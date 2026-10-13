@@ -1,0 +1,4 @@
+# Generated files. Some have absolute paths of the build computer.
+build/
+dist/
+__pycache__/

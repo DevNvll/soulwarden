@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Capture the agent desktop that shows the game. Usage: tools/shot NAME
+set -euo pipefail
+source "$(dirname -- "${BASH_SOURCE[0]}")/dev-env.sh"
+data_dir="${dev_data_dir}"
+desktop_id="${SOULWARDEN_DESKTOP_ID:-soulwarden-game}"
+mkdir -p "${data_dir}/shots"
+target="${data_dir}/shots/${1:-shot}.png"
+omarchy-agent-desktop screenshot "${desktop_id}" "${target}" >/dev/null
+echo "${target}"

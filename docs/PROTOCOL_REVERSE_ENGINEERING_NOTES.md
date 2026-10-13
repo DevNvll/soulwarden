@@ -1,0 +1,3039 @@
+# New World Protocol Notes
+
+Target: `NewWorld.exe` build `1.400.6031.6004151` (Steam build 22469132),
+SHA-256 `8654f01d324636d9f74f1c793b0cc4a417c3c5fa9847d9913c358ca29e0fdc8e`.
+All addresses are image-relative (RVA). Evidence level is given for each contract.
+
+## 1. Client start sequence (behavioral proof)
+
+```text
+SteamAPI_Init (hook DLL)
+-> GET  <channel host>/STEAM_APP_ID.1063730.json            channel document
+-> POST tokenservice.amazongames.com /games/new-world/tokens account session (2.1)
+-> GET  <JavelinGatewayService-CF>/prod/credentials/omni      signing credentials
+-> title screen, first-run screens, main menu
+-> GET  /prod/game/getlogininfo                               worlds and characters
+-> empty row of the character list: character creation (2.2), then the login of the
+   new character
+-> Play: POST /prod/game/login/queue/v2                       login token with RepAddress
+-> DTLS 1.2 to RepAddress (UDP), carrier handshake, registration
+-> self identification            state WaitingForSpawnPoint
+-> level information, spawn point notice, first state bundle: level load
+                                  state WaitingForPlayerSpawn
+-> state record of the local player (interest 1)
+                                  state InGame, loading screen
+-> player position in the movement state: world streaming, loading screen ends
+-> a movement state each 200 ms keeps the session open and the input of the client on
+<- input reports of the client (30 each second): the client moves its character itself
+```
+
+Client state names (string table at 0x84FA000): `QueryGameUpdateCheck`,
+`WaitingForGameUpdateCheck`, `QueueGameLogin`, `WaitingForQueuedLogin`,
+`QueryForRemoteConfigClass`, `WaitingForRemoteConfigClass`, `ObtainREPRequirements`,
+`WaitingForREPRequirements`, `StartREPConnection`, `WaitingForREPConnection`,
+`WaitingForActorGameConnection`, `WaitingForSpawnPoint`, `WaitingForPlayerSpawn`, `InGame`.
+
+## 2. HTTP services (behavioral proof unless noted)
+
+| Service | Route | Reply contract |
+| --- | --- | --- |
+| Channel | `GET /STEAM_APP_ID.<app>.json` | Region objects with `publicApis[]` (`clientTag`: `authStack`, `loginGateway`, `JavelinGatewayServiceV2`, `JavelinGatewayService-CF`) and `platformMetadata` |
+| Account token | `POST /games/{game}/tokens` | `accessToken`, `expiresIn`, `fallbackToken`, `region`, `isNewAccount`, `account{identityId,personaId,type,ageGroup}`, `platformAccount{identityId,personaId,identityType,platform,ageGroup}` (reader 0x79B6D00). The backend sends `isNewAccount` false for a new account too: the value true was not tested. |
+| Credentials | `GET /prod/credentials/omni` | `accessKeyId`, `secretAccessKey`, `sessionToken`, `expiration` (Unix ms; reader 0x5A955E0) |
+| Login info | `GET /prod/game/getlogininfo` | `{"LoginInfoList":{Characters,Worlds,NameReservations,PendingWorldMerges,MaxChannelCharacters,CrossRegionTransferCooldownMins}}` (reader 0x74E42E0). A character with `PublishedData` (2.2.5) has its body in the menu. |
+| World list | `GET /prod/game/worlds/list` | `{"ListWorldsResponseBody":{Worlds,RecommendedWorlds}}` |
+| Name check | `POST /prod/game/worlds/{world}/characters/validator` | Status only (2.2.2) |
+| Create character | `POST /prod/game/worlds/{world}/characters` | `{"Character":{CharacterId,...}}` (2.2.3) |
+| Delete character | `DELETE /prod/game/characters/{character}` | Status only (2.2.6) |
+| Login queue | `POST /prod/game/login/queue/v2?tokenVersion=10` | Request `{"LoginQueueRequest":{CharacterId,...}}`; reply `{"LoginQueueResponse":{Token:{RepAddress,...},...}}` (reader 0x74E4F20, 0x74E5990) |
+
+World checks in the client (0x6423730): `WorldStatus == "ACTIVE"`, `WorldType` is `OpenWorld` or
+`FTUE` (0x17C40A0), `WorldVersion` must contain the client version text, population text is
+`low`, `medium`, or `high`.
+
+Model field types come from `tools/aws_model.py READER_RVA`.
+
+### 2.1 Player identity (behavioral proof unless noted)
+
+The client gets its identity from three Steam functions of the hook. The addresses of the
+client code are static proof.
+
+| Steam function | Interface slot | Client use |
+| --- | --- | --- |
+| `ISteamUser::GetSteamID` | User 2 | Decimal text of the Steam id: the header `x-amzn-playerid`, and the client data of the registration request (3.4). Callers 0x5A7F3E0, 0x6429EC0, 0x6459C10. |
+| `ISteamFriends::GetPersonaName` | Friends 0 | UTF-8 text. Caller 0x5A7F3E0. |
+| `ISteamUser::GetAuthTicketForWebApi` | User 14 | One call with a null identity (0x5A9FBE0). The ticket comes in callback 168 (handler 0x5A936F0): `handle:u32 result:i32 size:i32 ticket:2560 bytes`. |
+
+The client copies `size` bytes of the ticket (object +0x38C) and makes lower-case hexadecimal
+text from them (0x5A871A0). It sends this one ticket three times, and no request has a field
+for the Steam id:
+
+| Step | Request | Ticket and identity in the request | Identity in the reply |
+| --- | --- | --- | --- |
+| 1 | `POST /games/new-world/tokens` | `{"platformIdentityType":"steam","platformAuth":{"ticket":HEX},"fallbackToken":...,"attributionData":{...}}` | `accessToken`, `account.identityId`, `account.personaId`, `platformAccount.identityId` (Steam id) |
+| 2 | `GET /prod/credentials/omni` | `authorization: Bearer <accessToken>` | none |
+| 3 | `/players/{personaId}/games/new-world/...` (entitlements, catalog, privacy settings) | `x-amzn-token: <accessToken>`, `x-amzn-playerid: <Steam id of the client>` | no route in the backend (404) |
+| 4 | `GET /prod/game/getlogininfo` | `x-nw-auth: <accessToken>` | `Characters[].PersonaId` |
+| 5 | `POST /prod/game/login/queue/v2` | `x-nw-auth`, body `CharacterId`, `SteamAuthTicket: HEX` | `Token.PersonaId`, `Token.SteamUserId` |
+| 6 | `RegistrationRequestV3Msg` (3.4) | The fields of `Token`, the Steam id of the client, the text `steam\|HEX` | result 0 |
+
+- `account.personaId` is the key of the player in the client: it is in the service paths of
+  step 3, in the game log (`Omni CreateSession complete with result: 0, id: <personaId>`), and
+  in the name of the settings file (below).
+- The client keeps the access token as opaque text and sends it back in the three headers of
+  steps 2 to 5.
+- The client does not compare `platformAccount.identityId` or `Token.SteamUserId` with its own
+  Steam id: world entry worked when the three values were different (runs before the account
+  support).
+- Ticket size: the client sends tickets of 49 to 295 bytes in step 1, and tickets of 64 and
+  295 bytes passed steps 5 and 6 (world entry). A larger ticket was not tested.
+- A persona name with characters that are not ASCII (14 bytes, and 128 bytes of 4-byte
+  characters) goes from the launcher through the environment of Wine to the hook and to the
+  backend with no change.
+
+Identity contract of the project:
+
+```text
+launcher   reads the Steam id and the persona name of the last Steam login from
+           <Steam>/config/loginusers.vdf and gives them to the hook in the environment:
+           SOULWARDEN_STEAM_ID (17 decimal digits), SOULWARDEN_PERSONA_NAME (UTF-8 text)
+hook       GetSteamID := SOULWARDEN_STEAM_ID, GetPersonaName := SOULWARDEN_PERSONA_NAME
+           ticket := "SOULWARDEN-LOCAL-TICKET" ";" "1" ";" steam-id ";" persona-hex
+                     steam-id    := 17 decimal digits, high 32 bits 0x01100001 (individual
+                                    account, public universe)
+                     persona-hex := lower-case hexadecimal text of the UTF-8 persona name
+                                    (128 bytes at most)
+backend    step 1: ticket -> Steam id -> account row (found, or made) -> persona id
+                   access token := unsigned JSON Web Token with the claim personaId
+           step 4, 5: x-nw-auth -> claim personaId -> account -> characters of that persona
+           step 6: persona id, the two Steam ids, and the ticket are compared with the account
+                   and the result goes to the log
+```
+
+- **Stub authentication.** The ticket is local text and not a Steam credential. The backend
+  does not validate it, the access token has no signature, and a difference in step 5 or 6
+  is only written to the log. This is acceptable only because the backend listens on loopback.
+- With no Steam account (no `loginusers.vdf`, or `SOULWARDEN_STEAM_ID=local`) the hook uses the
+  fallback identity: Steam id `0x0110000100A207A1` and the name `Soulwarden`. A token request with
+  no local ticket gets the account of the same Steam id.
+- A database from before the account support has one persona, `soulwarden-persona-0001`. The first
+  Steam id that logs in with a local ticket takes it (behavioral proof: world entry at the
+  position that the database had). Each later Steam id gets a new account with random ids.
+- A token request with no local ticket of version 1 does not take that persona. It gets the
+  fallback account, as a new account with no character when the database has none. Such a
+  request comes from a hook from before the account support (its ticket is 64 bytes of the
+  marker text with no separator and no Steam id) or from a tool. Proof: requests to the
+  backend alone on a copy of a version 2 database, not a run with the old hook.
+- A gateway request with an access token that names no account gets status 401. The reaction
+  of the client is not known (it does not occur in a normal session).
+
+Settings file of the client: `@savedata@/usersettings_<hash>.javsave` (function 0x4591D00,
+format `%s/%s%s_%llx.%s`). `<hash>` is the FNV-1a 64 hash of the channel id and the persona id
+as one text (`STEAM_APP_ID.1063730` + persona id; proved for two personas). A persona with no
+settings file gets five first-run screens before the main menu: narration, seizure warning,
+basic settings, brightness, code of conduct (game log: `Failed to find Options file`).
+
+### 2.2 Character creation (behavioral proof unless noted)
+
+Proof: 6 creations in the live client (3 of them by `tools/scenarios/create.sh` alone), with
+the HTTP captures of the requests, and 2 later creations by the script with the archetype
+buttons 5 and 7. A function address with "trace" had a hit of `SOULWARDEN_TRACE` at that step. The
+other addresses are static proof.
+
+#### 2.2.1 Flow
+
+```text
+main menu, click on an empty row ("Create Character") of the character list
+-> popup "Choose world type" with one panel ("Standard"), click on the panel
+-> popup "Create character", "Yes"
+-> console command "map FTUE_V2_CC" (0x41FAD90, trace): the client loads the creation level
+   game log: Loading level FTUE_V2_CC
+-> intro film (more than 80 s). A key shows "Hold ESC to skip". Escape for 3 s skips it.
+-> camera sequence (less than 25 s), then the buttons of step 1 show
+-> step 1 Archetype (7 buttons), step 2 Appearance, step 3 Identity (name), step 4 World
+   step 3: POST .../characters/validator, 2 s after the last key (2.2.2)
+   step 4: GET /prod/game/getlogininfo again, and the world content requests (404)
+   "Continue" of step 4: POST .../characters (2.2.3)
+-> end sequence (4.5 s), then the client logs in with the new character:
+   RequestLogin(CharacterId of the reply, "FTUE") (0x2EF9BB0 and 0x6462B20, trace with
+   the two texts)
+   game log: Queuing login for world () and character (<new id>)
+-> POST /prod/game/login/queue/v2 and the world entry of section 1
+```
+
+- The two popups come for an account with no character and for an account that has
+  characters.
+- No request goes to the backend before step 3. The archetype and the appearance are only in
+  the creation data of the create request.
+- Escape in step 3 goes back to step 2 (the first Escape only takes the focus from the name
+  field). The other steps were not tested.
+- The login of the new character is the same request as the login from the menu (`WorldId`
+  is empty, `Queuing login for world ()`). The client enters the open world from the
+  creation level with no return to the main menu. The world type text `FTUE` has no effect:
+  the console variable `g_loginWithWorldTypes` is 0 (static proof, 0x6441C70).
+- The requests of this flow have the query `channelId=STEAM_APP_ID.1063730` and the header
+  `x-nw-auth` (2.1). A request with a body has `content-type: application/x-amz-json-1.1`.
+  Each route also has the
+  path forms `<path>/jwt` and `<path>/jwt/omni` (static proof, selector 0x646FCA0; the
+  captures have only the plain form).
+
+#### 2.2.2 Name check
+
+```text
+POST /prod/game/worlds/{worldId}/characters/validator?channelId=STEAM_APP_ID.1063730
+{"ValidateCharacterBody":{"Name":"<name>"}}
+```
+
+Client code: job 0x6419EF0, body writer 0x74ED0D0, result callback 0x2EAB900 (trace).
+
+**Name rule of the client** (static proof; behavioral proof for the results 3 and 5: a name
+with 7 digits and a name with two spaces in sequence got a text of the client below the
+field and no request). The client checks the name before it sends the request: 0x41F6530
+calls the text check 0x5CF59A0 with the limits 3 and 15 and the pattern text at 0x8159340. A
+name that the rule refuses gets no request. The check gives one of these results (the
+script `namevalidationcommon` shows a text for each):
+
+| Result | Rule |
+| --- | --- |
+| 1, too short; 2, too long | The name has 3 to 15 characters (UTF-16 units). |
+| 5, multiple spaces | No two spaces in sequence. |
+| 3, invalid characters | No white space at the start or at the end. Each character is in the pattern: the space, `'`, `,`, `-`, `.`, the digits, the ASCII letters, and the ranges U+00C0 to U+00D6, U+00D8 to U+00F6, U+00F8 to U+0108, U+010A to U+0124, U+0126 to U+0127, U+012A to U+012B, U+012D to U+0133, U+0136 to U+014D, U+0150 to U+0167, U+0169 to U+016B, U+016D to U+0174, U+0176 to U+017E. The pattern refuses a name with 7 digits. |
+| 4, bad words | A check of the words of the name (call at 0x5CF5DAB, not read). The backend does not have this rule. |
+
+| Reply | Result in the client |
+| --- | --- |
+| `200` with `{}` | Valid state: green mark in the name field, "Continue" is on. The client does not read the body (static proof). |
+| `400`, header `x-amzn-ErrorType: NameNotAvailableError`, body `{"__type":"NameNotAvailableError","message":"..."}` | The text "This name is in use." below the field, "Continue" is off, no popup. |
+
+The backend applies the name rule again (`check_name` in `state/character_name.h`; all of the
+rule but the word list). A name with a length that is not permitted gets `400`
+`NameLengthError`, and a name with a character, a number of digits, or a space position that
+is not permitted gets `400` `NameValidationError`. The client has a text for each of the two
+names (`mm_loginservices_NameLengthError` "Invalid name length.",
+`mm_loginservices_NameValidationError` "This name contains invalid characters."), and its
+callback shows them as the state of the name field (static proof, 0x2EAB900). Proof of the
+backend rule: requests to the backend alone. The client does not send such a name. A name
+of the client with 15 characters, a hyphen, a space, and an apostrophe got the valid state
+and a character (behavioral proof, 1 creation).
+
+The backend gives the reply `NameNotAvailableError` for a name that a character of any
+account has. The compare ignores the letter case of each letter that the client permits: the
+backend makes a compare form in lower case for the letters up to U+017F
+(`state/character_name.h`), because `COLLATE NOCASE` of SQLite changes the case of ASCII
+letters only. Proof: requests to the backend alone (`Élan` and `élan`, `Žofie` and `žofie`
+are one name; `Elan` is a different name). The rule of the game service for these letters is
+not known.
+
+#### 2.2.3 Create
+
+```text
+POST /prod/game/worlds/{worldId}/characters?channelId=STEAM_APP_ID.1063730
+{"CreateCharacterRequest":{"CharacterCreationParams":"<text, 2.2.5>","ClientCapabilities":[],
+ "Name":"<name>","SkipFtue":false,"SteamAppId":1063730,"SteamAuthTicket":"<hexadecimal text>"}}
+```
+
+Client code: 0x2EB0FE0 (trace; builds the creation data), gateway call 0x642B130 (trace),
+job 0x6414350, body writer 0x74ECF20 and 0x74EC2C0, reply reader 0x74E1090 and 0x74E1F60,
+result callback 0x2EAAEC0 (trace), then 0x2EF9740 (trace; starts the end sequence).
+
+- `SteamAuthTicket` is the ticket of 2.1 again. `SkipFtue` was false in each capture (5
+  archetypes). `ClientCapabilities` was an empty list.
+- Reply: `200` with `{"Character":{...}}`, the same members as a character of the login
+  information. The client reads only `Character.CharacterId` (static proof) and logs in with
+  it: the id of the game log line was the id of the reply in each run.
+- The backend makes the row for the account of the token (`x-nw-auth`), keeps
+  `CharacterCreationParams` with no change, and keeps the archetype (member `backstory` of
+  the creation data). It sends `FtueCompleted` true: it has no tutorial world, and the
+  character starts in the open world. It does not keep `SkipFtue`.
+- The backend makes no row for a request that does not have the form of the client: a name
+  that the name rule refuses (2.2.2), or creation data that it cannot read (2.2.5: base64,
+  zlib, the document with `visualsBlob`, and an object stream with the root class
+  `PlayerSaveData`). The reply is `400` `CreateCharacterFailed`, and the backend log has a
+  line `gateway: no character ...` with the cause. Proof: requests to the backend alone
+  (8 names and 9 texts that are not creation data got no row), and the creation data of
+  each of the 10 different create requests in the captures of the client got a row.
+- The client has a limit of 10 seconds for the reply (static proof, text
+  `@mm_connerr_createcharacter_timeout`).
+
+#### 2.2.4 Error reply of a gateway route
+
+```text
+HTTP status 4xx
+x-amzn-ErrorType: <error name>
+{"__type":"<error name>","message":"<text>"}
+```
+
+The client reads the error name from the header, else from the member `__type` (AWS JSON
+error reader 0x7481A00, static proof) and shows the text of the localization key
+`@mm_loginservices_<error name>` (0x16C14D0, 0x5C4CC10). The backend sends the two forms in
+each error reply of the table. A reply with an error name that the route does not expect, or
+with no error name, opens the popup "connection failed" (static proof, 0x2EAB900).
+
+| Route | Case | Status and error name | Proof |
+| --- | --- | --- | --- |
+| Name check | Name in use | 400 `NameNotAvailableError` | behavioral |
+| Name check | The name has less than 3 or more than 15 characters (also no name) | 400 `NameLengthError` | static (the client sends no such name), and a request to the backend alone |
+| Name check | The name has a character, a number of digits, or a space position that the name rule refuses | 400 `NameValidationError` | static (the client sends no such name), and a request to the backend alone |
+| Create | Name in use | 409 `ALREADY_EXISTS` | static, and a request to the backend alone |
+| Create | The account has 4 characters | 409 `TooManyCharactersError` | static |
+| Create | World id is not the local world | 404 `WorldNotEligibleForCharacterCreation` | static |
+| Create | The name rule refuses the name (also no name) | 400 `CreateCharacterFailed` | static, and a request to the backend alone |
+| Create | The backend cannot read the creation data (also no creation data) | 400 `CreateCharacterFailed` | static, and a request to the backend alone |
+| Create | The database did not accept the row (not a name conflict) | 400 `CreateCharacterFailed` | request to the backend alone, with the database locked |
+| Delete, login queue | The account has no character with this id | 404 `UnknownCharacter` | request to the backend alone. The client has the text key `mm_loginservices_UnknownCharacter`. The reaction of the client to this reply was not seen. |
+
+Three replies of the backend have no error name (no header `x-amzn-ErrorType`, no member
+`__type`). They do not occur in a session of the client, and the reaction of the client is
+not known:
+
+| Case | Reply |
+| --- | --- |
+| The access token of a request names no account (2.1) | 401 `{"message":"Unauthorized"}` |
+| The path has no handler | 404 `{"message":"soulwarden: route not implemented"}` |
+| A handler stops with an exception | 400 `{"message":"Bad Request"}`, and a line in the backend log |
+
+A request member with a type that the handler does not expect (a number for `Name`) is the
+same as an absent member.
+
+#### 2.2.5 Creation data (`CharacterCreationParams`, `PublishedData`)
+
+```text
+text        := base64( zlib( document ) )      standard alphabet with padding; zlib header 78 DA
+document    := {"currency":0,"visualsBlob":"<bytes>","position":{"x":0.0,"y":0.0,"z":0.0},
+                "currentLevel":0,"worldId":"<world id of the request>"}
+visualsBlob := binary engine object stream, 1904 to 1921 bytes in the captures (the size
+               changes with the length of the texts)
+```
+
+Client code: document writer 0x17A75B0 and reader 0x16B3850 (trace, at the load of the
+character list), zlib and base64 writer 0x16A6030 and reader 0x171A500.
+
+- **The document is not valid UTF-8 text.** The JSON writer of the client writes a byte of
+  `visualsBlob` below 0x20 as an escape (`\u0000`, `\n`, ...), writes `"` and `\` with a
+  backslash, and copies each other byte with no change. A JSON library that needs UTF-8
+  rejects the document: read the member as bytes (`state/creation_data.cpp`,
+  `tools/research/creation_params.py decode FILE`).
+- Object stream (big-endian; `tools/research/objstream.py`): tag `00`, version `u32` = 3,
+  then elements. An element is `flags:u8`, a name `u32` when flag 0x40 is set (CRC-32 of the
+  field name in lower case), a class version `u8` when 0x80 is set, a type id of 16 bytes, a
+  value when 0x10 is set, the elements of its fields, and the end byte `00`. The value size
+  is the low 3 bits of the flags, or with flag 0x20 a number with that many bytes. Each
+  element of the client has the flag 0x08. A text with no characters has the value flag and
+  the size 0 (flags `58`). The stream ends with one more byte `00` after the root element.
+- The root element has the type id `{144C7576-7FBA-4250-B0C8-F06803657D79}` and class
+  version 3 (class `PlayerSaveData`, reflection 0x36FDFA0). Its fields in the captures:
+
+  | Field | Type | Value in the captures |
+  | --- | --- | --- |
+  | `playerName` | text | The name of the request. |
+  | `companyName` | text | `<name>'s Company` |
+  | `entityClassName` | text | `PlayerMale` or `PlayerFemale` |
+  | `guildCrestName` | text | empty |
+  | `gender` | text | `Male` or `Female` |
+  | `race` | text | The face, for example `face26`. |
+  | `skinTone`, `hairstyle`, `facialHair`, `hairColor`, `facialHairColor`, `eyeColor`, `faceMark`, `scar`, `tattoo`, `tattooColor` | text | Names of the character creation databases: `skin10`, `hairstyle13m`, `None`, `haircolor26`, `eyecolor3`, `facemark02`, `none`, `tattoo58`, `tattoocolor15`. |
+  | `backstory` | text | The archetype. Buttons 1 to 7: `Archetype_Soldier`, `Archetype_Destroyer`, `Archetype_Ranger`, `Archetype_Musketeer`, `Archetype_Occultist`, `Archetype_Mystic`, `Archetype_Swordsman`. |
+  | `startingFaction` | int | 0 |
+  | `appearanceData` | container | empty |
+  | `equipment` | map | 5 entries with the keys `gloves`, `shirt`, `hat`, `boots`, `pants`. Each value is an `EquipmentSaveData`: `itemName` (empty), `appearanceId` (a 32-bit number), `dyeSettings` (4 numbers, all 0). This is the clothing of the archetype. |
+
+- **`PublishedData` of a character of the login information is the same text.** The backend
+  sends the stored `CharacterCreationParams` with no change. It sends the stored text only
+  when it can read it: a row with a different text (a database from before the check of the
+  create route) gets creation data that the backend makes (next item). The reaction of the
+  client to `PublishedData` that is not creation data is not known. With the stored text,
+  the menu shows the body of the character with its skin tone and face, and with the
+  clothing of the archetype (the headgear can hide the hair). A character with no
+  `PublishedData` has a white body in the menu. The level number of the row is the member
+  `currentLevel` plus 1. From stage 1.5 on the backend writes the level of the character
+  into this member of the text that it sends (the level of the screen minus 1) and sends the
+  document again as stored data of the zlib form; the other bytes of the document do not
+  change (behavioral proof: the row shows "21", and the body has its clothing).
+- **Creation data that the backend makes.** A character that the backend seeded has no
+  creation data. For its `PublishedData` the backend makes the same document
+  (`make_creation_data` in `state/creation_data.cpp`): the zlib stream has stored blocks
+  (header `78 01`), and the object stream has each field of the table in the same sequence,
+  with the names of the default appearance of 4.5 from the appearance tables, an empty
+  `backstory`, and an `equipment` map with no entry. The client accepts this text: the menu
+  shows the body with skin, face, and hair, and with underwear (behavioral proof: a seeded
+  character of a test account, and the seeded character of a database from before this
+  support). Up to the value of `race`, the bytes were equal to a capture of a character with
+  the same name. Without the appearance tables the backend sends no `PublishedData` for such
+  a character.
+- The appearance state of the world (4.5) has list indexes, not names. Index = position of
+  the name in a list of the character creation databases of the game: gender in `Male`,
+  `Female`; `race` in the list `Races` of the gender; skin tone, hairstyle, facial hair, and
+  the two hair colors in the lists of the race; the other fields in one list each. The
+  lists are game data: `tools/gamedata/appearance.sh` writes them to
+  `~/.local/share/soulwarden/gamedata/appearance-tables.json` and the backend reads the file at
+  its start (`--gamedata-dir`). With no file the backend uses the default appearance of 4.5
+  and writes a log line. Proof: 2 characters had the body type, the skin tone, the hairstyle,
+  and the hair color of the creation screen in the world (a view from the front), and a
+  third one its body type and skin tone.
+
+#### 2.2.6 Delete
+
+Menu: the button `...` of a character row, "Delete Character", then a popup with "Confirm".
+"Confirm" acts only after a long press of the pointer button (3 s in the test).
+
+```text
+DELETE /prod/game/characters/{characterId}        no query, no body
+```
+
+Client code (static proof): 0x41ED2E0, 0x642C420, 0x642C970, job 0x64148E0. Reply: `200`
+with `{}`. The client then requests the login information again and the list has one row
+less. The backend removes the row only when the character is a character of the account of
+the token. The name is free again at once.
+
+## 3. Game server transport
+
+### 3.1 Security
+
+DTLS 1.2, cipher `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`. The client trusts one embedded
+certificate authority (PEM at 0x8590460, pointer at 0x9F80D90). The hook replaces the pointer
+with the local backend certificate before the transport starts (behavioral proof).
+
+### 3.2 Carrier (GridMate variant, behavioral proof)
+
+```text
+datagram := flags:u8 version:u8 sequence:u16 message*      big-endian
+            flags = 0x80 | compressed(bit 0), version = 0x01
+            compressed: the messages are one LZ4 block
+message  := flags:u8 size:u16 [channel:u8] [chunks:u16] [sequence:u16] [reliable:u16] data
+            0x01 reliable, 0x04 chunks, 0x08 sequential, 0x10 sequential reliable,
+            0x20 channel, 0x80 connecting
+```
+
+Channel 3 is the system channel. The last data byte is the message id: 1 connect request,
+2 connect ack, 3 disconnect, 4 clock sync, 6 acknowledgements. Handshake payload: version
+`u32 = 5`. Readers: 0xF898E0 (datagram header), 0xF77EB0 (messages).
+
+Transport use of channels (pump at 0x6B3C250): reliable data on channel 0, unreliable data on
+channel 1.
+
+Sizes (behavioral proof): the data of one message has 1,024 bytes at most. A larger reliable
+message goes in chunks: the first chunk has the chunk count, and each chunk is one message.
+The client used a bundle of 1,275 bytes in two chunks (stage 1.7: the point state of a
+character with 114 tree nodes). A datagram has 1,038 bytes at most: the datagram header (4),
+the largest message header (10), and the largest message data. The client closes its
+connection when it gets a larger datagram: the backend had the limit 1,200 before stage 1.7,
+and a datagram of 1,187 bytes with two messages (the registration replies and a state bundle
+of 805 bytes) made the client close the connection 28 ms after the first record, with
+`ClientSDK: Unexpected client disconnect! {"transportError":2}` in the game log. With the
+limit 1,038 the same record goes out in datagrams of 366, 1,004, 1,037, and 275 bytes, and
+the client enters the world. The largest datagram of each earlier run had 1,037 bytes.
+
+### 3.3 Frames (static proof and behavioral proof)
+
+```text
+client -> server := crc32:u32 size:u32 payload      payload := target:16 bytes envelope
+                    (writer 0x6B0F430; CRC-32 of the payload)
+server -> client := size envelope                   (parser 0x6AE44F0; no checksum, no target)
+envelope := flags:u8 [8 bytes if bit 0] [8 bytes if bit 1] [extension if bit 2] message
+message  := present:u8 type:size body               (readers 0x61AC8D0, 0x17B2430, 0x61ACFE0)
+```
+
+`type` is an index into `typeindex.json` in the game root. Index 0 is followed by the 16-byte
+type id.
+
+Primitive encodings: `u32`/`u64` big-endian (0x876CD0, 0x8770E0); `size` prefix code
+(0x877970): `0xxxxxxx`, `10xxxxxx`+1, `110xxxxx`+2, `1110xxxx`+3, `11110xxx`+4 bytes, low bits
+first; `string` = size + bytes; `bool` = 1 byte.
+
+Each message type has an operations table: allocate, free, marshal, unmarshal. Find it from the
+runtime type name `InstallRegistrationHook<T>` (tools: `tools/gh symbols T`).
+
+### 3.4 Registration (behavioral proof)
+
+| Message | Type index | Body |
+| --- | ---: | --- |
+| `REPClient::RegistrationRequestV3Msg` | 19 | `u32`, version map (6 entries: key `u32`, text), text, login token, client data, 2 identities, flag |
+| `REPClient::RegistrationResponseMsg` | 3 | `result:u32` (0 = accepted), `serverTime:u64` (nanoseconds), text, text, 4 flags (4th: anti-cheat required) |
+
+Unmarshal of the response: 0x7CD040. Handler: 0x6B6F190.
+
+Field order of the request (writers 0x7CE860, 0x7D54A0, 0x7D5F30, 0x7D4920, 0x7D4B50,
+0x7D42C0, 0x7D4540, 0x7D3F70: static proof; the backend reads the fields to the ticket in
+each login, and the values agree with the login token and the hook: behavioral proof). A field
+with no type is a text.
+
+```text
+login token := Signature RepAddress WorldId CharacterId PersonaId SteamAppId:u32 SteamUserId
+               ChannelId TicketId text text IssueTime:u32 GenerateTime:u32 AccountAge:u32 text
+               TokenVersion:u32 u8 text present:u8 [flag:u8 if present] text text text
+client data := u32 u8 SteamAppId:u32 SteamId Ticket text u32 text text text text text
+identity    := flags:u8, then a 16-byte id when bit 0 is set, else a text
+```
+
+- The login token has the values of `LoginQueueResponse.Token` (2.1 step 5). `IssueTime` and
+  `GenerateTime` are the low 32 bits of the millisecond values of the reply. The names of the
+  fields with no name here are not known (in the captures: empty texts, `u8` 0, and the
+  present flag with the value 1).
+- `SteamId` of the client data is the decimal text from `GetSteamID`. `Ticket` is `steam|`
+  and the hexadecimal text of the ticket bytes (0x5A871A0). The first two fields of the
+  client data were 1 and 1 in each capture.
+- The backend reads the persona id, the two Steam ids, and the ticket, compares them with
+  the account of the persona, and writes the result to the log. A Steam id that does not
+  agree is not a cause for a refusal (stub authentication, 2.1).
+- The backend refuses a registration whose character id the store does not have, and a
+  character that is not a character of the persona id of the login token: the reply has the
+  result -160, and no other message follows (3.6). The login token has a `TicketId`, which
+  the gateway makes new for each login queue reply: the backend does not keep it and does
+  not compare it (a login ticket is not a part of the product now).
+
+### 3.5 Sessions of the game server
+
+The session rules are a design of this project: no capture of an original server exists.
+The statements about the client have their evidence level.
+
+**One session for each connection.** A peer of the DTLS listener is the IPv4 address and the
+UDP port of the client. Each peer that completes the DTLS handshake is one session: it has
+a session id (1, 2, ... in one backend process, not used again), one carrier connection, and
+one `RepSession` (`apps/backend/src/service/rep_server.h`).
+
+**What the client sends when the user leaves the world** (behavioral proof, 3 runs: Game
+Menu, "Exit to Main Menu", "Yes"). The client sends the carrier disconnect (system message
+3, reason 0) less than 0.1 s after the click. It sends no DTLS close notice: the secure
+session of the backend got no close in 130 s. Game log: `CGame::OnDisconnection:
+Disconnected from REP`, `Update state InGame to new state Disconnected`, `CGame exiting to
+main menu`.
+
+**A second connection of one game process** (behavioral proof, 3 runs; port rule: static
+proof). Play in the main menu makes a new login queue request (a new login token) and then
+a new connection from the next UDP port: 27000, then 27001 (`javelin.client-port` plus a
+counter of the process, modulo `javelin.client-port-range` + 1 = 51; client code 0x6B6A3ED).
+The client registers again with the same character.
+
+**Level information of a second connection** (static proof 0x6446800, and behavioral proof
+in the two directions). The handler of `LevelInfoChangedMsg` in the client:
+
+1. It does nothing when `version` of the message is equal to the version that it keeps
+   (game message port -0x7F8). The value stays after a disconnect: the line `[GameMessagePort]
+   Reset` of the game log does not clear it.
+2. With `reload` = 1 it writes `LevelInfoChanged m_clientContextInstanceId A changing to
+   levelInfo.m_clientContextInstanceId B` to the game log, and it does nothing more when A
+   is equal to B. A is the instance of the last connection, also after a disconnect.
+3. If not, it makes the client context (`Calling clientContext->Initialize`) and loads the
+   level.
+
+Thus the level information of each connection of one game process must have a version and
+an instance that the client did not get before. Live proof of the fault: with version 1 and
+instance 1 in each session (the backend before stage 0.6a), the second entry stays in
+`WaitingForPlayerSpawn`, the client drops each state bundle (`skipping ReceiveStateBundle
+... clientContext == nullptr`), and after 120 s it shows "Timed out while waiting for server
+to spawn the player". With a new instance and version 1 the client also drops each bundle
+(`received bundle for a previous ClientContext: expected=1, incoming=4`). The backend now
+sends the session id as the version, and `(session id - 1) mod 255 + 1` as the instance (in
+the level information, in the level block of the self identification, and in each state
+bundle). Session 1 has version 1 and instance 1, as before. Live proof of the repair: game
+log `m_clientContextInstanceId 1 changing to levelInfo.m_clientContextInstanceId 2`, then
+`InGame`.
+
+**Session end.** A session ends one time, with one of these causes (log line `rep: session
+ended, cause: CAUSE; client port N, A datagrams in, B datagrams out (C bytes) [mark]`):
+
+| Cause text | Condition | Where the backend finds it |
+| --- | --- | --- |
+| `carrier close` | The client sent the carrier disconnect (the user left the world, or the client ended the connection after an error or a timeout of its own). | After each datagram: state of the carrier connection |
+| `secure session closed` | DTLS close notice, DTLS read error, or a new DTLS handshake from the same port. | `on_disconnected` of the transport |
+| `idle (no datagram for 30 s)` | No datagram from the client for 30 s. In one run the largest time between two datagrams of a client was 0.117 s. | Each tick, with the world clock |
+| `no registration (30 s)` | No registration request 30 s after the start of the session. | Each tick, with the world clock |
+| `error` | A handler of this session stopped with an exception. | Guard around the message handlers and around the tick of each session |
+| `registration refused` | The session refused the registration (result -160, 3.6). | The client closed its carrier connection after the reply, or 1 s after the reply |
+| `replaced by a newer session of the character` | A newer session registered the character. This session sent the message "kicked" with reason 1 (3.6). | The client closed its carrier connection after the message, or 1 s after the message |
+| `character deleted` | The delete route removed the character while it was in the world. This session sent the message "kicked" with reason 2 (3.6). | The same |
+| `backend stop` | The backend stops. | `RepServer::stop` |
+
+- Each end makes the session leave the world (`World::leave`): the world writes the position
+  of the character when it is not the saved position, and it removes the entity of the
+  character. A session that lost its character changes nothing in the world. The end only
+  marks the session: the next tick erases its objects.
+- The backend sends nothing to the client at the end of a session, and it does not close
+  the secure session. The refusal and the two "kicked" messages go out before the end: the
+  session then gets no state and reads no message of its client, and it stays for 1 s at
+  most so that the carrier can give the message to the client. Behavioral proof (one run):
+  after a DTLS close notice of the backend, the client did a new DTLS handshake from the
+  same port two times in 0.5 s. The DTLS listener ends a secure session with no close notice
+  after 60 s with no datagram.
+- A client with no input of the user leaves the world itself (behavioral proof, one run of
+  stage 0.6b): 20 minutes after `InGame` the game log has `CGame::ActorContainerDisconnect`,
+  `Disconnected from REP`, and `CGame exiting to main menu`. The client sends no carrier
+  disconnect in this case: the backend ends the session with the cause `idle` 30 s later.
+  A click on Play enters the world again.
+- A client that stops with no message (live: the game process stopped with `kill -STOP`)
+  got more data in each period before this stage, because each reliable message goes out
+  again each 250 ms: 39,594, 114,796, 190,036, 265,952, and 341,312 bytes in the five periods
+  of 10 s after the stop. With the idle limit the data stops after 30 s.
+- A character is in one session at most, and the newer session wins (a design of this
+  project: a session can stay with no client, thus a rule "refuse the new one" can lock a
+  character out). When a session registers a character that an older session has, the world
+  writes the position of the entity, gives the entity with its ids and its position to the
+  new session, and tells the older session: it sends the message "kicked" with reason 1 and
+  ends. The new client gets the position of the entity, not an older row.
+
+**Log and captures.** Each log line of a session (`rep:`, `carrier:`) ends with its mark:
+` [s1]` before the registration, ` [s1 4aae16c4]` after it (session id, first 8 characters
+of the character id). The hexadecimal lines `rep: in`, `rep: out`, and `rep: message` are
+for the first 96 packets of each session. The capture files of a session are in its own
+folder with its own counter and its own limit of 32,768 files:
+
+```text
+captures/rep/s0001/NNNNN-in-LEN.bin     one clear datagram of the client
+captures/rep/s0001/NNNNN-out-LEN.bin    one clear datagram of the server
+captures/rep/s0001/NNNNN-msg-LEN.bin    one complete client frame (3.3)
+```
+
+### 3.6 Refusal and end messages (static proof, and behavioral proof for three values)
+
+The client has three ways to learn that the server does not accept its session. The backend
+uses two of them as product behavior from stage 0.6b on (the end of this section). The
+research switch of the game server (`SOULWARDEN_RESEARCH_SESSION`, backend option
+`--research-session`, off by default) sends one of them for a live check. The launcher gives
+the switch only to a run with `SOULWARDEN_HARNESS=1`, and the backend refuses the option (and the
+option `--dev-commands`) when its own process has no `SOULWARDEN_HARNESS=1`: it then starts no
+listener. Evidence of the three checks:
+`~/Games/soulwarden/work/evidence/session-model/implement/S9-*`.
+
+**Registration result** (`RegistrationResponseMsg`, type 3). The client reads `result` as a
+signed number. A value that is not 0 goes to function 0x6B70D00, which makes a text key and a
+reason, and the client ends the connection (0x6B6C500). A refusal is the reply alone: a
+different message before a reply with result 0 ends the connection with reason 1 (dispatcher
+0x6B6F190). Result values with a text key `@mm_authresult_Denied_...` (static proof, 28
+values, read from the two jump tables of 0x6B70D00): 37 `CapacityLimitReached`, -10
+`ClaimConnectionTicketFailed`, -70 and -100 TTL exceeded, -80 `VersionCheckFailed`, -90
+`TypeIndexMismatch`, -110 to -150 and -170 login token faults, -160 `LoginTicketInvalid`,
+-200 `EasyAntiCheatFailure`, -210 `EOSIsRequired` (reason 13), -300 to -352 and -399 auth
+token faults (-330 has reason 9), -900 `HubNotReady` (reason 9). All other values have
+reason 8.
+
+Live check 1, result -160 (behavioral proof, one run, switch `registration-result=-160`):
+
+- Trace: 0x6B70D00 with `edx` = 0xFFFFFF60, then 0x6B6C500 with `edx` = 8.
+- Game log: `ClientSDK: @mm_csdkerr_registration_failed: @mm_authresult_Denied_LoginTicketInvalid
+  (Status -160) (0)`, `Report Error: Reason: Errors::unknown`, `shouldRetryConnect=false,
+  isErrorRetryable=false`, `Connection fail popup from main menu: error 1`.
+- Screen: the main menu with the popup "CONNECTION ERROR. Error Code: Could not connect to
+  server.: Attempted login ticket is invalid or expired. Please retry login. (Status -160)
+  (0)" and the button OK. The popup stays (45 s). The client sends no second login queue
+  request and no second registration.
+- Backend: the client sends the carrier disconnect 33 ms after the reply.
+
+**Rejected** (`Javelin::ClientMessagesTrait::PlayerManagerRejectedMsg`, type 1630, body
+`reason:u32 text`, reader 0x14FF630, handler 0x64549B0). It goes with the plain envelope of
+the game messages (`00 01 type body`). The handler changes the wire reason to a value of the
+client enumeration `Errors` (name function 0x1003620): 0 to 13 are 23 to 36 (`aoi_errors`,
+`aoi_pending`, `aoi_duplicate_connection`, ...), 14 is 60, 15 is 38, 16 is 39, 17 is 42, 18
+is 43, 19 is 40, 20 is 41, 21 is 44, other values are 1 (`unknown`) (static proof, jump
+table 0x6454B94).
+
+Live check 2, reason 2 (behavioral proof, one run, switch `reject=2`, frame `09 00 01 9E 19
+00 00 00 02 00` after a registration reply with result 0, in place of the self
+identification):
+
+- Trace: 0x64549B0 with `edx` = 2, then the error function 0x5A86D80.
+- Game log: `Report Error: Reason: Errors::aoi_duplicate_connection`, `shouldRetryConnect=false,
+  isErrorRetryable=false`, `Connection fail popup from main menu: error 25`.
+- Screen: the main menu with the popup "CONNECTION ERROR. Player is already connected." and
+  the button OK. The popup stays (45 s), and the client does not try again.
+- Backend: the client sends the carrier disconnect 50 ms after the message.
+
+**Kicked** (`KickClientTrait::KickClientMsg`, type 271, body `reason:u32 u64 text`, reader
+0x7CB980, handler 0x6446170). It goes with the plain envelope. Wire reason to `Errors`
+(static proof, jump table 0x6446454): 0 is 57 `kicked`, 1 is 58 `kicked_duplicate_session`,
+2 is 59 `kicked_character_deactivated`, 3 is 60 `kicked_maintenence`, 4 is 61, 5 is 62 (70
+`banned_cheating` with the text `Cheating_EAC_Ban`), 6 is 63, 7 is 64, 8 is 65, 9 to 24 are
+66 to 81 (`banned` ...). `KickClientTrait::KickClientFromRepMsg` (type 254) has no handler
+in the client: do not use it.
+
+Live check 3, reason 1 (behavioral proof, one run, switch `kick=1`, frame `11 00 01 8F 04
+00 00 00 01`, 8 zero bytes, `00`, sent 10 s after the first camera position of a client that
+is in the world):
+
+- Trace: 0x6446170 (`rdx` points to the reason 1; probe 0x64461B4 has `edx` = 1), the error
+  function 0x5A86D80 with `edx` = 0x13, and 1.1 s later the popup function 0x102D420.
+- Game log: `Report Error: Reason: Errors::kicked_duplicate_session`, `Update state InGame to
+  new state Disconnected`, `shouldRetryConnect=false, isErrorRetryable=false`, `Connection
+  fail popup from in-game: error 58`, event `Popup_OnConnectionFail_InWorld`.
+- Screen: the world, dark, with the popup "CONNECTION ERROR. Your account has connected from
+  another game session." and the button OK. The popup stays (50 s), and the client does not
+  try again. What the client does after OK was not tested.
+- Backend: the client sends the carrier disconnect 17 ms after the message.
+
+Conclusions:
+
+- Each of the three ways works with the bytes above, and each one shows a text to the user.
+  The client ends the connection itself in less than 0.1 s: the server does not have to
+  close the session, and it must not send a DTLS close notice (3.5).
+- Not tested: the results with reason 9 (-330, -900), which name a retry; the other reasons
+  of the two messages; the text of each message.
+
+**Product behavior of the backend (stage 0.6b; a design of this project).**
+
+| Condition | What the client gets | End cause of the session (3.5) | Proof |
+| --- | --- | --- | --- |
+| The registration has a character id that the store does not have (also: no character id) | Reply type 3 with result -160 (`FF FF FF 60`), and no other message | `registration refused` | Bytes: test case T4. Effect in the client: live check 1 above. |
+| The character is a character of a different account (the persona id of the login token is not its owner) | The same | `registration refused` | The same |
+| A newer session registers the character of this session | `KickClientMsg` (type 271) with reason 1: frame `11 00 01 8F 04 00 00 00 01`, 8 zero bytes, `00` | `replaced by a newer session of the character` | Bytes: test cases T3 and E7. Effect in the client: live check 3 above. |
+| The delete route removes the character of this session (`DELETE /prod/game/characters/{id}` of the account of the character, from a different client) | `KickClientMsg` with reason 2 (`kicked_character_deactivated`): the same frame with `02` | `character deleted` | Bytes: test case D1. The effect of reason 2 in the client has static proof only (the jump table above). |
+
+- The world makes the decision (`World::enter`, `World::remove_character`), not the session:
+  the store has the owner of a character, and the entity table has the session of a
+  character.
+- The message "rejected" (type 1630) is not product behavior: a second session of a
+  character is not refused.
+- The delete route runs in an HTTP thread. It gives the world one task that removes the
+  entity and then deletes the row, so that no session registers the character between the
+  two steps. The stop of the backend waits for each HTTP connection thread before it
+  destroys the world.
+
+## 4. World entry (behavioral proof)
+
+The messages of 4.1 to 4.6 go from the server to the client on carrier channel 0. The input
+report of 4.7 goes from the client to the server on carrier channel 1.
+
+### 4.1 Messages
+
+| Message | Type index | Body |
+| --- | ---: | --- |
+| `PlayerManagerSelfIdentificationMsg` | 1628 | identity, actor reference x3, level block, identity (reader 0x14FD530) |
+| `LevelInfoChangedMsg` | 1635 | `level:text terrain:text u32 x4 u64 list flag instance:u8 reload:flag flag version:u64` (writer 0x1500850) |
+| `ClientViewListenerTrait::ReceivePlayerSpawnPointMsg` | 1617 | no fields |
+| `ReplicatedStateBundle` | 8 | `present:u8 sequence:size64 instance:u8 u8 unreliable:flag control:flag [control block] size payload` (reader 0x6B07870; the control block is in 4.2) |
+
+- identity := `flags:u8`, then a 16-byte id when bit 0 is set, else a text.
+- actor reference := `hub:u32 actor id:16 bytes actor type id:16 bytes` (reader 0x15ACC30).
+  The client sends only the actor id of a reference: it is the 16-byte route of a client
+  frame.
+- Self identification of the backend (behavioral proof: world entry, and the routes of the
+  client frames of the live runs of stage 0.6b). The ids come from the id allocator of the
+  world (4.2):
+
+  | Part | Value |
+  | --- | --- |
+  | identity 1, identity 2 | `01` and the actor id of the session (serial from `0x10000001`, kind `02`) |
+  | reference 1 | hub 1, the actor id of the player manager of the world (serial `0x10000000`, kind `01`), type id `38A737FF-6CAD-4792-A2F9-324736E0EE02` (`Aoi::PlayerManagerActor`) |
+  | reference 2 | hub 2, the actor id of the session, type id `2970E283-FCF3-4B6F-8F07-86D68BF3AE45` (`Amazon::Hub::ClientProxy`) |
+  | reference 3 | hub 0 and 32 zero bytes (null) |
+
+  Reference 1 is the address of the client messages that are not for an entity (static proof
+  0x5A9E6C0). With an actor id in reference 3 the client starts its bot spawn: it sends type
+  1665 to reference 1 and writes `BotUtils: Spawn type is not supported` to the game log
+  (behavioral proof: the backend sent an id there before stage 0.6b; with the null
+  reference the client sends no type 1665). The client did not check the type ids.
+- `level` is the level name (`newworld_vitaeeterna`). `terrain` is the terrain project
+  (`coatlicue/newworld_vitaeeterna`, game data folder `sharedassets/coatlicue/<name>`). The
+  client starts its terrain system only when `terrain` is not empty (0x6448CD0, 0x644C310).
+  With an empty text the loading screen does not end.
+- `instance` is the client context instance. It must be the same in the level information and
+  in each state bundle. `reload` = 1 makes the client load the level. The client does
+  nothing for a level information whose `version` or `instance` is the value of its last
+  connection: each session has its own values (3.5).
+- The client accepts a state bundle only after the level load started. A bundle before that
+  is dropped ("skipping ReceiveStateBundle ... clientContext == nullptr").
+- The sequence of the reliable bundles of one connection is 1, 2, 3, ... with no gap: the
+  client drops each bundle after a gap (static proof 0x644B280). Each session of the backend
+  has one counter for all its bundles: the records of its own character, the records of
+  other entities, and the stops.
+- The client disconnects with `connection_ingame_timeout` when it gets no game message for
+  30 seconds (0x6445E10, time at REP client +0x608). The backend sends a state bundle each
+  200 ms (the movement state of 4.6).
+
+### 4.2 State bundle payload
+
+```text
+payload  := record*
+record   := interest:size fragments:u8 fragment*         (reader 0x6AF20D0)
+fragment := slot:size type:size state                    (reader 0x6AF2340)
+```
+
+- An interest is one entity group ("GDE") of the client. Interest 1 is the player of the client
+  (apply function 0x1717FC0).
+- `type` is the type index of a replicated state type.
+- `slot` is the index of a component in the component list of the entity group (entity group
+  +0x160, apply function 0x167B2A0). Slot 0 has no component. The slot of a component is its
+  field `m_replicationIndex` in the slice file (`tools/research/slice_slots.py`).
+- The client gives a fragment to the client facet of the component (component +0x80, virtual
+  function +0xB0). A fragment with the state type of a different component gets no error and
+  has no effect: find the apply function of the facet and trace it.
+- The first fragment of a new entity group is `MB::GdeMetadataReplicatedState` (type 10). It
+  gives the slice asset id and the actor id. The client then instantiates the slice.
+- Fragments that arrive before the slice is ready are kept and applied at instantiation.
+- A record for an interest number that has no metadata in the client is dropped with no log
+  line (static proof 0x1717FC0). A second record with the metadata state for a number that
+  is in use is merged: the entity stays one, and the game log gets the warning
+  `StateReplication: Received repeated metadata` (behavioral proof, 2 runs, for the entity of
+  a different player).
+- For the own player (interest 1) a second record with the metadata state is not safe
+  (behavioral proof, 1 run of stage 1.3 with `tools/world touch` for the character of the
+  client): the game log has the same warning, and 3 ms later the client closes its connection
+  (`ClientSDK: Unexpected client disconnect! {"transportError":2}`, carrier close with reason
+  2). The error is one that the client tries again: it asks for a new login token and
+  registers again at once, and its new session enters the world with no action of the user.
+  The backend sends the metadata state of an entity to its owner one time only.
+- A record goes out in more than one bundle when its fragments are larger than one carrier
+  message (4.10). The first bundle has the metadata state.
+- An interest number is an index into a table of the client with 65,534 places (client
+  context +0x608). The client keeps 16 bits of the number and makes no range check: use 1 to
+  65,533 (static proof 0x6AF20D0, 0x1613A10).
+
+**Ids of an entity** (static proof `~/Games/soulwarden/work/research/ids.md`, and behavioral
+proof in the live runs of stage 0.6b for the actor ids `02000000 415A4F54 10000000 415A4F54`,
+`04...`, and `06...`):
+
+```text
+G               = first 8 bytes of the actor id as one little-endian number
+                  (entity group id, "GDEID"; reader 0x17B3AE0)
+K               = id of the root entity of the slice XOR G        (0x17898F0, 0x171E370)
+instance entity = entity id in the slice file XOR K               (the root entity gets G)
+target          = (instance entity + component id) mod 2^64       (facet "local id", 0x16C1020)
+
+component call of the client := route = actor id (16 bytes), body = target:u64 entity:u64 ...
+                                (big-endian numbers; `entity` is G)
+```
+
+- The root entity of `slices/player.dynamicslice` and of `slices/remoteplayer.dynamicslice`
+  is `RootPlayer`, with the same id. The remote slice has the same entity ids and the same
+  component ids for the components that it keeps: a component of a character has the same
+  target on each client.
+- Rules for an actor id of the server. The first byte must be even: an id with an odd first
+  byte is an offline ("managed") id with the default configuration of the client
+  (`javelin.offline-id-version` 2 and `javelin.enable-offline-capitals` true, 0x6165F20), and
+  the client makes no entity group for it. Bytes 4 to 7 must not be zero (offline id of
+  configuration version 1). Two entities must not have equal first 8 bytes. Two player
+  entities whose ids differ only in byte 4 can get equal entity ids: ids that differ only
+  in bytes 0 to 3 are safe. (This replaces the rule `(first byte & 7) == 1` of the earlier
+  notes, which is the rule of a configuration that is not the default.)
+- Form of the ids of the backend (a design of this project, `world/ids.h`):
+  `serial * 2` as `u32` little-endian, `"AZOT"`, `kind:u8`, 3 zero bytes, `"AZOT"`. Kinds and
+  serial ranges: player character `10` (1 to `0x0FFFFFFF`), player manager `01`
+  (`0x10000000`), session `02` (from `0x10000001`), other entity `20` (from `0x20000000`).
+  The world gives an entity its id when it makes the entity. An id is not used again in one
+  backend process: a character that leaves the world and enters it again gets a new id.
+- Live proof (stage 0.6b). With the actor id of serial 1 and of serial 2 in two world
+  entries of one game process: the game log has `Player Actor:
+  02000000415A4F5410000000415A4F54` (then `04...`) and `InGame`; the route of each of the 25
+  component message types of the client is the actor id; the `entity` field is `54 4F 5A 41
+  00 00 00 02` (then `...04`); and 16 of 16 targets of the capture are the targets of the
+  rule (for example `335C430A8D27619F` for the player component with serial 1). Thus the
+  byte order and the rule of `K` are correct for a player entity.
+- The backend checks each client message against the rule (`RepSession::check_route`). The
+  route must be the player manager or the actor id of an entity of the interest table of
+  the session. For an entity: `entity` must be its `G`, and `target` must be a target of a
+  faceted component of the player slice. The backend reads the ids of the 186 faceted
+  components from `slice-ids.json` (game data, `tools/gamedata/slice_ids.sh`; with no file
+  it makes no check of a target). A message that fails gets a log line and a count: it has
+  no other effect now. The end of a session writes the counts (`rep: client messages of the
+  session: ...`). Live result: 36,031 component calls in 20 minutes, 17,211 in a second
+  session, and 1,969 in a third run, each with 0 targets that are not known, 0 with a wrong
+  entity, and 0 routes that are not known. The client sent no message with the route of the
+  player manager in these runs.
+
+**Stop of an entity** (static proof `~/Games/soulwarden/work/research/entities.md`, behavioral
+proof in 3 runs). A state bundle can have a control block (4.1: the second flag of the
+bundle is 1):
+
+```text
+control block := stopCount:size count:size (interest:u16 big-endian) * count
+                 count <= 100. The first stopCount numbers are "stop", the others are "pause".
+                 stopCount must not be more than count: the client makes no check.
+bundle with the stop of interest 2 and no record (sequence 8, instance 1):
+                 01 08 01 00 00 01   01 01 00 02   00
+```
+
+The client removes the entity group of each stop number at once and clears its table place
+(0x1733A20, 0x178EC80: one call of each for each stop in the live runs), and the body and
+the name tag go away. After the stop, the same number can start a new entity (behavioral
+proof). The message `Amazon::Hub::ReplicationControl` (type 9) has the same list: the
+backend does not use it (not tested).
+
+### 4.3 State formats
+
+Common form (reader 0x17B4110, group reader 0x17B43C0):
+
+```text
+state := groupMask:u8 (one byte for each 8 groups of the type)
+         for each group in the mask: ( fieldMask:u8 value* )+
+         A field mask has 7 fields in bits 0 to 6. Bit 7 means that one more mask follows.
+```
+
+Movement state form (`MB::ALCReplicatedState`, reader 0x2A436B0):
+
+```text
+state := groupMask:u8
+         for each group in the mask: fieldMask:size64 value*      (one bit for each field)
+```
+
+`size64` is the prefix code of `size` for 64-bit values (reader 0x87B770): N leading one bits
+in the first byte give N more bytes; `0xFF` is followed by 8 bytes.
+
+`tools/st NAME_REGEX` prints the groups, the field order, and the field readers of a state
+type. The index of a field is its position in the registration sequence of its group. Some
+types keep a group number in a variable of the image (the vitals state); the tool then prints
+the start value of the variable and the address to read in the live client.
+
+Field value encodings used by the backend:
+
+| Field | Encoding |
+| --- | --- |
+| Asset id | 16 bytes, `sub:u32` (0x17B3670) |
+| Actor reference (`GdeRef`) | 16 bytes (0x17B3AE0) |
+| Identity text (`characterId`) | `flags:u8` (0 = text), text (0x34CA540) |
+| Text | size, bytes (0x17B3750) |
+| Flag, small number | 1 byte (0x17B3CB0, 0x279E210) |
+| Time anchor | `u64` (0x2A43500) |
+| World position | `x:f32 y:f32` big-endian, `height:u16` = (z + 100) / 1100 * 65535 (0x2A433D0) |
+| Number with a fraction | `f32` big-endian (0x2A42F30, 0x87A270) |
+| Tick rate | 16-bit float, big-endian (0x2A42F80, 0x87AE90) |
+| 16-bit number | `u16` big-endian (0x2A42E10) |
+| 32-bit number, name CRC | `u32` big-endian (0x17B3620, 0x32D9460) |
+| Rotation, look direction | compressed unit quaternion (0x2A43380, 0x2A434B0, decoder 0x87A8D0) |
+
+Compressed unit quaternion: one header byte, then one byte for each component that is not the
+largest one and not zero. Header: bit 0 = sign of the largest component, bits 1 to 4 = the
+component x, y, z, w is zero, bits 5 and 6 = index of the largest component. A component byte
+`b` is `b * 0.0055459356 - 0.70710677`. The largest component is the square root of the
+remainder. Thus `0x6E` is (0, 0, 0, 1) and `0x3A` is (0, 1, 0, 0), each with no more bytes.
+
+### 4.4 Player slice (`slices/player.dynamicslice`)
+
+Asset id `A660EEEB-EBC7-5CB7-BE6B-AB11EB831731`, sub id 2 (from `assetcatalog.catalog` in
+`Engine.pak`; `slices/remoteplayer.dynamicslice` has the same id and sub id 100). The entity
+group has 84 component slots.
+
+| Slot | Component | State type | Type index |
+| ---: | --- | --- | ---: |
+| 0 | (metadata) | `MB::GdeMetadataReplicatedState` | 10 |
+| 9 | Player | `MB::PlayerComponentReplicatedState` | 3935 |
+| 12 | Appearance | `MB::PlayerAppearanceComponentReplicatedState` | 1195 |
+| 16 | Movement (action list, "ALC") | `MB::ALCReplicatedState` | 11 |
+| 27 | Attribute | `MB::AttributeComponentReplicatedState` | 129 |
+| 41 | Vitals | `MB::VitalsComponentReplicatedState` | 15 |
+| 46 | Ability (the ability bars) | `MB::AbilityComponentReplicatedState` | 185 |
+| 60 | Currency (the coin) | `MB::CurrencyComponentReplicatedState` | 3786 |
+| 61 | Container (the bag) | `MB::ContainerComponentReplicatedState` | 1755 |
+| 62 | Paperdoll (the equipment) | `MB::PaperdollComponentReplicatedState` | 3183 |
+| 65 | CategoricalProgression (weapon mastery, trade skills) | `MB::CategoricalProgressionReplicatedState` | 911 |
+| 67 | ProgressionPoint (the weapon trees) | `MB::ProgressionPointReplicatedState` | 3681 |
+| 70 | Progression (level, experience) | `MB::ProgressionComponentReplicatedState` | 899 |
+
+All 13 rows have behavioral proof (a trace of the apply function of the facet, or the
+effect in the game). Slot 32 is the magic component, not the vitals component. The rows 60
+and 61 are in 4.10, the row 62 is in 4.11, the rows 27 and 70 are in 4.12, and the rows 46,
+65, and 67 are in 4.13.
+
+`tools/research/gde_components.py` reads the slot list from the live client, and
+`tools/research/slot_names.py` gives the class name of each slot.
+`tools/research/component_states.py` gives candidate state types for the slots: its output
+was wrong for the vitals state.
+
+Fields that the client must get to enter the world:
+
+| State | Field | Why |
+| --- | --- | --- |
+| Metadata | `AssetId`, `GdeRef` | Instantiate the player slice. |
+| Player | `characterId` (group 2, field 0) | Equal to the character id of the login makes the entity the local player (0x6929DF0). The client state changes to `InGame`. |
+| Player | `characterName` (group 2, field 1) | Player name. |
+| Player | `playerConnected` (group 2, field 3) | The loading screen waits for a connected local player (0x102EA20). |
+| Movement | `worldPosAbs` (group 0, field 27) | Spawn position. World streaming starts at this position. |
+| Movement | `teleportAndMigrationId` (group 0, field 31) | Low 4 bits count teleports. |
+| Movement | `timeAnchor` (group 0, field 40) | The client ignores a movement state without it (0x485A550). |
+
+Fields that the client must get before the player can move and look correct (4.6 gives the
+reasons for the movement fields):
+
+| State | Field | Why |
+| --- | --- | --- |
+| Movement | `rotation` (group 0, field 11), `lookDir` (group 0, field 12) | The client does not initialize these two values. |
+| Movement | `dataBits` (group 0, field 41), `moreDataBits` (group 0, field 42) | Movement permissions of the server. |
+| Vitals | `HealthAmount`, `HealthMax`, `maxHealth`, and the same for stamina and mana (4.5) | Health on the HUD. |
+| Vitals | `vitalsId` (group 0, field 8) | Row of the vitals tables. |
+| Appearance | `playerGender`, `playerRace` (group 0, fields 0 and 1), and fields 2 to 11 | The client reads the appearance only when it has the gender and the race (handler 0x683BA40). Without them the body is white. |
+
+### 4.5 Vitals and appearance (behavioral proof)
+
+`MB::VitalsComponentReplicatedState` has 2 groups (constructor 0x671E040). The group number
+of the health and stamina fields is in two variables of the image (0xA563290, 0xA563298: both
+0 in the live client), the mana fields are in the group that the constructor makes (1).
+
+```text
+group 0:  0 HealthAmount:f32      1 StaminaAmount:f32   2 vitalsData   3 healthChangeFlags
+          4 HealthMax:f32         5 HealthTickRate:f16  6 StaminaMax:f32
+          7 StaminaTickRate:f16   8 vitalsId:u32        9 vitalsCategoryId:u32
+         10 vitalsLevel:u32      11 invulnerability    12 displayImmuneWhenInvulnerable
+         13 maxHealth:u16
+group 1:  0 ManaAmount:f32        1, 2 afflictions      3 ManaMax:f32   4 ManaTickRate:f16
+```
+
+- The facet (apply function 0x683E670, then 0x67A7560) makes the stat `Health`, `Stamina`, or
+  `Mana` when it gets one of the amount, maximum, or tick rate fields of that stat. Without
+  the stats the game log gets `VitalsComponent: Could not find stat` on each frame.
+- The HUD shows `maxHealth` (16 bits, getter 0x67FCDC0). The client stores it only when the
+  state object also has `HealthMax`.
+- `vitalsId` is the CRC-32 of a row name of the level variant vitals tables (lookup
+  0x5C423D0). The row of a player is `player` (0x98197A65; the key is in the table of the
+  live client). Without it the client has no regeneration rates
+  (`Could not find stat {"functionName":"GetStatRegenRate"}`).
+- The backend sends the maximum health that follows from the level and from the constitution
+  of the character (4.12: 856 for a new character, behavioral proof on the HUD), stamina 100
+  of 100, mana 100 of 100, and tick rates 0. With no progression tables it sends health 1000
+  of 1000. The game log has no stat warning.
+
+`MB::PlayerAppearanceComponentReplicatedState` has 1 group with 12 fields of one byte each
+(indexes into the character creation databases of the client: gender, race, skin tone,
+hairstyle, facial hair, hair color, facial hair color, eye color, face mark, scar, tattoo,
+tattoo color). For a character that the client created, the backend converts the names of
+its creation data to these indexes (2.2.5). Result: the character has the body type, the
+skin tone, and the hair of the creation screen. For a character with no creation data (a
+seeded character), or with no appearance tables, the backend sends the default appearance:
+gender 0 (male), race 0, skin tone 3, hairstyle 1, and 0 for the other fields. Without this
+fragment the mesh and the default skins load, and the body is white (no skin material).
+The clothing and the weapons of a character are its equipment: the paperdoll state (4.11).
+
+### 4.6 Movement of the local player (behavioral proof)
+
+The client moves its character itself (the client facet of the movement component, tick
+0x486C740, 30 Hz) and sends its input to the server (4.7). With the position report of the
+game hook, each input report also has the position of the character (4.7). The server must do
+these things:
+
+- **Send a movement state at least each 2 seconds.** The client keeps the time of the last
+  accepted movement state (facet +0xAA8). When it is older than
+  `javelin.alc-server-timeout-for-input` (2000 ms in the live client, variable at 0x9F20EE0),
+  the client clears the actions of each new input (0x2A231D0). The backend sends a movement
+  state with a new `timeAnchor` each 200 ms (the heartbeat state). With it the function
+  0x2A231D0 is not called (trace) and the inputs keep their actions.
+- **Send an id that is never the number of an input of the client** (the id rule, below).
+  `idAbs` and `idRel` are, for the original server, the number of the last input that the
+  server applied. The client compares the server position with its own state for that
+  input and corrects itself (0x486D660). The backend has no movement simulation: its state
+  must find no input.
+- **Send the movement permissions.** The client copies 4 bits of the movement state into
+  each input (0x2A2D200), together with the permissions from its status effects. The actions
+  of the character test them (`IfCanNav` 0x2BFB780, `IfCanRun` 0x2BFB7F0, `IfCanSprint`
+  0x2BFB820, `IfCanDodge` 0x2BFB750). Without "can navigate" the character stays in its idle
+  action: the keys give actions in the input, but the position does not change.
+
+  | Field | Bit | Permission |
+  | --- | --- | --- |
+  | `dataBits` | 0x40 | can sprint |
+  | `dataBits` | 0x80 | can run |
+  | `moreDataBits` | 0x01 | can navigate |
+  | `moreDataBits` | 0x02 | can dodge |
+
+  `dataBits` bit 0x20 is the 20 Hz mode. `moreDataBits` bits 0x04 and 0x08 set two more bits
+  of the input (function not known). The backend sends `dataBits` 0xC0 and `moreDataBits`
+  0x03.
+- **Send `rotation` and `lookDir` in the spawn state.** The client does not initialize these
+  two values of the state object: a memory read of the server state (facet +0x430, look
+  direction at +0x440, rotation at +0x470) showed bytes of old text. 2 of 8 runs without the
+  two fields failed. One time the loading screen did not end: the yaw of the camera was not a
+  number, and the main thread stayed in the loop at 0x104E790 (read with a debugger). One
+  time the camera pointed down from above and the ground check below needed 2 minutes. The
+  random rotation is the probable cause (no trace proves the link). The backend sends rotation
+  `0x6E` (the character looks north) and look direction `0x3A`; the memory read then shows
+  (0, 0, 0, 1) and (0, 1, 0, 0) (1 run).
+- **Spawn near the ground.** After the loading screen the client looks for collision below
+  the position of the server state (query from terrain height + 0.5 m down, end of the tick
+  0x486C740) and sets facet +0x1690. Before that the character does not fall and does not
+  move. A spawn 160 m above the ground gives a fall of 6 seconds. A spawn 0.3 m to 1.7 m
+  above the ground gives a short drop.
+- **The spawn height is the saved height plus 0.5 m** (`world::kSpawnLift`), also for a saved
+  position that is exact. Behavioral proof (stage 2.3a, live check 10 of `position.md`: 36
+  world entries at three places: a street, a raised floor of a porch 1.7 m above the street,
+  and the stairs of that porch). The value is the height of the character at rest after the
+  world entry, minus its height at rest before:
+
+  | Spawn height above the exact height | Street | Raised floor | Stairs | What the client does |
+  | --- | --- | --- | --- | --- |
+  | 0.5 m | -0.016 m | -0.039 m | -0.025 m | The character falls to the ground. Each of 3 entries gives the same height. |
+  | 0.1 m | +0.063 m | -0.013 m | +0.097 m | At two places the character does not fall: it stays above the ground (ground flag 1) until it moves. A saved height would be higher after each entry. |
+  | 0.0 m | -0.005 m | -0.004 m | -0.002 m | The character stays at the height of the state. No fall through the ground in 9 entries. |
+
+  With 0.5 m and no change of the row between the entries (the product behavior), four
+  entries in sequence gave the heights 138.201, 138.195, 138.194, and 138.199 m at the street.
+  At the raised floor three entries gave 139.503 m, and the fourth one ended 0.39 m higher,
+  beside the wall of the house (the cause was not examined: the fall of 0.5 m moves the
+  character 0.015 m to 0.02 m in the horizontal plane each time). A spawn height with no lift
+  is a candidate for an exact position only: it needs a mark in the row that the position
+  is exact, because a position of the camera estimate needs the 0.5 m.
+
+A field of a state keeps its value in the client until the server sends it again. Thus the
+heartbeat state each 200 ms has only the time anchor and the two id fields, and the other
+fields come one time with the spawn.
+
+**The id rule of the movement state** (static proof for the client code; behavioral proof for
+the rule, stage 2.3a).
+
+- The input number of the client has 16 bits (facet +0x1622, increment at 0x486C903). It
+  starts at 1 for each world entry and is 0 again after 65,536 simulation steps: 36.4 minutes
+  at 30 steps each second.
+- The client keeps its last inputs and predicted states in two rings (facet +0x380 and
+  +0x3B0). For each server state it looks for the predicted state with the same id, with an
+  exact compare of the 16 bits (0x485A460; the id of a state is at state +8). The id of a
+  server state is `idAbs` (1 byte, the high 8 bits, reader 0x2A42DA0) and `idRel` (1 byte, the
+  low 8 bits, reader 0x2A42D40), put together at 0x2A2ACD0. A state with no id fields has the
+  id 0 until the server sends one.
+- Found: the client stores "server position minus predicted position" and moves its
+  character by it (0x486EF60, reason text `ApplyCorrection`), or it does a rollback and a
+  replay (0x486B280, 0x486E170). Not found: it does nothing.
+- The fault of a backend with no id: for 2 s after the wrap of the input number, the rings
+  have a predicted state with the id 0. Each heartbeat state then goes to "found", with the
+  position of the last `worldPosAbs`, which is the spawn position of the session: the client
+  pulls its character to the spawn position.
+- The rule. `S` is the newest input number that the session got from its client (0 before
+  the first input report). Each heartbeat state has
+
+  ```text
+  id = 0x8000   when S is in 0xC000..0xFFFF or in 0x0000..0x3FFF
+  id = 0x0000   when S is in 0x4000..0xBFFF
+  (the same: id = ((S + 0x4000) & 0x8000) ^ 0x8000)
+  heartbeat state with the id 0x8000: 01 f9 00 00 80 00 40  00  80  <timeAnchor: 8 bytes>
+       01 = group 0; f9 00 00 80 00 40 = field mask with the bits 0 (idRel), 25 (idAbs), 40 (timeAnchor)
+  ```
+
+  The id is 0x4000 (16,384 steps, 9.1 minutes) or more from `S` for each of the 65,536 values
+  of `S` (test case PR7), thus it is not the number of one of the 60 states of a ring. The
+  id changes 2 times in 36.4 minutes. A session starts with the id 0x8000. The full movement
+  state of the owner (the spawn) has no id fields. `S` and the id are values of the session:
+  they describe the ring of one client (`movement_state_id` in
+  `server/rep/states/movement_state.cpp`). An observer gets no id.
+- Live results (stage 2.3a; the input number was written in the client memory with the
+  harness, `tools/hx 'write FACET+0x1622 f0ff'`, after a walk of 20 m from the spawn; the id of
+  the last server state is at facet +0x430 +8, and the id of the predicted state at facet
+  +0xAE0 +8):
+
+  | Run | Write | Result |
+  | --- | --- | --- |
+  | Rule on | 0xFFF0 (the number is 0 after 0.5 s) | The client has the state id 0x8000 before and after the wrap. Position change in 6 s: 0.000 m. |
+  | Rule on | 0x3FF0 | The state id of the client changes from 0x8000 to 0x0000 when its input number is 0x4000. Position change in 6 s: 0.000 m. |
+  | Rule on | 0xBFF0 | The state id of the client changes from 0x0000 to 0x8000 when its input number is 0xC000. Position change in 6 s: 0.000 m. |
+  | Rule off (a backend build with no id fields: the state id is 0) | 0xFFF0 | 0.8 s after the write, with the input number 0x0009, the character is at the spawn position of the session: a jump of 20.36 m with no input. It stays there. |
+
+  With the rule, the session start (the id 0x8000 from the first heartbeat state), a walk, a
+  jump, and a dodge work as before, and the trace point 0x486E170 (the replay of a rollback)
+  has no hit in a session with the three writes. In the run with the rule off the trace point
+  has no hit too: the client moved its character with no replay. A session of 40 minutes was
+  not done.
+
+Results with these fields (memory read of the predicted state, facet +0xAE0, position at
++0x460): W for 3 seconds moves the character 16.5 m, A and D move it to the side at the same
+speed, the space key gives a jump of 1.2 m, and a pointer movement turns the camera and the
+direction of W. A session of 3.5 minutes with movement had no disconnect.
+
+The appearance state is not necessary for movement (a run without it: W for 2 seconds moved
+the character 10.8 m). The vitals state and the appearance state do not make the character
+move without the permissions. A run with the permissions and without the vitals state was
+not done.
+
+### 4.7 Input report of the client, and the position of the character (static proof, checked against captures; behavioral proof for the position field)
+
+`Javelin::ClientMessages::ActionListComponentServerFacet_ReceiveInputFromClient`, type index
+1589, carrier channel 1 (unreliable), 30 each second.
+
+```text
+body   := component:u64 entity:u64 header count:u8 entry*        (readers 0x4867C70, 0x2A2E490)
+header := u8 u8 u8 u8 size64 size size u8 [flag:u8, size if set] u64 u8 size size size u8
+          pairs:size (size size)* size64 size64 size size        (reader 0x2A2E6B0)
+entry  := mask:3 bytes (little-endian) sequence:u16
+          [flags:size64 if mask bit 0] [u8 if bit 1: permissions] [u8 if bit 2] [u8 if bit 3]
+          [u16 if bit 4: 0 to 10; 10 in a fall, near 0 on the ground]
+          actions:u8 (size64 for each pair of action words)
+          axes:4 bytes
+          [f32 if bit 5: step time] [yaw:f32 pitch:f32 if bit 6] [camera position if bit 7]
+          target                                                  (reader 0x2A25D90)
+          [block if mask bit 8: layout not known]
+          [size size size if flags bit 0: the action report]
+          bit := 9
+          [flags bit 11: position if mask bit 9; bit := 10]
+          [flags bit 8: position if mask bit `bit`; 16 bytes and u64 if mask bit `bit`+1; bit += 2]
+          [u8 if mask bit `bit`: with a value that is not 0, a position and a block follow]
+          bit += 1
+          [flags bit 14: 8 bytes if mask bit `bit`; bit += 1]
+          size size size                 the counts of three lists (item layouts not known)
+          [flags bit 15: position if mask bit `bit`: THE POSITION OF THE CHARACTER; bit += 1]
+          [half float x3 if mask bit `bit`: inherited velocity] ...
+target := kind:u8 [sub:u8 position u16 u16 u16 if the kind is not 3]      (reader 0x416EB00)
+position := x:f32 y:f32 height:u16      height in meters = -100 + value / 65535 * 1100
+```
+
+- The entries are newest first. Each entry is a difference from the entry before it in the
+  message, and the first one from a default entry. `tools/research/input_packet.py` decodes
+  all fields of a capture.
+- The keyboard gives action bits, not axes: the four axes are 0 with W, A, S, D held. The
+  axes are the analog sticks.
+- The position of mask bit 7 is the position of the **camera**, not of the character (same
+  encoding as the world position of 4.3). The position of the character is a different field
+  of the entry, which the client sends only with flag bit 15 (below). No other client message
+  has the position of the character.
+- The mask bits after bit 8 have no fixed number: a flag that adds a field takes its mask
+  bits also when the field is not in the entry. With the flags of an entry of a client with
+  the hook (0x20084F0) the position of the character has mask bit 10.
+- Target data (a kind that is not 3) has 17 bytes after the kind. Behavioral proof (1 report
+  of stage 2.3a, a step up the stairs of a porch): kind 0, sub kind 1, a world position 0.7 m
+  in front of the character and 0.5 m above it, and the values 0, 19879, 0. The entry decodes
+  with no byte left, and its position of the character is on the path. The backend log has
+  one line for the first such report of a session.
+- `yaw` turns the camera to the left from north (0 = north, the direction of +y). A positive
+  `pitch` is down (reader 0x87B4A0; live check with 5 camera directions).
+- The camera is behind the character in the direction of the camera (yaw and pitch), 0.5 m
+  to the right of the character in the horizontal plane, and 1.65 m above its feet on the
+  vertical axis of the world (behavioral proof: memory read of the character position
+  against the camera of the input entry, with a pitch of 0, of 0.13 and 0.29 down, and of
+  0.37 up: the difference was 0.01 m or less). The distance behind is 4.0 m at the start of
+  each session. It is not a constant: an obstacle behind the camera makes it smaller (0.3 m
+  to 3.2 m in live runs with a wall or a bush behind the camera), and the pointer wheel
+  changes it. Thus the camera gives a line that has the character on it (the camera axis),
+  not a point.
+- The pointer wheel (behavioral proof: the camera of the input entries in 7 sessions): one
+  step moves the camera 1.0 m along its axis, between 2.0 m and 8.0 m behind the character.
+  The camera is at its new distance 0.4 s after the last step. A camera at 2.0 m goes to
+  2.2 m when the character moves, and stays there (6 walks). The next steps of the wheel
+  start from 2.2 m (3.2 m and 4.2 m in live runs).
+- The action words of an entry (19 words of 32 bits in the world; bit 0 is the lowest bit of
+  the first word) have one bit for each action of the input provider. The table of the
+  client that gives each action its bit is not known. Bits in the captures (behavioral proof;
+  the same in each session):
+
+  | Input | Bits |
+  | --- | --- |
+  | No input, after the loading screen | 475, 497, 506, 569 at all times |
+  | W | 14, 43, 416, 542 while the key is down (43 for one more input), and 133, 434 in the first input. 416 and 542 are not in the oldest captures. |
+  | Pointer movement (camera turn) | 7, 107, 439 |
+  | One step of the wheel, camera nearer | 27, 237, 392, 394, 530 for one input |
+  | One step of the wheel, camera away | 51, 103, 219, 495, 510 for one input |
+
+  An entry with action bits does not prove that the character moves. The bits of A, S, D, and
+  the space key are not known. The backend reads bit 14 (forward key), and bits 27 and 51
+  (wheel) of the newest entry of each report.
+
+**The position of the character: the position field** (behavioral proof, stage 2.3a; research
+file `~/Games/soulwarden/work/research/position.md`; evidence
+`~/Games/soulwarden/work/evidence/exact-position/implement/`).
+
+- The client fills and sends entry +0xF0 only when bit 15 (0x8000) of the entry flags is set.
+  The fill function of an entry (0x2A236C0; one caller, the tick of the local player, at
+  0x486CA2E) sets the bit from the value "within a plot" of the housing component: it calls
+  method +0x6F0 of the movement component interface (0x483BDE0) at 0x2A242C1 and writes the
+  result to bit 15 (0x2A242C7 to 0x2A242DD). After the physics step of the same tick, the
+  function 0x2A24700 copies the position of the predicted state to entry +0xF0 when the bit
+  is set (0x2A2480D), and the entry writer sends it (0x2A25ACD). (Static proof.)
+- **The game hook sets the bit** (`apps/game-hook/src/client/hooks/movement`): it replaces
+  the 6 bytes of the call at 0x2A242C1 (`FF 90 F0 06 00 00`) with `B0 01 90 90 90 90`
+  (`mov al, 1` and four `nop`). The code after the call reads only `al`. The hook compares
+  the 37 bytes from 0x2A242BB with the code of the supported build first, and it changes
+  nothing when they are different (one line in the hook log: `position report: OFF for this
+  start of the game: CAUSE`). `SOULWARDEN_EXACT_POSITION=0` turns the change off, and
+  `SOULWARDEN_EXACT_POSITION_FAULT=code` (only with `SOULWARDEN_HARNESS=1`) makes the hook compare with
+  one wrong byte, for a test of a client build that is not the supported one. The
+  backend sends no housing state: the value "within a plot" of the client stays 0, thus the
+  camera, the compass, and the HUD of the client do not change, and the rollback and the
+  correction of the client work as before (they read the housing value, not the flag).
+- Live result: each input report with a camera position has the flags 0x20084F0 (or a value
+  with more or fewer of the other bits: 0x20084F1, 0x84F0, 0x2008470, 0x1020084F0, ...; all
+  have bit 15), a mask with bit 10, and the position of the character: 17,629 of 17,629
+  reports with a camera in the sessions of one run, 1,317 of 1,317 in a second run, and 2,100
+  of 2,100 in a run with the products of `dist` (`tools/research/input_packet.py
+  DATA_DIR/captures --summary`). The reports of the loading screen (flags 0x1000) have no
+  camera and no position. The first report after the loading screen has the spawn position
+  (the character did not fall yet).
+- The value is the position of the predicted state of the client (facet +0xAE0, position at
+  +0x460). `x` and `y` are the 32-bit floats of the client. The height has a step of
+  1100 / 65535 = 0.0168 m, and the client cuts it off: the value on the wire is 0 m to
+  0.017 m below the height of the client.
+
+  | Place (character at rest) | Client memory | Backend (entity) | Difference |
+  | --- | --- | --- | --- |
+  | Spawn | 8880.000 4250.008 138.217 | 8880.000 4250.008 138.212 | 0.000 m, height +0.005 m |
+  | After a walk of 3 s (16.7 m) | 8863.302 4250.292 137.864 | 8863.302 4250.292 137.859 | 0.001 m, height +0.005 m |
+  | After a jump | 8863.302 4250.293 137.836 | 8863.302 4250.293 137.826 | 0.000 m, height +0.010 m |
+  | Against a wall, the camera looks at the wall | 8861.120 4241.802 139.541 | 8861.120 4241.802 139.538 | 0.000 m, height +0.003 m |
+  | The same place, the wall is behind the camera (camera 0.03 m behind the character) | 8861.120 4241.802 139.541 | 8861.120 4241.802 139.538 | 0.000 m, height +0.003 m |
+
+- A step with no physics step gives an entry with the flag and with no position field (the
+  value of the entry is then the value of the default entry; static proof: no newest entry of
+  the live runs had the flag with no field). An entry with the block of mask
+  bit 8, with a list that is not empty, or with a value of entry +0x380 that is not 0 has a
+  layout that is not known before the position: the backend reads no position from such a
+  report. Neither case is an error: the entity keeps its position.
+
+**The reader of the backend** (`read_client_input` in `server/rep/client_input.cpp`) reads the
+first entry of a report only (the newest one; it is a difference from the default entry, thus
+its flags are 0 when it has no flags field). A body that does not parse to the camera
+position gives no input. A body that stops after it gives the input with no position of the
+character.
+
+**The check of a position report** (a design of this project: the client has no copy of the
+check of the original server). The session gives each position to the world
+(`World::report_position`, `world/position_report.h`). The world finds the entity from the
+session (rule MP-5), checks the report, and keeps an accepted position in the entity: the
+position index and the save rule are the same for each source of a position. A refused report
+changes no value of the world, and the client gets no reply. The values of the client for the
+check are in the session (`world::PositionTrack`: the last input number, the accepted
+positions of the time window, the counts). The check, in this sequence:
+
+1. **Sequence.** The input number is 1 to 0x7FFF above the last one of the session (16 bits,
+   with the wrap). A report with a number that is not newer is not used (an old or a second
+   datagram of the unreliable channel) and is not counted as refused. When each report of 2 s
+   has a number that is not newer, the input numbers of the client started again, and the
+   session takes the new sequence.
+2. **Numbers.** `x`, `y`, and the height are finite. The height is not one of the two limit
+   values of its 16 bits (0x0000 and 0xFFFF: the real height is then outside -100 m to
+   1000 m). The position is in the limits of the world (`valid_position`).
+3. **Speed.**
+   - Peak: the horizontal distance from the last accepted position is not more than
+     `kPeakSpeed` (20 m/s) times the time between the two reports.
+   - Height: the rise from the last accepted position is not more than `kRiseSpeed` (20 m/s)
+     times that time, and the fall is not more than `kFallSpeed` (120 m/s) times that time.
+   - Window: the horizontal distance from the oldest accepted position of the last 1 s (or
+     from the last accepted one when it is older) is not more than `kWindowSpeed` (8 m/s)
+     times the time between the two reports, plus `kWindowMargin` (2 m). The margin thus
+     applies one time for a window, not one time for each report (30 reports each second).
+   - The first report of a session: 5 m or less from the position that the entity has (the
+     spawn position), or the window rule from the time of the first report.
+   - The time between two reports is the time of their input numbers (1/30 s for each
+     step), but not less than the time of the world clock (a client with a slow picture
+     makes longer steps) and not more than that time plus 0.25 s (reports that come
+     together after a delay; a client gets no more time from a large input number).
+   - A refusal is not permanent: the permitted distance becomes larger with the time, thus a
+     client that stops is accepted again when its distance is in the limit.
+
+The limits come from one live session of a character on foot with chest and leg armor and
+a sword (stage 2.3a, criterion P7: a spawn 150 m above a street, a sprint of 23 m with a
+dodge in it, two more dodges, a jump at rest, and two jumps in a sprint; 1,317 reports, none
+refused, with the limits below and with the first limits). The session log has the values at
+its end (`rep: position reports of the session: ...`):
+
+| Value | Largest in the session | Limit |
+| --- | --- | --- |
+| Horizontal distance for one tick | 0.303 m (9.1 m/s, in a dodge; a sprint has 0.183 m) | 0.667 m (`kPeakSpeed` 20 m/s) |
+| Horizontal distance for one window of 1 s | 7.15 m and 7.50 m (two sessions; a dodge in a sprint; a sprint has 5.5 m) | 10 m (`kWindowSpeed` 8 m/s and `kWindowMargin` 2 m) |
+| Rise for one tick | 0.201 m (6.0 m/s, a jump; 0.218 m in a different session) | 0.667 m (`kRiseSpeed` 20 m/s) |
+| Fall for one tick | 1.796 m (53.9 m/s, at the end of a fall of 150 m in 5.3 s) | 4 m (`kFallSpeed` 120 m/s: a fall has no largest speed in the client, and 120 m/s is the speed after 730 m) |
+
+The check finds a position that is too far from the last one. It cannot find a position in a
+wall or below the ground: that needs the collision data of the world. A character on a mount
+needs a larger limit (the mount actions have 10 m/s and more; system 5.7).
+
+One live refusal: in the run with the id rule off (4.6) the client moved its character 20.36 m
+in one tick. The world refused the report (`rep: position report refused (too fast): input 44,
+...; the entity keeps its position ...`) and accepted the reports again when the window speed
+permitted the distance (2.3 s later, with the character at rest).
+
+**The two position sources of a session.** A session uses the position field when its client
+sends it (log line `rep: position source: the position field of the input reports, the exact
+position`). A report with no field keeps the last position. When no report had the field for
+1 s (a client with no hook change, the switch `SOULWARDEN_EXACT_POSITION=0`, a different client
+build, or entries that the reader cannot read), the session uses the camera estimate (log line
+`rep: position source: the camera estimate`, with the cause). A change of the source in a
+session gives one log line (16 lines at most). The log line of each second names the source:
+`rep: input N camera X Y Z look YAW PITCH position X Y Z (client report)` or `(camera
+estimate)`.
+
+**The camera estimate** (the fallback; `RepSession::track_position`). The spawn position is
+exact. The backend keeps the known position while the character is at rest, and follows an
+estimate from the camera while the character moves:
+
+- **At rest.** The camera axis goes through the known position: the horizontal distance of
+  the position from the axis is 0.75 m at most, and the position is not more than 0.75 m
+  behind the camera and not more than 3 m farther in front of it than the camera distance.
+  A camera turn, an obstacle behind the camera, and a jump do not change the position.
+- **The wheel at rest.** The backend takes the movement of the camera along its axis, from
+  the first wheel input to 0.7 s after the last one, as the change of the camera distance
+  (log line `rep: camera distance ...`). The position does not change. The backend cannot
+  measure a wheel input while the character moves: it then uses 4.0 m again.
+- **Movement.** The axis leaves the known position. Or: the forward key is down, the camera
+  moves, and no obstacle is behind the camera (the camera is not more than 0.5 m nearer to
+  the known position than the camera distance). An obstacle holds the camera while the
+  character goes away from it, thus the second rule does not apply with an obstacle. The
+  position then follows the point of the camera axis at the camera distance (2.2 m at
+  least, 4.0 m at most) until the camera is at rest for 0.5 s.
+- **The limit of 4.0 m.** An obstacle makes the camera nearer, never farther. An estimate
+  with a distance that is too large is a position in front of the character, which can be
+  in a wall. An estimate with a distance that is too small is a position between the camera
+  and the character.
+
+The backend writes the position to the store each 5 seconds (during a movement only a
+position that is 0.5 m or more from the saved position) and when the session ends. The next
+login uses it as the spawn position, 0.5 m higher. This is the same for the two sources.
+
+Results of the camera estimate (memory read of the character position against the row,
+stage 0.4):
+
+- A character that did not move kept its row with a wall 0.3 m behind the camera, with
+  camera turns to the side, up, and down (camera not farther than 4.0 m), with a jump, and
+  with wheel inputs (nearer and away, 9 inputs in 4 sessions).
+- After a walk with free space behind the camera at the end, and the camera not farther
+  than 4.0 m, the row was 0.03 m or less from the character in the horizontal plane, and
+  0.13 m or less in height: 14 walks of 2 m to 17 m with the camera at 4.0 m (one of them
+  a walk straight forward of 2.2 m, one with the camera turned down, one with the camera
+  turned up), and 2 walks with the camera at 2.2 m and at 3.2 m.
+- After a walk with the camera at 8.0 m, and after a walk with a wheel input in it (camera
+  at 7.0 m), the row was behind the character by the difference to 4.0 m (4.0 m and 3.0 m).
+- The backend code with the input reports of the session of an earlier check (a replay at
+  the speed of the client) gives the row `8862.29 4243.18` after a walk with the camera at
+  2.2 m. The memory read of that session was `8862.29 4243.18`, and its row was 1.7 m in
+  front of the character.
+
+The limits of the camera estimate are in section 5.
+
+### 4.8 Client checks on the way to the world
+
+- State `WaitingForPlayerSpawn` to `InGame` (0x644A070): level load flag and a local player in
+  the player registry (0x1026080, set through 0x6928D80).
+- Loading screen watchdog (0x100FA20, "Timed out waiting for world data" after 45 s): needs
+  the terrain start flag (game +0x8C8), a connected local player, and the world streaming
+  manager in an idle state (0x676BE70) for 30 frames.
+- The world streaming manager (update 0x68A55F0) ignores an observer at the map origin.
+
+### 4.9 Entity model of the backend, owner view and observer view, remote player
+
+The model is a design of this project (roadmap, rules MP-1 to MP-8). The statements about
+the client have their evidence level. Research files:
+`~/Games/soulwarden/work/research/entities.md`, `ids.md`, `multiplayer-foundation.md`. Evidence of
+the live runs: `~/Games/soulwarden/work/evidence/world-model/implement/`.
+
+**Entity table.** The world object (`apps/backend/src/world/world.h`) has one entity for
+each character that is in the world, with the entity group id as its key and an index by
+the character id. An entity has the actor id, the character id and its account, the session
+that plays it (0: none), the position, and the data of each component state (name,
+appearance, vitals, movement permissions, action) with the world revision of its last
+change. It has no wire bytes.
+
+- A session enters with a character (`World::enter`): the world reads the rows of the
+  character one time and makes the entity. The session reads the name, the spawn, the
+  appearance, and the vitals from the entity.
+- The position is world state. The session of the owner gives the world each position that
+  its client reports (`World::report_position`), and the world checks it before it keeps it
+  (4.7). For a client that sends no position, the session estimates the position from the
+  camera and gives the estimate to the world (`World::set_position`). The world keeps the
+  position in a position index (a grid of cells of 64 m) and writes the row: each 5 s when it
+  moved (the rule of 4.7), and when the session leaves. A position that is not saved goes to
+  the row 5 s after the last write also when the client sends no input.
+- A session that ends leaves the world (`World::leave`): the world writes the position and
+  removes the entity. An entity is in the world only while a session plays it, or while a
+  development command holds it (below).
+- One path for a change (rule MP-2): a system changes the data of an entity and marks the
+  component state (`World::touch`). The replication step of each session that has the entity
+  in its interest table sends the state in its view. `World::report_position` and
+  `World::set_position` do not mark the movement state: the client of the owner moves its
+  character itself, and its own position (or the estimate of the backend) must not come back
+  to it as a new position. Thus an observer gets the position of an entity with its record
+  only: the movement of a remote player is not in the backend (system 2.3, later stages).
+
+**The session as an observer.** A session (`RepSession`) has transport state (the bundle
+sequence, the client context instance), the values of the input of its client (the newest
+input number, the values for the check of its position reports, and the state of the camera
+estimate), and an interest table: entity to interest number and the world revision of its
+last record. Its own
+character has the number 1. Each other entity gets the lowest free number from 2. A number
+is free again only after its stop went out. Each tick, the session sends one bundle for each
+entity whose component states changed after its last record (the full record at first), and
+the heartbeat state of the movement component (a new time anchor and the id of the rule
+of 4.6) for its own character each 200 ms.
+
+**Interest.** With the option `--observe-players` (launcher variable
+`SOULWARDEN_OBSERVE_PLAYERS=1`; off by default; `tools/dev-run.sh` turns it on), a session
+compares the entities near its character with its table each 500 ms. An entity that is 100 m
+or less away (horizontal distance) comes into the table and gets its record. An entity that
+is more than 120 m away, or that is not in the world any more, goes out and gets a stop
+(4.2). The 100 m are `m_sliceSpawnRadius` of the Aoi component of the player slice (game
+data; its meaning is a guess); the 120 m are a decision of this project. The scan starts at
+the first input report with a camera: the client then has its local player entity, which it
+needs before the record of a different player (static proof 0x1747C60). With the option off,
+a client gets only its own character. The option stays off for a normal start: the movement
+of a remote player for an observer is not in the backend.
+
+**Owner view and observer view (rule MP-3).** One encoder for each component state
+(`apps/backend/src/server/rep/states/`) makes the bytes for one of two views: the owner (the
+session that plays the character) and an observer (each other session).
+
+| State (slot, type) | Owner view | Observer view | Evidence for the observer view |
+| --- | --- | --- | --- |
+| Metadata (0, 10) | `AssetId` of the player slice with sub id 2, `GdeRef` | The same. The client changes the asset to the remote player slice (sub id 100) itself. | Behavioral: entity group +0x100 is 100 for the entity of a different player and 2 for the own player (memory read, 3 runs) |
+| Player (9, 3935) | Group 2: `characterId`, `characterName`, `playerConnected`. Group 1 (22 fields of the account and the session: `loginMatchId`, `accountIsLocked`, `sessionStartTimePoint`, ...) is for the owner only; the backend sends none of it now. | Group 2: the same three fields | Behavioral: player facet +0x318 is 2 (remote) for a character id that is not the character id of the login, and 1 for the own player; the name tag shows `characterName` |
+| Movement (16, 11) | `worldPosAbs`, `rotation`, `lookDir`, `teleportAndMigrationId`, `timeAnchor`, `dataBits`, `moreDataBits`; then `timeAnchor`, `idRel`, and `idAbs` each 200 ms (the heartbeat state, 4.6) | `worldPosAbs`, `rotation`, `lookDir`, `teleportAndMigrationId`, `timeAnchor`, and the action of layer 0: `slayerStateId` (13), `slayerStateIdStarted` (14), `slayerSequenceId` (15), `slayerScriptLayers` (47). No `dataBits` and `moreDataBits` (the movement permissions for the input of the owner). One state, no later time anchor. | Behavioral (below) |
+| Vitals (41, 15) | Group 0 (health, stamina, `vitalsId`, `maxHealth`) and group 1 (mana) | Group 0 only: the remote player slice has no mana component | Static (slice data); the record is accepted by the client |
+| Appearance (12, 1195) | The 12 fields | The same | Behavioral: the body of the remote player has the appearance |
+| Progression (70, 899) | Group 0: `level`, `bonusLevel`. Group 1: `experiencePoints`, `restedExp` (4.12) | Group 0 only: `level`, `bonusLevel` | Behavioral: the name tag of a remote player shows the level of the fragment ("30 Remote") |
+| Attribute (27, 129) | `attributes`, `attributeBonuses`, `placingBonuses`, `persistentAttributeData` (4.12) | No fragment | Static (slice data): the remote player slice has no facet for the component |
+| CategoricalProgression (65, 911), ProgressionPoint (67, 3681), Ability (46, 185) | The lists of the masteries and the trade skills, the pools and the nodes of the weapon trees, the ability bars (4.13) | No fragment | Static (slice data) |
+| Currency (60, 3786) | `currency` (4.10) | No fragment | Static (slice data): the remote player slice has no facet for the component |
+| Container (61, 1755) | `Container` (4.10): the full vector at first, then a journal with the slots that changed | No fragment | Static (slice data) |
+| Paperdoll (62, 3183) | `isLocalPlayer`, each item with its slot and its durability (group 1, and `visiblePaperdollSlots` of group 2), `sheatheMap`, `activeMap` (4.11) | Group 2 only: `visiblePaperdollSlots` and `visibleItemVisualData` for the slots with a look (0 to 4, 24 to 29), `sheatheMap`, `activeMap`. No fragment for an entity with no such item. | Behavioral: a remote character shows its chest armor, leg armor, and sword, and a change of them (stage 1.4) |
+
+An encoder of a state for the owner only has the mark `ownerOnly`: a session does not call
+it for the observer view. An encoder of a state that can be larger than one carrier message
+gives a list of fragments (`PartsEncoder`), which the session sends in their sequence, each
+one in a record of its own (4.10). The paperdoll encoder is such an encoder with the two
+views (4.11).
+
+A state of a slot that the remote player slice does not have (45 of the 83 slots: inventory,
+currency, objectives, attributes, cooldowns, ...) is an owner state: an observer must not get
+it.
+
+**Record of a remote player that stands** (behavioral proof, 3 live runs of stage 0.6b; the
+bytes are in test case V1). Interest 2, 179 bytes, with the example values of the research
+(actor id `60 x8 61 x8`, character id `00000000-0000-4000-8000-000000000002`, name `Remote`,
+position 8882.0 4252.0 138.5, time anchor 1,000,000,000):
+
+```text
+02 05                                              interest 2, 5 fragments
+00 0a  01 03                                       metadata: group 0, fields 0 and 1
+       a6 60 ee eb eb c7 5c b7 be 6b ab 11 eb 83 17 31 00 00 00 02      AssetId, sub id 2
+       60 60 60 60 60 60 60 60 61 61 61 61 61 61 61 61                  GdeRef
+09 9f 3d  04 0b                                    player: group 2, fields 0, 1, 3
+       00 24 <36 bytes of the character id> 06 52 65 6d 6f 74 65 01
+0c ab 12  01 ff 00 00 03 01 00 00 00 1f 00 00 00 00 00                   appearance
+10 0b  01 fc 00 7c 00 44 80 40                     movement: group 0, fields 11 to 15, 27, 31, 40, 47
+       6e 3a                                       rotation, lookDir
+       1f  00 01  b9 10                            slayerStateId 30 + 1, started 1, slayerSequenceId 1080 + 1
+       46 0a c8 00 45 84 e0 00 37 81               worldPosAbs
+       01                                          teleportAndMigrationId
+       00 00 00 00 3b 9a ca 00                     timeAnchor
+       04                                          slayerScriptLayers
+29 0f  01 f3 44 7a 00 00 42 c8 00 00 44 7a 00 00 00 00 42 c8 00 00
+       43 00 00 98 19 7a 65 03 e8                  vitals, group 0
+```
+
+The backend sends the fragments in the sequence 0, 9, 16, 41, 12: the client sorts them by
+their slot (static proof 0x15CE270). A remote player with equipment has a sixth fragment, the
+observer view of the paperdoll state (62, 3183; 4.11).
+
+Results of the live checks of `entities.md` (section 11 of that file has the method of each
+check):
+
+| Check | Result | Proof |
+| --- | --- | --- |
+| L1, a second entity group starts | Pass. `0x178DB00` has one call for each record with a metadata state. | Trace: 2 calls after the own record and one remote record; 8 calls after 7 remote records |
+| L2, the client takes the remote slice | Pass, with the sub id 2 from the server: the asset of the new group has the sub id 100, and the game log names `slices/remoteplayer.dynamicslice`. | Memory read of group +0xF0 and +0x100 |
+| L3, the entity is a remote player | Pass. Player facet +0x318 is 2 for the new entity and 1 for the own player. The client state stays `InGame`. | Memory read |
+| L4, the body and the name tag show | **Fail with the record of the research (172 bytes), pass with the action fields.** With the five states of the research the client has the entity at its position (root transform 8882.00 4252.00 138.12, a shown state time), and it draws no body and no name tag. The body and the name tag show at once when the movement state has `slayerSequenceId` of layer 0 (value 1080, the sequence of the own character at rest) and `slayerScriptLayers` (4). Neither field alone is sufficient, and `slayerStateId` and `slayerStateIdStarted` are not necessary (7 variants in one run, with the development command `tools/world fragment`). No effect: a paperdoll state with `loadoutSwapIncrement`, a stealth state with `m_isStealthed` 0, a name tag state with `replicatedHideLevel` 0, `dataBits` and `moreDataBits`. | Screenshots `live-check-L4-*`, `W4-*` |
+| L5, the character stays with no later state | Pass. The body and the name tag are at the same place 63 s after the last state of the entity. | Screenshot `live-check-L5-*` |
+| L6, the show time | Pass. Movement facet +0x1DA8 (the time of the state that the client shows) is not 0, and it is equal to the time of the newest ring state (+0x670): 187,864,134,322 microseconds, a value of the monotonic clock of the computer, which the backend writes into the time anchor. Thus the client shows a state with the anchor of the backend clock: no other anchor rule is necessary. | Memory read (one run) |
+| L7, stop removes the entity | Pass. One call of `0x1733A20` and of `0x178EC80` for each stop; the body is gone in the next screenshot; the session continues. | Trace, screenshots `live-check-L7-*`, `W4-3-*` |
+| L8, the same number again | Pass. After the stop, a new record with interest 2 starts a new entity group. | Trace, screenshot `W4-4-*` |
+| L12, sub id 100 from the server | Not done: L2 passed, thus the observer constant is 2 (the decision rule of the research). | |
+| L14, configuration of the asset change | Pass. The byte at image 0x9E8FAEC is 0, and the pointer at streamer +0xC0 points to the entity id of the local player (`544F5A4100000002`). | Memory read |
+| L15, clock of the remote state | Not necessary (L6 passed). | |
+| L17, remote character and the ground | The client does not move a remote character to the ground: an entity 2 m above the ground stays in the air. A position 0.3 m above the ground goes to the ground (138.50 became 138.12). Thus the position of a remote character must be exact (system 2.3). | Screenshot `live-check-L17-*`, memory read |
+| L18, a full record a second time | Pass. One body and one name tag at the same place; the game log gets the warning `StateReplication: Received repeated metadata`. | Screenshot `W4-5-*`, game log |
+| L9, L10, L11, L13, L16 | Not done (the `ReplicationControl` form, a sequence gap, a creature, an odd first byte, a stop while the slice loads): they are not necessary for a remote player that stands. They belong to system 2.4. | |
+
+More facts of the live runs:
+
+- The game log has 26 lines `Slice: Couldn't get Transform component on the slice!` for each
+  instance of the remote player slice (function 0x17880B0, which looks for the root entity:
+  one line for each entity of the slice with no transform component). They have no effect.
+- The numbers 30 (state), 1080 (sequence), and 4 (layers) are ids of the action list of the
+  player in the supported client build. They are the values of layer 0 of the own character
+  at rest (memory read of the predicted state of the movement facet: `30/1/1080`; layer 1
+  has the state 44 and no sequence). The backend sends them as constants for each character
+  (`world::ActionState`) until the action system (system 3.1) gives each character its
+  action. A remote character thus stands in its idle animation at all times.
+- Wire form of the action fields (static proof `combat-actions.md`, behavioral proof for the
+  four fields above): `slayerStateId` and `slayerSequenceId` are numbers in the `size` code
+  with the value plus 1 (0 is "none"), `slayerStateIdStarted` is `u16`, `slayerScriptLayers`
+  is `u8`.
+- The client calls the player function 0x6769980 for the player component of each player,
+  also of a remote one (return address 0x6876D32). Only the call from the player registry
+  (return address 0x6928E1A) is for the local player: `tools/research/player_position.py`
+  uses that one.
+
+**Development commands** (`tools/world`; routes `/v1/dev/world` of the backend, only with
+the option `--dev-commands`, which needs `SOULWARDEN_HARNESS=1`). `spawn` puts a character of the
+database into the world as an entity with no session at a set position, `remove` takes it
+out, `touch` sends its full record again, and `fragment` gives an entity one state fragment
+with bytes of the caller (a live check of a state type that has no encoder). A session of
+the character takes an entity that has no session.
+
+### 4.10 Items and coin: container state, currency state, item requests
+
+Research files: `~/Games/soulwarden/work/research/inventory.md` (static proof, checked by a second
+agent). Evidence of the live runs of stage 1.3:
+`~/Games/soulwarden/work/evidence/inventory/implement/`. Each statement below has its evidence
+level. "Behavioral proof" is a live run of stage 1.3 with the client build of this document.
+
+**Components** (slots of `slices/player.dynamicslice`, entity "Inventory"):
+
+| Slot | Component | State type | Type index | Evidence |
+| ---: | --- | --- | ---: | --- |
+| 60 | Currency (the coin) | `MB::CurrencyComponentReplicatedState` | 3786 | behavioral proof |
+| 61 | Container (the bag) | `MB::ContainerComponentReplicatedState` | 1755 | behavioral proof |
+
+The two states have the common state form (4.3). `slices/remoteplayer.dynamicslice` has no
+facet for these components: the two states are for the owner only, and an observer gets no
+fragment of them (game data; the backend sends none, test case B6).
+
+**Item index list of the client** (static proof for the rule, behavioral proof for the
+result). An item on the wire is not an id. It is an index into a list that the client makes
+from its data tables at its start (`ItemDataManager::CacheAllItemDataTables` 0x4428B00):
+
+```text
+entry 0 = no item
+for each data table of the type "MasterItemDefinitions", in the byte order of the table name
+of the file header (not the file name; upper-case letters and "_" are before lower-case
+letters):
+    for each row in file order, not a row with ItemType "HousingItem":
+        the next entry = CRC-32 of the ItemID text, with the letters A to Z in lower case
+then the tables "HouseItems" and "HouseItemsMTX" (type "VariationData"), in this sequence:
+    for each row in file order, not the row "DEFAULTS", not a row with ExcludeFromGame:
+        the next entry = CRC-32 of the HouseItemID text
+```
+
+- The supported build has 43 item tables (45,533 rows) and 2 house tables (1,082 and 16 rows
+  that get an entry). The list has 46,632 entries.
+- Behavioral proof: `tools/research/item_index.py` read the list from the memory of the live
+  client (the pointer at image +0xA327838, then the pointer at that address, then the begin
+  and the end of the list at manager +0x3C8 and +0x3D0). Each of the 46,632 entries is equal
+  to the entry that `tools/gamedata/items.sh` computes from the tables. The client has the
+  list from the main menu on.
+- Examples: `1hSwordT1` has the index 5278 (CRC `0x98EDDB41`), `OreT1` 2956 (`0x48E7CA95`),
+  `PotionHealthT1` 4880.
+- A wrong index gives no log line: the slot is empty, or it has a different item.
+- The backend reads the list from the game data file `item-catalog.json`
+  (`apps/backend/src/gamedata/item_catalog.h`). The database has the `ItemID` text of an item,
+  and the backend finds the index at each load of a bag.
+
+**Container state** (type 1755; constructor 0x48EAB40; apply function of the facet
+0x48D5EC0). One group with 5 fields. The backend sends field 0 only.
+
+| Field | Name | Value | Evidence |
+| ---: | --- | --- | --- |
+| 0 | `Container` | replicated vector of items (below; reader 0x40E8F30) | behavioral proof |
+| 1 | `Item Class` | `count:size`, then `count` times `u64` | static proof, not sent |
+| 2 | `Bonus Max Encumbrance` | `u32` | static proof, not sent |
+| 3 | `Can Transfer items` | 1 byte | static proof, not sent |
+| 4 | `Container Was Emptied` | 1 byte | static proof, not sent |
+
+```text
+Container := changes:size
+             changes == 0:  version count:size item*count         the full vector
+             changes  > 0:  group*                                 the journal
+group     := mask:u8 entry*         one group for each 8 entries; bit N is for entry N
+entry     := index:size64 version [item when the mask bit is 1]
+version   := has:u8 [sequence:size64 when has is 1]               (reader 0x61ACCA0)
+```
+
+- One element is one slot of the bag. The length of the vector is the slot count. The client
+  reads 500 elements at most (static proof 0x48EA9C0).
+- The vector of the client is empty at the start: the first value must be the full vector.
+- A journal entry with the mask bit 1 sets the element at `index`. When `index` is the
+  length of the vector, the client adds the element at the end. Behavioral proof for the
+  two cases, for a journal with 1 entry, and for a journal with 16 entries in two groups.
+- A journal entry with the mask bit 0 erases an element and moves the elements after it
+  (static proof). The backend does not use it: a slot that loses its item gets the empty
+  element (behavioral proof: the slot is empty, and the weight of the bag goes down).
+- The backend sends `has = 0` in each version. The client then applies each entry
+  (behavioral proof). The sequence rule of the client for `has = 1` is in `inventory.md` 3
+  (static proof only).
+- The client compares each element with its slot and makes a new slot object only for an
+  element that is different (static proof 0x48E4130, 0x5C2DEE0). The compare has the bound
+  flag: an item whose definition has `BindOnPickup` is bound in the client, thus the backend
+  sets flag bit 0 for such an item. Without the bit the client made the slot object again at
+  each update (behavioral proof: the item pointer of the slot changed).
+
+**One item** (reader 0x5CE8C40, writer 0x5C734A0; static proof for the layout, behavioral
+proof for the values with a mark):
+
+```text
+item   := packed:u64 durability:size chrono:size gearScore:size perk:size x5 dye:4 bytes
+          instance:16 bytes flags:u8 [appearance:u32 skinDye:4 bytes]
+packed := ((((quantity * 64 + action) * 502 + slotCode) << 20) + itemIndex) * 8001 + maxDurability
+```
+
+| Value | Meaning | Evidence |
+| --- | --- | --- |
+| `quantity` | size of the stack; 0 is an empty slot | behavioral proof (number on the item cell) |
+| `action` | the cause of the change, 0 to 63 (below) | behavioral proof (slot +0x20 in the client memory) |
+| `slotCode` | the slot number 0 to 500, or 501 for "no slot" | static proof; the backend sends the slot number |
+| `itemIndex` | index in the item index list, 20 bits | behavioral proof (icon, item id CRC at item +0x40) |
+| `maxDurability`, `durability` | 0 to 8000 | behavioral proof (item +0x0C, +0x08) |
+| `chrono` | order counter of the item in the container | behavioral proof (item +0x14); its effect is not known |
+| `gearScore` | | behavioral proof (item +0x3E) |
+| `perk` x5 | index in the perk list of the client, 0 is no perk | static proof; the backend sends 0 |
+| `dye`, `skinDye` | | static proof; the backend sends 0 |
+| `instance` | 16 bytes that name the stack; all zero is "no instance" | behavioral proof (item +0x220) |
+| `flags` | bit 0 bound to the player, bit 1 locked | behavioral proof for bit 0 (item +0x160) |
+| `appearance` | transmog appearance id | static proof; the backend sends 0 |
+
+- The last two values (8 bytes) are there only when the client setting
+  `javelin.enable-transmog` is true. Behavioral proof: the cached setting at image
+  +0x9F30298 has the ready flag 1 and the value 1 after the client read its first item. An
+  item thus has 45 bytes when each `size` value is below 128. A wrong choice makes the read
+  of the bundle fail.
+- The empty element: quantity 0, action 0x11, slot code 501, item index 0, and zero in each
+  other value: `00 00 44 F0 B0 B0 00 00` and 37 zero bytes (behavioral proof).
+- The server must keep `maxDurability` at 8000 or less and the quantity at 10,000 or less.
+- `action` is the value `ActionCausingSync` of the client: 0 ItemAdded, 1 ItemGathered,
+  2 ItemRemoved, 6 ContainerTransfer, 0x11 the start value of a slot in the client (the load
+  of a container), 28 LockStateChanged (static proof; the full list is in `inventory.md`
+  4.1). The backend sends 0x11 in each element of a full vector, and the cause of the change
+  in a journal entry.
+- The client computes the weight of the bag itself (behavioral proof: the sword with the
+  table weight 30 and 10 ore with the weight 2 show as 5.0 of 200.0).
+
+**Currency state** (type 3786; constructor 0x37FF0E0; apply function of the facet 0x3820570).
+One group with one field: `currency`, `u64`, the coin in hundredths. Behavioral proof: the
+amount 12345 shows as `123.45` in the bag window, and the currency component of the client
+has 12345 at +0x1A0. The client keeps `min(amount, limit)`; the limit of the supported build
+is 100,000,000 (`javelin.wallet-cap-player`, static proof). The backend refuses a larger
+amount.
+
+**Fragments and bundles.** A bag can be larger than one carrier message (1,024 data bytes,
+3.2), and no live run has a state bundle that the carrier sent in chunks. Thus the backend
+keeps each bundle of its states below that size:
+
+- A session with no record of the entity gets the full vector. When the vector is larger
+  than one fragment can be (900 bytes of state), the first fragment has the first elements,
+  and each next fragment is a journal that adds elements at the end.
+- After that the session gets one journal entry for each slot that changed after its last
+  record (each slot of an entity has the world revision of its last change).
+- The session puts the fragments of a record into bundles in their sequence. A bundle ends
+  before a fragment that makes its payload larger than 960 bytes, and before a second
+  fragment for one slot: the client sorts the fragments of a record by their slot (0x15CE270),
+  thus two fragments of one slot have no sure sequence in one record. A fragment that is
+  larger than 960 bytes goes in a bundle of its own (the carrier sends it in chunks), and a
+  fragment that makes a bundle larger than the limit of the client (256,000 bytes of
+  payload, static proof 0x646C2B0) does not go out.
+- Behavioral proof: a bag of 28 items in the first record of a session (3 bundles: 198, 882,
+  and 442 bytes of payload), and 25 new stacks for a session that is in the world (2 bundles).
+- The first record of the own character has, after the five fragments of 4.4: the
+  progression fragment, the attribute fragment (4.12), the paperdoll fragment (4.11), the
+  currency fragment, the container fragment, the two list states of the skills (slots 65 and
+  67, 4.13), and the ability state (slot 46) when the character has an ability on a bar.
+  Behavioral proof: 12 fragments in one bundle of 930 bytes for a character with equipment
+  and no skill, and a second bundle of 850 bytes with the ability state.
+
+**The level of the player and the bag window** (behavioral proof). The script of an item
+cell (`lyshineui/slices/itemlayout`, function `SetLayout`) asks if the player meets the
+requirements of the item: it compares the data value `Hud.LocalPlayer.Progression.Level`
+with the level that the item needs (`lyshineui/_common/itemcommon`,
+`GetPlayerMeetsRequirements`). A client that got no progression state has no such value:
+the script stops with the error "attempt to compare nil with number" for each item, and
+the game log has no line for it (the script error function 0x4A65DA0 writes none; a trace
+of that function shows the text). The result on the screen: each item cell is a wide white
+cell, it has no tooltip and no action menu, and the inventory screen has no equipment
+panel. With the state `MB::ProgressionComponentReplicatedState` (slot 70, type 899; static
+proof `progression.md`) the screen is complete. Thus the backend sends this state from stage
+1.3 on. From stage 1.5 on it has the stored level and experience of the character (4.12):
+
+```text
+state := 03                    groups 0 and 1
+         03 level:u32 bonusLevel:u32            level is the number of the screen minus 1
+         03 experiencePoints:u32 restedExp:u32
+```
+
+The level system (experience, a stored level, the attributes, the view of an observer) is
+system 1.5.
+
+**Requests of the client** (static proof for each layout: the field writer and the field
+reader of the message class; `inventory.md` 9; behavioral proof for the two rows of the
+table: one capture of each request in stage 1.3). Each one is a component call: its body
+starts with `target:u64 entity:u64` (4.2). The client has no reply message for a request
+that the server did: the new container state is the answer.
+
+| Type | Name | Body after `target entity` | The backend |
+| ---: | --- | --- | --- |
+| 1838 | `ItemDropComponentServerFacet_DropInventoryItems` (writer 0x65AF090) | `count:size` (501 at most), then for each entry `slot:u32 instance:16 bytes u32 quantity:u32` | removes the quantities (the world has no entity for an item on the ground yet) |
+| 2549 | `ItemRepairComponentServerFacet_RequestSetLockState` (writer 0x2E8E120) | `containerType:u32 slot:u32 instance:16 bytes quantity:u32 locked:u8` | sets or clears flag bit 1 (container type 1, the bag) |
+
+- The backend finds the character from the session. The `entity` field must be the entity
+  group id of the entity of the session, each entry must name the item instance of its slot,
+  and each quantity must be 1 to the quantity of the stack. A request that is not correct
+  changes nothing, and the log has the cause. A drop request with one wrong entry is refused
+  as a whole.
+- The lock of an item (flag bit 1). The backend refuses a drop entry for an item with the
+  lock, and thus the full drop request: the lock protects an item from a request that takes
+  it away from the character. The action menu of a locked item in the client has no entry
+  "Drop" and no entry "Salvage" (behavioral proof, stage 1.4); the request of a client that
+  is not its screen gets the same rule. The lock does not stop an equip (4.11). A lock
+  request with a quantity above 10,000 (the limit of an item location in the client) is
+  refused; the client sends the quantity 0.
+- The second `u32` of a drop entry is a slot value whose meaning is not known (static
+  proof). The client sent `FFFFFFFF` (-1) there (behavioral proof).
+- Captures of the live client. Drop of a stack of 10 from slot 1 (45 bytes; the target is the
+  facet of a component of the slice entity "RootPlayer"): `01`, `00000001`, the 16 bytes of
+  the instance id, `FFFFFFFF`, `0000000A`. Lock of the item of slot 0 (45 bytes; the target
+  is the facet of a component of the slice entity "Crafting"): `00000001`, `00000000`, the
+  16 bytes of the instance id, `00000000`, `01`. The quantity of a lock request is 0.
+- How the user makes these requests in the bag window (behavioral proof): a drag of an item
+  cell to the area "Drop items" at the right of the window sends the drop request for the
+  full stack (a drag to the character at the left is an equip try); a click on an item cell
+  opens the action menu (Equip, Lock, Drop, Link to Chat, Salvage), and its entry "Lock"
+  sends the lock request. The item cell then shows a lock mark.
+- The client has no request to move, to swap, to stack, or to split an item inside one
+  container (static proof: the 23 message types of the container, item drop, and player
+  trade components, `inventory.md` 13.1). Its bag window sorts the items by their class
+  itself (behavioral proof: the sections "Weapons", "Smelting", "Utilities"). The split
+  window of the client only selects the quantity of a drop or of a transfer. The backend has
+  these four operations for the development commands and the tool window.
+- Not handled in stage 1.3: use (2917), salvage (1733, 6188), repair (3003), and the transfer
+  to a different container (2801, 2942).
+
+**Model of the backend** (a design of this project). The bag of a character is a vector of
+slots in its entity (`world::Bag`), as the vector of the client: it does not become shorter
+while the character is in the world, a slot that loses its item stays as an empty slot, and
+a new stack gets the first empty slot. The inventory system (`apps/backend/src/world/inventory.h`)
+makes each change on a copy, writes all rows of the change in one transaction, and then
+changes the entity and marks the component state. The table `items` has one row for each
+item instance with the character id as its owner key (instance id, container, slot, item id
+text, quantity, gear score, durability, flags, order counter), and the table `currencies`
+has the coin (schema version 5). The container of a row is 1 for the bag and 2 for the
+paperdoll (4.11). An item whose id the catalog does not have keeps its row and is the empty
+element for the client.
+
+**Development commands** (`tools/world`; routes `/v1/dev/items` of the backend, with
+`--dev-commands`): `items`, `give`, `take`, `coin`, `move`, `split`, `lock`. Each command
+names a character. A command for a character that is not in the world changes its rows.
+
+### 4.11 Equipment: paperdoll state, equipment requests, visible gear
+
+Research files: `~/Games/soulwarden/work/research/equipment.md` (static proof, checked by a second
+agent). Evidence of the live runs of stage 1.4:
+`~/Games/soulwarden/work/evidence/equipment/implement/`. Each statement below has its evidence
+level. "Behavioral proof" is a live run of stage 1.4 with the client build of this document.
+
+**Component.** The paperdoll (the equipment) is slot 62 of `slices/player.dynamicslice`
+(entity "Inventory") and of `slices/remoteplayer.dynamicslice`. Its state type is
+`MB::PaperdollComponentReplicatedState`, type index 3183 (constructor 0x670D610; apply
+function of the facet 0x683B800; behavioral proof: a trace of the apply function and the
+effect on the screen). The state has the common state form (4.3) with three groups. Group 0
+has no field.
+
+| Group | Field | Name | Value | Who gets it | Evidence |
+| ---: | ---: | --- | --- | --- | --- |
+| 1 | 0 | `visibleDurability` | list of `u32` | owner | behavioral proof |
+| 1 | 1 | `visibleFullItemData` | list of item | owner | behavioral proof |
+| 1 | 2 | `nonVisibleFullItemData` | list of item | owner | behavioral proof |
+| 1 | 3 | `nonVisiblePaperdollSlots` | list of `u32` | owner | behavioral proof |
+| 1 | 4 | `nonVisibleDurability` | list of `u32` | owner | behavioral proof |
+| 1 | 5 | `bonusEquipLoad` | `u16` | owner | static proof, not sent |
+| 1 | 6 | `isLocalPlayer` | 1 byte | owner | behavioral proof |
+| 1 | 7 to 11 | `isLoadoutPanelOpen`, the loaded ammunition of two weapons, `loadouts`, `hideSkins` | | owner | static proof, not sent |
+| 2 | 0 | `sheatheMap` | 7 bytes | each client | behavioral proof |
+| 2 | 1 | `itemSlotsAttachmentStatus` | 7 bytes | each client | static proof, not sent |
+| 2 | 2 | `activeMap` | 7 bytes | each client | behavioral proof |
+| 2 | 3 | `visiblePaperdollSlots` | list of `u32` | each client | behavioral proof |
+| 2 | 4 | `visibleItemVisualData` | list of item look | observer | behavioral proof |
+| 2 | 5 | `loadoutSwapIncrement` | 1 byte | each client | static proof, not sent |
+
+```text
+list      := 00 version count:size element*count      the full form (readers 0x2F9BC20, 0x2D97FA0,
+                                                       0x40E8F30, 0x6950CD0); count 0x2000000 at most
+version   := has:u8 [sequence:size64 when has is 1]   the backend sends has = 0
+item      := the element of a container (4.10; reader 0x5CE8C40), with the slot code 501
+item look := itemIndex:size flags:u8                  (reader 0x5CE9070, writer 0x5C736D0)
+             [value:size when flag bit 0]             a 16-bit value; its meaning is not known
+             [dye:4 bytes when flag bit 1]
+             [appearance:u32 skinDye:4 bytes]         when `javelin.enable-transmog` is true (4.10)
+map       := 7 bytes; bit N is for slot N: byte N / 8, bit N mod 8 (reader 0x6951740)
+```
+
+A list also has a journal form (a first number that is not 0), as the vector of a container.
+The backend does not use it for this state.
+
+**The lists are changes, not a full state** (static proof 0x68382D0 and 0x6839160; behavioral
+proof). The lists of one fragment are parallel: entry N is one slot number with its item (and
+its durability). The client handles each entry as a change of that slot:
+
+- An entry with an item that is not the item of the slot puts the item into the slot. An
+  entry that is equal to the content of the slot does nothing.
+- An entry with no item (quantity 0, or the item index 0) takes the item out of the slot.
+- A slot that has no entry keeps its item. Behavioral proof: a fragment with only the leg
+  armor added it to a character with a chest armor and a sword, and a fragment with only an
+  empty chest entry removed only the chest armor.
+- The client does nothing, and writes no log line, when the lists of a group do not have the
+  same length (static proof).
+- The client of the owner does the entries with the cause 5 (`ActionCausingSync`: item
+  unequipped) first. Thus the backend sends an entry with no item with the cause 5
+  (`00 00 16 F9 98 30 00 00` and 37 zero bytes), and an item leaves its old slot before it
+  is in a new one (a swap of two weapon slots, behavioral proof). A new item has the cause 4
+  (item equipped), and an item of a first record the cause 0x11.
+
+**Owner view** (behavioral proof). The client reads the item lists only when the state has
+`isLocalPlayer` = 1 (static proof 0x6771AB0). The client uses the two list groups in the same
+way: the visible group is `visiblePaperdollSlots` with `visibleFullItemData` and
+`visibleDurability`, and the other group is `nonVisiblePaperdollSlots` with
+`nonVisibleFullItemData` and `nonVisibleDurability`. The backend puts the slots whose item
+shows on the body (0 to 4, 24 to 29) into the visible group and each other slot into the other
+group, and it sends `isLocalPlayer` with each group of fragments. The first fragment of the
+research for a chest armor and a sword (135 state bytes; item index 1323 and 5278):
+
+```text
+06                                   groups 1 and 2
+43                                   group 1: fields 0, 1, 6
+   00 00 02 00 00 00 FA 00 00 03 E8     visibleDurability: 250, 1000
+   00 00 02 <item, 46 bytes> <item, 46 bytes>      visibleFullItemData
+   01                                   isLocalPlayer
+0D                                   group 2: fields 0, 2, 3
+   00 00 00 01 00 00 00                 sheatheMap: slot 24
+   00 00 00 01 00 00 00                 activeMap: slot 24
+   00 00 02 00 00 00 01 00 00 00 18     visiblePaperdollSlots: 1, 24
+item (the chest armor): 00 01 3A 16 89 51 85 E5  BA 03  00  3C  00 00 00 00 00  00 00 00 00
+                        <16 bytes of the instance id>  00  00 00 00 00  00 00 00 00
+```
+
+A character with no equipment gets `02 40 01` (only `isLocalPlayer`) in its first record.
+
+**Observer view** (behavioral proof: a second character with a chest armor, leg armor, and a
+sword showed its gear to the client of an observer, in its first record and after a change).
+A client that has no `isLocalPlayer` = 1 for the entity reads `visiblePaperdollSlots` with
+`visibleItemVisualData` (static proof 0x6771AB0, 0x6839160): the two lists must have the same
+length. It makes an item from each look with a new instance id, the quantity 1, and the
+durability 1 (0x5C23250). The observer gets only the slots with a look, the two maps, and no
+field of group 1. The state for the same character (52 bytes):
+
+```text
+04                                   group 2
+1D                                   fields 0, 2, 3, 4
+   00 00 00 01 00 00 00                 sheatheMap: slot 24
+   00 00 00 01 00 00 00                 activeMap: slot 24
+   00 00 02 00 00 00 01 00 00 00 18     visiblePaperdollSlots: 1, 24
+   00 00 02                             visibleItemVisualData: 2 entries
+      AB 14  00  00 00 00 00  00 00 00 00     item index 1323, flags 0, appearance 0, skin dye 0
+      9E 52  00  00 00 00 00  00 00 00 00     item index 5278
+```
+
+An update that takes the chest armor off is `04 18 00 00 01 00 00 00 01 00 00 01 00 00 00 00
+00 00 00 00 00 00` (slot 1 with the item index 0). An observer gets no fragment for an entity
+that has no item with a look, and no fragment for a change of a slot with no look.
+
+**Slots** (`Javelin::PaperdollSlotTypes`, registration 0x5D19E40; static proof, and behavioral
+proof for the slots 1, 3, 5, 14, 24, 25): 0 head, 1 chest, 2 hands, 3 legs, 4 feet, 5 amulet,
+6 token (the earring), 7 ring, 8 paint, 9 the hand slot of a gathered object, 10 and 11 two
+old weapon slots, 12 arrows, 13 cartridges, 14 to 19 quick slots, 20 backpack, 24 to 26 weapon
+1 to 3, 27 to 29 the off hand item of weapon 1 to 3, 30 to 32 bags, 33 logging axe, 34 sickle,
+35 skinning knife, 36 pickaxe, 37 fishing pole, 38 soulwarden staff, 39 to 43 instruments, 44 a
+throwable object, 45 heart rune, 46 to 49 mount items. The slot database of the player
+(`sharedassets/genericassets/paperdoll.paperdolldb`, game data) has 47 rows: it has no row for
+21, 22, and 23. The values 50 and 51 are "number of slots" and "no slot".
+
+**Which slot takes which item** (static proof: the check of the client before an equip
+request, 0x679C060, and the names of the item class numbers, 0x5CB4770). A slot takes an item
+whose class text (the column `ItemClass` of the item tables, tags with "+" between them) has
+the tag of the slot: `EquippableHead` (0), `EquippableChest` (1), `EquippableHands` (2),
+`EquippableLegs` (3), `EquippableFeet` (4), `EquippableAmulet` (5), `EquippableToken` (6),
+`EquippableRing` (7), `EquippablePaint` (8), `Consumable` or `Blueprint` (14 to 19),
+`EquippableBackpack` (20), `EquippableMainHand` or `EquippableTwoHand` (24 to 26),
+`EquippableOffHand` (27 to 29), `Bag` (30 to 32; the name of class number 119 is from the
+item tables), `LoggingAxe` (33), `Sickle` (34), `SkinningKnife` (35), `Pickaxe` (36),
+`FishingPole` (37), `SoulwardenStaff` (38), `InstrumentFlute`, `InstrumentGuitar`,
+`InstrumentMandolin`, `InstrumentUprightBass`, `InstrumentDrums` (39 to 43), `ThrowableObject`
+(44), `HeartGem` (45), `MountBuff1` (46), `MountBuff2` (47), `MountAttachment` (48, 49). The
+backend has this table (`world/item.cpp`). It has no rule for the ammunition slots (the rule
+of the client needs the ammunition type of an item) and for the slots 9, 10, and 11: these
+slots take no item. The client has more checks that the backend does not have (for example
+two weapons of one kind): the client does not send such a request.
+
+**Requests of the client** (static proof for each layout: the writer and the reader of the
+message class; behavioral proof: captures of the live client in stage 1.4). Each one is a
+component call of the paperdoll facet: `target:u64 entity:u64`, then the fields (4.2). The
+target of the paperdoll facet was the value of the id rule of 4.2 (`0C47D9835971E8A3` for the
+actor id with the serial 1; slice entity "Inventory", component id `A4682AF2564E7814`).
+
+| Type | Name | Fields after `target entity` | Bytes | Client code |
+| ---: | --- | --- | ---: | --- |
+| 3895 | `PaperdollComponentServerFacet_ServerEquipItem` | `bagSlot:u32 paperdollSlot:u32 quantity:u32 instance:16 bytes flag:u8` | 45 | writer 0x65AA180, send 0x667FD90, caller 0x67A5C50 |
+| 3896 | `PaperdollComponentServerFacet_ServerUnequipItem` | `paperdollSlot:u32 bagSlot:u32 quantity:u32 flag:u8` | 29 | writer 0x6562810, send 0x6680180, caller 0x67A7990 |
+| 3900 | `PaperdollComponentServerFacet_ServerSwapItems` | `slot:u32 slot:u32 instance:16 bytes instance:16 bytes count:u8` | 57 | writer 0x65875F0, send 0x667FF80, caller 0x693B580 |
+| 3626 | `PaperdollComponentClientFacet_OnEquipItemFail` (server to client) | `reason:u32` | 20 | reader 0x26D52A0, handler 0x687BB60 |
+
+- Ranges of the readers of the client (static proof): a bag slot is a signed number from -1
+  to 501, a slot of the paperdoll is 0 to 51, a quantity is 0 to 10,000, the two flags are 0
+  or 1, and the last byte of a swap is 0 to 30. The backend refuses a body outside them.
+- Equip, captures: the entry "Equip" of the action menu of a sword in bag slot 0 sent
+  `00000000 00000018 00000001 <instance id> 00` (the client selects the slot: 24); leg armor
+  in bag slot 3 sent the slot 3; a stack of 3 potions in bag slot 2 sent the slot 14 and the
+  quantity 3. The instance id is the id of the item in the bag slot. The flag was 0.
+- Unequip, capture: the entry "Unequip" of the action menu of the equipped leg armor sent
+  `00000003 FFFFFFFF 00000001 01`. The bag slot -1 is "the first free slot".
+- Swap, captures: a drag of weapon cell 1 to weapon cell 2 sent `00000019 00000018 <16 zero
+  bytes> <instance id> 00`: the slot of the drop first, then the slot that the item came
+  from, then the instance id of the item of each slot (zero for a slot with no item).
+- The client has no reply message for a request that the server did: the new paperdoll state
+  and the new container state are the answer (static proof; behavioral proof: the item is
+  in its slot and not in the bag, with no second copy).
+- A request that the server refuses gets type 3626. The body has the facet target and the
+  entity of the request (the target of a client facet is the target of the server facet of
+  the same component, static proof 0x16BCBA0) and a reason that the handler of the client
+  does not read: it shows its 50 slots again (static proof 0x687BB60).
+- The client makes its own checks before a request (the class of the item for the slot, its
+  local player flag at facet +0x338, which was 1 in the live client). It sends no request for
+  an action that its screen does not offer.
+- Not handled: the sheathe request (3899), `ServerUseItem` (663), `UnequipAllItems` (1253),
+  the loadouts, the transfer of an item of a different container into the paperdoll, and the
+  drop of an equipped item (826).
+
+**What the backend does with a request.** It finds the character from the session. The
+`entity` field must be the entity group id of the entity of the session: if not, the request
+changes nothing and gets no reply. Equip: the bag slot must have the item instance that the
+request names, the quantity must be the quantity of the stack (the full stack moves), and
+the slot must take the class of the item; an item that is in the slot goes into the bag slot
+of the new one. Unequip: the slot must have an item, and the bag slot must be empty (or -1).
+Swap: each instance id must be the item of its slot, and each item must be an item for its
+new slot. A request that is not correct changes nothing, and the client gets type 3626 with
+the reason 0. The lock of an item (4.10) does not stop an equip: the equip check of the
+client has no lock test (static proof 0x679C7A0), and the action menu of a locked item has
+the entry "Equip" and no entry "Drop" or "Salvage" (behavioral proof).
+
+**Visible gear** (behavioral proof for the result; static proof and game data for the path).
+The server sends no mesh name. The client finds the look of an item from its item index: the
+columns `ArmorAppearanceM` and `ArmorAppearanceF` of the item tables give a row of the table
+`ArmorAppearanceDefinitions` (skins and materials), and `WeaponAppearanceOverride` gives a
+row of `WeaponAppearanceDefinitions` (the mesh). Client code: 0x693CF60 sets the slot,
+0x68492B0 loads the assets, and its callback 0x6740460 calls 0x68531C0 (the look of a slot),
+which calls 0x6851BA0 for an armor skin (a trace of each function, one hit for each item).
+
+- Armor: a chest armor and leg armor show on the body of the own character and of a remote
+  character, in the world and on the inventory screen.
+- Weapons: `activeMap` has the bit of the active weapon slot, and `sheatheMap` the bit of each
+  weapon that is in its sheath. With the two bits of slot 24, a sword hangs on the hip of
+  the character, for the own character at the world entry and on the inventory screen, and
+  for a remote character. The weapon display of the HUD shows the active weapon.
+- After an equip of a weapon in a session, the client of the owner shows its own character
+  with the weapon in the hand, in the stance of the weapon (the action sequence of layer 0
+  changes from 1080 to 4064 for a sword), with the sheathe bit set or clear. The client
+  selects this action itself. The weapon keys and the sheathe key reach the server only in
+  the input report (the client sent no message of type 3899 or 3902 for them).
+- The backend has no draw and no sheathe: each weapon has its sheathe bit, the active weapon
+  is the first of the slots 24, 25, 26 that has an item, and its off hand slot is active
+  with it.
+- The inventory screen shows the equip load and the gear score of the equipment: the client
+  computes them from the items (the gear score of each item is in its wire form).
+
+**Model of the backend** (a design of this project). The equipment of a character is a map
+from the slot number to a slot in its entity (`world::Equipment`). A slot that loses its item
+stays as an empty slot while the character is in the world, with the world revision of its
+change: a session that has an older record gets its entry with no item. An equipped item is
+a row of the table `items` with the container 2 (`eItemContainerType`: the paperdoll) and
+the slot number of the paperdoll: an item that moves between the bag and the paperdoll keeps
+its row and its instance id, and the move is one transaction. The inventory system
+(`world/inventory.h`) has equip, unequip, and the swap of two slots. A session with no record
+of an entity gets each slot that has an item; after that it gets the slots that changed. The
+entries of a fragment have 900 state bytes at most: a character with an item in 28 slots goes
+out in more than one bundle (test case G8).
+
+**The items of a new character** (game data; behavioral proof). The table of the type
+`BackstoryDefinition` (`javelindata_backstorydata.datasheet`) has one row for each archetype
+of the character creation (`Archetype_Soldier`, ...): the column `InventoryItem` is a list
+`ItemID:quantity`. An entry with the quantity 0 (the head armor and the weapons of the
+archetype) is an item that only the character creation screen shows. The create route gives
+a new character each entry with a quantity: an item with a slot of its own that is free goes
+into that slot (the four armor pieces, the first weapon `1hSwordT2_FTUE`), each other item
+into the bag. `tools/gamedata/items.sh` writes the lists into the item catalog (member
+`backstories`). The `equipment` entries of the creation data (2.2.5) have only appearance
+ids for the menu: the backend does not use them.
+
+**Development commands** (`tools/world`; routes `/v1/dev/items/equip` and
+`/v1/dev/items/unequip`): `equip CHARACTER BAGSLOT [SLOT]`, `unequip CHARACTER SLOT
+[BAGSLOT]`, `equipment CHARACTER`, and `items CHARACTER` also lists the equipment.
+
+### 4.12 Level, experience, attributes: progression state, attribute state, attribute requests
+
+Research file: `~/Games/soulwarden/work/research/progression.md` (static proof, checked by two
+agents). Evidence of the live runs of stage 1.5:
+`~/Games/soulwarden/work/evidence/progression/implement/`. Each statement below has its evidence
+level. "Behavioral proof" is a live run of stage 1.5 with the client build of this document.
+
+**Progression state.** The level and the experience are in the component Progression: slot 70
+of `slices/player.dynamicslice` (entity "GameEvents") and of
+`slices/remoteplayer.dynamicslice`. The state type is
+`MB::ProgressionComponentReplicatedState`, type index 899 (constructor 0x3CDF390; apply
+function of the facet 0x3CF15D0; behavioral proof: a trace of the apply function and the
+effect on the screen). The state has the common state form (4.3) with two groups, and each
+field is a 32-bit number.
+
+| Group | Field | Name | Value | Who gets it | Evidence |
+| ---: | ---: | --- | --- | --- | --- |
+| 0 | 0 | `level` | the level of the screen minus 1 (the row index of the level table) | each client | behavioral proof |
+| 0 | 1 | `bonusLevel` | 0 | each client | static proof; sent as 0 |
+| 1 | 0 | `experiencePoints` | the total experience of the character | owner | behavioral proof |
+| 1 | 1 | `restedExp` | 0 | owner | static proof; sent as 0 |
+
+- The client does not compute the level from the experience: the server sends the two values
+  (static proof). The client reads the start and the end of the level from its own level
+  table (`XPLevels`, column `XPToLevel`: the total experience at which a level starts) and
+  shows the part of the level that is done (0x3CFD790; behavioral proof: 90,100 experience
+  at level 20 fills 48 % of the bar of the character window).
+- The client has no message for a level-up. Its facet shows the level notice ("LEVEL 20", the
+  entry "Assign Points", an effect on the character) when it gets a `level` that is larger
+  than its last one (0x3CFE120; behavioral proof, for a change of 19 levels and of 1 level).
+  The first `level` of a facet gives no notice (behavioral proof: a world entry with the
+  level 21 shows none; the backend sends the level in the first record of each session).
+- The HUD shows `level + bonusLevel + 1` below the health bar (behavioral proof).
+- The largest level. `GetMaxLevel` of the client (0x3CED4B0) is the value `MaxDisplayLevel`
+  of the expansion row of the player minus 1. Behavioral proof: with the level 65 the
+  character window shows "Rise of the Angry Earth needed to advance", thus the client has
+  the expansion row `None` (60) with this backend. The backend uses the value of that row
+  (game data) as the largest level of a player.
+- The character window shows the text "N XP to Level M" at its lower border. The client
+  writes this text when the window opens. While the window is open, the bar follows each new
+  state, and the text is one state behind (behavioral proof). This is the script of the
+  client: the state of the backend is the same in the two cases.
+
+**Observer view** (behavioral proof). The name tag of a remote player shows its level before
+its name: "1 Remote" with no progression fragment, and "30 Remote" after a fragment with the
+level 29. Thus an observer gets group 0 of the state. The experience is not a value for a
+different player: an observer gets no field of group 1.
+
+**Attribute state.** The attributes are in the component Attribute: slot 27 of the player
+slice (entity "RootPlayer"). The remote player slice has no such component: the state is for
+the owner only. The state type is `MB::AttributeComponentReplicatedState`, type index 129
+(constructor 0x276C250; apply function of the facet 0x2788BE0; behavioral proof). One group
+with four fields:
+
+```text
+0 attributes               count:size (type:u32 value:u32)*count     (reader 0x279E2B0)
+1 attributeBonuses         container of type:u32 value:u32           (reader 0x279D9B0)
+2 placingBonuses           container of u32, 5 elements at most      (reader 0x279DF40)
+3 persistentAttributeData  unspent:u32 ignoreBackstory:u8 hasRespec:u8
+                           count:size (type:u32 points:u32)*count behavior:u32   (reader 0x279E360)
+container := 00 version count:size element*count      the full form; version := has:u8
+             [sequence:size64 when has is 1]. The backend sends has = 0 and no element.
+```
+
+- An attribute is a number (`CharacterAttributeType`): constitution 0, focus 1, strength 2,
+  dexterity 3, intelligence 4 (static proof 0x27967D3; behavioral proof: the request of the
+  client for 3 points of strength has the type 2).
+- The value of an attribute has the start value in it: 5 (the first row of each attribute
+  table of the game) plus the points that the character spent. `attributes` has all five
+  types: the client writes the values of a type to its screen only when the map has it
+  (static proof 0x279C470).
+- `unspent` is the number of free points. The client does not compute it: the server sends
+  it (behavioral proof: the character window shows "102 POINTS AVAILABLE" for the value 102).
+  The entries of the spent points have only the types with points.
+- `behavior` is 5 (the client selects the attribute of the placing bonuses itself). The two
+  flag bytes are 0 or 1: a different value makes the read of the fragment fail (static
+  proof). The backend sends 0 for the two: the client does not read `ignoreBackstory`, and
+  `hasRespec` is a reset with no cost, which the level table of the game gives at no level.
+- The two bonus containers are in each fragment of the backend, with no element. A container
+  in the full form is a change for the client in each fragment (static proof: the merge
+  functions 0x278B490 and 0x278D590 do not compare the content), thus the facet copies all
+  four fields each time, and the values of the server replace the values that the client
+  computed itself when it sent a request. Behavioral proof: after a spend in the window, the
+  values show with a green mark until the next attribute state.
+- The equipment panel of the inventory screen and the character window show the attribute
+  values of this state (behavioral proof: STR 8, CON 7 after a spend; with no attribute
+  state the panel showed 31.4 for each attribute).
+
+**The requests of the client for its attributes** (behavioral proof for the two layouts and
+for the reaction of the client). Each one is a call of the Attribute component (the body
+starts with the facet target and the entity group id, 4.2). The client changes its own
+values when it sends a request, and it has no reply message: the next attribute state is the
+answer, also when the server refused the request.
+
+```text
+1502  AttributeComponentServerFacet_RequestSpendAttributePoints   writer 0x2747D80, reader 0x274F8D0
+      target:u64 entity:u64 types:size (type:u32)* points:size (points:u32)*
+      Each list has 5 elements at most. A number of points is 0 to 700: the points to add,
+      not the new value. Live body for 2 points of constitution and 3 of strength (34 bytes):
+      <target> <entity> 02 00000000 00000002 02 00000002 00000003
+2409  AttributeComponentServerFacet_RequestRefundSpentPoints       reader 0x259E1E0
+      target:u64 entity:u64                                         (16 bytes)
+```
+
+- The window sends a spend only for points that the character has (the buttons "+" and
+  "Assign"). The button "Respec" is on only after an attribute state of the server that has
+  spent points. Its popup shows the cost ("Cost: 0.00. Respecs are free until level 60."),
+  and the client sends the reset after "Yes" when the cost is 0 and the client has a currency
+  state (`hasRespec` was 0).
+- Checks of the backend (the rule of the client for its own values, 0x2778130 and 0x279AC70,
+  and rule MP-5): a request for more points than the free points of the character changes
+  nothing; a request with one type two times changes nothing; an attribute does not go above
+  the largest value of the attribute tables (the points above it stay free). After a request
+  that the backend refused, the session gets the attribute state again.
+- The cost of a reset is the column `AttributeRespecCost` of the level table (0 below level
+  60, in the unit of the coin amount). The backend takes it from the coin of the character in
+  the transaction that writes the points, and it refuses a reset when the coin is less.
+- Not handled: `SetPlacingBonusBehavior` (type 6397) and the debug request for a level (type
+  3342), which the screens of the client do not send.
+
+**Health** (game data; the sum is a rule of this project). The maximum health of a player is
+`HealthBaseMax` of the row `Player` of the vitals table (856), plus the column `Health` of the
+level table (50 for each level above the first), plus the column `Health` of the constitution
+table for the value of the constitution (0 for the value 5, 40 for 6, 80 for 7). The game data
+has the three values; the code that adds them was in the original server. One part has
+behavioral proof: the character window shows the health of the server (1,000 before this
+stage) with the change that a selection of 2 points of constitution gives as "1000 > 1080",
+which is the difference of the constitution table. The backend sends the new `HealthMax` and
+`maxHealth` (4.5) to each observer of the character when the level or the constitution
+changes, and the health keeps its part of the maximum (the backend has no damage yet).
+
+**Model of the backend** (a design of this project). The level, the experience, and the
+spent points of each attribute are in the entity of the character (`world::Progression`,
+`world::Attributes`) and in one row of the table `character_progress` (schema version 6),
+with the character id as the key. The free points are computed: the sum of the column
+`AttributePoints` of the levels 2 to the level of the character, minus the spent points. The
+progress system (`world/progress.h`) has the functions: set the level, give experience (the
+level goes up while the experience is at the start of the next level or above it), set an
+attribute, spend, and reset. A level with fewer points than the character spent makes all
+its points free again. The character list of the gateway has the level of the row in the
+menu document of each character (2.2.5). A system that gives experience later (a kill, a quest) calls the
+experience function.
+
+**Game data.** `tools/gamedata/progression.sh` writes `progression-tables.json`: the level
+table (70 levels), the largest level and the largest trade skill level of a player with no
+expansion, the health of each value of the constitution, the base vitals of a player, and the
+tables of 4.13. With no file the backend sends the stored values of a character (no free
+point, health 1,000), and it refuses a command or a request that needs a table.
+
+**Development commands** (`tools/world`; routes `/v1/dev/progress`): `progress CHARACTER`,
+`level CHARACTER LEVEL`, `xp CHARACTER AMOUNT`, `attribute CHARACTER NAME VALUE`.
+
+### 4.13 Weapon mastery, ability bar, trade skills: three skill states, their requests
+
+Research file: `~/Games/soulwarden/work/research/skills.md` (static proof, checked by a second
+agent). Evidence of the live runs of stage 1.6:
+`~/Games/soulwarden/work/evidence/progression/implement/`. "Behavioral proof" is a live run of
+stage 1.6 with the client build of this document.
+
+**Components.** Three components of the player slice have the skills of a character. The
+remote player slice has no one of them: the three states are for the owner only. Each state
+has the common state form with one group.
+
+| Slot | Component (entity) | State type | Type index | Constructor | Apply function of the facet | Content |
+| ---: | --- | --- | ---: | --- | --- | --- |
+| 65 | CategoricalProgression (GameEvents) | `MB::CategoricalProgressionReplicatedState` | 911 | 0x3CA3CA0 | 0x3CB7170, then 0x3CC0D50 | rank and experience of each weapon mastery and trade skill |
+| 67 | ProgressionPoint (GameEvents) | `MB::ProgressionPointReplicatedState` | 3681 | 0x3CDFA30 | 0x3CF1880 | the free mastery points of each weapon and the nodes of its tree |
+| 46 | Ability (Stats) | `MB::AbilityComponentReplicatedState` | 185 | 0x66EA770 | 0x6839390 | the three active abilities of each weapon |
+
+All three rows have behavioral proof (a trace of the apply function, and the screens of the
+client).
+
+**Ids.** An id on the wire is the CRC-32 of the lower-case id text of the game table (game
+data and behavioral proof): the sword mastery `SwordAbilityTable` is `E8EC5716`, the trade
+skill `Mining` is `25DD6A56`, the node `Ability_Sword_Bash` is `6C2E4693`. The id of a weapon
+is the id of its mastery (slot 65), of its point pool (slot 67), and of its ability table
+(slot 46). The id of a node is the id of its ability.
+
+**List fields.** Each field of the slots 65 and 67 is a list in the full form:
+
+```text
+list  := 00 stamp count:size element*count      (readers 0x3779060, 0x2F9A420, 0x365E0D0,
+                                                 0x2F9BEF0, 0x3D01040)
+stamp := 01 sequence:size64                     the backend sends the world revision of the change
+```
+
+**Slot 65** has three parallel lists: `progressionIds` (field 0, `u32`), `ranks` (field 1,
+`u16`), and `points` (field 2, `u64`). The facet uses them only when they have the same
+length, and it makes its map again from each fragment (static proof): a fragment has each
+entry of the character. An id that is not in the lists has the rank 0. The backend sends no
+entry for a rank 0 with no experience.
+
+- Weapon mastery: the screen shows the rank plus 1 (level 1 to 20). `points` is the
+  experience in the rank, not the total: the screen shows it against the column
+  `MaximumInfluence` of the rank table (behavioral proof: rank 4 with 60 experience shows
+  "Level 5 / 20" and "95 to next level").
+- Trade skill: the screen shows the rank. The largest rank of a client with no expansion is
+  200 (the window shows "Trade Skill Level Cap: 200"), and the riding skill, whose rank
+  table needs the expansion, shows 0 for each rank (behavioral proof).
+- A larger rank in a state after the first one makes the client show a notice ("SWORD AND
+  SHIELD 6" with "Assign Points", and the text "+100 Sword and Shield Mastery" for the
+  experience; behavioral proof). The client does not change a rank itself.
+
+**Slot 67** has four lists: `poolIds` (field 0, `u32`), `poolCounts` (field 1, `u16`: the free
+points of each pool), `poolCategories` (field 2, one byte: 1 is a pool of a player), and
+`pointEntries` (field 3, `poolId:u32 pointId:u32 level:u16`). The pool lists have 50 elements
+at most, and the entry list 1,000.
+
+- The client removes a pool that is not in the lists: a fragment has each pool. The backend
+  has one pool for each weapon of the game data (16), also with no point: the client
+  permits a selection in a tree only when it has the pool of the weapon with free points.
+- The list `pointEntries` of a fragment replaces the list of the client: the tree window
+  shows only the nodes of the last fragment that the client used (behavioral proof, stage
+  1.7). The state merge of the client uses a list only when its stamp is larger than the
+  stamp of the list that it has (static proof, merge function 0x3CF3960). The three live
+  results with the character Soulwarden: (a) the backend of stage 1.6 cut 76 nodes into two
+  fragments with one stamp: the client did not use the second fragment, and the sword tree
+  showed 16 of 19 nodes; (b) with a larger stamp for the second fragment the client used it,
+  and the trees showed only its 3 nodes (the sword 3 of 19, the bow 0 of 19); (c) with one
+  fragment that has each pool and each node (114 nodes, a bundle of 1,275 bytes) each tree
+  showed its 19 nodes. Thus the backend never cuts this state: one fragment has each pool and
+  each node of the character. The statement "a node that is not in a fragment keeps its
+  level" of the research is not correct for what the client shows.
+- A node with the level 0 goes away (static proof): a node that a character lost goes out one
+  time with the level 0. A fragment with no node makes the client give the selected levels of
+  each pool of the fragment back itself (static proof 0x3CFBA80).
+- Behavioral proof: the mastery screen shows the level and the free points of the sword
+  ("2"), the tree shows the two nodes of a fragment as open, and the memory of the client has
+  the pool `E8EC5716` with the category 1.
+
+**Slot 46**, field 0 (`persistentAbilityData`, reader 0x6951790):
+
+```text
+tables:size ( tableId:u32 slots:size ( abilityId:u32 button:u32 )* )*      3 slots at most
+versions:size ( tableId:u32 version:u32 )*
+```
+
+- The client finds the bar of a weapon by the index of its ability table in the list of its
+  ability data manager, not by `tableId` (static proof 0x67EA1D0, 0x690F460). The list has
+  the 29 tables of the type `AbilityData`, in a sequence that the game files do not give (the
+  sequence of the asset catalog). Behavioral proof: the list in the memory of the live client
+  was equal in two runs, and the request of the client for the sword has the index 27. The
+  backend has the sequence as a constant of the supported client build
+  (`gamedata::kAbilityTableOrder`):
+
+  | Index | Table | Index | Table | Index | Table |
+  | ---: | --- | ---: | --- | ---: | --- |
+  | 0 | Flail `2915FB5D` | 10 | `2EE6A42E` | 20 | Rapier `81575CBB` |
+  | 1 | Blunderbuss `6020B33F` | 11 | `05E2FC0C` | 21 | `32733382` |
+  | 2 | Life staff `6E4FD87A` | 12 | `AE40FE40` | 22 | `2A11B501` |
+  | 3 | Hatchet `AF42A7F2` | 13 | War hammer `F94C464F` | 23 | `1C6AEA69` |
+  | 4 | Fire staff `5553E699` | 14 | `0C20C4DE` | 24 | `630D9982` |
+  | 5 | Spear `7C2BB2C5` | 15 | Void gauntlet `AC457988` | 25 | Bow `C7EA8FF8` |
+  | 6 | Greatsword `180B9A9F` | 16 | Dagger `572562B8` | 26 | `359CB911` |
+  | 7 | `7A04F0CE` | 17 | `9E461EEF` | 27 | Sword `E8EC5716` |
+  | 8 | `B8C4187D` | 18 | Musket `1C79C0C7` | 28 | `FF59AEF3` |
+  | 9 | Ice gauntlet `4A366E22` | 19 | Great axe `E7AAC3FB` | | |
+
+  The 13 tables with no name here are tables of creatures, perks, and items.
+- A fragment has one element for each of the 29 tables, and each element has three places.
+  The facet copies the list of the state on each fragment, and the client reads the places
+  of an element with no size check (static proof 0x6839390, 0x6931310): a shorter list makes
+  it read memory that is not a bar.
+- The client makes this list itself at its world entry, with an empty bar for each table
+  (0x6870BB0 with the argument 0; behavioral proof: 29 elements before the first fragment).
+  Thus the backend sends no ability state in the first record of a character that has no
+  ability on a bar (the state has 845 bytes), and it sends the full state for each change.
+- `button` is the input number of the ability key of a place. The client writes the numbers
+  0x192, 0x73, and 0x8B into its own list (behavioral proof: a memory read), and the backend
+  sends these numbers. The HUD was the same with the numbers 0, 1, and 2.
+- The state merge of the client (0x6860A30, compare function 0x66277F0) gives the field to
+  the facet only when a table id, an ability, or a button number is different from the last
+  field of the server (static proof). After a bar request that the backend refused, the bars
+  of the server are the same as before, and the client has its own bar. The backend then
+  sends the state two times to a session that had the bars: first with the place numbers 0,
+  1, 2 as the button numbers, then with the numbers of the client. Each one is different
+  from the field before it, thus the facet applies the bars of the server (test case K3 with
+  a model of the merge; no live proof of a refusal).
+- The backend sends no table version. The bars are correct without one (behavioral proof).
+- The HUD shows the bar of the weapon in the hand next to the weapon (behavioral proof: the
+  two abilities of the sword tree after the fragment).
+
+**The requests of the client for its trees and its bars** (behavioral proof for each layout:
+the body in a capture or in the log of the backend, and the reaction of the client).
+
+```text
+1112  ProgressionPointComponentServerFacet_RequestAssignPoolPoints    writer 0x3CD7B30, reader 0x3CD9530
+      target:u64 entity:u64 poolId:u32 pointId:u32 count:u32          (28 bytes; count 4,096 at most)
+2701  AbilityComponentServerFacet_RequestChangeMappedAbility          writer 0x65A5580, reader 0x65A6270
+      target:u64 entity:u64 tableIndex:u16 slot:u32 abilityId:u32     (26 bytes; slot 0 to 2)
+2857  AbilityComponentServerFacet_RequestApplyAbilityPoints           reader 0x259E1E0
+      target:u64 entity:u64                                           (16 bytes)
+186   AbilityComponentServerFacet_RequestMasteryTreeRespec            writer 0x65B2EE0, reader 0x65B3740
+      target:u64 entity:u64 tableIndex:u16 flag:u8                    (19 bytes; the screen sends the flag 0)
+2858  AbilityComponentClientFacet_MasteryTreeRespecResponse           reader 0x6568F80, handler 0x6855CA0
+      target:u64 entity:u64 success:u8 tableIndex:u32                 (server to client, 21 bytes)
+```
+
+- The button "Assign" of a tree sends, for each node of the selection, one request 1112
+  (count 1), then one request 2701 when the node is an active ability and the bar has an
+  empty place (the first empty place), then one request 2857. The client changes its own
+  tree and bar when it sends them, and it has no reply message: the states of the slots 67
+  and 46 are the answer. The mastery screen shows a new ability on its bar only after the
+  state of slot 46 (behavioral proof).
+- The button "Respec" of a tree shows a popup with the cost in the currency "Azoth" (0 below
+  rank 10) and sends the request 186. The client does not change its tree: it waits for the
+  message 2858, and it sends no second reset before it gets one with a table index of 0 or
+  more (static proof 0x69107F0). The target of the message is the target of the request
+  (behavioral proof: one hit of the handler with the success 1 and the index 27, and no line
+  "facet target ID couldn't be found" in the game log). The pool changes only with the next
+  state of slot 67.
+- The conditions of a node (the check of the client before it sends a point, 0x6849F10; the
+  numbers are in `playerbaseattributes.pbadb` of the game): the node that the points table
+  names for it (`RequiredProgressionPointId`) is there; a node below the first row needs one
+  point in the row before it in its tree (for the rows 1 to 4); a node of the last row of a
+  tree needs 10 points in that tree.
+- Checks of the backend (rule MP-5): the pool is a weapon of the game data; the node is a
+  node of the tree of that weapon; the character does not have it; one point for one node;
+  the weapon has a free point; the conditions of the node are met. For a bar: the table index
+  is a weapon; the ability is an active ability of the tree of that weapon, and the character
+  has its node; the ability leaves the place that it had. A reset is done only when its cost
+  is 0: the backend does not have the currency "Azoth", and it then sends the answer with the
+  success 0. After a request that the backend refused, the session gets the state again (a
+  node that the character does not have with the level 0).
+
+**Model of the backend** (a design of this project). The skills of a character are in its
+entity (`world::SkillSet`: the ranks, the nodes of each pool, the bars) and in the tables
+`progressions`, `ability_nodes`, and `ability_bars` (schema version 6), with the character id
+as the owner key and the id on the wire as the id of a row (the column `name` has the id text
+for a reader). The skill system (`world/skills.h`) writes all rows of a change in one
+transaction. A weapon has one mastery point for each rank (19 points at the largest level): the game
+data has no value for this, and it is a rule of this project. The free points are
+the rank minus the spent points. The experience of a rank is the column `MaximumInfluence`
+of the rank table: experience that reaches it gives the next rank, and the rest stays. A
+weapon that gets a rank with fewer points than the character spent has its tree reset. The
+points state is one fragment for each number of nodes (the client replaces its node list
+with the list of a fragment): a character with each weapon at the largest rank has 304 nodes
+and a state of 3.2 kilobytes, which the session sends in a bundle of its own and the carrier
+in chunks (3.2). A tree reset at a rank that has no cost row in the game data is refused, as
+a reset with a cost.
+
+**Development commands** (`tools/world`; routes `/v1/dev/progress`): `mastery CHARACTER
+WEAPON LEVEL [EXPERIENCE]`, `tradeskill CHARACTER SKILL LEVEL [EXPERIENCE]`, `skillxp
+CHARACTER NAME AMOUNT`, and `progress CHARACTER` lists the weapons with their nodes and bars
+and the trade skills.
+
+### 4.14 Creatures: the record, the states, the action of a creature, the spawn data, the rules of the project
+
+Research files: `~/Games/soulwarden/work/research/creatures.md` and `enemies-start-area.md` (static
+proof and game data, checked by a second agent). Evidence of the live runs of stage 3.4a:
+`~/Games/soulwarden/work/evidence/creatures/implement/`. A statement with the mark "project
+rule" is a decision of this project, not a contract of the client.
+
+**Creature data** (game data, `tools/gamedata/creatures.sh`, file `creatures.json`). The
+chain of one spawn point in the game files:
+
+| Step | File | What it gives |
+| --- | --- | --- |
+| 1 | `regions/REGION/capitals/LAYER/LAYER.metadata` (object stream), list `AiSpawnLocations` | Position, CRC of the vitals row and of the category row, level, the flags `SpawnedByCoatlicue`, `IsAlias`, `IsOverride`, `IsEncounter` |
+| 2 | `LAYER.capitals.json` of the same layer | The placement at that position (0.06 m or less): its id, its rotation, and the spawner slice (`coatgen/.../pointspawner_*.dynamicslice`) |
+| 3 | The spawner slice | `m_aliasAsset` (or `m_sliceAsset`), `m_minRespawnCooldown`, `m_maxRespawnCooldown` |
+| 4 | The alias asset, and `assetcatalog.catalog` | One or more slices with a percent value; the catalog gives the path of an asset id |
+| 5 | The slice of the creature | The entities and components: `m_replicationIndex` is the slot of a component; the Aoi component has `m_sliceSpawnRadius`; the action list component names the grid file (`m_actionGridNew`) and the controller file (`m_controllerDefinition`) |
+| 6 | The vitals tables (types `VitalsLevelVariantData`, `VitalsBaseData`, `VitalsCategoryData`, `VitalsLevelData`, `VitalsModifierData`) | The base row of a vitals row (family, creature type, `HealthMod`), the health of a level (`BaseMaxHealth`), the health modifier of a creature type (`CategoryHealthMod`) |
+
+- Which entries are a spawn point (project rule): the entry has `SpawnedByCoatlicue` and not
+  `IsOverride` and not `IsEncounter` (a usual spawn point, not an entry of an event); the
+  base row of its vitals row has a family (a creature, not a siege object); its layer has a
+  placement at its position; a slice of its alias has no schedule and has a movement
+  component and a vitals component. The entries of one placement are one spawn point: the
+  metadata has one entry for each slice of an alias with more than one slice (a left arm and
+  a right arm, a man and a woman).
+- The area of the file is a circle (default: 800 m around the start place `8880 4250`;
+  `--center`, `--radius`). Counts of the supported build for the default: 26,285 entries in
+  the layers of 4 regions, 4,423 in the circle, 1,092 usual ones, 1,076 with a creature
+  family (the 16 others are siege weapons), 1,051 spawn points after the merge of 25
+  placements with two entries, 121 kinds, 70 slices. The research counted the same 4,423,
+  1,092, and 1,076.
+- A kind is one vitals row with one category row and one alias. Its id for a command is the
+  name of the vitals row; when more than one kind has the row, the kinds after the one with
+  the most spawn points get a number (`Risen_L-R_Arm_6:2`).
+- The health of a creature (project rule; the order of the original server is not known):
+  `BaseMaxHealth` of its level times `HealthMod` of its base row times `CategoryHealthMod`
+  of its creature type. Examples: Chalky Rabbit level 1: 337.5 x 1 x 0.05 = 16.875; Grey
+  Wolf level 18: 1690.876; Fallow Scavenger (Risen) level 18: 1690.876 x 0.9 = 1521.788.
+- The level of a spawn point is the level of its metadata entry, not the number in the name
+  of its row (`Wolf_Grey_7` at level 18).
+
+**The record of a creature** (behavioral proof: three kinds by command and at their spawn
+points, stage 3.4a). The first creature of the live run at its spawn point, a Grey Wolf
+(interest 2, 132 bytes; the actor id has the form of 4.2 with the kind 20):
+
+```text
+02 04                                              interest 2, 4 fragments
+00 0a  01 03                                       metadata: group 0, fields 0 and 1
+       33 4d fc 9f ce 8e 5c 71 a7 6d 8e d6 12 b0 60 2b 00 00 00 02      AssetId of the slice, sub id 2
+       08 00 00 40 41 5a 4f 54 20 00 00 00 41 5a 4f 54                  GdeRef
+05 0b  01 fc 00 0c 00 44 80 03                     movement (slot 5 of this slice): fields 11, 12, 27, 31, 40, 41, 42
+       66 ff                                       rotation: a turn of 90 degrees about the vertical axis
+       3a                                          lookDir
+       46 09 bd 01 45 86 f9 14 37 e1               worldPosAbs 8815.25 4319.13 140.11
+       01                                          teleportAndMigrationId
+       00 00 00 32 9f fc 08 33                     timeAnchor
+       00 00                                       dataBits, moreDataBits
+09 0f  01 bd 44 d3 5c 08                           vitals (slot 9): HealthAmount 1690.876
+       00 x 18                                     vitalsData: not dead
+       01                                          healthChangeFlags
+       44 d3 5c 08  00 00                          HealthMax, HealthTickRate
+       7e a1 99 d7 84  4f 97 b6 a8  00 00 00 12    vitalsId, vitalsCategoryId, vitalsLevel 18
+       00 00  06 9a                                invulnerability, displayImmuneWhenInvulnerable, maxHealth 1690
+0f 97 54  01 01 01                                 marker (slot 15, type 5399): enabled
+```
+
+| State (type) | Slot | Fields of the record | Evidence |
+| --- | --- | --- | --- |
+| Metadata (10) | 0 | `AssetId`: the asset id of the slice with the sub id of the asset catalog (2 for each slice of the file); `GdeRef` | Behavioral: the client makes the slice (the body of the kind shows) |
+| Movement, `MB::ALCReplicatedState` (11) | Slot of the action list component | `rotation`, `lookDir`, `worldPosAbs`, `teleportAndMigrationId`, `timeAnchor`, `dataBits`, `moreDataBits` (both 0) | Behavioral: the creature stands at the position, turned as the rotation says, and it plays its idle animation |
+| Vitals (15) | Slot of the vitals component | Group 0: `HealthAmount`, `vitalsData`, `healthChangeFlags`, `HealthMax`, `HealthTickRate`, `vitalsId`, `vitalsCategoryId`, `vitalsLevel`, `invulnerability`, `displayImmuneWhenInvulnerable`, `maxHealth` | Behavioral: the name plate with the name of the category row, the level, and the health bar |
+| Marker, `MB::MarkerComponentReplicatedState` (5399) | Slot of the marker component | `enabled` (1 byte) | Behavioral for the record with it (the name plate shows); a record with no marker state was not tested |
+
+The slots of the three checked slices: rabbit (`rabbit_snowshoe_8`) movement 2, vitals 5,
+marker 17; Grey Wolf (`wolf_grey_5`) 5, 9, 15; Risen (`risen`) 5, 10, 15.
+
+Live results (stage 3.4a; the live checks A1 to A6 of the research):
+
+- **No action field is necessary for the idle pose.** With the record above, the rabbit, the
+  wolf, and the Risen play their idle animation (the ears of the rabbit and the head of the
+  wolf move between screenshots). The research expected a body in its bind pose. A creature
+  has no script layers: its action list selects the action `Idle_No_Task` of its grid file
+  itself. Do not send the state ids of a player (4.9) for a creature.
+- **The name plate.** The name is the name of the category row (`vitalsCategoryId`):
+  "Chalky Rabbit" for the category `Rabbit_Snowshoe_8`, not "White Rabbit" of the vitals row;
+  "Fallow Scavenger" for the Risen. The plate shows at 6 m with no crosshair on the creature
+  (the marker of the slice has the near range 6 m). The plates of the wolf and of the Risen
+  have the level mark (18). The plate of the rabbit (creature type Critter, level 1) has no
+  level mark.
+- **The position is exact.** The client does not move a creature to the ground. The height
+  of a spawn point is the height of the game data: one Risen point is on the wood floor of
+  a hut, 0.87 m above the terrain, and the Risen stands on the floor.
+- **The rotation.** A turn about the vertical axis by the angle `a` is the quaternion (0, 0,
+  sin(a/2), cos(a/2)) in the compressed form of 4.3. The angle 0 looks north, 90 looks west,
+  270 looks east (screenshots of a wolf with 270 on a street to the west of the camera).
+- **A health change needs bit 0 of `healthChangeFlags`.** A fragment with only `HealthAmount`,
+  and one with `healthChangeFlags` 0, change the value of the client and not the bar of the
+  name plate (3 tries: one half, a raw fragment, the health 0). The client gives a health
+  change to the listeners of the vitals component only when bit 0 of the flags is 1 (static
+  proof: facet +0x218, test at 0x689FDC0 after the apply function 0x67A7560). With the bit,
+  the bar shows the part at once. Bit 1 is for the health gain number of the local player:
+  the backend does not set it. A health change of a creature (29 bytes for interest 2):
+
+  ```text
+  02 01  09 0f  01 0d  43 fa 00 00  00 x 18  01      HealthAmount 500, vitalsData, healthChangeFlags 1
+  ```
+- **The dead mark.** Bit 0 of the flags byte of `vitalsData` (4.5; the 18 bytes are the flags,
+  two times of 8 bytes, and a count). With it the client plays the death effect of the slice
+  (blue particles), gives the body the death material (white), and takes the name plate away
+  some seconds later. The body does not fall: it keeps its idle pose. The client removes the
+  body itself some minutes later (the slice has a delayed event of 300 s; in two runs the
+  body was gone 5 minutes after the mark). The death of the player is not a part of this.
+- **The stop.** A stop of the interest number (4.2) removes the body and the name plate at
+  once. A new creature can use the number again.
+- The game log has no line for a creature record, and no stat warning: a creature needs no
+  stamina field and no mana field.
+
+**The action of a creature** (static proof `enemies-start-area.md`, section "Action
+indexes"; behavioral proof for the death action of the Grey Wolf and for the two index
+rules). A creature slice has `m_useSlayerScript` false: its movement state has no script
+layers. An action that the server starts is a scope record:
+
+```text
+group 0 of the movement state:
+  32 scopeData        size code: a mask of the scopes that have a record (bit 0: scope 0, "FullBody")
+  33 scopeInfoBlob    size code: byte count; then one record for each scope of the mask:
+                        start count:u16   fragment index + 1 (size code)   action index + 1 (size code)
+                        playback speed (16-bit float, 0x3C00 is 1.0)   option:u8
+                        [slave fragment index + 1 (size code), only for an action with ReplicateSlaveFragment]
+  29 scopeTimeBlobEx  size code: byte count (0), then the times of the scopes 2 and more.
+                      The client reads the scope fields only when the state has this field.
+  34 globalFragTags   12 bytes: the tag state of the fragments
+  28, 38, 49, 50      one byte each, the low byte first: the time of the action of scope 0, in ticks of 1/30 s
+
+the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vitals state):
+03 02
+05 0b  01 fe 00 18 00 b8 47 07 06                  fields 11, 12, 27, 28, 29, 31, 32, 33, 34, 38, 40, 41, 42, 49, 50
+       66 25  3a  46 0a ac 00 45 84 d7 44 37 70    rotation, lookDir, worldPosAbs
+       00  00                                      time byte 0, scopeTimeBlobEx with the count 0
+       01  01                                      teleportAndMigrationId, scopeData: scope 0
+       07  00 01  05  1c  3c 00  00                scopeInfoBlob: start count 1, fragment 4 + 1, action 27 + 1, speed 1.0, option 0
+       00 x 12                                     globalFragTags
+       00  00 00 00 32 a6 89 83 9c  00 00  00 00   time byte 1, timeAnchor, dataBits, moreDataBits, time bytes 2 and 3
+09 0f  01 0d  00 00 00 00  01 00 x 17  01          vitals: HealthAmount 0, vitalsData with the dead mark, healthChangeFlags 1
+```
+
+- Result: the wolf falls on its side and stays on the ground with the death material
+  (screenshots 0.8 s, 3 s, and 8 s after the kill). The research had no live proof for a
+  scope record.
+- The backend sends the full movement state with the scope fields (the position and the
+  rotation again). The time bytes are the time from the start of the action to the state: a
+  session that observes a dead creature later sends the time that passed, so that its
+  client shows the end of the action.
+- **The index of an action** is its position in the action table that the client makes for
+  the slice (builder 0x4840D90; the table is at movement component +0xB58, one action has
+  0x1A0 bytes: name +0x90, index +0x130, fragment name +0x138, fragment index +0x164). The
+  rule: the action lists of the element `ActionLists` of the grid file in their sequence,
+  and the action definitions of each list in their sequence; a definition is in the table
+  only when the alias map of its list in the grid file names it (`<Action ActionName=...>`).
+  The research had the sequence and not the alias map condition: its candidate values were
+  correct only up to the first definition that the grid does not name (the first 20 of the
+  wolf). Live proof: the tables of three kinds from the memory of the client are equal to
+  the tables of this rule: Grey Wolf 50 actions (68 definitions), Risen 62 (78), rabbit 19
+  (35).
+- **The index of a fragment** is the position of the fragment name in the fragment file of
+  the controller file of the slice (`<Fragments filename=...>`; the tags of each imported
+  file first, a name one time). Live proof: 117 fragment indexes of the three kinds are
+  equal (46, 55, 16); an action whose fragment name is not in the file has no fragment
+  (0xFFFFFFFF in the client).
+- The creature data file has the action table of each slice (`actions`: name, fragment name,
+  fragment index, the mark `ServerStarted`). `tools/research/creature_actions.py` reads the
+  table of the live client and compares it with the file.
+- The values of the Grey Wolf (`wolf_grey_5`), read in the live client:
+
+  | Purpose | Action | Action index | Fragment | Fragment index | `ServerStarted` |
+  | --- | --- | ---: | --- | ---: | --- |
+  | Idle | `Idle_No_Task` | 36 | `Idle` | 0 | no |
+  | Movement | `Move` | 41 | `Move` | 64 | no |
+  | Movement in combat | `Move_Combat` | 42 | `Move_Combat` | 65 | no |
+  | Default bite | `Attack_Bite` | 8 | `Attack_Bite` | 5 | no |
+  | Reaction to a hit | `Reaction` | 25 | `r_R2_F` | 15 | yes |
+  | Death | `Death` | 27 | `r_Death` | 4 | yes |
+
+  The Risen (`risen`): `Idle_No_Task` 0 / `Idle` 0, `Move` 50 / 46, `Attack_Swipe_L` 14 / 99,
+  `Reaction` 39 / `r_R2_F` 12, `Death` 41 / `r_Death` 3. The rabbit (`rabbit_snowshoe_8`):
+  `Death` 0 / `r_Death` 2, `Idle_No_Task` 8 / `Idle` 3, `Move` 10 / 6, `Reaction` 12 / 5.
+- The death action of a slice is the action `Death` with a fragment, or `Death_FB` for a
+  slice with no such action (13 of the 70 slices of the file; not tested live).
+- More actions of the Grey Wolf as a scope record, each one with the option 0 and with 12
+  tag bytes of 0 (one live run, with the development command `tools/world fragment`; the
+  start count was 1, 2, 3, 4): `Attack_Bite` (8, fragment 5) plays the bite: the wolf goes
+  forward with its head down and its mouth open. `Reaction` (25, fragment 15) plays a
+  reaction to a hit: the wolf goes down on its front legs and comes up again. `Move` (41,
+  fragment 64) is accepted and shows a standing pose with no change of the position (the
+  fragment is a blend by the speed: the movement of a creature is stage 3.4b).
+  `Idle_No_Task` (36, fragment 0) after them gives the idle pose again. The backend sends
+  none of these actions in stage 3.4a.
+
+**The world model for creatures** (project rules, roadmap MP-1 to MP-8).
+
+- A creature is an entity of the entity table with the kind "creature": the kind and the
+  slice (pointers into the creature data), the level, the direction, the life state, the
+  time of the death, and the action that the server started; the health is in the vitals of
+  the entity. It has no character, no account, and no session. The world gives it an actor
+  id of the range of other entities (4.2: kind 20, serials from `0x20000000`). The creature
+  system (`world/creatures.h`) is the only code that makes a creature, changes its health,
+  and removes it.
+- **Spawn point rule.** Each 500 ms of the world clock: the world makes the creature of a
+  spawn point when a player entity is 150 m or less from the point (horizontal), and it
+  removes a creature of a spawn point when no player entity is 200 m or less from it. A
+  spawn point has one creature at most. With no player in the world, the world has no
+  creature of a spawn point. The first value is larger than each interest distance: a
+  creature is in the world before a session can observe it.
+- **A point that waits.** A creature of a spawn point that died, or that a command removed,
+  does not come back by the distance rule. The point is free again after the command
+  `reset`, or at its respawn time on the world clock (`Creatures::respawn_at`: the place
+  of the respawn timer of stage 3.5a; no code sets a time now). The body of a dead creature
+  stays in the world until a command or the distance rule removes it.
+- A slice of an alias with more than one slice is selected with the percent values of the
+  alias, from a count (the same sequence in each run).
+- **Interest.** A session observes the creatures near its character in each start (the
+  option `--observe-players` is only for the characters of other players). A creature comes
+  into the interest table when it is not farther than `m_sliceSpawnRadius` of its slice
+  (game data: rabbit 35 m, Risen 82 m, wolf 100 m; not less than 20 m, not more than 100 m),
+  and it goes out when it is 20 m farther than that, or when it leaves the world. One scan
+  (each 500 ms) takes 16 new creatures at most, the nearest ones first. The records of
+  creatures go together in bundles of 960 bytes at most (7 full records): the live run had
+  7 records in a bundle of 922 bytes at a world entry.
+- **Client messages for a creature.** The route of a client message can be the actor id of a
+  creature of the interest table: the backend then finds the target among the faceted
+  components of the slice of the creature (the id rule of 4.2 with the root entity of that
+  slice; the creature data file has the ids). In the live run the client sent no message
+  for a creature: with the crosshair on a wolf for 2 s it sent only input reports (type
+  1589, 70 reports of 284 bytes), and for one light sword attack at 1.4 m from the wolf it
+  sent only input reports (52 reports of 284 to 415 bytes). It sent no hit message.
+
+**Commands.** Development routes (`tools/world`): `GET /v1/dev/creatures[?character=ID]
+[&range=N]`, `GET /v1/dev/creatures/kinds[?q=TEXT]`, `POST /v1/dev/creatures/spawn?character=ID
+&kind=KIND[&level=N][&dx=N&dy=N&dz=N][&yaw=N]`, `POST /v1/dev/creatures/remove?creature=ID`,
+`POST /v1/dev/creatures/health?creature=ID&health=N` (or `percent=N`), `POST
+/v1/dev/creatures/kill?creature=ID`, `POST /v1/dev/creatures/reset`, and `POST
+/v1/dev/world/fragment?creature=ID&slot=N&type=N&state=HEX`. The admin interface has the same
+commands (6.4). The character of a spawn command is the reference place: the new creature
+is at its position plus the distance (east, north, up; with no distance 3 m to the north).
+
+**Not known, not done.**
+
+- The option index and the tag bytes that the client itself has for an action. The scope
+  record of the idle action that the client selects itself was not found at the decoded
+  offsets in the first 0x2400 bytes of the movement facet and of the movement component.
+  The option 0 with no tag bit has live proof for the death, the bite, and the reaction of
+  the Grey Wolf only: a kind with a variant tag (a different wolf, a Risen with one arm) can
+  need tag bits for its own fragments.
+- Five slices of the default area show no body with the record above: four Ancient Guardian
+  slices (`ancientguardian_javelineer`, `ancientguardian_javelineer_12`,
+  `ancientguardian_reaver`, `ancientguardian_spearman`) show a blue light, and
+  `corruption_swarmer` shows a red effect, each one with no name plate. Their action tables
+  have an action `Spawn`: the cause can be that these kinds wait for an action of the
+  server. The tool leaves their 22 spawn points out (`SLICES_NOT_CORRECT`). The other 65
+  slices of the area show a body, an idle pose, and a name plate (one screenshot of each).
+- The death action `Death_FB` of 13 slices, and the death of a kind with more than one death
+  fragment (a death from the front or from the rear).
+- What the client does with the states that the backend does not send (the stamina
+  component, the status effects, the paperdoll of a creature with a weapon).
+- The marker state: a record with no marker state was not tested.
+- The time of the body of a dead creature in the client (about 5 minutes) was not measured
+  with a clock.
+
+## 5. Open items
+
+- Creatures (4.14) stand at their spawn points, and nothing more. Open for them:
+  - A creature does not move, does not see a player, and does not attack (stage 3.4b). The
+    backend sends the movement state of a creature one time, and again only with the death
+    action.
+  - An attack of a player has no effect on a creature (stage 3.2a). The client sends no hit
+    message for a sword attack: only its input reports.
+  - A creature that died does not come back: no respawn timer, no loot, no experience (stage
+    3.5a). The place of the timer is `Creatures::respawn_at`. The body of a dead creature
+    stays in the world of the backend until a command or the distance rule removes it; the
+    client removes the body itself after about 5 minutes.
+  - The health of a creature is a rule of this project (the health of the level times two
+    modifiers). The states of the other components of a creature slice (stamina, status
+    effects, the paperdoll of a creature with a weapon) are not sent.
+  - Five slices of the default area show no body, and their 22 spawn points are not in the
+    creature data. The spawn points of an event, of an encounter, and the entries with a
+    schedule are not in the creature data.
+  - The creature data has only the area of 800 m around the start place.
+- The position of a character is exact with the position report of the game hook (4.7).
+  Open for it:
+  - The backend has no movement simulation and no collision data: the check of a position
+    report is a speed check. A position in a wall or below the ground passes it.
+  - A refused position report has no answer: the client keeps its own position, and the
+    backend keeps the last accepted one until the reports are in the limits again. A teleport
+    of the server to the last accepted position is later work, and it needs a rule for the
+    first reports after it.
+  - The layouts of the block of mask bit 8 and of the three lists of an input entry are not
+    known. An entry with one of them gives no position (no such entry in the captures of
+    stage 2.3a: walk, jump, dodge, fall, a step up stairs).
+  - A character on a mount needs a larger speed limit. The speed limits come from one live
+    session on foot.
+  - The movement of a remote player for an observer is not in the backend.
+- The camera estimate is the fallback for a client with no position field (4.7). Limits of
+  the estimate:
+  - With the camera farther than 4.0 m (wheel), the row is behind the character by the
+    difference after each movement (4.0 m with the camera at 8.0 m). A camera turn at rest
+    then moves the row around the character at that distance.
+  - With an obstacle behind the camera at the end of a movement, the row is in front of the
+    character by the difference between the distance of the estimate and the real distance
+    (up to 3.7 m with a wall behind the camera).
+  - With an obstacle behind the camera at the start (the spawn position of a new character
+    has a wall behind the camera), a walk straight forward that does not move the camera
+    axis from the known position does not show, and the row keeps the old position (1.7 m
+    behind the character in one run, until the next camera turn). The same applies to a
+    walk straight back of less than 3 m.
+  - The backend does not know the camera distance after a wheel input in a movement, or
+    after a wheel input while an obstacle is behind the camera. It reads only the newest
+    entry of each report: a wheel step in a report that does not arrive is lost.
+  - The bits of the forward key and of the wheel are numbers from captures (4.7), not from
+    the table of the client. A forward movement with a different input (the bits of an
+    automatic run are not known) shows only when the camera axis leaves the known position.
+- The housing state of the player (slot 6, type 2768, field `m_isWithinAPlot`) also makes the
+  client send its position, with effects on the camera, the compass, and the HUD of the
+  client (static proof and game data, `~/Games/soulwarden/work/research/position.md`). The
+  backend does not send it: the hook change gives the position with no such effect. When the
+  backend gets a housing system (system 5.5), the flag of the entry has no meaning for it:
+  each entry has the flag.
+- A session of 40 minutes with no position correction was not done: the wrap of the input
+  number was tested with a write of the number in the client memory (4.6).
+- The S key starts a turn action that moves the character only slowly (animation or state
+  data that the backend does not send).
+- The other component states of the player. The states for stamina (slot 42) and mana
+  (slot 47) are static candidates only.
+- Equipment (4.11). Open: the draw and the sheathe of a weapon and the change of the active
+  weapon (the action system; the client of the owner shows its own weapon in the hand after
+  an equip, and on the hip after a world entry); the rule for the ammunition slots; the
+  checks of the client that the backend does not have (two weapons of one kind, a two hand
+  weapon with an off hand item, the level of an item); a part of a stack (the backend moves
+  full stacks); the equip load as a rule of the server; `BindOnEquip`; perks, dyes, skins,
+  and the value of flag bit 0 of an item look; the durability loss; the sheathe request
+  (3899), the loadouts, and the drop of an equipped item (826); the body of a character in
+  the main menu after a change of its equipment (the menu shows the creation data).
+- Level and attributes (4.12). Open: the sum rule of the maximum health has no proof in the
+  client (the code was in the original server); the bonus level and the rested experience
+  (sent as 0); the bonuses of an attribute from equipment and food (`attributeBonuses`,
+  `placingBonuses`: sent with no element); the levels 61 to 70, which need the expansion row
+  of the player in the client (the entitlements); the effects of an attribute other than the
+  health (damage, the threshold abilities); the placing behavior request (6397); a source of
+  experience in the game (the systems of a kill, a quest, and gathering call the experience
+  function later); the text "N XP to Level M" of the open character window, which is one
+  state behind.
+- Skills (4.13). Open: the cost of a tree reset from rank 10 on (the currency "Azoth", which
+  the backend does not have: it refuses such a reset); the use of an ability and its cooldown
+  (the cooldown state, slot 45; system 3.3); the effect of a passive node; the table versions
+  of the ability state (not sent); the other entries of slot 65 (territory standing, faction
+  reputation, the season track) and the territory pools of slot 67; the trade skill levels
+  201 to 250 and the riding skill, which need the expansion; the experience after the largest
+  rank (the rows `_PostCap`); a bundle above 2,048 bytes (three chunks or more) has no live
+  proof; a refused bar request has no live proof; the sequence of the ability tables is a constant of one client build, read from the
+  live client (a different build needs a new read: `tools/research/ability_tables.py`).
+- Items (4.10). Open: the perk index list of the client (the backend sends no perk); the
+  dye values; the effect of the order counter `chrono` on the bag window; the fields 1 to 4
+  of the container state (the backend sends none; the client shows the bag with no one of
+  them); a full vector that is shorter than the vector of the client (not sent by the
+  backend: the bag keeps its length while the character is in the world); the requests use
+  (2917), salvage, repair, and transfer; an entity for an item on the ground (a drop removes
+  the item); the weight limit as a rule of the server; the item line of the HUD for a new
+  item (the cause values 1, 26 and others were not compared on the screen).
+- Messages from the client in the world other than the input report have no handlers
+  (`~/Games/soulwarden/work/research/client-messages.md` has the names and layouts).
+- The world time: the client asks for it one time (type 4248) and gets no answer.
+- Other entities (4.9). The backend has the record of a remote player that stands. Open:
+  the movement of a remote player (new positions, the walk animation, the rate of the
+  states); an exact position (a remote character does not go to the ground by itself); the
+  action of a character (the backend sends the idle action for each character); the dye and
+  the appearance of the equipment of a remote player (4.11); entities that are not players;
+  region and area-of-interest data; a state bundle of more than 1,024 bytes (the limit of
+  the carrier of the backend). With `--observe-players` and two clients, each client sees
+  the character of the other one at the position of its world entry: this was not tested
+  with two game processes.
+- Names of the fields of `RegistrationRequestV3Msg` that 3.4 gives with no name, and the
+  first `u32` of the message (`0x970C0A5D` in each capture).
+- Authentication is a stub (2.1): no code proves the Steam id of a login. A real check needs
+  the Steam client, which the network namespace does not let the game reach.
+- The reaction of the client to status 401 from a gateway route, and to `isNewAccount` true
+  in the token reply.
+- The name of a character is unique for all accounts, with no regard to the letter case
+  (2.2.2). The index `characters_active_name` of the database refuses only names that are
+  equal in ASCII letter case: the backend makes the full check before each insert.
+- A character with no creation data (a seeded character) has the default appearance and no
+  clothing in the menu and in the world (2.2.5). It has a white body in the menu when the
+  backend has no appearance tables.
+- A new character starts at the spawn position of the seeded character. It has the items
+  of its archetype that have a quantity in the backstory table (4.11): four armor pieces and
+  one sword. The head armor and the weapons of the archetype have the quantity 0 there: the
+  original game gave them later (the first quest, system 1.8 and 4.3). The backend keeps the
+  archetype (`characters.archetype`). It does not use the `equipment` entries of the creation
+  data, and it does not keep `SkipFtue`.
+- The backend has the name rule of the client (2.2.2), but not its check of the words of a
+  name. The client does not send a name that its rule refuses, and it does not send creation
+  data that the backend cannot read: the reaction of the client to the replies
+  `NameLengthError` and `NameValidationError` of the name check, and to the other create
+  errors of 2.2.4, was not seen.
+- The option "Change World" of a character row, and the rename route
+  (`PATCH /prod/game/characters/{id}`), have no handler.
+- The world content document (`motd/worlds_STEAM_APP_ID.1063730.json`) has no route (404).
+  The landing screen and step 4 of the creation work without it.
+- Sessions (3.5, 3.6). Not tested: what the client does after OK on the popup of a kick;
+  the message "kicked" with reason 2 (the delete of a character that is in the world) in a
+  live client; the registration results with reason 9; what the client sends when the user
+  closes the game window while the character is in the world (the launcher stops the backend
+  when the game process ends). The refusal and the kick as product behavior have test cases
+  with made-up clients and no live run of their own: the live checks of 3.6 used the research
+  switch with the same bytes.
+- The login ticket: the backend does not keep the `TicketId` of a login queue reply, and a
+  registration can name each character of the account of its login token (3.4).
+- The actor id of a character is new for each world entry (4.2). The client uses the actor
+  id of a player as an argument of game messages (for example type 2556): a system that
+  keeps such an id in the database needs an id that stays (the research `ids.md` proposes a
+  serial in the row of the character).
+- The backend checks the route and the target of each client message and counts a message
+  that fails (4.2). It does not refuse a message for this cause now.
+- The client context instance has one byte. After 255 sessions of one backend process the
+  numbers start again: a client whose two connections have 254 sessions of other clients
+  between them gets the instance of its last connection, and its world entry then fails
+  (3.5). With one client this does not occur.
+
+## 6. Tool window: renderer and input of the client, and the admin interface
+
+The hook DLL draws one Dear ImGui window on the picture of the game (key F8). The window
+sends commands to the admin interface of the backend. This section has the client facts that
+the hook uses, and the contract of the admin interface. Source of the static proof:
+`~/Games/soulwarden/work/research/overlay.md` (verified). Each "live" mark is a check of stage 1.7
+on one computer (NVIDIA card, Proton Experimental, VKD3D-Proton), with the trace points of
+the hook (`SOULWARDEN_TRACE`, `SOULWARDEN_PROBE`) and with memory reads of the harness.
+
+### 6.1 Renderer of the client (static proof and behavioral proof)
+
+| Fact | Evidence |
+| --- | --- |
+| The client renders with Direct3D 12. With Proton the calls go to VKD3D-Proton. | Static (import table), game log (`RenderD3D12`) |
+| The client has one present call: `call [rax+0x40]` at `0x8D4468`, in the thread function `0x8D4250` (the submission thread of its renderer, command 5). The instructions from `0x8D445C` are `mov rax,[r14]; mov r8d,r15d; mov edx,r12d; mov rcx,r14; call [rax+0x40]`. | Static |
+| At `0x8D445C`: `r14` is the swap chain (`IDXGISwapChain3*`), `r12d` the sync interval (1 in the run), `r15d` the present flags (0). The stack pointer is a multiple of 16. | Live (probe) |
+| The present thread is not the window thread. In the runs: window thread 348 (it also made the swap chain), present thread 1024 or 1028. | Live (probe, trace of `0x7159680`) |
+| NVIDIA Streamline is active with Proton on this computer: the flag byte at `0xA42C608` is 1. The swap chain of the present call is an object of `sl.interposer.dll` (its `Present` function is at that library `+0x29010`), and the command queue of the swap chain is an object of that library too. | Live (memory reads, module of each method table) |
+| Global `0xA2E96F0`: the native `ID3D12Device*` (a function of `d3d12core.dll` in its method table). Global `0xA2E96F8`: the device of Streamline (not null in the run). | Live |
+| Global `0xA2E96C0`: the queue manager. `[+0x78]` is the record of the direct queue, and `[record+0x10]` is its `ID3D12CommandQueue*`. This pointer is the queue argument of `CreateSwapChainForHwnd` (`rdx` at `0x8B8937`). | Static, live (probe) |
+| Global `0xA2E9CB8`: the device object. `[+0x178]` is the swap chain record of the game window: `[+0x00]` the `HWND`, `[+0x70]` the native swap chain, `[+0x78]` the swap chain that the game presents when Streamline is active, `[+0x28]` the `DXGI_SWAP_CHAIN_DESC1`. | Static, live (memory read) |
+| The swap chain of the game window: 1256x660 in a development run, format `DXGI_FORMAT_R8G8B8A8_UNORM` (28), swap effect 4, flags `0x840`. `GetDesc` of the swap chain of the present call gives 2 buffers; the description in the record gives 4. | Live. The research gave 2 buffers and the flags `0x800`. |
+| A command list of the native device runs on the command queue of Streamline: the tool window draws with this pair for each frame. | Live (runs of 11 minutes) |
+| At the present call the back buffer has the state "present": the tool window changes it to "render target" and back. No device removal in the runs. | Live |
+| `D3DCompile` of the `d3dcompiler_47.dll` of the Proton prefix compiles the two shaders of Dear ImGui. | Live (`renderer ready` log line) |
+
+The hook of the tool window is at the instructions of the call site (`0x8D445C`), not in the
+`Present` function. The call site is the same with Streamline, with the DXGI library of
+DXVK, and with the DXGI library of Windows, and no other thread uses it. The hook compares
+the 15 bytes at the address with the bytes of the supported build before it changes them. The
+hook of the tool window is installed before the trace points, so that a trace point at the
+same address does not change the bytes of the compare (the two together were not checked
+live).
+
+### 6.2 The frame of the tool window
+
+- The first present call makes the objects: one heap for the render target views (one for
+  each buffer of `GetDesc`), one heap for the textures of Dear ImGui, three command
+  allocators, one command list, one fence, the Dear ImGui context, and the Direct3D 12 part
+  of Dear ImGui (`ImGui_ImplDX12_Init` and `ImGui_ImplDX12_CreateDeviceObjects`). A failure
+  of a step turns the tool window off for the start, with one log line (`tool window: OFF
+  for this start of the game: CAUSE`). The game continues.
+- While the window does not show, the hook does one test in each present call and draws
+  nothing.
+- While the window shows, each present call makes one Dear ImGui frame and one command
+  list: the buffer of `GetCurrentBackBufferIndex`, a render target view for it, the two
+  state changes, and `ExecuteCommandLists` and `Signal` on the queue of the game. The hook
+  keeps no reference to a back buffer after the frame, thus a resize of the swap chain needs
+  no hook.
+- The hook stops the tool window (with a log line) when the swap chain changes its format
+  or gets more buffers, and when the device is removed.
+- The text and the controls have the scale 1 for a picture of 720 lines or less, and a larger
+  scale for a larger picture, in steps of 0.25 (1.5 for 1080 lines, 2 for 1440 lines, 3 at
+  most).
+
+### 6.3 Input of the client (static proof and behavioral proof)
+
+| Fact | Evidence |
+| --- | --- |
+| The root window procedure of the game window is the function `0x7159680` (class `GameWindowClass`). It runs on the window thread. | Static, live (trace) |
+| The client reads its keys and its pointer from raw input (`WM_INPUT`, branch at `0x7135300`) and text from `WM_CHAR` (branch at `0x7135366`). | Static, live (probes) |
+| With Wine, the game window gets the usual key and pointer messages too (`WM_KEYDOWN`, `WM_KEYUP`, `WM_CHAR`, `WM_MOUSEMOVE`, the button messages) while raw input is registered, also for the input of `SendInput`. | Live (message counts of the hook: `tool window: messages of the game window: ...` in a harness run) |
+| The text of the harness (`SendInput` with a Unicode character) gives `WM_KEYDOWN`, `WM_CHAR`, and no raw keyboard packet. | Live (message counts) |
+| The client sets the pointer position with `SetCursorPos` (import slot `0x7ECA3F8`) and limits the pointer with `ClipCursor` (import slot `0x7ECA580`). Each slot has one user function. | Static |
+| The client reads a raw input packet with `GetRawInputData` (import slot `0x7ECA660`; two calls, at `0x7135319` and `0x7135337`, in the raw input branch of the window procedure). The client image has no import of `GetRawInputBuffer`. | Static; live for the read of a pointer packet (stage 2.3a) |
+| With Wine, one input event of `SendInput` with a button release and a relative movement (`MOUSEEVENTF_RIGHTUP` and `MOUSEEVENTF_MOVE`) gives one raw pointer packet with the release flag and the movement. | Live (hook log of a harness run: `button flags 0x0008, movement 14 5`) |
+| The right pointer button in the world is the block: while the game has the button down, the action sequence of layer 0 of the character is 1248. | Live (memory read) |
+| In the world the game hides the pointer of the system (`GetCursorInfo` shows no pointer): Dear ImGui then draws one. On a screen of the game with a pointer (the inventory), the system shows its pointer, and Dear ImGui draws none. | Live |
+
+The hook replaces the window procedure (a detour of `0x7159680`; the bytes at the address
+are compared first) and the two import slots. Rules:
+
+- The game never gets the toggle key (F8): not the key messages, and not the raw packet.
+  The window changes its state at the key press. A repeat of a key that stays down changes
+  nothing.
+- While the window shows, the game gets no pointer message, no key message, no character
+  message, and no raw packet of a key press, of a button press, of the wheel, or of a pointer
+  movement. It gets the raw packets of a key release and of a button release: a key that was
+  down when the window opened is then released in the game (live: the character stopped
+  when the W key was released after F8). Alt+F4 and each other message go to the game.
+- A raw pointer packet can have a button release together with other events (a movement,
+  the press of a different button, the wheel). The game gets each packet with a release, and
+  it reads only the releases of it: the hook replaces the import slot of the client for
+  `GetRawInputData`, and its function clears the other button flags, the wheel data, and the
+  movement of the packet that the game reads at that time (finding 3 of the code review of
+  stage 1.7; before the correction such a packet did not go to the game, and the game kept
+  the button down). Live check: with the right button down in the game (block stance), the
+  tool window open, and a release with a movement in one input event, the character left
+  the block stance.
+- The hook takes the pointer capture for a button that goes down on the tool window. The
+  window thread releases it when the button goes up, when the window closes, and when the
+  tool window stops (a failure of the renderer): the stop posts a message with no function
+  to the game window, and the window procedure of the hook ends the capture before its test
+  for the stopped state (finding 4 of that review; live check with the harness command
+  `toolwindow stop`).
+- The window thread puts the messages in a queue, with the state of the Control, Shift, and
+  Alt keys at that time. The present thread gives the queue to Dear ImGui before each
+  frame. The window thread makes no Dear ImGui call. The hook uses only the key table of the
+  Win32 part of Dear ImGui (`ImGui_ImplWin32_KeyEventToImGuiKey`): the message handler and
+  the frame function of that part read the keyboard state of the thread that calls them.
+- While the window shows, `SetCursorPos` of the game does nothing and `ClipCursor` of the
+  game applies no limit. The limit that the game set last applies again when the window
+  closes.
+- The second extra pointer button and the horizontal wheel have no function in the window
+  (the harness uses that button to make the game window the foreground window).
+
+Live results of stage 1.7 (run with the character in the world): with the window open, the
+text of the harness and the keys W, K, and M went into the search field, the position of the
+character did not change (8880.00, 4250.01), and no window of the client opened. After F8,
+the W key moved the character (8879.46, 4248.97).
+
+### 6.4 Admin interface of the backend
+
+The routes of the tool window. They are on the HTTP listener of the backend (loopback only).
+Each start has them when the launcher gave the backend a token: they need no harness gate
+and no development option.
+
+```text
+GET  /admin/v1/state[?character=ID]
+     {"account": true, "catalog": true, "revision": N,
+      "characters": [{"id", "name", "level", "inWorld", "session"}, ...],
+      "selected": ID, "items": {...}, "progress": {...}, "creatures": {...}}
+     The characters of the account of the token. "items" and "progress" are for the character
+     of the request, or, with no id, for the character of the account that a session plays,
+     then one that is in the world, then the first one. "items": the bag ("items": slot, item,
+     quantity, gearScore, durability, locked, instance), the equipment, the coin (hundredths),
+     and the slot count. "progress": the level, the experience and the limits of the level,
+     each attribute (value, spent points), the free points, the health, each weapon mastery
+     (level of the screen, experience, free and spent points, nodes, bar), each trade skill.
+     The two members are the replies of GET /v1/dev/items and GET /v1/dev/progress.
+     "creatures": the creatures that are 150 m or less from the character, the nearest one
+     first ("creatures": id, kind, name, level, health, healthMax, dead, spawnPoint,
+     position, distance), the number of all creatures of the world, and the number of spawn
+     points that wait (the reply of GET /v1/dev/creatures with a range).
+POST /admin/v1/commands
+     {"command": NAME, "character": ID, "args": {...}}
+       give_item           item (the ItemID text), quantity (1 to 100000), gearScore
+       remove_item         slot (a slot of the bag), quantity (no quantity: the full stack)
+       set_coin            amount (hundredths of a coin, 0 to 100000000)
+       set_level           level (a level of the screen)
+       add_experience      amount (1 to 10000000)
+       set_attribute       attribute (constitution, focus, strength, dexterity, intelligence), value
+       set_weapon_mastery  weapon ("SwordAbilityTable" or "sword"), level (1 to 20), experience
+       set_trade_skill     skill ("Mining"), level, experience
+       spawn_creature      kind (an id of the creature data), level, dx, dy, dz (meters from the
+                           character: east, north, up; with none: 3 m to the north), yaw
+       remove_creature     creature (the id of a creature: 16 hexadecimal digits)
+       set_creature_health creature, and health (a number) or percent (0 to 100)
+       kill_creature       creature
+       reset_creatures     no argument: each spawn point that waits is free again
+     The character of a creature command is the reference place (4.14): it must be a
+     character of the account of the token, as for each command.
+     Reply 200: {"message": "done", "applied": "world" | "stored", ...} ("stored": the
+     character is not in the world, and its rows changed). Reply 400: {"message": CAUSE}, and
+     nothing changed. A member of "args" can be a number or a text.
+GET  /admin/v1/catalog/items?q=TEXT[&limit=N][&offset=N]
+     {"loaded": true, "total": N, "offset": N,
+      "items": [{"id", "type", "class", "tier", "maxStack", "minGearScore", "maxGearScore"}, ...]}
+     The items of the item catalog whose id, type, or class has each word of the text (no
+     letter case). limit: 1 to 200, default 50. An item with no type is not in the result.
+GET  /admin/v1/catalog/creatures?q=TEXT[&limit=N][&offset=N]
+     {"loaded": true, "total": N, "offset": N,
+      "kinds": [{"id", "name", "vitalsName", "category", "family", "creatureType", "level",
+                 "health", "spawnPoints", "slice"}, ...]}
+     The kinds of the creature data whose id, name, category, or family has each word of the
+     text. "health" is the health of the kind at its level.
+```
+
+Rules:
+
+- The query of a request with a path below `/admin` is in no log line and in no capture
+  file: the record has the text `(not recorded)` in its place (`capture::recorded_target`).
+  A sender can put the token in the query by mistake: the route refuses that request (401),
+  and the record of the refusal must not keep the token (finding 5 of the code review of
+  stage 1.7; test case X7).
+- An argument of a command that is not necessary (`quantity`, `gearScore`, `action`,
+  `experience`) and that is there with a wrong JSON form (an array, an object, `null`) gives
+  the reply 400, and nothing changes. It is not the same as no argument: a `remove_item`
+  with no quantity removes the full stack (finding 2 of that review; test case X8).
+- A command of the tool window has the character id of the snapshot that the window drew
+  when the user gave the command, not the selected character at the time of the send
+  (finding 1 of that review).
+- The token. The launcher makes 48 hexadecimal characters from `/dev/urandom` for each start
+  and gives them to the backend and to the game in the environment variable
+  `SOULWARDEN_ADMIN_TOKEN` (not as an option of a command line). The backend also gets the Steam
+  id of the game of the start (`SOULWARDEN_ADMIN_STEAM_ID`; with no value, the fallback identity).
+  A request has the token in the header `X-Soulwarden-Admin`, never in its path or its query. The
+  backend and the hook write the token to no log line, and a capture file of the backend has
+  the text `(not recorded)` in place of the header value.
+- A request with no token, or with a token that is not the token of the start, gets the
+  reply 401 with no data, and nothing changes. A token has 32 characters or more. The
+  compare does not stop at the first different character.
+- A request with a service host (`X-Soulwarden-Host`: a request of the game, which the hook
+  redirects) or with an `Origin` header (a page of a browser) gets the reply 403.
+- The token is for one account: the account of the Steam id of the start. The backend finds
+  the account from the token, not from the request (rule MP-5). A command names a character
+  id (rule MP-9). A character of a different account gives the reply 404, the same as a
+  character that is not there.
+- A command runs as a task of the world thread and calls the function of the world that the
+  development route for it calls (`server/http/character_commands.h` is the one layer of the
+  two route sets). The session of the character gets the state change through the encoders.
+- The state route and the search route give no log line and no capture file for a reply
+  200: the tool window calls the state route each second while it shows. Each command has a
+  log line (`admin: command NAME for character ID8: reply STATUS`).
+- With no token in its environment the backend has no admin route (reply 404), and the log
+  says so. `SOULWARDEN_TOOL_WINDOW=0` makes the launcher give no token.
+
+### 6.5 Switches of the tool window
+
+| Variable | Read by | Effect |
+| --- | --- | --- |
+| `SOULWARDEN_TOOL_WINDOW` | launcher, hook | `0`: the hook installs no hook of the tool window and makes no Dear ImGui context, and the launcher makes no token. Default: on. |
+| `SOULWARDEN_TOOL_WINDOW_KEY` | hook | Virtual key of the window, 1 to 254 (decimal or `0x` text). Default `0x77` (F8). |
+| `SOULWARDEN_ADMIN_TOKEN`, `SOULWARDEN_ADMIN_STEAM_ID` | backend, hook (token only) | The launcher sets them. Do not set them by hand for a start of the launcher. |
+| `SOULWARDEN_TOOL_WINDOW_FAULT` | hook, only with `SOULWARDEN_HARNESS=1` | A test of a start with a fault: `hook` (the code at the present call is not the code of the build), `device` (no Direct3D 12 device at the first present call), `swapchain` (no description of the swap chain). |
+
+Harness commands (`tools/hx`): `toolwindow` gives `shown` or `hidden`, `toolwindow 1` and
+`toolwindow 0` show and hide the window with no key, `toolwindow scale PERCENT` sets the
+scale of the text and of the controls for a check of the layout (0: the automatic scale), and
+`toolwindow stop` stops the tool window for the rest of the start (a test of the stop).
+`mousedown left|right` and `mouseup left|right [DX DY]` press and release a pointer button
+(with `DX DY`: the release and a relative movement in one input event).
+
+### 6.6 Limits and items that are not checked
+
+- One computer, one graphics card, Streamline active. A start with no Streamline (the swap
+  chain of DXVK) has static proof only: the call site and the globals are the same.
+- A picture with HDR (format `R10G10B10A2`), a change of the resolution in the settings of
+  the game while the window shows, and frame generation were not checked.
+- The layout was checked live at 1256x660. The larger scales were checked with a forced
+  scale at that picture size (`toolwindow scale 150` and `200`), not with a larger picture.
+- The pointer of the system does not show in a screenshot of `tools/shot`. The pointer that
+  Dear ImGui draws in the world does.
+- The item search uses the id, the type, and the class of an item. The catalog has no name
+  text of an item (only its text key), thus a search for the name on the screen finds
+  nothing.

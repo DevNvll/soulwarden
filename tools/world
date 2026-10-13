@@ -1,0 +1,509 @@
+#!/usr/bin/env python3
+"""Development commands for the world of a development run.
+
+The backend of a development run (tools/dev-run.sh, the scenario scripts) has the routes
+/v1/dev/world, /v1/dev/items, and /v1/dev/progress. This tool sends a request to them. The backend is in the
+network namespace of the launcher, thus the request goes with nsenter.
+
+Usage:
+  tools/world list                              the entities of the world
+  tools/world characters                        the characters of the database (id and name)
+  tools/world spawn CHARACTER --at X Y Z        put a character of the database into the world
+                                                as an entity with no session, at a position
+  tools/world spawn CHARACTER --near OTHER [DX DY DZ]
+                                                the same, at a distance from the character OTHER,
+                                                which is in the world (meters: east, north, up)
+  tools/world remove CHARACTER                  remove an entity that has no session
+  tools/world touch CHARACTER                   send the full record of an entity again
+  tools/world fragment CHARACTER SLOT TYPE HEX  give an entity one state fragment with these bytes:
+                                                a live check of a state type that has no encoder
+                                                (SLOT: index of the component in the slice, TYPE:
+                                                type index of the state, HEX: the state bytes)
+
+The items, the equipment, and the coin of a character (the character can be in the world or
+not: a command for a character that is not in the world changes its rows in the database):
+  tools/world items CHARACTER                   the items of the bag, the equipment, and the coin
+  tools/world give CHARACTER ITEM [QUANTITY]    give a quantity of an item (default 1). ITEM is
+                                                the ItemID text of the item catalog, for example
+                                                1hSwordT1 (tools/gamedata/items.sh --find ITEM)
+  tools/world take CHARACTER SLOT [QUANTITY]    remove the item of a slot, or a quantity of it
+  tools/world coin CHARACTER AMOUNT             set the coin, for example 123.45
+  tools/world move CHARACTER FROM TO            move the item of a slot to a different slot: an
+                                                empty slot gets it, a stack of the same item takes
+                                                what it can hold, a different item changes places
+  tools/world split CHARACTER SLOT QUANTITY [TO]
+                                                make a new stack from a quantity of a stack
+  tools/world lock CHARACTER SLOT on|off        set or clear the lock of an item
+  tools/world equipment CHARACTER               the items in the slots of the paperdoll
+  tools/world equip CHARACTER BAGSLOT [SLOT]    move the item of a slot of the bag into a slot of
+                                                the paperdoll. No SLOT: the slot of the item class
+                                                (for a weapon the first free weapon slot). An item
+                                                that is in the slot goes into the slot of the bag
+  tools/world unequip CHARACTER SLOT [BAGSLOT]  move the item of a slot of the paperdoll into the
+                                                bag (no BAGSLOT: the first empty slot)
+
+The level, the attributes, and the skills of a character (the character can be in the world or
+not, as for the items):
+  tools/world progress CHARACTER                the level, the experience, the attributes, the
+                                                weapon masteries, and the trade skills
+  tools/world level CHARACTER LEVEL             set the level (the level of the screen). The
+                                                experience becomes the start of the level
+  tools/world xp CHARACTER AMOUNT               give experience: the level goes up at the limit
+  tools/world attribute CHARACTER NAME VALUE    set the value of one attribute. NAME: constitution,
+                                                focus, strength, dexterity, intelligence. The
+                                                character must have the points for the value
+  tools/world mastery CHARACTER WEAPON LEVEL [EXPERIENCE]
+                                                set the mastery level of a weapon (1 to 20) and
+                                                the experience in that level. Each level above 1
+                                                gives one mastery point. WEAPON: sword, rapier,
+                                                hatchet, flail, dagger, spear, greataxe,
+                                                warhammer, greatsword, bow, musket, blunderbuss,
+                                                firemagic, lifemagic, icemagic, voidgauntlet (or
+                                                the id of the game table: SwordAbilityTable)
+  tools/world tradeskill CHARACTER SKILL LEVEL [EXPERIENCE]
+                                                set the level of a trade skill and the experience
+                                                in that level. SKILL: Mining, Logging, Cooking, ...
+  tools/world skillxp CHARACTER NAME AMOUNT     give experience to a weapon mastery or to a trade
+                                                skill: its level goes up at the limit
+
+The creatures of the world (protocol notes 4.14):
+  tools/world creatures [CHARACTER [RANGE]]     the creatures of the world. With a character: the
+                                                distance of each one from it, the nearest one first
+                                                (RANGE: only the creatures that are this near, meters)
+  tools/world kinds [TEXT]                      the kinds of the creature data whose id, name, or
+                                                family has the text
+  tools/world creature spawn KIND CHARACTER [DX DY DZ] [--level N] [--yaw DEGREES]
+                                                make a creature of a kind near a character that is
+                                                in the world (meters: east, north, up; with no
+                                                distance: 3 m to the north). KIND: Wolf_Grey_7
+  tools/world creature remove CREATURE          take a creature out of the world
+  tools/world creature health CREATURE VALUE    set the health: a number, or a part (50%)
+  tools/world creature kill CREATURE            set the health to 0: the creature is dead
+  tools/world creature reset                    each spawn point whose creature died or was removed
+                                                makes its creature again
+  tools/world fragment CREATURE SLOT TYPE HEX   the fragment command for a creature
+CREATURE is the id of a creature (16 hexadecimal digits), or the last digits of it when only one
+creature has them.
+
+Slots of the paperdoll: 0 head, 1 chest, 2 hands, 3 legs, 4 feet, 5 amulet, 6 earring, 7 ring,
+14 to 19 quick slots, 24 to 26 weapon 1 to 3, 27 to 29 the off hand item of weapon 1 to 3,
+30 to 32 bags, 33 logging axe, 34 sickle, 35 skinning knife, 36 pickaxe, 37 fishing pole,
+38 soulwarden staff, 45 heart rune.
+
+CHARACTER is a character id, or the name of a character of the database. The session of a
+client near the entity gets its record, and the client shows it as a remote player. The
+position of a spawn does not go to the database.
+
+The data directory is the development data directory (tools/dev-env.sh), or SOULWARDEN_DATA_DIR.
+Status 0: the backend did the command. Status 1: it did not (the message says why).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import dev_env  # noqa: E402
+
+DEV_MARK = b"SOULWARDEN_DEV_RUN=1"
+SLOT_NAMES = {0: "head", 1: "chest", 2: "hands", 3: "legs", 4: "feet", 5: "amulet", 6: "earring", 7: "ring",
+              24: "weapon 1", 25: "weapon 2", 26: "weapon 3", 27: "off hand 1", 28: "off hand 2", 29: "off hand 3",
+              33: "logging axe", 34: "sickle", 35: "skinning knife", 36: "pickaxe", 37: "fishing pole",
+              38: "soulwarden staff", 45: "heart rune"}
+CHARACTER_ID = re.compile(r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+
+
+def fail(text: str) -> None:
+    sys.exit(f"world: {text}")
+
+
+def backend(data_dir: Path) -> tuple[int, int]:
+    """@return The process id and the HTTP port of the backend of the development run with this data directory."""
+    found = []
+    for directory in Path("/proc").iterdir():
+        if not directory.name.isdigit():
+            continue
+        try:
+            if (directory / "comm").read_text().strip() != "soulwarden-backend":
+                continue
+            if DEV_MARK not in (directory / "environ").read_bytes().split(b"\0"):
+                continue
+            arguments = (directory / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        words = [word.decode("utf-8", "replace") for word in arguments]
+        directory_of_run = words[words.index("--data-dir") + 1] if "--data-dir" in words[:-1] else ""
+        port = int(words[words.index("--http-port") + 1]) if "--http-port" in words[:-1] else 32200
+        if Path(directory_of_run) == data_dir:
+            found.append((int(directory.name), port))
+    if not found:
+        fail(f"no backend of a development run uses the data directory {data_dir}. Start a run first.")
+    return found[0]
+
+
+def characters(data_dir: Path) -> list[tuple[str, str]]:
+    """@return The id and the name of each character of the database."""
+    database = data_dir / "soulwarden.sqlite3"
+    if not database.is_file():
+        fail(f"no database at {database}")
+    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    try:
+        return [(row[0], row[1]) for row in
+                connection.execute("select character_id, name from characters where deleted_date is null order by name")]
+    finally:
+        connection.close()
+
+
+def character_id(data_dir: Path, text: str) -> str:
+    if CHARACTER_ID.match(text):
+        return text
+    matches = [identifier for identifier, name in characters(data_dir) if name == text]
+    if len(matches) != 1:
+        fail(f"the database has no character with the name {text}")
+    return matches[0]
+
+
+def item_text(item: dict) -> str:
+    marks = "".join(f" {mark}" for mark in ("bound", "locked") if item[mark])
+    return (f"{item['quantity']:>5} x {item['item']:<32} index {item['index']:>5}  gear score {item['gearScore']:>3}  "
+            f"durability {item['durability']}/{item['maxDurability']}{marks}  instance {item['instance']}")
+
+
+def request(data_dir: Path, method: str, path: str, show_bag: bool = True) -> None:
+    process, port = backend(data_dir)
+    command = ["nsenter", "-t", str(process), "-U", "-n", "--preserve-credentials", "curl", "--silent", "--max-time", "5",
+               "--request", method, "--write-out", "\n%{http_code}", f"http://127.0.0.1:{port}{path}"]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        fail(f"no reply of the backend (nsenter and curl gave status {result.returncode}): {result.stderr.strip()}")
+    body, _, status = result.stdout.rpartition("\n")
+    try:
+        document = json.loads(body)
+    except ValueError:
+        document = {"message": body}
+    if isinstance(document, dict) and "weapons" in document:
+        show_progress(document)
+    elif isinstance(document, dict) and "spawnPointsWaiting" in document:
+        show_creatures(document)
+    elif isinstance(document, dict) and "kinds" in document:
+        if not document["loaded"]:
+            print("the backend has no creature data: make the file with tools/gamedata/creatures.sh")
+        for kind in document["kinds"]:
+            print(f"{kind['id']:<40} {kind['name']:<26} {kind['family']:<16} {kind['creatureType']:<10} level "
+                  f"{kind['level']:>2}  health {kind['health']:9.1f}  {kind['spawnPoints']:>3} spawn point(s)  {kind['slice']}")
+        print(f"{len(document['kinds'])} kinds")
+    elif isinstance(document, dict) and "creature" in document:
+        print("world: done: " + creature_text(document["creature"]))
+    elif isinstance(document, dict) and "spawnPoints" in document and "applied" in document:
+        print(f"world: done, {document['spawnPoints']} spawn point(s) that waited are free again")
+    elif isinstance(document, dict) and "freeAttributePoints" in document:
+        where = "the character is in the world" if document["applied"] == "world" else "the row only"
+        gained = f", {document['levelsGained']} level(s) more" if document["levelsGained"] else ""
+        print(f"world: done, level {document['level']}, experience {document['experience']}, "
+              f"{document['freeAttributePoints']} free attribute point(s){gained} ({where})")
+    elif isinstance(document, dict) and "freePoints" in document:
+        where = "the character is in the world" if document["applied"] == "world" else "the rows only"
+        print(f"world: done, rank {document['rank']}, experience {document['experience']}, "
+              f"{document['freePoints']} free mastery point(s) ({where})")
+    elif isinstance(document, dict) and "entities" in document:
+        for entity in document["entities"]:
+            show(entity)
+        print(f"{len(document['entities'])} entities, revision {document['revision']}")
+    elif isinstance(document, dict) and "entity" in document:
+        show(document)
+    elif isinstance(document, dict) and "items" in document:
+        place = "in the world" if document["inWorld"] else "not in the world"
+        equipment = document.get("equipment", [])
+        if show_bag:
+            for item in document["items"]:
+                print(f"slot {item['slot']:>3}  {item_text(item)}")
+            print(f"{len(document['items'])} items in {document['slots']} slots, coin {document['coin'] // 100}."
+                  f"{document['coin'] % 100:02d} (the character is {place})")
+        for item in equipment:
+            name = SLOT_NAMES.get(item["slot"], "")
+            print(f"paperdoll slot {item['slot']:>2} {name:<14} {item_text(item)}")
+        print(f"{len(equipment)} items in the paperdoll" + ("" if show_bag else f" (the character is {place})"))
+    elif isinstance(document, dict) and "applied" in document and "slots" not in document:
+        print(f"world: {document.get('message', 'done')}")
+    elif isinstance(document, dict) and "applied" in document:
+        where = "the character is in the world" if document["applied"] == "world" else "the rows only"
+        paperdoll = document.get("equipmentSlots", [])
+        print(f"world: done, changed slots {document['slots']}"
+              + (f", changed slots of the paperdoll {paperdoll}" if paperdoll else "") + f" ({where})")
+    else:
+        print(f"world: {document.get('message', body)}")
+    if status == "404" and (path == "/v1/dev/world" or ("message" not in document and
+                                                        path.startswith(("/v1/dev/items", "/v1/dev/progress")))):
+        fail("the backend has no development commands (start it with tools/dev-run.sh)")
+    if status != "200":
+        sys.exit(1)
+
+
+def fetch(data_dir: Path, path: str) -> dict:
+    """@return The JSON reply of a GET request, with no output."""
+    process, port = backend(data_dir)
+    command = ["nsenter", "-t", str(process), "-U", "-n", "--preserve-credentials", "curl", "--silent", "--max-time", "5",
+               f"http://127.0.0.1:{port}{path}"]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        fail(f"no reply of the backend (nsenter and curl gave status {result.returncode}): {result.stderr.strip()}")
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        fail("the backend has no development commands for creatures (start it with tools/dev-run.sh)")
+        return {}
+
+
+def creature_id(data_dir: Path, text: str) -> str:
+    """@return The id of the creature whose id is the text, or ends with it."""
+    if not re.fullmatch(r"[0-9a-fA-F]{1,16}", text):
+        fail("the creature must be its id (hexadecimal digits)")
+    if len(text) == 16:
+        return text.lower()
+    found = [creature["id"] for creature in fetch(data_dir, "/v1/dev/creatures").get("creatures", [])
+             if creature["id"].endswith(text.lower())]
+    if len(found) != 1:
+        fail(f"{len(found)} creatures of the world have an id that ends with {text}")
+    return found[0]
+
+
+def creature_text(creature: dict) -> str:
+    x, y, z = creature["position"]
+    distance = f"  {creature['distance']:6.1f} m" if "distance" in creature else ""
+    return (f"creature {creature['id']}  {creature['kind']:<28} {creature['name']:<22} level {creature['level']:>2}  "
+            f"health {creature['health']:.1f} of {creature['healthMax']:.1f}{'  DEAD' if creature['dead'] else ''}  "
+            f"position {x:.3f} {y:.3f} {z:.3f}{distance}  {'spawn point' if creature['spawnPoint'] else 'command'}")
+
+
+def show_creatures(document: dict) -> None:
+    if not document["data"]:
+        print("the backend has no creature data: make the file with tools/gamedata/creatures.sh")
+        return
+    for creature in document["creatures"]:
+        print(creature_text(creature))
+    counts = document["counts"]
+    print(f"{len(document['creatures'])} creatures in the list, {document['total']} in the world; "
+          f"{document['spawnPoints']} spawn points, {document['spawnPointsWaiting']} of them wait; made by a spawn point "
+          f"{counts['spawnedByPoint']}, by a command {counts['spawnedByCommand']}; removed by the distance rule "
+          f"{counts['removedByDistance']}, by a command {counts['removedByCommand']}; deaths {counts['deaths']}; the "
+          f"largest number at one time {counts['largest']}")
+
+
+def show_progress(document: dict) -> None:
+    place = "in the world" if document["inWorld"] else "not in the world"
+    following = document["nextLevelExperience"]
+    print(f"level {document['level']}, experience {document['experience']}"
+          + (f" (the next level starts at {following})" if following else "")
+          + f", health {document['health']:.0f} of {document['healthMax']:.0f} (the character is {place})")
+    values = ", ".join(f"{name} {entry['value']}" for name, entry in document["attributes"].items())
+    print(f"attributes: {values}; {document['freeAttributePoints']} free point(s)")
+    if not document["tables"]:
+        print("the backend has no progression tables: no list of the weapons and of the trade skills")
+        return
+    for weapon in document["weapons"]:
+        if weapon["level"] == 1 and not weapon["experience"] and not weapon["nodes"]:
+            continue
+        bar = ", ".join(place or "-" for place in weapon["bar"])
+        print(f"weapon {weapon['id']:<26} level {weapon['level']:>2}, experience {weapon['experience']} of "
+              f"{weapon['nextLevel']}, {weapon['freePoints']} free and {weapon['spentPoints']} spent point(s)")
+        if weapon["nodes"]:
+            print(f"    nodes: {', '.join(weapon['nodes'])}")
+            print(f"    bar: {bar}")
+    for skill in document["tradeSkills"]:
+        if skill["level"] or skill["experience"]:
+            print(f"trade skill {skill['id']:<21} level {skill['level']:>3}, experience {skill['experience']} of "
+                  f"{skill['nextLevel']}")
+    weapons = sum(1 for weapon in document["weapons"] if weapon["level"] > 1 or weapon["experience"] or weapon["nodes"])
+    skills = sum(1 for skill in document["tradeSkills"] if skill["level"] or skill["experience"])
+    print(f"{weapons} of {len(document['weapons'])} weapons and {skills} of {len(document['tradeSkills'])} trade skills "
+          "are above the start")
+
+
+def show(entity: dict) -> None:
+    x, y, z = entity["position"]
+    session = f"session s{entity['session']}" if entity["session"] else "no session"
+    owner = entity["character"] or f"({entity.get('kind', 'entity')})"
+    print(f"entity {entity['entity']}  actor {entity['actor']}  {entity['name']:<16} {owner}  "
+          f"{session:<11} position {x:.3f} {y:.3f} {z:.3f}")
+
+
+def whole(word: str, what: str) -> int:
+    if not word.isdigit():
+        fail(f"{what} must be a whole number, 0 or more")
+    return int(word)
+
+
+def coin_amount(word: str) -> int:
+    """@return The amount in hundredths of a coin from a text such as 123.45."""
+    if not re.fullmatch(r"[0-9]+(\.[0-9]{1,2})?", word):
+        fail("give the coin as a number with 2 decimals at most, for example 123.45")
+    units, _, cents = word.partition(".")
+    return int(units) * 100 + int(cents.ljust(2, "0") or 0)
+
+
+def numbers(words: list[str], count: int) -> list[float]:
+    try:
+        values = [float(word) for word in words]
+    except ValueError:
+        fail("a distance or a position must be a number")
+    if len(values) != count:
+        fail(f"give {count} numbers")
+    return values
+
+
+def creature_command(data_dir: Path, arguments: list[str]) -> None:
+    action = arguments[0]
+    if action == "spawn" and len(arguments) >= 3:
+        options = ""
+        words = arguments[3:]
+        for name in ("--level", "--yaw"):
+            if name in words:
+                place = words.index(name)
+                if place + 1 >= len(words):
+                    fail(f"give a value after {name}")
+                value = whole(words[place + 1], "the level") if name == "--level" else numbers(words[place + 1:place + 2], 1)[0]
+                options += f"&{name[2:]}={value}"
+                del words[place:place + 2]
+        if not re.fullmatch(r"[A-Za-z0-9_:+-]+", arguments[1]):
+            fail("the kind must be an id of the creature data (tools/world kinds)")
+        if words:
+            dx, dy, dz = numbers(words, 3)
+            options += f"&dx={dx}&dy={dy}&dz={dz}"
+        request(data_dir, "POST", f"/v1/dev/creatures/spawn?character={character_id(data_dir, arguments[2])}"
+                                  f"&kind={arguments[1]}{options}")
+    elif action in ("remove", "kill") and len(arguments) == 2:
+        request(data_dir, "POST", f"/v1/dev/creatures/{action}?creature={creature_id(data_dir, arguments[1])}")
+    elif action == "health" and len(arguments) == 3:
+        value = arguments[2]
+        if value.endswith("%"):
+            amount = f"percent={numbers([value[:-1]], 1)[0]}"
+        else:
+            amount = f"health={numbers([value], 1)[0]}"
+        request(data_dir, "POST", f"/v1/dev/creatures/health?creature={creature_id(data_dir, arguments[1])}&{amount}")
+    elif action == "reset" and len(arguments) == 1:
+        request(data_dir, "POST", "/v1/dev/creatures/reset")
+    else:
+        fail("unknown creature command. tools/world --help prints the commands.")
+
+
+def main() -> None:
+    arguments = sys.argv[1:]
+    if not arguments or arguments[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return
+    data_dir = dev_env.data_dir()
+    command = arguments[0]
+    if command == "list" and len(arguments) == 1:
+        request(data_dir, "GET", "/v1/dev/world")
+    elif command == "characters" and len(arguments) == 1:
+        for identifier, name in characters(data_dir):
+            print(f"{identifier}  {name}")
+    elif command == "spawn" and len(arguments) >= 3:
+        target = character_id(data_dir, arguments[1])
+        if arguments[2] == "--at":
+            x, y, z = numbers(arguments[3:], 3)
+            request(data_dir, "POST", f"/v1/dev/world/spawn?character={target}&x={x}&y={y}&z={z}")
+        elif arguments[2] == "--near" and len(arguments) >= 4:
+            other = character_id(data_dir, arguments[3])
+            dx, dy, dz = numbers(arguments[4:], 3) if len(arguments) > 4 else (2.0, 2.0, 0.0)
+            request(data_dir, "POST", f"/v1/dev/world/spawn?character={target}&near={other}&dx={dx}&dy={dy}&dz={dz}")
+        else:
+            fail("give the position: --at X Y Z, or --near OTHER [DX DY DZ]")
+    elif command == "fragment" and len(arguments) == 5:
+        try:
+            slot, type_index = int(arguments[2]), int(arguments[3])
+            state = bytes.fromhex(arguments[4]).hex()
+        except ValueError:
+            fail("give the slot and the type as numbers, and the state as hexadecimal text")
+        # A text of hexadecimal digits that is not the name of a character is the id of a creature.
+        names = [name for _, name in characters(data_dir)]
+        if re.fullmatch(r"[0-9a-fA-F]{1,16}", arguments[1]) and arguments[1] not in names:
+            target = f"creature={creature_id(data_dir, arguments[1])}"
+        else:
+            target = f"character={character_id(data_dir, arguments[1])}"
+        request(data_dir, "POST", f"/v1/dev/world/fragment?{target}&slot={slot}&type={type_index}&state={state}")
+    elif command == "creatures" and len(arguments) in (1, 2, 3):
+        query = f"?character={character_id(data_dir, arguments[1])}" if len(arguments) > 1 else ""
+        if len(arguments) == 3:
+            query += f"&range={numbers(arguments[2:], 1)[0]}"
+        request(data_dir, "GET", f"/v1/dev/creatures{query}")
+    elif command == "kinds" and len(arguments) in (1, 2):
+        if len(arguments) == 2 and not re.fullmatch(r"[A-Za-z0-9_:+-]+", arguments[1]):
+            fail("the text can have letters, digits, and the characters _ : + -")
+        request(data_dir, "GET", "/v1/dev/creatures/kinds" + (f"?q={arguments[1]}" if len(arguments) == 2 else ""))
+    elif command == "creature" and len(arguments) >= 2:
+        creature_command(data_dir, arguments[1:])
+    elif command == "items" and len(arguments) == 2:
+        request(data_dir, "GET", f"/v1/dev/items?character={character_id(data_dir, arguments[1])}")
+    elif command == "give" and len(arguments) in (3, 4):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[2]):
+            fail("the item must be the ItemID text of the item catalog")
+        quantity = whole(arguments[3], "the quantity") if len(arguments) == 4 else 1
+        request(data_dir, "POST", f"/v1/dev/items/give?character={character_id(data_dir, arguments[1])}"
+                                  f"&item={arguments[2]}&quantity={quantity}")
+    elif command == "take" and len(arguments) in (3, 4):
+        quantity = f"&quantity={whole(arguments[3], 'the quantity')}" if len(arguments) == 4 else ""
+        request(data_dir, "POST", f"/v1/dev/items/remove?character={character_id(data_dir, arguments[1])}"
+                                  f"&slot={whole(arguments[2], 'the slot')}{quantity}")
+    elif command == "coin" and len(arguments) == 3:
+        request(data_dir, "POST", f"/v1/dev/items/coin?character={character_id(data_dir, arguments[1])}"
+                                  f"&amount={coin_amount(arguments[2])}")
+    elif command == "move" and len(arguments) == 4:
+        request(data_dir, "POST", f"/v1/dev/items/move?character={character_id(data_dir, arguments[1])}"
+                                  f"&from={whole(arguments[2], 'the slot')}&to={whole(arguments[3], 'the slot')}")
+    elif command == "split" and len(arguments) in (4, 5):
+        target = f"&to={whole(arguments[4], 'the slot')}" if len(arguments) == 5 else ""
+        request(data_dir, "POST", f"/v1/dev/items/split?character={character_id(data_dir, arguments[1])}"
+                                  f"&slot={whole(arguments[2], 'the slot')}&quantity={whole(arguments[3], 'the quantity')}{target}")
+    elif command == "lock" and len(arguments) == 4 and arguments[3] in ("on", "off"):
+        request(data_dir, "POST", f"/v1/dev/items/lock?character={character_id(data_dir, arguments[1])}"
+                                  f"&slot={whole(arguments[2], 'the slot')}&locked={1 if arguments[3] == 'on' else 0}")
+    elif command == "equipment" and len(arguments) == 2:
+        request(data_dir, "GET", f"/v1/dev/items?character={character_id(data_dir, arguments[1])}", show_bag=False)
+    elif command == "equip" and len(arguments) in (3, 4):
+        slot = f"&slot={whole(arguments[3], 'the slot of the paperdoll')}" if len(arguments) == 4 else ""
+        request(data_dir, "POST", f"/v1/dev/items/equip?character={character_id(data_dir, arguments[1])}"
+                                  f"&from={whole(arguments[2], 'the slot of the bag')}{slot}")
+    elif command == "unequip" and len(arguments) in (3, 4):
+        target = f"&to={whole(arguments[3], 'the slot of the bag')}" if len(arguments) == 4 else ""
+        request(data_dir, "POST", f"/v1/dev/items/unequip?character={character_id(data_dir, arguments[1])}"
+                                  f"&slot={whole(arguments[2], 'the slot of the paperdoll')}{target}")
+    elif command == "progress" and len(arguments) == 2:
+        request(data_dir, "GET", f"/v1/dev/progress?character={character_id(data_dir, arguments[1])}")
+    elif command == "level" and len(arguments) == 3:
+        request(data_dir, "POST", f"/v1/dev/progress/level?character={character_id(data_dir, arguments[1])}"
+                                  f"&level={whole(arguments[2], 'the level')}")
+    elif command == "xp" and len(arguments) == 3:
+        request(data_dir, "POST", f"/v1/dev/progress/experience?character={character_id(data_dir, arguments[1])}"
+                                  f"&amount={whole(arguments[2], 'the amount')}")
+    elif command == "attribute" and len(arguments) == 4:
+        if not re.fullmatch(r"[a-z0-4]+", arguments[2]):
+            fail("the attribute must be constitution, focus, strength, dexterity, or intelligence")
+        request(data_dir, "POST", f"/v1/dev/progress/attribute?character={character_id(data_dir, arguments[1])}"
+                                  f"&attribute={arguments[2]}&value={whole(arguments[3], 'the value')}")
+    elif command in ("mastery", "tradeskill") and len(arguments) in (4, 5):
+        if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[2]):
+            fail("the name must be the id of a weapon or of a trade skill of the game tables")
+        experience = f"&experience={whole(arguments[4], 'the experience')}" if len(arguments) == 5 else ""
+        name = "weapon" if command == "mastery" else "skill"
+        request(data_dir, "POST", f"/v1/dev/progress/{command}?character={character_id(data_dir, arguments[1])}"
+                                  f"&{name}={arguments[2]}&level={whole(arguments[3], 'the level')}{experience}")
+    elif command == "skillxp" and len(arguments) == 4:
+        if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[2]):
+            fail("the name must be the id of a weapon or of a trade skill of the game tables")
+        request(data_dir, "POST", f"/v1/dev/progress/skill-experience?character={character_id(data_dir, arguments[1])}"
+                                  f"&id={arguments[2]}&amount={whole(arguments[3], 'the amount')}")
+    elif command in ("remove", "touch") and len(arguments) == 2:
+        request(data_dir, "POST", f"/v1/dev/world/{command}?character={character_id(data_dir, arguments[1])}")
+    else:
+        fail("unknown command. tools/world --help prints the commands.")
+
+
+if __name__ == "__main__":
+    main()

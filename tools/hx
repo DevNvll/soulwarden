@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Send automation commands to the game harness and print the result.
+# Usage: tools/hx 'key 0x0D' 'wait 500' 'click 640 360'
+set -euo pipefail
+source "$(dirname -- "${BASH_SOURCE[0]}")/dev-env.sh"
+data_dir="${dev_data_dir}"
+harness_dir="${data_dir}/client/harness"
+mkdir -p "${harness_dir}"
+rm -f "${harness_dir}/result.txt"
+printf '%s\n' "$@" >"${harness_dir}/command.tmp"
+mv "${harness_dir}/command.tmp" "${harness_dir}/command.txt"
+for ((attempt = 0; attempt < 300; ++attempt)); do
+    if [[ -f "${harness_dir}/result.txt" ]]; then
+        cat "${harness_dir}/result.txt"
+        exit 0
+    fi
+    sleep 0.1
+done
+echo "harness: no result" >&2
+exit 1

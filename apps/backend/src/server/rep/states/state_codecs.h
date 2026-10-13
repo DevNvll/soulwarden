@@ -1,0 +1,247 @@
+#pragma once
+
+#include <cstdint>
+#include <span>
+#include <vector>
+
+#include "server/hub/wire.h"
+#include "world/entity.h"
+#include "world/world_clock.h"
+
+// One encoder for each component state of an entity. An encoder makes the wire form of the
+// state from the entity of the world, for one of two views (roadmap, rule MP-3):
+//   owner     the session whose client plays the character
+//   observer  each other session that observes the entity
+// No other code writes the bytes of a state. The fields of each view are in the file of the
+// state and in the protocol notes (4.9, 4.10 for the items and the coin, 4.11 for the
+// equipment, 4.12 for the level and the attributes, 4.13 for the skills, and 4.14 for a
+// creature).
+//
+// A state that only the owner gets (the remote player slice has no facet for its component)
+// has the mark `ownerOnly`: a session sends no fragment of it for the observer view.
+//
+// A creature has its own codec list (creature_codecs): it has only the observer view, and the
+// slot of each of its states is a value of its slice (game data).
+//
+// The slots are the slots of slices/player.dynamicslice. slices/remoteplayer.dynamicslice,
+// which the client uses for the player of a different client, has the same slot for each
+// component that it keeps (protocol notes 4.4).
+
+namespace soulwarden::backend::server::rep {
+
+/** Type indexes of the state types (typeindex.json of the supported client build). */
+inline constexpr std::uint32_t kTypeGdeMetadataState = 10;     // 203dc8c7-0c60-454b-a46f-566114314b84
+inline constexpr std::uint32_t kTypePlayerComponentState = 3935; // MB::PlayerComponentReplicatedState
+inline constexpr std::uint32_t kTypeMovementState = 11;         // MB::ALCReplicatedState
+inline constexpr std::uint32_t kTypeVitalsState = 15;           // MB::VitalsComponentReplicatedState
+inline constexpr std::uint32_t kTypeAppearanceState = 1195;     // MB::PlayerAppearanceComponentReplicatedState
+inline constexpr std::uint32_t kTypeProgressionState = 899;     // MB::ProgressionComponentReplicatedState
+inline constexpr std::uint32_t kTypeCurrencyState = 3786;       // MB::CurrencyComponentReplicatedState
+inline constexpr std::uint32_t kTypeContainerState = 1755;      // MB::ContainerComponentReplicatedState
+inline constexpr std::uint32_t kTypePaperdollState = 3183;      // MB::PaperdollComponentReplicatedState
+inline constexpr std::uint32_t kTypeAttributeState = 129;       // MB::AttributeComponentReplicatedState
+inline constexpr std::uint32_t kTypeCategoricalState = 911;     // MB::CategoricalProgressionReplicatedState
+inline constexpr std::uint32_t kTypePointsState = 3681;         // MB::ProgressionPointReplicatedState
+inline constexpr std::uint32_t kTypeAbilityState = 185;         // MB::AbilityComponentReplicatedState
+inline constexpr std::uint32_t kTypeMarkerState = 5399;         // MB::MarkerComponentReplicatedState
+
+/** Slot of the metadata state in each slice. */
+inline constexpr std::uint32_t kMetadataSlot = 0;
+/** Slots of the components in the component list of slices/player.dynamicslice. */
+inline constexpr std::uint32_t kPlayerComponentSlot = 9;
+inline constexpr std::uint32_t kAppearanceSlot = 12;
+inline constexpr std::uint32_t kMovementSlot = 16;
+inline constexpr std::uint32_t kVitalsSlot = 41;
+/** The components Currency, Container (the bag), and Paperdoll (the equipment) of the entity "Inventory" of the player slice. */
+inline constexpr std::uint32_t kCurrencySlot = 60;
+inline constexpr std::uint32_t kContainerSlot = 61;
+/** The remote player slice has the paperdoll component at the same slot. */
+inline constexpr std::uint32_t kPaperdollSlot = 62;
+/**
+ * The component Progression (level and experience) of the entity "GameEvents" of the player
+ * slice. The remote player slice has it at the same slot.
+ */
+inline constexpr std::uint32_t kProgressionSlot = 70;
+/** The component Attribute of the entity "RootPlayer" of the player slice. */
+inline constexpr std::uint32_t kAttributeSlot = 27;
+/** The components CategoricalProgression and ProgressionPoint of the entity "GameEvents", and Ability of the entity "Stats". */
+inline constexpr std::uint32_t kCategoricalSlot = 65;
+inline constexpr std::uint32_t kPointsSlot = 67;
+inline constexpr std::uint32_t kAbilitySlot = 46;
+
+enum class View {
+    owner,
+    observer,
+};
+
+using StateEncoder = server::hub::Bytes (*)(const world::Entity& entity, View view, const world::WorldClock& clock);
+
+/** What an encoder of a state with more than one fragment gets from the session. */
+struct PartsRequest {
+    /**
+     * World revision of the last record of the session for the entity. 0: the session has no
+     * record of the entity, and the client has nothing of the state.
+     */
+    world::Revision since{0};
+    /** Largest number of bytes of one fragment state, so that one bundle stays in one carrier message. */
+    std::size_t budget{0};
+};
+
+/**
+ * Encoder of a state that can need more than one fragment: a state with a list that is larger
+ * than one carrier message. The session sends each part in its own record, in this sequence.
+ */
+using PartsEncoder = std::vector<server::hub::Bytes> (*)(const world::Entity& entity, View view, const PartsRequest& request);
+
+struct StateCodec {
+    world::ComponentKey key;
+    /** Index of the component in the component list of the slice (`m_replicationIndex`). */
+    std::uint32_t slot;
+    std::uint32_t type;
+    /** Encoder of a state with one fragment. Null when `parts` is set. */
+    StateEncoder encode;
+    PartsEncoder parts{nullptr};
+    /** True: only the session of the owner gets the state. */
+    bool ownerOnly{false};
+    /**
+     * For a state of a creature: the slot of the component in the slice of the creature, which
+     * is game data (0: the slice has no such component, and the state has no fragment). Null:
+     * the slot is `slot`.
+     */
+    std::uint32_t (*slotOf)(const world::Entity& entity){nullptr};
+};
+
+/** @return The codecs of a player entity, in the sequence of the fragments of its record. */
+[[nodiscard]] std::span<const StateCodec> player_codecs();
+/**
+ * @return The codecs of a creature, in the sequence of the fragments of its record. A creature
+ *         has only the observer view.
+ */
+[[nodiscard]] std::span<const StateCodec> creature_codecs();
+/** @return The codecs of an entity of each kind. */
+[[nodiscard]] std::span<const StateCodec> codecs_of(const world::Entity& entity);
+/** @return The slot of the state of a codec for an entity. 0 for a state that is not the metadata state: no fragment. */
+[[nodiscard]] std::uint32_t slot_of(const StateCodec& codec, const world::Entity& entity);
+
+[[nodiscard]] hub::Bytes encode_metadata_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] hub::Bytes encode_player_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] hub::Bytes encode_movement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] hub::Bytes encode_vitals_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] hub::Bytes encode_appearance_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The level of the character (states/progression_state.cpp): the level and the
+ *         experience for the owner, and only the level for an observer.
+ */
+[[nodiscard]] hub::Bytes encode_progression_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/** @return The attributes of the character for the owner (states/attribute_state.cpp). No byte for the observer view. */
+[[nodiscard]] hub::Bytes encode_attribute_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * The three states of the skills of a character (states/skill_states.cpp), for the owner only:
+ * the rank and the experience of each weapon mastery and trade skill, the point pools and the
+ * nodes of the weapon trees, and the ability bar of each weapon.
+ */
+[[nodiscard]] hub::Bytes encode_categorical_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] std::vector<hub::Bytes> encode_points_state(const world::Entity& entity, View view, const PartsRequest& request);
+[[nodiscard]] std::vector<hub::Bytes> encode_ability_state(const world::Entity& entity, View view, const PartsRequest& request);
+
+/**
+ * @return The state of slot 65 for these skills.
+ * @param sequence The sequence number of each list of the state.
+ */
+[[nodiscard]] hub::Bytes encode_categorical(const world::SkillSet& skills, std::uint64_t sequence);
+/**
+ * @return The state of slot 67 for these skills: each pool and each node, in one state of each
+ *         size. The client replaces its lists with the lists of a state: the backend does not
+ *         cut this state into fragments.
+ * @param since World revision of the last record of the session: a node that the character
+ *        lost after it goes out with the level 0. 0: the client has no node.
+ */
+[[nodiscard]] hub::Bytes encode_points(const world::SkillSet& skills, std::uint64_t sequence, world::Revision since);
+/**
+ * @return The state of slot 46 for these skills: one element for each ability table of the client.
+ * @param placeNumbers True: each place has its place number (0, 1, 2) as its button number,
+ *        not the input number of the client. The client shows the same bar. The backend uses
+ *        this form only to make a state that is different from the usual one (after a bar
+ *        request that it refused).
+ */
+[[nodiscard]] hub::Bytes encode_ability_bars(const world::SkillSet& skills, bool placeNumbers = false);
+/** @return The coin of the character for the owner. No byte for the observer view. */
+[[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The fragments of the bag for the owner (states/container_state.cpp): the full vector
+ *         for a session that has no record of the entity, and after that only the slots that
+ *         changed. No fragment for the observer view.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_container_state(const world::Entity& entity, View view, const PartsRequest& request);
+
+/**
+ * @return The fragments of the equipment (states/paperdoll_state.cpp): for a session with no
+ *         record of the entity each slot that has an item, and after that only the slots that
+ *         changed. The owner gets each item. An observer gets the look of the items that show
+ *         on the body, and no fragment when the entity has no such item.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_paperdoll_state(const world::Entity& entity, View view, const PartsRequest& request);
+
+/** How the encoder writes one item. */
+struct ItemWire {
+    /**
+     * True: an item has the appearance id and the skin dye bytes at its end (8 bytes). The
+     * client reads them when its setting `javelin.enable-transmog` is true, which is the
+     * default of the supported build (live read: protocol notes 4.10).
+     */
+    bool transmog{true};
+    /**
+     * The cause of the empty element. The start value of a slot for a container. The
+     * paperdoll uses "unequipped": the client does the entries with that cause first.
+     */
+    std::uint8_t emptyAction{world::sync::kLoad};
+};
+
+/**
+ * @return The wire form of one element of a container: the item of a slot, or the empty
+ *         element when `item` is null or has no index (states/container_state.cpp).
+ * @param slot Number of the slot in its container (0 to 500), or 501 for an item that is in
+ *        no container (an item of the paperdoll).
+ * @param action The cause of the change (world/item.h, namespace sync).
+ */
+[[nodiscard]] hub::Bytes encode_item(const world::ItemInstance* item,
+                                     std::uint32_t slot,
+                                     std::uint8_t action,
+                                     ItemWire wire = {});
+
+/**
+ * @return The look of an item for the client of an observer: the item index with no dye and
+ *         no appearance, or the index 0 when `item` is null or has no index
+ *         (states/paperdoll_state.cpp).
+ */
+[[nodiscard]] hub::Bytes encode_item_look(const world::ItemInstance* item, ItemWire wire = {});
+
+/** @return The movement state of a creature (states/movement_state.cpp): its position and its direction. */
+[[nodiscard]] hub::Bytes encode_creature_movement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The vitals state of a creature (states/vitals_state.cpp), in one fragment: the full
+ *         state for a session that has no record of the creature, and after that the health
+ *         and the dead mark.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_creature_vitals_state(const world::Entity& entity, View view, const PartsRequest& request);
+/** @return The marker state of a creature (states/marker_state.cpp): the name plate is on. */
+[[nodiscard]] hub::Bytes encode_marker_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+
+/**
+ * @return The id of a movement state for the owner: a value that is 0x4000 or more from the
+ *         newest input number of its client, thus not the number of an input that the client
+ *         has in its history (states/movement_state.cpp).
+ * @param newestInput The newest input number that the session got from its client. 0 before
+ *        the first input report.
+ */
+[[nodiscard]] std::uint16_t movement_state_id(std::uint16_t newestInput);
+
+/**
+ * @return The heartbeat state of the movement component: a new time anchor and the id of the
+ *         state. The owner gets it at a constant interval after its full movement state
+ *         (states/movement_state.cpp).
+ * @param newestInput The newest input number that the session got from its client.
+ */
+[[nodiscard]] hub::Bytes encode_movement_heartbeat(const world::WorldClock& clock, std::uint16_t newestInput);
+
+} // namespace soulwarden::backend::server::rep

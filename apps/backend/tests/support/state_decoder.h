@@ -1,0 +1,393 @@
+#pragma once
+
+#include <cstdint>
+#include <map>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "server/hub/wire.h"
+#include "support/item_decoder.h"
+#include "support/paperdoll_decoder.h"
+#include "support/progress_decoder.h"
+
+// Decoder of a state bundle from the formats of the protocol notes (4.1 to 4.3, 4.10 to 4.13). It
+// reads each field of the state types that the backend sends for the local player, so that a
+// test can compare a field and prove that a record has no unknown byte.
+
+namespace soulwarden::backend::tests {
+
+using server::hub::Bytes;
+
+struct Fragment {
+    std::uint32_t slot{};
+    std::uint32_t type{};
+    /** (group, field) to the bytes of the value. */
+    std::map<std::pair<unsigned, unsigned>, Bytes> fields;
+};
+
+struct Record {
+    std::uint32_t interest{};
+    std::vector<Fragment> fragments;
+};
+
+struct Bundle {
+    std::uint64_t sequence{};
+    std::uint8_t instance{};
+    std::vector<Record> records;
+    /** Interest numbers of the control block: the client removes these entities. */
+    std::vector<std::uint32_t> stops;
+    /** Numbers of the control block after the stop numbers ("pause"). The backend sends none. */
+    std::vector<std::uint32_t> pauses;
+    /** True when the decoder read the bundle to its last byte. */
+    bool complete{false};
+};
+
+namespace detail {
+
+/** @return The size of the value of one field, or -1 when the decoder does not know the field. */
+inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::span<const std::uint8_t> rest) {
+    const auto text_size = [&](std::size_t offset) -> int {
+        if (rest.size() <= offset) {
+            return -1;
+        }
+        server::hub::Reader reader(rest.subspan(offset));
+        const std::uint32_t length = reader.size();
+        return static_cast<int>(offset + reader.position() + length);
+    };
+    switch (type) {
+    case 10: // GdeMetadata: asset id (16 bytes and sub id), actor id (16 bytes).
+        return group == 0 && field == 0 ? 20 : group == 0 && field == 1 ? 16 : -1;
+    case 3935: // PlayerComponent, group 2: character id (flags, text), name (text), connected (flag).
+        if (group != 2) {
+            return -1;
+        }
+        return field == 0 ? text_size(1) : field == 1 ? text_size(0) : field == 3 ? 1 : -1;
+    case 11: // Movement state.
+        if (group != 0) {
+            return -1;
+        }
+        switch (field) {
+        case 0:
+        case 25:
+            return 1; // idRel and idAbs: the low and the high 8 bits of the id of the state.
+        case 11:
+        case 12: {
+            // Compressed quaternion: the header, and one byte for each component that is not
+            // the largest one and not zero (bits 1 to 4: x, y, z, w is zero; bits 5 and 6: the
+            // largest component).
+            if (rest.empty()) {
+                return -1;
+            }
+            int size = 1;
+            for (unsigned component = 0; component < 4; ++component) {
+                const bool largest = ((rest[0] >> 5) & 3U) == component;
+                const bool zero = (rest[0] & (2U << component)) != 0;
+                size += !largest && !zero ? 1 : 0;
+            }
+            return size;
+        }
+        case 28:
+        case 38:
+        case 49:
+        case 50:
+            return 1; // One byte of the time of scope 0.
+        case 29:
+        case 33: {
+            // A blob: its byte count in the size code, then the bytes.
+            if (rest.empty()) {
+                return -1;
+            }
+            server::hub::Reader reader(rest);
+            const std::uint32_t length = reader.size();
+            return reader.ok() ? static_cast<int>(reader.position() + length) : -1;
+        }
+        case 32: {
+            if (rest.empty()) {
+                return -1;
+            }
+            server::hub::Reader reader(rest);
+            reader.size();
+            return reader.ok() ? static_cast<int>(reader.position()) : -1;
+        }
+        case 34:
+            return 12; // The tag state of the fragments.
+        case 13:
+        case 15: {
+            // State id and sequence id of action layer 0: a number in the size code.
+            if (rest.empty()) {
+                return -1;
+            }
+            server::hub::Reader reader(rest);
+            reader.size();
+            return reader.ok() ? static_cast<int>(reader.position()) : -1;
+        }
+        case 14:
+            return 2;
+        case 47:
+            return 1;
+        case 27:
+            return 10;
+        case 31:
+        case 41:
+        case 42:
+            return 1;
+        case 40:
+            return 8;
+        default:
+            return -1;
+        }
+    case 15: // Vitals.
+        if (group == 0) {
+            switch (field) {
+            case 0:
+            case 1:
+            case 4:
+            case 6:
+            case 8:
+            case 9:
+            case 10:
+                return 4;
+            case 5:
+            case 7:
+            case 13:
+                return 2;
+            case 2:
+                return 18; // vitalsData: flags, two times, a count.
+            case 3:
+            case 11:
+            case 12:
+                return 1;
+            default:
+                return -1;
+            }
+        }
+        return group == 1 ? (field == 0 || field == 3 ? 4 : field == 4 ? 2 : -1) : -1;
+    case 5399: // Marker: enabled.
+        return group == 0 && field == 0 ? 1 : -1;
+    case 1195: // Appearance: 12 fields of one byte.
+        return group == 0 && field < 12 ? 1 : -1;
+    case 899: // Progression: level and bonus level (group 0), experience and rested experience (group 1).
+        return (group == 0 || group == 1) && field < 2 ? 4 : -1;
+    case 3786: // Currency: the amount, 64 bits.
+        return group == 0 && field == 0 ? 8 : -1;
+    case 1755: { // Container: the vector of the slots.
+        if (group != 0 || field != 0) {
+            return -1;
+        }
+        const WireContainer container = read_container(rest);
+        return container.ok ? static_cast<int>(container.size) : -1;
+    }
+    case 3183: // Paperdoll: the lists and the maps of the equipment.
+        return paperdoll_value_size(group, field, rest);
+    case 129: // Attribute: the values, the two bonus containers, the points.
+        return progress_wire::attribute_value_size(group, field, rest);
+    case 911: // Categorical progression: the three lists of the masteries and the trade skills.
+        return progress_wire::categorical_value_size(group, field, rest);
+    case 3681: // Progression points: the pools and the nodes of the weapon trees.
+        return progress_wire::points_value_size(group, field, rest);
+    case 185: // Ability: the bar of each weapon.
+        return progress_wire::ability_value_size(group, field, rest);
+    default:
+        return -1;
+    }
+}
+
+inline unsigned group_count(std::uint32_t type) {
+    switch (type) {
+    case 10:
+    case 5399:
+    case 1195:
+    case 3786:
+    case 1755:
+    case 129:
+    case 911:
+    case 3681:
+    case 185:
+        return 1;
+    case 3935:
+    case 3183:
+        return 3;
+    case 11:
+    case 15:
+    case 899:
+        return 2;
+    default:
+        return 0;
+    }
+}
+
+inline bool read_field(std::span<const std::uint8_t> data, std::size_t& position, Fragment& fragment, unsigned group,
+                       unsigned field) {
+    const int size = value_size(fragment.type, group, field, data.subspan(position));
+    if (size < 0 || position + static_cast<std::size_t>(size) > data.size()) {
+        return false;
+    }
+    fragment.fields[{group, field}] = Bytes(data.begin() + static_cast<std::ptrdiff_t>(position),
+                                            data.begin() + static_cast<std::ptrdiff_t>(position + size));
+    position += static_cast<std::size_t>(size);
+    return true;
+}
+
+inline bool read_state(std::span<const std::uint8_t> data, std::size_t& position, Fragment& fragment) {
+    const unsigned groups = group_count(fragment.type);
+    if (groups == 0 || position >= data.size()) {
+        return false;
+    }
+    const std::uint8_t groupMask = data[position++];
+    for (unsigned group = 0; group < groups; ++group) {
+        if ((groupMask & (1U << group)) == 0) {
+            continue;
+        }
+        if (fragment.type == 11) {
+            // Wide form: one number with one bit for each field.
+            server::hub::Reader reader(data.subspan(position));
+            const std::uint64_t mask = reader.size64();
+            position += reader.position();
+            for (unsigned field = 0; field < 64; ++field) {
+                if (((mask >> field) & 1U) != 0 && !read_field(data, position, fragment, group, field)) {
+                    return false;
+                }
+            }
+            continue;
+        }
+        // Common form: mask bytes with 7 fields each. The values follow each mask byte.
+        for (unsigned base = 0;; base += 7) {
+            if (position >= data.size()) {
+                return false;
+            }
+            const std::uint8_t mask = data[position++];
+            for (unsigned bit = 0; bit < 7; ++bit) {
+                if ((mask & (1U << bit)) != 0 && !read_field(data, position, fragment, group, base + bit)) {
+                    return false;
+                }
+            }
+            if ((mask & 0x80) == 0) {
+                break;
+            }
+        }
+    }
+    return true;
+}
+
+} // namespace detail
+
+/** Reads the body of a ReplicatedStateBundle message (type 8). */
+inline Bundle read_bundle(std::span<const std::uint8_t> body) {
+    Bundle bundle;
+    server::hub::Reader reader(body);
+    if (reader.u8() != 1) {
+        return bundle;
+    }
+    bundle.sequence = reader.size64();
+    bundle.instance = reader.u8();
+    reader.u8();
+    const std::uint8_t unreliable = reader.u8();
+    const std::uint8_t control = reader.u8();
+    if (unreliable > 1 || control > 1) {
+        return bundle;
+    }
+    if (control == 1) {
+        // Control block: stopCount:size count:size (interest:u16)*count.
+        const std::uint32_t stopCount = reader.size();
+        const std::uint32_t count = reader.size();
+        if (stopCount > count || count > 100) {
+            return bundle;
+        }
+        for (std::uint32_t index = 0; index < count; ++index) {
+            (index < stopCount ? bundle.stops : bundle.pauses).push_back(reader.u16());
+        }
+    }
+    const std::uint32_t size = reader.size();
+    if (!reader.ok() || reader.position() + size != body.size()) {
+        return bundle;
+    }
+    const auto payload = body.subspan(reader.position());
+    std::size_t position = 0;
+    while (position < payload.size()) {
+        server::hub::Reader head(payload.subspan(position));
+        Record record;
+        record.interest = head.size();
+        const unsigned count = head.u8();
+        position += head.position();
+        for (unsigned index = 0; index < count; ++index) {
+            server::hub::Reader fragmentHead(payload.subspan(position));
+            Fragment fragment;
+            fragment.slot = fragmentHead.size();
+            fragment.type = fragmentHead.size();
+            position += fragmentHead.position();
+            if (!detail::read_state(payload, position, fragment)) {
+                return bundle;
+            }
+            record.fragments.push_back(std::move(fragment));
+        }
+        bundle.records.push_back(std::move(record));
+    }
+    bundle.complete = position == payload.size();
+    return bundle;
+}
+
+/** @return The fragment of a record for a slot, or null. */
+inline const Fragment* fragment_of(const Record& record, std::uint32_t slot) {
+    for (const Fragment& fragment : record.fragments) {
+        if (fragment.slot == slot) {
+            return &fragment;
+        }
+    }
+    return nullptr;
+}
+
+/** @return The value of a field of a fragment, or an empty value when the fragment does not have the field. */
+inline std::span<const std::uint8_t> field_of(const Fragment& fragment, unsigned group, unsigned field) {
+    const auto found = fragment.fields.find({group, field});
+    return found == fragment.fields.end() ? std::span<const std::uint8_t>{} : std::span<const std::uint8_t>(found->second);
+}
+
+/** @return The attribute state of a fragment of slot 27 with its four fields. */
+inline WireAttributes attributes_of(const Fragment& fragment) {
+    return fragment.fields.size() == 4 ? read_attributes({field_of(fragment, 0, 0), field_of(fragment, 0, 1),
+                                                           field_of(fragment, 0, 2), field_of(fragment, 0, 3)})
+                                       : WireAttributes{};
+}
+
+/** @return The masteries and the trade skills of a fragment of slot 65 with its three fields. */
+inline WireRanks ranks_of(const Fragment& fragment) {
+    return fragment.fields.size() == 3
+               ? read_ranks({field_of(fragment, 0, 0), field_of(fragment, 0, 1), field_of(fragment, 0, 2)})
+               : WireRanks{};
+}
+
+/** @return The pools and the nodes of a fragment of slot 67 with its four fields. */
+inline WirePools pools_of(const Fragment& fragment) {
+    return fragment.fields.size() == 4 ? read_pools({field_of(fragment, 0, 0), field_of(fragment, 0, 1),
+                                                     field_of(fragment, 0, 2), field_of(fragment, 0, 3)})
+                                       : WirePools{};
+}
+
+/** @return The ability bars of a fragment of slot 46. */
+inline WireBars bars_of(const Fragment& fragment) {
+    return fragment.fields.size() == 1 ? read_bars(field_of(fragment, 0, 0)) : WireBars{};
+}
+
+/** @return The fragments of a record as text, for example "(0,10) (9,3935) ". */
+inline std::string order_of(const Record& record) {
+    std::string text;
+    for (const Fragment& fragment : record.fragments) {
+        text += "(" + std::to_string(fragment.slot) + "," + std::to_string(fragment.type) + ") ";
+    }
+    return text;
+}
+
+/** @return The text of a field value. `skip` is the number of bytes before the text. */
+inline std::string text_of(const Bytes& value, std::size_t skip) {
+    server::hub::Reader reader(std::span<const std::uint8_t>(value).subspan(skip));
+    return reader.string();
+}
+
+inline float float_at(const Bytes& value, std::size_t offset) {
+    server::hub::Reader reader(std::span<const std::uint8_t>(value).subspan(offset));
+    return reader.f32();
+}
+
+} // namespace soulwarden::backend::tests

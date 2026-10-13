@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Print the wire layout of replicated state types. Usage: tools/st NAME_REGEX
+set -euo pipefail
+tool_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec "${SOULWARDEN_PYTHON:-${HOME}/Games/soulwarden/venv/bin/python}" -I "${tool_directory}/statetype.py" "$@"

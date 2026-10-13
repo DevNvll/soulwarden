@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Run the static image query tool with the analysis environment.
+set -euo pipefail
+tool_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+python_binary="${SOULWARDEN_PYTHON:-${HOME}/Games/soulwarden/venv/bin/python}"
+exec "${python_binary}" -I "${tool_directory}/nwbin.py" "$@"

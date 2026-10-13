@@ -1,0 +1,1816 @@
+#include "server/rep/rep_session.h"
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstring>
+
+#include "core/logging/log.h"
+#include "middleware/steam/local_ticket.h"
+#include "server/hub/wire.h"
+#include "server/rep/item_requests.h"
+#include "server/rep/replication.h"
+#include "state/identity.h"
+
+namespace soulwarden::backend::server::rep {
+namespace {
+
+constexpr std::size_t kRouteSize = 16;
+/** Main open-world level of the supported build. */
+constexpr const char* kLevelName = "newworld_vitaeeterna";
+/**
+ * Terrain project of the level (game data folder sharedassets/coatlicue/<name>). The client
+ * starts its terrain system only when this text is not empty (client code at image RVA
+ * 0x6448CD0). Without the terrain the loading screen does not end.
+ */
+constexpr const char* kTerrainProject = "coatlicue/newworld_vitaeeterna";
+/**
+ * Largest client context instance: the level information and the state bundle have one byte
+ * for it, and the client uses 0 for "no instance".
+ */
+constexpr std::uint32_t kContextInstanceCount = 255;
+constexpr std::uint8_t kEnvelopeTarget = 0x01;
+constexpr std::uint8_t kEnvelopeSource = 0x02;
+constexpr std::uint8_t kEnvelopeExtension = 0x04;
+/**
+ * Interval of the movement state of the own character. The client disconnects
+ * ("connection_ingame_timeout") when it gets no game message for 30 seconds (client check at
+ * image RVA 0x6445E10), and it stops its input when the last movement state is older than 2 s.
+ */
+constexpr std::chrono::milliseconds kAnchorInterval{200};
+/** Interval at which a session compares the entities near its character with its interest table. */
+constexpr std::chrono::milliseconds kInterestInterval{500};
+/** Largest number of interest numbers in the control block of one bundle (client reader at image RVA 0x6A6DDB0). */
+constexpr std::size_t kMaxStopsInBundle = 100;
+/** Shortest time between two log lines for a camera that moves. */
+constexpr std::chrono::milliseconds kInputLogInterval{1000};
+/** Key in the set of logged message types for an input report that did not parse. */
+constexpr std::uint32_t kUnreadableInputMark = 0xFFFFFFFFU;
+/** The same for the first input report with target data, and for the first one whose reader stopped. */
+constexpr std::uint32_t kTargetDataMark = 0xFFFFFFFEU;
+constexpr std::uint32_t kInputTailMark = 0xFFFFFFFDU;
+/**
+ * A session whose client sends its position uses the camera estimate when no input report had
+ * the position field for this time. A report with no field in a shorter time keeps the last
+ * position: the client sends no field for a simulation step with no physics step.
+ */
+constexpr std::chrono::milliseconds kReportTimeout{1000};
+/** Largest number of log lines of a session for a change of its position source. */
+constexpr unsigned kLoggedSourceChanges = 16;
+/** Shortest time between two log lines with the counts of the refused position reports. */
+constexpr std::chrono::milliseconds kRefusalLogInterval{5000};
+/** Number of log lines for client messages that do not agree with the id rule. */
+constexpr std::uint64_t kLoggedIdFaults = 16;
+/**
+ * Largest payload of one state bundle that the backend makes from more than one fragment. The
+ * carrier puts 1,024 data bytes in one message and sends a larger message in chunks, and no
+ * live run has a state bundle in chunks. The frame, the envelope, and the header of a bundle
+ * are 21 bytes at most. Thus each bundle with this payload is one carrier message.
+ */
+constexpr std::size_t kBundleBudget = 960;
+/** Largest state of one fragment of a state with more than one fragment (the bag): it fits in kBundleBudget. */
+constexpr std::size_t kFragmentBudget = 900;
+/** Bytes of a record before its fragments: the interest number and the fragment count. */
+constexpr std::size_t kRecordHeader = 6;
+/**
+ * Largest payload of a bundle that the client reads (client code at image RVA 0x646C2B0). The
+ * backend sends no bundle that is larger.
+ */
+constexpr std::size_t kClientBundleLimit = 256000;
+/** The fragment count of a record is one byte. */
+constexpr unsigned kMaxFragmentsInRecord = 255;
+/**
+ * Largest number of creatures that come into the interest table in one scan, the nearest ones
+ * first. Many creatures can be near a character at its world entry: the client then makes
+ * some slices in each scan interval and not all in one frame. A decision of this project.
+ */
+constexpr std::size_t kMaxNewCreaturesInScan = 16;
+
+// Hub numbers and type ids of the actor references of the self identification. The client
+// sends only the actor id of a reference (the 16-byte route of a client frame), not the hub
+// number and not the type id. The type ids are the ids of Aoi::PlayerManagerActor (type 565)
+// and Amazon::Hub::ClientProxy (type 551), in the sequence of their text.
+constexpr std::uint32_t kWorldHub = 1;
+constexpr std::uint32_t kConnectionHub = 2;
+constexpr std::array<std::uint8_t, 16> kPlayerManagerType{0x38, 0xA7, 0x37, 0xFF, 0x6C, 0xAD, 0x47, 0x92,
+                                                          0xA2, 0xF9, 0x32, 0x47, 0x36, 0xE0, 0xEE, 0x02};
+constexpr std::array<std::uint8_t, 16> kClientProxyType{0x29, 0x70, 0xE2, 0x83, 0xFC, 0xF3, 0x4B, 0x6F,
+                                                        0x8F, 0x07, 0x86, 0xD6, 0x8B, 0xF3, 0xAE, 0x45};
+
+// The position of a character has two sources. A client with the hook change of the game hook
+// sends the exact position of its character in each input report (protocol notes 4.7): the
+// session gives it to the world, which checks it (World::report_position). A client with no
+// hook change sends no position: the backend then estimates it from the camera, as below.
+//
+// The camera estimate. The input report has the position
+// and the direction of the camera. The camera is behind the character in its own direction,
+// 0.5 m to the right of the character in the horizontal plane, and 1.65 m above the feet of
+// the character on the vertical axis of the world (live runs: memory read of the character
+// position against the camera of the input entry, with the camera level and with the camera
+// turned down and up). The distance behind is 4.0 m at the start of a session. It is not a
+// constant: an obstacle behind the camera makes it smaller (0.3 m to 3.2 m in live runs), and
+// the user changes it with the pointer wheel (2.0 m to 8.0 m in live runs, 1.0 m for one
+// step). Thus the backend knows only a line that has the character on it, the camera axis,
+// and its estimate can be some meters from the character. The estimate is the position of the
+// entity in the world.
+//
+// The backend follows the wheel only while the character is at rest: the change of the
+// camera distance is then the movement of the camera along its axis. The estimate uses the
+// distance of the wheel when the camera is nearer than 4.0 m, and 4.0 m when the camera is
+// farther: an obstacle makes the camera nearer, never farther, and an estimate with a
+// distance that is too large is a position in front of the character, which can be in a wall.
+constexpr float kCameraBehind = 4.0F;
+constexpr float kCameraRight = 0.5F;
+constexpr float kCameraAbove = 1.65F;
+/** Limits for the camera distance that the wheel gives. */
+constexpr float kMinCameraDistance = 1.0F;
+constexpr float kMaxCameraDistance = 10.0F;
+/**
+ * The client moves a camera that is nearer than this to this distance when the character
+ * moves, and the camera stays there (2.0 m from the wheel became 2.2 m in each of 6 walks).
+ */
+constexpr float kMovingCameraDistance = 2.2F;
+/** Time from the last wheel input to a camera that is at its new distance (0.4 s in captures). */
+constexpr std::chrono::milliseconds kWheelSettleTime{700};
+/**
+ * The character moved to the rear when the camera is this much farther behind the known
+ * position than its distance with no obstacle.
+ */
+constexpr float kRearWalkDistance = 3.0F;
+/** No obstacle is behind the camera when it is not more than this nearer than its distance. */
+constexpr float kFreeCameraTolerance = 0.5F;
+/** A position is on the camera axis when its horizontal distance from the axis is not more than this. */
+constexpr float kAxisTolerance = 0.75F;
+/** Below this horizontal length, the direction of the camera is up or down and gives no axis. */
+constexpr float kMinAxisLength = 0.05F;
+/** The camera is at rest when it stays in this distance for this time. */
+constexpr float kCameraRestDistance = 0.1F;
+constexpr std::chrono::milliseconds kCameraRestTime{500};
+
+/** Directions of the camera of an input report in the world. */
+struct CameraFrame {
+    std::array<float, 3> forward;
+    /** To the right of the camera, in the horizontal plane. */
+    std::array<float, 3> right;
+};
+
+CameraFrame camera_frame(const ClientInput& input) {
+    // The yaw turns the camera to the left from north. A positive pitch on the wire is down.
+    const float pitch = -input.lookPitch;
+    const float sinYaw = std::sin(input.lookYaw);
+    const float cosYaw = std::cos(input.lookYaw);
+    const float sinPitch = std::sin(pitch);
+    const float cosPitch = std::cos(pitch);
+    return CameraFrame{{-sinYaw * cosPitch, cosYaw * cosPitch, sinPitch}, {cosYaw, sinYaw, 0.0F}};
+}
+
+/**
+ * @return The point of the camera axis that is `behind` meters in front of the camera: the
+ *         position of a character that has the camera this far behind it.
+ */
+state::WorldPosition axis_point(const ClientInput& input, const CameraFrame& frame, float behind) {
+    return state::WorldPosition{input.cameraX + frame.forward[0] * behind - frame.right[0] * kCameraRight,
+                                input.cameraY + frame.forward[1] * behind - frame.right[1] * kCameraRight,
+                                input.cameraZ + frame.forward[2] * behind - kCameraAbove};
+}
+
+/** Place of a position in relation to the camera axis. The values are horizontal, thus a jump changes nothing. */
+struct AxisOffset {
+    /** Distance of the position in front of the camera, along the axis. */
+    float along;
+    /** Distance of the position from the axis. */
+    float aside;
+    /**
+     * Distance of the camera behind the position in the direction of the camera (the value
+     * that axis_point takes). No value when the camera points up or down and gives no axis.
+     */
+    std::optional<float> behind;
+};
+
+AxisOffset axis_offset(const ClientInput& input, const CameraFrame& frame, const state::WorldPosition& position) {
+    const state::WorldPosition origin = axis_point(input, frame, 0.0F);
+    const float deltaX = position.x - origin.x;
+    const float deltaY = position.y - origin.y;
+    const float length = std::hypot(frame.forward[0], frame.forward[1]);
+    if (length < kMinAxisLength) {
+        return AxisOffset{0.0F, std::hypot(deltaX, deltaY), std::nullopt};
+    }
+    const float directionX = frame.forward[0] / length;
+    const float directionY = frame.forward[1] / length;
+    const float along = deltaX * directionX + deltaY * directionY;
+    return AxisOffset{along, std::abs(deltaX * directionY - deltaY * directionX), along / length};
+}
+
+/** Actor reference: hub number, actor id, actor type id (client writer at image RVA 0x14FD380). */
+void write_actor_reference(hub::Writer& writer,
+                           std::uint32_t hubNumber,
+                           const world::ActorId& actor,
+                           std::span<const std::uint8_t> type) {
+    writer.u32(hubNumber);
+    writer.raw(actor.bytes);
+    writer.raw(type);
+}
+
+/** Identity with a 16-byte id: flags with bit 0, then the id. */
+void write_identity(hub::Writer& writer, const world::ActorId& actor) {
+    writer.u8(1);
+    writer.raw(actor.bytes);
+}
+
+std::uint64_t read_u64(std::span<const std::uint8_t> data) {
+    std::uint64_t value = 0;
+    for (const std::uint8_t byte : data) {
+        value = (value << 8) | byte;
+    }
+    return value;
+}
+
+/** @return The number of bytes of a value in the variable-length form. */
+std::size_t size_length(std::uint32_t value) {
+    hub::Writer writer;
+    writer.size(value);
+    return writer.data().size();
+}
+
+/** One state fragment of a record that waits for its bundle. */
+struct PendingFragment {
+    std::uint32_t slot;
+    std::uint32_t type;
+    hub::Bytes state;
+    /** True for a fragment of a development command. */
+    bool development;
+};
+
+} // namespace
+
+RepSession::RepSession(std::uint32_t id, Send send, world::World& world, SessionOptions options)
+    : m_id(id),
+      m_logMark(log::session_mark(id)),
+      // Session 1 has instance 1, the value of each session before the sessions had an id.
+      m_contextInstance(static_cast<std::uint8_t>((id + kContextInstanceCount - 1) % kContextInstanceCount + 1)),
+      m_options(std::move(options)),
+      m_send(std::move(send)),
+      m_world(world),
+      m_clock(world.clock()),
+      m_cameraDistance(kCameraBehind),
+      m_knownBehind(kCameraBehind) {}
+
+void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> data) {
+    std::span<const std::uint8_t> payload;
+    if (!hub::decode_frame(data, payload)) {
+        log::write("rep: frame on channel %u (%zu bytes) has a bad size or checksum", channel, data.size());
+        return;
+    }
+    hub::Reader reader(payload);
+    const auto route = reader.raw(kRouteSize);
+    const std::uint8_t flags = reader.u8();
+    if ((flags & kEnvelopeTarget) != 0) {
+        reader.raw(8);
+    }
+    if ((flags & kEnvelopeSource) != 0) {
+        reader.raw(8);
+    }
+    if ((flags & kEnvelopeExtension) != 0) {
+        log::write("rep: envelope with an extension (flags 0x%02x) is not supported", flags);
+        return;
+    }
+    const std::uint8_t present = reader.u8();
+    if (!reader.ok() || present != 1) {
+        log::write("rep: envelope without a message (flags 0x%02x)", flags);
+        return;
+    }
+    const std::uint32_t type = reader.size();
+    if (!reader.ok()) {
+        return;
+    }
+    if (m_closing) {
+        return; // The session sent its client away: a message of the client changes nothing.
+    }
+    const auto body = payload.subspan(reader.position());
+    // The client sends some types 30 times each second. Only the first of each type is logged.
+    const bool firstOfType = m_seenTypes.insert(type).second;
+    switch (type) {
+    case kTypeRegistrationRequest:
+    case kTypeRegistrationRequestV2:
+    case kTypeRegistrationRequestV3:
+        handle_registration(type, body);
+        break;
+    case kTypeClientInput:
+        check_route(route, type, body, firstOfType);
+        handle_client_input(body);
+        break;
+    case kTypeDropInventoryItems:
+        check_route(route, type, body, firstOfType);
+        handle_drop_items(body);
+        break;
+    case kTypeSetLockState:
+        check_route(route, type, body, firstOfType);
+        handle_set_lock_state(body);
+        break;
+    case kTypeEquipItem:
+        check_route(route, type, body, firstOfType);
+        handle_equip_item(body);
+        break;
+    case kTypeUnequipItem:
+        check_route(route, type, body, firstOfType);
+        handle_unequip_item(body);
+        break;
+    case kTypeSwapItems:
+        check_route(route, type, body, firstOfType);
+        handle_swap_items(body);
+        break;
+    case kTypeSpendAttributePoints:
+        check_route(route, type, body, firstOfType);
+        handle_spend_attribute_points(body);
+        break;
+    case kTypeRefundAttributePoints:
+        check_route(route, type, body, firstOfType);
+        handle_refund_attribute_points(body);
+        break;
+    case kTypeAssignPoolPoints:
+        check_route(route, type, body, firstOfType);
+        handle_assign_pool_points(body);
+        break;
+    case kTypeApplyAbilityPoints:
+        check_route(route, type, body, firstOfType);
+        handle_apply_ability_points(body);
+        break;
+    case kTypeChangeMappedAbility:
+        check_route(route, type, body, firstOfType);
+        handle_change_mapped_ability(body);
+        break;
+    case kTypeMasteryTreeRespec:
+        check_route(route, type, body, firstOfType);
+        handle_mastery_tree_respec(body);
+        break;
+    default:
+        check_route(route, type, body, firstOfType);
+        if (firstOfType) {
+            log::write("rep: message type %u (%zu bytes) has no handler", type, body.size());
+        }
+        break;
+    }
+}
+
+void RepSession::check_route(std::span<const std::uint8_t> route,
+                             std::uint32_t type,
+                             std::span<const std::uint8_t> body,
+                             bool firstOfType) {
+    // The route of a client frame is the actor id of the receiver: the player manager, or an
+    // entity for a component call. The body of a component call starts with the facet target
+    // and the entity group id, each one as a big-endian number.
+    const auto fault = [&](const char* text) {
+        if (m_counts.unknownRoutes + m_counts.unknownTargets + m_counts.wrongEntity <= kLoggedIdFaults) {
+            std::string routeText;
+            static const char* digits = "0123456789abcdef";
+            for (const std::uint8_t byte : route) {
+                routeText += digits[byte >> 4];
+                routeText += digits[byte & 15];
+            }
+            log::write("rep: message type %u: %s (route %s)", type, text, routeText.c_str());
+        }
+    };
+    if (route.size() != kRouteSize) {
+        return;
+    }
+    if (std::equal(route.begin(), route.end(), m_world.player_manager().bytes.begin())) {
+        ++m_counts.playerManager;
+        return;
+    }
+    const world::Entity* entity = nullptr;
+    for (const auto& [id, known] : m_observer.known()) {
+        const world::Entity* candidate = m_world.find(id);
+        if (candidate != nullptr && std::equal(route.begin(), route.end(), candidate->actor.bytes.begin())) {
+            entity = candidate;
+            break;
+        }
+    }
+    if (entity == nullptr) {
+        ++m_counts.unknownRoutes;
+        fault("the route is not the player manager and not an entity of this session");
+        return;
+    }
+    ++m_counts.componentCalls;
+    if (body.size() < 16) {
+        ++m_counts.unknownTargets;
+        fault("the body has no target and no entity");
+        return;
+    }
+    const std::uint64_t target = read_u64(body.subspan(0, 8));
+    const std::uint64_t group = read_u64(body.subspan(8, 8));
+    if (group != entity->id) {
+        ++m_counts.wrongEntity;
+        fault("the entity field is not the entity group id of the route");
+        return;
+    }
+    if (entity->kind == world::EntityKind::creature) {
+        // A call for a component of a creature that the client observes: the hit of an attack,
+        // an interaction. The slice of the creature (game data) names the component.
+        const gamedata::CreatureSlice::Component* component = entity->creature.body->find(entity->id, target);
+        ++(component != nullptr ? m_counts.creatureTargets : m_counts.unknownTargets);
+        if (component == nullptr) {
+            fault("the target is not a facet of the slice of this creature");
+        } else if (firstOfType) {
+            log::write("rep: message type %u: target %016llx is the facet of component %016llx (%s) of creature %016llx "
+                       "(%s)",
+                       type,
+                       static_cast<unsigned long long>(target),
+                       static_cast<unsigned long long>(component->component),
+                       component->name.c_str(),
+                       static_cast<unsigned long long>(entity->id),
+                       entity->creature.kind->id.c_str());
+        }
+        return;
+    }
+    const gamedata::SliceIds* slice = m_options.playerSlice;
+    if (slice == nullptr || !slice->loaded()) {
+        ++m_counts.uncheckedTargets;
+        return;
+    }
+    const gamedata::SliceIds::Component* component = slice->find(entity->id, target);
+    if (component == nullptr) {
+        ++m_counts.unknownTargets;
+        fault("the target is not a facet of the player slice for this entity");
+        return;
+    }
+    ++m_counts.knownTargets;
+    if (firstOfType) {
+        log::write("rep: message type %u: target %016llx is the facet of component %016llx (%s) of entity %016llx",
+                   type,
+                   static_cast<unsigned long long>(target),
+                   static_cast<unsigned long long>(component->component),
+                   component->name.empty() ? "no name" : component->name.c_str(),
+                   static_cast<unsigned long long>(entity->id));
+    }
+}
+
+void RepSession::log_message_counts() const {
+    if (!m_registered) {
+        return;
+    }
+    if (m_creatureRecords != 0) {
+        log::write("rep: creatures of the session: %llu first record(s), %zu in the interest table at one time at most, "
+                   "%llu client message(s) for a component of a creature",
+                   static_cast<unsigned long long>(m_creatureRecords),
+                   m_creaturesObserved,
+                   static_cast<unsigned long long>(m_counts.creatureTargets));
+    }
+    log::write("rep: client messages of the session: %llu component calls (%llu with a target of the id rule, %llu "
+               "with a target that is not known, %llu with a wrong entity, %llu with no check), %llu for the player "
+               "manager, %llu with a route that is not known",
+               static_cast<unsigned long long>(m_counts.componentCalls),
+               static_cast<unsigned long long>(m_counts.knownTargets + m_counts.creatureTargets),
+               static_cast<unsigned long long>(m_counts.unknownTargets),
+               static_cast<unsigned long long>(m_counts.wrongEntity),
+               static_cast<unsigned long long>(m_counts.uncheckedTargets),
+               static_cast<unsigned long long>(m_counts.playerManager),
+               static_cast<unsigned long long>(m_counts.unknownRoutes));
+    const std::uint64_t accepted = m_track.count(world::PositionVerdict::accepted);
+    const std::uint64_t outOfSequence = m_track.count(world::PositionVerdict::outOfSequence);
+    if (accepted + outOfSequence + m_track.refused() == 0) {
+        log::write("rep: position reports of the session: none (the client sent no position field)");
+        return;
+    }
+    const world::PositionTrack::Largest& largest = m_track.largest();
+    log::write("rep: position reports of the session: %llu accepted, %llu refused (%llu too fast, %llu not finite, %llu "
+               "at a height limit, %llu outside the world), %llu not in sequence, %u new input sequence(s); largest "
+               "accepted distance for one tick %.3f m (input %u), largest speed between two reports %.2f m/s, largest "
+               "distance for one window %.3f m in %.3f s, largest rise %.3f m and largest fall %.3f m for one tick "
+               "(%.2f m/s up, %.2f m/s down)",
+               static_cast<unsigned long long>(accepted),
+               static_cast<unsigned long long>(m_track.refused()),
+               static_cast<unsigned long long>(m_track.count(world::PositionVerdict::tooFast)),
+               static_cast<unsigned long long>(m_track.count(world::PositionVerdict::notFinite)),
+               static_cast<unsigned long long>(m_track.count(world::PositionVerdict::heightLimit)),
+               static_cast<unsigned long long>(m_track.count(world::PositionVerdict::outsideWorld)),
+               static_cast<unsigned long long>(outOfSequence),
+               m_track.restarts(),
+               static_cast<double>(largest.tick),
+               static_cast<unsigned>(largest.tickInput),
+               static_cast<double>(largest.stepSpeed),
+               static_cast<double>(largest.window),
+               static_cast<double>(largest.windowSeconds),
+               static_cast<double>(largest.rise),
+               static_cast<double>(largest.fall),
+               static_cast<double>(largest.riseSpeed),
+               static_cast<double>(largest.fallSpeed));
+}
+
+void RepSession::tick(carrier::Clock::time_point now) {
+    replicate(now);
+    if (m_researchKickAt) {
+        send_research_kick(now);
+    }
+}
+
+void RepSession::replicate(carrier::Clock::time_point now) {
+    if (!m_inWorld) {
+        return;
+    }
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    update_interest(now, *own);
+    if (!m_pendingStops.empty()) {
+        send_stops();
+    }
+    // The record of the own character goes first: the client must have its local player
+    // before it gets a different player (client code at image RVA 0x1747C60).
+    send_record(*own, *m_observer.find(own->id), now);
+    // The records of the creatures go together in common bundles: many creatures can come into
+    // the interest table in one tick.
+    RecordBatch batch;
+    for (const auto& [id, known] : m_observer.known()) {
+        if (id == own->id) {
+            continue;
+        }
+        const world::Entity* entity = m_world.find(id);
+        if (entity == nullptr) {
+            continue;
+        }
+        if (entity->kind == world::EntityKind::creature) {
+            add_creature_record(*entity, *m_observer.find(id), batch);
+        } else {
+            send_record(*entity, *m_observer.find(id), now);
+        }
+    }
+    send_batch(batch);
+}
+
+void RepSession::add_creature_record(const world::Entity& entity, Known& known, RecordBatch& batch) {
+    // A creature has only the observer view, and each of its states is one small fragment.
+    RecordWriter record(known.interest);
+    unsigned count = 0;
+    for (const StateCodec& codec : creature_codecs()) {
+        const auto changed = entity.changed.find(codec.key);
+        if (changed == entity.changed.end() || changed->second <= known.sent) {
+            continue;
+        }
+        const std::uint32_t slot = slot_of(codec, entity);
+        if (slot == 0 && codec.key != world::ComponentKey::metadata) {
+            continue; // The slice of the creature has no such component.
+        }
+        if (codec.parts != nullptr) {
+            for (const hub::Bytes& state : codec.parts(entity, View::observer, PartsRequest{known.sent, kFragmentBudget})) {
+                record.fragment(slot, codec.type, state);
+                ++count;
+            }
+            continue;
+        }
+        const hub::Bytes state = codec.encode(entity, View::observer, m_clock);
+        if (!state.empty()) {
+            record.fragment(slot, codec.type, state);
+            ++count;
+        }
+    }
+    // Development aid: the fragments of a command (tools/world fragment).
+    for (const world::RawFragment& raw : entity.rawFragments) {
+        if (raw.changed > known.sent && count < kMaxFragmentsInRecord) {
+            record.fragment(raw.slot, raw.type, raw.state);
+            ++count;
+            log::write("rep: DEVELOPMENT COMMAND: fragment of the command for slot %u, type %u (%zu bytes) is in the "
+                       "record of interest %u",
+                       raw.slot,
+                       raw.type,
+                       raw.state.size(),
+                       known.interest);
+        }
+    }
+    if (count == 0) {
+        return;
+    }
+    const hub::Bytes payload = record.finish();
+    if (payload.size() > kClientBundleLimit) {
+        log::write("rep: the record of creature %016llx (%zu bytes) is larger than the client permits for one bundle: "
+                   "not sent",
+                   static_cast<unsigned long long>(entity.id),
+                   payload.size());
+        known.sent = m_world.revision();
+        return;
+    }
+    // A bundle stays below the size of one carrier message: a record that does not fit starts
+    // the next bundle.
+    if (batch.records != 0 && batch.payload.size() + payload.size() > kBundleBudget) {
+        send_batch(batch);
+    }
+    batch.payload.insert(batch.payload.end(), payload.begin(), payload.end());
+    ++batch.records;
+    if (known.sent == 0) {
+        ++batch.fresh;
+    }
+    known.sent = m_world.revision();
+}
+
+void RepSession::send_batch(RecordBatch& batch) {
+    if (batch.records == 0) {
+        return;
+    }
+    send_state_bundle(batch.payload);
+    log::write("rep: state bundle %llu sent (%zu bytes): %u record(s) of creatures, %u of them the first record",
+               static_cast<unsigned long long>(m_bundleSequence),
+               batch.payload.size(),
+               batch.records,
+               batch.fresh);
+    m_creatureRecords += batch.fresh;
+    batch = RecordBatch{};
+}
+
+void RepSession::update_interest(carrier::Clock::time_point now, const world::Entity& own) {
+    // An entity that is not in the world any more: the client must remove it at once. The
+    // distance of an entity that left by its distance is for the log line.
+    std::vector<world::EntityId> gone;
+    std::map<world::EntityId, float> distances;
+    for (const auto& [id, known] : m_observer.known()) {
+        if (id != own.id && m_world.find(id) == nullptr) {
+            gone.push_back(id);
+        }
+    }
+    // A session observes the creatures near its character in each start. It observes the
+    // characters of other players only with the option.
+    const bool scan = m_cameraSeen && now - m_lastInterestScan >= kInterestInterval;
+    if (scan) {
+        m_lastInterestScan = now;
+        for (const auto& [id, known] : m_observer.known()) {
+            const world::Entity* entity = m_world.find(id);
+            if (id == own.id || entity == nullptr) {
+                continue;
+            }
+            const float distance = world::horizontal_distance(own.position, entity->position);
+            if (distance > m_world.interest_leave(*entity)) {
+                gone.push_back(id);
+                distances[id] = distance;
+            }
+        }
+    }
+    for (const world::EntityId id : gone) {
+        const std::uint32_t interest = m_observer.remove(id);
+        if (interest == 0) {
+            continue; // The entity was in the list two times: it is out already.
+        }
+        m_pendingStops.push_back(interest);
+        const auto distance = distances.find(id);
+        if (distance != distances.end()) {
+            log::write("rep: entity %016llx goes out of the interest table (interest %u, %.1f m)",
+                       static_cast<unsigned long long>(id),
+                       interest,
+                       static_cast<double>(distance->second));
+        } else {
+            log::write("rep: entity %016llx goes out of the interest table (interest %u): it left the world",
+                       static_cast<unsigned long long>(id),
+                       interest);
+        }
+    }
+    if (!scan) {
+        return;
+    }
+    // The largest interest distance of an entity is the distance of a character.
+    std::vector<std::pair<float, const world::Entity*>> creatures;
+    m_world.for_each_near(own.position, m_world.options().interestEnter, [&](world::Entity& entity) {
+        if (entity.id == own.id || m_observer.find(entity.id) != nullptr) {
+            return;
+        }
+        const float distance = world::horizontal_distance(own.position, entity.position);
+        if (entity.kind == world::EntityKind::creature) {
+            if (distance <= m_world.interest_enter(entity)) {
+                creatures.emplace_back(distance, &entity);
+            }
+            return;
+        }
+        if (!m_options.observePlayers) {
+            return;
+        }
+        const std::uint32_t interest = m_observer.add(entity.id);
+        if (interest == 0) {
+            return; // The table has no free number.
+        }
+        log::write("rep: entity %016llx (character %s) comes into the interest table (interest %u, %.1f m)",
+                   static_cast<unsigned long long>(entity.id),
+                   entity.characterId.c_str(),
+                   interest,
+                   distance);
+    });
+    // The nearest creatures first, and not more than some of them in one scan.
+    std::sort(creatures.begin(), creatures.end(), [](const auto& left, const auto& right) {
+        return left.first != right.first ? left.first < right.first : left.second->id < right.second->id;
+    });
+    if (creatures.size() > kMaxNewCreaturesInScan) {
+        creatures.resize(kMaxNewCreaturesInScan);
+    }
+    for (const auto& [distance, entity] : creatures) {
+        const std::uint32_t interest = m_observer.add(entity->id);
+        if (interest == 0) {
+            break; // The table has no free number.
+        }
+        log::write("rep: creature %016llx (%s, level %u) comes into the interest table (interest %u, %.1f m)",
+                   static_cast<unsigned long long>(entity->id),
+                   entity->creature.kind->id.c_str(),
+                   entity->creature.level,
+                   interest,
+                   distance);
+    }
+    m_creaturesObserved = std::max(m_creaturesObserved, creature_count());
+}
+
+std::size_t RepSession::creature_count() const {
+    std::size_t count = 0;
+    for (const auto& [id, known] : m_observer.known()) {
+        const world::Entity* entity = m_world.find(id);
+        count += entity != nullptr && entity->kind == world::EntityKind::creature ? 1 : 0;
+    }
+    return count;
+}
+
+void RepSession::send_stops() {
+    // A stop list goes in the control block of a bundle with no record. The client removes
+    // the entity group of each number and clears its table place (client code at image RVA
+    // 0x1733A20). After that, a new entity can get the number.
+    for (std::size_t first = 0; first < m_pendingStops.size(); first += kMaxStopsInBundle) {
+        const std::size_t count = std::min(kMaxStopsInBundle, m_pendingStops.size() - first);
+        const std::span<const std::uint32_t> stops(m_pendingStops.data() + first, count);
+        send_state_bundle({}, stops);
+        for (const std::uint32_t interest : stops) {
+            m_observer.release(interest);
+        }
+        log::write("rep: state bundle %llu sent: stop of %zu interest number(s), first %u",
+                   static_cast<unsigned long long>(m_bundleSequence),
+                   count,
+                   stops.front());
+    }
+    m_pendingStops.clear();
+}
+
+void RepSession::send_record(const world::Entity& entity, Known& known, carrier::Clock::time_point now) {
+    const bool owner = entity.id == m_observer.own();
+    const View view = owner ? View::owner : View::observer;
+    const bool first = known.sent == 0;
+    std::vector<PendingFragment> fragments;
+    bool movement = false;
+    for (const StateCodec& codec : player_codecs()) {
+        if (codec.ownerOnly && !owner) {
+            continue; // The client of an observer has no facet for this state.
+        }
+        if (owner && !first && codec.key == world::ComponentKey::metadata) {
+            // The owner gets the metadata state of its entity one time. A second one makes the
+            // client close its connection (protocol notes 4.2).
+            continue;
+        }
+        const auto changed = entity.changed.find(codec.key);
+        if (changed == entity.changed.end() || changed->second <= known.sent) {
+            continue;
+        }
+        if (codec.parts != nullptr) {
+            for (hub::Bytes& state : codec.parts(entity, view, PartsRequest{known.sent, kFragmentBudget})) {
+                fragments.push_back(PendingFragment{codec.slot, codec.type, std::move(state), false});
+            }
+            continue;
+        }
+        hub::Bytes state = codec.encode(entity, view, m_clock);
+        if (state.empty()) {
+            continue; // The view has no fragment of this state.
+        }
+        fragments.push_back(PendingFragment{codec.slot, codec.type, std::move(state), false});
+        movement = movement || codec.key == world::ComponentKey::movement;
+    }
+    // Development aid: the fragments of a command (tools/world fragment), for each view.
+    for (const world::RawFragment& raw : entity.rawFragments) {
+        if (raw.changed > known.sent) {
+            fragments.push_back(PendingFragment{raw.slot, raw.type, raw.state, true});
+        }
+    }
+    bool anchorOnly = false;
+    if (owner && !movement && now - m_lastAnchor >= kAnchorInterval) {
+        // The owner gets its full movement state one time. After that it gets only a new time
+        // anchor, which keeps its input on, with an id that is not the number of an input of
+        // its client. The client of the owner moves its character itself: it must not get the
+        // position of the entity as a new position.
+        anchorOnly = fragments.empty();
+        fragments.push_back(PendingFragment{kMovementSlot, kTypeMovementState,
+                                            encode_movement_heartbeat(m_clock, m_input.sequence), false});
+        movement = true;
+    }
+    if (fragments.empty()) {
+        return;
+    }
+    // The fragments go into records, one record in one bundle, in their sequence. A record
+    // ends before a fragment that makes it larger than one carrier message, and before a
+    // second fragment for one slot: the client sorts the fragments of a record by their slot,
+    // thus two fragments of one slot have no sure sequence in one record.
+    RecordWriter record(known.interest);
+    std::vector<std::uint32_t> slots;
+    std::size_t size = kRecordHeader;
+    unsigned count = 0;
+    const auto send = [&] {
+        if (count == 0) {
+            return;
+        }
+        const hub::Bytes payload = record.finish();
+        send_state_bundle(payload);
+        if (!anchorOnly) {
+            log::write("rep: state bundle %llu sent (%zu bytes): %s view of entity %016llx, interest %u, %u fragment(s)",
+                       static_cast<unsigned long long>(m_bundleSequence),
+                       payload.size(),
+                       owner ? "owner" : "observer",
+                       static_cast<unsigned long long>(entity.id),
+                       known.interest,
+                       count);
+        }
+        record = RecordWriter(known.interest);
+        slots.clear();
+        size = kRecordHeader;
+        count = 0;
+    };
+    for (const PendingFragment& fragment : fragments) {
+        const std::size_t fragmentSize = size_length(fragment.slot) + size_length(fragment.type) + fragment.state.size();
+        if (kRecordHeader + fragmentSize > kClientBundleLimit) {
+            // The client cannot read a bundle of this size. The fragment does not go out, and
+            // the other fragments of the entity do.
+            log::write("rep: the fragment for slot %u, type %u (%zu bytes) is larger than the client permits for one "
+                       "bundle (%zu bytes): not sent",
+                       fragment.slot,
+                       fragment.type,
+                       fragment.state.size(),
+                       kClientBundleLimit);
+            continue;
+        }
+        const bool sameSlot = std::find(slots.begin(), slots.end(), fragment.slot) != slots.end();
+        if (count > 0 && (size + fragmentSize > kBundleBudget || sameSlot || count == kMaxFragmentsInRecord)) {
+            send();
+        }
+        record.fragment(fragment.slot, fragment.type, fragment.state);
+        slots.push_back(fragment.slot);
+        size += fragmentSize;
+        ++count;
+        if (fragment.development) {
+            log::write("rep: DEVELOPMENT COMMAND: fragment of the command for slot %u, type %u (%zu bytes) is in the "
+                       "record of interest %u",
+                       fragment.slot,
+                       fragment.type,
+                       fragment.state.size(),
+                       known.interest);
+        }
+    }
+    send();
+    // The session has the entity at this revision only now: each bundle of the record is out.
+    known.sent = m_world.revision();
+    if (owner && movement) {
+        m_lastAnchor = now;
+    }
+    if (owner && first) {
+        log::write("rep: local player record sent");
+    }
+}
+
+void RepSession::character_lost(world::LostCause cause) {
+    // The call comes from the world, in the handler of a different session or of a task.
+    const log::Context context(m_logMark);
+    m_inWorld = false;
+    m_observer.clear();
+    m_pendingStops.clear();
+    m_researchKickAt.reset();
+    const bool deleted = cause == world::LostCause::deleted;
+    send_kick(deleted ? kKickCharacterDeactivated : kKickDuplicateSession);
+    m_closing = Closing{deleted ? CloseCause::characterDeleted : CloseCause::replaced, m_clock.now()};
+    log::write("rep: the session lost its character (%s): message \"kicked\" (type %u) sent",
+               deleted ? "the character was deleted" : "a newer session has the character",
+               kTypeKickClient);
+}
+
+void RepSession::send_kick(std::uint32_t reason) {
+    // KickClientMsg, client reader at image RVA 0x7CB980: reason:u32 u64 text.
+    hub::Writer kick;
+    kick.u32(reason);
+    kick.u64(0);
+    kick.string("");
+    send_message(kTypeKickClient, kick.data());
+}
+
+void RepSession::handle_client_input(std::span<const std::uint8_t> body) {
+    const auto input = read_client_input(body);
+    if (!input) {
+        if (m_seenTypes.insert(kUnreadableInputMark).second) {
+            log::write("rep: input report (%zu bytes) did not parse", body.size());
+        }
+        return;
+    }
+    // The input of a session changes only the entity that the session owns.
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto now = m_clock.now();
+    if (input->targetKind != kInputTargetNone && m_seenTypes.insert(kTargetDataMark).second) {
+        // The layout of the target data has static proof only (client reader at image RVA
+        // 0x416EB00). The log shows the first report of a session that has it.
+        log::write("rep: input %u (%zu bytes) has target data of the kind %u: the first report of the session with "
+                   "target data; the reader %s",
+                   static_cast<unsigned>(input->sequence),
+                   body.size(),
+                   static_cast<unsigned>(input->targetKind),
+                   input->tail == InputTail::read ? "got to the position of the character" : "stopped after it");
+    }
+    if (input->tail != InputTail::read && m_seenTypes.insert(kInputTailMark).second) {
+        log::write("rep: input %u (%zu bytes, flags 0x%llx): %s before the position of the character: the report gives "
+                   "no position (the first report of the session with this result)",
+                   static_cast<unsigned>(input->sequence),
+                   body.size(),
+                   static_cast<unsigned long long>(input->flags),
+                   input->tail == InputTail::unknownBlock ? "the entry has a block with a layout that is not known"
+                                                          : "the body ends");
+    }
+    const state::WorldPosition before = own->position;
+    if (input->hasCharacter) {
+        report_position(*input, now, *own);
+    }
+    if (!std::isfinite(input->cameraX) || !std::isfinite(input->cameraY) || !std::isfinite(input->cameraZ)
+        || !std::isfinite(input->lookYaw) || !std::isfinite(input->lookPitch)) {
+        // A number that is not finite is not a camera: it must not go into the estimate of
+        // the position.
+        if (m_seenTypes.insert(kUnreadableInputMark).second) {
+            log::write("rep: input report (%zu bytes) has a camera number that is not finite: not used", body.size());
+        }
+        return;
+    }
+    const bool axesChanged = input->axes != m_input.axes;
+    const bool cameraMoved = input->hasCamera
+                             && (input->cameraX != m_input.cameraX || input->cameraY != m_input.cameraY
+                                 || input->cameraZ != m_input.cameraZ);
+    if (input->hasCamera) {
+        m_cameraSeen = true;
+        if (m_options.research.kickReason && !m_researchKickArmed) {
+            m_researchKickArmed = true;
+            m_researchKickAt = now + m_options.research.kickDelay;
+        }
+        if (!input->hasCharacter && use_camera_estimate(*input, now, *own)) {
+            track_position(*input, now, *own);
+        }
+        m_input = *input;
+    } else {
+        m_input.sequence = input->sequence;
+        m_input.axes = input->axes;
+    }
+    const bool positionMoved =
+        own->position.x != before.x || own->position.y != before.y || own->position.z != before.z;
+    // The log has one line for each change of the axes, and one line each second while the
+    // camera or the character moves. The first line shows that the loading screen of the
+    // client is gone: the client sends no camera position before that.
+    if (m_input.hasCamera
+        && (axesChanged || ((cameraMoved || positionMoved) && now - m_lastInputLog >= kInputLogInterval))) {
+        log::write("rep: input %u camera %.2f %.2f %.2f look %.3f %.3f position %.3f %.3f %.3f (%s)",
+                   static_cast<unsigned>(m_input.sequence),
+                   m_input.cameraX,
+                   m_input.cameraY,
+                   m_input.cameraZ,
+                   m_input.lookYaw,
+                   m_input.lookPitch,
+                   own->position.x,
+                   own->position.y,
+                   own->position.z,
+                   m_positionSource == PositionSource::report   ? "client report"
+                   : m_positionSource == PositionSource::camera ? "camera estimate"
+                                                                : "no source");
+        m_lastInputLog = now;
+    }
+}
+
+void RepSession::report_position(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own) {
+    const world::PositionReport report{input.sequence,
+                                       state::WorldPosition{input.characterX, input.characterY, input.characterZ},
+                                       input.characterHeight};
+    // The world finds the character from the session, checks the report, and keeps the
+    // position in the entity. A report that it refuses changes nothing.
+    const world::PositionVerdict verdict = m_world.report_position(m_id, report, m_track);
+    m_reportSign = now;
+    if (m_positionSource != PositionSource::report) {
+        set_position_source(PositionSource::report, input);
+    }
+    if (verdict == world::PositionVerdict::accepted || verdict == world::PositionVerdict::noEntity) {
+        return;
+    }
+    const auto cause = static_cast<std::size_t>(verdict);
+    if (verdict == world::PositionVerdict::outOfSequence) {
+        if (!m_verdictLogged[cause]) {
+            m_verdictLogged[cause] = true;
+            log::write("rep: input %u is not newer than the input before it: its position is not used (the first report "
+                       "of the session with this cause)",
+                       static_cast<unsigned>(input.sequence));
+        }
+        return;
+    }
+    if (!m_verdictLogged[cause]) {
+        m_verdictLogged[cause] = true;
+        m_lastRefusalLog = now;
+        log::write("rep: position report refused (%s): input %u, position %.3f %.3f %.3f, height value 0x%04x; the "
+                   "entity keeps its position %.3f %.3f %.3f (the first report of the session with this cause)",
+                   world::position_verdict_text(verdict),
+                   static_cast<unsigned>(input.sequence),
+                   report.position.x,
+                   report.position.y,
+                   report.position.z,
+                   static_cast<unsigned>(report.height),
+                   own.position.x,
+                   own.position.y,
+                   own.position.z);
+    } else if (now - m_lastRefusalLog >= kRefusalLogInterval) {
+        m_lastRefusalLog = now;
+        log::write("rep: position reports refused: %llu (%llu too fast, %llu not finite, %llu at a height limit, %llu "
+                   "outside the world); %llu accepted",
+                   static_cast<unsigned long long>(m_track.refused()),
+                   static_cast<unsigned long long>(m_track.count(world::PositionVerdict::tooFast)),
+                   static_cast<unsigned long long>(m_track.count(world::PositionVerdict::notFinite)),
+                   static_cast<unsigned long long>(m_track.count(world::PositionVerdict::heightLimit)),
+                   static_cast<unsigned long long>(m_track.count(world::PositionVerdict::outsideWorld)),
+                   static_cast<unsigned long long>(m_track.count(world::PositionVerdict::accepted)));
+    }
+}
+
+bool RepSession::use_camera_estimate(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own) {
+    if (!m_reportSign && (input.flags & kInputFlagPosition) != 0) {
+        // The client sends its position, and this entry has none: wait for the field.
+        m_reportSign = now;
+    }
+    if (m_reportSign && now - *m_reportSign < kReportTimeout) {
+        return false; // The entity keeps its last position.
+    }
+    if (m_positionSource != PositionSource::camera) {
+        const bool exact = m_positionSource == PositionSource::report;
+        set_position_source(PositionSource::camera, input);
+        if (exact) {
+            resume_camera_estimate(input, now, own);
+        }
+    }
+    return true;
+}
+
+void RepSession::set_position_source(PositionSource source, const ClientInput& input) {
+    const bool first = m_positionSource == PositionSource::none;
+    m_positionSource = source;
+    if (++m_sourceChanges > kLoggedSourceChanges) {
+        return;
+    }
+    const char* cause = "the input report has the position of the character";
+    if (source == PositionSource::camera) {
+        cause = (input.flags & kInputFlagPosition) == 0
+                    ? "the input report has no position flag: a client with no position report of the game hook"
+                    : input.tail != InputTail::read ? "the reader of the input report stops before the position field"
+                                                    : "the input reports have the position flag and no position field";
+    }
+    log::write("rep: position source%s: %s (input %u, flags 0x%llx: %s)%s",
+               first ? "" : " changed",
+               source == PositionSource::report ? "the position field of the input reports, the exact position"
+                                                : "the camera estimate",
+               static_cast<unsigned>(input.sequence),
+               static_cast<unsigned long long>(input.flags),
+               cause,
+               m_sourceChanges == kLoggedSourceChanges ? "; no more lines for a change of the source in this session" : "");
+}
+
+void RepSession::resume_camera_estimate(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own) {
+    // The position of the entity is the last position that the client sent. The camera is at
+    // some distance behind it: that distance is the start value of the estimate.
+    m_followCamera = false;
+    m_wheelStartBehind.reset();
+    m_restCamera = state::WorldPosition{input.cameraX, input.cameraY, input.cameraZ};
+    m_cameraRestStart = now;
+    m_cameraDistance = kCameraBehind;
+    const AxisOffset offset = axis_offset(input, camera_frame(input), own.position);
+    m_knownBehind = offset.behind && offset.aside <= kAxisTolerance ? std::clamp(*offset.behind, 0.0F, kMaxCameraDistance)
+                                                                    : kCameraBehind;
+}
+
+void RepSession::handle_drop_items(std::span<const std::uint8_t> body) {
+    // The character of a request is the character of the session, not a value of the body.
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_drop_request(body);
+    if (!request) {
+        log::write("rep: drop request (type %u, %zu bytes) does not have the form of the request: no change",
+                   kTypeDropInventoryItems,
+                   body.size());
+        return;
+    }
+    if (request->call.entity != own->id) {
+        log::write("rep: drop request (type %u) names the entity %016llx, which is not the entity of the session: no "
+                   "change",
+                   kTypeDropInventoryItems,
+                   static_cast<unsigned long long>(request->call.entity));
+        return;
+    }
+    const world::ItemResult result = m_world.inventory().drop(own->characterId, request->entries);
+    log::write("rep: drop request (type %u, %zu entr%s): %s",
+               kTypeDropInventoryItems,
+               request->entries.size(),
+               request->entries.size() == 1 ? "y" : "ies",
+               result.ok() ? "done" : world::item_error_text(result.error));
+}
+
+void RepSession::handle_set_lock_state(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_lock_request(body);
+    if (!request) {
+        log::write("rep: lock request (type %u, %zu bytes) does not have the form of the request: no change",
+                   kTypeSetLockState,
+                   body.size());
+        return;
+    }
+    if (request->call.entity != own->id) {
+        log::write("rep: lock request (type %u) names the entity %016llx, which is not the entity of the session: no "
+                   "change",
+                   kTypeSetLockState,
+                   static_cast<unsigned long long>(request->call.entity));
+        return;
+    }
+    if (request->containerType != kItemContainerBag) {
+        // The bag is the only container that the backend has.
+        log::write("rep: lock request (type %u) for container type %u: the backend has only the bag: no change",
+                   kTypeSetLockState,
+                   request->containerType);
+        return;
+    }
+    const world::ItemResult result =
+        m_world.inventory().set_locked(own->characterId, request->slot, &request->instance, request->locked);
+    log::write("rep: lock request (type %u, slot %u, %s): %s",
+               kTypeSetLockState,
+               request->slot,
+               request->locked ? "lock" : "unlock",
+               result.ok() ? "done" : world::item_error_text(result.error));
+}
+
+std::optional<ComponentCall> RepSession::equipment_call(const world::Entity& own,
+                                                        std::uint32_t type,
+                                                        const char* name,
+                                                        std::span<const std::uint8_t> body) {
+    const auto call = read_component_call(body);
+    if (!call) {
+        log::write("rep: %s request (type %u, %zu bytes) does not have the form of the request: no change", name, type, body.size());
+        return std::nullopt;
+    }
+    // The character of a request is the character of the session, not a value of the body.
+    // A reply goes to the facet of the own entity only.
+    if (call->entity != own.id) {
+        log::write("rep: %s request (type %u) names the entity %016llx, which is not the entity of the session: no "
+                   "change",
+                   name,
+                   type,
+                   static_cast<unsigned long long>(call->entity));
+        return std::nullopt;
+    }
+    if (m_options.research.refuseEquipment) {
+        log::write("rep: RESEARCH SWITCH: %s request (type %u) refused with no check: no change, message \"equip item "
+                   "fail\" (type %u) sent",
+                   name,
+                   type,
+                   kTypeEquipItemFail);
+        send_equip_fail(*call);
+        return std::nullopt;
+    }
+    return call;
+}
+
+void RepSession::send_equip_fail(const ComponentCall& call) {
+    send_message(kTypeEquipItemFail, equip_fail_body(call));
+}
+
+void RepSession::handle_equip_item(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto call = equipment_call(*own, kTypeEquipItem, "equip", body);
+    if (!call) {
+        return;
+    }
+    const auto request = read_equip_request(body);
+    if (!request) {
+        log::write("rep: equip request (type %u, %zu bytes) does not have the form of the request: no change, message "
+                   "\"equip item fail\" (type %u) sent",
+                   kTypeEquipItem,
+                   body.size(),
+                   kTypeEquipItemFail);
+        send_equip_fail(*call);
+        return;
+    }
+    world::ItemResult result;
+    if (request->bagSlot < 0) {
+        result.error = world::ItemError::badSlot; // "No slot" is not the place of an item.
+    } else {
+        result = m_world.inventory().equip(own->characterId,
+                                           static_cast<std::uint32_t>(request->bagSlot),
+                                           request->paperdollSlot,
+                                           &request->instance,
+                                           request->quantity);
+    }
+    log::write("rep: equip request (type %u, bag slot %d, paperdoll slot %u): %s%s",
+               kTypeEquipItem,
+               request->bagSlot,
+               request->paperdollSlot,
+               result.ok() ? "done" : world::item_error_text(result.error),
+               result.ok() ? "" : ": message \"equip item fail\" sent");
+    if (!result.ok()) {
+        send_equip_fail(*call);
+    }
+}
+
+void RepSession::handle_unequip_item(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto call = equipment_call(*own, kTypeUnequipItem, "unequip", body);
+    if (!call) {
+        return;
+    }
+    const auto request = read_unequip_request(body);
+    if (!request) {
+        log::write("rep: unequip request (type %u, %zu bytes) does not have the form of the request: no change, "
+                   "message \"equip item fail\" (type %u) sent",
+                   kTypeUnequipItem,
+                   body.size(),
+                   kTypeEquipItemFail);
+        send_equip_fail(*call);
+        return;
+    }
+    // The bag slot -1 is "the first free slot".
+    const std::optional<std::uint32_t> bagSlot =
+        request->bagSlot < 0 ? std::nullopt : std::optional(static_cast<std::uint32_t>(request->bagSlot));
+    const world::ItemResult result =
+        m_world.inventory().unequip(own->characterId, request->paperdollSlot, bagSlot, request->quantity);
+    log::write("rep: unequip request (type %u, paperdoll slot %u, bag slot %d): %s%s",
+               kTypeUnequipItem,
+               request->paperdollSlot,
+               request->bagSlot,
+               result.ok() ? "done" : world::item_error_text(result.error),
+               result.ok() ? "" : ": message \"equip item fail\" sent");
+    if (!result.ok()) {
+        send_equip_fail(*call);
+    }
+}
+
+void RepSession::handle_swap_items(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto call = equipment_call(*own, kTypeSwapItems, "swap", body);
+    if (!call) {
+        return;
+    }
+    const auto request = read_swap_request(body);
+    if (!request) {
+        log::write("rep: swap request (type %u, %zu bytes) does not have the form of the request: no change, message "
+                   "\"equip item fail\" (type %u) sent",
+                   kTypeSwapItems,
+                   body.size(),
+                   kTypeEquipItemFail);
+        send_equip_fail(*call);
+        return;
+    }
+    const world::ItemResult result = m_world.inventory().swap_equipped(own->characterId,
+                                                                       request->first,
+                                                                       request->second,
+                                                                       &request->firstInstance,
+                                                                       &request->secondInstance);
+    log::write("rep: swap request (type %u, paperdoll slots %u and %u): %s%s",
+               kTypeSwapItems,
+               request->first,
+               request->second,
+               result.ok() ? "done" : world::item_error_text(result.error),
+               result.ok() ? "" : ": message \"equip item fail\" sent");
+    if (!result.ok()) {
+        send_equip_fail(*call);
+    }
+}
+
+bool RepSession::own_call(const world::Entity& own, const ComponentCall& call, std::uint32_t type, const char* name) {
+    // The character of a request is the character of the session, not a value of the body.
+    if (call.entity == own.id) {
+        return true;
+    }
+    log::write("rep: %s request (type %u) names the entity %016llx, which is not the entity of the session: no change",
+               name,
+               type,
+               static_cast<unsigned long long>(call.entity));
+    return false;
+}
+
+void RepSession::handle_spend_attribute_points(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_spend_request(body);
+    if (!request) {
+        log::write("rep: attribute spend request (type %u, %zu bytes) does not have the form of the request: no change",
+                   kTypeSpendAttributePoints,
+                   body.size());
+        return;
+    }
+    if (!own_call(*own, request->call, kTypeSpendAttributePoints, "attribute spend")) {
+        return;
+    }
+    static constexpr const char* kNames[] = {"constitution", "focus", "strength", "dexterity", "intelligence"};
+    std::string text;
+    for (const world::AttributeSpend& entry : request->entries) {
+        text += (text.empty() ? "" : ", ") + std::string(kNames[entry.type]) + " " + std::to_string(entry.points);
+    }
+    const world::ProgressResult result = m_world.progress().spend(own->characterId, request->entries);
+    log::write("rep: attribute spend request (type %u, %s): %s, %u free point(s)",
+               kTypeSpendAttributePoints,
+               text.empty() ? "no entry" : text.c_str(),
+               result.ok() ? "done" : world::progress_error_text(result.error),
+               result.unspent);
+}
+
+void RepSession::handle_refund_attribute_points(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto call = read_plain_call(body);
+    if (!call) {
+        log::write("rep: attribute reset request (type %u, %zu bytes) does not have the form of the request: no change",
+                   kTypeRefundAttributePoints,
+                   body.size());
+        return;
+    }
+    if (!own_call(*own, *call, kTypeRefundAttributePoints, "attribute reset")) {
+        return;
+    }
+    const world::ProgressResult result = m_world.progress().reset_attributes(own->characterId);
+    log::write("rep: attribute reset request (type %u): %s, %u free point(s)",
+               kTypeRefundAttributePoints,
+               result.ok() ? "done" : world::progress_error_text(result.error),
+               result.unspent);
+}
+
+void RepSession::handle_assign_pool_points(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_assign_request(body);
+    if (!request) {
+        log::write("rep: mastery point request (type %u, %zu bytes) does not have the form of the request: no change",
+                   kTypeAssignPoolPoints,
+                   body.size());
+        return;
+    }
+    if (!own_call(*own, request->call, kTypeAssignPoolPoints, "mastery point")) {
+        return;
+    }
+    const world::SkillResult result =
+        m_world.skills().assign(own->characterId, request->pool, request->node, request->count);
+    log::write("rep: mastery point request (type %u, pool %08X, node %08X, %u point(s)): %s, %u free point(s)",
+               kTypeAssignPoolPoints,
+               request->pool,
+               request->node,
+               request->count,
+               result.ok() ? "done" : world::progress_error_text(result.error),
+               own->skills.free_points(request->pool));
+}
+
+void RepSession::handle_apply_ability_points(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto call = read_plain_call(body);
+    if (!call) {
+        log::write("rep: apply ability points request (type %u, %zu bytes) does not have the form of the request",
+                   kTypeApplyAbilityPoints,
+                   body.size());
+        return;
+    }
+    if (!own_call(*own, *call, kTypeApplyAbilityPoints, "apply ability points")) {
+        return;
+    }
+    // The end of a selection in a weapon tree. Each point of the selection came in its own
+    // request: the backend has nothing to change here.
+    log::write("rep: apply ability points request (type %u): the points of the selection are in the tree",
+               kTypeApplyAbilityPoints);
+}
+
+void RepSession::handle_change_mapped_ability(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_bar_request(body);
+    if (!request) {
+        log::write("rep: ability bar request (type %u, %zu bytes) does not have the form of the request: no change",
+                   kTypeChangeMappedAbility,
+                   body.size());
+        return;
+    }
+    if (!own_call(*own, request->call, kTypeChangeMappedAbility, "ability bar")) {
+        return;
+    }
+    // The table index is the place of the weapon in the list of the client.
+    const auto table = ability_table(request->tableIndex);
+    world::SkillResult result;
+    if (!table) {
+        result.error = world::ProgressError::unknownProgression;
+    } else {
+        result = m_world.skills().set_bar(own->characterId, *table, request->slot, request->ability);
+    }
+    log::write("rep: ability bar request (type %u, table index %u, place %u, ability %08X): %s",
+               kTypeChangeMappedAbility,
+               request->tableIndex,
+               request->slot,
+               request->ability,
+               result.ok() ? "done" : world::progress_error_text(result.error));
+}
+
+void RepSession::handle_mastery_tree_respec(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_tree_reset_request(body);
+    if (!request) {
+        log::write("rep: tree reset request (type %u, %zu bytes) does not have the form of the request: no change",
+                   kTypeMasteryTreeRespec,
+                   body.size());
+        return;
+    }
+    if (!own_call(*own, request->call, kTypeMasteryTreeRespec, "tree reset")) {
+        return;
+    }
+    const auto table = ability_table(request->tableIndex);
+    world::SkillResult result;
+    if (!table) {
+        result.error = world::ProgressError::unknownProgression;
+    } else {
+        result = m_world.skills().reset_tree(own->characterId, *table);
+    }
+    // The client waits for this answer: without it, it sends no second reset. The states of
+    // the tree and of the bar follow in the next bundle.
+    send_message(kTypeMasteryTreeRespecResponse, tree_reset_reply_body(request->call, result.ok(), request->tableIndex));
+    log::write("rep: tree reset request (type %u, table index %u): %s: message \"mastery tree respec response\" (type "
+               "%u, success %u) sent",
+               kTypeMasteryTreeRespec,
+               request->tableIndex,
+               result.ok() ? "done" : world::progress_error_text(result.error),
+               kTypeMasteryTreeRespecResponse,
+               result.ok() ? 1U : 0U);
+}
+
+void RepSession::track_position(const ClientInput& input, carrier::Clock::time_point now, world::Entity& own) {
+    const state::WorldPosition camera{input.cameraX, input.cameraY, input.cameraZ};
+    const bool cameraMoves = std::hypot(camera.x - m_restCamera.x, camera.y - m_restCamera.y, camera.z - m_restCamera.z)
+                             > kCameraRestDistance;
+    if (cameraMoves) {
+        m_restCamera = camera;
+        m_cameraRestStart = now;
+    }
+    const CameraFrame frame = camera_frame(input);
+    const AxisOffset offset = axis_offset(input, frame, own.position);
+    if (input.wheel) {
+        m_lastWheel = now;
+        if (m_followCamera || !offset.behind) {
+            // The change of the distance does not show while the character moves.
+            forget_camera_distance();
+        } else if (!m_wheelStartBehind) {
+            m_wheelStartBehind = offset.behind;
+        }
+    }
+    if (!m_followCamera) {
+        // The spawn position is exact. While the camera axis goes through the known position,
+        // the character did not move: only the camera turned, or its distance changed. The
+        // position then stays. When the axis leaves the position, the character moved. A walk
+        // straight forward keeps the position on the axis, thus the forward key with a camera
+        // that moves is also a movement, but only when no obstacle is behind the camera: an
+        // obstacle holds the camera while the character goes away from it.
+        const bool wheelActive = m_wheelStartBehind.has_value();
+        const bool onAxis = offset.aside <= kAxisTolerance && offset.along >= -kAxisTolerance
+                            && (wheelActive || offset.along <= m_knownBehind + kRearWalkDistance);
+        const bool freeCamera = offset.behind && *offset.behind >= m_knownBehind - kFreeCameraTolerance;
+        if (!onAxis || (input.forward && cameraMoves && (wheelActive || freeCamera))) {
+            m_followCamera = true;
+            if (wheelActive) {
+                forget_camera_distance();
+            }
+        } else if (wheelActive && now - m_lastWheel >= kWheelSettleTime) {
+            if (offset.behind) {
+                apply_wheel(*offset.behind);
+            } else {
+                forget_camera_distance();
+            }
+        }
+    }
+    if (m_followCamera) {
+        // The position follows the estimate until the camera is at rest again.
+        m_cameraDistance = std::max(m_cameraDistance, kMovingCameraDistance);
+        const float behind = std::min(m_cameraDistance, kCameraBehind);
+        m_knownBehind = behind;
+        m_followCamera = now - m_cameraRestStart < kCameraRestTime;
+        // The position is world state: the world keeps it, puts it in its position index, and
+        // saves it.
+        m_world.set_position(own.id, axis_point(input, frame, behind), m_followCamera);
+    }
+}
+
+void RepSession::apply_wheel(float behind) {
+    const float change = behind - *m_wheelStartBehind;
+    m_wheelStartBehind.reset();
+    m_cameraDistance = std::clamp(m_cameraDistance + change, kMinCameraDistance, kMaxCameraDistance);
+    m_knownBehind = std::max(m_knownBehind + change, 0.0F);
+    log::write("rep: camera distance %.2f after a wheel input (change %+.2f)", m_cameraDistance, change);
+}
+
+void RepSession::forget_camera_distance() {
+    m_wheelStartBehind.reset();
+    m_cameraDistance = kCameraBehind;
+}
+
+void RepSession::send_message(std::uint32_t type, std::span<const std::uint8_t> body) {
+    // A frame to the client is a size and the envelope. It has no checksum and no route
+    // (client frame parser at image RVA 0x6AE44F0).
+    hub::Writer envelope;
+    envelope.u8(0); // Envelope flags: no target, no source, no extension.
+    envelope.u8(1); // A message is present.
+    envelope.size(type);
+    envelope.raw(body);
+    hub::Writer frame;
+    frame.size(static_cast<std::uint32_t>(envelope.data().size()));
+    frame.raw(envelope.data());
+    m_send(0, frame.data(), carrier::Reliability::reliable);
+}
+
+void RepSession::send_registration_reply(std::int32_t result) {
+    // RegistrationResponseMsg, client reader at image RVA 0x7CD040:
+    //   result:u32 serverTime:u64 text text flag flag flag flag
+    hub::Writer reply;
+    reply.u32(static_cast<std::uint32_t>(result));
+    reply.u64(m_clock.server_time_ns());
+    reply.string(m_options.serverVersion);
+    reply.string("");
+    reply.boolean(false);
+    reply.boolean(false);
+    reply.boolean(false);
+    reply.boolean(false); // The local server does not require the anti-cheat service.
+    send_message(kTypeRegistrationResponse, reply.data());
+}
+
+void RepSession::handle_registration(std::uint32_t type, std::span<const std::uint8_t> body) {
+    if (m_registered) {
+        return;
+    }
+    m_registered = true;
+    const Registration request = read_registration(body);
+    if (!request.characterId.empty()) {
+        m_characterId = request.characterId;
+        m_logMark = log::session_mark(m_id, m_characterId);
+    }
+    const ResearchSwitch& research = m_options.research;
+    if (research.registrationResult && *research.registrationResult != 0) {
+        // A message after a reply with a result that is not 0 is not correct: the client ends
+        // the connection itself (client code at image RVA 0x6B6F190).
+        send_registration_reply(*research.registrationResult);
+        log::write("rep: RESEARCH SWITCH: registration request (type %u, %zu bytes), reply with result %d and no "
+                   "other message",
+                   type,
+                   body.size(),
+                   *research.registrationResult);
+        return;
+    }
+    if (request.parsed) {
+        check_identity(request);
+    }
+    // The world has the character of a session. It refuses a character id that the store
+    // does not have, and a character of a different account.
+    const world::EnterResult entered = m_world.enter(m_id, *this, request.characterId, request.personaId);
+    if (entered.error != world::EnterError::none) {
+        // A refusal is the reply alone: a different message before a reply with result 0
+        // ends the connection of the client with a different reason. The client shows a text
+        // and closes its connection.
+        send_registration_reply(kRegistrationRefused);
+        m_closing = Closing{CloseCause::refused, m_clock.now()};
+        log::write("rep: registration request (type %u, %zu bytes) refused (%s): reply with result %d and no other "
+                   "message",
+                   type,
+                   body.size(),
+                   entered.error == world::EnterError::unknownCharacter ? "the store does not have the character"
+                                                                        : "the character is of a different account",
+                   kRegistrationRefused);
+        return;
+    }
+    const world::Entity& entity = *entered.entity;
+    m_observer.set_own(entity.id);
+    m_sessionActor = m_world.next_session_actor();
+    const state::WorldPosition spawn = world::spawn_position(entity);
+    log::write("rep: character %s (%s), spawn %.2f %.2f %.2f, actor %s",
+               entity.characterId.c_str(),
+               entity.name.c_str(),
+               spawn.x,
+               spawn.y,
+               spawn.z,
+               world::actor_text(entity.actor).c_str());
+    send_registration_reply(0);
+    log::write("rep: registration request (type %u, %zu bytes) accepted", type, body.size());
+    if (research.rejectReason) {
+        // PlayerManagerRejectedMsg, client reader at image RVA 0x14FF630: reason:u32 text.
+        hub::Writer rejected;
+        rejected.u32(*research.rejectReason);
+        rejected.string("");
+        send_message(kTypePlayerManagerRejected, rejected.data());
+        log::write("rep: RESEARCH SWITCH: message \"rejected\" (type %u) with reason %u sent in place of the self "
+                   "identification",
+                   kTypePlayerManagerRejected,
+                   *research.rejectReason);
+        return;
+    }
+    send_self_identification();
+    send_level_information();
+    // ClientViewListenerTrait::ReceivePlayerSpawnPointMsg has no fields.
+    send_message(kTypeReceivePlayerSpawnPoint, {});
+    log::write("rep: spawn point notice sent");
+    // The first state bundle makes the client load the level of the level information.
+    send_state_bundle({});
+    m_inWorld = true;
+    // The first record of the own character has the metadata state in slot 0 and the state of
+    // the player component. The client compares the character id of the player component with
+    // the character id of its login. Only an equal id makes the entity the local player
+    // (client code at image RVA 0x6929DF0).
+    replicate(m_clock.now());
+}
+
+void RepSession::send_research_kick(carrier::Clock::time_point now) {
+    if (now < *m_researchKickAt) {
+        return;
+    }
+    m_researchKickAt.reset();
+    send_kick(*m_options.research.kickReason);
+    log::write("rep: RESEARCH SWITCH: message \"kicked\" (type %u) with reason %u sent",
+               kTypeKickClient,
+               *m_options.research.kickReason);
+}
+
+RepSession::Registration RepSession::read_registration(std::span<const std::uint8_t> body) {
+    // RegistrationRequestV3Msg, client writer at image RVA 0x7CE860 and 0x7D54A0:
+    //   u32, version map {key:u32 text}*, text, login token, client data, ...
+    //   login token := signature address worldId characterId personaId steamAppId:u32
+    //                  steamUserId channelId ticketId text text issueTime:u32 generateTime:u32
+    //                  accountAge:u32 text tokenVersion:u32 u8 text present:u8 [flag:u8]
+    //                  text text text                     (writers 0x7D5F30 to 0x7D42C0)
+    //   client data := u32 u8 steamAppId:u32 steamId ticket ...     (writer 0x7D54A0)
+    // Each field with no type is a text. The ticket is "steam|" and the hexadecimal text
+    // of the ticket bytes.
+    Registration request;
+    hub::Reader reader(body);
+    reader.u32();
+    const std::uint32_t versionParts = reader.size();
+    for (std::uint32_t index = 0; index < versionParts && reader.ok(); ++index) {
+        reader.u32();
+        reader.string();
+    }
+    reader.string();
+    reader.string(); // Token signature.
+    reader.string(); // Game server address.
+    reader.string(); // World id.
+    const std::string characterId = reader.string();
+    if (!reader.ok() || characterId.empty()) {
+        log::write("rep: the registration request has no character id");
+        return request;
+    }
+    request.characterId = characterId;
+    request.personaId = reader.string();
+    reader.u32(); // Steam application id of the token.
+    request.tokenSteamId = reader.string();
+    reader.string(); // Channel id.
+    reader.string(); // Ticket id.
+    reader.string();
+    reader.string();
+    reader.u32(); // Issue time.
+    reader.u32(); // Generate time.
+    reader.u32(); // Account age.
+    reader.string();
+    reader.u32(); // Token version.
+    reader.u8();
+    reader.string();
+    if (reader.u8() != 0) {
+        reader.u8();
+    }
+    reader.string();
+    reader.string();
+    reader.string();
+    reader.u32();
+    reader.u8();
+    reader.u32(); // Steam application id of the client.
+    request.clientSteamId = reader.string();
+    request.ticket = reader.string();
+    if (!reader.ok()) {
+        log::write("rep: the identity fields of the registration request did not parse");
+        return request;
+    }
+    request.parsed = true;
+    return request;
+}
+
+void RepSession::check_identity(const Registration& request) {
+    // Stub authentication: the backend reports a Steam id that does not agree, and it does
+    // not refuse the registration for it.
+    const auto account = m_world.account_of(request.personaId);
+    const auto ticketIdentity = steam::read_local_ticket(request.ticket);
+    const std::string accountSteamId = account ? account->steamId : std::string{};
+    const std::string ticketSteamId = ticketIdentity ? ticketIdentity->steamId : std::string{};
+    log::write("rep: identity of persona %s: Steam id of the account %s, of the login token %s, "
+               "of the client %s, of the ticket %s",
+               request.personaId.c_str(),
+               state::masked_steam_id(accountSteamId).c_str(),
+               state::masked_steam_id(request.tokenSteamId).c_str(),
+               state::masked_steam_id(request.clientSteamId).c_str(),
+               state::masked_steam_id(ticketSteamId).c_str());
+    if (!account) {
+        log::write("rep: persona %s has no account", request.personaId.c_str());
+    } else if (request.tokenSteamId != accountSteamId || request.clientSteamId != accountSteamId
+               || ticketSteamId != accountSteamId) {
+        log::write("rep: the Steam ids of the registration request are not equal to the Steam id of the account");
+    } else {
+        log::write("rep: the Steam ids of the registration request are equal");
+    }
+}
+
+void RepSession::send_self_identification() {
+    // PlayerManagerSelfIdentificationMsg, client reader at image RVA 0x14FD530:
+    //   identity, actor reference x3, level block, identity
+    //   level block := instance:u32 list<u32> flag flag u32 u32
+    // Reference 1 is the address of the client messages that are not for an entity: the
+    // player manager of the world. Reference 2 and the two identities are the client actor of
+    // this session. Reference 3 is null: an actor id there makes the client start its bot
+    // spawn and send type 1665 (client handler at image RVA 0x6454C00).
+    hub::Writer body;
+    write_identity(body, m_sessionActor);
+    write_actor_reference(body, kWorldHub, m_world.player_manager(), kPlayerManagerType);
+    write_actor_reference(body, kConnectionHub, m_sessionActor, kClientProxyType);
+    body.u32(0);
+    body.zeros(32);
+    body.u32(m_contextInstance);
+    body.size(0);
+    body.boolean(false);
+    body.boolean(false);
+    body.u32(0);
+    body.u32(0);
+    write_identity(body, m_sessionActor);
+    send_message(kTypePlayerManagerSelfIdentification, body.data());
+    log::write("rep: self identification sent (session actor %s)", world::actor_text(m_sessionActor).c_str());
+}
+
+void RepSession::send_level_information() {
+    // LevelInfoChangedMsg, client writer at image RVA 0x1500850:
+    //   level:text terrain:text pair:u32,u32 pair:u32,u32 u64 list{u8,u32,u64,u32}
+    //   flag instance:u8 reload:flag flag version:u64
+    hub::Writer body;
+    body.string(kLevelName);
+    body.string(kTerrainProject);
+    body.u32(0);
+    body.u32(0);
+    body.u32(0);
+    body.u32(0);
+    body.u64(0);
+    body.size(0);
+    body.boolean(false);
+    body.u8(m_contextInstance);
+    body.boolean(true);
+    body.boolean(false);
+    // The client does nothing for a level information whose version is the version of the
+    // last one that it got, also when that one came on an earlier connection (client code at
+    // image RVA 0x6446800). The session id is different for each connection.
+    body.u64(m_id);
+    send_message(kTypeLevelInfoChanged, body.data());
+    log::write("rep: level information sent (%s)", kLevelName);
+}
+
+void RepSession::send_state_bundle(std::span<const std::uint8_t> payload, std::span<const std::uint32_t> stops) {
+    // ReplicatedStateBundle, client reader at image RVA 0x6B07870:
+    //   present:u8 [sequence:size64] instance:u8 u8 unreliable:flag control:flag
+    //   [control block when the second flag is set] size payload
+    //   control block := stopCount:size count:size (interest:u16)*count      (reader 0x6A6DDB0)
+    // The first `stopCount` numbers are "stop", the others are "pause". The backend writes
+    // the two counts from one list: the client makes no check of `stopCount`.
+    hub::Writer body;
+    body.u8(1);
+    body.size64(++m_bundleSequence);
+    body.u8(m_contextInstance);
+    body.u8(0);
+    body.boolean(false);
+    body.boolean(!stops.empty());
+    if (!stops.empty()) {
+        body.size(static_cast<std::uint32_t>(stops.size()));
+        body.size(static_cast<std::uint32_t>(stops.size()));
+        for (const std::uint32_t interest : stops) {
+            body.u16(static_cast<std::uint16_t>(interest));
+        }
+    }
+    body.size(static_cast<std::uint32_t>(payload.size()));
+    body.raw(payload);
+    send_message(kTypeReplicatedStateBundle, body.data());
+}
+
+} // namespace soulwarden::backend::server::rep
