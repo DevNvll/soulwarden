@@ -190,7 +190,7 @@ continue in the C++ backend, and the layout below is the layout after the port.
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
 | 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | | |
-| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done | |
+| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c in work | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
 | 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | | |
@@ -236,11 +236,12 @@ stage with a letter is a part of the system with that number.
 | 1 | 2.3a | Exact position of a character, id rule of the movement state | 0.6b | done |
 | 2 | 3.4a | Creatures spawn: the creatures of the start area stand at their spawn points, with name plate and health bar; spawn and remove commands; health and death flag by command | 2.3a | done |
 | 3 | 3.2a | The player hits a creature: the hit path of the client, the damage, the damage number, the death of the creature | 3.4a | done |
-| 4 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | open |
-| 5 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
-| 6 | 1.8 | Original quest state of a new character | 1.6 | open |
-| 7 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
-| 8 | P.1, P.2 | Go port | 1.9 | open |
+| 4 | 3.4c | Creatures in the whole world: the creature file for each region (33,328 spawn points, 541 slices in the supported build), a picture check of each slice, the load of the spawn rule, and a travel command of the tool window | 3.4a | in work |
+| 5 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | open |
+| 6 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
+| 7 | 1.8 | Original quest state of a new character | 1.6 | open |
+| 8 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
+| 9 | P.1, P.2 | Go port | 1.9 | open |
 
 After the Go port, the sequence is the sequence of the summary table, with these changes:
 the other parts of the systems 3.1 to 3.7 come before milestone 4, and milestone 6 comes
