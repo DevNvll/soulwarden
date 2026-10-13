@@ -28,9 +28,11 @@
 //      window, not one time for each report. The height has a limit for a rise and a larger
 //      one for a fall, each one for the time between two reports, and the same two limits for
 //      the total rise and the total fall of the time window: that time is the time of the
-//      world clock plus the delay value, one time for a window. The first report of a session
-//      has the position of the entity as its reference, for the horizontal distance and for
-//      the height.
+//      world clock plus the delay value, one time for a window. The total rise is the sum of
+//      the rises of the accepted reports of the window, and the total fall is the sum of their
+//      falls: a path that goes up and down has the two sums, not the difference of two
+//      heights. The first report of a session has the position of the entity as its
+//      reference, for the horizontal distance and for the height.
 //
 // The check is a design of this project: the client has no copy of the check of the original
 // server. It finds a position that is too far from the last one. It cannot find a position
@@ -186,6 +188,14 @@ private:
         std::uint16_t input{0};
         WorldClock::time_point time{};
         state::WorldPosition position;
+        /**
+         * The sum of the rises and the sum of the falls of the accepted reports of the session
+         * up to this one (meters). The difference of two samples is the total of the reports
+         * between them. Double precision: the sums of a long session stay exact to less than
+         * one step of the height on the wire.
+         */
+        double totalRise{0.0};
+        double totalFall{0.0};
     };
 
     PositionVerdict counted(PositionVerdict verdict) {

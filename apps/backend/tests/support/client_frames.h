@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <array>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "server/hub/wire.h"
 
@@ -147,6 +149,27 @@ inline constexpr std::uint64_t kInputFlagsWorld = 0x20004F0ULL;
 /** The flag that the game hook sets: the entry has the position of the character. */
 inline constexpr std::uint64_t kInputFlagPositionBit = 0x8000ULL;
 
+/** Bits of the action words of an input entry: the attack inputs and the weapon keys (protocol notes 4.7). */
+inline constexpr unsigned kActionAttack = 555;
+inline constexpr unsigned kActionAttackHold = 191;
+inline constexpr unsigned kActionAttackRelease = 567;
+inline constexpr unsigned kActionWeapon1 = 9;
+inline constexpr unsigned kActionWeapon2 = 355;
+
+/** One melee contact of an input entry: an item of its third list (96 bytes). */
+struct InputContactItem {
+    std::uint32_t provider{0xFFFFFFFFU};
+    /** The entity group of the receiver, and the receiver: an actor id, an entity group id, and a facet target. */
+    std::array<std::uint8_t, 16> groupActor{};
+    std::uint64_t group{0};
+    std::array<std::uint8_t, 16> actor{};
+    std::uint64_t entity{0};
+    std::uint64_t facet{0};
+    std::array<float, 3> point{};
+    std::array<float, 3> normal{1.0F, 0.0F, 0.0F};
+    std::array<float, 3> direction{-1.0F, 0.0F, 0.0F};
+};
+
 /**
  * The fields of one input entry that a test sets (server/rep/client_input.h, protocol notes
  * 4.7). The default is the entry of the older tests: the look direction and the camera
@@ -160,8 +183,10 @@ struct InputEntry {
     int permissions{-1};
     /** The 16 bits of the distance to the ground (entry +0x2C). A negative value: not in the entry. */
     int groundDistance{-1};
-    /** Number of action words (the live client has 19). All bits are 0. */
+    /** Number of action words (the live client has 19). */
     unsigned actionWords{0};
+    /** The action bits that are 1 (bit 0 is the lowest bit of the first word). A bit above the words is not sent. */
+    std::vector<unsigned> actionBits;
     /** Step time in seconds (entry +0xC0). 0: the field is not in the entry. */
     float stepTime{0.0F};
     /** True: the entry has the look direction. A camera that looks north with no pitch has none. */
@@ -174,16 +199,29 @@ struct InputEntry {
     float cameraZ{0.0F};
     /** Kind of the target data. 3: none. A different kind adds 17 bytes. */
     std::uint8_t targetKind{3};
-    /** True: mask bit 8 is set (a block with a layout that is not known). The entry has no bytes for it. */
-    bool block140{false};
+    /**
+     * The object of mask bit 8 (entry +0x140). -1: the bit is not set. 0: the object is not
+     * present (one byte). 1: a present object with empty texts (131 bytes). 2: the same with
+     * its two vectors (155 bytes). 3: a present flag that is not 0 or 1.
+     */
+    int object140{-1};
     /** The entry has the world position of flag bit 11, the two fields of flag bit 8, and the value of flag bit 14. */
     bool position360{false};
     bool positionPair{false};
     bool value3F8{false};
-    /** Value of entry +0x380. No value: the field is not in the entry. */
+    /** Value of entry +0x380. No value: the field is not in the entry. A value that is not 0 adds two fields. */
     int value380{-1};
-    /** Counts of the three lists. */
-    std::uint32_t lists[3]{0, 0, 0};
+    /** True: the entry has the two fields of a value of entry +0x380 that is not 0. */
+    bool fields380{false};
+    /**
+     * Number of items of the first and of the second list (104 and 192 bytes each, all zero),
+     * and the items of the third list.
+     */
+    std::uint32_t projectileHits{0};
+    std::uint32_t shots{0};
+    std::vector<InputContactItem> contacts;
+    /** A value that is not negative replaces the count of the third list: the entry then has no item for it. */
+    int contactCount{-1};
     /** True: the entry has the position of the character (it needs the flag kInputFlagPositionBit). */
     bool hasCharacter{false};
     float characterX{0.0F};
@@ -197,31 +235,12 @@ struct InputEntry {
     std::size_t cut{0};
 };
 
-/** Body of an input report with one entry. */
-inline server::hub::Bytes input_entry_body(const InputEntry& entry) {
-    server::hub::Writer w;
-    w.u64(0x1111111111111111ULL); // Component.
-    w.u64(0x5050505050505050ULL); // Entity.
-    // Header: 4 bytes, 3 numbers, u8, optional flag, u64, u8, 3 numbers, u8, pair count, 4 numbers.
-    w.zeros(4);
-    w.size64(0);
-    w.size64(0);
-    w.size64(0);
-    w.u8(0);
-    w.u8(0);
-    w.u64(0);
-    w.u8(0);
-    w.size64(0);
-    w.size64(0);
-    w.size64(0);
-    w.u8(0);
-    w.size64(0);
-    w.size64(0);
-    w.size64(0);
-    w.size64(0);
-    w.size64(0);
-    w.u8(1); // One entry.
-
+/**
+ * Writes one entry of an input report. An entry is a difference from the entry before it in
+ * the report: it sends its flags only when they are not the flags of that entry.
+ * @param before The entry before it in the report, or null for the first one.
+ */
+inline void write_input_entry(server::hub::Writer& w, const InputEntry& entry, const InputEntry* before) {
     const auto position = [](server::hub::Writer& out, float x, float y, std::uint16_t height) {
         out.f32(x);
         out.f32(y);
@@ -229,7 +248,7 @@ inline server::hub::Bytes input_entry_body(const InputEntry& entry) {
     };
     std::uint32_t mask = 0;
     server::hub::Writer fields;
-    if (entry.flags != 0) {
+    if (entry.flags != (before != nullptr ? before->flags : 0)) {
         mask |= 0x01;
         fields.size64(entry.flags);
     }
@@ -242,9 +261,16 @@ inline server::hub::Bytes input_entry_body(const InputEntry& entry) {
         fields.u16(static_cast<std::uint16_t>(entry.groundDistance));
     }
     // Action words: in pairs, and one word alone when the count is odd.
+    std::vector<std::uint32_t> words(entry.actionWords, 0);
+    for (const unsigned bit : entry.actionBits) {
+        if (bit / 32 < words.size()) {
+            words[bit / 32] |= 1U << (bit % 32);
+        }
+    }
     fields.u8(static_cast<std::uint8_t>(entry.actionWords));
     for (unsigned index = 0; index < entry.actionWords; index += 2) {
-        fields.size64(0);
+        const std::uint64_t high = index + 1 < entry.actionWords ? words[index + 1] : 0;
+        fields.size64(words[index] | (high << 32));
     }
     for (int axis = 0; axis < 4; ++axis) {
         fields.u8(0x80);
@@ -268,8 +294,20 @@ inline server::hub::Bytes input_entry_body(const InputEntry& entry) {
     if (entry.targetKind != 3) {
         fields.zeros(17);
     }
-    if (entry.block140) {
+    if (entry.object140 >= 0) {
         mask |= 0x100;
+        // present, then (client reader at image RVA 0x35EBC30): 32 + 14 bytes, a text, 8
+        // bytes, f32, flag, four texts, f32, the flag of the vectors, [24 bytes], 10 + 16
+        // bytes, a number, u32, a number, a text, 5 bytes, flag, u32, a text, 12 bytes, u32, flag.
+        fields.u8(entry.object140 == 3 ? 2 : entry.object140 != 0 ? 1 : 0);
+        if (entry.object140 == 1 || entry.object140 == 2) {
+            fields.zeros(32 + 14 + 1 + 8 + 4 + 1 + 4 + 4);
+            fields.u8(entry.object140 == 2 ? 1 : 0);
+            if (entry.object140 == 2) {
+                fields.zeros(24);
+            }
+            fields.zeros(10 + 16 + 1 + 4 + 1 + 1 + 5 + 1 + 4 + 1 + 12 + 4 + 1);
+        }
     }
     if ((entry.flags & 0x1) != 0) {
         fields.size64(0);
@@ -298,6 +336,16 @@ inline server::hub::Bytes input_entry_body(const InputEntry& entry) {
         fields.u8(static_cast<std::uint8_t>(entry.value380));
     }
     ++bit;
+    // An entry that does not send the value has the value of the entry before it.
+    const int value380 = entry.value380 >= 0 ? entry.value380 : before != nullptr ? std::max(before->value380, 0) : 0;
+    if (value380 != 0) {
+        if (entry.fields380) {
+            mask |= 3U << bit;
+            position(fields, 8.0F, 9.0F, 10);
+            fields.zeros(32);
+        }
+        bit += 2;
+    }
     if ((entry.flags & 0x4000) != 0) {
         if (entry.value3F8) {
             mask |= 1U << bit;
@@ -305,8 +353,24 @@ inline server::hub::Bytes input_entry_body(const InputEntry& entry) {
         }
         ++bit;
     }
-    for (const std::uint32_t count : entry.lists) {
-        fields.size64(count);
+    fields.size(entry.projectileHits);
+    fields.zeros(entry.projectileHits * 104);
+    fields.size(entry.shots);
+    fields.zeros(entry.shots * 192);
+    fields.size(entry.contactCount >= 0 ? static_cast<std::uint32_t>(entry.contactCount)
+                                        : static_cast<std::uint32_t>(entry.contacts.size()));
+    for (const InputContactItem& contact : entry.contacts) {
+        fields.u32(contact.provider);
+        fields.raw(contact.groupActor);
+        fields.u64(contact.group);
+        fields.raw(contact.actor);
+        fields.u64(contact.entity);
+        fields.u64(contact.facet);
+        for (const auto& vector : {contact.point, contact.normal, contact.direction}) {
+            for (const float value : vector) {
+                fields.f32(value);
+            }
+        }
     }
     if ((entry.flags & kInputFlagPositionBit) != 0) {
         if (entry.hasCharacter) {
@@ -327,9 +391,50 @@ inline server::hub::Bytes input_entry_body(const InputEntry& entry) {
     w.u8(static_cast<std::uint8_t>(mask >> 16));
     w.u16(entry.sequence);
     w.raw(fields.data());
+}
+
+/**
+ * Body of an input report with these entries, the newest one first.
+ * @param target The facet target of the action list component, and the entity group id.
+ */
+inline server::hub::Bytes input_entries_body(const std::vector<InputEntry>& entries,
+                                             std::uint64_t target = 0x1111111111111111ULL,
+                                             std::uint64_t entity = 0x5050505050505050ULL) {
+    server::hub::Writer w;
+    w.u64(target);
+    w.u64(entity);
+    // Header: 4 bytes, 3 numbers, u8, optional flag, u64, u8, 3 numbers, u8, pair count, 4 numbers.
+    w.zeros(4);
+    w.size64(0);
+    w.size64(0);
+    w.size64(0);
+    w.u8(0);
+    w.u8(0);
+    w.u64(0);
+    w.u8(0);
+    w.size64(0);
+    w.size64(0);
+    w.size64(0);
+    w.u8(0);
+    w.size64(0);
+    w.size64(0);
+    w.size64(0);
+    w.size64(0);
+    w.size64(0);
+    w.u8(static_cast<std::uint8_t>(entries.size()));
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+        write_input_entry(w, entries[index], index == 0 ? nullptr : &entries[index - 1]);
+    }
     server::hub::Bytes body = w.data();
-    body.resize(body.size() - std::min(entry.cut, body.size()));
+    if (!entries.empty()) {
+        body.resize(body.size() - std::min(entries.back().cut, body.size()));
+    }
     return body;
+}
+
+/** Body of an input report with one entry. */
+inline server::hub::Bytes input_entry_body(const InputEntry& entry) {
+    return input_entries_body({entry});
 }
 
 /**

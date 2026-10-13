@@ -38,6 +38,9 @@
 //          set_creature_health creature, and health or percent
 //          kill_creature       creature
 //          reset_creatures     no argument: each spawn point that waits is free again
+//        remove_creature, set_creature_health, and kill_creature change only a creature of
+//        the list of the character (150 m or less from it), and the character must be in the
+//        world: a different creature gives the reply 404, and nothing changes.
 //        The reply is the reply of the command of the common layer (character_commands.h):
 //        200 with "applied":"world" or "applied":"stored", or 400 or 404 with a message.
 //   GET  /admin/v1/catalog/items?q=TEXT[&limit=N][&offset=N]
@@ -74,6 +77,8 @@ constexpr std::size_t kLogIdLength = 8;
 struct NamedCommand {
     const char* name;
     commands::Command command;
+    /** Not null: the command is a creature command, which gets the rule of the admin interface. */
+    commands::CreatureCommand creature{nullptr};
 };
 
 constexpr NamedCommand kCommands[] = {
@@ -86,15 +91,12 @@ constexpr NamedCommand kCommands[] = {
     {"set_weapon_mastery", commands::set_weapon_mastery},
     {"set_trade_skill", commands::set_trade_skill},
     // The creature commands: the character of the command is the reference place.
-    {"spawn_creature", commands::spawn_creature},
-    {"remove_creature", commands::remove_creature},
-    {"set_creature_health", commands::set_creature_health},
-    {"kill_creature", commands::kill_creature},
-    {"reset_creatures", commands::reset_creatures},
+    {"spawn_creature", nullptr, commands::spawn_creature},
+    {"remove_creature", nullptr, commands::remove_creature},
+    {"set_creature_health", nullptr, commands::set_creature_health},
+    {"kill_creature", nullptr, commands::kill_creature},
+    {"reset_creatures", nullptr, commands::reset_creatures},
 };
-
-/** The state of the tool window has the creatures that are this near to the selected character (meters). */
-constexpr float kCreatureListRange = 150.0F;
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
 std::string url_decode(const std::string& text) {
@@ -192,7 +194,7 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 reply["progress"] = *progress;
                 // The creatures near the character. The character of a different account never
                 // gets here: the list above has only the characters of the account of the token.
-                reply["creatures"] = commands::creatures_view(target, selected, kCreatureListRange);
+                reply["creatures"] = commands::creatures_view(target, selected, commands::kAdminCreatureRange);
             }
         }
         return json_reply(200, reply.dump());
@@ -220,8 +222,12 @@ service::HttpResponse run_command(const Services& services, const AdminAccess& a
         return message(400, "the admin interface has no command with this name");
     }
     static const json kNoArguments = json::object();
+    const commands::JsonArguments arguments(body.contains("args") ? body["args"] : kNoArguments);
+    // A creature command of the admin interface changes only a creature near the character of
+    // the command (the creatures of the list of the state), and that character must be in the world.
     commands::WorldCommand step =
-        found->command(character, commands::JsonArguments(body.contains("args") ? body["args"] : kNoArguments), refusal);
+        found->creature != nullptr ? found->creature(character, arguments, commands::CreatureReach::nearCharacter, refusal)
+                                   : found->command(character, arguments, refusal);
     if (!step) {
         return refusal;
     }

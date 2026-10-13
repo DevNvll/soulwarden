@@ -54,6 +54,14 @@ When one entry that the tool needs has no source, the tool stops with one messag
 no file: a file with a part of the spawn points would give a world with a part of its
 creatures and no sign of the fault.
 
+The same for the animation files of step 7. A file that a slice or an animation file names (the
+grid file, the controller file, the fragment file and each file that it imports, each action
+list of the grid) must be in the pak files and must be correct XML. If not, the tool stops with
+one message and writes no file: each index after a part that is not there would be wrong, and
+the backend would start a wrong action with no sign of the fault. Two cases of the game copy
+are not a fault: a slice that names no grid file has no action table, and a grid file with no
+action list gives an empty table.
+
 The tool needs only the standard library of Python and the modules appearance_tables.py,
 item_catalog.py, and slice_ids.py of this folder.
 
@@ -524,24 +532,36 @@ def game_path(text: str) -> str:
     return text.replace("\\", "/").lower().lstrip("/")
 
 
-def read_xml(sources: Sources, path: str) -> ElementTree.Element | None:
-    """@return The root of an XML file of the game, or no value when the file has no source or does not parse."""
-    data = sources.read(game_path(path)) if sources.has(game_path(path)) else None
+def read_xml(sources: Sources, path: str, named_by: str) -> ElementTree.Element | None:
+    """@return The root of an XML file of the game that a slice or an animation file names (`named_by`: that
+    file, for the message). No value, with a mark, when the pak entry of the file has no source on this
+    computer: `Sources.check_complete` then stops the tool. A file that is not in the pak files, and a file
+    that is not correct XML, stop the tool here: a part of an action table that is not there makes each later
+    index wrong."""
+    name = game_path(path)
+    if not sources.has(name):
+        raise Failure(f"{named_by} names the file {name or '(no name)'}, which is not in the pak files of the "
+                      f"game copy")
+    data = sources.read(name)
     if data is None:
         return None
     try:
         return ElementTree.fromstring(data.decode("utf-8-sig", "replace"))
-    except ElementTree.ParseError:
-        return None
+    except ElementTree.ParseError as error:
+        raise Failure(f"{name} (a file that {named_by} names) is not correct XML: {error}") from error
 
 
-def read_tag_names(sources: Sources, path: str, depth: int = 0) -> list[str] | None:
+def read_tag_names(sources: Sources, path: str, named_by: str, depth: int = 0) -> list[str] | None:
     """@return The names of a tag definition file, in the sequence of the client: the names of each imported file
     first, then the tags of the file in their sequence (the tags of a group at the place of the group). A name
     that is in the list already is not added again. The position of a fragment name in the list of the fragment
-    file of a controller is the fragment index on the wire (live proof: 117 fragments of three kinds)."""
-    root = read_xml(sources, path)
-    if root is None or depth > 8:
+    file of a controller is the fragment index on the wire (live proof: 117 fragments of three kinds). No value
+    when a file has no source on this computer (see `read_xml`). An imported file that is not there stops the
+    tool: without its names, each fragment index of the file that imports it would be too small."""
+    if depth > 8:
+        raise Failure(f"{game_path(path)}: the tag definition files import each other more than 8 times")
+    root = read_xml(sources, path, named_by)
+    if root is None:
         return None
     names: list[str] = []
     seen: set[str] = set()
@@ -552,7 +572,7 @@ def read_tag_names(sources: Sources, path: str, depth: int = 0) -> list[str] | N
             names.append(name)
 
     for imported in root.iter("Import"):
-        for name in read_tag_names(sources, imported.get("filename", ""), depth + 1) or []:
+        for name in read_tag_names(sources, imported.get("filename", ""), game_path(path), depth + 1) or []:
             add(name)
     tags = root.find("Tags")
     for child in (tags if tags is not None else []):
@@ -566,8 +586,9 @@ def read_tag_names(sources: Sources, path: str, depth: int = 0) -> list[str] | N
 
 def read_action_table(sources: Sources, roots: list[Element]) -> list[list] | None:
     """@return The action table of a creature slice: [action name, fragment name, fragment index, server started]
-    for each action, or no value when the slice has no grid file. The position of an action in the list is its
-    index on the wire: the scope record of a movement state has the index plus 1.
+    for each action, or no value when the slice names no grid file. The position of an action in the list is its
+    index on the wire: the scope record of a movement state has the index plus 1. A file that the slice, the
+    grid, or the controller names and that is not there, or that is not correct, stops the tool (`read_xml`).
 
     The rule of the client (builder at image RVA 0x4840D90, live proof for the tables of three kinds: 50, 62,
     and 19 actions): the table has the action lists of the grid file in their sequence, and the action
@@ -584,25 +605,31 @@ def read_action_table(sources: Sources, roots: list[Element]) -> list[list] | No
                 found = first(node, ASSET_PATH_FIELD)
                 if found is not None and found.value is not None:
                     controller_path = found.value.decode("utf-8", "replace")
-    grid = read_xml(sources, grid_path) if grid_path else None
+    component = "the action list component of the slice"
+    grid = read_xml(sources, grid_path, component) if grid_path else None
     if grid is None:
         return None
     fragments: dict[str, int] = {}
-    controller = read_xml(sources, controller_path) if controller_path else None
+    controller = read_xml(sources, controller_path, component) if controller_path else None
     fragment_file = controller.find("Fragments") if controller is not None else None
     if fragment_file is not None:
-        for position, name in enumerate(read_tag_names(sources, fragment_file.get("filename", "")) or []):
+        names = read_tag_names(sources, fragment_file.get("filename", ""), game_path(controller_path))
+        for position, name in enumerate(names or []):
             fragments.setdefault(name.lower(), position)
     actions: list[list] = []
     # Only the lists of the element ActionLists: a grid file names action lists in other elements too.
     lists = grid.find("ActionLists")
     for entry in (lists.findall("ActionList") if lists is not None else []):
         listed = {action.get("ActionName", "").lower() for action in entry.iter("Action")}
-        definitions = read_xml(sources, entry.get("Path", ""))
-        container = definitions.find("Actions") if definitions is not None else None
-        if container is None:
-            # A list of the grid that is not there: each index after it would be wrong.
+        definitions = read_xml(sources, entry.get("Path", ""), game_path(grid_path))
+        if definitions is None:
+            # The list has no source on this computer: the tool stops at the end (check_complete).
             return None
+        container = definitions.find("Actions")
+        if container is None:
+            # A list of the grid that is not an action list file: each index after it would be wrong.
+            raise Failure(f"{game_path(entry.get('Path', ''))} (an action list of {game_path(grid_path)}) has no "
+                          f"element Actions")
         for action in container.findall("Action"):
             name = action.get("Name", "")
             if action.get("Disabled", "").lower() in ("true", "1") or name.lower() not in listed:
@@ -685,12 +712,12 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
     `slices`: "movement", "vitals", and "marker" are the slots of these three components (0: the
     slice has none), "components" are the components with a facet (the targets of client
     messages), and "actions" is the action table: the position of an action is its index in a
-    movement state, and a fragment index of -1 is "no fragment" (an empty list: the slice has no
-    grid file). `kinds`: "vitalsId" and "categoryId" are the ids on the wire, "health" is the
-    health of the kind as a part of the health of its level (the health modifier of its base
-    row times the modifier of its creature type), "level" is the level of the most spawn
-    points, and "bodies" are the slices of its alias (index into `slices`). A spawn point has
-    an index into `kinds`.
+    movement state, and a fragment index of -1 is "no fragment" (an empty list: the slice names
+    no grid file, or its grid file has no action list). `kinds`: "vitalsId" and "categoryId" are
+    the ids on the wire, "health" is the health of the kind as a part of the health of its level
+    (the health modifier of its base row times the modifier of its creature type), "level" is
+    the level of the most spawn points, and "bodies" are the slices of its alias (index into
+    `slices`). A spawn point has an index into `kinds`.
     """
     tables = read_tables(sources)
     names = read_names(sources)
@@ -722,7 +749,10 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
                 return None
             slice_index[path] = len(slices)
             slices.append(read_creature_slice(path, asset, roots))
-            slices[-1]["actions"] = read_action_table(sources, roots) or []
+            try:
+                slices[-1]["actions"] = read_action_table(sources, roots) or []
+            except Failure as error:
+                raise Failure(f"the action table of {path} is not complete: {error}") from error
         return slice_index[path]
 
     def bodies_of(spawner: dict) -> list[tuple[int, int]]:

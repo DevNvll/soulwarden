@@ -20,7 +20,7 @@ service::HttpResponse ping(const RouteContext& context) {
     return response;
 }
 
-/** S3 remote configuration layers. The local setup has no remote layer. */
+/** S3 remote configuration layers. The local setup has no remote layer but the one below. */
 service::HttpResponse s3_missing(const RouteContext& context) {
     service::HttpResponse response;
     response.status = 404;
@@ -29,6 +29,25 @@ service::HttpResponse s3_missing(const RouteContext& context) {
                     "<Message>The specified key does not exist.</Message><Key>"
                     + context.request.path.substr(1)
                     + "</Key><RequestId>SOULWARDENLOCAL</RequestId><HostId>soulwarden-local</HostId></Error>";
+    return response;
+}
+
+/**
+ * The remote configuration document of the gameplay settings of the product (protocol notes
+ * 2.3). The client asks for it one time at its start, before the main menu. The document
+ * turns the melee contact report of the client on: the client then puts each melee contact
+ * that it finds into the third list of its input report (type 1589), and the world checks
+ * the contact (world/combat.h). Only the exact request gets it.
+ */
+service::HttpResponse s3_gameplay_configuration(const RouteContext& context) {
+    std::string host = context.request.host;
+    host = host.substr(0, host.find(':'));
+    if (host != kRemoteConfigurationHost) {
+        return s3_missing(context);
+    }
+    service::HttpResponse response;
+    response.contentType = "application/json";
+    response.body = kMeleeReportDocument;
     return response;
 }
 
@@ -65,8 +84,12 @@ service::HttpResponse kinesis(const RouteContext& context) {
 
 } // namespace
 
-void register_aws_routes(Router& router) {
+void register_aws_routes(Router& router, const AwsOptions& options) {
     router.add("GET", "amazonaws.com", "/ping", "aws.ping", ping);
+    if (options.meleeReport) {
+        router.add("GET", kRemoteConfigurationHost, kGameplayConfigurationPath, "aws.s3_gameplay_configuration",
+                   s3_gameplay_configuration);
+    }
     router.add("GET", ".s3.", "/*", "aws.s3_missing", s3_missing);
     router.add("POST", "sts.", "/", "aws.sts", sts);
     router.add("POST", "kinesis.", "/", "aws.kinesis", kinesis);

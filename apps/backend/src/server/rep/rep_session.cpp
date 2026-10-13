@@ -5,10 +5,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 #include "core/logging/log.h"
 #include "middleware/steam/local_ticket.h"
 #include "server/hub/wire.h"
+#include "server/rep/combat_messages.h"
 #include "server/rep/item_requests.h"
 #include "server/rep/replication.h"
 #include "state/identity.h"
@@ -466,6 +468,29 @@ void RepSession::log_message_counts() const {
                static_cast<unsigned long long>(m_counts.uncheckedTargets),
                static_cast<unsigned long long>(m_counts.playerManager),
                static_cast<unsigned long long>(m_counts.unknownRoutes));
+    if (m_contacts + m_projectileItems + m_attack.presses() != 0) {
+        using world::HitVerdict;
+        log::write("rep: hit claims of the session: %u attack input(s), %llu melee contact(s): %llu accepted, %llu refused "
+                   "(%llu not a creature, %llu not a component of the creature, %llu not observed, %llu dead, %llu no "
+                   "melee weapon, %llu no attack, %llu the same attack, %llu too far, %llu bad point, %llu too many "
+                   "claims, %llu no combat tables); %llu item(s) of the projectile lists (not used)",
+                   m_attack.presses(),
+                   static_cast<unsigned long long>(m_contacts),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::accepted)),
+                   static_cast<unsigned long long>(m_attack.refused()),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::notCreature)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::badReference)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::notObserved)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::dead)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::noWeapon)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::noAttack)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::sameAttack)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::tooFar)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::badPoint)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::tooMany)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::noTables)),
+                   static_cast<unsigned long long>(m_projectileItems));
+    }
     const std::uint64_t accepted = m_track.count(world::PositionVerdict::accepted);
     const std::uint64_t outOfSequence = m_track.count(world::PositionVerdict::outOfSequence);
     if (accepted + outOfSequence + m_track.refused() == 0) {
@@ -541,8 +566,7 @@ void RepSession::replicate(carrier::Clock::time_point now) {
 
 void RepSession::add_creature_record(const world::Entity& entity, Known& known, RecordBatch& batch) {
     // A creature has only the observer view, and each of its states is one small fragment.
-    RecordWriter record(known.interest);
-    unsigned count = 0;
+    std::vector<PendingFragment> fragments;
     for (const StateCodec& codec : creature_codecs()) {
         const auto changed = entity.changed.find(codec.key);
         if (changed == entity.changed.end() || changed->second <= known.sent) {
@@ -553,53 +577,89 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
             continue; // The slice of the creature has no such component.
         }
         if (codec.parts != nullptr) {
-            for (const hub::Bytes& state : codec.parts(entity, View::observer, PartsRequest{known.sent, kFragmentBudget})) {
-                record.fragment(slot, codec.type, state);
-                ++count;
+            for (hub::Bytes& state : codec.parts(entity, View::observer, PartsRequest{known.sent, kFragmentBudget})) {
+                fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
             }
             continue;
         }
-        const hub::Bytes state = codec.encode(entity, View::observer, m_clock);
+        hub::Bytes state = codec.encode(entity, View::observer, m_clock);
         if (!state.empty()) {
-            record.fragment(slot, codec.type, state);
-            ++count;
+            fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
         }
     }
     // Development aid: the fragments of a command (tools/world fragment).
     for (const world::RawFragment& raw : entity.rawFragments) {
-        if (raw.changed > known.sent && count < kMaxFragmentsInRecord) {
-            record.fragment(raw.slot, raw.type, raw.state);
-            ++count;
+        if (raw.changed > known.sent) {
+            fragments.push_back(PendingFragment{raw.slot, raw.type, raw.state, true});
+        }
+    }
+    if (fragments.empty()) {
+        return;
+    }
+    // The fragments go into records by the rule of send_record: a record ends before a fragment
+    // that makes it larger than one carrier message, and before a second fragment for one slot
+    // (the client sorts the fragments of a record by their slot). The usual fragments of a
+    // creature are one record. A later record of the same creature starts a new bundle: a
+    // bundle has one record of an entity at most, as for each other entity.
+    RecordWriter record(known.interest);
+    std::vector<std::uint32_t> slots;
+    std::size_t size = kRecordHeader;
+    unsigned count = 0;
+    /** True from the second record of the creature on. */
+    bool later = false;
+    const auto add = [&] {
+        if (count == 0) {
+            return;
+        }
+        const hub::Bytes payload = record.finish();
+        // A bundle stays below the size of one carrier message: a record that does not fit
+        // starts the next bundle.
+        if (batch.records != 0 && (later || batch.payload.size() + payload.size() > kBundleBudget)) {
+            send_batch(batch);
+        }
+        batch.payload.insert(batch.payload.end(), payload.begin(), payload.end());
+        ++batch.records;
+        if (known.sent == 0 && !later) {
+            ++batch.fresh;
+        }
+        later = true;
+        record = RecordWriter(known.interest);
+        slots.clear();
+        size = kRecordHeader;
+        count = 0;
+    };
+    for (const PendingFragment& fragment : fragments) {
+        const std::size_t fragmentSize = size_length(fragment.slot) + size_length(fragment.type) + fragment.state.size();
+        if (kRecordHeader + fragmentSize > kClientBundleLimit) {
+            // The client cannot read a bundle of this size. The fragment does not go out, and
+            // the other fragments of the creature do.
+            log::write("rep: the fragment for slot %u, type %u (%zu bytes) is larger than the client permits for one "
+                       "bundle (%zu bytes): not sent",
+                       fragment.slot,
+                       fragment.type,
+                       fragment.state.size(),
+                       kClientBundleLimit);
+            continue;
+        }
+        const bool sameSlot = std::find(slots.begin(), slots.end(), fragment.slot) != slots.end();
+        if (count > 0 && (size + fragmentSize > kBundleBudget || sameSlot || count == kMaxFragmentsInRecord)) {
+            add();
+        }
+        record.fragment(fragment.slot, fragment.type, fragment.state);
+        slots.push_back(fragment.slot);
+        size += fragmentSize;
+        ++count;
+        if (fragment.development) {
             log::write("rep: DEVELOPMENT COMMAND: fragment of the command for slot %u, type %u (%zu bytes) is in the "
                        "record of interest %u",
-                       raw.slot,
-                       raw.type,
-                       raw.state.size(),
+                       fragment.slot,
+                       fragment.type,
+                       fragment.state.size(),
                        known.interest);
         }
     }
-    if (count == 0) {
-        return;
-    }
-    const hub::Bytes payload = record.finish();
-    if (payload.size() > kClientBundleLimit) {
-        log::write("rep: the record of creature %016llx (%zu bytes) is larger than the client permits for one bundle: "
-                   "not sent",
-                   static_cast<unsigned long long>(entity.id),
-                   payload.size());
-        known.sent = m_world.revision();
-        return;
-    }
-    // A bundle stays below the size of one carrier message: a record that does not fit starts
-    // the next bundle.
-    if (batch.records != 0 && batch.payload.size() + payload.size() > kBundleBudget) {
-        send_batch(batch);
-    }
-    batch.payload.insert(batch.payload.end(), payload.begin(), payload.end());
-    ++batch.records;
-    if (known.sent == 0) {
-        ++batch.fresh;
-    }
+    add();
+    // The session has the creature at this revision: each of its records is in a bundle or in the batch.
     known.sent = m_world.revision();
 }
 
@@ -911,18 +971,20 @@ void RepSession::handle_client_input(std::span<const std::uint8_t> body) {
                    input->tail == InputTail::read ? "got to the position of the character" : "stopped after it");
     }
     if (input->tail != InputTail::read && m_seenTypes.insert(kInputTailMark).second) {
-        log::write("rep: input %u (%zu bytes, flags 0x%llx): %s before the position of the character: the report gives "
-                   "no position (the first report of the session with this result)",
+        log::write("rep: input %u (%zu bytes, flags 0x%llx): %s before the end of the entry: the report gives no "
+                   "position and no attack data (the first report of the session with this result)",
                    static_cast<unsigned>(input->sequence),
                    body.size(),
                    static_cast<unsigned long long>(input->flags),
-                   input->tail == InputTail::unknownBlock ? "the entry has a block with a layout that is not known"
-                                                          : "the body ends");
+                   input->tail == InputTail::badValue ? "the entry has a value that the client does not send"
+                                                      : "the body ends");
     }
     const state::WorldPosition before = own->position;
     if (input->hasCharacter) {
         report_position(*input, now, *own);
     }
+    // After the position: the check of a hit claim uses the position of the character.
+    handle_attacks(*input);
     if (!std::isfinite(input->cameraX) || !std::isfinite(input->cameraY) || !std::isfinite(input->cameraZ)
         || !std::isfinite(input->lookYaw) || !std::isfinite(input->lookPitch)) {
         // A number that is not finite is not a camera: it must not go into the estimate of
@@ -972,6 +1034,87 @@ void RepSession::handle_client_input(std::span<const std::uint8_t> body) {
                                                                 : "no source");
         m_lastInputLog = now;
     }
+}
+
+void RepSession::handle_attacks(const ClientInput& input) {
+    if (input.steps.empty()) {
+        return;
+    }
+    const auto now = m_clock.now();
+    const auto take = [&](const InputStep& step) {
+        if (step.weaponKey != 0) {
+            m_world.combat().select_weapon(m_id, step.weaponKey);
+        }
+        m_attack.step(step.sequence, step.attackPress, step.attackHold, step.attackRelease, now);
+        m_projectileItems += step.projectileHits + step.shots;
+        for (const InputContact& contact : step.contacts) {
+            claim_hit(step, contact);
+        }
+    };
+    // The steps of a report are newest first.
+    const InputStep& newest = input.steps.front();
+    if (!m_attack.newer(newest.sequence)) {
+        // An old or a second datagram. Only when the input numbers of the client started
+        // again, the newest step is the first step of a new sequence.
+        if (m_attack.restarted(newest.sequence, now)) {
+            take(newest);
+        }
+        return;
+    }
+    for (auto step = input.steps.rbegin(); step != input.steps.rend(); ++step) {
+        // An older step of the report that the session got in a report before it is not new,
+        // also when the reports stopped for some time: a contact counts one time.
+        if (m_attack.newer(step->sequence)) {
+            take(*step);
+        }
+    }
+}
+
+void RepSession::claim_hit(const InputStep& step, const InputContact& contact) {
+    ++m_contacts;
+    world::HitClaim claim;
+    claim.input = step.sequence;
+    claim.target.bytes = contact.actor;
+    claim.targetId = contact.entity;
+    claim.facet = contact.facet;
+    claim.group.bytes = contact.groupActor;
+    claim.groupId = contact.group;
+    claim.point = state::WorldPosition{contact.point[0], contact.point[1], contact.point[2]};
+    // The session is an observer: only it knows which entities its client has.
+    claim.observed = contact.entity != m_observer.own() && m_observer.find(contact.entity) != nullptr;
+    // The world finds the attacker from the session, checks the claim, and computes the
+    // damage. A claim that it refuses changes nothing.
+    const world::HitResult result = m_world.combat().claim(m_id, claim, m_attack);
+    if (result.verdict == world::HitVerdict::accepted) {
+        return;
+    }
+    const auto cause = static_cast<std::size_t>(result.verdict);
+    if (!m_hitVerdictLogged[cause]) {
+        m_hitVerdictLogged[cause] = true;
+        const world::AttackTrack::Press* attack = m_attack.newest();
+        log::write("rep: hit claim refused (%s): input %u, target %016llx, facet %016llx, point %.3f %.3f %.3f; %s (the "
+                   "first claim of the session with this cause)",
+                   world::hit_verdict_text(result.verdict),
+                   static_cast<unsigned>(step.sequence),
+                   static_cast<unsigned long long>(contact.entity),
+                   static_cast<unsigned long long>(contact.facet),
+                   contact.point[0],
+                   contact.point[1],
+                   contact.point[2],
+                   attack == nullptr ? "the client sent no attack input"
+                                     : ("the newest attack input started at input " + std::to_string(attack->input) + " and was on for "
+                                        + std::to_string(attack->holdSteps) + " step(s)")
+                                           .c_str());
+    }
+}
+
+void RepSession::damage_dealt(const world::DamageDealt& damage) {
+    if (!m_inWorld || m_closing) {
+        return;
+    }
+    // The number at the target, for the client of the attacker only. Each observer of the
+    // target gets its new health with the vitals state.
+    send_message(kTypeDamageDealt, damage_dealt_body(m_observer.own(), damage));
 }
 
 void RepSession::report_position(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own) {

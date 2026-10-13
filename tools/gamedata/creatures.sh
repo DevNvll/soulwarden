@@ -13,7 +13,8 @@
 # tools/research with a library for Windows (SOULWARDEN_OODLE_DLL), or the files that
 # tools/research/pakx.py extracted (SOULWARDEN_EXTRACT_DIR, default
 # ~/Games/soulwarden/work/assets/extract). It stops with status 1 and one message when one file
-# that it needs has no source, and then writes no file.
+# that it needs has no source, and then writes no file. The same for an animation file that a
+# slice names (its action table) and that is not in the pak files or is not correct XML.
 # Environment: SOULWARDEN_GAME_DIR (default ~/Games/soulwarden/game), SOULWARDEN_GAMEDATA_DIR (default
 # ~/.local/share/soulwarden/gamedata), SOULWARDEN_PYTHON (default python3), SOULWARDEN_OODLE_LIB,
 # SOULWARDEN_OODLE_DLL, SOULWARDEN_OODLE_DEC, SOULWARDEN_EXTRACT_DIR.

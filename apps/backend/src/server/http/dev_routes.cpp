@@ -66,6 +66,9 @@
 //   POST /v1/dev/creatures/reset                         each spawn point that waits is free again
 //   POST /v1/dev/world/fragment?creature=ID&slot=N&type=N&state=HEX
 //                                                        the fragment command for a creature
+// The commands remove, health, and kill change each creature of the world, and they need no
+// character (the rule CreatureReach::world of character_commands.h). The admin interface has a
+// different rule for them.
 // The level, the attributes, and the skills of a character: server/http/dev_progress_routes.cpp.
 // The commands give, remove, and coin, and the list, are commands of the common layer
 // (character_commands.h), which the admin routes use too.
@@ -413,15 +416,17 @@ service::HttpResponse list_creature_kinds(const Services& services, const RouteC
 /**
  * @return The handler of a development route for a creature command. The character is the
  *         reference place of the command: a command that needs none works with no character.
+ *         A development route gives the rule `world`: the command can change each creature.
  */
-RouteHandler creature_route(const Services& services, commands::Command command) {
+RouteHandler creature_route(const Services& services, commands::CreatureCommand command) {
     return [&services, command](const RouteContext& context) {
         if (!context.request.host.empty()) {
             return message(403, "forbidden");
         }
         service::HttpResponse refusal;
         const std::string character = query_text(context.request, "character").value_or("");
-        commands::WorldCommand step = command(character, commands::QueryArguments(context.request), refusal);
+        commands::WorldCommand step =
+            command(character, commands::QueryArguments(context.request), commands::CreatureReach::world, refusal);
         return step ? in_world(services, std::move(step)) : refusal;
     };
 }

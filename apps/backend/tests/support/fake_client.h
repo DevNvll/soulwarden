@@ -74,6 +74,10 @@ public:
     Bytes input_report(const InputEntry& entry) {
         return wrap(1, client_frame(kClientInput, input_entry_body(entry)), false);
     }
+    /** Input report with these entries, the newest one first: a client sends an input in more than one report. */
+    Bytes input_report(const std::vector<InputEntry>& entries) {
+        return wrap(1, client_frame(kClientInput, input_entries_body(entries)), false);
+    }
     /**
      * Input report of a client with the position report of the game hook: the position of the
      * character (x, y, z), and the camera of a character at that position.

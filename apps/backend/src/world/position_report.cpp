@@ -76,6 +76,9 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
     }
 
     // 3. Speed.
+    // The totals of the rises and of the falls of the accepted reports, with this report.
+    double totalRise = 0.0;
+    double totalFall = 0.0;
     if (m_window.empty()) {
         // No report was accepted: the reference is the position that the world has (the spawn
         // position), from the time of the first report. The loading screen of the client is
@@ -123,9 +126,26 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
         // the world clock, with the delay value one time. The time between two reports comes
         // from their input numbers too (seconds_from), and each report would get the delay
         // value again: a client with larger input number steps could rise without a limit.
+        //
+        // The two totals are sums: each rise of the accepted reports of the window and of this
+        // report, and each fall. The difference of two heights is not sufficient: a client that
+        // goes up and down in turns stays near its first height, and each change of its
+        // direction would give it the limit again (400 m up and 400 m down at one clock value).
+        //
+        // Usual movement stays far below the two limits, also with its changes of direction.
+        // The sum of the rises of a character in a time is not more than its largest rise speed
+        // times that time, for each path: that speed is 6.5 m/s (the start of a jump, see
+        // position_limits), and the limit is 20 m/s. A character that jumps 1.2 m each 0.8 s on
+        // a slope goes less than 4 m up in a window of 1 s, and the limit of that window is
+        // 25 m. Reports that come together at one clock value after a delay of 0.25 s are 8
+        // simulation steps: 1.7 m up at the most (the limit is 5 m), and 14.4 m down in the
+        // fastest fall of the live session (the limit is 30 m).
         const float clockSeconds = seconds(now - start->time) + seconds(kClockSlack);
-        const float windowRise = position.z - start->position.z;
-        if (windowRise > kRiseSpeed * clockSeconds || -windowRise > kFallSpeed * clockSeconds) {
+        totalRise = last.totalRise + static_cast<double>(std::max(rise, 0.0F));
+        totalFall = last.totalFall + static_cast<double>(std::max(-rise, 0.0F));
+        const float windowRise = static_cast<float>(totalRise - start->totalRise);
+        const float windowFall = static_cast<float>(totalFall - start->totalFall);
+        if (windowRise > kRiseSpeed * clockSeconds || windowFall > kFallSpeed * clockSeconds) {
             return counted(PositionVerdict::tooFast);
         }
         if (static_cast<std::uint16_t>(report.input - last.input) == 1) {
@@ -150,7 +170,7 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
     while (m_window.size() > 1 && now - m_window.front().time > kWindow) {
         m_window.pop_front();
     }
-    m_window.push_back(Sample{report.input, now, position});
+    m_window.push_back(Sample{report.input, now, position, totalRise, totalFall});
     return counted(PositionVerdict::accepted);
 }
 

@@ -14,8 +14,32 @@ void register_omni_routes(Router& router, const Services& services);
 /** Javelin HTTP gateway. */
 void register_gateway_routes(Router& router, const Services& services);
 
+/** Host of the remote configuration documents of the client (an S3 bucket in the original service). */
+inline constexpr const char* kRemoteConfigurationHost = "ags-javelin-remote-config.s3.amazonaws.com";
+/**
+ * Path of the one document that the backend has: the gameplay settings of the product (the
+ * Steam application of the game), for each client version.
+ */
+inline constexpr const char* kGameplayConfigurationPath =
+    "/applications/publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.1063730/versionless";
+/**
+ * The document. It sets one registered setting of the client. The client reads the body only
+ * when the reply has its length (the HTTP writer gives it): 50 bytes.
+ */
+inline constexpr const char* kMeleeReportDocument = R"({"javelin.enable-client-authoritative-melee":true})";
+
+/** Switches of the AWS routes. */
+struct AwsOptions {
+    /**
+     * The reply to the request for the gameplay configuration document has the document. Off:
+     * the reply is "no such key", as for each other document, and the client reports no melee
+     * contact (backend option --no-melee-report).
+     */
+    bool meleeReport{true};
+};
+
 /** AWS SDK service endpoints. */
-void register_aws_routes(Router& router);
+void register_aws_routes(Router& router, const AwsOptions& options);
 
 /**
  * Development commands for the world (management routes: a request with a service host gets

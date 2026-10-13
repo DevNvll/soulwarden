@@ -10,6 +10,7 @@
 #include "core/capture/http_capture.h"
 #include "core/logging/log.h"
 #include "gamedata/appearance_tables.h"
+#include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/progression_tables.h"
@@ -55,6 +56,8 @@ struct Options {
     bool observePlayers{false};
     /** Development commands for the world (server/http/dev_routes.cpp). */
     bool devCommands{false};
+    /** The client reports its melee contacts (server/http/routes.h, AwsOptions). */
+    bool meleeReport{true};
 };
 
 /**
@@ -137,6 +140,8 @@ bool parse(int argc, char** argv, Options& options) {
             options.observePlayers = true;
         } else if (argument == "--dev-commands") {
             options.devCommands = true;
+        } else if (argument == "--no-melee-report") {
+            options.meleeReport = false;
         } else if (argument == "--capture") {
             options.capture = true;
         } else {
@@ -156,7 +161,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: soulwarden-backend --data-dir DIR [--gamedata-dir DIR] [--http-host HOST] [--http-port PORT] "
                      "[--rep-address HOST:PORT] [--no-rep-listener] [--seed-character NAME] [--world-version TEXT] "
-                     "[--capture] [--observe-players]\n"
+                     "[--capture] [--observe-players] [--no-melee-report]\n"
                      "only with SOULWARDEN_HARNESS=1 in the environment: --dev-commands, --research-session "
                      "registration-result=N | reject=N | kick=N | kick-delay=SECONDS | refuse-equipment=1\n");
         return 2;
@@ -267,6 +272,23 @@ int main(int argc, char** argv) {
                    creatureDataPath.c_str(),
                    creatureData.error().c_str());
     }
+    // The combat tables: the damage of an attack of a player on a creature.
+    const std::string combatTablesPath = (gameDataDirectory / gamedata::kCombatTablesFile).string();
+    gamedata::CombatTables combatTables;
+    if (combatTables.load(combatTablesPath)) {
+        log::write("backend: combat tables loaded from %s (%zu items with a weapon, %zu weapons, %zu damage rows, the "
+                   "defense values of %zu vitals rows)",
+                   combatTablesPath.c_str(),
+                   combatTables.data().items.size(),
+                   combatTables.data().weapons.size(),
+                   combatTables.data().damageRows.size(),
+                   combatTables.data().vitals.size());
+    } else {
+        log::write("backend: no combat tables at %s (%s): an attack of a player on a creature has no effect. Make the "
+                   "file with tools/gamedata/combat.sh",
+                   combatTablesPath.c_str(),
+                   combatTables.error().c_str());
+    }
     // The local ticket of the game hook names the Steam account of a login. No code proves it.
     log::write("backend: stub authentication, the Steam ticket of a login is not validated");
     // One thread owns the world. With the game server listener, it is the listener thread of
@@ -277,6 +299,7 @@ int main(int argc, char** argv) {
     worldOptions.itemCatalog = &itemCatalog;
     worldOptions.progressionTables = &progressionTables;
     worldOptions.creatureData = &creatureData;
+    worldOptions.combatTables = &combatTables;
     world::World world(clock, store, appearanceTables, worldOptions);
     const server::http::Services services{store,
                                           options.repAddress,
@@ -315,7 +338,16 @@ int main(int argc, char** argv) {
     server::http::register_channel_routes(router);
     server::http::register_omni_routes(router, services);
     server::http::register_gateway_routes(router, services);
-    server::http::register_aws_routes(router);
+    server::http::AwsOptions awsOptions;
+    awsOptions.meleeReport = options.meleeReport;
+    server::http::register_aws_routes(router, awsOptions);
+    if (options.meleeReport) {
+        log::write("backend: the melee contact report of the client is on (the remote configuration document %s)",
+                   server::http::kGameplayConfigurationPath);
+    } else {
+        log::write("backend: the melee contact report of the client is OFF (--no-melee-report): the client gets no "
+                   "remote configuration document, and a melee attack of a player has no effect");
+    }
     if (options.devCommands) {
         server::http::register_dev_routes(router, services);
         log::write("backend: DEVELOPMENT COMMANDS are on (routes /v1/dev/world, /v1/dev/items, /v1/dev/progress, and "

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "gamedata/appearance_tables.h"
+#include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/progression_tables.h"
@@ -35,7 +36,9 @@ struct ServerHost {
     gamedata::ProgressionTables progression;
     /** The creature data of the world. It is empty until a case sets it: the world then has no creature. */
     gamedata::CreatureData creatures;
-    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures)};
+    /** The combat tables of the world. They are empty until a case sets them: an attack then has no effect. */
+    gamedata::CombatTables combat;
+    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -53,6 +56,14 @@ struct ServerHost {
                                               const gamedata::CreatureData& creatures) {
         world::WorldOptions options = with_game_data(catalog, progression);
         options.creatureData = &creatures;
+        return options;
+    }
+    static world::WorldOptions with_game_data(const gamedata::ItemCatalog& catalog,
+                                              const gamedata::ProgressionTables& progression,
+                                              const gamedata::CreatureData& creatures,
+                                              const gamedata::CombatTables& combat) {
+        world::WorldOptions options = with_game_data(catalog, progression, creatures);
+        options.combatTables = &combat;
         return options;
     }
 

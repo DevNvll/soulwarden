@@ -19,6 +19,7 @@ backend. Read only the documents relevant to the task.
 | Level, experience, attributes of a character | Protocol notes 4.12, `apps/backend/src/world/progress.h`, `server/rep/states/attribute_state.cpp`, `tools/world level`, `tools/gamedata/progression.sh` |
 | Weapon mastery, ability bar, trade skills | Protocol notes 4.13, `apps/backend/src/world/skills.h`, `server/rep/states/skill_states.cpp`, `tools/world mastery`, `tools/research/ability_tables.py` |
 | Creatures: the spawn points, the kinds, the record of a creature, health and death, the action of a creature, the commands | Protocol notes 4.14, `apps/backend/src/world/creatures.h`, `gamedata/creature_data.h`, `server/rep/states` (movement, vitals, marker), `server/http/creature_commands.cpp`, `tools/world creatures`, `tools/gamedata/creatures.sh`, `tools/research/creature_actions.py` |
+| A melee attack of a player on a creature: the contact report of the client, the hit check, the damage rule, the damage number | Protocol notes 2.3, 4.7, and 4.15, `apps/backend/src/world/combat.h`, `gamedata/combat_tables.h`, `server/rep/client_input.h`, `server/rep/combat_messages.h`, `server/http/aws_routes.cpp`, `tools/gamedata/combat.sh`, `tools/research/input_packet.py --contacts` |
 | Ids of an entity, check of the client messages | Protocol notes 4.2, `tools/gamedata/slice_ids.sh` |
 | The launcher in the Steam library | `tools/steam-shortcut.py` |
 | The tool window (key F8): renderer hook, input, layout | Protocol notes section 6, `apps/game-hook/src/client/toolwindow`, `tools/hx 'toolwindow'` |
@@ -68,7 +69,9 @@ backend. Read only the documents relevant to the task.
   the creature system (`world/creatures.h`) makes a creature, changes its health, and
   removes it. The health 0 is the death: the creature gets the dead mark and the death
   action of its slice, and its entity stays in the world (the body). A dead creature does
-  not get health again.
+  not get health again. Damage goes through the same system (`Creatures::hurt`): a creature
+  that lives after it plays the action `Reaction` of its slice, which has an end 1.5 s later
+  (the creature then has no action of the server, and its observers get no record for it).
 - The spawn points (a project rule, protocol notes 4.14). The creature data has the places
   where the game has a creature. The world makes the creature of a spawn point when a
   player is 150 m or less from the point, and it removes the creature when no player is
@@ -76,16 +79,53 @@ backend. Read only the documents relevant to the task.
   for each 500 ms of the world clock). A spawn point has one creature at most. A creature of
   a point that died, or that a command removed, does not come back by this rule: the point
   waits until the command `reset`, or until its respawn time (`Creatures::respawn_at`, the
-  place of the respawn timer of stage 3.5a: no code sets a time in stage 3.4a). A creature of
-  a command has no spawn point: the distance rule does not remove it.
+  place of the respawn timer of stage 3.5a: no code sets a time in stage 3.4a). At the
+  respawn time, when a player is 150 m or less from the point, the point first removes the
+  body of its dead creature and then makes its new creature; with no player that near, the
+  body stays and the point waits. A creature of a command has no spawn point: the distance
+  rule does not remove it.
+- A melee attack of a player (protocol notes 4.15). The client finds each melee contact
+  itself and reports it in the third list of its input entry (the contact report). The
+  report is on in each start: the backend answers one remote configuration request of the
+  client with the document that turns the client setting
+  `javelin.enable-client-authoritative-melee` on (`server/http/aws_routes.cpp`; the exact
+  request of protocol notes 2.3; each other request to that host keeps the reply 404).
+  `SOULWARDEN_MELEE_REPORT=0` (backend option `--no-melee-report`) turns it off: an attack then
+  has no effect. The document has this one setting: do not add a setting without a live
+  check.
+- A contact is a claim of a client, not a fact. The session gives each claim to the combat
+  system of the world (`world/combat.h`, `Combat::claim`), which finds the attacker from the
+  session and checks the claim: the target is a creature of the world that lives and that
+  the session observes, the reference names a component of its slice, an attack input of
+  the client fits the contact, the character has a melee weapon in its hand, the same attack
+  did not hurt the creature, the exact position of the character is 5 m or less from the
+  creature, and the client made 12 claims or less in 1 s. A refused claim changes nothing
+  and gets no reply; the log counts the refusals with their cause. The values of one client
+  for the check (`world::AttackTrack`: its attack inputs, its last hits, the counts) are in
+  its session, as the values of the position check. The session takes each input step one
+  time: a client sends an entry in 5 reports.
+- The damage of an attack is computed in one function (`Combat::damage`), from the combat
+  tables (game data) and the entity of the attacker: the weapon of the item, its gear score,
+  the damage row of the light or of the heavy attack, the attributes and the level of the
+  attacker, and the mitigation, the weakness, and the absorption of the creature. The rule is
+  a project rule (protocol notes 4.15): change it there and in the notes together. The health
+  goes down through the creature system, each observer gets the vitals state, and only the
+  session of the attacker gets the damage number (`SessionSink::damage_dealt`, message type
+  2071 for the damage receiver facet of its own character). The client computes no damage.
+- The weapon in the hand of a character is the item of the weapon slot that its client
+  selected with a weapon key (`Entity::combat.selectedWeapon`), or the first weapon slot
+  with an item. The sheathe bits and the active bits of the paperdoll state do not follow
+  the keys yet (roadmap 3.1).
 - The position of a character that a client plays is the position that its client reports
   (the position field of the input report, protocol notes 4.7). The session gives each report
   to the world (`World::report_position`), which finds the entity from the session, checks
   the report (`world/position_report.h`: a newer input number, finite numbers, the two limit
   values of the height, a peak speed, a speed of the height, a speed over a time window
-  of 1 s, and the total rise and fall of that window for the time of the world clock; the
-  first report of a session has the position of the entity as its reference, also for its
-  height; the limits are constants from one live session, `position_limits`), and keeps an
+  of 1 s, and the total rise and the total fall of that window for the time of the world
+  clock: each total is the sum of the rises or of the falls of the accepted reports, not the
+  difference of two heights; the first report of a session has the position of the entity as
+  its reference, also for its height; the limits are constants from one live session,
+  `position_limits`), and keeps an
   accepted position in the entity. A report that the world refuses changes no value of the world, and
   the session counts it in the log. The values of one client for the check (`PositionTrack`:
   the last input number, the accepted positions of the window, the counts) are in its
@@ -188,7 +228,10 @@ backend. Read only the documents relevant to the task.
   the interest table at the radius of its slice (`m_sliceSpawnRadius` of the game data, not
   less than 20 m and not more than 100 m), and it goes out 20 m farther. One scan takes 16
   new creatures at most, the nearest ones first. The records of creatures go together in
-  common bundles below the size of one carrier message.
+  common bundles below the size of one carrier message. The fragments of a creature make
+  records by the rule of each entity: a second fragment for one slot, and a fragment that
+  makes the record larger than one carrier message, go in a later record, and each later
+  record of a creature starts a new bundle.
 - The record of a creature has the metadata state (the asset of its slice), the movement
   state, the vitals state, and the marker state, with the slot of each component from the
   slice (game data: `CreatureSlice::movementSlot`, `vitalsSlot`, `markerSlot`). A creature
@@ -266,7 +309,13 @@ backend. Read only the documents relevant to the task.
   (`spawn_creature`, `remove_creature`, `set_creature_health`, `kill_creature`,
   `reset_creatures`) acts for the character of the command as the reference place: that
   character must be a character of the account of the token, and the state of a character
-  has the creatures near it. The admin routes and the
+  has the creatures near it. An admin command that changes a creature (`remove_creature`,
+  `set_creature_health`, `kill_creature`) changes only a creature that is 150 m or less from
+  that character (`commands::kAdminCreatureRange`, the distance of the list), and the
+  character must be in the world: if not, the reply is 404 and nothing changes. A
+  development route (`/v1/dev/creatures`, `tools/world`) has no such rule: it changes each
+  creature of the world. Each creature command of the common layer has the parameter
+  `commands::CreatureReach`, and each route set gives its rule. The admin routes and the
   development routes have one layer below them
   (`server/http/character_commands.h`): add a command for a character there, and give it to
   the two route sets. A route has no logic of its own for a character.
@@ -290,7 +339,12 @@ backend. Read only the documents relevant to the task.
   game data files now: `appearance-tables.json`, `slice-ids.json`, `creatures.json` (the
   spawn points of the creatures of an area, and for each kind its slice, the slots of its
   components, its vitals ids, its health, its name, and its action table; without it the
-  world has no creature), `item-catalog.json` (the
+  world has no creature; the backend refuses a file whose levels, slots, assets, or health
+  values do not fit together, as a whole), `combat-tables.json` (the weapon of each item
+  with its base damage, its attribute factors, and the damage rows of its light and of its
+  heavy attack, the damage rows and types, the damage values of the attributes, the level
+  and gear score values of the damage rule, and the defense values of each vitals row;
+  without it an attack of a player on a creature has no effect), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
   list of the backstories of the character creation; without it the backend gives no item,
   and a new character has no clothing), and `progression-tables.json` (the level table, the
@@ -329,6 +383,7 @@ tools/gamedata/slice_ids.sh          # one time: ids of the player slice for the
 tools/gamedata/items.sh              # one time: item catalog for the backend (index of each item on the wire)
 tools/gamedata/progression.sh        # one time: progression tables for the backend (levels, attributes, skills)
 tools/gamedata/creatures.sh          # one time: creature data for the backend (spawn points, kinds, slices); needs an Oodle source
+tools/gamedata/combat.sh             # one time: combat tables for the backend (weapons, damage rows, defense values of the creatures)
 tools/scenarios/menu.sh RUN_LABEL    # start, go to the main menu
 tools/scenarios/play.sh RUN_LABEL    # the same, then press Play for the first character
 tools/scenarios/create.sh RUN_LABEL NAME   # menu, then create a character and enter the world
@@ -406,8 +461,20 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   creature in the entity table and in the position index (CR3), the spawn point rule (CR4),
   the interest of a session for creatures and many creatures in more than one bundle (CR5),
   health and death as state changes (CR6), the creature commands of the development routes
-  and of the admin interface (CR7), three sessions with one creature (CR8), HTTP
-  stop (H1), a world task that did not start
+  and of the admin interface (CR7), three sessions with one creature (CR8), the respawn time
+  of a spawn point with its body near a player (CR9), the reference character of an admin
+  creature command with two accounts and two sessions (CR10), a creature data file whose
+  parts do not fit together (CR11), two fragments of one slot and a long fragment in the
+  records of a creature (CR12), the health command with a percent value (CR13), the totals of
+  the rises and of the falls of the time window (PR10), the reader of an input report with
+  items in its three lists (HT1), the attack inputs of a client: light and heavy, a long
+  hold, fast clicks, the input numbers (HT2), the combat tables file and the damage rule
+  with the worked example (HT3), one hit with the bytes of the health change, of the
+  reaction, and of the damage number (HT4), each refusal of the hit check and a backend with
+  no combat tables (HT5), the death of a creature by a hit and attacks on the body (HT6), the
+  weapon in the hand and the weapon keys (HT7), three sessions with one wolf: two observers
+  and one session far away (HT8), the remote configuration document and its switch (HT9),
+  HTTP stop (H1), a world task that did not start
   (D2), position limits (P2), bundle limits (F1), sessions and stops (T11), a locked item
   and the quantity of a lock request (L1), a delete whose write failed (D3), a spawn offset
   that is not a number (P3), a bag change whose write failed (B10), older database versions
@@ -449,7 +516,10 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   character `Soulwarden`, and the made-up test identity (`76561202255233008`, `Tester`) with the
   characters `Remote` and `Gearone`. `Soulwarden` has a chest armor, leg armor, an amulet, a
   sword, and a potion stack in a quick slot on it, the level 26 with points on strength,
-  dexterity, and constitution, six weapons (sword, bow, great axe, fire staff, spear,
+  dexterity, and constitution (strength 8, dexterity 25: the damage values of protocol notes
+  4.15), a spear (`2hSpearT1`) in weapon slot 2 (slot 25), a great axe (`2hGreatAxeT2`), a
+  hatchet (`1hHatchetT2`), and a war hammer (`2hWarhammerT2`) in the bag (`tools/world equip
+  Soulwarden BAGSLOT 25` puts one of them into weapon slot 2), six weapons (sword, bow, great axe, fire staff, spear,
   hatchet) at the mastery level 20 with 19 nodes each and no ability on a bar (114 nodes:
   rows of a test, written into the database with no check of the tree rules), the war hammer
   at the mastery level 8, and the trade skills mining, cooking, and armoring; `Remote` has the level 35; `Remote` has a chest armor, leg armor,
@@ -569,6 +639,14 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   list of the backstories that the character creation can send (member
   `creationBackstories`). A catalog file from before stage 1.5 has no such list, and a new
   character then gets no item: run the tool again.
+- `tools/gamedata/combat.sh` writes `combat-tables.json` to the game data folder (14,073 items
+  with a weapon, 587 weapons, 414 damage rows, the defense values of 8,779 vitals rows). It
+  reads the data tables and the base attributes file of the game copy from the sources of
+  the creature data tool: the extracted files of the work folder are sufficient for it (6 s),
+  and `SOULWARDEN_OODLE_LIB` reads the pak files. `tools/gamedata/combat.sh --find TEXT...` prints
+  the weapons and the creatures with a text (`1hswordt1`, `wolf_grey_7`). The backend log
+  says at the start if the tables are loaded. With no file the backend starts, and each hit
+  claim is refused (`no combat tables`).
 - `tools/research/script_errors.py` prints the errors of the user interface scripts of the
   client (run the game with `SOULWARDEN_TRACE=4A65DA0:512`; the game log has no line for such an
   error). Use it when a screen of the client is not complete after a new state.
@@ -610,8 +688,11 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   at rest are equal in `x` and `y`, and the height of the backend is 0 m to 0.017 m lower.
 - `tools/research/input_packet.py DATA_DIR/captures --summary` counts the input reports of a
   run: how many have a camera position, the position flag (flag bit 15), and the position of
-  the character (`posf0`), and each flags value. `--changes` prints the newest entry of each
-  report that is different from the one before.
+  the character (`posf0`), each flags value, and the items of the three lists. `--changes`
+  prints the newest entry of each report that is different from the one before. `--contacts`
+  prints each entry with a list item one time (the melee contacts of a run: the target, the
+  facet, the point), with its action bits. The tool reads each entry to its last byte: a
+  report that does not decode is in the output as `NOT DECODED`.
 - Game log of a development run:
   `~/Games/soulwarden/proton-dev/1063730/pfx/drive_c/users/steamuser/AppData/Local/AGS/New World/Game.log`
   (`game_log` of `tools/scenarios/common.sh`). Game log of a start with no development
@@ -644,7 +725,9 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   (`0`: the hook does not change the client code, and the backend uses the camera estimate)
   and `SOULWARDEN_EXACT_POSITION_FAULT=code` (a test of a start with client code that is not the
   code of the supported build: the hook compares with a wrong byte; only with the harness
-  gate).
+  gate). The same for the melee contact report: `SOULWARDEN_MELEE_REPORT` (`0`: the backend gets
+  the option `--no-melee-report`, the client gets no remote configuration document, and a
+  melee attack has no effect).
 - More variables of `tools/dev-run.sh`: `SOULWARDEN_BACKEND_EXE` and `SOULWARDEN_HOOK_DLL` start a
   different build of the backend or of the hook. `SOULWARDEN_RESEARCH_SESSION` is the research
   switch of the game server for live checks (`registration-result=N`, `reject=N`, `kick=N`,
@@ -701,6 +784,51 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
     makes "to the north" can be behind the window. Hide the window (F8) to see it.
   - The game log has no line for a creature record that the client accepts, and no line for
     a wrong action index: look at a screenshot.
+
+- Hits (stage 3.2a):
+  - A test of an attack: `tools/hx 'look -900 0'`, `tools/world creature spawn Wolf_Grey_7
+    Soulwarden -2.2 0 0 --yaw 270`, then `tools/hx 'click 628 330'` (a light attack) or
+    `'mousedown left' 'wait 600' 'mouseup left'` (a heavy attack). The backend log has one
+    line for each hit (`world: hit: NAME hurts creature ID ... N damage of the type T ...,
+    health A to B`), one line for the first refused claim of each cause (`rep: hit claim
+    refused (CAUSE)`), and the counts at the end of the session (`rep: hit claims of the
+    session`).
+  - Each attack moves the character 0.7 m to 2 m to the creature. A creature has no body that
+    stops the character: after some attacks the character is 1 m from the creature, and some
+    attacks then give no contact (the thrust of a heavy sword attack at 1.0 m, each spear
+    attack at 1.7 m or less). Spawn a new creature at the distance of the test.
+  - The distance at which an attack gives a contact depends on the weapon: a light sword
+    attack 1.8 m (not 2.4 m), a great axe 2.3 m, a light spear attack 2.0 m to 3.4 m, a heavy
+    spear attack only near 3.9 m (2 of 10 tries). No contact is not a fault of the backend:
+    look at `tools/research/input_packet.py DATA_DIR/captures --contacts`.
+  - The damage number shows for about 1 s. Take the screenshots in a loop directly after
+    the input (6 calls of `tools/shot` need 1 s). The number is the whole part of the damage
+    (75.7 shows as 75).
+  - The kind of an attack comes from the time of the attack input: a click (the button down
+    for less than 0.27 s) is a light attack, and a hold is a heavy attack. `'click X Y'` of
+    the harness is a light attack. For a heavy attack keep the button down for 0.4 s or
+    more (`'mousedown left' 'wait 600' 'mouseup left'`).
+  - While the button stays down, the client attacks again and again, and it attacks one more
+    time after the button went up. Each contact is one hit.
+  - The mode of the client comes from a document that the client reads before the main menu
+    (and again in the main menu). A backend that starts after the client asked gives no
+    document for that start. Read the two values with the method of protocol notes 2.3 when
+    an attack has no effect: the game log has the line `Retrieved layer's
+    "remoteCfg.publicGameplay.ProductId" remote config ... successfully, size: 50` when the
+    client got the document.
+  - `tools/gamedata/combat.sh` writes into the common game data folder: the next start of the
+    user then has the damage. For a test of a different file, give the tool an output path
+    and give the run its folder with `SOULWARDEN_GAMEDATA_DIR` (the folder needs the other game
+    data files too).
+  - A weapon key (1, 2) selects the weapon slot for the damage of the backend. A world entry
+    starts with the first weapon slot again, in the client and in the backend.
+  - A dead rabbit shows the text "No equipped Knife" at its name: the skinning interaction of
+    the client, which the backend does not have.
+  - The capture folder of a session is full after 6 minutes in the world (32,768 files): do
+    the attacks of a test early, or leave the world and enter it again.
+  - A test host with a creature data set whose kind or spawn point has a level with no row
+    gives no creature data (`CreatureData::set` returns false): the loader refuses data that
+    do not fit together.
 
 - The position report and the tests of the position (stage 2.3a):
   - The key of the dodge is the left Shift key (`tools/hx 'key 0xA0 80'`): 4 m to the rear

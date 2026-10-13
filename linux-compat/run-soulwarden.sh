@@ -239,6 +239,13 @@ if [[ "${SOULWARDEN_NO_BACKEND:-0}" != "1" ]]; then
     if [[ "${SOULWARDEN_OBSERVE_PLAYERS:-0}" == "1" ]]; then
         backend_arguments+=(--observe-players)
     fi
+    # The melee contact report of the client: the backend gives the client one remote
+    # configuration document, and the client then reports each melee contact that it finds
+    # in its input report. SOULWARDEN_MELEE_REPORT=0 turns it off: the client gets no document,
+    # and a melee attack of a player has no effect.
+    if [[ "${SOULWARDEN_MELEE_REPORT:-1}" == "0" ]]; then
+        backend_arguments+=(--no-melee-report)
+    fi
     # Development commands for the world (tools/world). They are diagnostics: only a run with
     # the harness gate on gets them, and the backend refuses the option without the gate.
     if [[ "${SOULWARDEN_DEV_COMMANDS:-0}" == "1" ]]; then

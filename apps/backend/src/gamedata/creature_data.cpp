@@ -7,6 +7,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "server/rep/states/state_codecs.h"
+
 namespace soulwarden::backend::gamedata {
 namespace {
 
@@ -26,6 +28,8 @@ constexpr std::uint32_t kMaxLevel = 1000;
 constexpr std::int64_t kMaxFragmentIndex = 1000000;
 /** Names of the action that a creature plays when it dies, in the sequence of the search. */
 constexpr const char* kDeathActions[] = {"Death", "Death_FB"};
+/** The action that a creature plays when it takes a hit (live proof for the Grey Wolf: protocol notes 4.14). */
+constexpr const char* kHitAction = "Reaction";
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -189,6 +193,16 @@ bool read_spawn_point(const json& row, SpawnPoint& point) {
     return true;
 }
 
+/**
+ * @return True when the slot list of a slice has the slot of a state that the backend sends,
+ *         for a component with the type of that state.
+ */
+bool has_slot(const CreatureSlice& slice, std::uint32_t slot, std::uint32_t stateType) {
+    return std::any_of(slice.slots.begin(), slice.slots.end(), [slot, stateType](const CreatureSlice::Slot& entry) {
+        return entry.slot == slot && entry.stateType == stateType;
+    });
+}
+
 } // namespace
 
 std::optional<std::uint32_t> CreatureSlice::find_action(std::string_view name) const {
@@ -274,8 +288,9 @@ bool CreatureData::load(const std::string& path) {
             return false;
         }
     }
-    // The count of the tool: a file that lost a part of a list is not complete.
-    if (document.contains("counts") && document["counts"].is_object()) {
+    // The count of the tool: a file that lost a part of a list is not complete. A member
+    // "counts" with a wrong form is a fault of the file: it is not the same as no member.
+    if (document.contains("counts")) {
         const json& counts = document["counts"];
         std::uint32_t pointCount = 0;
         std::uint32_t kindCount = 0;
@@ -313,6 +328,7 @@ bool CreatureData::set(std::vector<CreatureSlice> slices,
                 slice.deathAction = slice.find_action(name);
             }
         }
+        slice.hitAction = slice.find_action(kHitAction);
     }
     build_keys();
     return true;
@@ -323,11 +339,16 @@ bool CreatureData::check() {
         m_error = "the data has no kind, no slice, or no level";
         return false;
     }
+    // The smallest and the largest health of a level, for the health of each kind below.
+    float lowestHealth = m_levels.begin()->second;
+    float highestHealth = lowestHealth;
     for (const auto& [level, health] : m_levels) {
-        if (level == 0 || level > kMaxLevel || !(health > 0.0F)) {
+        if (level == 0 || level > kMaxLevel || !(health > 0.0F) || !std::isfinite(health)) {
             m_error = "the level table has a level or a health that is not correct";
             return false;
         }
+        lowestHealth = std::min(lowestHealth, health);
+        highestHealth = std::max(highestHealth, health);
     }
     for (std::size_t index = 0; index < m_slices.size(); ++index) {
         const CreatureSlice& slice = m_slices[index];
@@ -337,6 +358,20 @@ bool CreatureData::check() {
             || (slice.markerSlot != 0 && (slice.markerSlot == slice.movementSlot || slice.markerSlot == slice.vitalsSlot))
             || !(slice.interestRadius >= 0.0F)) {
             m_error = "slice " + std::to_string(index) + " has no movement slot or no vitals slot, or two equal slots";
+            return false;
+        }
+        // The backend sends a state to each of these slots (server/rep/states): the slot list
+        // of the slice must have the slot, for a component with the type of that state.
+        if (!has_slot(slice, slice.movementSlot, server::rep::kTypeMovementState)
+            || !has_slot(slice, slice.vitalsSlot, server::rep::kTypeVitalsState)
+            || (slice.markerSlot != 0 && !has_slot(slice, slice.markerSlot, server::rep::kTypeMarkerState))) {
+            m_error = "slice " + std::to_string(index)
+                      + " has a movement slot, a vitals slot, or a marker slot that is not the slot of that component in its slot list";
+            return false;
+        }
+        // The metadata state of a creature has the asset id of its slice: the null id names no asset.
+        if (std::all_of(slice.asset.begin(), slice.asset.end(), [](std::uint8_t byte) { return byte == 0; })) {
+            m_error = "slice " + std::to_string(index) + " has the null asset id";
             return false;
         }
     }
@@ -353,6 +388,19 @@ bool CreatureData::check() {
             m_error = "kind " + std::to_string(index) + " has no id, no slice, no health, or no level";
             return false;
         }
+        if (m_levels.count(kind.level) == 0) {
+            m_error = "kind " + std::to_string(index) + " has the level " + std::to_string(kind.level)
+                      + ", and the level table has no row for this level";
+            return false;
+        }
+        // A command can give a creature each level of the table: the health of the kind (the
+        // health of the level times its factor) must be a finite number above 0 for each one.
+        // The product of two floats goes up with each of them: the two ends are sufficient.
+        if (!(lowestHealth * kind.healthFactor > 0.0F) || !std::isfinite(highestHealth * kind.healthFactor)) {
+            m_error = "kind " + std::to_string(index)
+                      + " has a health factor that gives a health of 0 or a health that is not finite for a level of the table";
+            return false;
+        }
     }
     for (std::size_t index = 0; index < m_spawnPoints.size(); ++index) {
         const SpawnPoint& point = m_spawnPoints[index];
@@ -360,6 +408,11 @@ bool CreatureData::check() {
             || std::abs(point.position.x) > kMaxHorizontal || std::abs(point.position.y) > kMaxHorizontal
             || std::abs(point.position.z) > kMaxVertical) {
             m_error = "spawn point " + std::to_string(index) + " has no id, no kind, no level, or no position of the world";
+            return false;
+        }
+        if (m_levels.count(point.level) == 0) {
+            m_error = "spawn point " + std::to_string(index) + " has the level " + std::to_string(point.level)
+                      + ", and the level table has no row for this level";
             return false;
         }
     }

@@ -26,7 +26,9 @@
 // A creature of a spawn point that died, or that a command removed, does not come back by the
 // distance rule: the spawn point waits. In this stage only a command makes it free again
 // (reset_spawn_points). The respawn time of a later stage has its place here: a spawn point
-// that waits has a time of the world clock (`respawnAt`) at which it is free again.
+// that waits has a time of the world clock (`respawnAt`) at which it is free again. The body of
+// the dead creature can be in the world at that time (a player stayed near it): the point
+// removes it before it makes its new creature.
 //
 // World thread only.
 
@@ -80,6 +82,8 @@ struct CreatureCounts {
     /** Creatures that left the world: no player was near, or a command removed them. */
     std::uint64_t removedByDistance{0};
     std::uint64_t removedByCommand{0};
+    /** Bodies of dead creatures that left the world at the respawn time of their spawn point. */
+    std::uint64_t removedByRespawn{0};
     std::uint64_t deaths{0};
     /** The largest number of creatures in the world at one time. */
     std::size_t largest{0};
@@ -127,6 +131,14 @@ public:
     }
 
     /**
+     * A creature takes damage (the combat system, world/combat.h): its health goes down by the
+     * damage, through set_health. A creature that lives after it plays the reaction action of
+     * its slice. A damage that is not less than its health is its death.
+     * @param damage The damage: a finite number that is not negative.
+     */
+    CreatureResult hurt(EntityId id, float damage);
+
+    /**
      * Makes each spawn point that waits free again (a command): the distance rule makes its
      * creature again when a player is near. A dead creature of a point leaves the world.
      * @return The number of spawn points that waited.
@@ -136,7 +148,9 @@ public:
     /**
      * Sets the time of the world clock at which a spawn point that waits is free again: the
      * place of the respawn time (stage 3.5a calls it at the death of a creature). No effect for
-     * a point that does not wait.
+     * a point that does not wait. From that time on, the point makes its creature again when a
+     * player is near it (the distance rule): the body of the dead creature then leaves the
+     * world first.
      * @return False when the creature data has no spawn point with this index.
      */
     bool respawn_at(std::uint32_t spawnPoint, WorldClock::time_point time);
@@ -170,6 +184,12 @@ public:
 
     /** The interval of the spawn point rule on the world clock. */
     static constexpr std::chrono::milliseconds kScanInterval{500};
+    /**
+     * The time of the reaction of a creature to a hit (a rule of this project: the game files
+     * have the length of each animation, and the tool does not read it). After it the
+     * creature has no action of the server: its client plays the idle action again itself.
+     */
+    static constexpr std::chrono::milliseconds kReactionTime{1500};
 
 private:
     Entity* make(const gamedata::CreatureKind& kind,
@@ -184,8 +204,11 @@ private:
     /**
      * Starts an action of the action table of the slice of a creature, and marks its movement
      * state. No effect for an index that the table does not have, or for an action with no fragment.
+     * @param length The time of an action that has an end. No value: the action stays.
      */
-    void start_action(Entity& entity, std::uint32_t action);
+    void start_action(Entity& entity, std::uint32_t action, std::optional<std::chrono::milliseconds> length = std::nullopt);
+    /** Removes the action of each creature whose action has an end that came. */
+    void end_actions();
 
     World& m_world;
     const gamedata::CreatureData* m_data;
@@ -194,6 +217,8 @@ private:
     /** The spawn points by their place: the id of an entry is the index of the spawn point. */
     PositionIndex m_pointIndex;
     std::set<EntityId> m_creatures;
+    /** The creatures whose action has an end. */
+    std::set<EntityId> m_acting;
     CreatureCounts m_counts;
     std::optional<WorldClock::time_point> m_lastScan;
     /** Number of creatures that commands made. It selects the slice of an alias with more than one. */

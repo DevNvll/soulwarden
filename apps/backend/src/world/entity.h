@@ -214,6 +214,12 @@ struct CreatureAction {
     std::uint16_t generation{0};
     /** The start of the action, on the world clock. */
     WorldClock::time_point started{};
+    /**
+     * The end of an action that has an end (the reaction to a hit), on the world clock: the
+     * creature then has no action of the server, and a session that observes it later gets
+     * none. No value: the action stays (the death).
+     */
+    std::optional<WorldClock::time_point> ends;
 };
 
 /**
@@ -231,10 +237,25 @@ struct Creature {
     bool dead{false};
     /** The time of the death, on the world clock. Stage 3.5a starts the respawn time and the time of the body here. */
     WorldClock::time_point diedAt{};
-    /** The action that the server started (the death action of a dead creature). No value: the idle action of the client. */
+    /**
+     * The action that the server started: the death action of a dead creature, or the reaction
+     * of a creature to a hit for the time of that action. No value: the idle action of the client.
+     */
     std::optional<CreatureAction> action;
+    /** Number of actions that the server started for this creature. The count of an action on the wire is this number. */
+    std::uint32_t actions{0};
     /** The spawn point of the creature: an index into the spawn points of the creature data. No value: a command made it. */
     std::optional<std::uint32_t> spawnPoint;
+};
+
+/** The combat values of a character. The combat system sets them (world/combat.h). */
+struct CombatState {
+    /**
+     * The weapon slot of the paperdoll that the client of the character selected with a weapon
+     * key. 0: none, and the weapon in the hand is the first weapon slot with an item. The
+     * sheathe bits and the active bits of the paperdoll state do not follow it yet (roadmap 3.1).
+     */
+    std::uint32_t selectedWeapon{0};
 };
 
 /**
@@ -297,6 +318,8 @@ struct Entity {
     Bag bag;
     Equipment equipment;
     Wallet wallet;
+    /** The combat values of the character. The combat system changes them (world/combat.h). */
+    CombatState combat;
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */
     std::vector<RawFragment> rawFragments;
 

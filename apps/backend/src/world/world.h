@@ -16,10 +16,12 @@
 
 #include "core/logging/log.h"
 #include "gamedata/appearance_tables.h"
+#include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/progression_tables.h"
 #include "state/store.h"
+#include "world/combat.h"
 #include "world/creatures.h"
 #include "world/entity.h"
 #include "world/ids.h"
@@ -63,6 +65,15 @@ public:
      * the call.
      */
     virtual void character_lost(LostCause cause) = 0;
+
+    /**
+     * The character of this session did hurt an entity (world/combat.h). The session tells
+     * its client, which shows the damage number at the target. The world calls it in the
+     * claim of the session, after the change of the target. A sink with no client does nothing.
+     */
+    virtual void damage_dealt(const DamageDealt& damage) {
+        (void)damage;
+    }
 
 protected:
     ~SessionSink() = default;
@@ -121,6 +132,8 @@ struct WorldOptions {
     const gamedata::ProgressionTables* progressionTables{nullptr};
     /** The creature data (game data). Null: the world has no creature. */
     const gamedata::CreatureData* creatureData{nullptr};
+    /** The combat tables (game data). Null: an attack of a player has no effect. */
+    const gamedata::CombatTables* combatTables{nullptr};
     /**
      * The spawn point rule (horizontal, meters; a decision of this project). The world makes
      * the creature of a spawn point when a player is `creatureSpawnEnter` or less from the
@@ -362,6 +375,16 @@ public:
     [[nodiscard]] Creatures& creatures() {
         return m_creatures;
     }
+    /** @return The combat system: the hit claims of the clients and the damage. */
+    [[nodiscard]] Combat& combat() {
+        return m_combat;
+    }
+    /**
+     * Gives a session the damage that its character did (SessionSink::damage_dealt). Only the
+     * combat system calls it. No effect for a session that the world does not know: an entity
+     * with no session.
+     */
+    void damage_dealt(SessionId session, const DamageDealt& damage);
 
 private:
     void run(Task& task, const char* kind);
@@ -406,6 +429,7 @@ private:
     Progress m_progress;
     Skills m_skills;
     Creatures m_creatures;
+    Combat m_combat;
 };
 
 template <class Result>

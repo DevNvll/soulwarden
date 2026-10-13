@@ -118,17 +118,49 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 
 // The creature commands (world/creatures.h, server/http/creature_commands.cpp). The character
 // of a creature command is the reference place: the character of the user who gives it.
+
+/**
+ * The creatures of a character for the admin interface: each creature that is this near to the
+ * character (meters, the horizontal distance). The state of a character has the list of these
+ * creatures, and a creature command of the admin interface changes only a creature of that list.
+ */
+inline constexpr float kAdminCreatureRange = 150.0F;
+
+/**
+ * Which creatures a creature command can change (remove, health, kill). Each route set gives
+ * its rule to the command:
+ * - `world`: the development routes (tools/world). Each creature of the world, and the command
+ *   needs no character.
+ * - `nearCharacter`: the admin routes (the tool window). The character of the command must be
+ *   in the world, and the creature must be `kAdminCreatureRange` or less from it. The reply
+ *   is 404 for a character that is not in the world, and 404 for a creature that is farther
+ *   (the same reply as for an id of no creature), and nothing changes.
+ * The rule makes no difference for spawn (the character must be in the world for each rule)
+ * and for reset (it names no creature).
+ */
+enum class CreatureReach { world, nearCharacter };
+
+/** The first step of a creature command: a command (see `Command`) with the rule of its route set. */
+using CreatureCommand = WorldCommand (*)(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                         service::HttpResponse& refusal);
+
 // spawn: `kind` (an id of the creature data), and when necessary `level`, `dx`, `dy`, `dz`
 // (the place of the creature from the character, in meters: east, north, up; with none of
 // them: 3 m to the north), and `yaw` (degrees). The character must be in the world.
 // remove, kill: `creature` (the id of the creature: 16 hexadecimal digits).
-// health: `creature`, and `health` (a number from 0 to the maximum) or `percent` (0 to 100).
+// health: `creature`, and `health` (a number from 0 to the maximum) or `percent` (0 to 100:
+// 100 is the exact maximum).
 // reset: no argument. Each spawn point that waits is free again.
-[[nodiscard]] WorldCommand spawn_creature(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
-[[nodiscard]] WorldCommand remove_creature(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
-[[nodiscard]] WorldCommand set_creature_health(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
-[[nodiscard]] WorldCommand kill_creature(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
-[[nodiscard]] WorldCommand reset_creatures(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand spawn_creature(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                          service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand remove_creature(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                           service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand set_creature_health(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                               service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand kill_creature(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                         service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand reset_creatures(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                           service::HttpResponse& refusal);
 
 /**
  * @return The creatures of the world (world thread), the nearest one first: the id, the kind,

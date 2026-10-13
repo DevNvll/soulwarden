@@ -24,8 +24,8 @@
 // A session is one observer of the world and the owner of one character (roadmap, rules MP-1
 // and MP-2). It has transport state (the bundle sequence, the client context instance), the
 // values of the input of its client (the newest input number, the values for the check of
-// its position reports, and the state of the camera estimate), and the table of the entities
-// that its client knows. It has no state of a character: the name, the position, the
+// its position reports and of its hit claims, and the state of the camera estimate), and the
+// table of the entities that its client knows. It has no state of a character: the name, the position, the
 // appearance, and the vitals are in the entity of the world, and the session reads them there.
 //
 // The transport is a byte stream on carrier channel 0 (reliable) and channel 1 (unreliable).
@@ -136,6 +136,9 @@ public:
     /** The world took the character of this session away: the client gets the message "kicked". */
     void character_lost(world::LostCause cause) override;
 
+    /** The character of this session did hurt an entity: the client gets the message "on damage dealt". */
+    void damage_dealt(const world::DamageDealt& damage) override;
+
     [[nodiscard]] std::uint32_t id() const {
         return m_id;
     }
@@ -185,6 +188,10 @@ public:
     /** @return The values of the check of the position reports of the client of this session. */
     [[nodiscard]] const world::PositionTrack& position_track() const {
         return m_track;
+    }
+    /** @return The values of the check of the hit claims of the client of this session. */
+    [[nodiscard]] const world::AttackTrack& attack_track() const {
+        return m_attack;
     }
 
 private:
@@ -241,7 +248,10 @@ private:
     };
     /**
      * Puts the record of a creature into the batch, when a component state of the creature
-     * changed after the last record of this session. A batch that is full goes out first.
+     * changed after the last record of this session. A batch that is full goes out first. The
+     * fragments of a creature make more than one record by the rule of send_record (a second
+     * fragment for one slot, a record above the size of one carrier message): each next record
+     * of the creature is in a later bundle.
      */
     void add_creature_record(const world::Entity& entity, Known& known, RecordBatch& batch);
     /** Sends the records of a batch in one bundle. No effect for an empty batch. */
@@ -301,6 +311,15 @@ private:
      * The log gets the first report that the world refused for each cause, and then the counts.
      */
     void report_position(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own);
+    /**
+     * Gives the attack data of one input report to the world: each input step that the session
+     * did not get before, in the sequence of the input numbers, and each melee contact of
+     * these steps as a hit claim (world/combat.h). A client sends an input in more than one
+     * report: a second copy changes nothing.
+     */
+    void handle_attacks(const ClientInput& input);
+    /** Gives one melee contact to the world, and writes the result to the log. */
+    void claim_hit(const InputStep& step, const InputContact& contact);
     /**
      * For an input report with a camera and with no position of the character.
      * @return True when the camera estimate gives the position: the client sends no position
@@ -393,6 +412,17 @@ private:
     unsigned m_sourceChanges{0};
     /** True for each cause of a refused position report that has its log line. */
     std::array<bool, world::kPositionVerdictCount> m_verdictLogged{};
+    /**
+     * The values of the client for the check of its hit claims: its attack inputs, its last
+     * hits, and the counts. The world uses them in Combat::claim. They describe the input of one
+     * client, thus they are here and not in the entity.
+     */
+    world::AttackTrack m_attack;
+    /** True for each cause of a refused hit claim that has its log line. */
+    std::array<bool, world::kHitVerdictCount> m_hitVerdictLogged{};
+    /** Number of melee contacts and of items of the two projectile lists that the client sent. */
+    std::uint64_t m_contacts{0};
+    std::uint64_t m_projectileItems{0};
     carrier::Clock::time_point m_lastRefusalLog{};
     /** True while the character moves: the position then follows the camera. */
     bool m_followCamera{false};

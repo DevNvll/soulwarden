@@ -119,6 +119,7 @@ tools/gamedata/slice_ids.sh        # one time: ids of the player slice (optional
 tools/gamedata/items.sh            # one time: item catalog (without it the backend gives no item, and a new character has no clothing)
 tools/gamedata/progression.sh      # one time: progression tables (without them the backend gives no level and no skill point)
 tools/gamedata/creatures.sh        # one time: creature data (without it the world has no creature); needs an Oodle library (see below)
+tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect)
 linux-compat/run-soulwarden.sh
 ```
 
@@ -223,6 +224,7 @@ the HUD.
 
 | Variable of the launcher | Effect |
 | --- | --- |
+| `SOULWARDEN_MELEE_REPORT=0` | The backend does not give the client the remote configuration document that turns the melee contact report of the client on. A melee attack of your character then has no effect on a creature. |
 | `SOULWARDEN_EXACT_POSITION=0` | The hook does not change the client code. The backend then estimates the position from the camera: the saved position can be some meters from the character (up to 4 m behind it after a camera move with the wheel, some meters in front of it near a wall). |
 
 - The hook compares the client code at the address with the code of the supported client
@@ -289,7 +291,7 @@ button on "Confirm").
   point.
 - `tools/gamedata/creatures.sh` makes the creature data
   (`~/.local/share/soulwarden/gamedata/creatures.json`): the usual spawn points of the creatures
-  in 800 m around the start place of a new character (1,051 spawn points of 121 kinds in the
+  in 800 m around the start place of a new character (1,029 spawn points of 114 kinds in the
   supported build; `--center X Y` and `--radius METERS` select a different area), and for
   each kind its slice, the slots of its components, its vitals ids, its health, its name, and
   its action table (protocol notes 4.14). The pak entries that it reads have Oodle data: set
@@ -297,16 +299,35 @@ button on "Confirm").
   `SOULWARDEN_OODLE_DLL` to an Oodle library for Windows (the helper of
   `tools/research/oodle_loader.c`). `tools/gamedata/creatures.sh --find TEXT` prints the
   kinds with a text. Without the file the backend starts, and the world has no creature.
+- `tools/gamedata/combat.sh` makes the combat tables
+  (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
+  attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
+  the damage values of the attributes, the level and gear score values, and the defense
+  values of each creature (protocol notes 4.15). It reads the data tables and the base
+  attributes file of the game copy, from the same sources as the creature data tool.
+  `tools/gamedata/combat.sh --find TEXT` prints the weapons and the creatures with a text.
+  Without the file the backend starts, and an attack has no effect.
 - Creatures. With the creature data, the creatures of the start area stand at their spawn
   points outside the settlement: rabbits, wolves, Risen, skeletons, sheep, and others. Each
   one has its body, its idle animation, its name plate with its level, and its health bar.
   The world makes the creature of a spawn point when your character comes near it (150 m),
-  and removes it when no character is near (200 m). A creature does not move, does not
-  attack, and takes no damage from an attack yet. The tab "Creatures" of the tool window
+  and removes it when no character is near (200 m). A creature does not move and does not
+  attack yet. The tab "Creatures" of the tool window
   (F8) lists the creatures near the character, and it can make a creature of a kind, set
   its health, kill it, and remove it; `tools/world creatures`, `kinds`, and `creature` do the
   same in a development run. A creature that you killed or removed does not come back by
   itself (the respawn timer is later work): the button "Reset" makes its spawn point free.
+- Melee attacks. With the combat tables, a melee attack of your character that touches a
+  creature lowers its health: a click of the left pointer button is a light attack, and a
+  hold is a heavy attack. The damage number shows at the creature, the creature plays its
+  reaction to the hit, and it dies at the health 0 (the body falls, and its name plate goes).
+  This works with a sword, a great axe, a hatchet, a war hammer, and a spear; the keys 1 and
+  2 select the weapon. The backend computes the damage from the weapon, its gear score, the
+  attack, the attributes and the level of the character, and the defense values of the
+  creature. The client finds each contact itself and reports it, and the backend checks each
+  report (the creature, the distance, the weapon, the time of the attack): the rules are
+  rules of this project (protocol notes 4.15). Not yet: ranged weapons and magic, abilities,
+  critical hits, blocks, damage to your character, loot, and experience.
 - The bag (Tab key) shows the items and the coin of the character. The tool window (F8)
   gives and removes items, and `tools/world give` gives items in a development run. The backend handles the drop request of the client (drag an
   item to the area "Drop items": the item is gone, the world has no items on the ground yet;

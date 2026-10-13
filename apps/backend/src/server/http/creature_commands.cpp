@@ -10,7 +10,9 @@
 
 // The creature commands of the common layer (character_commands.h): the development routes
 // (tools/world) and the admin routes (the tool window) use the same functions. Each command
-// calls the creature system of the world (world/creatures.h).
+// calls the creature system of the world (world/creatures.h). A route set gives its rule for
+// the creature of a command (CreatureReach): a development route changes each creature of the
+// world, and an admin route changes only a creature near the character of the command.
 
 namespace soulwarden::backend::server::http::commands {
 namespace {
@@ -90,6 +92,31 @@ service::HttpResponse creature_reply(const world::CreatureResult& result) {
     return json_reply(200, reply.dump());
 }
 
+/**
+ * The rule of a route set for the creature of a command (CreatureReach, world thread).
+ * @return No value when the command can change the creature, or the reply of the refusal.
+ */
+std::optional<service::HttpResponse> out_of_reach(world::World& target, const std::string& character, world::EntityId id,
+                                                  CreatureReach reach) {
+    if (reach == CreatureReach::world) {
+        return std::nullopt; // The creature system gives the reply for an id of no creature.
+    }
+    const world::Entity* reference = target.find_character(character);
+    if (reference == nullptr) {
+        return message(404, "the character is not in the world: a creature command needs its place");
+    }
+    // A creature that is farther gets the reply of an id of no creature: the reply does not say
+    // which creatures are at a different place of the world.
+    const world::Entity* creature = target.creatures().find(id);
+    if (creature == nullptr || world::horizontal_distance(reference->position, creature->position) > kAdminCreatureRange) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "no creature with this id is %.0f m or less from the character",
+                      static_cast<double>(kAdminCreatureRange));
+        return message(404, text);
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 json creature_kind_json(const gamedata::CreatureData& data, const gamedata::CreatureKind& kind) {
@@ -148,12 +175,14 @@ json creatures_view(world::World& target, const std::string& character, std::opt
                   {"spawnedByCommand", counts.spawnedByCommand},
                   {"removedByDistance", counts.removedByDistance},
                   {"removedByCommand", counts.removedByCommand},
+                  {"removedByRespawn", counts.removedByRespawn},
                   {"deaths", counts.deaths},
                   {"largest", counts.largest}}},
                 {"revision", target.revision()}};
 }
 
-WorldCommand spawn_creature(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+WorldCommand spawn_creature(const std::string& character, const Arguments& arguments, CreatureReach,
+                            service::HttpResponse& refusal) {
     const auto kind = arguments.text("kind");
     if (!kind || kind->empty()) {
         refusal = message(400, "give kind=ID: the id of a kind of the creature data");
@@ -215,13 +244,17 @@ WorldCommand spawn_creature(const std::string& character, const Arguments& argum
     };
 }
 
-WorldCommand remove_creature(const std::string&, const Arguments& arguments, service::HttpResponse& refusal) {
+WorldCommand remove_creature(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                             service::HttpResponse& refusal) {
     const auto id = creature_id(arguments);
     if (!id) {
         refusal = message(400, "give creature=ID: the id of a creature (16 hexadecimal digits)");
         return {};
     }
-    return [id = *id](world::World& target) {
+    return [character, id = *id, reach](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
         const world::CreatureResult result = target.creatures().remove(id);
         if (result.error == world::CreatureError::none) {
             log::write("world: command: creature %s removed", id_text(id).c_str());
@@ -230,7 +263,8 @@ WorldCommand remove_creature(const std::string&, const Arguments& arguments, ser
     };
 }
 
-WorldCommand set_creature_health(const std::string&, const Arguments& arguments, service::HttpResponse& refusal) {
+WorldCommand set_creature_health(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                 service::HttpResponse& refusal) {
     const auto id = creature_id(arguments);
     const bool absolute = arguments.has("health");
     const auto value = absolute ? arguments.number("health", 0.0F, 100000000.0F) : arguments.number("percent", 0.0F, 100.0F);
@@ -238,12 +272,22 @@ WorldCommand set_creature_health(const std::string&, const Arguments& arguments,
         refusal = message(400, "give creature=ID, and health=N (0 to the maximum health) or percent=N (0 to 100)");
         return {};
     }
-    return [id = *id, absolute, value = *value](world::World& target) {
+    return [character, id = *id, reach, absolute, value = *value](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
         const world::Entity* entity = target.creatures().find(id);
         if (entity == nullptr) {
             return creature_reply(world::CreatureResult{world::CreatureError::unknownCreature, nullptr});
         }
-        const float health = absolute ? value : entity->vitals.healthMax * value / 100.0F;
+        // A percent value is that part of the maximum, with the product and the quotient in
+        // double precision. The product of two floats is exact there: 100 percent is the exact
+        // maximum, and no percent value gives a health above it. In float precision the product
+        // of a maximum and 100, divided by 100, can be one float step above the maximum (the
+        // creature system refuses it) or one step below it.
+        const float health = absolute ? value
+                                      : static_cast<float>(static_cast<double>(entity->vitals.healthMax)
+                                                           * static_cast<double>(value) / 100.0);
         const world::CreatureResult result = target.creatures().set_health(id, health);
         if (result.error == world::CreatureError::none) {
             log::write("world: command: health of creature %s is %.1f of %.1f",
@@ -255,18 +299,22 @@ WorldCommand set_creature_health(const std::string&, const Arguments& arguments,
     };
 }
 
-WorldCommand kill_creature(const std::string&, const Arguments& arguments, service::HttpResponse& refusal) {
+WorldCommand kill_creature(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                           service::HttpResponse& refusal) {
     const auto id = creature_id(arguments);
     if (!id) {
         refusal = message(400, "give creature=ID: the id of a creature (16 hexadecimal digits)");
         return {};
     }
-    return [id = *id](world::World& target) {
+    return [character, id = *id, reach](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
         return creature_reply(target.creatures().kill(id));
     };
 }
 
-WorldCommand reset_creatures(const std::string&, const Arguments&, service::HttpResponse&) {
+WorldCommand reset_creatures(const std::string&, const Arguments&, CreatureReach, service::HttpResponse&) {
     return [](world::World& target) {
         const std::size_t count = target.creatures().reset_spawn_points();
         log::write("world: command: %zu spawn point(s) that waited are free again", count);

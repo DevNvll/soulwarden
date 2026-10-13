@@ -16,12 +16,13 @@ std::vector<Case> review_progress_cases();
 std::vector<Case> admin_cases();
 std::vector<Case> position_cases();
 std::vector<Case> creature_cases();
+std::vector<Case> combat_cases();
 
 std::vector<Case> all_cases() {
     std::vector<Case> cases;
     for (const auto& group : {session_cases(), session_end_cases(), world_cases(), world_model_cases(), inventory_cases(),
                               equipment_cases(), review_cases(), review_inventory_cases(), progress_cases(), skill_cases(),
-                              review_progress_cases(), admin_cases(), position_cases(), creature_cases()}) {
+                              review_progress_cases(), admin_cases(), position_cases(), creature_cases(), combat_cases()}) {
         cases.insert(cases.end(), group.begin(), group.end());
     }
     return cases;

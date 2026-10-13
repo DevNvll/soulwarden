@@ -46,6 +46,7 @@ Client state names (string table at 0x84FA000): `QueryGameUpdateCheck`,
 | Create character | `POST /prod/game/worlds/{world}/characters` | `{"Character":{CharacterId,...}}` (2.2.3) |
 | Delete character | `DELETE /prod/game/characters/{character}` | Status only (2.2.6) |
 | Login queue | `POST /prod/game/login/queue/v2?tokenVersion=10` | Request `{"LoginQueueRequest":{CharacterId,...}}`; reply `{"LoginQueueResponse":{Token:{RepAddress,...},...}}` (reader 0x74E4F20, 0x74E5990) |
+| Remote configuration | `GET /applications/publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.<app>/versionless`, host `ags-javelin-remote-config.s3.amazonaws.com` | The document `{"javelin.enable-client-authoritative-melee":true}` (2.3). Each other object of a host with `.s3.` in its name: status 404, `NoSuchKey` |
 
 World checks in the client (0x6423730): `WorldStatus == "ACTIVE"`, `WorldType` is `OpenWorld` or
 `FTUE` (0x17C40A0), `WorldVersion` must contain the client version text, population text is
@@ -384,6 +385,70 @@ Client code (static proof): 0x41ED2E0, 0x642C420, 0x642C970, job 0x64148E0. Repl
 with `{}`. The client then requests the login information again and the list has one row
 less. The backend removes the row only when the character is a character of the account of
 the token. The name is free again at once.
+
+### 2.3 Remote configuration documents of the client (static proof and behavioral proof)
+
+Research file: `~/Games/soulwarden/work/research/melee-mode.md`. Evidence of the live runs of stage
+3.2a: `~/Games/soulwarden/work/evidence/hit/implement/` (files `H1-*`).
+
+- The client reads settings from JSON documents of an S3 bucket (`[StackConfig]` in the game
+  log). It asks for 16 documents in one start with a world entry, each one with a `GET`
+  request to the host `ags-javelin-remote-config.s3.amazonaws.com` (the hook sends each
+  request to the backend). The path is `/applications/CLASS/configuration-sets/SCOPE/ID/
+  VERSION`: the class is `public` or `publicGameplay`, the scope is `ProductId` (the id
+  `STEAM_APP_ID.1063730`), `RegionId`, `CognitoId`, or `WorldId`, and the version is
+  `versionless` or the client version (`6031%3B6004151`). At its start, before the main menu,
+  the client asks for the 12 documents of the first three scopes. At each world entry it asks
+  for the 4 documents of the scope `WorldId` (state `QueryForRemoteConfigClass` of the game
+  log). After a leave to the main menu it asks for the first 12 documents again (behavioral
+  proof: one run with two world entries had 32 requests).
+- **The reply of the backend.** The request for the path
+  `/applications/publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.1063730/versionless`
+  of that host gets the status 200, the type `application/json`, and the body
+  `{"javelin.enable-client-authoritative-melee":true}` (50 bytes), each time. Each other
+  request to that host, and each request for an object of a different S3 host, keeps the
+  reply 404 with the XML code `NoSuchKey` (`server/http/aws_routes.cpp`). The compare of the
+  host is exact (with no port), and the route is for `GET` only.
+- What the reply must have (static proof): a status from 200 to 299 (0x7479588), the header
+  `Content-Length` (the reader applies no body when the length of the result is 0; 0x853252),
+  and a JSON object whose member name is the full name of a registered setting. The value is
+  the JSON value `true`: the number 1 is not a true value for the reader of the client
+  (0x83FBA0). The reply needs no `ETag` and no checksum.
+- Which settings a document can change (static proof). The class `publicGameplay` has the
+  mask 0 (0x89410): the apply function (0x8578A0) takes each registered setting whose flags
+  are not 0, and it ignores a name that is not registered. The backend sends one setting.
+- **The setting** `javelin.enable-client-authoritative-melee` has the default false
+  (registration 0x6176A1C to 0x6176A3C). Its object is at image address 0x9F1F7C0 (the cache
+  flag at +8, the value at +0xC). The initialization of each movement component (0x48423D0)
+  copies the value to component +0x157D (at 0x4842590), and the getter 0x48403E0 reads only
+  that copy: a change of the setting after the initialization does not change a component
+  that is there.
+- Live result (behavioral proof, memory reads with `tools/hx`; the copy is the byte of the
+  movement component of the local player, and of the components of the creatures near it):
+
+  | Start | Game log | Cache flag, value (0x9F1F7C8, 0x9F1F7CC) | Copy (+0x157D) |
+  | --- | --- | --- | --- |
+  | With the reply, world entry at once | `Retrieved layer's "remoteCfg.publicGameplay.ProductId" remote config, ... successfully, size: 50` | 1, 1 | 1 |
+  | The same run, after a leave to the main menu and a second world entry | The same line a second time | 1, 1 | 1 (the new component) |
+  | With the reply, in the main menu | The same line | 0, 0 (the client reads the setting at the first use) | no component |
+  | With the reply, world entry after 95 s in the main menu | The same line | 1, 1 | 1 |
+  | With no reply (`SOULWARDEN_MELEE_REPORT=0`) | no such line | 1, 0 | 0 |
+
+  Thus the document arrives before the client makes the movement component of the player, in
+  each start: the client asks for it before the main menu, and again when it comes back to
+  the main menu.
+- What the setting changes (behavioral proof): the client puts each melee contact that it
+  finds into the third list of its input entry (4.7, 4.15). With the setting off, the flags
+  of an entry of a client in the world have bit 32 (0x1020084F0 with the hook); with the
+  setting on they do not have it (0x20084F0). The position field, the walk, the jump, the
+  dodge, and the tool window are the same with the setting on.
+- **The switch.** `SOULWARDEN_MELEE_REPORT=0` (launcher) gives the backend the option
+  `--no-melee-report`: the request then gets the reply 404, the setting stays false, and a
+  melee attack of a player has no effect. The backend log has one line for the condition at
+  its start (`backend: the melee contact report of the client is on ...` or `is OFF ...`).
+- Not tested: a document of a different scope or class with a value for the same setting
+  (the order of the layers), a refresh of a layer by the message type 1639, and a different
+  setting in the document.
 
 ## 3. Game server transport
 
@@ -1141,24 +1206,47 @@ entry  := mask:3 bytes (little-endian) sequence:u16
           axes:4 bytes
           [f32 if bit 5: step time] [yaw:f32 pitch:f32 if bit 6] [camera position if bit 7]
           target                                                  (reader 0x2A25D90)
-          [block if mask bit 8: layout not known]
+          [object if mask bit 8]                                  (reader 0x35EBC30)
           [size size size if flags bit 0: the action report]
           bit := 9
           [flags bit 11: position if mask bit 9; bit := 10]
           [flags bit 8: position if mask bit `bit`; 16 bytes and u64 if mask bit `bit`+1; bit += 2]
-          [u8 if mask bit `bit`: with a value that is not 0, a position and a block follow]
-          bit += 1
+          [u8 if mask bit `bit`: the value of entry +0x380]; bit += 1
+          [that value (of this entry, or of the entry before it) is not 0:
+           position if mask bit `bit`; 32 bytes if mask bit `bit`+1; bit += 2]
           [flags bit 14: 8 bytes if mask bit `bit`; bit += 1]
-          size size size                 the counts of three lists (item layouts not known)
+          count:size hit*                the hits of a projectile with no flight (list 1)
+          count:size shot*               the shots (list 2)
+          count:size contact*            the melee contacts (list 3)
           [flags bit 15: position if mask bit `bit`: THE POSITION OF THE CHARACTER; bit += 1]
-          [half float x3 if mask bit `bit`: inherited velocity] ...
+          [half float x3 if mask bit `bit`: the velocity]; bit += 1
+          [u64 if flags bit 16] [u8 if flags bit 18]
+          [u8 if mask bit `bit`] [u32 if mask bit `bit`+1]
+          [half float if flags bit 0 and mask bit `bit`+2]
 target := kind:u8 [sub:u8 position u16 u16 u16 if the kind is not 3]      (reader 0x416EB00)
 position := x:f32 y:f32 height:u16      height in meters = -100 + value / 65535 * 1100
+object := present:u8 [16 bytes u64 u64 | u8 u8 u64 u32 | text u32 u32 | f32 flag | text text
+          text text | f32 flag | 12 bytes and 12 bytes if that flag is 1 | flag u32 u8 u32 |
+          u32 u32 u32 u32 | size64 u32 size text | u32 u8 flag | u32 text u32 u64 | u32 flag]
+          a text is size and that number of bytes; a flag is one byte, 0 or 1
+hit     := 3 f32 (origin) 3 f32 (point) reference(facet) reference(group) u64 u32 u32 u32 u32
+           104 bytes                                              (readers 0x2A1A310, 0x2A195D0)
+shot    := 4 x 3 f32, 16 bytes, u32, reference(group), reference(facet), reference(group),
+           u64, u64, f32, f32, f32, u32, u32, u32, flag, flag, u8, flag
+           192 bytes                                              (readers 0x2A1A0D0, 0x2A1A590)
+contact := provider:u32 reference(group) reference(facet) point:3 f32 normal:3 f32
+           direction:3 f32          96 bytes                      (readers 0x2A19E60, 0x2A18490)
+reference(group) := actor id:16 bytes G:u64            reference(facet) := the same and target:u64
 ```
 
 - The entries are newest first. Each entry is a difference from the entry before it in the
-  message, and the first one from a default entry. `tools/research/input_packet.py` decodes
-  all fields of a capture.
+  message, and the first one from a default entry. A live client sends an input in up to 5
+  reports: a report has the newest entry and the 4 entries before it (a report in the world
+  has 5 entries; the loss of a datagram loses no input). The items of the three lists are
+  not a difference: an entry has only its own items. `tools/research/input_packet.py`
+  decodes all fields of a capture, to the last byte of each report (stage 3.2a: each report
+  of 5 runs decoded, 5,927 and 5,741 reports in the two longest ones; `--contacts` prints the
+  entries with a list item).
 - The keyboard gives action bits, not axes: the four axes are 0 with W, A, S, D held. The
   axes are the analog sticks.
 - The position of mask bit 7 is the position of the **camera**, not of the character (same
@@ -1190,8 +1278,13 @@ position := x:f32 y:f32 height:u16      height in meters = -100 + value / 65535 
   2.2 m when the character moves, and stays there (6 walks). The next steps of the wheel
   start from 2.2 m (3.2 m and 4.2 m in live runs).
 - The action words of an entry (19 words of 32 bits in the world; bit 0 is the lowest bit of
-  the first word) have one bit for each action of the input provider. The table of the
-  client that gives each action its bit is not known. Bits in the captures (behavioral proof;
+  the first word) have one bit for each action name of the input profile of the client. The
+  bit of a name is its position in the list of all names of the default profile and its
+  includes (596 names of `libs/config/defaultprofile.xml`), in the sequence of the CRC-32
+  values of the names (static proof: the list builder 0x6501F30, the writer 0x651C180;
+  research file `combat-actions.md`). One key gives the bits of each name that the profile
+  binds to it. Each entry has its own words (they are not a difference). The bits of the
+  attack inputs and of the weapon keys are in 4.15. Bits in the captures (behavioral proof;
   the same in each session):
 
   | Input | Bits |
@@ -1203,8 +1296,12 @@ position := x:f32 y:f32 height:u16      height in meters = -100 + value / 65535 
   | One step of the wheel, camera away | 51, 103, 219, 495, 510 for one input |
 
   An entry with action bits does not prove that the character moves. The bits of A, S, D, and
-  the space key are not known. The backend reads bit 14 (forward key), and bits 27 and 51
-  (wheel) of the newest entry of each report.
+  the space key were not looked up. The backend reads bit 14 (forward key), and bits 27 and
+  51 (wheel) of the newest entry of each report, and the bits of the attack inputs and of
+  the weapon keys of each entry (4.15).
+- Bit 222 (`character_collided`) is on while the character touches a creature (behavioral
+  proof: on in the steps before a contact of an attack that moves the character into a
+  wolf, and while a wolf plays its bite at the character).
 
 **The position of the character: the position field** (behavioral proof, stage 2.3a; research
 file `~/Games/soulwarden/work/research/position.md`; evidence
@@ -1251,16 +1348,25 @@ file `~/Games/soulwarden/work/research/position.md`; evidence
 
 - A step with no physics step gives an entry with the flag and with no position field (the
   value of the entry is then the value of the default entry; static proof: no newest entry of
-  the live runs had the flag with no field). An entry with the block of mask
-  bit 8, with a list that is not empty, or with a value of entry +0x380 that is not 0 has a
-  layout that is not known before the position: the backend reads no position from such a
-  report. Neither case is an error: the entity keeps its position.
+  the live runs had the flag with no field). This is not an error: the entity keeps its
+  position.
+- The object of mask bit 8 and the fields of a value of entry +0x380 that is not 0 have
+  static proof only: no entry of a live run had one of them. The first two lists have static
+  proof only too (no ranged weapon in stage 3.2a). The third list has behavioral proof
+  (4.15): an entry with a contact item has the position of the character too, and it
+  decodes with no byte left.
 
-**The reader of the backend** (`read_client_input` in `server/rep/client_input.cpp`) reads the
-first entry of a report only (the newest one; it is a difference from the default entry, thus
-its flags are 0 when it has no flags field). A body that does not parse to the camera
-position gives no input. A body that stops after it gives the input with no position of the
-character.
+**The reader of the backend** (`read_client_input` in `server/rep/client_input.cpp`) reads each
+entry of a report to its end (the first one is a difference from the default entry, thus its
+flags are 0 when it has no flags field; each later one has the flags and the value of entry
++0x380 of the entry before it when it does not send them). The newest entry gives the camera
+and the position of the character. Each entry gives its attack data (`InputStep`): the three
+attack inputs, the weapon key, the item counts of the first two lists, and the melee contacts.
+A body that does not parse to the camera position gives no input. An entry that the reader
+cannot read to its end (a body that ends, a list count that is larger than the body, a flag
+of the object that is not 0 or 1) gives no position and no attack data, and the reader reads
+no entry after it. The reader makes no list from a count: it compares the count with the
+bytes that the body has (a count of 100,000 in a short body is refused).
 
 **The check of a position report** (a design of this project: the client has no copy of the
 check of the original server). The session gives each position to the world
@@ -1284,6 +1390,16 @@ positions of the time window, the counts). The check, in this sequence:
      `kPeakSpeed` (20 m/s) times the time between the two reports.
    - Height: the rise from the last accepted position is not more than `kRiseSpeed` (20 m/s)
      times that time, and the fall is not more than `kFallSpeed` (120 m/s) times that time.
+   - Height of the window: the total rise and the total fall of the accepted reports of the
+     last 1 s are each one not more than the same speed times the time of the world clock
+     plus 0.25 s, one time for a window. The total rise is the sum of the rises of the
+     accepted reports, and the total fall is the sum of their falls: they are not the
+     difference of two heights. Thus one clock value permits 5 m up and 30 m down, and a
+     window of 1 s permits 25 m up and 150 m down, also for a path that goes up and down
+     (review of stage 3.4a: with the difference of two heights, reports that went 4 m up and
+     4 m down in turns passed with 399 m of rise at one clock value).
+   - The first report of a session has the height of the entity as its reference: 5 m up or
+     down, plus the rise or the fall of the time from the first report.
    - Window: the horizontal distance from the oldest accepted position of the last 1 s (or
      from the last accepted one when it is older) is not more than `kWindowSpeed` (8 m/s)
      times the time between the two reports, plus `kWindowMargin` (2 m). The margin thus
@@ -2415,6 +2531,19 @@ chain of one spawn point in the game files:
   Wolf level 18: 1690.876; Fallow Scavenger (Risen) level 18: 1690.876 x 0.9 = 1521.788.
 - The level of a spawn point is the level of its metadata entry, not the number in the name
   of its row (`Wolf_Grey_7` at level 18).
+- The file of the tool for the default area has 1,029 spawn points, 114 kinds, and 65 slices:
+  the tool reads 70 slices and leaves out the 5 that show no body ("Not known, not done").
+- The tool stops with status 1 and one message, and writes no file, when a file that a slice
+  or an animation file names is not in the pak files or is not correct XML (the grid file,
+  the controller file, the fragment file, a file that a fragment file imports, an action
+  list). Two cases are usual and give no stop: a slice that names no grid file has no action
+  table, and a grid file with no action list has an empty table. No fragment file of the
+  creature controllers of the game copy imports a file.
+- The backend refuses a file whose parts do not fit together, as a whole (the world then has
+  no creature): a kind or a spawn point with a level that the level table does not have; a
+  movement, vitals, or marker slot that is not the slot of that component (state type 11,
+  15, 5399) in the slot list of its slice; a slice with the null asset id; a kind whose
+  health is 0 or not finite for a level of the table; a member `counts` with a wrong form.
 
 **The record of a creature** (behavioral proof: three kinds by command and at their spawn
 points, stage 3.4a). The first creature of the live run at its spawn point, a Grey Wolf
@@ -2571,7 +2700,17 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   fragment 64) is accepted and shows a standing pose with no change of the position (the
   fragment is a blend by the speed: the movement of a creature is stage 3.4b).
   `Idle_No_Task` (36, fragment 0) after them gives the idle pose again. The backend sends
-  none of these actions in stage 3.4a.
+  none of these actions in stage 3.4a. From stage 3.2a the backend sends the action
+  `Reaction` of a slice when its creature takes a hit (4.15).
+- **A creature that walks** (behavioral proof, stage 3.2a, one Grey Wolf, the development
+  command `tools/world fragment`). A sequence of movement states with only the position
+  (`worldPosAbs`), the rotation, and the time anchor makes the creature go from one position
+  to the next one with moving legs: the client selects the movement action itself from the
+  change of the position. 19 states in 3.7 s (one each 200 ms) made the wolf walk 6 m at
+  1.75 m/s in a low walk, and 7 states in 1.3 s made it run 7 m at 6 m/s. The states had no
+  action field. The rotation of the states turned the wolf to the direction of the path.
+  The backend sends no such sequence yet (stage 3.4b), and the entity of the backend did not
+  move in this check.
 
 **The world model for creatures** (project rules, roadmap MP-1 to MP-8).
 
@@ -2592,7 +2731,14 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   does not come back by the distance rule. The point is free again after the command
   `reset`, or at its respawn time on the world clock (`Creatures::respawn_at`: the place
   of the respawn timer of stage 3.5a; no code sets a time now). The body of a dead creature
-  stays in the world until a command or the distance rule removes it.
+  stays in the world until a command or the distance rule removes it. At the respawn time of
+  a point, when a player is 150 m or less from it, the point first removes the body of its
+  dead creature and then makes its new creature (the count `removedByRespawn`). With no
+  player that near, the body stays and the point waits.
+- **The records of a creature.** The fragments of a creature make records by the rule of each
+  entity: a second fragment for one slot (a fragment of a development command), and a
+  fragment that makes the record larger than one carrier message, go in a later record, and
+  each later record of a creature starts a new bundle.
 - A slice of an alias with more than one slice is selected with the percent values of the
   alias, from a count (the same sequence in each run).
 - **Interest.** A session observes the creatures near its character in each start (the
@@ -2619,6 +2765,10 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
 /v1/dev/world/fragment?creature=ID&slot=N&type=N&state=HEX`. The admin interface has the same
 commands (6.4). The character of a spawn command is the reference place: the new creature
 is at its position plus the distance (east, north, up; with no distance 3 m to the north).
+The two route sets have different rules for a change of a creature (remove, health, kill):
+a development route changes each creature of the world, with no character. An admin command
+changes only a creature that is 150 m or less from its character, which must be in the
+world (6.4). The health command with `percent` 100 gives the exact maximum health.
 
 **Not known, not done.**
 
@@ -2643,14 +2793,236 @@ is at its position plus the distance (east, north, up; with no distance 3 m to t
 - The time of the body of a dead creature in the client (about 5 minutes) was not measured
   with a clock.
 
+### 4.15 Hits: the melee contact report, the hit check, the damage rule, the damage number
+
+Research files: `~/Games/soulwarden/work/research/melee-mode.md`, `hit-reports.md`, `damage.md`,
+`combat-actions.md`, and `enemies-start-area.md` (static proof and game data, each one checked
+by a second agent). Evidence of the live runs of stage 3.2a:
+`~/Games/soulwarden/work/evidence/hit/implement/`. A statement with the mark "project rule" is a
+decision of this project, not a contract of the client: the client has no copy of the hit
+rules and of the damage rule of the original server.
+
+**How the server finds a hit** (behavioral proof). With the setting of 2.3 on, the client
+finds each melee contact itself (the weapon shape of the attack touches a hit volume of an
+entity) and puts one item into the third list of the input entry of that simulation step
+(4.7). The server finds no contact itself.
+
+| Attack of the player (a sword, a Grey Wolf of a command) | Items of the third list |
+| --- | --- |
+| One light attack that touches the wolf (1.8 m after the step forward) | 1 |
+| One light attack in the air (no creature) | 0 |
+| One light attack with the wolf 10 m away (7.9 m after the step forward) | 0 |
+| One light attack that touches the wolf, with the setting off | 0 |
+| Three attacks on the body of a dead wolf | 0 |
+
+- The item of a contact (96 bytes): the provider is 0xFFFFFFFF in each live contact (about
+  100 contacts of 5 weapons). The two references name the same entity: the actor id and the
+  entity group id of the creature. The facet target of the second reference is a hit volume
+  component of the slice of the creature, by the id rule of 4.2 with the root entity of that
+  slice (the wolf: the entity `Head` for a light sword attack, a different entity for the
+  thrust of a heavy attack). The point is a position of the world at the creature (0.9 m to
+  1.7 m from the position of the wolf, which is at its feet), and the normal and the
+  direction are unit vectors.
+  The item has no damage value, no attack row, and no time.
+- The entry of a contact also has the position of the character (one entry has both fields).
+- The client sends an entry in 5 reports (4.7): the session gets each contact 5 times.
+- The client sends no other message for an attack: no message with the route of the creature.
+- The client shows its own contact effect (a flash at the creature) with no reply of the
+  server. It shows no number and no change of the health bar itself, and the creature plays
+  no reaction itself.
+- A creature has no such report for the player: while a wolf played its bite at the
+  character (a scope record of a development command), the client of the player sent only
+  input reports with no list item (stage 3.4b needs a contact test of the server).
+
+**The attack inputs** (behavioral proof; the bit numbers are static proof of
+`combat-actions.md`, each one seen in the captures). The left pointer button sets these bits
+of the action words (4.7):
+
+| Bit | Name of the input profile | When |
+| --- | --- | --- |
+| 555 | `attack_primary` | One input step: the button goes down. Bits 203 (`attack_primary_virtual`) and 408 (`attack_shoot`) come with it. |
+| 191 | `attack_primary_hold` | Each step while the button is down, from the step after bit 555 |
+| 567 | `attack_primary_release` | One input step: the button goes up |
+| 9, 40 | `Use_MainHandSlot_1`, `quickslot-weapon1` | Key 1: the weapon of slot 24 |
+| 355, 306 | `Use_MainHandSlot_2`, `quickslot-weapon2` | Key 2: the weapon of slot 25 |
+
+The client starts each attack itself, from the action lists of the weapon. The contact step
+(input steps of 1/30 s; live data of a sword, a great axe, a hatchet, a war hammer, and a
+spear on a Grey Wolf):
+
+| Input | Attack of the client | Contact |
+| --- | --- | --- |
+| A click: the button goes up 1 to 8 steps after it went down (the hold bit is on for 7 steps at most) | One light attack | 5 to 12 steps after the button went up (7 to 19 steps after it went down). In a chain of clicks: 7 to 9 steps after the button went down. |
+| A hold: the button goes up 9 steps or more after it went down (the hold bit is on for 8 steps or more) | A heavy attack | Sword: 15 to 18 steps after the start when the button goes up at 9 to 12 steps, and 24 or 25 steps for a longer hold. Hatchet 28, great axe 32, war hammer 32 or 33, spear 35 steps. |
+| A long hold (4 s) | The client attacks again and again while the button is down, and one more time after it went up | Sword: 24, 64, and 103 steps after the start, and 10 steps after the button went up. War hammer: 33 and 81 steps, and 9 steps after the button went up. |
+| Fast clicks (11 steps from click to click, hatchet) | One light attack for each click | 11 to 13 steps from contact to contact: the contact of a click can come in the step of the next click |
+
+**The hit check** (project rule; `world/combat.h`). A contact is a claim of a client. The
+session gives each claim to the world (`Combat::claim`) with the values of its client
+(`world::AttackTrack`: the attack inputs, the last hits, the counts). The world finds the
+attacker from the session (rule MP-5). A claim that the check refuses changes nothing, the
+client gets no reply, and the log has a line for the first refusal of each cause and the
+counts at the end of the session (`rep: hit claims of the session: ...`). The check, in this
+sequence:
+
+| Check | Refusal (log text) |
+| --- | --- |
+| The backend has combat tables | no combat tables |
+| The client made 12 claims or less in the last 1 s of the world clock | too many claims |
+| The entity group id of the receiver is a creature of the world, and the actor id is its actor id | not a creature |
+| The group reference is the group of the receiver, and the facet target is a component of the slice of the creature | not a component of the creature |
+| The interest table of the session has the creature | not observed |
+| The creature lives | dead |
+| An attack input fits the contact: the newest one that started 3 input steps or more before the contact is on, or it went off 30 steps or less before the contact and not more than 1.5 s before it on the world clock | no attack |
+| The character has a melee weapon in its hand (the use `Combat Melee` of the weapon table), and the weapon has a damage row for the attack | no melee weapon |
+| No hit of the same creature was less than 8 input steps or less than 250 ms (world clock) before the contact: one attack hurts one creature one time | the same attack |
+| The distance (3 axes) from the exact position of the character (4.7) to the position of the creature is 5.0 m or less: 3.5 m for the reach of a melee weapon and 1.5 m of tolerance for the size of the creature and for the age of the position | too far |
+| The point of the contact is a position of the world, 4.0 m or less from the position of the creature | bad point |
+
+- The attack is a heavy attack when its attack input was on for 8 steps or more, and a light
+  attack if not (the limit of the client for a sword: 12 live attacks).
+- The weapon in the hand: the item of the weapon slot of the last weapon key of the client
+  (`Entity::combat.selectedWeapon`), when that slot has an item; if not, the first weapon
+  slot with an item. The sheathe bits and the active bits of the paperdoll state do not
+  follow the keys yet (4.11).
+- The session takes each input step one time: an entry with an input number that is not
+  newer than the last one is not a new input, also after a pause of the reports (a contact
+  counts one time). When the newest entry of a report is not newer and no newer one came for
+  2 s, the input numbers of the client started again, and the session takes the new sequence.
+- The largest live distance of a contact was 3.9 m (the heavy attack of a spear), 2.3 m for a
+  great axe, and 2.2 m for a sword. The limits do not depend on the weapon or on the creature
+  yet: the attack shapes are in the animation files of the game, and the tables have no size
+  of a creature.
+- The check does not stop a client that sends attack inputs and contacts with no attack on
+  its screen. It limits such a client to a creature that it observes, 5 m or less from its
+  character, with a melee weapon, and to one hit of a creature each 250 ms.
+
+**The damage rule** (project rule, in one function: `Combat::damage`). The values come from
+the game files (`tools/gamedata/combat.sh`, file `combat-tables.json`):
+
+```text
+weapon = BaseDamage x gear score factor
+core   = weapon x (1 + sum of (attribute factor of the weapon x ModifierValueSum of the
+         attribute value) + level damage x (level - 1))
+raw    = core x DmgCoef + AddDmg
+dealt  = raw x (1 - mitigation) x (1 + weakness) x (1 - absorption), each factor not less than 0
+```
+
+| Value | Source |
+| --- | --- |
+| The weapon of an item | Column `ItemStatsRef` of the item tables: a row of the weapon table (`WeaponItemDefinitions`) |
+| `BaseDamage`, the four attribute factors (`ScalingStrength`, ...) | The weapon row |
+| The damage row of the light attack and of the heavy attack | Columns `TooltipPrimaryAttackData` and `TooltipAlternateAttackData` of the weapon row: rows of the damage table of the weapons of a player (`DamageTable`). A project rule: the client selects the row of an attack in its animation files, and the weapon table names these two rows for the tooltip of the item. |
+| `DmgCoef`, `AddDmg`, the damage type | The damage row |
+| `ModifierValueSum` of an attribute value | The attribute tables (`Strength`, `Dexterity`, `Intelligence`, `Focus`) |
+| Level damage (0.025), and the gear score: rate 0.0112 for each 5 points above 100, the rate times 0.6667 above 500 | The base attributes file (`playerbaseattributes.pbadb`): `Level Damage Multiplier`, `Base Damage Compound Increase`, `Base Damage Gear Score Interval`, `Min Possible Weapon Gear Score`, `Diminishing Gear Score Threshold`, `Compound Increase Diminishing Multiplier`. A weapon row can have its own rate (`WeaponBaseDamageCompoundIncrease`). |
+| The gear score factor | (1 + rate) to the power of the number of full intervals above the lowest gear score, with the smaller rate for the intervals above the limit |
+| Mitigation | `PhysicalMitigation` or `ElementalMitigation` of the base vitals row of the creature, by the category of the damage type (table `DamageTypes`); 0 for a type of the category `True` |
+| Weakness, absorption | Columns `WKN<type>` and `ABS<type>` of the base vitals row |
+
+- Static proof: the first three lines are the rule of the client for the damage of a weapon
+  on its item tooltip (helper 0x5BFB530 for the core damage, 0x3691470 for the gear score).
+- Project rule: the last line. The game files have the cells, and no proof of how the
+  original server used them (a mitigation value as a part of the damage, the armor rating of
+  the level of a creature, the order of the factors). The rule does not use the armor rating
+  of the level. Some rows of the game have a mitigation above 1 or an absorption below 0: a
+  factor is not less than 0.
+- The rule has no critical hit, no hit of the head or of the back, no block, no status
+  effect, and no stamina. The damage is a 32-bit float with no rounding.
+- The worked example of the research: the item `1hSwordT1` (weapon `SwordT1`, base damage 64,
+  gear score 100), the level 1, strength 5 and dexterity 5, the light row `1H_Sword_Attack1`
+  (slash, factor 1), and a target with no defense give 64. A target with the mitigation 0.35
+  gives 41.6.
+- Live values (the character of the development database: level 26, strength 8, dexterity
+  25; the core damage of its sword is 64 x (1 + 0.0085 x 3.75 + 0.0065 x 25 + 0.025 x 25) =
+  116.44):
+
+  | Weapon (gear score) | Target | Light attack | Heavy attack |
+  | --- | --- | --- | --- |
+  | Sword `1hSwordT1` (100) | Grey Wolf (mitigation 0.35, weakness 0.2 for thrust) | 75.7 slash | 109.0 thrust |
+  | Sword | Fallow Scavenger, a Risen (mitigation 0.35, weakness 0.1 for strike) | 75.7 slash | 90.8 thrust |
+  | Sword | Chalky Rabbit (health 16.9) | 75.7: dead | |
+  | Great axe `2hGreatAxeT2` (200) | Grey Wolf | 120.0 slash | 144.0 slash |
+  | Hatchet `1hHatchetT2` (200) | Grey Wolf | 100.2 slash | 120.2 slash |
+  | War hammer `2hWarhammerT2` (200) | Grey Wolf | 133.0 strike | 172.9 strike |
+  | Spear `2hSpearT1` (100) | Grey Wolf | 101.7 thrust | 132.2 thrust |
+
+**The result of a hit.**
+
+- The health of the creature goes down by the damage through the creature system
+  (`Creatures::hurt`, which uses `set_health`: one path with the health command and the kill
+  command). Each session that observes the creature gets the vitals state of 4.14 (the
+  health, the vitals data, the change mark 1).
+- A creature that lives after the hit plays the action `Reaction` of its slice (4.14: a scope
+  record of its movement state with a new start count; behavioral proof for the Grey Wolf
+  and the Risen: the creature goes back and comes to its idle pose again). The action has
+  an end on the world clock 1.5 s after its start (project rule: the tool does not read the
+  length of an animation): the creature then has no action of the server, and a session that
+  observes it later gets a record with no action. The observers get no record for the end.
+  A slice with no such action keeps its pose.
+- A damage that is not less than the health is the death (4.14): the health 0, the dead
+  mark, and the death action. The client sends no contact for a dead creature. For a dead
+  rabbit the client shows the name of the creature with the text "No equipped Knife" (the
+  skinning interaction of a later stage).
+
+**The damage number** (static proof of the layout in `hit-reports.md`; behavioral proof for a
+creature target). The session of the attacker, and only it, gets one message for each hit:
+
+```text
+DamageReceiverComponentClientFacet_OnDamageDealt, type 2071     (reader 0x65B4B50, handler 0x686CC50)
+  target:u64 entity:u64          the damage receiver facet of the character of the attacker:
+                                 the target is the entity group id of the character plus
+                                 0xCCC47F92DAF6BFC1 (the id of the component DamageReceiver of
+                                 the root entity of the player slice)
+  actor id:16 bytes  G:u64       the entity that took the damage
+  u32 u32                        two keys (feedback, sound): 0
+  flags:2 bytes                  low byte first; bit 3 "the damage was the death", bit 6
+                                 "critical hit", bit 8 "head shot": the backend sets bit 3
+  count:size                     1
+    type:u8 amount:f32 part:f32  the number of the damage type (slash 4, thrust 5, strike 6),
+                                 the damage, and the part of the damage before the defense
+                                 that the target took: the backend sends 1
+```
+
+The body for 64 slash damage with made-up ids (60 bytes; the bytes of the research fixture
+and of case HT4): `ccc47f93daf6bfc3 0000000100000002 04000000010000002000000000000000
+0000000100000004 00000000 00000000 0000 01 04 42800000 3f800000`.
+
+- Live result: the number shows at the creature for about 1 s, with the icon of the damage
+  type, in white. The client shows the whole part of the amount with no rounding (75.7 shows
+  as 75, 109.0 as 108, 133.0 as 132: the float is a small part below the number). For a
+  damage type that the creature is weak to (thrust for a wolf), the client shows the number
+  in yellow with an arrow mark itself: it reads the weakness from its own tables.
+- The message has the damage that the world computed. The client computes none.
+- Not tested: the two keys, the flags (also the effect of bit 3), a part that is not 1, more
+  than one entry, and the message for a target that is a player.
+
+**Not known, not done.**
+
+- The kind of each attack of the client is not known to the server: the rule (8 steps of
+  hold) is a limit of one weapon. The attack after the end of a long hold, the last attack of
+  a chain (the rows `..._Ender`), and a heavy attack with a full charge (the rows
+  `..._Charged`) have their own rows in the damage table: the backend uses the light row or
+  the heavy row for them.
+- The heavy attack of a spear gave a contact in 2 of 10 tries (the wolf was 3.9 m from the
+  character at the contact). A sword gives no contact for a creature that is 1.0 m or less from
+  the character in a heavy attack: a creature has no body that stops the character.
+- The reaction of a creature is the same action for each hit. The reaction tracking state
+  (type 1927) and the stagger values of the damage rows are not used.
+- Ranged weapons and magic (the first two lists of an input entry), the abilities, critical
+  hits, blocks, status effects, stamina, damage to a player, damage between players, and the
+  durability of a weapon.
+- A size of each creature and a reach of each weapon for the distance check.
+
 ## 5. Open items
 
 - Creatures (4.14) stand at their spawn points, and nothing more. Open for them:
   - A creature does not move, does not see a player, and does not attack (stage 3.4b). The
     backend sends the movement state of a creature one time, and again only with the death
     action.
-  - An attack of a player has no effect on a creature (stage 3.2a). The client sends no hit
-    message for a sword attack: only its input reports.
+  - A melee attack of a player hurts a creature (stage 3.2a, 4.15). Open for it: the items
+    of "Not known, not done" of 4.15 (the kind of each attack, ranged weapons, critical hits,
+    the size of a creature).
   - A creature that died does not come back: no respawn timer, no loot, no experience (stage
     3.5a). The place of the timer is `Creatures::respawn_at`. The body of a dead creature
     stays in the world of the backend until a command or the distance rule removes it; the
@@ -2670,9 +3042,9 @@ is at its position plus the distance (east, north, up; with no distance 3 m to t
     backend keeps the last accepted one until the reports are in the limits again. A teleport
     of the server to the last accepted position is later work, and it needs a rule for the
     first reports after it.
-  - The layouts of the block of mask bit 8 and of the three lists of an input entry are not
-    known. An entry with one of them gives no position (no such entry in the captures of
-    stage 2.3a: walk, jump, dodge, fall, a step up stairs).
+  - The object of mask bit 8, the fields of a value of entry +0x380 that is not 0, and the
+    first two lists of an input entry have static proof only: no entry of a live run had one
+    of them (4.7).
   - A character on a mount needs a larger speed limit. The speed limits come from one live
     session on foot.
   - The movement of a remote player for an observer is not in the backend.
@@ -2952,7 +3324,11 @@ POST /admin/v1/commands
        kill_creature       creature
        reset_creatures     no argument: each spawn point that waits is free again
      The character of a creature command is the reference place (4.14): it must be a
-     character of the account of the token, as for each command.
+     character of the account of the token, as for each command. remove_creature,
+     set_creature_health, and kill_creature change only a creature that is 150 m or less
+     from that character (the distance of the list of the state), and the character must
+     be in the world. Reply 404 with a message for a character that is not in the world,
+     and for a creature that is farther (the same reply as for an id of no creature).
      Reply 200: {"message": "done", "applied": "world" | "stored", ...} ("stored": the
      character is not in the world, and its rows changed). Reply 400: {"message": CAUSE}, and
      nothing changed. A member of "args" can be a number or a text.

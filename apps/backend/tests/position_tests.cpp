@@ -189,23 +189,47 @@ void parser_fixtures(const Options&) {
           "entry with the flag bits 11, 8, and 14 and none of their fields: each flag takes its mask bits, and the "
           "position is read");
 
-    // Blocks with a layout that is not known: the reader stops, and the entry keeps its camera.
-    InputEntry block = live;
-    block.block140 = true;
-    input = read_client_input(input_entry_body(block));
-    const bool blockStop = input && input->tail == InputTail::unknownBlock && !input->hasCharacter && input->hasCamera
-                           && input->cameraX == 8861.75F;
-    InputEntry list = live;
-    list.lists[1] = 2;
-    input = read_client_input(input_entry_body(list));
-    const bool listStop = input && input->tail == InputTail::unknownBlock && !input->hasCharacter && input->hasCamera;
+    // The object of mask bit 8, the lists, and the fields of a value of entry +0x380 that is
+    // not 0: the reader passes each one and reads the position.
+    bool passed = true;
+    for (const int form : {0, 1, 2}) {
+        InputEntry object = live;
+        object.object140 = form;
+        input = read_client_input(input_entry_body(object));
+        passed = passed && input && input->tail == InputTail::read && input->hasCharacter && input->characterX == 8861.25F;
+    }
+    InputEntry lists = live;
+    lists.projectileHits = 1;
+    lists.shots = 2;
+    input = read_client_input(input_entry_body(lists));
+    const bool listsRead = input && input->tail == InputTail::read && input->hasCharacter && input->characterX == 8861.25F
+                           && input->steps.size() == 1 && input->steps[0].projectileHits == 1 && input->steps[0].shots == 2;
     InputEntry value = live;
     value.value380 = 1;
+    value.fields380 = true;
     input = read_client_input(input_entry_body(value));
-    const bool valueStop = input && input->tail == InputTail::unknownBlock && !input->hasCharacter && input->hasCamera;
-    check(blockStop && listStop && valueStop,
-          "entry with the block of mask bit 8, with a list that is not empty, or with a value of entry +0x380 that is not "
-          "0: the reader stops, the entry gives no position and keeps its camera");
+    const bool valueRead = input && input->tail == InputTail::read && input->hasCharacter && input->characterY == 4252.75F;
+    value.fields380 = false;
+    input = read_client_input(input_entry_body(value));
+    check(passed && listsRead && valueRead && input && input->tail == InputTail::read && input->hasCharacter,
+          "entry with the object of mask bit 8 (not present, present, present with its vectors), with items in the two "
+          "projectile lists, or with a value of entry +0x380 that is not 0 (with and with no field of it): the reader "
+          "passes each one and reads the position");
+
+    // Values that the client does not send: the reader stops, and the entry keeps its camera.
+    InputEntry flag = live;
+    flag.object140 = 3;
+    input = read_client_input(input_entry_body(flag));
+    const bool flagStop = input && input->tail == InputTail::badValue && !input->hasCharacter && input->hasCamera
+                          && input->cameraX == 8861.75F && input->steps.empty();
+    InputEntry count = live;
+    count.contactCount = 2;
+    input = read_client_input(input_entry_body(count));
+    const bool countStop = input && input->tail == InputTail::shortBody && !input->hasCharacter && input->hasCamera
+                           && input->steps.empty();
+    check(flagStop && countStop,
+          "entry with a flag of the object of mask bit 8 that is not 0 or 1, or with a list count that is larger than "
+          "the body: the reader stops, the entry gives no position and no attack data and keeps its camera");
 
     // A body that is cut.
     InputEntry cut = live;
@@ -655,10 +679,10 @@ void camera_fallback(const Options&) {
         check(kept && log_count("rep: position source changed") == 0,
               "reports with no position field for 0.5 s: the entity keeps its last position, and the camera does not "
               "move it");
-        // The field stops for 2 s: the reader stops at a block that it does not know.
+        // The field stops for 2 s: the reader stops at a value that the client does not send.
         for (int index = 0; index < 60; ++index) {
             InputEntry entry = report_entry(++number, 100.0F, 200.0F, kHeight);
-            entry.block140 = true;
+            entry.object140 = 3;
             // The camera of a character that walks east, 0.18 m in each step.
             entry.cameraX = 100.5F + kSprintStep * static_cast<float>(index + 1);
             entry.actionWords = 0;
@@ -678,7 +702,7 @@ void camera_fallback(const Options&) {
                   && entity->position.x == x + 0.1F && !entity->positionEstimated,
               "the position field comes again: the source changes back with one log line, and the entity has the exact "
               "value");
-        check(log_count("the entry has a block with a layout that is not known before the position of the character") == 1,
+        check(log_count("the entry has a value that the client does not send before the end of the entry") == 1,
               "the log has one line for the first report whose reader stopped");
     }
     {
@@ -986,6 +1010,161 @@ void height_over_the_window(const Options&) {
     check(all, "a fall of 108 m in 2 s (1.8 m in each tick) is accepted: each report passes the check of the time window");
 }
 
+/**
+ * PR10: the totals of the rises and of the falls of the time window (code review of stage 3.4a,
+ * finding 6). The check of PR9 compared the height of a report with the height at the start of
+ * the window: a client that goes up and down got the limit again after each change of its
+ * direction. The world adds the rises and the falls of the accepted reports of the window, and
+ * each of the two totals has the time of the world clock, with the delay value one time.
+ */
+void rise_and_fall_totals(const Options&) {
+    using world::position_limits::kFallSpeed;
+    using world::position_limits::kRiseSpeed;
+    const auto start = world::WorldClock::time_point(std::chrono::seconds(1000));
+    // The accepted reports of one client: their number, and the totals of their rises and of their falls.
+    struct Travel {
+        PositionTrack track;
+        unsigned accepted{0};
+        float rise{0.0F};
+        float fall{0.0F};
+        state::WorldPosition last;
+    };
+    const auto send = [](Travel& travel, unsigned input, float x, float z, world::WorldClock::time_point time) {
+        const state::WorldPosition position{x, 200.0F, sent_height(z)};
+        // The entity is at the place of the first report.
+        const state::WorldPosition known = travel.accepted == 0 ? position : travel.last;
+        if (travel.track.judge(PositionReport{static_cast<std::uint16_t>(input), position, wire_height(z)}, known, time)
+            != PositionVerdict::accepted) {
+            return;
+        }
+        if (travel.accepted != 0) {
+            travel.rise += std::max(position.z - travel.last.z, 0.0F);
+            travel.fall += std::max(travel.last.z - position.z, 0.0F);
+        }
+        travel.last = position;
+        ++travel.accepted;
+    };
+
+    // 201 reports at one value of the world clock, with an input number that is 8 higher each
+    // time. Their heights are 50 m and 54 m in turns: 4 m up, 4 m down. The height never is
+    // more than 4 m from the height of the first report.
+    Travel turns;
+    for (unsigned index = 0; index <= 200; ++index) {
+        send(turns, 1 + 8 * index, 100.0F, index % 2 == 1 ? kHeight + 4.0F : kHeight, start);
+    }
+    note("201 reports at one clock value, 4 m up and 4 m down in turns: accepted " + std::to_string(turns.accepted)
+         + ", total rise " + std::to_string(turns.rise) + " m, total fall " + std::to_string(turns.fall) + " m");
+    check(turns.rise <= kRiseSpeed * 0.25F && turns.fall <= kFallSpeed * 0.25F,
+          "the accepted reports at one clock value have a total rise of 5 m at most and a total fall of 30 m at most (20 m/s "
+          "and 120 m/s for the delay value of 0.25 s, one time)");
+    check(turns.accepted == 102 && same_height(turns.last.z, sent_height(kHeight)),
+          "the first rise and the first fall are accepted, and each next rise is refused: a report at the height of the "
+          "last accepted one has no rise and no fall, and it is accepted");
+
+    // The total fall alone: three falls of 10.5 m with a rise of 1.5 m between them, at one
+    // clock value. The height of the last report is 28.5 m below the first one (less than 30 m),
+    // and the falls are 31.5 m.
+    Travel falls;
+    const float steps[] = {100.0F, 89.5F, 91.0F, 80.5F, 82.0F, 71.5F};
+    for (unsigned index = 0; index < 6; ++index) {
+        send(falls, 1 + 8 * index, 100.0F, steps[index], start);
+    }
+    note("three falls of 10.5 m with two rises of 1.5 m at one clock value: accepted " + std::to_string(falls.accepted)
+         + ", total fall " + std::to_string(falls.fall) + " m, last height " + std::to_string(falls.last.z) + " m");
+    check(falls.accepted == 5 && falls.fall <= kFallSpeed * 0.25F && same_height(falls.last.z, sent_height(82.0F)),
+          "the third fall is refused: the falls of the window are 31.5 m (the limit is 30 m), and the height of the report is "
+          "only 28.5 m below the first one");
+
+    // Two sessions (rule MP-10). The client of A sends 30 reports in 1 s, 4 m up and 4 m down
+    // in turns. The client of B walks on level ground in the same time.
+    ServerHost host;
+    const Player alpha = add_player(host.store, kSteamIdA, "Tester A", kCharacterA, "Alpha",
+                                    state::WorldPosition{100.0F, 200.0F, kHeight});
+    const Player beta = add_player(host.store, kSteamIdB, "Tester B", kCharacterB, "Beta",
+                                   state::WorldPosition{300.0F, 200.0F, kHeight});
+    FakeClient a(27000);
+    FakeClient b(27001);
+    host.enter(a, alpha.registration());
+    host.enter(b, beta.registration());
+    step(host, a, report_entry(1, 100.0F, 200.0F, kHeight));
+    host.datagram(b.peer, b.input_report(report_entry(1, 300.0F, 200.0F, kHeight)));
+    const world::Entity* entity = host.world.find_character(kCharacterA);
+    const auto began = host.clock.now();
+    float last = entity->position.z;
+    float rise = 0.0F;
+    float fall = 0.0F;
+    float highest = last;
+    for (unsigned index = 1; index <= 30; ++index) {
+        host.datagram(b.peer, b.input_report(report_entry(static_cast<std::uint16_t>(1 + index),
+                                                          300.0F + kSprintStep * static_cast<float>(index), 200.0F, kHeight)));
+        step(host, a, report_entry(static_cast<std::uint16_t>(1 + 8 * index), 100.0F, 200.0F, index % 2 == 1 ? kHeight + 4.0F : kHeight));
+        b.exchange(host);
+        rise += std::max(entity->position.z - last, 0.0F);
+        fall += std::max(last - entity->position.z, 0.0F);
+        last = entity->position.z;
+        highest = std::max(highest, last);
+    }
+    const float elapsed = std::chrono::duration<float>(host.clock.now() - began).count();
+    const world::PositionTrack& trackA = host.session(1).position_track();
+    const world::PositionTrack& trackB = host.session(2).position_track();
+    note("session of A, 4 m up and 4 m down in turns for " + std::to_string(elapsed) + " s: the entity went " + std::to_string(rise)
+         + " m up and " + std::to_string(fall) + " m down, accepted " + std::to_string(trackA.count(PositionVerdict::accepted))
+         + ", refused " + std::to_string(trackA.refused()) + "; session of B: accepted "
+         + std::to_string(trackB.count(PositionVerdict::accepted)) + ", refused " + std::to_string(trackB.refused()));
+    check(rise <= kRiseSpeed * (elapsed + 0.25F) + 0.017F && trackA.refused() > 0 && highest <= sent_height(kHeight + 4.0F) + 0.017F,
+          "the entity of A does not go up more than 25 m in total in 1 s (20 m/s for the time of the world clock plus the "
+          "delay value one time), and reports above that are refused");
+    check(trackB.refused() == 0 && trackB.count(PositionVerdict::accepted) == 31
+              && std::abs(host.world.find_character(kCharacterB)->position.x - (300.0F + kSprintStep * 30.0F)) < 0.001F,
+          "the reports of B are all accepted: the totals of one session are not a part of the check of a different session");
+
+    // Usual movement passes. A path gives the place and the height of the character for a time
+    // in seconds. The client makes 30 simulation steps in a second, and it sends one report
+    // for each `stride` steps. With `together` above 1, that number of reports comes at one value
+    // of the world clock (a delay of the network).
+    const auto all_accepted = [&](float seconds, unsigned stride, unsigned together, float (*place)(float), float (*height)(float)) {
+        Travel travel;
+        const unsigned ticks = static_cast<unsigned>(seconds * 30.0F);
+        unsigned reports = 0;
+        for (unsigned tick = 0; tick <= ticks; tick += stride) {
+            const float time = static_cast<float>(tick) / 30.0F;
+            // The step of the last report of the group: each report of the group comes at its time.
+            const unsigned arrival = ((tick / stride + together - 1) / together) * together * stride;
+            const std::chrono::duration<float> delay(static_cast<float>(arrival) / 30.0F);
+            send(travel, 1 + tick, place(time), height(time), start + std::chrono::duration_cast<std::chrono::nanoseconds>(delay));
+            ++reports;
+        }
+        note("  " + std::to_string(reports) + " reports, accepted " + std::to_string(travel.accepted) + ", total rise "
+             + std::to_string(travel.rise) + " m, total fall " + std::to_string(travel.fall) + " m");
+        return travel.accepted == reports;
+    };
+    const auto walk = [](float time) { return 100.0F + 5.0F * time; };
+    const auto still = [](float) { return 100.0F; };
+    // A jump of 1.2 m each 0.8 s (6 m/s at its start) on a slope that goes 0.5 m up in a second.
+    const auto jumps = [](float time) {
+        const float air = std::fmod(time, 0.8F);
+        return 100.0F + 0.5F * time + 6.0F * air - 7.5F * air * air;
+    };
+    // Stairs with steps of 0.2 m: 3 m up in 2 s, then 3 m down in 2 s.
+    const auto stairs = [](float time) {
+        const float part = std::fmod(time, 4.0F);
+        return 100.0F + 0.2F * std::floor((part < 2.0F ? part : 4.0F - part) * 7.5F);
+    };
+    const auto long_fall = [](float time) { return 900.0F - 54.0F * time; };
+    const auto long_rise = [](float time) { return 100.0F + 8.0F * time; };
+    note("usual movement: jumps on a slope for 10 s (each step, 2 reports in a second, 6 reports together), stairs for "
+         "12 s (each step, 6 reports together), a fall of 540 m in 10 s (each step, 2 reports in a second), a rise of 40 m in 5 s");
+    check(all_accepted(10.0F, 1, 1, walk, jumps) && all_accepted(10.0F, 15, 1, walk, jumps) && all_accepted(10.0F, 1, 6, walk, jumps),
+          "a character that jumps 1.2 m each 0.8 s on a slope for 10 s: each report is accepted, with one report for each "
+          "step, with 2 reports in a second, and with the reports of 0.2 s together at one clock value");
+    check(all_accepted(12.0F, 1, 1, walk, stairs) && all_accepted(12.0F, 1, 6, walk, stairs),
+          "a character on stairs (3 m up in 2 s, then 3 m down) for 12 s: each report is accepted");
+    check(all_accepted(10.0F, 1, 1, still, long_fall) && all_accepted(10.0F, 15, 1, still, long_fall)
+              && all_accepted(5.0F, 1, 1, still, long_rise),
+          "a fall of 540 m in 10 s (54 m/s) with one report for each step and with 2 reports in a second, and a rise of 40 m "
+          "in 5 s: each report is accepted");
+}
+
 } // namespace
 
 std::vector<Case> position_cases() {
@@ -999,6 +1178,8 @@ std::vector<Case> position_cases() {
         {"PR7", "movement state: the id rule of the heartbeat state", movement_id},
         {"PR8", "position report: the height of the first report of a session (review of stage 2.3a)", first_report_height},
         {"PR9", "position report: the total rise and fall of the time window (review of stage 2.3a)", height_over_the_window},
+        {"PR10", "position report: the totals of the rises and of the falls of the time window (review of stage 3.4a)",
+         rise_and_fall_totals},
     };
 }
 

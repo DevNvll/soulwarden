@@ -4,11 +4,14 @@
 // one session. All ids and names are made up: no value of a game file is here.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -17,6 +20,7 @@
 #include "server/http/request_handler.h"
 #include "server/http/router.h"
 #include "server/http/routes.h"
+#include "server/rep/replication.h"
 #include "support/cases.h"
 #include "support/check.h"
 #include "support/server_host.h"
@@ -37,6 +41,7 @@ constexpr const char* kCharacterB = "bbbbbbbb-0000-4000-8000-00000000000b";
 constexpr const char* kCharacterC = "cccccccc-0000-4000-8000-00000000000c";
 constexpr const char* kSteamIdC = "76561202255233010";
 constexpr const char* kTokenA = "token-of-the-start-of-A-0123456789abcdef";
+constexpr const char* kTokenB = "token-of-the-start-of-B-fedcba9876543210";
 constexpr float kHeight = 50.0F;
 /** The place of the character of A in each case. */
 constexpr state::WorldPosition kPlace{1000.0F, 1000.0F, kHeight};
@@ -521,7 +526,7 @@ void spawn_points(const Options&) {
           "the spawn point distances of the world are 150 m (make) and 200 m (remove)");
     ServerHost host;
     set_creatures(host, {test_point("point-near", 0, 18, 1100.0F, 1000.0F), test_point("point-edge", 1, 1, 1160.0F, 1000.0F),
-                         test_point("point-far", 0, 18, 1500.0F, 1000.0F), test_point("point-level", 0, 19, 1000.0F, 1050.0F)});
+                         test_point("point-far", 0, 18, 1500.0F, 1000.0F)});
     const Player alpha = add_player(host.store, kSteamIdA, "Tester A", kCharacterA, "Alpha", kPlace);
     world::Creatures& creatures = host.world.creatures();
     host.tick();
@@ -540,8 +545,6 @@ void spawn_points(const Options&) {
     check(wolf != nullptr && wolf->creature.spawnPoint == 0U && wolf->creature.level == 18 && wolf->creature.yaw == 90.0F
               && wolf->position.x == 1100.0F && wolf->creature.kind->id == "Test_Wolf",
           "the creature has the kind, the level, the position, and the direction of its spawn point");
-    check(at_point(3) == 0 && creatures.spawn_points()[3].waiting && log_count("makes no creature: the level table has no level 19") == 1,
-          "a point whose level has no row in the level table makes no creature, with one log line");
     const world::EntityId first = at_point(0);
     host.advance(std::chrono::seconds(3));
     host.steps(5, {&a});
@@ -603,7 +606,7 @@ void spawn_points(const Options&) {
     host.advance(std::chrono::seconds(2));
     host.steps(1, {&a});
     check(at_point(0) == 0, "the distance rule does not make a creature that a command removed");
-    check(creatures.reset_spawn_points() == 2, "the reset command makes the two points that wait free (the removed one and the one with no level)");
+    check(creatures.reset_spawn_points() == 1, "the reset command makes the point that waits free");
     host.steps(1, {&a});
     check(at_point(0) != 0 && at_point(0) != third, "after the reset the point makes its creature again");
 
@@ -1087,6 +1090,518 @@ void creature_sessions(const Options&) {
     check(log_count("rep: creatures of the session") >= 1, "the end of a session writes its creature counts to the log");
 }
 
+/**
+ * CR9: the respawn time of a spawn point whose dead creature is near a player (code review of
+ * stage 3.4a, finding 1). The body is in the world at the respawn time: the point removes it
+ * and makes its new creature. CR4 has the respawn time of a point whose body left the world.
+ */
+void respawn_with_body(const Options&) {
+    CommandHost c;
+    ServerHost& host = c.host;
+    world::Creatures& creatures = host.world.creatures();
+    FakeClient a(27000);
+    enter_with_camera(host, a, c.alpha, kPlace);
+    const auto at_point = [&] { return creatures.spawn_points()[0].entity; };
+    const auto waits = [&] { return creatures.spawn_points()[0].waiting; };
+    const world::EntityId first = at_point();
+    const std::uint32_t firstNumber = interest_of(host, 1, first);
+    check(first != 0 && firstNumber != 0, "the point 20 m from the player has its creature, and the session observes it");
+    check(creatures.kill(first).error == CreatureError::none && waits() && at_point() == first
+              && creatures.respawn_at(0, host.clock.now() + std::chrono::seconds(2)),
+          "a kill: the body stays at its point, and the point waits with a respawn time 2 s after the death");
+    host.advance(std::chrono::milliseconds(1200));
+    host.steps(1, {&a});
+    check(at_point() == first && waits() && creatures.find(first) != nullptr,
+          "1.2 s later the point still waits, and the body is in the world");
+    const std::size_t from = a.got.size();
+    host.advance(std::chrono::milliseconds(1200));
+    host.steps(1, {&a});
+    const world::EntityId second = at_point();
+    const world::Entity* made = second != 0 ? creatures.find(second) : nullptr;
+    note("after the respawn time: creature of the point before " + u64_hex(first) + ", now " + u64_hex(second) + ", the point waits "
+         + std::to_string(waits()) + ", the body is in the world " + std::to_string(creatures.find(first) != nullptr));
+    check(second != 0 && second != first && !waits() && creatures.find(first) == nullptr && creatures.count() == 1,
+          "after the respawn time, with the player still 20 m from the point: the body left the world, and the point has a "
+          "new creature with a new id");
+    check(made != nullptr && !made->creature.dead && made->vitals.health == kWolfHealth && made->creature.spawnPoint == 0U
+              && !creatures.spawn_points()[0].respawnAt,
+          "the new creature lives and has full health, and the point has no respawn time any more");
+    json list = json::parse(c.send("GET", "/v1/dev/creatures", "").body, nullptr, false);
+    check(list.is_object() && list["counts"]["removedByRespawn"] == 1 && list["counts"]["removedByCommand"] == 0
+              && list["counts"]["removedByDistance"] == 0 && list["counts"]["spawnedByPoint"] == 2 && list["counts"]["deaths"] == 1,
+          "the counts of the creature system: one body left the world at a respawn time, and no command and no distance "
+          "removed a creature");
+    host.steps(60, {&a});
+    const std::vector<std::uint32_t> stops = stops_of(bundles_of(a, from));
+    const std::uint32_t secondNumber = interest_of(host, 1, second);
+    bool fresh = false;
+    for (const Record& record : other_records(bundles_of(a, from))) {
+        const Fragment* vitals = fragment_of(record, 9);
+        fresh = fresh || (record.interest == secondNumber && record.fragments.size() == 4 && vitals != nullptr
+                          && vitals->fields.at({0, 2})[0] == 0);
+    }
+    check(std::find(stops.begin(), stops.end(), firstNumber) != stops.end() && secondNumber != 0 && fresh,
+          "the session gets the stop of the body, and the full record of the new creature with no dead mark");
+
+    // The rule makes a creature only for a player that is 150 m or less from the point. A
+    // respawn time that comes with the player between the two distances changes nothing.
+    const world::EntityId player = host.world.find_character(kCharacterA)->id;
+    const auto move = [&](float x) { host.world.set_position(player, state::WorldPosition{x, 1000.0F, kHeight}, false); };
+    check(creatures.kill(second).error == CreatureError::none
+              && creatures.respawn_at(0, host.clock.now() + std::chrono::seconds(1)),
+          "the second creature is killed: the respawn time of its point is 1 s after the death");
+    move(860.0F);
+    host.advance(std::chrono::milliseconds(1500));
+    host.steps(1, {&a});
+    check(at_point() == second && waits() && creatures.find(second) != nullptr,
+          "the respawn time comes with the player 160 m from the point (between the two distances): the body stays, and "
+          "the point waits");
+    move(880.0F);
+    host.advance(std::chrono::milliseconds(600));
+    host.steps(1, {&a});
+    const world::EntityId third = at_point();
+    check(third != 0 && third != second && !waits() && creatures.find(second) == nullptr && creatures.count() == 1,
+          "the player at 140 m: the body leaves the world, and the point makes its creature");
+
+    // A point that waits with no respawn time keeps its body.
+    check(third != 0 && creatures.kill(third).error == CreatureError::none, "the third creature is killed, with no respawn time");
+    host.advance(std::chrono::seconds(3));
+    host.steps(1, {&a});
+    check(at_point() == third && waits() && creatures.find(third) != nullptr && creatures.find(third)->creature.dead,
+          "3 s later the point still waits with its body: only a command or a respawn time makes it free");
+}
+
+/**
+ * CR10: the reference character of a creature command of the admin interface (code review of
+ * stage 3.4a, finding 2). Such a command changes only a creature that is 150 m or less from its
+ * character, and the character must be in the world: the creatures of the list of the tool
+ * window. A development route keeps its rule: each creature of the world, with no character.
+ */
+void admin_creature_reference(const Options&) {
+    CommandHost c;
+    ServerHost& host = c.host;
+    world::Creatures& creatures = host.world.creatures();
+    check(c.access.add(kTokenB, kSteamIdB), "the account of B has its own token");
+    const state::WorldPosition placeB{1300.0F, 1000.0F, kHeight};
+    FakeClient a(27000);
+    FakeClient b(27001);
+    enter_with_camera(host, a, c.alpha, kPlace);
+    enter_with_camera(host, b, c.beta, placeB);
+    // The creature of the spawn point is 20 m from A. Three creatures of commands: one at the
+    // place of B (300 m from A), one 149 m from A (151 m from B), and one 151 m from A (149 m
+    // from B).
+    const world::EntityId atPoint = creatures.spawn_points()[0].entity;
+    const world::EntityId atB = creatures.spawn("Test_Wolf", placeB, 0.0F).entity->id;
+    const world::EntityId nearA = creatures.spawn("Test_Wolf", state::WorldPosition{1149.0F, 1000.0F, kHeight}, 0.0F).entity->id;
+    const world::EntityId nearB = creatures.spawn("Test_Wolf", state::WorldPosition{1151.0F, 1000.0F, kHeight}, 0.0F).entity->id;
+    const auto id_of = [](world::EntityId id) { return json{{"creature", u64_hex(id)}}; };
+    const auto listed = [&](const char* token) {
+        std::set<std::string> ids;
+        json state = json::parse(c.send("GET", "/admin/v1/state", "", {}, token).body, nullptr, false);
+        if (state.is_object() && state["creatures"]["creatures"].is_array()) {
+            for (const json& row : state["creatures"]["creatures"]) {
+                ids.insert(row["id"].get<std::string>());
+            }
+        }
+        return ids;
+    };
+    check(atPoint != 0 && listed(kTokenA) == std::set<std::string>{u64_hex(atPoint), u64_hex(nearA)}
+              && listed(kTokenB) == std::set<std::string>{u64_hex(atB), u64_hex(nearB)},
+          "the list of the tool window of each account has the two creatures that are 150 m or less from its character");
+
+    // The token of A with the character of A: a creature that is not in its list does not change.
+    check(c.admin("kill_creature", kCharacterB, id_of(atB)).status == 404 && !creatures.find(atB)->creature.dead,
+          "the token of A with the character of B gives 404 (the account check): the creature at B lives");
+    const service::HttpResponse kill = c.admin("kill_creature", kCharacterA, id_of(atB));
+    note("token of A, character of A, kill of the creature at B (300 m): status " + std::to_string(kill.status) + ", dead "
+         + std::to_string(creatures.find(atB)->creature.dead));
+    check(kill.status == 404 && !creatures.find(atB)->creature.dead,
+          "kill_creature for a creature 300 m from the character of the command gives 404: the creature lives");
+    json percent = id_of(atB);
+    percent["percent"] = 50;
+    const service::HttpResponse health = c.admin("set_creature_health", kCharacterA, percent);
+    note("set_creature_health for the creature at B: status " + std::to_string(health.status) + ", health "
+         + std::to_string(creatures.find(atB)->vitals.health));
+    check(health.status == 404 && creatures.find(atB)->vitals.health == kWolfHealth,
+          "set_creature_health for that creature gives 404: its health does not change");
+    const service::HttpResponse removed = c.admin("remove_creature", kCharacterA, id_of(atB));
+    note("remove_creature for the creature at B: status " + std::to_string(removed.status) + ", in the world "
+         + std::to_string(creatures.find(atB) != nullptr));
+    check(removed.status == 404 && creatures.find(atB) != nullptr,
+          "remove_creature for that creature gives 404: the creature stays in the world");
+    if (creatures.find(atB) == nullptr || creatures.find(nearA) == nullptr || creatures.find(nearB) == nullptr) {
+        return;
+    }
+    // The limit is the distance of the list: 150 m.
+    const service::HttpResponse far = c.admin("kill_creature", kCharacterA, id_of(nearB));
+    const service::HttpResponse unknown = c.admin("kill_creature", kCharacterA, json{{"creature", "0000000000001234"}});
+    json farReply = json::parse(far.body, nullptr, false);
+    check(far.status == 404 && !creatures.find(nearB)->creature.dead && farReply.is_object()
+              && farReply["message"].is_string() && !farReply["message"].get<std::string>().empty() && far.body == unknown.body
+              && unknown.status == 404,
+          "a creature 151 m from the character gives 404 with a message, the same reply as an id of no creature");
+    percent = id_of(nearA);
+    percent["percent"] = 50;
+    check(c.admin("set_creature_health", kCharacterA, percent).status == 200
+              && creatures.find(nearA)->vitals.health == kWolfHealth / 2.0F
+              && c.admin("kill_creature", kCharacterA, id_of(atPoint)).status == 200 && creatures.find(atPoint)->creature.dead,
+          "the creatures of the list (149 m and 20 m from the character) change: the health of one is one half, and the "
+          "other one is dead");
+
+    // The account of B, with its own token and its own session (rule MP-10): the same rule from its place.
+    check(c.admin("kill_creature", kCharacterB, id_of(nearA), kTokenB).status == 404 && !creatures.find(nearA)->creature.dead
+              && c.admin("remove_creature", kCharacterB, id_of(atPoint), kTokenB).status == 404
+              && creatures.find(atPoint) != nullptr,
+          "the token of B with the character of B: the creatures near A (151 m and 280 m from B) give 404 and do not change");
+    check(c.admin("kill_creature", kCharacterB, id_of(atB), kTokenB).status == 200 && creatures.find(atB)->creature.dead
+              && c.admin("remove_creature", kCharacterB, id_of(nearB), kTokenB).status == 200
+              && creatures.find(nearB) == nullptr,
+          "the creatures near B change: the one at its place is dead, and the one 149 m from it left the world");
+    check(log_count("admin: command kill_creature for character aaaaaaaa: reply 404") == 3
+              && log_count("admin: command kill_creature for character bbbbbbbb: reply 200") == 1,
+          "the log has one line for each command, with the status of its reply");
+
+    // A development route has no reference character: each creature of the world, also with a
+    // character in the request that is far away.
+    json devReply = json::parse(c.dev("health", std::string("character=") + kCharacterA + "&creature=" + u64_hex(atB) + "&health=0").body,
+                                nullptr, false);
+    check(devReply.is_object() && devReply["message"] == "the creature is dead: its health does not change"
+              && c.dev("remove", "creature=" + u64_hex(atB)).status == 200 && creatures.find(atB) == nullptr,
+          "the development routes find the creature at B with no character and with the character of A (300 m): the "
+          "health command gets to the creature system (it is dead: 400), and the remove command removes it");
+
+    // The character of the command is not in the world: no reference place, and no change.
+    const world::EntityId stays = creatures.spawn("Test_Wolf", state::WorldPosition{1002.0F, 1000.0F, kHeight}, 0.0F).entity->id;
+    host.datagram(a.peer, a.carrier_close());
+    host.steps(3, {&a, &b});
+    const service::HttpResponse absent = c.admin("kill_creature", kCharacterA, id_of(stays));
+    note("the character of A left the world, kill of a creature 2 m from its saved place: status " + std::to_string(absent.status)
+         + ", dead " + std::to_string(creatures.find(stays)->creature.dead));
+    check(host.world.find_character(kCharacterA) == nullptr && absent.status == 404 && !creatures.find(stays)->creature.dead
+              && c.admin("remove_creature", kCharacterA, id_of(stays)).status == 404 && creatures.find(stays) != nullptr
+              && c.admin("spawn_creature", kCharacterA, {{"kind", "Test_Wolf"}}).status == 404,
+          "a command for a character of the account that is not in the world gives 404: the creature near its saved place "
+          "does not change");
+    check(c.dev("kill", "creature=" + u64_hex(stays)).status == 200 && creatures.find(stays)->creature.dead,
+          "the development route kills that creature");
+}
+
+/**
+ * CR11: a creature data file whose parts do not fit together (code review of stage 3.4a,
+ * finding 3). Each list of such a file is correct alone. The loader refuses the file as a whole:
+ * a world with a part of its creatures and no sign of the fault is not acceptable.
+ */
+void creature_file_relations(const Options& options) {
+    const std::filesystem::path folder = options.workDirectory / "creature-relations";
+    std::filesystem::create_directories(folder);
+    const auto write = [&](const char* name, const json& document) {
+        const std::filesystem::path path = folder / name;
+        std::ofstream(path, std::ios::binary) << document.dump();
+        return path.string();
+    };
+    // A file is refused when it gives no data and the cause has the word of the fault.
+    const auto refused = [&](const char* name, const json& document, const char* word) {
+        gamedata::CreatureData broken;
+        const bool loaded = broken.load(write(name, document));
+        note(std::string(name) + ": loaded " + std::to_string(loaded) + ", kinds " + std::to_string(broken.kinds().size())
+             + ", spawn points " + std::to_string(broken.spawn_points().size()) + ", cause \"" + broken.error() + "\"");
+        return !loaded && !broken.loaded() && broken.kinds().empty() && broken.spawn_points().empty()
+               && broken.error().find(word) != std::string::npos;
+    };
+    gamedata::CreatureData correct;
+    json noMarker = file_document();
+    noMarker["slices"][1]["marker"] = 0;
+    check(correct.load(write("correct.json", file_document())) && correct.load(write("no-marker.json", noMarker))
+              && correct.slices()[1].markerSlot == 0,
+          "the correct file of CR1 loads, also with a slice that has no marker component (slot 0)");
+
+    // The levels.
+    json usedLevel = file_document();
+    usedLevel["levels"].erase(1);
+    json kindLevel = file_document();
+    kindLevel["kinds"][0]["level"] = 17;
+    json pointLevel = file_document();
+    pointLevel["spawnPoints"][0][2] = 17;
+    check(refused("used-level.json", usedLevel, "level"),
+          "not used: a file whose level table has no row for the level 18 of a kind and of its spawn point");
+    check(refused("kind-level.json", kindLevel, "level") && refused("point-level.json", pointLevel, "level"),
+          "not used: a kind with a level that has no row, and a spawn point with a level that has no row");
+
+    // The slots of a slice.
+    json movementSlot = file_document();
+    movementSlot["slices"][0]["movement"] = 6;
+    json vitalsSlot = file_document();
+    vitalsSlot["slices"][0]["vitals"] = 10;
+    json markerSlot = file_document();
+    markerSlot["slices"][1]["marker"] = 16;
+    json otherComponent = file_document();
+    otherComponent["slices"][0]["movement"] = 9;
+    otherComponent["slices"][0]["vitals"] = 5;
+    check(refused("movement-slot.json", movementSlot, "slot"),
+          "not used: a slice whose movement slot (6) is not in its slot list");
+    check(refused("vitals-slot.json", vitalsSlot, "slot") && refused("marker-slot.json", markerSlot, "slot"),
+          "not used: a vitals slot and a marker slot that are not in the slot list of the slice");
+    check(refused("other-component.json", otherComponent, "slot"),
+          "not used: a movement slot and a vitals slot that are the slots of the other component in the slot list");
+
+    // The asset of a slice.
+    json nullAsset = file_document();
+    nullAsset["slices"][0]["asset"] = "00000000-0000-0000-0000-000000000000";
+    check(refused("null-asset.json", nullAsset, "asset"), "not used: a slice with the null asset id");
+
+    // The health: the health of a level times the health factor of a kind.
+    json largeHealth = file_document();
+    largeHealth["levels"][1][1] = 1.0e30;
+    largeHealth["kinds"][0]["health"] = 1.0e30;
+    json smallHealth = file_document();
+    smallHealth["levels"][0][1] = 1.0e-30;
+    smallHealth["kinds"][1]["health"] = 1.0e-30;
+    json commandLevel = file_document();
+    commandLevel["levels"].push_back(json::array({50, 1.0e30}));
+    commandLevel["kinds"][0]["health"] = 1.0e30;
+    ServerHost host;
+    const bool accepted = host.creatures.load(write("large-health.json", largeHealth));
+    const world::CreatureResult made = host.world.creatures().spawn("Test_Wolf", kPlace, 0.0F);
+    note("large-health.json: loaded " + std::to_string(accepted) + ", a spawn command made a creature "
+         + std::to_string(made.entity != nullptr) + (made.entity != nullptr ? ", health " + std::to_string(made.entity->vitals.health) : ""));
+    check(!accepted && !host.creatures.loaded() && made.error == CreatureError::noData && host.world.creatures().count() == 0
+              && refused("large-health.json", largeHealth, "health"),
+          "not used: a level health and a health factor of 1e30 (each one is a float, their product is not finite): the "
+          "world has no creature data, and a spawn command makes no creature");
+    check(refused("small-health.json", smallHealth, "health"),
+          "not used: a level health and a health factor of 1e-30 (their product is 0 as a float)");
+    check(refused("command-level.json", commandLevel, "health"),
+          "not used: a product that is not finite for a level that no kind and no spawn point has (a command can give a "
+          "creature each level of the table)");
+
+    // The counts of the tool.
+    json textCounts = file_document();
+    textCounts["spawnPoints"].erase(1);
+    textCounts["counts"] = "lost counts";
+    json listCounts = file_document();
+    listCounts["counts"] = json::array({2, 2, 2});
+    check(refused("text-counts.json", textCounts, "counts"),
+          "not used: a file with one spawn point less whose member \"counts\" is a text");
+    check(refused("list-counts.json", listCounts, "counts"), "not used: a member \"counts\" that is a list");
+
+    // The data of a test with no file has the same check.
+    const auto set = [](std::uint32_t pointLevel, std::uint32_t movementSlot, float factor) {
+        std::vector<gamedata::CreatureSlice> slices{
+            test_slice("slices/test/wolf.dynamicslice", 0x11, kWolfSlots, 100.0F, kWolfDeathAction, kWolfDeathFragment)};
+        slices[0].movementSlot = movementSlot;
+        gamedata::CreatureData data;
+        return data.set(std::move(slices), {test_kind("Test_Wolf", "Test Wolf", 0x11112222, 0x33334444, factor, 18, {{0, 100}})},
+                        {test_point("point", 0, pointLevel, 1100.0F, 1000.0F)}, {{18, kWolfHealth}})
+               && data.loaded();
+    };
+    check(set(18, kWolfSlots[0], 1.0F) && !set(19, kWolfSlots[0], 1.0F) && !set(18, 6, 1.0F) && !set(18, kWolfSlots[0], 1.0e36F),
+          "the data of a test: a correct set is used; a spawn point with the level 19 (no row), a movement slot that is "
+          "not in the slot list, and a health factor of 1e36 are not");
+    ServerHost other;
+    check(!set_creatures(other, {test_point("point-level", 0, 19, 1000.0F, 1050.0F)}) && !other.world.creatures().has_data(),
+          "a world whose data set has a spawn point with a level that has no row has no creature data");
+}
+
+/**
+ * CR12: the fragments of a command in the record of a creature (code review of stage 3.4a,
+ * finding 4). The session cuts the fragments of a creature into records by the rule of each
+ * entity: a second fragment for one slot goes in a later bundle, and a record ends before a
+ * fragment that makes it larger than one carrier message.
+ */
+void creature_command_fragments(const Options&) {
+    ServerHost host;
+    set_creatures(host);
+    const Player alpha = add_player(host.store, kSteamIdA, "Tester A", kCharacterA, "Alpha", kPlace);
+    FakeClient a(27000);
+    enter_with_camera(host, a, alpha, kPlace);
+    world::Creatures& creatures = host.world.creatures();
+    const world::EntityId wolf = creatures.spawn("Test_Wolf", state::WorldPosition{1004.0F, 1000.0F, kHeight}, 0.0F).entity->id;
+    const world::EntityId rabbit = creatures.spawn("Test_Rabbit", state::WorldPosition{1002.0F, 1000.0F, kHeight}, 0.0F).entity->id;
+    // A command gives the wolf a vitals fragment (slot 9, health 500) before the session has the creature.
+    host.world.set_raw_fragment(wolf, 9, 15, Bytes{0x01, 0x01, 0x43, 0xFA, 0x00, 0x00});
+    std::size_t from = a.got.size();
+    host.steps(60, {&a});
+    const std::uint32_t wolfNumber = interest_of(host, 1, wolf);
+    const std::uint32_t rabbitNumber = interest_of(host, 1, rabbit);
+    // The records of the wolf with the place of their bundle, and the two faults of a bundle.
+    struct Placed {
+        std::size_t bundle;
+        std::size_t frame;
+        Record record;
+    };
+    const auto collect = [&](std::size_t start, std::vector<Placed>& placed, bool& sameSlot, bool& sameEntity) {
+        std::size_t bundleIndex = 0;
+        for (std::size_t index = start; index < a.got.size(); ++index) {
+            if (a.got[index].type != 8) {
+                continue;
+            }
+            const Bundle bundle = read_bundle(a.got[index].body);
+            if (bundle.records.empty() || bundle.records.front().interest == 1) {
+                continue;
+            }
+            ++bundleIndex;
+            std::set<std::uint32_t> interests;
+            for (const Record& record : bundle.records) {
+                sameEntity = sameEntity || !interests.insert(record.interest).second;
+                std::set<std::uint32_t> slots;
+                for (const Fragment& fragment : record.fragments) {
+                    sameSlot = sameSlot || !slots.insert(fragment.slot).second;
+                }
+                if (record.interest == wolfNumber) {
+                    placed.push_back(Placed{bundleIndex, a.got[index].frame.size(), record});
+                }
+            }
+        }
+    };
+    std::vector<Placed> first;
+    bool sameSlot = false;
+    bool sameEntity = false;
+    collect(from, first, sameSlot, sameEntity);
+    std::string orders;
+    for (const Placed& placed : first) {
+        orders += "bundle " + std::to_string(placed.bundle) + ": " + order_of(placed.record) + "; ";
+    }
+    note("records of the wolf: " + std::to_string(first.size()) + " (" + orders + "), two fragments of one slot in a record "
+         + std::to_string(sameSlot) + ", two records of one creature in a bundle " + std::to_string(sameEntity));
+    check(wolfNumber != 0 && rabbitNumber != 0 && !sameSlot, "no record has two fragments of one slot");
+    check(first.size() == 2 && order_of(first[0].record) == "(0,10) (5,11) (9,15) (15,5399) " && order_of(first[1].record) == "(9,15) "
+              && first[1].bundle > first[0].bundle && !sameEntity,
+          "the wolf has two records in two bundles: its four states, and then the fragment of the command for the vitals "
+          "slot; no bundle has two records of one creature");
+    check(first.size() == 2 && float_at(fragment_of(first[0].record, 9)->fields.at({0, 0}), 0) == kWolfHealth
+              && float_at(first[1].record.fragments[0].fields.at({0, 0}), 0) == 500.0F,
+          "the vitals state of the creature goes first, and the fragment of the command comes after it: the health of the "
+          "command (500) is the newest value of the client");
+    check(log_count("DEVELOPMENT COMMAND: fragment of the command for slot 9, type 15 (6 bytes) is in the record of interest "
+                    + std::to_string(wolfNumber))
+                  == 1
+              && host.session(1).creature_records() == 2,
+          "the log has one line for the fragment of the command, and the session counts two first records (the wolf and the rabbit)");
+
+    // A long fragment of a command does not go into the carrier message of the other fragments.
+    server::rep::StateWriter text(3);
+    text.field(2, 1).string(std::string(2000, 'X'));
+    from = a.got.size();
+    check(creatures.set_health(wolf, 400.0F).error == CreatureError::none, "the health of the wolf is set to 400");
+    host.world.set_raw_fragment(wolf, 40, 3935, text.finish());
+    host.steps(10, {&a});
+    std::vector<Placed> second;
+    collect(from, second, sameSlot, sameEntity);
+    orders.clear();
+    for (const Placed& placed : second) {
+        orders += "bundle " + std::to_string(placed.bundle) + " (frame of " + std::to_string(placed.frame) + " bytes): "
+                  + order_of(placed.record) + "; ";
+    }
+    note("a health change and a command fragment of 2,000 bytes: " + orders);
+    check(second.size() == 2 && order_of(second[0].record) == "(9,15) " && second[0].frame <= 1024
+              && order_of(second[1].record) == "(40,3935) " && second[1].bundle > second[0].bundle && second[1].frame > 2000,
+          "a health change and a command fragment of 2,000 bytes: the health change is one bundle below the size of one "
+          "carrier message, and the long fragment is alone in the next bundle");
+    // A fragment that is larger than the bundle limit of the client does not go out. The other
+    // fragments of the creature do.
+    from = a.got.size();
+    check(creatures.set_health(wolf, 300.0F).error == CreatureError::none, "the health of the wolf is set to 300");
+    host.world.set_raw_fragment(wolf, 41, 3935, std::vector<std::uint8_t>(300000, 0));
+    host.steps(10, {&a});
+    std::vector<Placed> third;
+    collect(from, third, sameSlot, sameEntity);
+    check(third.size() == 1 && order_of(third[0].record) == "(9,15) "
+              && float_at(third[0].record.fragments[0].fields.at({0, 0}), 0) == 300.0F
+              && log_count("the fragment for slot 41, type 3935 (300000 bytes) is larger than the client permits for one bundle "
+                           "(256000 bytes): not sent")
+                     == 1,
+          "a command fragment of 300,000 bytes does not go out, with one log line; the health change of the same tick does");
+    from = a.got.size();
+    host.steps(60, {&a});
+    check(other_records(bundles_of(a, from)).empty(), "the records count as sent: the next ticks send no record of a creature");
+    check(all_complete(bundles_of(a)), "each bundle of the session decodes to its last byte, and the sequences have no gap");
+}
+
+/**
+ * CR13: the health command with a percent value (code review of stage 3.4a, finding 7). The
+ * product of a maximum health and a percent value as floats can be one float step above the
+ * maximum, or below it at 100 percent. 100 percent is the exact maximum, and each percent
+ * value from 0 to 100 gives a health that the creature system permits.
+ */
+void creature_health_percent(const Options&) {
+    CommandHost c;
+    ServerHost& host = c.host;
+    world::Creatures& creatures = host.world.creatures();
+    // The level table of this case. The float product of the health of the levels 1 to 3 and
+    // of 100, divided by 100, is one float step above the health; that of the levels 4 and 5 is
+    // one step below it; that of the levels 6 and 7 is the health.
+    const std::vector<std::pair<std::uint32_t, float>> levels{{1, 1.292F}, {2, 503.407F}, {3, 1503.507F}, {4, 1503.411F},
+                                                              {5, 1.324F}, {6, 337.5F},   {7, 2000.0F}};
+    check(host.creatures.set({test_slice("slices/test/wolf.dynamicslice", 0x11, kWolfSlots, 100.0F, kWolfDeathAction, kWolfDeathFragment)},
+                             {test_kind("Test_Wolf", "Test Wolf", 0x11112222, 0x33334444, 1.0F, 1, {{0, 100}}),
+                              test_kind("Test_Twin", "Test Twin", 0x9999AAAA, 0xBBBBCCCC, 0.37F, 1, {{0, 100}})},
+                             {}, levels),
+          "the creature data of the case: seven levels, a kind with the health factor 1, and a kind with the factor 0.37");
+    FakeClient a(27000);
+    enter_with_camera(host, a, c.alpha, kPlace);
+    unsigned full = 0;
+    unsigned inside = 0;
+    unsigned percents = 0;
+    unsigned ends = 0;
+    std::string faults;
+    for (const char* kind : {"Test_Wolf", "Test_Twin"}) {
+        for (const auto& [level, levelHealth] : levels) {
+            json made = json::parse(c.admin("spawn_creature", kCharacterA, {{"kind", kind}, {"level", level}}).body, nullptr, false);
+            if (!made.is_object() || !made["creature"].is_object()) {
+                faults += std::string("no creature of ") + kind + " at level " + std::to_string(level) + "; ";
+                continue;
+            }
+            const std::string id = made["creature"]["id"].get<std::string>();
+            const world::Entity* entity = creatures.find(std::strtoull(id.c_str(), nullptr, 16));
+            const float maximum = entity->vitals.healthMax;
+            // 100 percent after a different value, through each of the two route sets.
+            const int half = c.admin("set_creature_health", kCharacterA, {{"creature", id}, {"percent", 50}}).status;
+            const int admin = c.admin("set_creature_health", kCharacterA, {{"creature", id}, {"percent", 100}}).status;
+            const float afterAdmin = entity->vitals.health;
+            const int lower = c.dev("health", "creature=" + id + "&percent=12.5").status;
+            const int dev = c.dev("health", "creature=" + id + "&percent=100").status;
+            if (half == 200 && admin == 200 && lower == 200 && dev == 200 && afterAdmin == maximum && entity->vitals.health == maximum) {
+                ++full;
+            } else {
+                char text[200];
+                std::snprintf(text, sizeof(text), "%s level %u (maximum %.9g): 100 percent gives the status %d and %d, health %.9g and %.9g; ",
+                              kind, level, static_cast<double>(maximum), admin, dev, static_cast<double>(afterAdmin),
+                              static_cast<double>(entity->vitals.health));
+                faults += text;
+            }
+            // Each percent value in steps of 0.25, from 100 down to 0.25: the health is in the
+            // interval, and it is the part of the maximum.
+            for (int step = 400; step >= 1; --step) {
+                const float percent = static_cast<float>(step) / 4.0F;
+                char value[32];
+                std::snprintf(value, sizeof(value), "%.2f", static_cast<double>(percent));
+                const int status = c.dev("health", "creature=" + id + "&percent=" + value).status;
+                const float health = entity->vitals.health;
+                const float expected = maximum * (percent / 100.0F);
+                ++percents;
+                inside += status == 200 && health >= 0.0F && health <= maximum && std::abs(health - expected) <= maximum * 1.0e-6F ? 1 : 0;
+            }
+            // 0 percent is the health 0: the death of the creature.
+            ends += c.admin("set_creature_health", kCharacterA, {{"creature", id}, {"percent", 0}}).status == 200
+                            && entity->vitals.health == 0.0F && entity->creature.dead
+                        ? 1
+                        : 0;
+        }
+    }
+    note("100 percent is the exact maximum for " + std::to_string(full) + " of 14 creatures; " + std::to_string(inside) + " of "
+         + std::to_string(percents) + " percent values give a health in the interval; faults: " + (faults.empty() ? "none" : faults));
+    check(full == 14,
+          "100 percent gives the status 200 and the exact maximum health, through the admin interface and through the "
+          "development route, for each of the 14 maximum values");
+    check(percents == 14 * 400 && inside == percents,
+          "each percent value from 0.25 to 100 gives the status 200 and a health from 0 to the maximum, which is that part "
+          "of the maximum");
+    check(ends == 14, "0 percent gives the health 0: the creature is dead");
+    check(c.dev("health", "creature=0000000000001234&percent=100").status == 404
+              && c.admin("set_creature_health", kCharacterA, {{"creature", "0000000000001234"}, {"percent", 101}}).status == 400,
+          "a percent value for a creature that is not there gives 404, and a percent value above 100 gives 400");
+}
+
 } // namespace
 
 std::vector<Case> creature_cases() {
@@ -1099,6 +1614,12 @@ std::vector<Case> creature_cases() {
         {"CR6", "creatures: health and death as state changes", creature_health},
         {"CR7", "creatures: the commands of the development routes and of the admin interface", creature_commands},
         {"CR8", "creatures: three sessions (two observers of one creature, one session far away)", creature_sessions},
+        {"CR9", "creatures: the respawn time of a spawn point with its body near a player (review of stage 3.4a)", respawn_with_body},
+        {"CR10", "creatures: the reference character of an admin creature command (review of stage 3.4a)", admin_creature_reference},
+        {"CR11", "creatures: a creature data file whose parts do not fit together (review of stage 3.4a)", creature_file_relations},
+        {"CR12", "creatures: two fragments of one slot, and a long fragment, in the records of a creature (review of stage 3.4a)",
+         creature_command_fragments},
+        {"CR13", "creatures: the health command with a percent value (review of stage 3.4a)", creature_health_percent},
     };
 }
 

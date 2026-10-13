@@ -187,8 +187,8 @@ continue in the C++ backend, and the layout below is the layout after the port.
 | 2.6 | Death, respawn, camps, fast travel | 2.3, 2.5 | M | verified | | |
 | 2.7 | Map, territories, markers | 2.1 | M | verified | | |
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
-| 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | | |
-| 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the melee mode needs its live checks M1 and M2 | 3.2a in work | |
+| 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
+| 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
 | 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | | |
@@ -235,7 +235,7 @@ stage with a letter is a part of the system with that number.
 | --- | --- | --- | --- | --- |
 | 1 | 2.3a | Exact position of a character, id rule of the movement state | 0.6b | done |
 | 2 | 3.4a | Creatures spawn: the creatures of the start area stand at their spawn points, with name plate and health bar; spawn and remove commands; health and death flag by command | 2.3a | done |
-| 3 | 3.2a | The player hits a creature: the hit path of the client, the damage, the damage number, the death of the creature | 3.4a | in work |
+| 3 | 3.2a | The player hits a creature: the hit path of the client, the damage, the damage number, the death of the creature | 3.4a | done |
 | 4 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | open |
 | 5 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
 | 6 | 1.8 | Original quest state of a new character | 1.6 | open |
@@ -895,6 +895,13 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   `AttackHeightRetarget`, `CameraLockTarget`.
 - Research (`combat-actions.md`, verified): the action states of each weapon type; draw and sheathe; light and heavy
   attack; block; ammunition; what the server must confirm for each action.
+- Stage 3.2a did a part of this system (protocol notes 4.15): the backend reads the attack
+  inputs of the client (the bits of the left pointer button) and the weapon keys from each
+  input entry. The client starts each melee attack itself and plays it with no message of
+  the server. The weapon in the hand of a character, for the damage, is the weapon slot of
+  the last weapon key. Open: the sheathe bits and the active bits of the paperdoll state for
+  an observer, the action of a remote player, the kind of each attack from the action lists
+  (light, heavy, charged, the last attack of a chain), ranged weapons, and the block.
 - Test: screenshots of an attack with a sword, a bow, and a staff; stamina goes down with a
   dodge.
 
@@ -903,14 +910,31 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
 - Client evidence: `DamageReceiver`, `HitVolume`, `DefenseCollision`, `CriticalHits`,
   `CombatStatus`, `ReactionTracking`, `StatMultiplierTable`, `Grit`, `Stamina` (slot 42),
   `Mana` (slot 47), `Vitals` (slot 41).
-- Research: `damage.md` and `hit-reports.md`. The part for a damage command of the server is
-  verified. The combat part is not ready. The client starts each attack itself. Its input
-  report has the data of a projectile. It reports a melee contact only with the client
-  setting `javelin.enable-client-authoritative-melee`, which is off by default. Live check
-  L10 reads the value in the running client (the hook can turn the setting on). With the
-  setting off, the server must find each melee contact. Then: the damage formula and its
-  tables; regeneration; the combat state.
+- Research: `damage.md`, `hit-reports.md`, and `melee-mode.md` (verified). The client starts
+  each attack itself. Its input report has the data of a projectile. It reports a melee
+  contact only with the client setting `javelin.enable-client-authoritative-melee`, which is
+  off by default: the backend turns it on with a remote configuration document (stage
+  3.2a). Then: the damage formula and its tables; regeneration; the combat state.
 - Implementation: the damage service; regeneration; a target dummy for tests.
+- Stage 3.2a (done; protocol notes 2.3, 4.7, and 4.15; evidence
+  `~/Games/soulwarden/work/evidence/hit/implement/`). The two live checks of the melee mode
+  passed with no change of the client code: the backend answers one remote configuration
+  request of the client with a document that turns the setting on, and the client then puts
+  each melee contact into the third list of its input entry. The backend reads each entry of
+  an input report with its three lists. A contact is a claim: the combat system of the world
+  (`world/combat.h`) checks the target, the reference, the interest of the session, the life
+  of the creature, the attack input, the weapon, the distance, and the claim rate (project
+  rules), computes the damage in one function from the combat tables of the game
+  (`tools/gamedata/combat.sh`: weapon, gear score, damage row, attributes, level, and the
+  mitigation, the weakness, and the absorption of the creature; a project rule), lowers the
+  health through the creature system, and gives the attacker the damage number (message type
+  2071). The creature plays its reaction, and it dies at the health 0. Live: a sword, a great
+  axe, a hatchet, a war hammer, and a spear; a Grey Wolf, a rabbit, and a Risen. Not in this
+  stage: ranged weapons and magic, abilities, critical hits, blocks, status effects, stamina,
+  regeneration, the combat state, and damage to a player. For stage 3.4b: the client of a
+  player sends no report when a creature attacks it (the server must test that contact), and
+  a sequence of movement states with a new position each 200 ms makes a creature walk with
+  moving legs.
 - Test: a hit on a test target shows a damage number and lowers its health bar.
 
 ### 3.3 Abilities, cooldowns, status effects, perks
@@ -950,7 +974,11 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   `remove`, `health`, `kill`, `reset`, and the tab "Creatures" of the tool window. Not in this
   stage: movement, perception, attacks, damage from a player, loot, and the respawn timer
   (its place is `Creatures::respawn_at`). For stage 3.2a: the client sends only its input
-  reports for a sword attack on a creature (no hit message).
+  reports for a sword attack on a creature (no hit message). The code review of stage 3.4a
+  had 7 findings, which stage 3.2a corrected (the respawn of a point whose body is near a
+  player, the reference character of an admin creature command, the check of the creature
+  data file, the records of a creature, the animation sources of the tool, the totals of
+  the height check, and the health command with 100 percent).
 - Test: screenshots of a creature at its spawn point, of a fight, and of its death; the
   health of the player goes down when the creature hits.
 - Risk: no data for the behavior. Then the behavior is a design of this project. Decision

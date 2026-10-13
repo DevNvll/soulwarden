@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 
 // Input report of the client in the world:
 // Javelin::ClientMessages::ActionListComponentServerFacet_ReceiveInputFromClient (type 1589).
@@ -17,22 +18,36 @@
 //   entry  := mask:3 bytes (little-endian) sequence:u16 optional fields
 //             (client reader at image RVA 0x2A25D90)
 //
-// The entries are newest first. Each entry is a difference from the entry before it in the
-// message, and the first one is a difference from a default entry. The backend reads the
-// first entry only: its fields up to the camera position, and then the fields up to the
-// position of the character (protocol notes 4.7):
+// The entries are newest first: the newest input of the client, and then the inputs before it
+// (a client sends an input in up to 5 reports, so that the loss of a datagram loses no input).
+// Each entry is a difference from the entry before it in the message, and the first one is a
+// difference from a default entry. The backend reads each entry to its end (protocol notes 4.7):
 //
 //   target   := kind:u8 [17 bytes if the kind is not 3]          (client reader 0x416EB00)
-//   [block if mask bit 8: the layout is not known]
+//   [object if mask bit 8: present:u8, and 130 or more bytes if it is 1 (client reader 0x35EBC30)]
 //   [size size size if flags bit 0: the action report]
 //   bit := 9
 //   [flags bit 11: world position if mask bit 9; bit := 10]
 //   [flags bit 8: world position if mask bit `bit`; 16 bytes and u64 if mask bit `bit`+1; bit += 2]
-//   [u8 if mask bit `bit`: a value that is not 0 has blocks with a layout that is not known]
-//   bit += 1
+//   [u8 if mask bit `bit`: the value of entry +0x380]; bit += 1
+//   [value of entry +0x380 not 0: world position if mask bit `bit`; 32 bytes if mask bit `bit`+1; bit += 2]
 //   [flags bit 14: 8 bytes if mask bit `bit`; bit += 1]
-//   size size size                 the counts of three lists (the item layouts are not known)
-//   [flags bit 15 and mask bit `bit`: world position: the position of the character]
+//   list list list                 count:size and the items of each list: the hits of a projectile
+//                                  with no flight (104 bytes each), the shots (192 bytes each),
+//                                  and the melee contacts (96 bytes each)
+//   [flags bit 15: world position if mask bit `bit`: the position of the character; bit += 1]
+//   [3 half floats if mask bit `bit`]; bit += 1
+//   [u64 if flags bit 16] [u8 if flags bit 18]
+//   [u8 if mask bit `bit`] [u32 if mask bit `bit`+1] [half float if flags bit 0 and mask bit `bit`+2]
+//
+// A melee contact (client reader 0x2A18490; the client fills the list only with its setting
+// javelin.enable-client-authoritative-melee on, protocol notes 2.3):
+//
+//   provider:u32  group := actor id:16 bytes G:u64  receiver := actor id:16 bytes G:u64 target:u64
+//   point:3 f32  normal:3 f32  direction:3 f32
+//
+// The receiver names the hit volume of the entity that the weapon of the character touched.
+// The item has no damage value: the world computes the damage (world/combat.h).
 //
 // The client sets flag bit 15 from the value "within a plot" of its housing component. The
 // game hook makes the client set it in each entry (apps/game-hook, client/hooks/movement), thus
@@ -40,7 +55,9 @@
 // with no hook sends no position field.
 //
 // The action words of an entry have one bit for each action of the input provider of the
-// client. The backend knows the bits of three actions from captures (client_input.cpp).
+// client: the position of the action in the list of its input profile, in the sequence of
+// the CRC-32 values of the action names (client code at image RVA 0x6501F30). The backend
+// reads the bits of the actions that it uses (client_input.cpp).
 
 namespace soulwarden::backend::server::rep {
 
@@ -51,12 +68,45 @@ inline constexpr std::uint64_t kInputFlagPosition = 1ULL << 15;
 
 /** How far the reader got after the camera position of an entry. */
 enum class InputTail {
-    /** The reader read the entry to the place of the position of the character. */
+    /** The reader read the entry to its end. */
     read,
-    /** The entry has a block whose layout the backend does not know. */
-    unknownBlock,
-    /** The body ended before the place of the position of the character. */
+    /** The entry has a value that the client does not send: a list that is longer than the body, a flag that is not 0 or 1. */
+    badValue,
+    /** The body ended before the end of the entry. */
     shortBody,
+};
+
+/** One melee contact of an input entry: the weapon of the character touched a hit volume of an entity. */
+struct InputContact {
+    /** Number of the input provider that was active. 0xFFFFFFFF: none (each live contact of a sword). */
+    std::uint32_t provider{0};
+    /** The entity group of the receiver: its actor id and its entity group id. */
+    std::array<std::uint8_t, 16> groupActor{};
+    std::uint64_t group{0};
+    /** The receiver: the actor id and the entity group id of the entity, and the facet target of its hit volume. */
+    std::array<std::uint8_t, 16> actor{};
+    std::uint64_t entity{0};
+    std::uint64_t facet{0};
+    /** The contact in the world: the point, the normal of the surface, and the direction of the weapon. */
+    std::array<float, 3> point{};
+    std::array<float, 3> normal{};
+    std::array<float, 3> direction{};
+};
+
+/** What the backend reads of each entry of a report for the attacks of the character. */
+struct InputStep {
+    /** Input number of the entry. */
+    std::uint16_t sequence{0};
+    /** The attack inputs of the client: the pointer button went down, is down, went up. */
+    bool attackPress{false};
+    bool attackHold{false};
+    bool attackRelease{false};
+    /** The key of a weapon of the paperdoll came: 1 or 2. 0: none. */
+    std::uint8_t weaponKey{0};
+    /** Number of items of the two projectile lists. The backend does not use them yet. */
+    std::uint32_t projectileHits{0};
+    std::uint32_t shots{0};
+    std::vector<InputContact> contacts;
 };
 
 /** The newest input entry of one input report. */
@@ -88,8 +138,8 @@ struct ClientInput {
     /** Kind of the target data of the entry. */
     std::uint8_t targetKind{kInputTargetNone};
     /**
-     * `read`: the reader got to the place of the position of the character. A different value
-     * is not an error: the entry then gives no position, and the session keeps the last one.
+     * `read`: the reader read the newest entry to its end. A different value is not an error:
+     * the entry then gives no position, and the session keeps the last one.
      */
     InputTail tail{InputTail::read};
     /** True when the entry has the position of the character (flag bit 15 and the field). */
@@ -104,12 +154,20 @@ struct ClientInput {
     float characterZ{0.0F};
     /** The 16 bits of the height on the wire. 0 and 0xFFFF are the two limits of the height range. */
     std::uint16_t characterHeight{0};
+    /** Number of entries of the report, and how many of them the reader read to their end. */
+    std::uint8_t entries{0};
+    /**
+     * The attack data of each entry that the reader read to its end, newest first. The reader
+     * stops at the first entry that it cannot read: an entry is a difference from the one
+     * before it.
+     */
+    std::vector<InputStep> steps;
 };
 
 /**
- * @return The newest entry of an input report, or nothing when the body does not parse to the
- *         camera position of that entry. A body that does not parse after it gives the entry
- *         with no position of the character.
+ * @return The newest entry of an input report with the attack data of each entry, or nothing
+ *         when the body does not parse to the camera position of the newest entry. A body that
+ *         does not parse after it gives the entry with no position of the character.
  */
 [[nodiscard]] std::optional<ClientInput> read_client_input(std::span<const std::uint8_t> body);
 

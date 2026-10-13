@@ -174,7 +174,33 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
     return result;
 }
 
-void Creatures::start_action(Entity& entity, std::uint32_t action) {
+CreatureResult Creatures::hurt(EntityId id, float damage) {
+    CreatureResult result;
+    Entity* entity = find(id);
+    if (entity == nullptr) {
+        result.error = CreatureError::unknownCreature;
+        return result;
+    }
+    if (entity->creature.dead) {
+        result.error = CreatureError::dead;
+        return result;
+    }
+    if (!std::isfinite(damage) || damage < 0.0F) {
+        result.error = CreatureError::badHealth;
+        return result;
+    }
+    // One path with the health command and the kill command: the health 0 is the death.
+    result = set_health(id, std::max(entity->vitals.health - damage, 0.0F));
+    if (result.error == CreatureError::none && !entity->creature.dead) {
+        const gamedata::CreatureSlice& body = *entity->creature.body;
+        if (body.hitAction) {
+            start_action(*entity, *body.hitAction, kReactionTime);
+        }
+    }
+    return result;
+}
+
+void Creatures::start_action(Entity& entity, std::uint32_t action, std::optional<std::chrono::milliseconds> length) {
     const gamedata::CreatureSlice& body = *entity.creature.body;
     if (action >= body.actions.size() || body.actions[action].fragmentIndex < 0) {
         return;
@@ -182,10 +208,37 @@ void Creatures::start_action(Entity& entity, std::uint32_t action) {
     CreatureAction started;
     started.action = action;
     started.fragment = static_cast<std::uint32_t>(body.actions[action].fragmentIndex);
-    started.generation = static_cast<std::uint16_t>(entity.creature.action ? entity.creature.action->generation + 1 : 1);
+    // The count of the actions of the creature stays when an action ended: a new action must
+    // not have the count of an action that a client got.
+    started.generation = static_cast<std::uint16_t>(++entity.creature.actions);
     started.started = m_world.clock().now();
+    if (length) {
+        started.ends = started.started + *length;
+        m_acting.insert(entity.id);
+    } else {
+        m_acting.erase(entity.id);
+    }
     entity.creature.action = started;
     m_world.touch(entity.id, ComponentKey::movement);
+}
+
+void Creatures::end_actions() {
+    const WorldClock::time_point now = m_world.clock().now();
+    for (auto acting = m_acting.begin(); acting != m_acting.end();) {
+        Entity* entity = find(*acting);
+        if (entity != nullptr && entity->creature.action && entity->creature.action->ends
+            && now < *entity->creature.action->ends) {
+            ++acting;
+            continue;
+        }
+        if (entity != nullptr && entity->creature.action && entity->creature.action->ends) {
+            // No mark of the movement state: the client of each observer ended the action
+            // itself and plays its idle action. A session that observes the creature from now
+            // on gets a record with no action.
+            entity->creature.action.reset();
+        }
+        acting = m_acting.erase(acting);
+    }
 }
 
 std::size_t Creatures::reset_spawn_points() {
@@ -225,6 +278,7 @@ void Creatures::entity_removed(const Entity& entity) {
         return;
     }
     m_creatures.erase(entity.id);
+    m_acting.erase(entity.id);
     if (entity.creature.spawnPoint && m_points[*entity.creature.spawnPoint].entity == entity.id) {
         m_points[*entity.creature.spawnPoint].entity = 0;
     }
@@ -234,6 +288,7 @@ void Creatures::tick() {
     if (!has_data()) {
         return;
     }
+    end_actions();
     load_points();
     const WorldClock::time_point now = m_world.clock().now();
     if (m_lastScan && now - *m_lastScan < kScanInterval) {
@@ -274,15 +329,26 @@ void Creatures::scan() {
             const auto index = static_cast<std::uint32_t>(candidate);
             const gamedata::SpawnPoint& point = points[index];
             SpawnPointState& state = m_points[index];
-            if (state.entity != 0 || horizontal_distance(player, point.position) > options.creatureSpawnEnter) {
+            if (horizontal_distance(player, point.position) > options.creatureSpawnEnter) {
                 return;
             }
             if (state.waiting) {
                 if (!state.respawnAt || now < *state.respawnAt) {
                     return;
                 }
+                // The respawn time came: the point is free again. The body of the creature that
+                // died can be in the world still (a player stayed near it): it is in the way of
+                // the new creature, and it leaves the world first.
                 state.waiting = false;
                 state.respawnAt.reset();
+                const Entity* body = state.entity != 0 ? find(state.entity) : nullptr;
+                if (body != nullptr && body->creature.dead) {
+                    ++m_counts.removedByRespawn;
+                    m_world.remove_creature(body->id);
+                }
+            }
+            if (state.entity != 0) {
+                return;
             }
             const Entity* entity = make(m_data->kinds()[point.kind], point.level, point.position, point.yaw, index,
                                         index + state.spawns);

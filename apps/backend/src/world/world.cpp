@@ -48,7 +48,8 @@ World::World(const WorldClock& clock,
       m_inventory(*this, store, options.itemCatalog),
       m_progress(*this, store, options.progressionTables),
       m_skills(*this, store, options.progressionTables),
-      m_creatures(*this, options.creatureData) {}
+      m_creatures(*this, options.creatureData),
+      m_combat(*this, options.combatTables) {}
 
 World::~World() {
     stop_thread();
@@ -229,6 +230,13 @@ void World::remove_entity(EntityId id) {
     }
     m_entities.erase(found);
     ++m_revision;
+}
+
+void World::damage_dealt(SessionId session, const DamageDealt& damage) {
+    const auto sink = m_sinks.find(session);
+    if (sink != m_sinks.end() && sink->second != nullptr) {
+        sink->second->damage_dealt(damage);
+    }
 }
 
 EnterResult World::enter(SessionId session,

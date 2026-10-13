@@ -86,6 +86,11 @@ struct CreatureSlice {
      * a fragment, and a dead creature keeps its pose.
      */
     std::optional<std::uint32_t> deathAction;
+    /**
+     * Index of the action that a creature with this slice plays when it takes a hit: the action
+     * "Reaction". No value: the slice has none with a fragment, and the creature keeps its pose.
+     */
+    std::optional<std::uint32_t> hitAction;
 
     /** @return The index of the action with this name that has a fragment, or no value. */
     [[nodiscard]] std::optional<std::uint32_t> find_action(std::string_view name) const;
@@ -149,12 +154,20 @@ public:
     /**
      * Reads the file of the tool. A file that is not complete (a member that is not there, an
      * index outside its list, a slice with no movement slot, a position that is not a
-     * number) is not used: the data then stays empty.
+     * number) is not used: the data then stays empty. The same for a file whose parts do not
+     * fit together: a kind or a spawn point with a level that the level table does not have, a
+     * movement, vitals, or marker slot that is not the slot of that component in the slot list
+     * of its slice, a slice with the null asset id, a kind whose health (the health of a level
+     * times its factor) is 0 or not finite for a level of the table, and a member "counts"
+     * with a wrong form or with a number that is not the size of its list.
      * @return False when the file is not there or is not complete. `error()` then has the cause.
      */
     [[nodiscard]] bool load(const std::string& path);
 
-    /** Sets the data with no file (tests). @return False, with no change, when the data is not complete. */
+    /**
+     * Sets the data with no file (tests), with the same check as the data of a file.
+     * @return False when the data is not complete: the object then has no data.
+     */
     [[nodiscard]] bool set(std::vector<CreatureSlice> slices,
                            std::vector<CreatureKind> kinds,
                            std::vector<SpawnPoint> spawnPoints,
