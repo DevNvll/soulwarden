@@ -17,12 +17,17 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Level, attributes, weapon mastery trees, the ability bar, and trade skills.
 - Creatures at their real spawn points in the whole world, 32,840 points and 3,848 kinds in 25 regions.
 - Melee combat with a sword, a great axe, a hatchet, a war hammer, or a spear. A hit shows its damage number, and creatures die.
+- Creatures fight. A creature sees your character, runs to it, attacks, and goes back to its place at the end of its leash. 2,989 of the 3,848 kinds attack.
+- Health and death. Your character loses health and dies, and it comes back at the nearest spirit shrine or inn.
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
-- A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, and moves your character to a travel place.
+- A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, and moves it to a travel place.
 
 ## What does not work yet
 
-- Creatures stand still. They do not move, attack, drop loot, or come back after death.
+- Creatures walk in a straight line, through walls and rocks. A creature on a floor of a building, on a bridge, or in a cave stays at its place and attacks only when you are in its reach. Path search comes next.
+- 859 kinds of creature have no attack yet and stand still. No creature has a ranged attack, magic, or an ability.
+- Creatures do not drop loot, give no experience, and do not come back after death.
+- Your health does not come back with time, and you cannot block or dodge. The tool window heals your character.
 - Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
 - Nothing in the world gives experience. The tool window sets your level.
 - No quests, no ranged weapons, no magic, and no abilities.
@@ -50,13 +55,14 @@ tools/build-soulwarden-game-hook.sh
 tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh     # the backend tests, with no game process
 
-tools/gamedata/appearance.sh         # seven game data tools, one time each
+tools/gamedata/appearance.sh         # eight game data tools, one time each
 tools/gamedata/slice_ids.sh
 tools/gamedata/items.sh
 tools/gamedata/progression.sh
 tools/gamedata/creatures.sh
 tools/gamedata/combat.sh
 tools/gamedata/places.sh
+tools/gamedata/heights.sh
 
 linux-compat/run-soulwarden.sh
 ```
@@ -65,7 +71,7 @@ At the main menu, select a character and press Play. `tools/steam-shortcut.py ad
 
 ### Game data
 
-The backend reads its tables from your game copy. Each tool above writes one file to `~/.local/share/soulwarden/gamedata`. The backend starts without any of them, and then the feature of that file is off.
+The backend reads its tables from your game copy. Each tool above writes one file to `~/.local/share/soulwarden/gamedata` (`heights.sh` writes one folder with 136 MB). The backend starts without any of them, and then the feature of that file is off.
 
 | Tool | Without its file |
 | --- | --- |
@@ -73,17 +79,20 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `slice_ids.sh` | The server does not check the target of a client message |
 | `items.sh` | No items, and a new character has no clothing |
 | `progression.sh` | No levels and no skill points |
-| `creatures.sh` | No creatures |
-| `combat.sh` | An attack does nothing |
-| `places.sh` | The travel list is empty, and you travel only to a position in numbers |
+| `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still: run the tool again |
+| `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature: run the tool again |
+| `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
+| `heights.sh` | Creatures do not leave their place. They attack only when you are in their reach |
 
-Some tables of the game have Oodle compression. `creatures.sh` and `places.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
+Some tables of the game have Oodle compression. `creatures.sh` and `places.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute, and `heights.sh` for about two minutes (it needs no Oodle library). The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
 
 ## The tool window
 
 Press F8 in the world. The window has five tabs for items, the character, skills, creatures, and travel. It is how you get anything today, because nothing in the world gives items or experience yet.
 
-The tab "Travel" lists the spirit shrines and the inns of each territory. Type a part of a name in the filter, click a place, and press "Travel". Your character is there after a loading screen of some seconds, and the creatures of that place stand at their spawn points.
+The tab "Character" shows your health. "Heal" gives your character its full health, and it makes a dead character live again at its place. With the mark "Creatures ignore this character", no creature attacks you. `SOULWARDEN_CREATURE_BEHAVIOR=0` starts the game with creatures that stand still.
+
+The tab "Travel" lists the spirit shrines and the inns of each territory. Type a part of a name in the filter, click a place, and press "Travel". Your character is there after a loading screen of some seconds, with the creatures of that place around it.
 
 While the window is open, the keyboard and the pointer go to it and not to the game. `SOULWARDEN_TOOL_WINDOW=0` starts the game without it.
 

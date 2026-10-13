@@ -16,6 +16,7 @@
 #include "gamedata/appearance_tables.h"
 #include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
+#include "gamedata/height_maps.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/slice_ids.h"
@@ -63,6 +64,8 @@ struct Options {
     bool devCommands{false};
     /** The client reports its melee contacts (server/http/routes.h, AwsOptions). */
     bool meleeReport{true};
+    /** The creatures have their behavior: a target, the way to it, and attacks (world/behavior.h). */
+    bool creatureBehavior{true};
 };
 
 /**
@@ -147,6 +150,8 @@ bool parse(int argc, char** argv, Options& options) {
             options.devCommands = true;
         } else if (argument == "--no-melee-report") {
             options.meleeReport = false;
+        } else if (argument == "--no-creature-behavior") {
+            options.creatureBehavior = false;
         } else if (argument == "--capture") {
             options.capture = true;
         } else {
@@ -177,7 +182,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: soulwarden-backend --data-dir DIR [--gamedata-dir DIR] [--http-host HOST] [--http-port PORT] "
                      "[--rep-address HOST:PORT] [--no-rep-listener] [--seed-character NAME] [--world-version TEXT] "
-                     "[--capture] [--observe-players] [--no-melee-report]\n"
+                     "[--capture] [--observe-players] [--no-melee-report] [--no-creature-behavior]\n"
                      "only with SOULWARDEN_HARNESS=1 in the environment: --dev-commands, --research-session "
                      "registration-result=N | reject=N | kick=N | kick-delay=SECONDS | refuse-equipment=1\n");
         return 2;
@@ -288,6 +293,43 @@ int main(int argc, char** argv) {
                    creatureDataPath.c_str(),
                    creatureData.error().c_str());
     }
+    // The terrain heights: the ground of a creature that walks. The reader opens no file here:
+    // it reads the tile of a place when a creature needs the height there.
+    const std::string heightsPath = (gameDataDirectory / gamedata::kHeightMapsFolder).string();
+    gamedata::HeightMaps heightMaps;
+    if (heightMaps.set_directory(heightsPath)) {
+        log::write("backend: terrain heights at %s: a creature walks on the terrain", heightsPath.c_str());
+    } else {
+        log::write("backend: no terrain heights at %s: no creature leaves its place. Make the files with "
+                   "tools/gamedata/heights.sh",
+                   heightsPath.c_str());
+    }
+    if (creatureData.loaded()) {
+        // The numbers of the behavior data: which creatures fight, and which ones do not leave
+        // their place (a spawn point that is not at the terrain height: a floor, a bridge, a cave).
+        if (creatureData.fighting_slices() == 0) {
+            log::write("backend: the creature data has no behavior data (a file of a tool from before stage 3.4b): the "
+                       "creatures stand at their spawn points. Make the file again with tools/gamedata/creatures.sh");
+        } else {
+            log::write("backend: creature behavior data: %zu of %zu slices and %zu of %zu kinds have an attack (%zu of %zu "
+                       "spawn points); %zu of these spawn points are more than %.1f m from the terrain height: their "
+                       "creatures do not leave their place",
+                       creatureData.fighting_slices(),
+                       creatureData.slices().size(),
+                       creatureData.fighting_kinds(),
+                       creatureData.kinds().size(),
+                       creatureData.fighting_points(),
+                       creatureData.spawn_points().size(),
+                       creatureData.rooted_points(),
+                       static_cast<double>(gamedata::kTerrainTolerance));
+        }
+    }
+    if (options.creatureBehavior) {
+        log::write("backend: the behavior of the creatures is on");
+    } else {
+        log::write("backend: the behavior of the creatures is OFF (--no-creature-behavior): the creatures stand at their "
+                   "spawn points");
+    }
     // The combat tables: the damage of an attack of a player on a creature.
     const std::string combatTablesPath = (gameDataDirectory / gamedata::kCombatTablesFile).string();
     gamedata::CombatTables combatTables;
@@ -299,6 +341,15 @@ int main(int argc, char** argv) {
                    combatTables.data().weapons.size(),
                    combatTables.data().damageRows.size(),
                    combatTables.data().vitals.size());
+        if (combatTables.data().armor.empty()) {
+            log::write("backend: the combat tables have no armor values (a file of a tool from before stage 3.4b): a "
+                       "character has no armor against an attack of a creature. Make the file again with "
+                       "tools/gamedata/combat.sh");
+        } else {
+            log::write("backend: armor values of %zu items, and %zu level differences with a damage value",
+                       combatTables.data().armor.size(),
+                       combatTables.data().levelDamage.size());
+        }
     } else {
         log::write("backend: no combat tables at %s (%s): an attack of a player on a creature has no effect. Make the "
                    "file with tools/gamedata/combat.sh",
@@ -334,6 +385,8 @@ int main(int argc, char** argv) {
     worldOptions.creatureData = &creatureData;
     worldOptions.combatTables = &combatTables;
     worldOptions.travelPlaces = &travelPlaces;
+    worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
+    worldOptions.creatureBehavior = options.creatureBehavior;
     world::World world(clock, store, appearanceTables, worldOptions);
     const server::http::Services services{store,
                                           options.repAddress,

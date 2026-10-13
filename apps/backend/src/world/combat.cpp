@@ -48,6 +48,8 @@ const char* hit_verdict_text(HitVerdict verdict) {
         return "too far";
     case HitVerdict::badPoint:
         return "bad point";
+    case HitVerdict::attackerDead:
+        return "the character is dead";
     }
     return "unknown";
 }
@@ -247,6 +249,57 @@ Damage Combat::damage(const Entity& attacker,
     return damage;
 }
 
+float Combat::armor_of(const Entity& character, gamedata::DamageCategory category) const {
+    if (m_tables == nullptr || category == gamedata::DamageCategory::direct) {
+        return 0.0F;
+    }
+    const gamedata::ArmorConstants& constants = m_tables->armor_constants();
+    const auto one_decimal = [](float value) { return std::round(value * 10.0F) / 10.0F; };
+    float armor = 0.0F;
+    for (std::uint32_t slot = paperdoll::kHead; slot <= paperdoll::kFeet; ++slot) {
+        const ItemInstance* item = character.equipment.item(slot);
+        const gamedata::ArmorRow* row = item != nullptr ? m_tables->armor_of(item->itemId) : nullptr;
+        if (row == nullptr) {
+            continue;
+        }
+        // The armor of one item (client code at image RVA 0x5BFB400): a power of its gear
+        // score times its factor for the category, then times its rating factor.
+        const float factor = category == gamedata::DamageCategory::physical ? row->physical : row->elemental;
+        const float scaled = one_decimal(std::pow(static_cast<float>(item->gearScore), constants.ratingExponent) * factor);
+        armor += one_decimal(row->rating * scaled);
+    }
+    return armor;
+}
+
+CreatureDamage Combat::creature_damage(const Entity& creature,
+                                       const gamedata::CreatureContact& contact,
+                                       const Entity& target) const {
+    CreatureDamage damage;
+    const gamedata::CreatureData* data = m_world.creatures().data();
+    if (data == nullptr || creature.creature.kind == nullptr) {
+        return damage;
+    }
+    damage.base = data->damage(*creature.creature.kind, creature.creature.level);
+    damage.raw = damage.base * contact.factor + contact.added;
+    if (m_tables != nullptr) {
+        // The level difference: a creature that is some levels above a character does more damage.
+        const auto difference = static_cast<std::int64_t>(creature.creature.level)
+                                - static_cast<std::int64_t>(std::max<std::uint32_t>(target.progression.level, 1));
+        damage.levelFactor = 1.0F + m_tables->level_damage(difference);
+        damage.armor = armor_of(target, contact.category);
+        const float gearScore = data->gear_score(creature.creature.level);
+        if (damage.armor > 0.0F && gearScore > 0.0F) {
+            const float against = std::pow(gearScore, m_tables->armor_constants().mitigationExponent);
+            damage.mitigation = damage.armor / (damage.armor + against);
+        }
+    }
+    damage.dealt = damage.raw * std::max(damage.levelFactor, 0.0F) * std::max(1.0F - damage.mitigation, 0.0F);
+    if (!std::isfinite(damage.dealt) || damage.dealt < 0.0F) {
+        damage.dealt = 0.0F;
+    }
+    return damage;
+}
+
 HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& track) {
     HitResult result;
     const auto refuse = [&](HitVerdict verdict) {
@@ -259,6 +312,9 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     }
     if (!has_tables()) {
         return refuse(HitVerdict::noTables);
+    }
+    if (attacker->life.dead) {
+        return refuse(HitVerdict::attackerDead);
     }
     const WorldClock::time_point now = m_world.clock().now();
     // The limits are the limits of the character: a new session of it has the same ones.
@@ -322,7 +378,7 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     limits.note_hit(HitLimits::Hit{target->id, now, claim.input, session, track.sequence()});
     const EntityId targetId = target->id;
     const ActorId targetActor = target->actor;
-    const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt);
+    const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt, attacker->id);
     if (hurt.error != CreatureError::none || hurt.entity == nullptr) {
         return refuse(HitVerdict::dead);
     }

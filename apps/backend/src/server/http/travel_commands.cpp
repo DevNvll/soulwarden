@@ -106,6 +106,9 @@ WorldCommand travel(const std::string& character, const Arguments& arguments, se
             return json_reply(200, reply.dump());
         case world::TravelError::badPosition:
             return message(400, "the position is not a place for a character");
+        case world::TravelError::storage:
+            // The world wrote no row and moved nothing: the character is at its place.
+            return message(500, "the position of the character was not written");
         case world::TravelError::notInWorld:
             break;
         }

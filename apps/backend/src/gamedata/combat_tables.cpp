@@ -149,6 +149,24 @@ bool CombatTables::check(const CombatData& data, std::string& error) {
             return fail("a vitals row names defense values that the tables do not have");
         }
     }
+    // The armor rule: a power of a gear score. An exponent outside a small range, or a factor
+    // that is not a number, would give an armor that is not a number.
+    const ArmorConstants& armor = data.armorConstants;
+    if (!std::isfinite(armor.ratingExponent) || armor.ratingExponent < 0.0F || armor.ratingExponent > 4.0F
+        || !std::isfinite(armor.mitigationExponent) || armor.mitigationExponent < 0.0F || armor.mitigationExponent > 4.0F) {
+        return fail("an exponent of the armor rule is not valid");
+    }
+    for (const auto& [item, row] : data.armor) {
+        if (!std::isfinite(row.physical) || row.physical < 0.0F || !std::isfinite(row.elemental) || row.elemental < 0.0F
+            || !std::isfinite(row.rating) || row.rating < 0.0F) {
+            return fail("the armor values of an item are not valid");
+        }
+    }
+    for (const auto& [difference, value] : data.levelDamage) {
+        if (!std::isfinite(value) || value < -1.0F || value > 1000.0F) {
+            return fail("the damage of a level difference is not valid");
+        }
+    }
     return true;
 }
 
@@ -332,6 +350,39 @@ bool CombatTables::load(const std::string& path) {
         }
         data.vitals.emplace(lower(vitals), index);
     }
+    // The armor of the items (a file of stage 3.4b):
+    // {"ratingExponent": N, "mitigationExponent": N, "items": {"<item id>": [physical, elemental, rating], ...}}.
+    if (document.contains("armor")) {
+        const json& armor = document["armor"];
+        if (!armor.is_object() || !armor.contains("ratingExponent") || !armor.contains("mitigationExponent")
+            || !armor.contains("items") || !armor["items"].is_object()
+            || !read_float(armor["ratingExponent"], data.armorConstants.ratingExponent)
+            || !read_float(armor["mitigationExponent"], data.armorConstants.mitigationExponent)) {
+            return fail("the armor values do not have the form of the tool");
+        }
+        for (const auto& [item, values] : armor["items"].items()) {
+            ArmorRow row;
+            if (!values.is_array() || values.size() != 3 || !read_float(values[0], row.physical)
+                || !read_float(values[1], row.elemental) || !read_float(values[2], row.rating)) {
+                return fail("the armor values of the item " + item + " do not have the form of the tool");
+            }
+            data.armor.emplace(lower(item), row);
+        }
+    }
+    // The damage of a level difference: [[difference, part of the damage], ...].
+    if (document.contains("levelDamage")) {
+        if (!document["levelDamage"].is_array()) {
+            return fail("the level differences are not a list");
+        }
+        for (const json& row : document["levelDamage"]) {
+            float value = 0.0F;
+            if (!row.is_array() || row.size() != 2 || !row[0].is_number_integer() || !read_float(row[1], value)
+                || row[0].get<std::int64_t>() < -1000 || row[0].get<std::int64_t>() > 1000) {
+                return fail("a level difference does not have the form of the tool");
+            }
+            data.levelDamage[static_cast<std::int32_t>(row[0].get<std::int64_t>())] = value;
+        }
+    }
     std::string error;
     if (!check(data, error)) {
         return fail(error);
@@ -349,6 +400,19 @@ const WeaponRow* CombatTables::weapon_of(std::string_view itemId) const {
 const DefenseRow* CombatTables::defense_of(std::string_view vitalsId) const {
     const auto found = m_data.vitals.find(lower(vitalsId));
     return found == m_data.vitals.end() ? nullptr : &m_data.defenses[found->second];
+}
+
+const ArmorRow* CombatTables::armor_of(std::string_view itemId) const {
+    const auto found = m_data.armor.find(lower(itemId));
+    return found == m_data.armor.end() ? nullptr : &found->second;
+}
+
+float CombatTables::level_damage(std::int64_t difference) const {
+    if (difference < -1000 || difference > 1000) {
+        return 0.0F;
+    }
+    const auto found = m_data.levelDamage.find(static_cast<std::int32_t>(difference));
+    return found == m_data.levelDamage.end() ? 0.0F : found->second;
 }
 
 float CombatTables::attribute_damage(std::size_t attribute, std::uint32_t value) const {

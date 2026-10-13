@@ -88,7 +88,12 @@ DAMAGE_TYPE_TYPE = "DamageTypeData"
 ATTRIBUTE_TYPE = "AttributeDefinition"
 VARIANT_TYPE = "VitalsLevelVariantData"
 BASE_TYPE = "VitalsBaseData"
-USED_TYPES = (ITEM_TYPE, WEAPON_TYPE, DAMAGE_TYPE, DAMAGE_TYPE_TYPE, ATTRIBUTE_TYPE, VARIANT_TYPE, BASE_TYPE)
+# The armor of a character against an attack of a creature (stage 3.4b): the armor values of
+# each armor item, and the damage of a level difference.
+ARMOR_TYPE = "ArmorItemDefinitions"
+LEVEL_DIFFERENCE_TYPE = "LevelDisparityData"
+USED_TYPES = (ITEM_TYPE, WEAPON_TYPE, DAMAGE_TYPE, DAMAGE_TYPE_TYPE, ATTRIBUTE_TYPE, VARIANT_TYPE, BASE_TYPE, ARMOR_TYPE,
+              LEVEL_DIFFERENCE_TYPE)
 # The table name of each attribute that a weapon can have a factor for, and its member of the file.
 ATTRIBUTE_TABLES = {"Strength": "strength", "Dexterity": "dexterity", "Intelligence": "intelligence", "Focus": "focus"}
 # The fields of the base attributes file (the field id is the CRC-32 of the name in lower case).
@@ -101,6 +106,11 @@ CONSTANT_FIELDS = {
     "gearScoreLimit": "Diminishing Gear Score Threshold",
 }
 WHOLE_CONSTANTS = ("gearScoreInterval", "gearScoreMinimum", "gearScoreLimit")
+# The fields of the base attributes file for the armor rule.
+ARMOR_FIELDS = {
+    "ratingExponent": "Armor Set Rating Exponent",
+    "mitigationExponent": "Armor Mitigation Exponent",
+}
 # References of the tables of the supported build that name a row which no table of the game has
 # (lower case). They are facts of the game data, not faults of a source: the weapons are weapons
 # of creatures and key items, and the vitals rows are rows of creatures with no base row. A
@@ -162,7 +172,7 @@ def rounded(value: float) -> float:
     return float(f"{value:.7g}")
 
 
-def read_constants(sources: Sources) -> dict:
+def read_constants(sources: Sources, fields: dict[str, str] = CONSTANT_FIELDS) -> dict:
     roots = sources.stream(BASE_ATTRIBUTES_PATH)
     if roots is None:
         raise Failure(f"the game copy has no source for {BASE_ATTRIBUTES_PATH}")
@@ -172,7 +182,7 @@ def read_constants(sources: Sources) -> dict:
             if element.name is not None and element.value is not None:
                 values.setdefault(element.name, element.value)
     constants = {}
-    for member, label in CONSTANT_FIELDS.items():
+    for member, label in fields.items():
         value = values.get(field_id(label))
         if value is None:
             raise Failure(f"{BASE_ATTRIBUTES_PATH} has no field \"{label}\"")
@@ -182,7 +192,7 @@ def read_constants(sources: Sources) -> dict:
             constants[member] = rounded(finite(struct.unpack(">f", value)[0], f"the field \"{label}\""))
         else:
             raise Failure(f"the field \"{label}\" of {BASE_ATTRIBUTES_PATH} is not a 32-bit float")
-    if constants["gearScoreInterval"] <= 0:
+    if constants.get("gearScoreInterval", 1) <= 0:
         raise Failure(f"the gear score interval of {BASE_ATTRIBUTES_PATH} is 0")
     return constants
 
@@ -361,8 +371,44 @@ def build_tables(sources: Sources) -> dict:
     if not vitals:
         raise Failure("the vitals tables have no row")
 
+    # The armor of each armor item: its factor for a physical and for an elemental damage, and
+    # the part of the armor of a full set that the item gives. An item names its armor row in
+    # the column ItemStatsRef, as a weapon does.
+    armor_rows: dict[str, list] = {}
+    for sheet in sheets[ARMOR_TYPE]:
+        for row in range(sheet.row_count):
+            name = str(cell(sheet, row, "WeaponID")).lower()
+            if not name or name in armor_rows:
+                continue
+            values = [rounded(number(sheet, row, "PhysicalArmorSetScaleFactor")),
+                      rounded(number(sheet, row, "ElementalArmorSetScaleFactor")),
+                      rounded(number(sheet, row, "ArmorRatingScaleFactor"))]
+            if any(value < 0.0 for value in values):
+                raise Failure(f"the armor row {name} has a factor below 0")
+            if values[2] > 0.0 and (values[0] > 0.0 or values[1] > 0.0):
+                armor_rows[name] = values
+    armor_items: dict[str, list] = {}
+    for sheet in sheets[ITEM_TYPE]:
+        for row in range(sheet.row_count):
+            values = armor_rows.get(str(cell(sheet, row, "ItemStatsRef")).lower())
+            name = str(cell(sheet, row, "ItemID")).lower()
+            if values is not None and name:
+                armor_items.setdefault(name, values)
+    armor = dict(read_constants(sources, ARMOR_FIELDS), items=armor_items)
+    # The damage of a level difference (the level of the attacker minus the level of its target).
+    level_damage = []
+    for sheet in sheets[LEVEL_DIFFERENCE_TYPE]:
+        for row in range(sheet.row_count):
+            difference = number(sheet, row, "LevelDisparity")
+            value = rounded(number(sheet, row, "DamageModifier"))
+            if difference != int(difference):
+                raise Failure(f"the level difference {difference:g} of the table {sheet.name} is not a whole number")
+            if value != 0.0:
+                level_damage.append([int(difference), value])
+
     return {"format": 1, "constants": constants, "damageTypes": damage_types, "attributes": attributes,
-            "damageRows": damage_rows, "weapons": weapons, "items": items, "defenses": defenses, "vitals": vitals}
+            "damageRows": damage_rows, "weapons": weapons, "items": items, "defenses": defenses, "vitals": vitals,
+            "armor": armor, "levelDamage": sorted(level_damage)}
 
 
 def print_found(tables: dict, texts: list[str]) -> None:

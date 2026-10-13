@@ -12,6 +12,7 @@
 #include "gamedata/slice_ids.h"
 #include "server/carrier/carrier.h"
 #include "server/rep/client_input.h"
+#include "server/rep/health_messages.h"
 #include "server/rep/item_requests.h"
 #include "server/rep/observer.h"
 #include "server/rep/progress_requests.h"
@@ -143,8 +144,22 @@ public:
      */
     void traveled(const world::Travel& travel) override;
 
+    /** @return The teleport number of the last full movement state of its character that the client got. 0: none. */
+    [[nodiscard]] std::optional<std::uint8_t> client_teleport() const override {
+        return m_clientTeleport;
+    }
+
     /** The character of this session did hurt an entity: the client gets the message "on damage dealt". */
     void damage_dealt(const world::DamageDealt& damage) override;
+
+    /** The character of this session took damage: the client gets the message "on damage" (the mark with its direction). */
+    void damage_taken(const world::DamageTaken& damage) override;
+
+    /** The character of this session died: the client gets the message "on player death". */
+    void died(float respawnSeconds) override;
+
+    /** Development aid: the client gets one message with a type and a body of a command (tools/world message). */
+    void development_message(std::uint32_t type, const std::vector<std::uint8_t>& body) override;
 
     [[nodiscard]] std::uint32_t id() const {
         return m_id;
@@ -309,6 +324,12 @@ private:
     void handle_change_mapped_ability(std::span<const std::uint8_t> body);
     void handle_mastery_tree_respec(std::span<const std::uint8_t> body);
     /**
+     * The respawn request of the client of a dead character (server/rep/health_messages.h).
+     * The world makes the character live again at its respawn place. A request for a character
+     * that is not dead changes nothing, and the client gets the message that ends its loading screen.
+     */
+    void handle_request_respawn(std::span<const std::uint8_t> body);
+    /**
      * @return True when the entity of a component call is the entity of this session. False,
      *         with a log line, for a different entity: such a request changes nothing.
      */
@@ -337,10 +358,12 @@ private:
     /** Changes the position source and writes one log line. */
     void set_position_source(PositionSource source, const ClientInput& input);
     /**
-     * After a travel of the character, for a session with the camera estimate.
-     * @return True when the camera of this report is a camera of the place before the travel:
-     *         the client made the report before it got the new position, and the estimate
-     *         must not follow it.
+     * After a travel of the character, for a session with the camera estimate. The session
+     * compares the estimate of this report with the place of the travel, in the horizontal
+     * plane and in the height (kTravelCameraRange).
+     * @return True when the estimate is not near the place: the client made the report before
+     *         it got the new position, or it did not take the position, and the estimate must
+     *         not follow it. False, and the rule ends, when the estimate is near the place.
      */
     [[nodiscard]] bool camera_before_travel(const ClientInput& input, carrier::Clock::time_point now,
                                             const world::Entity& own);
@@ -407,13 +430,33 @@ private:
      * player teleport" goes out after that bundle.
      */
     bool m_travelNotice{false};
+    /** The place of a travel that the client of this session did not confirm. */
+    struct TravelAnchor {
+        state::WorldPosition place;
+        /** Time of the first camera estimate after the travel. No value before it. */
+        std::optional<carrier::Clock::time_point> firstCamera;
+        /** True when the log has its line for a camera estimate that is not near the place. */
+        bool logged{false};
+    };
     /**
-     * After a travel: the time until which the camera estimate does not follow a camera that
-     * is far from the new place. No value at all other times.
+     * From a travel until the client confirms the new place (an accepted position report, or
+     * a camera estimate near the place): the camera estimate does not follow a camera that is
+     * not near the place (camera_before_travel). The time alone does not end it. No value at
+     * all other times.
      */
-    std::optional<carrier::Clock::time_point> m_travelCameraHold;
+    std::optional<TravelAnchor> m_travelAnchor;
+    /**
+     * The teleport number of the last full movement state of the own character that this
+     * session sent: the number that its client has. 0 before the first one, which is the
+     * start number of a client. World::travel counts the next number from it.
+     */
+    std::uint8_t m_clientTeleport{0};
     /** Number of travels of the character in this session, for the log line at its end. */
     std::uint32_t m_travels{0};
+    /** Numbers of damage marks, of deaths, and of respawns of the character in this session, for the log line at its end. */
+    std::uint64_t m_damageMarks{0};
+    std::uint32_t m_deaths{0};
+    std::uint32_t m_respawns{0};
     /**
      * True from the first input report with a camera: the loading screen of the client is
      * gone, and the client has its local player entity. The client needs it before it gets

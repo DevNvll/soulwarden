@@ -83,6 +83,23 @@ struct DefenseRow {
     std::vector<float> absorption;
 };
 
+/** The armor values of one armor item (its row of the armor table of the game). */
+struct ArmorRow {
+    /** The factor of the item for a physical and for an elemental damage. */
+    float physical{0.0F};
+    float elemental{0.0F};
+    /** The part of the armor of a full set that this item gives (a chest gives more than a glove). */
+    float rating{0.0F};
+};
+
+/** The values of the armor rule that the game has in its base attributes file. */
+struct ArmorConstants {
+    /** The power of the gear score of an armor item in its armor. */
+    float ratingExponent{1.2F};
+    /** The power of the gear score of an attacker against the armor of its target. */
+    float mitigationExponent{1.2F};
+};
+
 /** The values of the damage rule that the game has in its base attributes file. */
 struct CombatConstants {
     /** The part of the base damage that one level of the attacker adds. */
@@ -114,13 +131,28 @@ struct CombatData {
     std::vector<DefenseRow> defenses;
     /** Vitals row id in lower case to the index of its defense values. */
     std::unordered_map<std::string, std::uint32_t> vitals;
+    /**
+     * The armor of a character against an attack of a creature (stage 3.4b). A file of a tool
+     * from before that stage has none of these values: a character then has no armor in the
+     * damage rule, and the level difference changes no damage.
+     */
+    ArmorConstants armorConstants;
+    /** Item id in lower case to the armor values of the item. */
+    std::unordered_map<std::string, ArmorRow> armor;
+    /**
+     * The level difference of an attacker and its target (the level of the attacker minus the
+     * level of the target) to the part of the damage that the difference adds.
+     */
+    std::unordered_map<std::int32_t, float> levelDamage;
 };
 
 class CombatTables {
 public:
     /**
      * Reads the file of the tool. A file that is not complete (a member that is not there, an
-     * index outside its list, a number that is not finite) is not used.
+     * index outside its list, a number that is not finite) is not used. The members "armor"
+     * and "levelDamage" are members of a file of stage 3.4b: a file with no such member is
+     * correct, and a member with a wrong form is not.
      * @return False when the file is not there or is not complete. `error()` then has the cause.
      */
     [[nodiscard]] bool load(const std::string& path);
@@ -153,6 +185,16 @@ public:
     }
     /** @return The defense values of a vitals row (the compare ignores the case), or null when the tables have no such row. */
     [[nodiscard]] const DefenseRow* defense_of(std::string_view vitalsId) const;
+    [[nodiscard]] const ArmorConstants& armor_constants() const {
+        return m_data.armorConstants;
+    }
+    /** @return The armor values of an item (the compare ignores the case of the letters A to Z), or null for an item with no armor. */
+    [[nodiscard]] const ArmorRow* armor_of(std::string_view itemId) const;
+    /**
+     * @return The part of the damage that a level difference adds (the table of the game has a
+     *         value for some differences). 0 for a difference with no value.
+     */
+    [[nodiscard]] float level_damage(std::int64_t difference) const;
     /**
      * @return The damage value of one value of an attribute (the column ModifierValueSum of the
      *         attribute table): 0 for a value below the first row, and the last row for a value

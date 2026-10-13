@@ -26,9 +26,11 @@
 #include "world/combat.h"
 #include "world/creatures.h"
 #include "world/entity.h"
+#include "world/health.h"
 #include "world/ids.h"
 #include "world/inventory.h"
 #include "world/load_meter.h"
+#include "world/navigation.h"
 #include "world/position_index.h"
 #include "world/position_report.h"
 #include "world/progress.h"
@@ -76,6 +78,8 @@ enum class TravelError {
     notInWorld,
     /** The place is not a place for a character (travel_position). */
     badPosition,
+    /** The database did not accept the position row of the character. Nothing changed: the character is at its place. */
+    storage,
 };
 
 struct TravelResult {
@@ -115,12 +119,50 @@ public:
     }
 
     /**
+     * @return The teleport number that the client of this session has for its character: the
+     *         number of the last full movement state that the session sent to it, and 0 before
+     *         the first one (the start number of a client). World::travel counts the next
+     *         number from it. No value for a sink with no client.
+     */
+    [[nodiscard]] virtual std::optional<std::uint8_t> client_teleport() const {
+        return std::nullopt;
+    }
+
+    /**
      * The character of this session did hurt an entity (world/combat.h). The session tells
      * its client, which shows the damage number at the target. The world calls it in the
      * claim of the session, after the change of the target. A sink with no client does nothing.
      */
     virtual void damage_dealt(const DamageDealt& damage) {
         (void)damage;
+    }
+
+    /**
+     * The character of this session took damage (world/health.h). The session tells its
+     * client, which shows a mark with the direction of the damage. The health of the character
+     * goes out with its vitals state. A sink with no client does nothing.
+     */
+    virtual void damage_taken(const DamageTaken& damage) {
+        (void)damage;
+    }
+
+    /**
+     * The character of this session died (world/health.h). The session tells its client, which
+     * shows the death screen after `respawnSeconds`. The dead mark goes out with the vitals
+     * state of the character. A sink with no client does nothing.
+     */
+    virtual void died(float respawnSeconds) {
+        (void)respawnSeconds;
+    }
+
+    /**
+     * Development aid (tools/world message): the session sends its client one message with a
+     * type and a body of the caller. It is for a live check of a message that has no code yet.
+     * A sink with no client does nothing.
+     */
+    virtual void development_message(std::uint32_t type, const std::vector<std::uint8_t>& body) {
+        (void)type;
+        (void)body;
     }
 
 protected:
@@ -193,6 +235,16 @@ struct WorldOptions {
     /** The travel places (game data). Null: the travel command takes only a position in numbers. */
     const gamedata::TravelPlaces* travelPlaces{nullptr};
     /**
+     * The terrain heights (game data): the ground for a creature that walks. Null: no creature
+     * leaves its place. The world asks it only in the world thread.
+     */
+    gamedata::Terrain* terrain{nullptr};
+    /**
+     * False: the creatures have no behavior. They stand at their spawn points, as before stage
+     * 3.4b (the backend option --no-creature-behavior).
+     */
+    bool creatureBehavior{true};
+    /**
      * The spawn point rule (horizontal, meters; a decision of this project). The world makes
      * the creature of a spawn point when a player is `creatureSpawnEnter` or less from the
      * point, and it removes the creature when no player is `creatureSpawnLeave` or less from
@@ -229,6 +281,14 @@ public:
     }
     [[nodiscard]] const WorldOptions& options() const {
         return m_options;
+    }
+    /**
+     * Turns the behavior of the creatures on or off (WorldOptions::creatureBehavior): the start
+     * option of the backend, and a test. World thread only. Off: a creature takes no target,
+     * and a creature that has one keeps its values and does nothing.
+     */
+    void set_creature_behavior(bool on) {
+        m_options.creatureBehavior = on;
     }
 
     /** Any thread. The task runs in the world thread at the start of the next tick. */
@@ -351,14 +411,22 @@ public:
     PositionVerdict report_position(SessionId session, const PositionReport& report, PositionTrack& track);
 
     /**
-     * Moves a character that is in the world to a different place (a command). The world sets
-     * the position of the entity, gives it the next teleport number, marks its movement state,
-     * and writes its position row. The session of the owner gets SessionSink::traveled, and
-     * its client gets the new position with its next record (a position of the server, which
-     * the client takes: the teleport number is new). A session that observes the entity
+     * Moves a character that is in the world to a different place (a command). The world
+     * writes the position row of the character first. Then it sets the position of the entity,
+     * gives it a teleport number, and marks its movement state. The session of the owner gets
+     * SessionSink::traveled, and its client gets the new position with its next record (a
+     * position of the server, which the client takes: the teleport number is not the number
+     * that the client has). A session that observes the entity
      * compares its interest distances at once (last_travel): it gets the new position, or the
      * stop of the entity. The spawn point rule runs in the same tick: the creatures of the new
      * place are in the world before a session looks for them.
+     *
+     * A travel whose row the database did not accept changes nothing (the error `storage`):
+     * the entity keeps its place and its teleport number, and the session gets nothing.
+     *
+     * The teleport number is one above the number that the client of the owner has
+     * (SessionSink::client_teleport), from 15 to 1: each travel before the next movement state
+     * of the owner has the same number. An entity with no client gets one above its own number.
      *
      * The position is a place on the ground, or some distance above it: the client lets the
      * character fall to the ground (kSpawnLift).
@@ -413,6 +481,11 @@ public:
     Entity& make_creature(const Creature& creature, const state::WorldPosition& position, float health);
     /** Removes the entity of a creature. Only the creature system calls it. No effect for a different entity. */
     void remove_creature(EntityId id);
+    /**
+     * Puts a creature at a different place: the position index follows it. Only the creature
+     * system calls it. A creature has no row: nothing goes to the store.
+     */
+    void place_creature(Entity& entity, const state::WorldPosition& position);
 
     /** @return The distance at which a session starts to observe an entity (WorldOptions). */
     [[nodiscard]] float interest_enter(const Entity& entity) const;
@@ -471,12 +544,33 @@ public:
     [[nodiscard]] Combat& combat() {
         return m_combat;
     }
+    /** @return The health system: the damage that a character takes, its death, and its respawn. */
+    [[nodiscard]] Health& health() {
+        return m_health;
+    }
+    /** @return The navigation: the ground and the next step of a creature. */
+    [[nodiscard]] const Navigation& navigation() const {
+        return m_navigation;
+    }
+    /**
+     * Gives a session the damage that its character took (SessionSink::damage_taken), and the
+     * death of its character (SessionSink::died). Only the health system calls them. No effect
+     * for a session that the world does not know: an entity with no session.
+     */
+    void damage_taken(SessionId session, const DamageTaken& damage);
+    void died(SessionId session, float respawnSeconds);
     /**
      * Gives a session the damage that its character did (SessionSink::damage_dealt). Only the
      * combat system calls it. No effect for a session that the world does not know: an entity
      * with no session.
      */
     void damage_dealt(SessionId session, const DamageDealt& damage);
+    /**
+     * Development aid: gives the session of a character one message for its client
+     * (SessionSink::development_message).
+     * @return False when the character is not in the world, or when no session plays it.
+     */
+    bool development_message(const std::string& characterId, std::uint32_t type, const std::vector<std::uint8_t>& body);
 
 private:
     void run(Task& task, const char* kind);
@@ -484,7 +578,8 @@ private:
     void remove_entity(EntityId id);
     /**
      * Writes the position of an entity when it is `minimumDistance` or more from the saved
-     * position. @return True when the row was written.
+     * position. A position whose write failed keeps its mark (Entity::positionDirty): the next
+     * interval tries again. @return True when the row was written.
      */
     bool save_position(Entity& entity, float minimumDistance);
     void save_due_positions();
@@ -522,8 +617,10 @@ private:
     Inventory m_inventory;
     Progress m_progress;
     Skills m_skills;
+    Navigation m_navigation;
     Creatures m_creatures;
     Combat m_combat;
+    Health m_health;
 };
 
 template <class Result>

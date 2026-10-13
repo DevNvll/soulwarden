@@ -146,6 +146,12 @@ void read_state(const json& reply, Snapshot& snapshot) {
     snapshot.freeAttributePoints = number_of(progress, "freeAttributePoints");
     snapshot.health = number_of(progress, "health");
     snapshot.healthMax = number_of(progress, "healthMax");
+    // The life state of the character, and if the creatures ignore it (a backend from before
+    // stage 3.4b has no such member: the values then are the values of a new character).
+    const json& health = member_of(reply, "health");
+    snapshot.dead = flag_of(health, "dead");
+    snapshot.creaturesIgnore = flag_of(health, "creaturesIgnore");
+    snapshot.creatureBehavior = !health.is_object() || !health.contains("creatureBehavior") || flag_of(health, "creatureBehavior");
     const json& attributes = member_of(progress, "attributes");
     for (unsigned index = 0; index < kAttributeCount; ++index) {
         const json& attribute = member_of(attributes, kAttributeNames[index]);

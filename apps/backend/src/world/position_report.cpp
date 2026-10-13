@@ -88,10 +88,10 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
     }
 
     // 3. Speed.
-    // The totals of the rises and of the falls of the accepted reports, with this report, and
-    // the client time of this report.
-    double totalRise = 0.0;
-    double totalFall = 0.0;
+    // The time that the client has for a rise and for a fall after this report (the two
+    // budgets of the height), and the client time of this report.
+    double riseTime = 0.0;
+    double fallTime = 0.0;
     double clientTime = 0.0;
     if (m_window.empty()) {
         // No report was accepted: the reference is the position that the world has (the spawn
@@ -114,8 +114,11 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
             return counted(far);
         }
         m_traveled = false;
-        // The client time starts at the first accepted report.
+        // The client time starts at the first accepted report, and each budget of the height
+        // starts with the delay value.
         m_clientStart = now;
+        riseTime = exact_seconds(kClockSlack);
+        fallTime = exact_seconds(kClockSlack);
     } else {
         const Sample& last = m_window.back();
         const float step = horizontal_distance(position, last.position);
@@ -141,51 +144,60 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
         if (distance > kWindowSpeed * windowSeconds + kWindowMargin) {
             return counted(PositionVerdict::tooFast);
         }
-        // The height over a time window: the total rise and the total fall of the window have
-        // a limit for the time of the window. That time is the client time (the top of
-        // position_report.h): the time of the input numbers, which is not more than the time of
-        // the world clock from the first accepted report plus the delay value, one time for
-        // the session. The time between two reports comes from their input numbers too
-        // (seconds_from), and each report would get the delay value again: a client with larger
-        // input number steps could rise without a limit. The time of arrival of a report is not
-        // the time of its movement: reports that come late and together have the times of their
-        // input numbers, and the time of the world clock before them covers these times.
+        // The height over more than one report. The rises of the accepted reports have one
+        // budget of time, and the falls have a second one: an accepted report takes the time of
+        // its rise at the rise speed from the first one, and the time of its fall at the fall
+        // speed from the second one. A report that needs more time than its budget has is
+        // refused. The time between two reports (seconds_from) is not sufficient for this: it
+        // comes from the input numbers too, and each report gets the delay value again, thus a
+        // client with larger input number steps could rise without a limit.
         //
-        // The two totals are sums: each rise of the accepted reports of the window and of this
-        // report, and each fall. The difference of two heights is not sufficient: a client that
-        // goes up and down in turns stays near its first height, and each change of its
-        // direction would give it the limit again (400 m up and 400 m down at one clock value).
+        // The world clock fills the two budgets, and it does this one time: each budget gets
+        // the time from the last accepted report to this one. The first accepted report gives
+        // each budget the delay value. Thus the rises of a session are never more than the
+        // rise speed times the time of the world clock from the first accepted report plus the
+        // delay value, for each sequence of input numbers. The rule before this one compared
+        // the totals of a time window with the client time of the window, or with its time of
+        // the world clock when that was longer: a client with slow input numbers got its rise
+        // for the time of the world clock, and then a second rise for the same time when its
+        // input numbers went on at one clock value (code review of stage 3.4c, finding C2).
+        //
+        // Two budgets, not one: a path that goes up and down has its rises and its falls in
+        // the same time. The difference of two heights is not sufficient: a client that goes
+        // up and down in turns stays near its first height (400 m up and 400 m down at one
+        // clock value).
+        //
+        // The limit of a budget. A budget keeps the time that the client did not use, but not
+        // more than the time of one window, or than the time that the client has in store when
+        // that is more. The time in store is the time of the world clock that the input numbers
+        // of the client did not cover (the top of position_report.h): reports that come late
+        // and together have the times of their input numbers, and the time of the world clock
+        // before them covers these times. It is 5.25 s at most (the backlog value and the delay
+        // value), and it goes down with each input number that the client sends.
         //
         // Usual movement stays far below the two limits, also with its changes of direction.
         // The sum of the rises of a character in a time is not more than its largest rise speed
         // times that time, for each path: that speed is 6.5 m/s (the start of a jump, see
         // position_limits), and the limit is 20 m/s. A character that jumps 1.2 m each 0.8 s on
-        // a slope goes less than 4 m up in a window of 1 s, and the limit of that window is
-        // 20 m. The fastest fall of the live session is 54 m in 1 s, and the limit is 120 m.
+        // a slope goes less than 4 m up in 1 s, and the budget gets 20 m in that time. The
+        // fastest fall of the live session is 54 m in 1 s, and the budget gets 120 m.
         const double ticks = static_cast<double>(static_cast<std::uint16_t>(report.input - last.input))
                              / static_cast<double>(kTicksInSecond);
         const double highest = exact_seconds(now - m_clientStart) + exact_seconds(kClockSlack);
         clientTime = std::clamp(last.clientTime + ticks, highest - exact_seconds(kReportBacklog), highest);
-        // The start of the window of the client time: the oldest accepted report that is not
-        // older than the window in client time. With no such report: the last accepted one.
-        const Sample* since = &last;
-        for (const Sample& sample : m_window) {
-            if (clientTime - sample.clientTime <= exact_seconds(kWindow)) {
-                since = &sample;
-                break;
-            }
-        }
-        // The time of the window is not less than its time of the world clock: a client whose
-        // input numbers go slower than the world clock has the time that passed.
-        const float heightSeconds =
-            std::max(static_cast<float>(clientTime - since->clientTime), seconds(now - since->time));
-        totalRise = last.totalRise + static_cast<double>(std::max(rise, 0.0F));
-        totalFall = last.totalFall + static_cast<double>(std::max(-rise, 0.0F));
-        const float windowRise = static_cast<float>(totalRise - since->totalRise);
-        const float windowFall = static_cast<float>(totalFall - since->totalFall);
-        if (windowRise > kRiseSpeed * heightSeconds || windowFall > kFallSpeed * heightSeconds) {
+        const double store =
+            std::min(highest - last.clientTime, exact_seconds(kReportBacklog) + exact_seconds(kClockSlack));
+        const double limit = std::max(exact_seconds(kWindow), store);
+        const double filled = exact_seconds(now - last.time);
+        riseTime = std::min(last.riseTime + filled, limit);
+        fallTime = std::min(last.fallTime + filled, limit);
+        const double riseNeeds = static_cast<double>(std::max(rise, 0.0F)) / static_cast<double>(kRiseSpeed);
+        const double fallNeeds = static_cast<double>(std::max(-rise, 0.0F)) / static_cast<double>(kFallSpeed);
+        if (riseNeeds > riseTime || fallNeeds > fallTime) {
             return counted(PositionVerdict::tooFast);
         }
+        riseTime -= riseNeeds;
+        fallTime -= fallNeeds;
         if (static_cast<std::uint16_t>(report.input - last.input) == 1) {
             if (step > m_largest.tick) {
                 m_largest.tick = step;
@@ -208,7 +220,7 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
     while (m_window.size() > 1 && now - m_window.front().time > kWindow) {
         m_window.pop_front();
     }
-    m_window.push_back(Sample{report.input, now, position, totalRise, totalFall, clientTime});
+    m_window.push_back(Sample{report.input, now, position, riseTime, fallTime, clientTime});
     return counted(PositionVerdict::accepted);
 }
 

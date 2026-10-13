@@ -190,7 +190,7 @@ continue in the C++ backend, and the layout below is the layout after the port.
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
 | 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | | |
-| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done | |
+| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
 | 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | | |
@@ -237,8 +237,8 @@ stage with a letter is a part of the system with that number.
 | 2 | 3.4a | Creatures spawn: the creatures of the start area stand at their spawn points, with name plate and health bar; spawn and remove commands; health and death flag by command | 2.3a | done |
 | 3 | 3.2a | The player hits a creature: the hit path of the client, the damage, the damage number, the death of the creature | 3.4a | done |
 | 4 | 3.4c | Creatures in the whole world: the creature file for each region (32,840 spawn points, 503 slices in the supported build), a picture check of each slice, the load of the spawn rule, and a travel command of the tool window | 3.4a | done |
-| 5 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | open |
-| 6 | 3.4d | The path search of a creature: navigation data that a tool makes from the collision shapes of the game copy (the terrain, the solid objects, the water), loaded by the backend; a creature goes around a wall and uses stairs | 3.4b | open (the research and the extraction tool are in work) |
+| 5 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | done |
+| 6 | 3.4d | The path search of a creature: navigation data that a tool makes from the collision shapes of the game copy (the terrain, the solid objects, the water), loaded by the backend; a creature goes around a wall and uses stairs | 3.4b | in work |
 | 7 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
 | 8 | 1.8 | Original quest state of a new character | 1.6 | open |
 | 9 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
@@ -871,8 +871,15 @@ the player can interact, die, and travel. All later milestones need this one.
   number, and the two messages 3951 (the loading screen) and 3954 go with it. The travel
   places of the game data (`tools/gamedata/places.sh`) are the spirit shrines and the inns
   of each territory. Open: the fast travel of the game (the interaction of a shrine, the
-  map, the costs), the recall to an inn, the death, and the respawn. The respawn of stage
-  3.4b can use `World::travel`.
+  map, the costs) and the recall to an inn.
+- Stage 3.4b did the death and the respawn (protocol notes 4.18): the health 0 is the
+  death (the dead bit of the vitals state and the death notice, type 3950), the client
+  shows its death screen and then its respawn screen, and its respawn request (type 1938)
+  makes the character live again with its full health at the nearest travel place (a
+  travel). The health and the death are not in SQLite: each world entry starts with the
+  full health. Open: the respawn points of the game (the camps, the inns after a check-in,
+  the houses: the list of the respawn screen has only the row "Random Location"), the
+  cost of a death, and the "death's door" condition.
 - Test: screenshots of the death screen, of the respawn at a camp, and of the arrival after
   fast travel.
 
@@ -1014,17 +1021,65 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   rule uses the place of its spawn point, thus a creature that goes 50 m or more from its
   point needs a change of the rule; a slice with a spawn action has that action in its
   movement state.
-- Stage 3.4d (open; research file `navigation.md`, not verified yet). The navigation files
-  of the game copy have no mesh: the original navigation data was only on the server. The
-  client stops its own character at each wall, thus the game copy has the collision shapes
-  of the world: the placements of the region files, the physics files, the height map, and
-  the water data. A tool makes the navigation data from them (game data, made by a tool in
-  `tools/gamedata`), and the backend finds a path on it. The client shows a creature at the
-  exact position of its states and looks for no floor: the path must give the height of the
-  surface. First work, outside the repository: a reader for the collision of the whole
-  world and a first grid for the start region. Open: the size of the data and the time of a
-  path search, the things that a spawner makes later, plants with a shape in their mesh
-  file, and terrain holes.
+- Stage 3.4b (done; protocol notes 4.17 and 4.18; evidence
+  `~/Games/soulwarden/work/evidence/fight/implement/`). A creature fights. The game files give
+  the values of a creature and no rule of its behavior, thus the behavior is a design of
+  this project, the same for each family (`world/behavior.h`): a creature at rest gets a
+  character as its target when the character is in its vision (the distance and the angle
+  of its slice) or hurts it; it goes to the target with the run speed of its slice; in the
+  reach of its next attack it starts the attack (an action of the server), and the world
+  tests each contact of the attack at its time on the world clock; it goes back to its
+  home when the target is dead or gone, or at the end of its leash, and it has its full
+  health there. The creature data tool gives the behavior data of each slice (the vision,
+  the leash, the speeds, the animation tags of its weapons, and the attacks with their
+  contact times and damage rows, from the animation databases and the damage tables):
+  2,989 of the 3,848 kinds attack (24,228 of the 32,840 spawn points), and 859 kinds stand.
+  A new tool makes the terrain heights from the height maps of the game copy
+  (`tools/gamedata/heights.sh`, 49 region files, 136 MB), and the backend reads one tile of
+  64 m when it needs it. A creature walks on the terrain: a creature whose spawn point is
+  more than 1.0 m from the terrain height (6,893 spawn points of kinds that fight: a
+  floor, a bridge, a cave) does not leave its place and attacks in its reach. A character
+  takes the damage of one rule (`Combat::creature_damage`: the level and the kind of the
+  creature, the row of the attack, the level difference, the armor), sees the damage mark
+  and the damage number, dies at the health 0, and comes back at the nearest travel place
+  (section 2.6). The spawn point rule uses the distance of the spawn point for its two
+  distances, and the behavior needs time only for the creatures with a target (test case
+  FT9: 1,000 ticks with 50 fights need 3.6 ms). Switches: `SOULWARDEN_CREATURE_BEHAVIOR=0`,
+  the command `set_creatures_ignore` (`tools/world ignore`, the tool window), and the
+  command `heal`. Live: a Grey Wolf, a Risen, a miner, an Ancient Guardian Reaver (a slice
+  with a spawn action and with weapon tags), a Siltboot Deckhand in Monarch's Bluffs, and a
+  rabbit (no attack). The stage also corrected the seven findings of the code review of
+  stage 3.4c (the camera estimate after a travel, the time of the height check, the
+  teleport number of more than one travel in one tick, the spawn action of a creature
+  that dies in its reaction, a travel whose position write failed, the travel places tool
+  with a wrong position, and a fragment number outside the range). Not in this stage: path
+  search and walls, the line of sight, patrols, group aggression, ranged attacks, magic,
+  abilities of a creature, blocks, dodges, critical hits, status effects, regeneration,
+  loot, experience, and the respawn timer of a creature. For stage 3.4d: the two functions
+  of `world/navigation.h` (`ground_height` with a position that has a height, and
+  `next_step`) are the only place where the behavior gets a place; the terrain tolerance
+  of 1.0 m (`gamedata::kTerrainTolerance`) and the member `ground` of a spawn point decide
+  which creatures walk. For stage 3.5a: the death of a creature is in `Creatures::hurt`
+  (with the attacker), the place of the respawn timer is `Creatures::respawn_at`, and a
+  creature has its full health only at its home.
+- Stage 3.4d (in work; research file `navigation.md`: two passes, status "not ready", the
+  open items are live checks of the stage). The navigation files of the game copy have no
+  mesh: the original navigation data was only on the server. The client stops its own
+  character at each wall, thus the game copy has the collision shapes of the world: the
+  placements of the region files, the physics files, the height map, and the water data. A
+  tool makes the navigation data from them (game data, made by a tool in `tools/gamedata`),
+  and the backend finds a path on it. The client shows a creature at the exact position of
+  its states and looks for no floor: the path must give the height of the surface. Work
+  before the stage, outside the repository
+  (`~/Games/soulwarden/work/evidence/navigation-data/implement/RESULT.md`): a tool reads the
+  collision of the 49 regions (2,319,942 solid placements; each of the 10,620 physics files
+  decodes), 30,065 of 33,328 spawn points are 0.3 m or less from a surface of its data, and
+  a first grid of the start region gives a path through the opening of the settlement wall
+  and up the stairs of a porch. The rule that says which collision filter stops a creature,
+  and the rule for the scattered objects, have proof from the client code. Open: the size
+  of the data and the time of a path search in the world thread, the things that the
+  original server made later (gates, crafting stations), plants with a shape in their mesh
+  file, and terrain holes (the entries of caves).
 - Test: screenshots of a creature at its spawn point, of a fight, and of its death; the
   health of the player goes down when the creature hits.
 - Risk: no data for the behavior. Then the behavior is a design of this project. Decision

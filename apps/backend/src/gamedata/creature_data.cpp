@@ -14,10 +14,23 @@ namespace {
 
 using nlohmann::json;
 
-/** The form of the file that this code reads (tools/gamedata/creature_data.py). */
-constexpr std::uint64_t kFormat = 1;
-/** Number of values of one spawn point: placement id, kind, level, x, y, z, yaw, respawnMin, respawnMax. */
+/**
+ * The forms of the file that this code reads (tools/gamedata/creature_data.py). Format 2 (stage
+ * 3.4b) has the data for the behavior of a creature: a level row has the base damage and the
+ * gear score too, a spawn point has the terrain height, a kind can have a damage factor, and a
+ * slice can have behavior values, attacks, and tags.
+ */
+constexpr std::uint64_t kFirstFormat = 1;
+constexpr std::uint64_t kBehaviorFormat = 2;
+/** Number of values of one spawn point: placement id, kind, level, x, y, z, yaw, respawnMin, respawnMax; format 2: and the terrain height. */
 constexpr std::size_t kSpawnPointColumns = 9;
+constexpr std::size_t kSpawnPointColumnsWithGround = 10;
+/** Limits of the behavior values: a distance and a reach in meters, a speed in meters in one second, a time in seconds. */
+constexpr float kMaxSenseDistance = 1000.0F;
+constexpr float kMaxSpeed = 100.0F;
+constexpr float kMaxAttackTime = 60.0F;
+constexpr float kMaxReach = 100.0F;
+constexpr float kMaxDamageFactor = 1000000.0F;
 /** Limits of a position of the world, in meters (the same as world/position_index.h). */
 constexpr float kMaxHorizontal = 1000000.0F;
 constexpr float kMaxVertical = 100000.0F;
@@ -145,6 +158,14 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
                 || !row[2].is_number_integer() || !row[3].is_boolean()) {
                 return false;
             }
+            // The reader keeps a whole number above the range of a signed 64-bit value as an
+            // unsigned value, and its signed value is a different number (18446744073709551615
+            // is -1, the value for "no fragment"). Thus an unsigned value has its own compare,
+            // before the conversion.
+            if (row[2].is_number_unsigned()
+                && row[2].get<std::uint64_t>() > static_cast<std::uint64_t>(kMaxFragmentIndex)) {
+                return false;
+            }
             const std::int64_t fragment = row[2].get<std::int64_t>();
             if (fragment < -1 || fragment > kMaxFragmentIndex) {
                 return false;
@@ -162,6 +183,69 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
     }
     if (entry.contains("spawnAction")) {
         slice.spawnActionName = entry["spawnAction"].get<std::string>();
+    }
+    // The members of the behavior (format 2). Each one is a member of a slice that has it: a
+    // member with a wrong form is a fault of the file.
+    if (entry.contains("tags")) {
+        const std::string digits = entry["tags"].is_string() ? entry["tags"].get<std::string>() : std::string();
+        if (digits.size() != 2 * kFragmentTagBytes || digits.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+            return false;
+        }
+        for (std::size_t index = 0; index < slice.tags.size(); ++index) {
+            slice.tags[index] = static_cast<std::uint8_t>(std::strtoul(digits.substr(index * 2, 2).c_str(), nullptr, 16));
+        }
+    }
+    if (entry.contains("behavior")) {
+        const json& values = entry["behavior"];
+        const auto pair = [&values](const char* key, float& first, float& second) {
+            return values.is_object() && values.contains(key) && values[key].is_array() && values[key].size() == 2
+                   && read_real(values[key][0], first) && read_real(values[key][1], second);
+        };
+        CreatureBehavior behavior;
+        if (!pair("sight", behavior.sightAngle, behavior.sightDistance)
+            || !pair("combatSight", behavior.combatAngle, behavior.combatDistance)
+            || !pair("leash", behavior.restLeash, behavior.combatLeash)
+            || !pair("speed", behavior.walkSpeed, behavior.runSpeed)) {
+            return false;
+        }
+        slice.behavior = behavior;
+    }
+    if (entry.contains("attacks")) {
+        if (!entry["attacks"].is_array()) {
+            return false;
+        }
+        for (const json& row : entry["attacks"]) {
+            // [action, time, [[contact time, reach, factor, added, type, type number, category, row], ...]]
+            CreatureAttack attack;
+            if (!row.is_array() || row.size() != 3 || !read_number(row[0], attack.action) || !read_real(row[1], attack.length)
+                || !row[2].is_array()) {
+                return false;
+            }
+            for (const json& cell : row[2]) {
+                CreatureContact contact;
+                std::uint32_t wire = 0;
+                if (!cell.is_array() || cell.size() != 8 || !read_real(cell[0], contact.time) || !read_real(cell[1], contact.reach)
+                    || !read_real(cell[2], contact.factor) || !read_real(cell[3], contact.added) || !cell[4].is_string()
+                    || !read_number(cell[5], wire) || wire == 0 || wire > 255 || !cell[6].is_string() || !cell[7].is_string()) {
+                    return false;
+                }
+                const std::string category = cell[6].get<std::string>();
+                if (category == "Physical") {
+                    contact.category = DamageCategory::physical;
+                } else if (category == "Elemental") {
+                    contact.category = DamageCategory::elemental;
+                } else if (category == "True") {
+                    contact.category = DamageCategory::direct;
+                } else {
+                    return false;
+                }
+                contact.type = cell[4].get<std::string>();
+                contact.wire = static_cast<std::uint8_t>(wire);
+                contact.row = cell[7].get<std::string>();
+                attack.contacts.push_back(std::move(contact));
+            }
+            slice.attacks.push_back(std::move(attack));
+        }
     }
     return true;
 }
@@ -186,17 +270,29 @@ bool read_kind(const json& entry, CreatureKind& kind) {
     if (entry.contains("points") && !read_number(entry["points"], kind.points)) {
         return false;
     }
+    // The damage of the kind as a part of the base damage of its level (format 2).
+    if (entry.contains("damage") && !read_real(entry["damage"], kind.damageFactor)) {
+        return false;
+    }
     return true;
 }
 
-bool read_spawn_point(const json& row, SpawnPoint& point) {
-    if (!row.is_array() || row.size() != kSpawnPointColumns || !row[0].is_string() || !read_number(row[1], point.kind)
+bool read_spawn_point(const json& row, std::size_t columns, SpawnPoint& point) {
+    if (!row.is_array() || row.size() != columns || !row[0].is_string() || !read_number(row[1], point.kind)
         || !read_number(row[2], point.level) || !read_real(row[3], point.position.x)
         || !read_real(row[4], point.position.y) || !read_real(row[5], point.position.z) || !read_real(row[6], point.yaw)
         || !read_real(row[7], point.respawnMin) || !read_real(row[8], point.respawnMax)) {
         return false;
     }
     point.id = row[0].get<std::string>();
+    if (columns == kSpawnPointColumnsWithGround && !row[9].is_null()) {
+        // The terrain height at the point. Null: the world has no height map there.
+        float ground = 0.0F;
+        if (!read_real(row[9], ground)) {
+            return false;
+        }
+        point.ground = ground;
+    }
     return true;
 }
 
@@ -236,6 +332,11 @@ void CreatureData::clear() {
     m_kinds.clear();
     m_spawnPoints.clear();
     m_levels.clear();
+    m_fightingSlices = 0;
+    m_fightingKinds = 0;
+    m_fightingPoints = 0;
+    m_rootedPoints = 0;
+    m_largestSight = 0.0F;
     m_byId.clear();
     m_searchTexts.clear();
 }
@@ -255,20 +356,26 @@ bool CreatureData::load(const std::string& path) {
         m_error = "the file is not a JSON object";
         return false;
     }
-    if (!document.contains("format") || !document["format"].is_number_unsigned()
-        || document["format"].get<std::uint64_t>() != kFormat) {
-        m_error = "the file does not have the format 1";
+    const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned()
+                                     ? document["format"].get<std::uint64_t>()
+                                     : 0;
+    if (format != kFirstFormat && format != kBehaviorFormat) {
+        m_error = "the file does not have the format 1 or 2";
         return false;
     }
+    const bool withBehavior = format == kBehaviorFormat;
     if (!list("levels") || !list("slices") || !list("kinds") || !list("spawnPoints")) {
         m_error = "the file does not have the lists levels, slices, kinds, and spawnPoints";
         return false;
     }
-    std::vector<std::pair<std::uint32_t, float>> levels;
+    std::vector<CreatureLevel> levels;
     for (const json& row : document["levels"]) {
-        std::pair<std::uint32_t, float> level;
-        if (!row.is_array() || row.size() != 2 || !read_number(row[0], level.first) || !read_real(row[1], level.second)) {
-            m_error = "a row of the level table is not [level, health]";
+        CreatureLevel level;
+        if (!row.is_array() || row.size() != (withBehavior ? 4U : 2U) || !read_number(row[0], level.level)
+            || !read_real(row[1], level.health)
+            || (withBehavior && (!read_real(row[2], level.damage) || !read_real(row[3], level.gearScore)))) {
+            m_error = withBehavior ? "a row of the level table is not [level, health, damage, gear score]"
+                                   : "a row of the level table is not [level, health]";
             return false;
         }
         levels.push_back(level);
@@ -290,7 +397,7 @@ bool CreatureData::load(const std::string& path) {
     std::vector<SpawnPoint> points;
     points.reserve(document["spawnPoints"].size());
     for (const json& row : document["spawnPoints"]) {
-        if (!read_spawn_point(row, points.emplace_back())) {
+        if (!read_spawn_point(row, withBehavior ? kSpawnPointColumnsWithGround : kSpawnPointColumns, points.emplace_back())) {
             m_error = "spawn point " + std::to_string(points.size() - 1) + " does not have each value";
             return false;
         }
@@ -309,19 +416,30 @@ bool CreatureData::load(const std::string& path) {
             return false;
         }
     }
-    return set(std::move(slices), std::move(kinds), std::move(points), std::move(levels));
+    return set_full(std::move(slices), std::move(kinds), std::move(points), std::move(levels));
 }
 
 bool CreatureData::set(std::vector<CreatureSlice> slices,
                        std::vector<CreatureKind> kinds,
                        std::vector<SpawnPoint> spawnPoints,
                        std::vector<std::pair<std::uint32_t, float>> levels) {
+    std::vector<CreatureLevel> rows;
+    for (const auto& [level, health] : levels) {
+        rows.push_back(CreatureLevel{level, health, 0.0F, 0.0F});
+    }
+    return set_full(std::move(slices), std::move(kinds), std::move(spawnPoints), std::move(rows));
+}
+
+bool CreatureData::set_full(std::vector<CreatureSlice> slices,
+                            std::vector<CreatureKind> kinds,
+                            std::vector<SpawnPoint> spawnPoints,
+                            std::vector<CreatureLevel> levels) {
     clear();
     m_slices = std::move(slices);
     m_kinds = std::move(kinds);
     m_spawnPoints = std::move(spawnPoints);
-    for (const auto& [level, health] : levels) {
-        m_levels[level] = health;
+    for (const CreatureLevel& level : levels) {
+        m_levels[level.level] = level;
     }
     if (!check()) {
         clear();
@@ -337,6 +455,25 @@ bool CreatureData::set(std::vector<CreatureSlice> slices,
         }
         slice.hitAction = slice.find_action(kHitAction);
         slice.spawnAction = slice.spawnActionName.empty() ? std::nullopt : slice.find_action(slice.spawnActionName);
+        if (slice.fights()) {
+            ++m_fightingSlices;
+            m_largestSight = std::max(m_largestSight, slice.behavior->sightDistance);
+        }
+    }
+    // The kinds and the spawn points whose creature fights, and the points whose creature does
+    // not leave its place: the numbers for the log line of the backend.
+    std::vector<bool> fights(m_kinds.size(), false);
+    for (std::size_t index = 0; index < m_kinds.size(); ++index) {
+        for (const CreatureBody& body : m_kinds[index].bodies) {
+            fights[index] = fights[index] || m_slices[body.slice].fights();
+        }
+        m_fightingKinds += fights[index] ? 1 : 0;
+    }
+    for (const SpawnPoint& point : m_spawnPoints) {
+        if (fights[point.kind]) {
+            ++m_fightingPoints;
+            m_rootedPoints += on_terrain(point) ? 0 : 1;
+        }
     }
     build_keys();
     return true;
@@ -348,11 +485,16 @@ bool CreatureData::check() {
         return false;
     }
     // The smallest and the largest health of a level, for the health of each kind below.
-    float lowestHealth = m_levels.begin()->second;
+    float lowestHealth = m_levels.begin()->second.health;
     float highestHealth = lowestHealth;
-    for (const auto& [level, health] : m_levels) {
+    for (const auto& [level, row] : m_levels) {
+        const float health = row.health;
         if (level == 0 || level > kMaxLevel || !(health > 0.0F) || !std::isfinite(health)) {
             m_error = "the level table has a level or a health that is not correct";
+            return false;
+        }
+        if (!(row.damage >= 0.0F) || !std::isfinite(row.damage) || !(row.gearScore >= 0.0F) || !std::isfinite(row.gearScore)) {
+            m_error = "the level table has a damage or a gear score that is not correct";
             return false;
         }
         lowestHealth = std::min(lowestHealth, health);
@@ -384,6 +526,39 @@ bool CreatureData::check() {
                       + ", and its action table has no such action with a fragment";
             return false;
         }
+        // The behavior values: each one is a number of its range. A slice with a value outside it
+        // would give a creature that sees the whole world or that is at a different place in one step.
+        if (slice.behavior) {
+            const CreatureBehavior& values = *slice.behavior;
+            const auto in_range = [](float value, float limit) { return std::isfinite(value) && value >= 0.0F && value <= limit; };
+            if (!in_range(values.sightAngle, 360.0F) || !in_range(values.combatAngle, 360.0F)
+                || !in_range(values.sightDistance, kMaxSenseDistance) || !in_range(values.combatDistance, kMaxSenseDistance)
+                || !in_range(values.restLeash, kMaxSenseDistance) || !in_range(values.combatLeash, kMaxSenseDistance)
+                || !in_range(values.walkSpeed, kMaxSpeed) || !in_range(values.runSpeed, kMaxSpeed)) {
+                m_error = "slice " + std::to_string(index) + " has a behavior value that is not a number of its range";
+                return false;
+            }
+        }
+        // The attacks: the backend starts the action of an attack, and it tests each contact at
+        // its time. The action table must have the action with a fragment, and each contact
+        // must be in the time of its attack.
+        for (const CreatureAttack& attack : slice.attacks) {
+            bool correct = attack.action < slice.actions.size() && slice.actions[attack.action].fragmentIndex >= 0
+                           && std::isfinite(attack.length) && attack.length > 0.0F && attack.length <= kMaxAttackTime
+                           && !attack.contacts.empty();
+            for (const CreatureContact& contact : attack.contacts) {
+                correct = correct && std::isfinite(contact.time) && contact.time >= 0.0F && contact.time <= attack.length
+                          && std::isfinite(contact.reach) && contact.reach > 0.0F && contact.reach <= kMaxReach
+                          && std::isfinite(contact.factor) && contact.factor >= 0.0F && contact.factor <= kMaxDamageFactor
+                          && std::isfinite(contact.added) && contact.added >= 0.0F && contact.added <= kMaxDamageFactor
+                          && contact.wire != 0 && !contact.type.empty();
+            }
+            if (!correct) {
+                m_error = "slice " + std::to_string(index)
+                          + " has an attack whose action, time, or contacts do not fit together";
+                return false;
+            }
+        }
         // The metadata state of a creature has the asset id of its slice: the null id names no asset.
         if (std::all_of(slice.asset.begin(), slice.asset.end(), [](std::uint8_t byte) { return byte == 0; })) {
             m_error = "slice " + std::to_string(index) + " has the null asset id";
@@ -401,6 +576,10 @@ bool CreatureData::check() {
         if (kind.id.empty() || !bodies || weight == 0 || !(kind.healthFactor > 0.0F) || kind.level == 0
             || kind.level > kMaxLevel) {
             m_error = "kind " + std::to_string(index) + " has no id, no slice, no health, or no level";
+            return false;
+        }
+        if (!std::isfinite(kind.damageFactor) || kind.damageFactor < 0.0F || kind.damageFactor > kMaxDamageFactor) {
+            m_error = "kind " + std::to_string(index) + " has a damage factor that is not correct";
             return false;
         }
         if (m_levels.count(kind.level) == 0) {
@@ -430,6 +609,10 @@ bool CreatureData::check() {
                       + ", and the level table has no row for this level";
             return false;
         }
+        if (point.ground && (!std::isfinite(*point.ground) || std::abs(*point.ground) > kMaxVertical)) {
+            m_error = "spawn point " + std::to_string(index) + " has a terrain height that is not a height of the world";
+            return false;
+        }
     }
     return true;
 }
@@ -452,7 +635,17 @@ const CreatureKind* CreatureData::find_kind(std::string_view id) const {
 
 float CreatureData::health(const CreatureKind& kind, std::uint32_t level) const {
     const auto found = m_levels.find(level);
-    return found == m_levels.end() ? 0.0F : found->second * kind.healthFactor;
+    return found == m_levels.end() ? 0.0F : found->second.health * kind.healthFactor;
+}
+
+float CreatureData::damage(const CreatureKind& kind, std::uint32_t level) const {
+    const auto found = m_levels.find(level);
+    return found == m_levels.end() ? 0.0F : found->second.damage * kind.damageFactor;
+}
+
+float CreatureData::gear_score(std::uint32_t level) const {
+    const auto found = m_levels.find(level);
+    return found == m_levels.end() ? 0.0F : found->second.gearScore;
 }
 
 std::vector<const CreatureKind*> CreatureData::search(std::string_view text,

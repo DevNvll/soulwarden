@@ -12,7 +12,8 @@
 # native Oodle library (SOULWARDEN_OODLE_LIB), or the Oodle helper of tools/research with an Oodle
 # library for Windows (SOULWARDEN_OODLE_DLL), or the files that tools/research/pakx.py extracted
 # (SOULWARDEN_EXTRACT_DIR, default ~/Games/soulwarden/work/assets/extract). It stops with status 1 and one
-# message when a file that it needs has no source, and then writes no file.
+# message when a file that it needs has no source, and when a spirit shrine or an inn has a
+# position with a wrong form, and then writes no file.
 # Environment: SOULWARDEN_GAME_DIR (default ~/Games/soulwarden/game), SOULWARDEN_GAMEDATA_DIR (default
 # ~/.local/share/soulwarden/gamedata), SOULWARDEN_PYTHON (default python3), SOULWARDEN_OODLE_LIB,
 # SOULWARDEN_OODLE_DLL, SOULWARDEN_OODLE_DEC, SOULWARDEN_EXTRACT_DIR.

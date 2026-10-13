@@ -1257,6 +1257,117 @@ void late_reports(const Options&) {
           "after 2 s with no report: the rise of 2.25 s, 45 m (the time of the world clock covers the client time)");
 }
 
+/**
+ * PR12: a time of the world clock gives its rise and its fall one time (code review of stage
+ * 3.4c, finding C2). The rule of PR11 gave a time two times. A client with slow input numbers
+ * got its rise for the time of the world clock, and its client time stayed behind. With fast
+ * input numbers at one clock value it then got a second rise for the same time, as client
+ * time. Each direction now has one budget of time: the world clock fills it one time, and
+ * each accepted rise or fall takes its time from it.
+ */
+void height_time_one_time(const Options&) {
+    using world::position_limits::kFallSpeed;
+    using world::position_limits::kRiseSpeed;
+    const auto start = world::WorldClock::time_point(std::chrono::seconds(5000));
+    // One client: its accepted reports change the height, and a refused report changes nothing.
+    struct Client {
+        PositionTrack track;
+        state::WorldPosition position;
+        std::uint16_t input{1};
+        unsigned accepted{0};
+        unsigned refused{0};
+    };
+    // A report `seconds` after the start: `ticks` more input numbers, and `change` meters of height.
+    const auto send = [&](Client& client, float seconds, float change, unsigned ticks) {
+        client.input = static_cast<std::uint16_t>(client.input + ticks);
+        state::WorldPosition next = client.position;
+        next.z = sent_height(next.z + change);
+        const auto time = start + std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<float>(seconds));
+        const bool accepted =
+            client.track.judge(PositionReport{client.input, next, wire_height(next.z)}, client.position, time) == PositionVerdict::accepted;
+        if (accepted) {
+            client.position = next;
+            ++client.accepted;
+        } else {
+            ++client.refused;
+        }
+        return accepted;
+    };
+
+    // The rise. For 15 s the client sends one report each second with one more input number and
+    // 18 m more height: its client time stays behind the world clock. At the seconds 5, 10, and
+    // 15 it sends 20 more reports at that clock value, each with 7 more input numbers and 4 m
+    // more height. The report after each group has no rise.
+    Client up;
+    up.position = state::WorldPosition{1000.0F, 1000.0F, sent_height(kHeight)};
+    const bool first = send(up, 0.0F, 0.0F, 0);
+    for (int second = 1; second <= 15; ++second) {
+        send(up, static_cast<float>(second), second > 5 && second % 5 == 1 ? 0.0F : 18.0F, 1);
+        if (second % 5 == 0) {
+            for (int burst = 0; burst < 20; ++burst) {
+                send(up, static_cast<float>(second), 4.0F, 7);
+            }
+        }
+    }
+    const float rise = up.position.z - sent_height(kHeight);
+    note("slow input numbers with 18 m each second, and three groups of 20 reports with 4 m each, in 15 s: accepted "
+         + std::to_string(up.accepted) + ", refused " + std::to_string(up.refused) + ", total rise " + std::to_string(rise) + " m");
+    check(first && up.accepted > 13, "the first report and the reports of the slow rise are accepted (18 m/s is below the limit)");
+    check(rise <= kRiseSpeed * 15.0F + kRiseSpeed * 5.25F,
+          "the total rise of 15 s is not more than 405 m: 20 m/s for the time of the world clock, and the 105 m of the "
+          "largest time in store one time (before the correction: 437.6 m)");
+    check(rise <= kRiseSpeed * 15.25F + 0.017F,
+          "and it is not more than 305 m: 20 m/s for the time of the world clock plus the delay value one time. The time "
+          "that the slow rise used is not there a second time for the groups");
+
+    // The fall, with the same pattern in 6 s: 100 m each second, and two groups with 20 m each.
+    Client down;
+    down.position = state::WorldPosition{1000.0F, 1000.0F, sent_height(950.0F)};
+    send(down, 0.0F, 0.0F, 0);
+    for (int second = 1; second <= 6; ++second) {
+        send(down, static_cast<float>(second), second == 4 ? 0.0F : -100.0F, 1);
+        if (second % 3 == 0) {
+            for (int burst = 0; burst < 20; ++burst) {
+                send(down, static_cast<float>(second), -20.0F, 7);
+            }
+        }
+    }
+    const float fall = sent_height(950.0F) - down.position.z;
+    note("the same with a fall of 100 m each second and two groups of 20 reports with 20 m each, in 6 s: accepted "
+         + std::to_string(down.accepted) + ", refused " + std::to_string(down.refused) + ", total fall " + std::to_string(fall) + " m");
+    check(down.accepted > 5 && fall <= kFallSpeed * 6.25F + 0.017F,
+          "the total fall of 6 s is not more than 750 m: 120 m/s for the time of the world clock plus the delay value one time");
+
+    // One rise takes its time from the budget. After 2 s with no report the client has 2.25 s:
+    // a rise of 30 m takes 1.5 s of it, and the reports at the same clock value get the rest.
+    Client spent;
+    spent.position = state::WorldPosition{1000.0F, 1000.0F, sent_height(kHeight)};
+    send(spent, 0.0F, 0.0F, 0);
+    const bool large = send(spent, 2.0F, 30.0F, 1);
+    unsigned more = 0;
+    for (int burst = 0; burst < 20; ++burst) {
+        more += send(spent, 2.0F, 4.0F, 7) ? 1 : 0;
+    }
+    const float after = spent.position.z - sent_height(kHeight);
+    note("a rise of 30 m after 2 s, then 20 reports with 4 m each at the same clock value: " + std::to_string(more)
+         + " of them accepted, total rise " + std::to_string(after) + " m");
+    check(large && more == 3 && after <= kRiseSpeed * 2.25F,
+          "after a rise of 30 m in 2 s, only 3 of the 20 reports at the same clock value are accepted (12 m): the total is "
+          "not more than 45 m, the rise of 2.25 s");
+
+    // A client with a slow picture is not a fault: one report each 0.5 s with one more input
+    // number, 9 m up in each one for 10 s and then 14 m down in each one for 10 s.
+    Client slow;
+    slow.position = state::WorldPosition{1000.0F, 1000.0F, sent_height(kHeight)};
+    send(slow, 0.0F, 0.0F, 0);
+    for (int index = 1; index <= 40; ++index) {
+        send(slow, 0.5F * static_cast<float>(index), index <= 20 ? 9.0F : -14.0F, 1);
+    }
+    check(slow.accepted == 41 && slow.refused == 0,
+          "a client with 2 simulation steps each second that goes 18 m/s up for 10 s and 28 m/s down for 10 s: each report "
+          "is accepted (the budget has the time of the world clock)");
+}
+
 } // namespace
 
 std::vector<Case> position_cases() {
@@ -1275,6 +1386,8 @@ std::vector<Case> position_cases() {
         {"PR11", "position report: valid jumps whose reports come late and together, and the limit of a client time in store "
                  "(review of stage 3.2a)",
          late_reports},
+        {"PR12", "position report: a time of the world clock gives its rise and its fall one time (review of stage 3.4c)",
+         height_time_one_time},
     };
 }
 

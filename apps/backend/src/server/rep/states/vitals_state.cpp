@@ -15,6 +15,10 @@
 //          StaminaTickRate, vitalsId, maxHealth. Group 1: ManaAmount, ManaMax, ManaTickRate.
 // observer group 0 only. The remote player slice has the vitals and the stamina component
 //          and no mana component.
+// Each state after the first one of a session, and the first state for a dead character, also
+// has vitalsData (bit 0 of its flags: the character is dead) and healthChangeFlags (bit 0), in
+// the two views (protocol notes 4.18). The health of a character changes with a damage, and
+// the client of the owner shows the new value on its HUD from HealthAmount alone (live proof).
 //
 // A creature (encode_creature_vitals_state) has only the observer view, and only fields of
 // group 0. The first state of a session has HealthAmount, vitalsData, healthChangeFlags,
@@ -106,10 +110,24 @@ std::vector<hub::Bytes> encode_creature_vitals_state(const world::Entity& entity
     return parts;
 }
 
-hub::Bytes encode_vitals_state(const world::Entity& entity, View view, const world::WorldClock&) {
+namespace {
+
+/**
+ * @param life True: the state also has the life data (the dead mark) and the mark "the health
+ *        changed", for a state after the first one and for a dead character.
+ */
+hub::Bytes player_vitals(const world::Entity& entity, View view, bool life) {
     const world::Vitals& vitals = entity.vitals;
     StateWriter state(kGroups);
     state.field(0, kHealthAmount).f32(vitals.health);
+    if (life) {
+        // Bit 0 of the flags of vitalsData is the death of the character: the client of the
+        // owner shows its death screen with it, and it closes that screen when the bit is 0
+        // again (client code at image RVA 0x67A6F10). The health 0 alone is not a death.
+        write_vitals_data(state.field(0, kVitalsData), entity.life.dead);
+        // The listeners of the vitals component (the name plate of a remote player) get the new health.
+        state.field(0, kHealthChangeFlags).u8(kHealthChangeNotify);
+    }
     state.field(0, kHealthMax).f32(vitals.healthMax);
     state.field(0, kHealthTickRate).u16(kNoTickRate);
     // The client shows the 16-bit maximum on the HUD (client getter at image RVA 0x67FCDC0).
@@ -124,6 +142,20 @@ hub::Bytes encode_vitals_state(const world::Entity& entity, View view, const wor
         state.field(kManaGroup, kManaTickRate).u16(kNoTickRate);
     }
     return state.finish();
+}
+
+} // namespace
+
+hub::Bytes encode_vitals_state(const world::Entity& entity, View view, const world::WorldClock&) {
+    return player_vitals(entity, view, false);
+}
+
+std::vector<hub::Bytes> encode_vitals_parts(const world::Entity& entity, View view, const PartsRequest& request) {
+    // The first state of a session for a character that lives has no life data: the client has
+    // the start values (alive). A character can be dead when a session starts to observe it.
+    std::vector<hub::Bytes> parts;
+    parts.push_back(player_vitals(entity, view, request.since != 0 || entity.life.dead));
+    return parts;
 }
 
 } // namespace soulwarden::backend::server::rep

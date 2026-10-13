@@ -212,14 +212,70 @@ struct CreatureAction {
     std::uint32_t fragment{0};
     /** The start count of the actions of this creature: a new action has a new count. */
     std::uint16_t generation{0};
+    /**
+     * The tag state of the animation fragments for this action: the tags of the slice of the
+     * creature (game data), which select the variant of a fragment (protocol notes 4.14).
+     */
+    gamedata::FragmentTags tags{};
     /** The start of the action, on the world clock. */
     WorldClock::time_point started{};
+    /**
+     * The world revision of the start of the action. A session gets the action one time: in
+     * its first record of the creature, or in the first record after this revision. A later
+     * movement state of the creature (a step of its way) has no action for that session: the
+     * client plays the action from the one state to its end.
+     */
+    Revision changed{0};
     /**
      * The end of an action that has an end (the reaction to a hit), on the world clock: the
      * creature then has no action of the server, and a session that observes it later gets
      * none. No value: the action stays (the death).
      */
     std::optional<WorldClock::time_point> ends;
+};
+
+/** What a creature does (world/behavior.h). */
+enum class CreatureMode : std::uint8_t {
+    /** The creature is at its home and has no target. It needs no time of the world. */
+    rest,
+    /** The creature has a target: it goes to the target, and it attacks in its reach. */
+    fight,
+    /** The creature lost its target and goes to its home. */
+    home,
+};
+
+/**
+ * The behavior values of a creature: its target, its home, and the attack that it plays. They
+ * are values of the creature in the world, not of a session (roadmap, rule MP-1). The behavior
+ * of the creature system sets them (world/behavior.h).
+ */
+struct CreatureMind {
+    CreatureMode mode{CreatureMode::rest};
+    /**
+     * The target: the entity of a character of the world. 0: none. The id of an entity is not
+     * used again: an entity that left the world is found no more.
+     */
+    EntityId target{0};
+    /** The home of the creature: the place and the direction of its spawn point, or where a command made it. */
+    state::WorldPosition home;
+    float homeYaw{0.0F};
+    /**
+     * False: the creature does not leave its place. Its spawn point is not at the terrain
+     * height (a floor of a building, a bridge), or the backend has no terrain data: the
+     * creature turns to its target and attacks in its reach.
+     */
+    bool walks{false};
+    /** The attack that the creature plays: an index into the attacks of its slice. No value: none. */
+    std::optional<std::uint32_t> attack;
+    /** The start count of the action of that attack, and its end on the world clock. */
+    std::uint16_t attackGeneration{0};
+    WorldClock::time_point attackEnds{};
+    /** The creature starts no attack before this time (the pause after an attack). */
+    WorldClock::time_point ready{};
+    /** Number of attacks that the creature started. It selects the next attack of its slice. */
+    std::uint32_t attacks{0};
+    /** The direction of the creature in the last movement state that the behavior marked. */
+    float sentYaw{0.0F};
 };
 
 /**
@@ -240,15 +296,38 @@ struct Creature {
     /** The time of the death, on the world clock. Stage 3.5a starts the respawn time and the time of the body here. */
     WorldClock::time_point diedAt{};
     /**
-     * The action that the server started: the spawn action of a slice that needs it (from the
-     * creation of the creature), the death action of a dead creature, or the reaction of a
-     * creature to a hit for the time of that action. No value: the idle action of the client.
+     * The action that the server started: the death action of a dead creature, an attack, the
+     * reaction of a creature to a hit, or the action of a command, for the time of that action.
+     * No value: the client selects the action itself (the idle action, the walk).
      */
     std::optional<CreatureAction> action;
+    /**
+     * The spawn action of a creature whose slice needs it (protocol notes 4.14): the client
+     * shows the body and the name plate of such a creature only after this action. It is a
+     * value of the creature for its whole time in the world: the first movement state of each
+     * session for the creature has it, with the time from the creation of the creature, when
+     * no action with an end plays. No value: the slice needs none.
+     */
+    std::optional<CreatureAction> spawnAction;
+    /** The behavior values of the creature. */
+    CreatureMind mind;
     /** Number of actions that the server started for this creature. The count of an action on the wire is this number. */
     std::uint32_t actions{0};
     /** The spawn point of the creature: an index into the spawn points of the creature data. No value: a command made it. */
     std::optional<std::uint32_t> spawnPoint;
+};
+
+/**
+ * The life state of a character. The health system sets it (world/health.h). The health of a
+ * character is in Entity::vitals.
+ */
+struct Life {
+    /** True from the moment at which the health of the character is 0, to its respawn. */
+    bool dead{false};
+    /** The time of the death, on the world clock. */
+    WorldClock::time_point diedAt{};
+    /** Number of deaths of the character while its entity is in the world. For the log and for the tests. */
+    std::uint32_t deaths{0};
 };
 
 /** The combat values of a character. The combat system sets them (world/combat.h). */
@@ -311,7 +390,8 @@ struct Entity {
      * state of the server only when the state has a number that is not the number of its own
      * state. The start number of a client is 0: thus the number is 1 to 15, never 0, and the
      * first movement state of each session puts the character at the position of the entity.
-     * World::travel gives the entity the next number.
+     * World::travel gives the entity the number after the number that the client of its owner
+     * has (SessionSink::client_teleport).
      */
     std::uint8_t teleport{1};
     /** True from the first refused position: the log has one line for an entity (World::set_position). */
@@ -332,6 +412,8 @@ struct Entity {
     Wallet wallet;
     /** The combat values of the character. The combat system changes them (world/combat.h). */
     CombatState combat;
+    /** The life state of the character. The health system changes it (world/health.h). */
+    Life life;
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */
     std::vector<RawFragment> rawFragments;
 

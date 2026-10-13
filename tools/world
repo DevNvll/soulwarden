@@ -28,11 +28,23 @@ Usage:
                                                 the ground, or above it: the character falls)
                                                 --screen: the loading screen of the client (auto:
                                                 a loading screen for a place more than 100 m away)
+  tools/world heal CHARACTER                    give a character its full health. A dead character
+                                                lives again at its place (the death screen closes)
+  tools/world ignore CHARACTER on|off           the creatures ignore the character (on), or not
+                                                (off): they do not get it as a target, and they do
+                                                not attack it. The value stays until the backend stops
+  tools/world hurt CHARACTER AMOUNT             a character takes damage. The health 0 is its death:
+                                                its client shows the death screen
   tools/world touch CHARACTER                   send the full record of an entity again
   tools/world fragment CHARACTER SLOT TYPE HEX  give an entity one state fragment with these bytes:
                                                 a live check of a state type that has no encoder
                                                 (SLOT: index of the component in the slice, TYPE:
                                                 type index of the state, HEX: the state bytes)
+  tools/world message CHARACTER TYPE HEX        send the client of a character one message with
+                                                these bytes: a live check of a message that has no
+                                                code (TYPE: type index of the message, HEX: its
+                                                body, which starts with the facet target and the
+                                                entity of the component)
 
 The items, the equipment, and the coin of a character (the character can be in the world or
 not: a command for a character that is not in the world changes its rows in the database):
@@ -95,11 +107,13 @@ The creatures of the world (protocol notes 4.14):
   tools/world creature kill CREATURE            set the health to 0: the creature is dead
   tools/world creature reset                    each spawn point whose creature died or was removed
                                                 makes its creature again
-  tools/world creature action CREATURE NAME [SECONDS]
+  tools/world creature action CREATURE NAME [SECONDS] [--tags HEX]
                                                 start an action of the action table of the slice of
                                                 a creature (Spawn, Attack_Bite, Idle): each client
                                                 that observes it plays the action. SECONDS: the time
-                                                of an action that has an end
+                                                of an action that has an end. --tags: the tag state
+                                                of the fragments for this action (24 hexadecimal
+                                                digits), in the place of the tags of the slice
   tools/world fragment CREATURE SLOT TYPE HEX   the fragment command for a creature
 CREATURE is the id of a creature (16 hexadecimal digits), or the last digits of it when only one
 creature has them.
@@ -245,6 +259,13 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             print(f"load: ticks of the game server {meter('serverTick')}; ticks of the world {meter('worldTick')}; scans "
                   f"of the spawn points {meter('spawnScan')}; {load['spawnPoints']} spawn points, "
                   f"{load['spawnPointsLooked']} looked at in {load['spawnScans']} scans; {load['creatures']} creatures")
+            if "behavior" in load:
+                state = "on" if load.get("behaviorOn", True) else "OFF"
+                print(f"behavior ({state}): steps {meter('behavior')}; {load['creaturesActive']} creatures in the step now "
+                      f"(the largest number {load['creaturesActiveLargest']}), {load['creatureSteps']} creature steps, "
+                      f"{load['creaturesSensed']} looks of the vision rule; {load['targets']} targets, {load['attacks']} "
+                      f"attacks, {load['contactsHit']} contacts that did hurt and {load['contactsMissed']} that did not, "
+                      f"{load['moves']} position changes")
     elif isinstance(document, dict) and "places" in document and "loaded" in document:
         if not document["loaded"]:
             print("the backend has no travel places: make the file with tools/gamedata/places.sh")
@@ -258,6 +279,14 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
                       f"{x:.3f} {y:.3f} {z:.3f}")
                 shown += 1
         print(f"{shown} of {len(document['places'])} travel places")
+    elif isinstance(document, dict) and "creaturesIgnore" in document:
+        where = "the character is in the world" if document.get("inWorld") else "the character is not in the world"
+        state = ""
+        if "health" in document:
+            state = (f", health {document['health']:.1f} of {document['healthMax']:.1f}"
+                     f"{' DEAD' if document.get('dead') else ''}")
+        ignore = "the creatures ignore it" if document["creaturesIgnore"] else "the creatures do not ignore it"
+        print(f"world: {document.get('message', 'done')}{state}; {ignore} ({where})")
     elif isinstance(document, dict) and "applied" in document and "position" in document:
         x, y, z = document["position"]
         place = document.get("place")
@@ -329,9 +358,14 @@ def creature_id(data_dir: Path, text: str) -> str:
 def creature_text(creature: dict) -> str:
     x, y, z = creature["position"]
     distance = f"  {creature['distance']:6.1f} m" if "distance" in creature else ""
+    # What the creature does: it has a target, or it goes to its home. No word: it is at rest.
+    mode = {"fight": f"  FIGHT (target {creature.get('target', '')[-8:]})", "home": "  GOES HOME"}.get(creature.get("mode"), "")
+    kind = "" if creature.get("fights", True) else "  no attack"
+    kind += "" if creature.get("walks", True) or not creature.get("fights", True) else "  stays at its place"
     return (f"creature {creature['id']}  {creature['kind']:<28} {creature['name']:<22} level {creature['level']:>2}  "
             f"health {creature['health']:.1f} of {creature['healthMax']:.1f}{'  DEAD' if creature['dead'] else ''}  "
-            f"position {x:.3f} {y:.3f} {z:.3f}{distance}  {'spawn point' if creature['spawnPoint'] else 'command'}")
+            f"position {x:.3f} {y:.3f} {z:.3f}{distance}  {'spawn point' if creature['spawnPoint'] else 'command'}"
+            f"{mode}{kind}")
 
 
 def show_creatures(document: dict) -> None:
@@ -382,8 +416,11 @@ def show(entity: dict) -> None:
     x, y, z = entity["position"]
     session = f"session s{entity['session']}" if entity["session"] else "no session"
     owner = entity["character"] or f"({entity.get('kind', 'entity')})"
+    health = ""
+    if "health" in entity:
+        health = f"  health {entity['health']:.1f} of {entity['healthMax']:.1f}{'  DEAD' if entity.get('dead') else ''}"
     print(f"entity {entity['entity']}  actor {entity['actor']}  {entity['name']:<16} {owner}  "
-          f"{session:<11} position {x:.3f} {y:.3f} {z:.3f}")
+          f"{session:<11} position {x:.3f} {y:.3f} {z:.3f}{health}")
 
 
 def whole(word: str, what: str) -> int:
@@ -441,12 +478,20 @@ def creature_command(data_dir: Path, arguments: list[str]) -> None:
         request(data_dir, "POST", f"/v1/dev/creatures/health?creature={creature_id(data_dir, arguments[1])}&{amount}")
     elif action == "reset" and len(arguments) == 1:
         request(data_dir, "POST", "/v1/dev/creatures/reset")
-    elif action == "action" and len(arguments) in (3, 4):
-        if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[2]):
+    elif action == "action" and len(arguments) >= 3:
+        words = arguments[3:]
+        tags = ""
+        if "--tags" in words:
+            place = words.index("--tags")
+            if place + 1 >= len(words) or not re.fullmatch(r"[0-9a-fA-F]{24}", words[place + 1]):
+                fail("give 24 hexadecimal digits after --tags")
+            tags = f"&tags={words[place + 1]}"
+            del words[place:place + 2]
+        if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[2]) or len(words) > 1:
             fail("the action must be a name of the action table of the slice (letters, digits, and _)")
-        seconds = f"&seconds={numbers(arguments[3:], 1)[0]}" if len(arguments) == 4 else ""
+        seconds = f"&seconds={numbers(words, 1)[0]}" if words else ""
         request(data_dir, "POST", f"/v1/dev/creatures/action?creature={creature_id(data_dir, arguments[1])}"
-                                  f"&action={arguments[2]}{seconds}")
+                                  f"&action={arguments[2]}{seconds}{tags}")
     else:
         fail("unknown creature command. tools/world --help prints the commands.")
 
@@ -487,6 +532,14 @@ def main() -> None:
         else:
             target = f"character={character_id(data_dir, arguments[1])}"
         request(data_dir, "POST", f"/v1/dev/world/fragment?{target}&slot={slot}&type={type_index}&state={state}")
+    elif command == "message" and len(arguments) == 4:
+        try:
+            type_index = int(arguments[2])
+            body = bytes.fromhex(arguments[3]).hex()
+        except ValueError:
+            fail("give the type as a number, and the body as hexadecimal text")
+        request(data_dir, "POST", f"/v1/dev/world/message?character={character_id(data_dir, arguments[1])}"
+                                  f"&type={type_index}&body={body}")
     elif command == "creatures" and len(arguments) in (1, 2, 3):
         query = f"?character={character_id(data_dir, arguments[1])}" if len(arguments) > 1 else ""
         if len(arguments) == 3:
@@ -577,6 +630,14 @@ def main() -> None:
         else:
             x, y, z = numbers(words, 3)
             request(data_dir, "POST", f"/v1/dev/world/travel?character={target}&x={x}&y={y}&z={z}{screen}")
+    elif command == "heal" and len(arguments) == 2:
+        request(data_dir, "POST", f"/v1/dev/world/heal?character={character_id(data_dir, arguments[1])}")
+    elif command == "ignore" and len(arguments) == 3 and arguments[2] in ("on", "off"):
+        request(data_dir, "POST", f"/v1/dev/world/ignore?character={character_id(data_dir, arguments[1])}"
+                                  f"&ignore={1 if arguments[2] == 'on' else 0}")
+    elif command == "hurt" and len(arguments) == 3:
+        request(data_dir, "POST", f"/v1/dev/world/hurt?character={character_id(data_dir, arguments[1])}"
+                                  f"&amount={numbers(arguments[2:], 1)[0]}")
     elif command in ("remove", "touch") and len(arguments) == 2:
         request(data_dir, "POST", f"/v1/dev/world/{command}?character={character_id(data_dir, arguments[1])}")
     else:

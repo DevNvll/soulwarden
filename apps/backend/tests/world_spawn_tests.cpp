@@ -1,12 +1,14 @@
 // Cases for stage 3.4c (creatures in the whole world): the creature data and the spawn point
 // rule at the size of the world, and the travel of a character (the wire for the owner, the
 // position check after it, the observers, the commands, the travel places, and the creatures
-// of the new place). All ids, names, and places are made up: no value of a game file is here.
+// of the new place). The cases TV6 to TV9 are the cases of the code review of the stage. All
+// ids, names, and places are made up: no value of a game file is here.
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -16,6 +18,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include <sqlite3.h>
 
 #include "server/http/admin_access.h"
 #include "server/http/request_handler.h"
@@ -261,8 +264,10 @@ void spawn_rule_at_world_size(const Options&) {
          + std::to_string(creatures.counts().lastScanPoints) + " of " + std::to_string(points.size()) + " spawn points");
     check(nearOne > 0 && creatures.count() == nearOne && creatures.counts().spawnedByPoint == nearOne,
           "with one player the world has the creature of each spawn point that is 150 m or less from it, and no other one");
-    check(creatures.counts().lastScanPoints >= nearOne && creatures.counts().lastScanPoints <= 36,
-          "the scan looked only at the spawn points of the grid cells that the circle of the player touches (36 cells at "
+    // The scan walks the cells of the larger distance of the rule (200 m: a creature stays
+    // while a player is that near to its spawn point): 7 cells of 64 m in each direction.
+    check(creatures.counts().lastScanPoints >= nearOne && creatures.counts().lastScanPoints <= 49,
+          "the scan looked only at the spawn points of the grid cells that the circle of the player touches (49 cells at "
           "most), not at each spawn point of the world");
     const std::uint64_t scansBefore = creatures.counts().scans;
     const auto oneStarted = std::chrono::steady_clock::now();
@@ -283,11 +288,11 @@ void spawn_rule_at_world_size(const Options&) {
     const std::size_t nearAll = points_near(points, places, rule.creatureSpawnEnter);
     note("50 players: " + std::to_string(creatures.count()) + " creatures; the scan looked at "
          + std::to_string(creatures.counts().lastScanPoints) + " spawn points and at "
-         + std::to_string(creatures.counts().lastScanCreatures) + " entities near a player");
+         + std::to_string(creatures.counts().lastScanCreatures) + " creatures of the world");
     check(creatures.count() == nearAll && nearAll > 40 * nearOne / 2,
           "with 50 players the world has the creature of each spawn point that is 150 m or less from a player");
-    check(creatures.counts().lastScanPoints <= kPlayers * 36 && creatures.counts().lastScanPoints * 10 < points.size(),
-          "the scan of 50 players looked at 36 spawn points or less for each player: less than one tenth of the spawn points "
+    check(creatures.counts().lastScanPoints <= kPlayers * 49 && creatures.counts().lastScanPoints * 10 < points.size(),
+          "the scan of 50 players looked at 49 spawn points or less for each player: less than one tenth of the spawn points "
           "of the world");
     // The time of 200 scans, against the time of the same number of scans that look at each
     // spawn point for each player (the cost of a rule with no grid).
@@ -488,13 +493,15 @@ void travel_of_the_owner(const Options&) {
     host.steps(3, {&a});
     check(forced == "screen state done" && joined(travel_steps(a, from).order) == "state done",
           "the caller can turn the loading screen on for a place that is near, and off for a place that is far");
-    // The teleport number: 1 to 15, never 0.
+    // The teleport number: 1 to 15, never 0. The session sends the state of each travel before
+    // the next one: the travels before one state have one number (case TV7).
     std::string numbers;
     bool never = true;
     for (int index = 0; index < 16; ++index) {
         host.world.travel(kCharacterA, state::WorldPosition{kPlace.x + static_cast<float>(index), kPlace.y, kPlace.z});
         numbers += std::to_string(entity->teleport) + " ";
         never = never && entity->teleport >= 1 && entity->teleport <= 15;
+        host.steps(1, {&a});
     }
     note("the teleport numbers of 16 more travels: " + numbers);
     check(never && numbers == "6 7 8 9 10 11 12 13 14 15 1 2 3 4 5 6 ",
@@ -818,6 +825,8 @@ void travel_commands(const Options& options) {
               && reply["position"] == json::array({5000.0, 6000.0, 120.0}) && entity->position.x == 5000.0F
               && entity->position.y == 6000.0F && entity->position.z == 120.0F && entity->teleport == 2,
           "travel to a place: the character that is in the world is at the place (\"applied\":\"world\")");
+    // The session sends the movement state of the travel: the next travel has the next number.
+    host.steps(1, {&a});
     reply = json::parse(c.travel(character + "&x=1234.5&y=2345.25&z=67&screen=off").body, nullptr, false);
     check(reply.is_object() && reply["applied"] == "world" && !reply.contains("place") && entity->position.x == 1234.5F
               && entity->position.y == 2345.25F && entity->position.z == 67.0F && entity->teleport == 3
@@ -1037,10 +1046,11 @@ void spawn_action_of_a_slice(const Options&) {
     world::Creatures& creatures = host.world.creatures();
     const world::Entity* wolf = creatures.spawn("Test_Wolf", state::WorldPosition{kPlace.x + 4.0F, kPlace.y, kHeight}, 0.0F).entity;
     const world::Entity* rabbit = creatures.spawn("Test_Rabbit", state::WorldPosition{kPlace.x - 4.0F, kPlace.y, kHeight}, 0.0F).entity;
-    check(wolf != nullptr && rabbit != nullptr && wolf->creature.action && wolf->creature.action->action == 2
-              && wolf->creature.action->fragment == 9 && !wolf->creature.action->ends && !rabbit->creature.action,
-          "a new creature of the slice with a spawn action has that action from its creation, with no end; a creature of the "
-          "other slice has no action");
+    check(wolf != nullptr && rabbit != nullptr && wolf->creature.spawnAction && wolf->creature.spawnAction->action == 2
+              && wolf->creature.spawnAction->fragment == 9 && !wolf->creature.spawnAction->ends && !wolf->creature.action
+              && !rabbit->creature.spawnAction && !rabbit->creature.action,
+          "a new creature of the slice with a spawn action has that action from its creation, with no end, as a value of "
+          "its own; a creature of the other slice has no action");
     std::size_t from = a.got.size();
     host.advance(std::chrono::milliseconds(600));
     host.steps(3, {&a});
@@ -1052,13 +1062,28 @@ void spawn_action_of_a_slice(const Options&) {
           "of the other creature has no scope record");
     // A hit: the reaction, and after its end the spawn action again for a later observer.
     const world::EntityId wolfId = wolf->id;
+    from = a.got.size();
     check(creatures.hurt(wolfId, 10.0F).error == CreatureError::none && wolf->creature.action->action == 1 && wolf->creature.action->ends,
           "a hit starts the reaction of the creature, which has an end");
+    host.steps(2, {&a});
+    check(scope_action(movement_of(a, from, wolfNumber, kWolfSlots[0])) == 1,
+          "the session that has the creature gets the reaction as the scope record of its movement state, not the spawn "
+          "action a second time");
     host.advance(std::chrono::milliseconds(1600));
     host.steps(2, {&a});
-    check(wolf->creature.action && wolf->creature.action->action == 2 && !wolf->creature.action->ends
-              && wolf->creature.action->started == wolf->creature.madeAt,
-          "after the end of the reaction the creature has its spawn action again, with the time of its creation");
+    check(!wolf->creature.action && wolf->creature.spawnAction && wolf->creature.spawnAction->action == 2
+              && wolf->creature.spawnAction->started == wolf->creature.madeAt,
+          "after the end of the reaction the creature has no action with an end, and its spawn action is the same, with "
+          "the time of its creation");
+    // A later movement state of a creature that the session has (a change of its direction):
+    // no scope record. The client must not start the spawn action a second time.
+    from = a.got.size();
+    creatures.moved(*creatures.find(wolfId));
+    host.steps(2, {&a});
+    const std::optional<Fragment> again = movement_of(a, from, wolfNumber, kWolfSlots[0]);
+    check(again && scope_action(again) == -1,
+          "a later movement state for a session that has the creature has no scope record: the spawn action goes out one "
+          "time for each session");
     // A session that observes the creature later: travel away and back.
     host.world.travel(kCharacterA, kFar);
     host.steps(3, {&a});
@@ -1072,11 +1097,24 @@ void spawn_action_of_a_slice(const Options&) {
     check(scope_action(later) == 2 && ticks > 600,
           "a session that observes the creature 20 s later gets the spawn action with the time from the creation of the "
           "creature (more than 600 ticks): its client shows the body at once");
-    // The slice of the test has no death action: the dead creature keeps its spawn action, so
-    // that its body shows for a later observer too.
-    check(creatures.kill(wolfId).error == CreatureError::none && wolf->creature.dead && wolf->creature.action
-              && wolf->creature.action->action == 2,
-          "a dead creature of a slice with no death action keeps its spawn action: its body stays for a later observer");
+    // The slice of the test has no death action. A creature of it that dies while its reaction
+    // plays keeps its spawn action after the end of the reaction, so that its body shows for a
+    // later observer too (code review of stage 3.4c, finding C4).
+    check(creatures.hurt(wolfId, 10.0F).error == CreatureError::none && wolf->creature.action && wolf->creature.action->action == 1,
+          "a second hit starts the reaction again");
+    check(creatures.kill(wolfId).error == CreatureError::none && wolf->creature.dead, "the creature dies while its reaction plays");
+    host.advance(std::chrono::milliseconds(1600));
+    host.steps(2, {&a});
+    check(!wolf->creature.action && wolf->creature.spawnAction && wolf->creature.spawnAction->action == 2,
+          "after the end of the reaction the dead creature of a slice with no death action has its spawn action still");
+    host.world.travel(kCharacterA, kFar);
+    host.steps(3, {&a});
+    host.advance(std::chrono::seconds(5));
+    from = a.got.size();
+    host.world.travel(kCharacterA, kPlace);
+    host.steps(4, {&a});
+    check(scope_action(movement_of(a, from, interest_of(host, 1, wolfId), kWolfSlots[0])) == 2,
+          "a session that observes the dead creature later gets the spawn action in its first record: the body shows");
 
     // The development command for an action of a creature.
     const char* rabbitId = nullptr;
@@ -1101,6 +1139,383 @@ void spawn_action_of_a_slice(const Options&) {
           "creature that is not there give 404; no action and a wrong time give 400");
 }
 
+/**
+ * TV6: the camera estimate after a travel (code review of stage 3.4c, finding C1). The session
+ * did not follow a camera that was far from the new place for 2 s only, and it compared only
+ * the horizontal distance: one input report with no position field and with a camera at the
+ * old place, 2.1 s after the travel, put the entity back, and the position report after it was
+ * accepted there. The session now keeps the place of the travel until its client confirms it,
+ * and it compares the camera estimate with that place in the horizontal plane and in the height.
+ */
+void camera_estimate_after_a_travel(const Options&) {
+    using std::chrono::milliseconds;
+    // A client with the position report.
+    ServerHost host;
+    const Player alpha = add_player(host.store, kSteamIdA, "Tester A", kCharacterA, "Alpha", kPlace);
+    FakeClient a(27000);
+    std::uint16_t input = 0;
+    enter_at(host, a, alpha, kPlace, input);
+    const world::Entity* entity = host.world.find_character(kCharacterA);
+    const world::PositionTrack& track = host.session(1).position_track();
+    const auto at_far = [&] { return entity->position.x == kFar.x && entity->position.y == kFar.y && entity->position.z == kFar.z; };
+    const auto camera_of = [&](ServerHost& server, FakeClient& client, std::uint16_t number, const state::WorldPosition& position) {
+        server.clock.advance(kTick);
+        server.datagram(client.peer, client.input_at(number, position.x, position.y, position.z));
+        server.tick();
+        client.exchange(server);
+    };
+    check(host.world.travel(kCharacterA, kFar).error == TravelError::none && track.count(PositionVerdict::accepted) == 20,
+          "a client with the position report (20 accepted reports) travels 2 km");
+    host.steps(1, {&a});
+    // The client sends no position field for 2.1 s, and then one report with a camera at the old place.
+    host.advance(milliseconds(2100));
+    camera_of(host, a, ++input, kPlace);
+    note("the place of the travel has x " + std::to_string(kFar.x) + "; x of the entity after one camera of the old place, 2.1 s "
+         "after the travel: " + std::to_string(entity->position.x));
+    check(at_far(), "one input report with no position field and with a camera at the old place, 2.1 s after the travel, does "
+                    "not move the entity: it stays at the place of the travel");
+    report(host, a, ++input, kPlace);
+    check(track.count(PositionVerdict::beforeTravel) == 1 && track.count(PositionVerdict::accepted) == 20 && at_far(),
+          "the position report from the old place after it is not used (not near the place of the travel)");
+    // 10 s of cameras at the old place, with no position field.
+    host.advance(milliseconds(1100));
+    for (int index = 0; index < 100; ++index) {
+        host.advance(milliseconds(67));
+        camera_of(host, a, ++input, state::WorldPosition{kPlace.x + 0.1F * static_cast<float>(index), kPlace.y, kPlace.z});
+    }
+    check(at_far() && saved_position(host.store, kCharacterA)->x == kFar.x,
+          "100 more cameras at the old place in 10 s do not move the entity: the time alone does not end the rule, and the "
+          "row keeps the place of the travel");
+    check(log_count("rep: the camera estimate is not near the place of the travel") == 1, "the log has one line for these cameras");
+    // The client takes the new place: its reports confirm it.
+    for (int index = 0; index < 15; ++index) {
+        const float fall = std::min(0.04F * static_cast<float>(index), 0.5F);
+        report(host, a, ++input, state::WorldPosition{kFar.x, kFar.y, kFar.z + world::kSpawnLift - fall});
+    }
+    check(track.count(PositionVerdict::accepted) == 35 && !entity->positionEstimated && std::abs(entity->position.z - kFar.z) < 0.02F,
+          "the position reports of the new place are accepted");
+    // After that the camera estimate is the fallback again: no position field for 1 s, then a walk to the north.
+    host.advance(milliseconds(1100));
+    for (int index = 0; index < 30; ++index) {
+        camera_of(host, a, ++input, state::WorldPosition{kFar.x, kFar.y + 0.2F * static_cast<float>(index), kFar.z});
+    }
+    check(std::abs(entity->position.x - kFar.x) < 1.0F && entity->position.y > kFar.y + 3.0F && entity->position.y < kFar.y + 7.0F,
+          "after the client confirmed the place, the camera estimate follows a camera at the new place when the position "
+          "field stops");
+
+    // A client with no position report: the camera estimate is its only source.
+    ServerHost other;
+    const Player beta = add_player(other.store, kSteamIdB, "Tester B", kCharacterB, "Beta", kPlace);
+    FakeClient b(27001);
+    other.enter(b, beta.registration());
+    std::uint16_t number = 0;
+    for (int index = 0; index < 10; ++index) {
+        camera_of(other, b, ++number, kPlace);
+    }
+    const world::Entity* second = other.world.find_character(kCharacterB);
+    other.world.travel(kCharacterB, kFar);
+    // At the clock value of the travel: a camera 2 m from the place in the horizontal plane, and 820 m above it.
+    other.datagram(b.peer, b.input_at(++number, kFar.x + 2.0F, kFar.y, 900.0F));
+    note("the place of the travel has the height " + std::to_string(kFar.z) + "; height of the entity after a camera 820 m above "
+         "it: " + std::to_string(second->position.z));
+    check(second->position.x == kFar.x && second->position.z == kFar.z,
+          "a camera that is near the place in the horizontal plane and 820 m above it does not move the entity: the rule "
+          "compares the height too");
+    // A camera 40 m to the east. The estimate gets the distance of a walk: 15 m, and 8 m/s from the first camera after the travel.
+    const state::WorldPosition east{kFar.x + 40.0F, kFar.y, kFar.z};
+    other.advance(milliseconds(2100));
+    camera_of(other, b, ++number, east);
+    const bool early = second->position.x == kFar.x;
+    other.advance(milliseconds(3900));
+    camera_of(other, b, ++number, east);
+    note("a camera 40 m to the east: x of the entity 6 s after the first camera " + std::to_string(second->position.x));
+    check(early && std::abs(second->position.x - east.x) < 1.0F && std::abs(second->position.z - kFar.z) < 1.0F,
+          "a camera 40 m from the place is not used 2.1 s after the first camera (the limit is then 32 m), and it is used 6 s "
+          "after it (63 m): a client gets a different place only after the time of a walk to it");
+    for (int index = 0; index < 30; ++index) {
+        camera_of(other, b, ++number, state::WorldPosition{east.x, east.y + 0.2F * static_cast<float>(index), east.z});
+    }
+    check(std::abs(second->position.x - east.x) < 1.0F && second->position.y > east.y + 3.0F && second->position.y < east.y + 7.0F,
+          "and the estimate then follows the camera, as before the travel");
+}
+
+/**
+ * TV7: more than one travel of a character before its session sends the movement state (code
+ * review of stage 3.4c, finding C3). Each travel gave the entity the next teleport number. A
+ * session sends only the last state of a tick: after 15 travels in one tick the state had the
+ * number that the client had already, and the client did not take the new position. The world
+ * now counts the number from the number that the client of the owner has.
+ */
+void travels_before_one_state(const Options&) {
+    ServerHost host;
+    const Player alpha = add_player(host.store, kSteamIdA, "Tester A", kCharacterA, "Alpha", kPlace);
+    FakeClient a(27000);
+    std::uint16_t input = 0;
+    enter_at(host, a, alpha, kPlace, input);
+    const world::Entity* entity = host.world.find_character(kCharacterA);
+    const unsigned first = travel_steps(a, 0).states.size() == 1 ? travel_steps(a, 0).states[0].fields.at({0, kFieldTeleport})[0] : 0U;
+    // The commands of other threads are tasks of the world: each task of a tick runs before the
+    // sessions send their records.
+    const auto travels = [&](int count, float x) {
+        for (int index = 0; index < count; ++index) {
+            host.world.post([index, x](world::World& world) {
+                world.travel(kCharacterA, state::WorldPosition{x + static_cast<float>(index), kFar.y, kFar.z});
+            });
+        }
+    };
+    std::size_t from = a.got.size();
+    travels(15, kFar.x);
+    host.steps(1, {&a});
+    TravelSteps steps = travel_steps(a, from);
+    const unsigned sent = steps.states.size() == 1 ? steps.states[0].fields.at({0, kFieldTeleport})[0] : 0U;
+    note("the client has the teleport number " + std::to_string(first) + "; after 15 travels in one tick it gets "
+         + std::to_string(steps.states.size()) + " movement state(s) with a position, teleport number " + std::to_string(sent)
+         + "; x of the entity " + std::to_string(entity->position.x));
+    check(first == 1 && steps.states.size() == 1 && joined(steps.order) == "screen state done"
+              && float_at(steps.states[0].fields.at({0, kFieldPosition}), 0) == kFar.x + 14.0F && entity->position.x == kFar.x + 14.0F,
+          "15 travels in one tick: the client gets one movement state, with the place of the last travel, between the two "
+          "travel messages");
+    check(sent != first, "the teleport number of that state is not the number that the client has: the client takes the position");
+    check(sent == 2 && entity->teleport == 2, "it is the next number (2): the travels before one state have one number");
+    // The next group counts from the number that the client got.
+    from = a.got.size();
+    travels(3, kPlace.x);
+    host.steps(1, {&a});
+    steps = travel_steps(a, from);
+    check(steps.states.size() == 1 && steps.states[0].fields.at({0, kFieldTeleport})[0] == 3 && entity->teleport == 3
+              && entity->position.x == kPlace.x + 2.0F,
+          "3 travels in the next tick: one movement state with the number 3");
+    // 15 ticks with 15 travels each: each state has a number that is not the number before it, and never 0.
+    std::string numbers;
+    bool always = true;
+    unsigned last = 3;
+    for (int tick = 0; tick < 15; ++tick) {
+        from = a.got.size();
+        travels(15, kFar.x + 20.0F * static_cast<float>(tick));
+        host.steps(1, {&a});
+        steps = travel_steps(a, from);
+        const unsigned number = steps.states.size() == 1 ? steps.states[0].fields.at({0, kFieldTeleport})[0] : 0U;
+        numbers += std::to_string(number) + " ";
+        always = always && number != 0 && number != last && number <= 15;
+        last = number;
+    }
+    note("the teleport numbers of 15 more ticks with 15 travels each: " + numbers);
+    check(always && numbers == "4 5 6 7 8 9 10 11 12 13 14 15 1 2 3 ",
+          "15 more ticks with 15 travels each: each state has the next number, from 15 to 1, never 0, and never the number "
+          "that the client has");
+    // An entity with no session has no client: each travel gives it the next number.
+    add_player(host.store, kSteamIdB, "Tester B", kCharacterB, "Beta", kPlace);
+    const bool spawned = host.world.spawn_character(kCharacterB, kPlace) == world::SpawnError::none;
+    const world::Entity* remote = host.world.find_character(kCharacterB);
+    host.world.travel(kCharacterB, state::WorldPosition{kPlace.x + 5.0F, kPlace.y, kPlace.z});
+    const unsigned one = remote->teleport;
+    host.world.travel(kCharacterB, state::WorldPosition{kPlace.x + 6.0F, kPlace.y, kPlace.z});
+    check(spawned && one == 2 && remote->teleport == 3, "an entity with no session gets the next number for each travel (2, then 3)");
+}
+
+/** A session with no client: it counts the travels that the world tells it. */
+struct TravelSink : world::SessionSink {
+    unsigned travels{0};
+    void character_lost(world::LostCause) override {}
+    void traveled(const world::Travel&) override {
+        ++travels;
+    }
+};
+
+/** Runs one SQL text on a second connection of a database file. */
+bool run_sql(const std::filesystem::path& path, const std::string& sql) {
+    sqlite3* connection = nullptr;
+    if (sqlite3_open(path.string().c_str(), &connection) != SQLITE_OK) {
+        sqlite3_close(connection);
+        return false;
+    }
+    const bool ok = sqlite3_exec(connection, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
+    sqlite3_close(connection);
+    return ok;
+}
+
+/**
+ * TV8: a travel whose position write failed (code review of stage 3.4c, finding C5). The world
+ * moved the entity, told the session, and did not look at the result of the write: the command
+ * gave the reply 200, the row kept the old place, and the mark for a later write was gone. The
+ * world now writes the row first: a travel whose write failed changes nothing and gives a
+ * storage error. A position whose write failed keeps its mark, and the world tries again.
+ */
+void travel_with_a_failed_write(const Options& options) {
+    std::filesystem::create_directories(options.workDirectory);
+    const std::filesystem::path path = options.workDirectory / "travel-write.sqlite3";
+    std::filesystem::remove(path);
+    ManualClock clock;
+    state::Store store;
+    const bool opened = store.open(path.string());
+    const Player alpha = add_player(store, kSteamIdA, "Tester A", kCharacterA, "Alpha", kPlace);
+    add_player(store, kSteamIdB, "Tester B", kCharacterB, "Beta", kPlace);
+    gamedata::AppearanceTables tables;
+    world::World world(clock, store, tables);
+    // This thread is the world thread: the task of a route runs in the call.
+    world.tick();
+    TravelSink sink;
+    const bool entered = world.enter(1, sink, kCharacterA, alpha.account.personaId).error == world::EnterError::none;
+    const world::Entity* entity = world.find_character(kCharacterA);
+    server::http::AdminAccess access;
+    server::http::Router router;
+    const server::http::Services services{store, "127.0.0.1:32210", "test-version", "", tables, world};
+    server::http::register_dev_routes(router, services);
+    server::http::register_admin_routes(router, services, access);
+    const auto send = [&](const std::string& path, const std::string& query, const std::string& body, const char* token) {
+        service::HttpRequest request;
+        request.method = "POST";
+        request.path = path;
+        request.query = query;
+        request.target = query.empty() ? path : path + "?" + query;
+        request.body = body;
+        if (token != nullptr) {
+            request.headers.emplace_back(server::http::kAdminTokenHeader, token);
+        }
+        return server::http::handle_request(router, request);
+    };
+    const auto dev = [&](const char* character) {
+        return send("/v1/dev/world/travel", std::string("character=") + character + "&x=3000&y=1000&z=80", {}, nullptr);
+    };
+    const auto admin = [&] {
+        const json command{{"command", "travel"}, {"character", kCharacterA}, {"args", {{"x", 3000}, {"y", 1000}, {"z", 80}}}};
+        return send("/admin/v1/commands", {}, command.dump(), kTokenA);
+    };
+    check(opened && entered && entity != nullptr && access.add(kTokenA, kSteamIdA)
+              && run_sql(path, "CREATE TRIGGER refuse_position BEFORE UPDATE OF position_x ON characters BEGIN SELECT "
+                               "RAISE(FAIL, 'test write failure'); END"),
+          "a character in the world, and a database that refuses the write of a position");
+    const world::Revision revision = world.revision();
+    const auto unchanged = [&] {
+        const auto row = saved_position(store, kCharacterA);
+        return entity->position.x == kPlace.x && entity->position.y == kPlace.y && entity->position.z == kPlace.z
+               && entity->teleport == 1 && sink.travels == 0 && world.last_travel() == 0 && world.revision() == revision && row
+               && row->x == kPlace.x;
+    };
+
+    // The travel command of the two route sets.
+    const service::HttpResponse refused = dev(kCharacterA);
+    note("travel with a failed write: status " + std::to_string(refused.status) + ", body " + refused.body + "; x of the entity "
+         + std::to_string(entity->position.x) + ", travels that the session got " + std::to_string(sink.travels) + ", x of the row "
+         + std::to_string(saved_position(store, kCharacterA)->x));
+    check(refused.status == 500 && refused.body.find("was not written") != std::string::npos,
+          "the development route gives the reply 500 (the position was not written), not 200");
+    check(unchanged(), "nothing changed: the entity keeps its place and its teleport number, the session gets no travel, the "
+                       "movement state is not marked, and the row keeps the old place");
+    const service::HttpResponse refusedAdmin = admin();
+    const world::TravelResult direct = world.travel(kCharacterA, kFar);
+    check(refusedAdmin.status == 500 && direct.error != TravelError::none && direct.entity == nullptr && unchanged(),
+          "the admin command gives 500 too, and World::travel gives an error and no entity: nothing changed");
+    check(dev(kCharacterB).status == 500 && !world.find_character(kCharacterB) && saved_position(store, kCharacterB)->x == kPlace.x,
+          "a character that is not in the world: the reply is 500 too, and its row keeps the old place");
+    check(log_count("world: no travel of character " + std::string(kCharacterA)) == 3, "the log has one line for each of the three travels");
+
+    // A position whose write failed keeps its mark: the world tries again at its interval.
+    const state::WorldPosition walked{kPlace.x + 7.0F, kPlace.y, kPlace.z};
+    world.set_position(entity->id, walked, false);
+    clock.advance(std::chrono::seconds(6));
+    world.tick();
+    const bool waits = entity->positionDirty;
+    const bool oldRow = saved_position(store, kCharacterA)->x == kPlace.x;
+    check(waits && oldRow && log_count("was not saved") == 1,
+          "a position of the entity whose write failed keeps its mark (the row has the old place)");
+    const bool accepts = run_sql(path, "DROP TRIGGER refuse_position");
+    clock.advance(std::chrono::seconds(6));
+    world.tick();
+    check(accepts && !entity->positionDirty && saved_position(store, kCharacterA)->x == walked.x,
+          "when the database accepts the write again, the next interval writes the position, and the mark is gone");
+
+    // The same travel command now works.
+    const json reply = json::parse(dev(kCharacterA).body, nullptr, false);
+    check(reply.is_object() && reply["applied"] == "world" && entity->position.x == kFar.x && entity->position.z == kFar.z
+              && entity->teleport == 2 && sink.travels == 1 && world.last_travel() > revision && !entity->positionDirty
+              && saved_position(store, kCharacterA)->x == kFar.x && saved_position(store, kCharacterA)->z == kFar.z,
+          "with a database that accepts the write, the same command moves the character: the row has the place, then the "
+          "entity, and the session gets the travel");
+    world.leave(1);
+    std::filesystem::remove(path);
+}
+
+/**
+ * TV9: the travel places tool writes no file from a shrine or an inn whose position has a wrong
+ * form (code review of stage 3.4c, finding C6). The check of the tool is a Python program with
+ * made-up region files (tools/gamedata/check_places_tool.py): this case runs it.
+ */
+void review_places_tool(const Options& options) {
+    // The golden folder of the options is REPOSITORY/apps/backend/tests/golden.
+    const std::filesystem::path script =
+        options.goldenDirectory / ".." / ".." / ".." / ".." / "tools" / "gamedata" / "check_places_tool.py";
+    check(std::filesystem::is_regular_file(script), "the check of the travel places tool is in the tree (the case needs --golden-dir)");
+    if (!std::filesystem::is_regular_file(script)) {
+        return;
+    }
+    std::filesystem::create_directories(options.workDirectory);
+    const auto output = options.workDirectory / "places-tool-check.log";
+    const char* python = std::getenv("SOULWARDEN_PYTHON");
+    const std::string command = std::string(python != nullptr && *python != '\0' ? python : "python3") + " -I -B \""
+                                + script.lexically_normal().string() + "\" \"" + options.workDirectory.string() + "\" > \""
+                                + output.string() + "\" 2>&1";
+    const int status = std::system(command.c_str());
+    std::ifstream log(output);
+    unsigned correct = 0;
+    unsigned wrong = 0;
+    for (std::string line; std::getline(log, line);) {
+        note(line.substr(0, 200));
+        correct += line.rfind("ok  ", 0) == 0 ? 1 : 0;
+        wrong += line.rfind("FAIL", 0) == 0 ? 1 : 0;
+    }
+    check(status == 0 && correct == 6 && wrong == 0,
+          "the tool writes its file for complete landmarks (a landmark of a different type with no position is left out), and "
+          "it writes no file (status 1) for a shrine whose position has 11 bytes, a shrine with no position, a shrine with a "
+          "number that is not finite, an inn whose position has 13 bytes, and an inn with no position");
+    std::filesystem::remove(output);
+}
+
+/**
+ * WS4: a creature of a slice with a spawn action and with no death action that dies while its
+ * reaction plays (code review of stage 3.4c, finding C4). The end of the reaction must not take
+ * the spawn action away: a session that observes the dead creature later needs it in its first
+ * record, or its client shows no body. The case looks only at what a session gets.
+ */
+void spawn_action_after_a_death_in_a_reaction(const Options&) {
+    CommandHost c;
+    ServerHost& host = c.host;
+    std::vector<gamedata::CreatureSlice> slices{test_slice("slices/test/wolf.dynamicslice", 0x11, kWolfSlots, 100.0F)};
+    slices[0].actions = {{"Idle_No_Task", "Idle", 0, false}, {"Reaction", "r_R2_F", 5, true}, {"Spawn", "Spawn", 9, false}};
+    slices[0].spawnActionName = "Spawn";
+    check(host.creatures.set(slices, {test_kind("Test_Wolf", 0x11112222, 1.0F, 18, 0)}, {}, {{18, 1690.875977F}}),
+          "the creature data: one slice with a spawn action, a reaction, and no death action");
+    FakeClient a(27000);
+    std::uint16_t input = 0;
+    enter_at(host, a, c.alpha, kPlace, input);
+    world::Creatures& creatures = host.world.creatures();
+    const world::Entity* wolf = creatures.spawn("Test_Wolf", state::WorldPosition{kPlace.x + 4.0F, kPlace.y, kHeight}, 0.0F).entity;
+    check(wolf != nullptr, "a creature of the slice is in the world");
+    const world::EntityId id = wolf->id;
+    std::size_t from = a.got.size();
+    host.advance(std::chrono::milliseconds(600));
+    host.steps(3, {&a});
+    check(scope_action(movement_of(a, from, interest_of(host, 1, id), kWolfSlots[0])) == 2,
+          "the first record of the creature has the spawn action");
+    // A hit starts the reaction, and the next hit is the death of the creature while the reaction plays.
+    check(creatures.hurt(id, 1.0F).error == CreatureError::none && creatures.hurt(id, 100000.0F).error == CreatureError::none
+              && wolf->creature.dead,
+          "the creature dies while its reaction plays");
+    host.advance(std::chrono::milliseconds(1600));
+    host.steps(2, {&a});
+    // A session that observes the dead creature later: travel away and back.
+    host.world.travel(kCharacterA, kFar);
+    host.steps(3, {&a});
+    host.advance(std::chrono::seconds(5));
+    from = a.got.size();
+    host.world.travel(kCharacterA, kPlace);
+    host.steps(4, {&a});
+    const std::optional<Fragment> later = movement_of(a, from, interest_of(host, 1, id), kWolfSlots[0]);
+    check(later.has_value() && scope_action(later) == 2,
+          "after the end of the reaction, a session that observes the dead creature gets the spawn action in its first "
+          "record: the body shows");
+}
+
 } // namespace
 
 std::vector<Case> world_spawn_cases() {
@@ -1110,12 +1525,21 @@ std::vector<Case> world_spawn_cases() {
         {"WS2", "world size: the spawn point rule with 33,856 spawn points and 1 and 50 players, with a time limit", spawn_rule_at_world_size},
         {"WS3", "world size: the spawn action of a slice that shows its body only after it, and the command for an action",
          spawn_action_of_a_slice},
+        {"WS4", "world size: a creature with a spawn action and no death action that dies while its reaction plays (review of stage 3.4c)",
+         spawn_action_after_a_death_in_a_reaction},
         {"TV1", "travel: the entity, the row, and what the client of the owner gets (the two messages and the movement state)",
          travel_of_the_owner},
         {"TV2", "travel: the check of the position reports after it, and the camera estimate", position_check_after_a_travel},
         {"TV3", "travel: two sessions (the new position, the stop, and the new record for the observer)", travel_with_two_sessions},
         {"TV4", "travel: the command of the development routes and of the admin interface, and the travel places file", travel_commands},
         {"TV5", "travel: the creatures of the new place come, and the creatures of the old place leave", creatures_of_the_new_place},
+        {"TV6", "travel: the camera estimate keeps the place of the travel until the client confirms it (review of stage 3.4c)",
+         camera_estimate_after_a_travel},
+        {"TV7", "travel: more than one travel before one movement state, and the teleport number (review of stage 3.4c)",
+         travels_before_one_state},
+        {"TV8", "travel: a travel whose position write failed changes nothing (review of stage 3.4c)", travel_with_a_failed_write},
+        {"TV9", "travel: the travel places tool writes no file from a place with a position of a wrong form (review of stage 3.4c)",
+         review_places_tool},
     };
 }
 

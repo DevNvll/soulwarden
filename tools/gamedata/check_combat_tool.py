@@ -105,12 +105,27 @@ class MadeUpSources:
         add("Base", tool.BASE_TYPE, [base])
         add("Variant", tool.VARIANT_TYPE, [{"VitalsID": "TestWolf",
                                             "BaseVitalsId": "Missing" if mode == "missing-base" else "BaseWolf"}])
+        add("ArmorItems", tool.ITEM_TYPE, [{"ItemID": "TestChest", "ItemStatsRef": "Chest"}])
+        chest = {"WeaponID": "Chest", "PhysicalArmorSetScaleFactor": 0.25, "ElementalArmorSetScaleFactor": 0.25,
+                 "ArmorRatingScaleFactor": 0.3}
+        if mode == "nan-armor":
+            chest["ArmorRatingScaleFactor"] = float("nan")
+        if mode == "no-armor-column":
+            chest.pop("ElementalArmorSetScaleFactor")
+        add("Armor", tool.ARMOR_TYPE, [chest])
+        add("LevelDisparity", tool.LEVEL_DIFFERENCE_TYPE,
+            [{"LevelDisparity": 5.0, "DamageModifier": 0.0},
+             {"LevelDisparity": 6.5 if mode == "part-level" else 6.0, "DamageModifier": 0.2}])
 
     def stream(self, path):
-        return [SimpleNamespace(name=tool.field_id(label),
-                                value=(int(CONSTANTS[member]).to_bytes(4, "big") if member in tool.WHOLE_CONSTANTS
-                                       else struct.pack(">f", CONSTANTS[member])),
-                                children=[]) for member, label in tool.CONSTANT_FIELDS.items()]
+        fields = [SimpleNamespace(name=tool.field_id(label),
+                                  value=(int(CONSTANTS[member]).to_bytes(4, "big") if member in tool.WHOLE_CONSTANTS
+                                         else struct.pack(">f", CONSTANTS[member])),
+                                  children=[]) for member, label in tool.CONSTANT_FIELDS.items()]
+        if self.mode != "no-armor-constant":
+            fields += [SimpleNamespace(name=tool.field_id(label), value=struct.pack(">f", 1.2), children=[])
+                       for label in tool.ARMOR_FIELDS.values()]
+        return fields
 
     def paths(self, prefix, suffix):
         return sorted(self.files)
@@ -133,6 +148,10 @@ CASES = [
     ("text-cell", False, "a base damage cell with a text that is not a number"),
     ("nan-weakness", False, "a weakness cell that is not a finite number"),
     ("no-defense-column", False, "a base vitals table with no weakness column"),
+    ("nan-armor", False, "an armor factor that is not a finite number"),
+    ("no-armor-column", False, "an armor table with no column ElementalArmorSetScaleFactor"),
+    ("no-armor-constant", False, "a base attributes file with no exponent of the armor rule"),
+    ("part-level", False, "a level difference that is not a whole number"),
 ]
 
 
@@ -154,7 +173,9 @@ def main() -> int:
         if correct and mode == "valid":
             tables = json.loads(target.read_text(encoding="utf-8"))
             correct = (tables["weapons"][0][3] == 64.0 and tables["weapons"][0][9] == "Heavy"
-                       and sorted(tables["vitals"]) == ["basewolf", "testwolf"] and tables["defenses"][0][2] == {"Slash": 0.2})
+                       and sorted(tables["vitals"]) == ["basewolf", "testwolf"] and tables["defenses"][0][2] == {"Slash": 0.2}
+                       and tables["armor"]["items"] == {"testchest": [0.25, 0.25, 0.3]}
+                       and tables["armor"]["ratingExponent"] == 1.2 and tables["levelDamage"] == [[6, 0.2]])
         if correct and mode == "known-absent-row":
             correct = json.loads(target.read_text(encoding="utf-8"))["weapons"][0][9] == ""
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""

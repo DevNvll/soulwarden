@@ -1,6 +1,8 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -83,7 +85,14 @@ json creature_json(const world::Entity& entity) {
             {"spawnPoint", creature.spawnPoint.has_value()},
             {"slice", creature.body->path},
             {"position", {entity.position.x, entity.position.y, entity.position.z}},
-            {"yaw", creature.yaw}};
+            {"yaw", creature.yaw},
+            // The behavior of the creature: what it does, its target, and if it fights and walks.
+            {"mode", creature.mind.mode == world::CreatureMode::fight  ? "fight"
+                     : creature.mind.mode == world::CreatureMode::home ? "home"
+                                                                       : "rest"},
+            {"target", creature.mind.target != 0 ? id_text(creature.mind.target) : std::string()},
+            {"fights", creature.body->fights()},
+            {"walks", creature.mind.walks}};
 }
 
 service::HttpResponse creature_reply(const world::CreatureResult& result) {
@@ -233,8 +242,16 @@ WorldCommand spawn_creature(const std::string& character, const Arguments& argum
         if (reference == nullptr) {
             return message(404, "the character is not in the world: a new creature needs its place");
         }
-        const state::WorldPosition position{reference->position.x + offset.x, reference->position.y + offset.y,
-                                            reference->position.z + offset.z};
+        state::WorldPosition position{reference->position.x + offset.x, reference->position.y + offset.y,
+                                      reference->position.z + offset.z};
+        // The ground is not level. A character that stands on the terrain gives the creature the
+        // terrain at the place of the creature: a creature that is not at the terrain height
+        // does not leave its place. A character on a floor gives its own height, as before.
+        const std::optional<float> under = target.navigation().ground_height(reference->position);
+        const std::optional<float> there = target.navigation().ground_height(position);
+        if (under && there && std::fabs(reference->position.z - *under) <= gamedata::kTerrainTolerance) {
+            position.z = *there + offset.z;
+        }
         const world::CreatureResult result = target.creatures().spawn(kind, position, yaw, level);
         if (result.entity != nullptr) {
             log::write("world: command: creature %s of the kind %s near character %s",
@@ -324,16 +341,28 @@ WorldCommand play_creature_action(const std::string& character, const Arguments&
     if (arguments.has("seconds")) {
         seconds = arguments.number("seconds", 0.0F, 3600.0F);
     }
-    if (!id || !action || action->empty() || (arguments.has("seconds") && !seconds)) {
+    // Development aid: the tag state of the fragments, as 24 hexadecimal digits.
+    std::optional<gamedata::FragmentTags> tags;
+    if (arguments.has("tags")) {
+        const auto text = arguments.text("tags");
+        if (text && text->size() == 2 * gamedata::kFragmentTagBytes
+            && text->find_first_not_of("0123456789abcdefABCDEF") == std::string::npos) {
+            tags.emplace();
+            for (std::size_t index = 0; index < tags->size(); ++index) {
+                (*tags)[index] = static_cast<std::uint8_t>(std::strtoul(text->substr(index * 2, 2).c_str(), nullptr, 16));
+            }
+        }
+    }
+    if (!id || !action || action->empty() || (arguments.has("seconds") && !seconds) || (arguments.has("tags") && !tags)) {
         refusal = message(400, "give creature=ID and action=NAME (an action of the action table of its slice), and when "
-                               "necessary seconds=N (the time of the action, 0 to 3600)");
+                               "necessary seconds=N (the time of the action, 0 to 3600) and tags=HEX (24 digits)");
         return {};
     }
-    return [character, id = *id, action = *action, seconds, reach](world::World& target) {
+    return [character, id = *id, action = *action, seconds, tags, reach](world::World& target) {
         if (const auto refused = out_of_reach(target, character, id, reach)) {
             return *refused;
         }
-        const world::CreatureResult result = target.creatures().play(id, action, seconds);
+        const world::CreatureResult result = target.creatures().play(id, action, seconds, tags);
         if (result.error == world::CreatureError::none) {
             const world::CreatureAction& started = *result.entity->creature.action;
             log::write("world: command: creature %s starts the action %s (index %u, fragment index %u)%s",

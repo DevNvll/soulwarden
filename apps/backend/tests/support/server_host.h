@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <span>
@@ -11,6 +12,7 @@
 #include "gamedata/appearance_tables.h"
 #include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
+#include "gamedata/height_maps.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/travel_places.h"
@@ -27,6 +29,15 @@ namespace soulwarden::backend::tests {
  * keeps the datagrams, and a database in memory. The test calls the handler functions that
  * the DTLS listener calls in the backend program.
  */
+/** The terrain of a test: the height that a case gives. With no function, no place has a height. */
+struct TestTerrain final : gamedata::Terrain {
+    std::function<std::optional<float>(float, float)> source;
+
+    [[nodiscard]] std::optional<float> height(float x, float y) override {
+        return source ? source(x, y) : std::nullopt;
+    }
+};
+
 struct ServerHost {
     ManualClock clock;
     state::Store store;
@@ -41,7 +52,9 @@ struct ServerHost {
     gamedata::CombatTables combat;
     /** The travel places of the world. They are empty until a case sets them: the travel command then takes only numbers. */
     gamedata::TravelPlaces places;
-    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat, places)};
+    /** The terrain of the world. It has no height until a case sets one: no creature then leaves its place. */
+    TestTerrain terrain;
+    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat, places, terrain)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -77,6 +90,17 @@ struct ServerHost {
                                               const gamedata::TravelPlaces& places) {
         world::WorldOptions options = with_game_data(catalog, progression, creatures, combat);
         options.travelPlaces = &places;
+        return options;
+    }
+
+    static world::WorldOptions with_game_data(const gamedata::ItemCatalog& catalog,
+                                              const gamedata::ProgressionTables& progression,
+                                              const gamedata::CreatureData& creatures,
+                                              const gamedata::CombatTables& combat,
+                                              const gamedata::TravelPlaces& places,
+                                              gamedata::Terrain& terrain) {
+        world::WorldOptions options = with_game_data(catalog, progression, creatures, combat, places);
+        options.terrain = &terrain;
         return options;
     }
 

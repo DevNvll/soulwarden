@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "gamedata/combat_tables.h"
+#include "gamedata/creature_data.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/world_clock.h"
@@ -175,8 +176,10 @@ enum class HitVerdict : std::uint8_t {
     tooFar,
     /** The point of the contact is not at the creature, or it is not a position. */
     badPoint,
+    /** The character of the session is dead: it does no damage. */
+    attackerDead,
 };
-inline constexpr std::size_t kHitVerdictCount = 13;
+inline constexpr std::size_t kHitVerdictCount = 14;
 
 /** @return A short text for a log line, for example "too far". */
 [[nodiscard]] const char* hit_verdict_text(HitVerdict verdict);
@@ -204,6 +207,21 @@ struct DamageDealt {
     float amount{0.0F};
     /** True when the hit was the death of the target. */
     bool killed{false};
+};
+
+/** The damage of one contact of an attack of a creature on a character, with the values of each step of the rule. */
+struct CreatureDamage {
+    /** The damage of the creature: the base damage of its level times the damage factor of its kind. */
+    float base{0.0F};
+    /** The damage of the attack before the level factor and the armor. */
+    float raw{0.0F};
+    /** The factor of the level difference of the creature and the character. */
+    float levelFactor{1.0F};
+    /** The armor of the character against the category of the damage type, and the part of the damage that it stops. */
+    float armor{0.0F};
+    float mitigation{0.0F};
+    /** The damage that the character takes. */
+    float dealt{0.0F};
 };
 
 struct HitResult {
@@ -394,6 +412,36 @@ public:
                                 std::uint32_t gearScore,
                                 const gamedata::DamageRow& row,
                                 const gamedata::DefenseRow* defense) const;
+
+    /**
+     * The damage rule for an attack of a creature on a character (a rule of this project;
+     * protocol notes 4.18), in one function:
+     *
+     *   base   = base damage of the level of the creature x damage factor of its kind
+     *   raw    = base x damage factor of the contact + damage that the contact adds
+     *   level  = 1 + damage value of the level difference (the level of the creature minus the
+     *            level of the character; the table of the game has a value for 6 and more)
+     *   armor  = sum, for each armor item on the character: rating factor of the item x
+     *            (gear score ^ rating exponent x factor of the item for the damage category),
+     *            each product rounded to one decimal
+     *   part   = armor / (armor + gear score of the level of the creature ^ mitigation exponent)
+     *   dealt  = raw x level x (1 - part)
+     *
+     * The values are cells of the game tables (the creature data and the combat tables). The
+     * rule, and the use of the two exponents, are choices of this project: the client has no
+     * copy of the rule of the original server. A damage of the category "True" takes no armor.
+     * With no combat tables, or with tables that have no armor values, the armor is 0 and the
+     * level factor is 1.
+     */
+    [[nodiscard]] CreatureDamage creature_damage(const Entity& creature,
+                                                 const gamedata::CreatureContact& contact,
+                                                 const Entity& target) const;
+
+    /**
+     * @return The armor of a character against a damage category: the sum of the armor of the
+     *         items in its five armor slots. 0 with no combat tables.
+     */
+    [[nodiscard]] float armor_of(const Entity& character, gamedata::DamageCategory category) const;
 
     /**
      * @return The limits of the hit check of a character. They stay when its session ends and

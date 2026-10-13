@@ -125,6 +125,27 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 // and its next world entry is there ("applied":"stored").
 [[nodiscard]] WorldCommand travel(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
+// The health commands (world/health.h, server/http/health_commands.cpp).
+// heal: no argument. The character gets its full health, and a dead character lives again at
+// its place. For a character that is not in the world nothing changes ("applied":"stored"):
+// each world entry starts with the full health.
+// set_creatures_ignore: `ignore` (1 or 0). The creatures ignore the character: they do not get
+// it as a target, and a creature that has it as its target loses it. A value of the character
+// in the world, with the character id as its key, until the backend stops.
+// hurt_character: `amount` (the damage). A development command: only the development routes
+// have it.
+[[nodiscard]] WorldCommand heal(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand set_creatures_ignore(const std::string& character, const Arguments& arguments,
+                                                service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand hurt_character(const std::string& character, const Arguments& arguments,
+                                          service::HttpResponse& refusal);
+/**
+ * @return The health of a character (world thread): "inWorld", "creaturesIgnore",
+ *         "creatureBehavior" (the switch of the backend), and for a character that is in the
+ *         world "health", "healthMax", and "dead".
+ */
+[[nodiscard]] nlohmann::json health_json(world::World& world, const std::string& character);
+
 /** @return The travel places of the backend: "loaded", and the list "places" (id, kind, name, territory, position). */
 [[nodiscard]] nlohmann::json travel_places_json(const gamedata::TravelPlaces* places);
 

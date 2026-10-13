@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "gamedata/creature_data.h"
+#include "world/behavior.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/load_meter.h"
@@ -25,13 +26,15 @@
 // places where the game has a creature. The world does not hold the creature of each place at
 // all times: it makes the creature of a spawn point when a player is `spawnEnter` or less from
 // the point, and it removes the creature when no player is `spawnLeave` or less from the
-// creature. A spawn point has one creature at most.
+// point. A spawn point has one creature at most. The two distances are distances of the spawn
+// point, not of the creature: a creature that goes to a player (world/behavior.h) stays in the
+// world while a player is near its point.
 //
 // The cost of the rule depends on the players and on what is near them, not on the size of the
 // world (the creature data of the whole world has 33,000 spawn points and more). One scan
 // looks only at the spawn points in the grid cells that the circle of a player touches
-// (SpawnGrid), and at the creatures that are in the world, which are the creatures near a
-// player. It never walks the list of all spawn points. The counts of a scan are in
+// (SpawnGrid), and at the creatures that are in the world, which are the creatures of the
+// points near a player. It never walks the list of all spawn points. The counts of a scan are in
 // CreatureCounts, and a test case fails for a scan that looks at each point.
 //
 // A creature of a spawn point that died, or that a command removed, does not come back by the
@@ -223,10 +226,13 @@ public:
     /**
      * A creature takes damage (the combat system, world/combat.h): its health goes down by the
      * damage, through set_health. A creature that lives after it plays the reaction action of
-     * its slice. A damage that is not less than its health is its death.
+     * its slice, when it plays no attack. A damage that is not less than its health is its
+     * death. A creature that lives gets the character that did the damage as its target, when
+     * it has none (world/behavior.h).
      * @param damage The damage: a finite number that is not negative.
+     * @param attacker The entity of the character that did the damage. 0: a command.
      */
-    CreatureResult hurt(EntityId id, float damage);
+    CreatureResult hurt(EntityId id, float damage, EntityId attacker = 0);
 
     /**
      * Starts an action of the action table of the slice of a creature, by its name (a
@@ -234,8 +240,11 @@ public:
      * Each session that observes the creature gets the action with its movement state.
      * @param seconds The time of an action that has an end: after it the creature has no action
      *        of the server. No value: the action stays until a different one starts.
+     * @param tags Development aid: the tag state of the fragments for this action, in the
+     *        place of the tags of the slice (a live check of the tags of a slice).
      */
-    CreatureResult play(EntityId id, const std::string& action, std::optional<float> seconds = std::nullopt);
+    CreatureResult play(EntityId id, const std::string& action, std::optional<float> seconds = std::nullopt,
+                        std::optional<gamedata::FragmentTags> tags = std::nullopt);
 
     /**
      * Makes each spawn point that waits free again (a command): the distance rule makes its
@@ -281,6 +290,33 @@ public:
     [[nodiscard]] std::size_t waiting_count() const {
         return m_waiting.size();
     }
+    /** @return The behavior of the creatures: the targets, the attacks, and the counts of its steps. */
+    [[nodiscard]] Behavior& behavior() {
+        return m_behavior;
+    }
+    [[nodiscard]] const Behavior& behavior() const {
+        return m_behavior;
+    }
+
+    // For the behavior of the system (world/behavior.h): it is the one caller of these functions.
+
+    /**
+     * Starts an action of the action table of the slice of a creature, and marks its movement
+     * state. No effect for an index that the table does not have, or for an action with no fragment.
+     * @param length The time of an action that has an end. No value: the action stays.
+     * @return True when the action started.
+     */
+    bool start_action(Entity& entity, std::uint32_t action, std::optional<std::chrono::milliseconds> length = std::nullopt);
+    /**
+     * Puts a creature at a different place: the position index of the world follows it, and
+     * each session that observes the creature gets its movement state.
+     */
+    void move(Entity& entity, const state::WorldPosition& position);
+    /** Marks the movement state of a creature that changed its direction at its place. */
+    void moved(Entity& entity);
+    /** Gives a creature that lives its full health: a creature that is at its home again. */
+    void restore(Entity& entity);
+
     /** @return The real time of the scans of the spawn point rule (a measurement). */
     [[nodiscard]] const LoadMeter& scan_load() const {
         return m_scanLoad;
@@ -318,12 +354,6 @@ private:
     void load_points();
     /** Sets or clears the mark "the point waits" of a spawn point. */
     void set_waiting(std::uint32_t point, bool waiting);
-    /**
-     * Starts an action of the action table of the slice of a creature, and marks its movement
-     * state. No effect for an index that the table does not have, or for an action with no fragment.
-     * @param length The time of an action that has an end. No value: the action stays.
-     */
-    void start_action(Entity& entity, std::uint32_t action, std::optional<std::chrono::milliseconds> length = std::nullopt);
     /** Removes the action of each creature whose action has an end that came. */
     void end_actions();
 
@@ -335,7 +365,10 @@ private:
     SpawnGrid m_grid;
     /** The spawn points that wait: the reset command walks only these. */
     std::set<std::uint32_t> m_waiting;
-    /** The creatures that a player is near in the scan that runs: a list of the scan, with no value between two scans. */
+    /**
+     * The creatures whose spawn point a player is near in the scan that runs: a list of the
+     * scan, with no value between two scans.
+     */
     std::unordered_set<EntityId> m_near;
     LoadMeter m_scanLoad;
     std::set<EntityId> m_creatures;
@@ -345,6 +378,8 @@ private:
     std::optional<WorldClock::time_point> m_lastScan;
     /** Number of creatures that commands made. It selects the slice of an alias with more than one. */
     std::uint32_t m_commandSpawns{0};
+    /** The behavior of the creatures: a part of this system. */
+    Behavior m_behavior;
 };
 
 } // namespace soulwarden::backend::world

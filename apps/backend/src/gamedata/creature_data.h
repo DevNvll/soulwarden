@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -8,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "gamedata/combat_tables.h"
 #include "state/store.h"
 
 // The creature data: the usual spawn points of the creatures in an area of the world, and for
@@ -19,6 +21,12 @@
 // state. An alias can have more than one slice (a left arm or a right arm, a man or a woman):
 // the world selects one for each creature.
 //
+// The data also has what the behavior of a creature needs (protocol notes 4.17): the sense
+// distances, the leash distances, and the speeds of each slice, the attacks of each slice (an
+// action with its contact times and damage rows), the damage of each kind and of each level,
+// and the terrain height at each spawn point. A file of a tool from before stage 3.4b (format
+// 1) has none of these: the creatures of such a file stand at their spawn points.
+//
 // The data is game data: the tool tools/gamedata/creatures.sh makes the file from the game
 // copy of the user, and the file stays outside the repository. Without the file the backend
 // starts and works, and the world has no creature.
@@ -27,6 +35,59 @@ namespace soulwarden::backend::gamedata {
 
 /** File name of the creature data in the game data directory of the backend. */
 inline constexpr const char* kCreatureDataFile = "creatures.json";
+
+/**
+ * The tag state of the animation fragments of a creature on the wire: 12 bytes (the field
+ * globalFragTags of a movement state). The tags of a creature (its weapons) select the variant
+ * of each fragment: a fragment of a creature with a weapon has no variant with no tag.
+ */
+inline constexpr std::size_t kFragmentTagBytes = 12;
+using FragmentTags = std::array<std::uint8_t, kFragmentTagBytes>;
+
+/**
+ * The behavior values of a slice: fields of its Perception and Blackboard components (game
+ * data). The meaning of each value in the behavior is a rule of this project (world/behavior.h).
+ */
+struct CreatureBehavior {
+    /** The vision of a creature at rest: the angle to each side of its direction (degrees) and the distance (meters). */
+    float sightAngle{0.0F};
+    float sightDistance{0.0F};
+    /** The vision of a creature in a fight. */
+    float combatAngle{0.0F};
+    float combatDistance{0.0F};
+    /** The largest distance of a creature from its home, at rest and in a fight (meters). 0: the slice has no value. */
+    float restLeash{0.0F};
+    float combatLeash{0.0F};
+    /** The speed of a walk and of a run in a fight (meters in one second). */
+    float walkSpeed{0.0F};
+    float runSpeed{0.0F};
+};
+
+/** One contact of an attack: the moment at which the attack can hurt its target. */
+struct CreatureContact {
+    /** The time of the contact from the start of the action, in seconds. */
+    float time{0.0F};
+    /** The largest distance of a target that the contact can hurt, in meters (a value of the tool). */
+    float reach{0.0F};
+    /** The damage as a part of the damage of the creature, and the damage that the row adds. */
+    float factor{0.0F};
+    float added{0.0F};
+    /** The damage type: its name, its number on the wire, and its category. */
+    std::string type;
+    std::uint8_t wire{0};
+    DamageCategory category{DamageCategory::direct};
+    /** Name of the damage row of the game. For a log line only. */
+    std::string row;
+};
+
+/** One attack of a slice: an action of its action table with one contact or more. */
+struct CreatureAttack {
+    /** Index of the action in CreatureSlice::actions. */
+    std::uint32_t action{0};
+    /** The time of the action, in seconds: the creature starts no other action before its end. */
+    float length{0.0F};
+    std::vector<CreatureContact> contacts;
+};
 
 /** One slice of a creature. */
 struct CreatureSlice {
@@ -101,6 +162,21 @@ struct CreatureSlice {
     std::string spawnActionName;
     /** Index of that action in the action table. No value: the slice needs no spawn action. */
     std::optional<std::uint32_t> spawnAction;
+    /**
+     * The tag state of the animation fragments of a creature with this slice: the tags of its
+     * weapons, as the bits of the tag definition file of its controller (the tool computes
+     * them). All 0: the slice has no tag.
+     */
+    FragmentTags tags{};
+    /** The behavior values of the slice. No value: a creature with this slice stands. */
+    std::optional<CreatureBehavior> behavior;
+    /** The attacks of the slice. Empty: a creature with this slice does not attack. */
+    std::vector<CreatureAttack> attacks;
+
+    /** @return True when a creature with this slice gets a target and attacks it: the slice has a sense, a speed, and an attack. */
+    [[nodiscard]] bool fights() const {
+        return behavior && behavior->sightDistance > 0.0F && behavior->runSpeed > 0.0F && !attacks.empty();
+    }
 
     /** @return The index of the action with this name that has a fragment, or no value. */
     [[nodiscard]] std::optional<std::uint32_t> find_action(std::string_view name) const;
@@ -137,6 +213,8 @@ struct CreatureKind {
     std::string creatureType;
     /** The health of the kind as a part of the health of its level. */
     float healthFactor{1.0F};
+    /** The damage of the kind as a part of the base damage of its level. */
+    float damageFactor{1.0F};
     /** The level of the most spawn points of the kind. */
     std::uint32_t level{1};
     std::vector<CreatureBody> bodies;
@@ -157,7 +235,30 @@ struct SpawnPoint {
     /** The two respawn values of the spawner, in seconds. Stage 3.5a uses them. */
     float respawnMin{0.0F};
     float respawnMax{0.0F};
+    /**
+     * The terrain height at the place of the point, in meters. No value: the file does not have
+     * it (a file of format 1, or a place with no height map).
+     */
+    std::optional<float> ground;
 };
+
+/** The values of one level of the level table of the game. */
+struct CreatureLevel {
+    std::uint32_t level{1};
+    /** The health of a creature of the level, before the factor of its kind. */
+    float health{0.0F};
+    /** The base damage of a creature of the level, before the factor of its kind and of its attack. 0: the file has none. */
+    float damage{0.0F};
+    /** The gear score of a creature of the level: the armor of a player works against it. 0: the file has none. */
+    float gearScore{0.0F};
+};
+
+/**
+ * A creature that walks is at the terrain height. A creature whose spawn point is farther than
+ * this from the terrain height (a floor of a building, a bridge, a cave) does not leave its
+ * place: the terrain is not its floor (a rule of this project, protocol notes 4.17).
+ */
+inline constexpr float kTerrainTolerance = 1.0F;
 
 class CreatureData {
 public:
@@ -170,7 +271,10 @@ public:
      * of its slice, a slice with the null asset id, a kind whose health (the health of a level
      * times its factor) is 0 or not finite for a level of the table, a spawn action that the
      * action table of its slice does not have with a fragment, and a member "counts" with a
-     * wrong form or with a number that is not the size of its list.
+     * wrong form or with a number that is not the size of its list. The same for the behavior
+     * data: an attack whose action the action table does not have with a fragment, an attack
+     * with no contact, a contact after the end of its attack, a reach, a speed, or a distance
+     * that is not a number of its range, and a damage type with no number or no category.
      * @return False when the file is not there or is not complete. `error()` then has the cause.
      */
     [[nodiscard]] bool load(const std::string& path);
@@ -183,6 +287,11 @@ public:
                            std::vector<CreatureKind> kinds,
                            std::vector<SpawnPoint> spawnPoints,
                            std::vector<std::pair<std::uint32_t, float>> levels);
+    /** The same, with the damage and the gear score of each level. */
+    [[nodiscard]] bool set_full(std::vector<CreatureSlice> slices,
+                                std::vector<CreatureKind> kinds,
+                                std::vector<SpawnPoint> spawnPoints,
+                                std::vector<CreatureLevel> levels);
 
     [[nodiscard]] bool loaded() const {
         return !m_kinds.empty();
@@ -214,6 +323,40 @@ public:
     [[nodiscard]] bool has_level(std::uint32_t level) const {
         return m_levels.count(level) != 0;
     }
+    /**
+     * @return The damage of a kind at a level before the factor of an attack: the base damage of
+     *         the level times the damage factor of the kind. 0 when the table has no such value.
+     */
+    [[nodiscard]] float damage(const CreatureKind& kind, std::uint32_t level) const;
+    /** @return The gear score of a creature of a level. 0 when the table has no such value. */
+    [[nodiscard]] float gear_score(std::uint32_t level) const;
+    /** @return The number of slices that have an attack and the values for the way to a target. */
+    [[nodiscard]] std::size_t fighting_slices() const {
+        return m_fightingSlices;
+    }
+    /** @return The number of kinds with a slice that fights, and of spawn points of these kinds. */
+    [[nodiscard]] std::size_t fighting_kinds() const {
+        return m_fightingKinds;
+    }
+    [[nodiscard]] std::size_t fighting_points() const {
+        return m_fightingPoints;
+    }
+    /**
+     * @return The number of spawn points of a kind that fights whose creature does not leave
+     *         its place: the point has no terrain height, or it is farther than
+     *         kTerrainTolerance from it.
+     */
+    [[nodiscard]] std::size_t rooted_points() const {
+        return m_rootedPoints;
+    }
+    /** @return The largest vision distance at rest of a slice that fights, in meters. 0: no slice fights. */
+    [[nodiscard]] float largest_sight() const {
+        return m_largestSight;
+    }
+    /** @return True when a creature of this spawn point can walk on the terrain. */
+    [[nodiscard]] static bool on_terrain(const SpawnPoint& point) {
+        return point.ground && std::abs(point.position.z - *point.ground) <= kTerrainTolerance;
+    }
 
     /**
      * Finds the kinds for a search text. Each word of the text must be in the id, the name, the
@@ -235,8 +378,13 @@ private:
     std::vector<CreatureSlice> m_slices;
     std::vector<CreatureKind> m_kinds;
     std::vector<SpawnPoint> m_spawnPoints;
-    /** Level to the health of the level. */
-    std::unordered_map<std::uint32_t, float> m_levels;
+    /** Level to the values of the level. */
+    std::unordered_map<std::uint32_t, CreatureLevel> m_levels;
+    std::size_t m_fightingSlices{0};
+    std::size_t m_fightingKinds{0};
+    std::size_t m_fightingPoints{0};
+    std::size_t m_rootedPoints{0};
+    float m_largestSight{0.0F};
     /** Lower-case kind id to the position in the list. */
     std::unordered_map<std::string, std::size_t> m_byId;
     std::vector<std::string> m_searchTexts;

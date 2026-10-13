@@ -50,7 +50,8 @@ delete of a character that is in the world ends its session first.
 The backend has an admin interface for the tool window (routes `/admin/v1` on its loopback
 listener): the state of the characters of the account of the game, an item search, the
 kinds of the creatures, the travel places, and commands for the items, the coin, the level,
-the attributes, and the skills of a character, for the creatures near it, and for a travel.
+the attributes, the skills, and the health of a character, for the creatures near it, and
+for a travel.
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
 
 The build has a library (`soulwarden_backend_core`), the backend program, and a test program that
@@ -102,6 +103,7 @@ tools/gamedata/progression.sh      # one time: progression tables (without them 
 tools/gamedata/creatures.sh        # one time: creature data (without it the world has no creature); needs an Oodle library (see below)
 tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
+tools/gamedata/heights.sh          # one time: terrain heights (without them no creature leaves its place); 136 MB, 2 minutes
 linux-compat/run-soulwarden.sh
 ```
 
@@ -146,7 +148,10 @@ It also has the commands for the items and the coin of a character: `items CHARA
 on|off`, and for its equipment: `equipment CHARACTER`, `equip CHARACTER BAGSLOT [SLOT]`, and
 `unequip CHARACTER SLOT [BAGSLOT]` (`SLOT` is a slot number of the paperdoll: 1 chest, 24
 weapon 1; `tools/world --help` has the list). A command for a character that is not in the
-world changes its rows in the database.
+world changes its rows in the database. For a fight: `ignore CHARACTER on|off` (the
+creatures ignore a character), `heal CHARACTER` (its full health; a dead character lives
+again at its place), `hurt CHARACTER AMOUNT` (its health goes down), and `message CHARACTER
+TYPE HEX` (one message with bytes of the caller to the client of a character).
 The backend has these commands only with the option `--dev-commands`, and it accepts that
 option and the research switch only when its process has `SOULWARDEN_HARNESS=1`.
 
@@ -164,7 +169,7 @@ it is hidden, the game has its input again. The window is for the character that
 | Tab | What you can do |
 | --- | --- |
 | Items | Type a text in the search field to find items of the catalog (the text is compared with the id, the type, and the class of an item, for example `sword`, `potionhealth`, `ore`, `consumable`). Click an item, set the quantity, and press "Give": the item is in the bag. The list "Bag" has each item of the bag with a "Remove" button. |
-| Character | Set the level, give experience, set the coin, and set the value of each attribute (the character must have the free points for it). |
+| Character | Set the level, give experience, set the coin, and set the value of each attribute (the character must have the free points for it). The row "Health" shows the health of your character: "Heal" gives it its full health, and for a dead character the button has the text "Revive" (the character lives again at its place, and the death screen closes). With the mark "Creatures ignore this character", no creature takes your character as its target; the value stays until the backend stops. |
 | Skills | Set the mastery level of each weapon (each level above 1 gives one mastery point for its tree) and the level of each trade skill. |
 | Creatures | The list at the bottom has each creature that is 150 m or less from your character, the nearest one first, with its level, its health, and its distance. "Set" sets the health of a creature to the percent value above the list, "Kill" kills it, and "Remove" takes it out of the world. To make a creature, type a text in the search field (the id, the name, or the family of a kind, for example `wolf`, `risen`, `rabbit`), click a kind, set the level and the distance, and press "Spawn": the creature is that many meters to the north of your character (the window covers the left half of the picture: press F8 to see the creature). "Reset" makes each spawn point free again whose creature you killed or removed. |
 | Travel | The first line has the position of your character (meters: east, north, up). The list has each spirit shrine and each inn of the world with its territory and its distance from your character. Type a text in the filter (a part of a name or of a territory, `shrine`, or `inn`), click a place, and press "Travel": your character is at that place, with no new login. A place that is more than 100 m away shows the loading screen of the game for some seconds. The form below the list moves your character to a position in numbers ("Here" puts the position of your character into the form): give a height on the ground or above it. Your character and the camera look north after a travel. |
@@ -208,6 +213,7 @@ the HUD.
 | Variable of the launcher | Effect |
 | --- | --- |
 | `SOULWARDEN_MELEE_REPORT=0` | The backend does not give the client the remote configuration document that turns the melee contact report of the client on. A melee attack of your character then has no effect on a creature. |
+| `SOULWARDEN_CREATURE_BEHAVIOR=0` | The behavior of the creatures is off for the start (backend option `--no-creature-behavior`): the creatures stand at their spawn points, do not see your character, and do not attack. The tab "Character" of the tool window has a line that says so. |
 | `SOULWARDEN_EXACT_POSITION=0` | The hook does not change the client code. The backend then estimates the position from the camera: the saved position can be some meters from the character (up to 4 m behind it after a camera move with the wheel, some meters in front of it near a wall). |
 
 - The hook compares the client code at the address with the code of the supported client
@@ -277,7 +283,13 @@ button on "Confirm").
   of the whole world (32,840 spawn points of 3,848 kinds in the 25 regions of the supported
   build, a file of 8.8 MB; `--radius METERS` with `--center X Y` writes a smaller file with
   the spawn points of a circle), and for each kind its slice, the slots of its components,
-  its vitals ids, its health, its name, and its action table (protocol notes 4.14). The tool
+  its vitals ids, its health, its name, and its action table (protocol notes 4.14). From
+  stage 3.4b the file (9.4 MB) also has what the behavior of a creature needs (protocol
+  notes 4.17): the vision, the leash, the speeds, the animation tags, and the attacks of
+  each model, the damage of each kind and of each level, and the terrain height at each
+  spawn point. With a file from before, the creatures stand at their spawn points: run the
+  tool again. `--no-attack FILE` writes one line for each kind that does not attack (859
+  kinds). The tool
   leaves out the spawn points of 50 creature models that the client does not show
   correctly with this backend (1,541 spawn points: the list is in
   `tools/gamedata/creature_slices.json`), and `--report FILE` writes one line for each entry
@@ -287,6 +299,13 @@ button on "Confirm").
   `tools/research/oodle_loader.c`). The tool needs about 1 minute.
   `tools/gamedata/creatures.sh --find TEXT` prints the kinds with a text. Without the file
   the backend starts, and the world has no creature.
+- `tools/gamedata/heights.sh` makes the terrain heights
+  (`~/.local/share/soulwarden/gamedata/heights`, one file for each of the 49 regions of the
+  world, 136 MB): the height of the terrain at each meter, from the height maps of the game
+  copy (protocol notes 4.17). The tool needs about 2 minutes and no Oodle library. The
+  backend reads only the parts of the files that it needs. `tools/gamedata/heights.sh
+  --height X Y` prints the height of a position. Without the files the backend starts, and
+  no creature leaves its place: it attacks only a character that is in its reach.
 - `tools/gamedata/places.sh` makes the travel places
   (`~/.local/share/soulwarden/gamedata/travel-places.json`): the spirit shrines and the inns of
   each territory with their names and positions (161 places in 16 territories in the
@@ -298,8 +317,10 @@ button on "Confirm").
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
-  the damage values of the attributes, the level and gear score values, and the defense
-  values of each creature (protocol notes 4.15). It reads the data tables and the base
+  the damage values of the attributes, the level and gear score values, the defense
+  values of each creature (protocol notes 4.15), and, from stage 3.4b, the armor values of
+  each armor item and the damage values of the level differences (protocol notes 4.18:
+  with a file from before, your armor does not lower the damage of a creature). It reads the data tables and the base
   attributes file of the game copy, from the same sources as the creature data tool.
   `tools/gamedata/combat.sh --find TEXT` prints the weapons and the creatures with a text.
   Without the file the backend starts, and an attack has no effect.
@@ -307,10 +328,29 @@ button on "Confirm").
   their spawn points: rabbits, wolves, Risen, skeletons, sheep, and many others. Each
   one has its body, its idle animation, its name plate with its level, and its health bar.
   The world makes the creature of a spawn point when your character comes near it (150 m),
-  and removes it when no character is near (200 m). A creature does not move and does not
-  attack yet. Some creatures are not in the world yet (the corruption swarmers, the sulfur
+  and removes it when no character is near (200 m). Some creatures are not in the world yet (the corruption swarmers, the sulfur
   lizards, the chameleons, and others): the client shows no body for them with this
   backend.
+- Fights. With the creature data of stage 3.4b and the terrain heights, a creature sees your
+  character (the vision distance and angle of its model: 12 m and 75 degrees to each side
+  for a wolf), runs to it, and attacks it. A creature that you hit attacks you too. It goes
+  back to its place when you are dead or too far, or at the end of its leash (70 m for a
+  wolf), and it has its full health there. The rules are rules of this project (protocol
+  notes 4.17): the game files have the values of a creature and not its behavior. Not yet:
+  path search (a creature goes on a straight line, through a wall), creatures on a floor of
+  a building, on a bridge, or in a cave (they do not leave their place), patrols, groups,
+  ranged attacks, magic, and abilities. 859 of the 3,848 kinds have no attack that the tool
+  can use: they stand.
+- Health and death. An attack of a creature lowers the health of your character: the HUD
+  shows the new value, a red mark shows the direction of the attacker, and a red number
+  shows the damage. The backend computes the damage from the level and the kind of the
+  creature, the attack, the level difference, and your armor (protocol notes 4.18). At the
+  health 0 your character dies: the client shows "You died" for 5 s and then its respawn
+  screen. The button "Respawn" puts your character at the nearest spirit shrine or inn
+  with its full health (with no travel places: at the place of its death). A character is
+  never dead after a login. Not yet: health regeneration, food and potions, blocks,
+  dodges, critical hits, status effects, and the respawn points of the game (camps,
+  houses).
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is
@@ -330,7 +370,7 @@ button on "Confirm").
   creature. The client finds each contact itself and reports it, and the backend checks each
   report (the creature, the distance, the weapon, the time of the attack): the rules are
   rules of this project (protocol notes 4.15). Not yet: ranged weapons and magic, abilities,
-  critical hits, blocks, damage to your character, loot, and experience.
+  critical hits, blocks, loot, and experience.
 - The bag (Tab key) shows the items and the coin of the character. The tool window (F8)
   gives and removes items, and `tools/world give` gives items in a development run. The backend handles the drop request of the client (drag an
   item to the area "Drop items": the item is gone, the world has no items on the ground yet;

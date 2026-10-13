@@ -27,24 +27,37 @@
 //      speed permits for that time, plus one margin. The margin thus applies one time for a
 //      window, not one time for each report. The height has a limit for a rise and a larger
 //      one for a fall, each one for the time between two reports, and the same two limits for
-//      the total rise and the total fall of a time window of the client time (below). The total
-//      rise is the sum of the rises of the accepted reports of the window, and the total fall
-//      is the sum of their falls: a path that goes up and down has the two sums, not the
-//      difference of two heights. The first report of a session has the position of the entity
-//      as its reference, for the horizontal distance and for the height.
+//      the rises and for the falls of more than one report: a budget of time for each of the
+//      two directions (below). An accepted report takes the time of its rise from the first
+//      budget and the time of its fall from the second one: a path that goes up and down has
+//      the two sums, not the difference of two heights. The first report of a session has the
+//      position of the entity as its reference, for the horizontal distance and for the height.
 //
-// The client time of a report (the time of the height totals). The input number of a report is
-// the time of the client: one number for each simulation step, 30 in a second. The client time
-// is the time of the input numbers from the first accepted report, with two limits from the
-// world clock: it is not more than the time of the world clock from that report plus the delay
-// value (a client cannot make more simulation steps than the time that passed, and large
-// input numbers give no time), and it is not more than the backlog value behind that time.
-// Thus the time of a report does not come from the moment at which its datagram came: reports
-// that come late and together (a delay of the network, a client that did no step for some
-// frames) have the time of their input numbers, which the time of the world clock before them
-// covers. A rule with the time of arrival refused the valid jumps of such reports (code review
-// of stage 3.2a, finding 2). The limits for a client that changes its input numbers are in the
-// protocol notes 4.7.
+// The two budgets of the height. The world clock fills each budget, one time: the time from the
+// last accepted report to the next one. The first accepted report gives each one the delay
+// value. Thus the rises of a session are not more than the rise speed times the time of the
+// world clock from its first accepted report plus the delay value, and the same for the falls
+// with the fall speed, for each sequence of input numbers. A time of the world clock gives its
+// rise one time: a rule that gave a client the time of the world clock, and then the time of
+// its input numbers for the same seconds, let a client rise 437 m in 15 s (code review of stage
+// 3.4c, finding C2).
+//
+// The limit of a budget, and the client time of a report. A budget keeps the time that the
+// client did not use, to a limit: the time of one window (1 s), or the time that the client has
+// in store when that is more. The input number of a report is the time of the client: one
+// number for each simulation step, 30 in a second. The client time is the time of the input
+// numbers from the first accepted report, with two limits from the world clock: it is not more
+// than the time of the world clock from that report plus the delay value (a client cannot make
+// more simulation steps than the time that passed, and large input numbers give no time), and
+// it is not more than the backlog value behind that time. The time in store is the time of the
+// world clock plus the delay value, minus the client time of the last accepted report, and
+// 5.25 s at most (the backlog value and the delay value). Thus reports that come late and
+// together (a delay of the network, a client that did no step for some frames) keep their
+// budget: the time of the world clock before them covers the time of their input numbers. A
+// rule with the time of arrival refused the valid jumps of such reports (code review of stage
+// 3.2a, finding 2). A client that sent each report in time has no time in store, and its
+// budget is the time of one window. The limits for a client that changes its input numbers are
+// in the protocol notes 4.7.
 //
 // The check is a design of this project: the client has no copy of the check of the original
 // server. It finds a position that is too far from the last one. It cannot find a position
@@ -52,7 +65,8 @@
 //
 // The world keeps the accepted position in the entity (rule MP-1). The values that describe
 // the input of one client are in a PositionTrack, which the session of that client owns: the
-// last input number, the accepted positions of the time window, and the counts for the log.
+// last input number, the accepted positions of the time window with the two budgets of the
+// height, and the counts for the log.
 
 namespace soulwarden::backend::world {
 
@@ -142,8 +156,9 @@ inline constexpr std::chrono::milliseconds kClockSlack{250};
 /**
  * The client time of a report is not more than this time behind the time of the world clock
  * plus the delay value. It is the longest delay of the reports of a client for which each of
- * its reports keeps the time of its input number. A client can keep this time and use it
- * later: a rise of 20 m/s for this time at one value of the world clock.
+ * its reports keeps the time of its input number. A client can keep this time and the delay
+ * value in its two budgets of the height and use them later, one time: a rise of 20 m/s for
+ * 5.25 s (105 m) at one value of the world clock.
  */
 inline constexpr std::chrono::milliseconds kReportBacklog{5000};
 /**
@@ -229,13 +244,12 @@ private:
         WorldClock::time_point time{};
         state::WorldPosition position;
         /**
-         * The sum of the rises and the sum of the falls of the accepted reports of the session
-         * up to this one (meters). The difference of two samples is the total of the reports
-         * between them. Double precision: the sums of a long session stay exact to less than
-         * one step of the height on the wire.
+         * The two budgets of the height after this report (seconds, see the top of this file):
+         * the time that the client has for a rise at the rise speed, and for a fall at the fall
+         * speed. The world clock fills them from the time of this report on.
          */
-        double totalRise{0.0};
-        double totalFall{0.0};
+        double riseTime{0.0};
+        double fallTime{0.0};
         /** The client time of the report, in seconds from the first accepted report (see the top of this file). */
         double clientTime{0.0};
     };

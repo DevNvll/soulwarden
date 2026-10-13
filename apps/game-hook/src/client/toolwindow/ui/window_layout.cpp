@@ -554,10 +554,23 @@ void draw_character() {
             send("set_coin", {{"amount", static_cast<std::uint64_t>(std::llround(g_coin * 100.0))}}, text);
         }
 
-        snprintf(now, sizeof(now), "%u / %u", g_data.health, g_data.healthMax);
+        snprintf(now, sizeof(now), "%u / %u%s", g_data.health, g_data.healthMax, g_data.dead ? " (dead)" : "");
         begin_value_row("Health", now);
         ImGui::TableNextColumn();
+        // The full health for the character. A dead character lives again at its place.
+        if (ImGui::Button(g_data.dead ? "Revive" : "Heal")) {
+            send("heal", json::object(), g_data.dead ? "Revive the character" : "Give the full health");
+        }
         ImGui::EndTable();
+    }
+    // The creatures of the world attack a character that they see. With this mark they ignore
+    // the character of this row (a value of the backend for this character, until its stop).
+    bool ignore = g_data.creaturesIgnore;
+    if (ImGui::Checkbox("Creatures ignore this character", &ignore)) {
+        send("set_creatures_ignore", {{"ignore", ignore}}, ignore ? "Creatures ignore the character" : "Creatures attack the character");
+    }
+    if (!g_data.creatureBehavior) {
+        ImGui::TextColored(kDimColor, "The behavior of the creatures is off for this start: they stand.");
     }
 
     char title[64];

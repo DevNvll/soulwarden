@@ -28,10 +28,14 @@
 // creature worldPosAbs (the exact position: the client does not move a creature to the
 //          ground), rotation (the direction of the creature), lookDir, teleportAndMigrationId,
 //          timeAnchor, dataBits, and moreDataBits (both 0). No later time anchor. A creature
-//          with no action of the server plays the idle action that its client selects. For a
-//          creature with an action of the server (the death action), the state also has the
-//          scope fields: scopeData, scopeInfoBlob, scopeTimeBlobEx, globalFragTags, and the
-//          four bytes of the time of scope 0 (protocol notes 4.14).
+//          with no action of the server plays the action that its client selects: the idle
+//          action, and the walk for a sequence of states with a new position each 200 ms. For
+//          a creature with an action of the server (the death action, an attack, a reaction),
+//          the state also has the scope fields: scopeData, scopeInfoBlob, scopeTimeBlobEx,
+//          globalFragTags (the tags of the weapons of the creature, which select the variant
+//          of a fragment), and the four bytes of the time of scope 0 (protocol notes 4.14 and
+//          4.17). The first state of a session for a creature whose slice needs its spawn
+//          action has that action.
 //
 // The id of a state (idAbs and idRel) is, for the original server, the number of the last
 // input of the owner that the server applied: the client looks for its predicted state with
@@ -85,7 +89,6 @@ constexpr unsigned kScopeTimeByte3 = 50;
 constexpr std::uint32_t kScopeFullBody = 0x01;
 /** The playback speed 1.0 as a 16-bit float. */
 constexpr std::uint16_t kPlaybackNormal = 0x3C00;
-constexpr std::size_t kFragTagBytes = 12;
 /** Ticks of the action time for one second. */
 constexpr std::uint64_t kActionTicksPerSecond = 30;
 // The rotation and the look direction are compressed unit quaternions (client reader at image
@@ -198,7 +201,7 @@ hub::Bytes encode_movement_state(const world::Entity& entity, View view, const w
     return state.finish();
 }
 
-hub::Bytes encode_creature_movement_state(const world::Entity& entity, View, const world::WorldClock& clock) {
+hub::Bytes encode_creature_movement_state(const world::Entity& entity, const world::WorldClock& clock, world::Revision since) {
     StateWriter state(kGroups, FieldMask::wide);
     // The position of a creature is exact: the client does not move a creature to the ground.
     write_world_position(state.field(0, kWorldPosition), entity.position);
@@ -207,11 +210,25 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, View, con
     state.field(0, kTeleportId).u8(1);
     state.field(0, kDataBits).u8(0);
     state.field(0, kMoreDataBits).u8(0);
-    if (entity.creature.action) {
+    // The action of the state. A creature whose slice needs its spawn action has that action in
+    // the first state of a session: the client shows the body and the name plate of such a
+    // creature only after it. The death action of a dead creature comes first: its body lies.
+    // A later state has an action only when the action started after the last record of the
+    // session (an attack, a reaction, the death): a session gets each action one time, and the
+    // client plays it to its end. A state of a walk has none, and the client then selects the
+    // walk itself.
+    const bool first = since == 0;
+    const world::CreatureAction* selected = entity.creature.action ? &*entity.creature.action : nullptr;
+    if (first && entity.creature.spawnAction && !(entity.creature.dead && selected != nullptr)) {
+        selected = &*entity.creature.spawnAction;
+    } else if (!first && selected != nullptr && selected->changed <= since) {
+        selected = nullptr;
+    }
+    if (selected != nullptr) {
         // The action that the server started, in scope 0. The time of the action is the time
         // from its start to this state: a client that gets the state later shows the pose of
         // that time, not the start of the action.
-        const world::CreatureAction& action = *entity.creature.action;
+        const world::CreatureAction& action = *selected;
         hub::Writer record;
         record.u16(action.generation);
         record.size(action.fragment + 1);
@@ -223,7 +240,7 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, View, con
         blob.size(static_cast<std::uint32_t>(record.data().size()));
         blob.raw(record.data());
         state.field(0, kScopeTimeBlob).size(0);
-        state.field(0, kGlobalFragTags).zeros(kFragTagBytes);
+        state.field(0, kGlobalFragTags).raw(action.tags);
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(clock.now() - action.started).count();
         const std::uint64_t ticks =
             std::min<std::uint64_t>(static_cast<std::uint64_t>(std::max<long long>(elapsed, 0)) * kActionTicksPerSecond / 1000,
@@ -235,6 +252,14 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, View, con
     }
     write_time_anchor(state, clock);
     return state.finish();
+}
+
+std::vector<hub::Bytes> encode_creature_movement_parts(const world::Entity& entity, View, const PartsRequest& request) {
+    std::vector<hub::Bytes> parts;
+    if (request.clock != nullptr) {
+        parts.push_back(encode_creature_movement_state(entity, *request.clock, request.since));
+    }
+    return parts;
 }
 
 std::uint16_t movement_state_id(std::uint16_t newestInput) {

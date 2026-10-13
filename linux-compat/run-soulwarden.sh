@@ -246,6 +246,12 @@ if [[ "${SOULWARDEN_NO_BACKEND:-0}" != "1" ]]; then
     if [[ "${SOULWARDEN_MELEE_REPORT:-1}" == "0" ]]; then
         backend_arguments+=(--no-melee-report)
     fi
+    # The behavior of the creatures: a creature gets a target, goes to it, and attacks.
+    # SOULWARDEN_CREATURE_BEHAVIOR=0 turns it off for a start: the creatures stand at their
+    # spawn points.
+    if [[ "${SOULWARDEN_CREATURE_BEHAVIOR:-1}" == "0" ]]; then
+        backend_arguments+=(--no-creature-behavior)
+    fi
     # Development commands for the world (tools/world). They are diagnostics: only a run with
     # the harness gate on gets them, and the backend refuses the option without the gate.
     if [[ "${SOULWARDEN_DEV_COMMANDS:-0}" == "1" ]]; then

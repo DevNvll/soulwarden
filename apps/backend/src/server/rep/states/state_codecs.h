@@ -85,6 +85,8 @@ struct PartsRequest {
     world::Revision since{0};
     /** Largest number of bytes of one fragment state, so that one bundle stays in one carrier message. */
     std::size_t budget{0};
+    /** The clock of the world, for a state with a time. Null: a caller with no clock (an encoder that needs none). */
+    const world::WorldClock* clock{nullptr};
 };
 
 /**
@@ -127,6 +129,13 @@ struct StateCodec {
 [[nodiscard]] hub::Bytes encode_player_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_movement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_vitals_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The vitals state of a character (states/vitals_state.cpp), in one fragment. The first
+ *         state of a session for a character that lives is the state of encode_vitals_state.
+ *         Each later state, and the first state for a dead character, also has the life data
+ *         (the dead mark) and the mark "the health changed".
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_vitals_parts(const world::Entity& entity, View view, const PartsRequest& request);
 [[nodiscard]] hub::Bytes encode_appearance_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /**
  * @return The level of the character (states/progression_state.cpp): the level and the
@@ -216,8 +225,18 @@ struct ItemWire {
  */
 [[nodiscard]] hub::Bytes encode_item_look(const world::ItemInstance* item, ItemWire wire = {});
 
-/** @return The movement state of a creature (states/movement_state.cpp): its position and its direction. */
-[[nodiscard]] hub::Bytes encode_creature_movement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The movement state of a creature (states/movement_state.cpp): its position, its
+ *         direction, and the action that the server started.
+ * @param since The world revision of the last record of the session for the creature. 0: the
+ *        session has no record of it. The first state has the action that plays, or the spawn
+ *        action of a creature whose slice needs it. A later state has an action only when the
+ *        action started after that revision: a session gets each action one time.
+ */
+[[nodiscard]] hub::Bytes encode_creature_movement_state(const world::Entity& entity, const world::WorldClock& clock,
+                                                        world::Revision since);
+/** @return The same, in one fragment, for a session whose last record of the creature has the revision `request.since`. */
+[[nodiscard]] std::vector<hub::Bytes> encode_creature_movement_parts(const world::Entity& entity, View view, const PartsRequest& request);
 /**
  * @return The vitals state of a creature (states/vitals_state.cpp), in one fragment: the full
  *         state for a session that has no record of the creature, and after that the health

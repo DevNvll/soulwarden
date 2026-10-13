@@ -48,8 +48,10 @@ World::World(const WorldClock& clock,
       m_inventory(*this, store, options.itemCatalog),
       m_progress(*this, store, options.progressionTables),
       m_skills(*this, store, options.progressionTables),
+      m_navigation(options.terrain),
       m_creatures(*this, options.creatureData),
-      m_combat(*this, options.combatTables) {}
+      m_combat(*this, options.combatTables),
+      m_health(*this) {}
 
 World::~World() {
     stop_thread();
@@ -241,6 +243,30 @@ void World::damage_dealt(SessionId session, const DamageDealt& damage) {
     }
 }
 
+void World::damage_taken(SessionId session, const DamageTaken& damage) {
+    const auto sink = m_sinks.find(session);
+    if (sink != m_sinks.end() && sink->second != nullptr) {
+        sink->second->damage_taken(damage);
+    }
+}
+
+void World::died(SessionId session, float respawnSeconds) {
+    const auto sink = m_sinks.find(session);
+    if (sink != m_sinks.end() && sink->second != nullptr) {
+        sink->second->died(respawnSeconds);
+    }
+}
+
+bool World::development_message(const std::string& characterId, std::uint32_t type, const std::vector<std::uint8_t>& body) {
+    const Entity* entity = find_character(characterId);
+    const auto sink = entity != nullptr && entity->owner != 0 ? m_sinks.find(entity->owner) : m_sinks.end();
+    if (sink == m_sinks.end() || sink->second == nullptr) {
+        return false;
+    }
+    sink->second->development_message(type, body);
+    return true;
+}
+
 EnterResult World::enter(SessionId session,
                          SessionSink& sink,
                          const std::string& characterId,
@@ -299,6 +325,17 @@ bool World::leave(SessionId session) {
     Entity* entity = find(id);
     if (entity == nullptr || entity->owner != session) {
         return false;
+    }
+    if (entity->life.dead) {
+        // A dead character is not dead at its next world entry: its row gets its respawn
+        // place, and each world entry starts with the full health (world/health.h).
+        const RespawnPlace respawn = m_health.respawn_place(*entity);
+        const std::string mark = log::session_mark(entity->owner, entity->characterId);
+        const log::Context context(mark);
+        log::write("world: character %s leaves the world dead: its row gets its respawn place (%s)",
+                   entity->characterId.c_str(),
+                   respawn.name.empty() ? "the place of its death" : respawn.name.c_str());
+        place(*entity, respawn.position, true, false);
     }
     save_position(*entity, 0.0F);
     remove_entity(id);
@@ -383,6 +420,15 @@ Entity& World::make_creature(const Creature& creature, const state::WorldPositio
     return entity;
 }
 
+void World::place_creature(Entity& entity, const state::WorldPosition& position) {
+    if (entity.kind != EntityKind::creature || !valid_position(position)) {
+        return;
+    }
+    m_index.move(entity.id, entity.position, position);
+    entity.position = position;
+    entity.positionRevision = ++m_revision;
+}
+
 void World::remove_creature(EntityId id) {
     const Entity* entity = find(id);
     if (entity != nullptr && entity->kind == EntityKind::creature) {
@@ -458,13 +504,44 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     travel.distance =
         std::hypot(position.x - travel.from.x, position.y - travel.from.y, position.z - travel.from.z);
     travel.screen = screen;
+    // The row gets the new place first: a travel shows in the entity and in the session only
+    // when its row is written. With a write that failed, the row has the old place, and the
+    // next world entry of the character would be there. Such a travel changes nothing: the
+    // caller gets the error and can do the command again.
+    if (!m_store.set_character_position(entity->characterId, position)) {
+        const std::string mark = log::session_mark(entity->owner, entity->characterId);
+        const log::Context context(mark);
+        log::write("world: no travel of character %s (%s) to %.2f %.2f %.2f: the database did not accept the position, "
+                   "and the character stays at its place",
+                   entity->characterId.c_str(),
+                   entity->name.c_str(),
+                   static_cast<double>(position.x),
+                   static_cast<double>(position.y),
+                   static_cast<double>(position.z));
+        result.error = TravelError::storage;
+        return result;
+    }
     // The place is a place on the ground: the client gets it with the spawn lift, as the
     // position of a row, and the character falls to the ground. The next accepted position
     // report of its client is the exact position.
     place(*entity, position, true, false);
+    // The position of the entity is the position of the row: a session that ends now saves
+    // nothing, and the row has the new place, not the old one.
+    entity->savedPosition = position;
+    entity->positionDirty = false;
+    m_dirtyPositions.erase(entity->id);
+    entity->lastSave = m_clock.now();
     // The next number, 1 to 15: the client of the owner takes the position of a movement state
-    // only when its teleport number is new, and 0 is the start number of a client.
-    entity->teleport = static_cast<std::uint8_t>(entity->teleport % 15 + 1);
+    // only when its teleport number is not the number that the client has, and 0 is the start
+    // number of a client. The count starts at the number that the client has, not at the
+    // number of the entity: a session sends only the last movement state of a tick, and 15
+    // travels in one tick would give the entity the number of the client again. Thus each
+    // travel before the next movement state of the owner has the same number. An entity with
+    // no client counts from its own number.
+    const auto sink = entity->owner != 0 ? m_sinks.find(entity->owner) : m_sinks.end();
+    const std::optional<std::uint8_t> known =
+        sink != m_sinks.end() && sink->second != nullptr ? sink->second->client_teleport() : std::nullopt;
+    entity->teleport = static_cast<std::uint8_t>(known.value_or(entity->teleport) % 15 + 1);
     entity->changed[ComponentKey::movement] = m_revision;
     m_lastTravel = m_revision;
     {
@@ -482,12 +559,10 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
                    static_cast<double>(position.z),
                    static_cast<double>(travel.distance),
                    static_cast<unsigned>(entity->teleport));
+        log::write("rep: position %.2f %.2f %.2f saved", position.x, position.y, position.z);
     }
-    // The row has the new place at once: a session that ends now saves it, not the old place.
-    save_position(*entity, 0.0F);
     // The creatures of the new place: the spawn point rule runs in this tick, not at its interval.
     m_creatures.scan_soon();
-    const auto sink = entity->owner != 0 ? m_sinks.find(entity->owner) : m_sinks.end();
     if (sink != m_sinks.end() && sink->second != nullptr) {
         sink->second->traveled(travel);
     }
@@ -600,12 +675,14 @@ bool World::save_position(Entity& entity, float minimumDistance) {
     // The log line names the session that plays the character.
     const std::string mark = log::session_mark(entity.owner, entity.characterId);
     const log::Context context(mark);
-    entity.positionDirty = false;
-    m_dirtyPositions.erase(entity.id);
     if (!m_store.set_character_position(entity.characterId, entity.position)) {
+        // The mark stays: the position is not the position of the row, and the world tries
+        // the write again at the next interval.
         log::write("rep: the position of character %s was not saved", entity.characterId.c_str());
         return false;
     }
+    entity.positionDirty = false;
+    m_dirtyPositions.erase(entity.id);
     entity.savedPosition = entity.position;
     log::write("rep: position %.2f %.2f %.2f saved", entity.position.x, entity.position.y, entity.position.z);
     return true;

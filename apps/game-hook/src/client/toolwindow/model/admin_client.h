@@ -128,6 +128,12 @@ struct Snapshot {
     unsigned freeAttributePoints{0};
     unsigned health{0};
     unsigned healthMax{0};
+    /** True: the character is dead (its client shows the death screen). */
+    bool dead{false};
+    /** True: the creatures of the world ignore the character (they do not attack it). */
+    bool creaturesIgnore{false};
+    /** False: the behavior of the creatures is off for this start of the backend. */
+    bool creatureBehavior{true};
     Attribute attributes[kAttributeCount]{};
     /** Hundredths of a coin. */
     std::uint64_t coin{0};

@@ -12,7 +12,7 @@ std::span<const StateCodec> player_codecs() {
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
-        {world::ComponentKey::vitals, kVitalsSlot, kTypeVitalsState, encode_vitals_state},
+        {world::ComponentKey::vitals, kVitalsSlot, kTypeVitalsState, nullptr, encode_vitals_parts},
         {world::ComponentKey::appearance, kAppearanceSlot, kTypeAppearanceState, encode_appearance_state},
         // The level is before the bag: it is in the first bundle of a record also when the bag
         // needs more than one bundle, and the client needs it to show an item.
@@ -41,7 +41,7 @@ std::span<const StateCodec> creature_codecs() {
     // The slot of each component is a value of the slice of the creature (game data).
     static constexpr std::array<StateCodec, 4> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
-        {world::ComponentKey::movement, 0, kTypeMovementState, encode_creature_movement_state, nullptr, false,
+        {world::ComponentKey::movement, 0, kTypeMovementState, nullptr, encode_creature_movement_parts, false,
          [](const world::Entity& entity) { return entity.creature.body->movementSlot; }},
         {world::ComponentKey::vitals, 0, kTypeVitalsState, nullptr, encode_creature_vitals_state, false,
          [](const world::Entity& entity) { return entity.creature.body->vitalsSlot; }},

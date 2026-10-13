@@ -38,6 +38,15 @@
 //                                                        give an entity one state fragment with
 //                                                        these bytes (a live check of a state
 //                                                        type that has no encoder)
+//   POST /v1/dev/world/heal?character=ID                 give a character its full health; a dead
+//                                                        character lives again at its place
+//   POST /v1/dev/world/ignore?character=ID&ignore=0|1    the creatures ignore the character (or not)
+//   POST /v1/dev/world/hurt?character=ID&amount=N        a character takes damage (the health 0
+//                                                        is its death)
+//   POST /v1/dev/world/message?character=ID&type=N&body=HEX
+//                                                        send the client of a character one
+//                                                        message with these bytes (a live check
+//                                                        of a message that has no code)
 //
 // The items, the equipment, and the coin of a character (world/inventory.h). A command for a
 // character that is not in the world changes its rows, and the reply has "applied":"stored".
@@ -108,6 +117,9 @@ json entity_json(const world::Entity& entity) {
         {"name", entity.name},
         {"session", entity.owner},
         {"position", {entity.position.x, entity.position.y, entity.position.z}},
+        {"health", entity.vitals.health},
+        {"healthMax", entity.vitals.healthMax},
+        {"dead", entity.kind == world::EntityKind::creature ? entity.creature.dead : entity.life.dead},
     };
 }
 
@@ -131,6 +143,8 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
         };
         const world::WorldLoad& load = target.load();
         const world::Creatures& creatures = target.creatures();
+        const world::Behavior& behavior = creatures.behavior();
+        const world::BehaviorCounts& behaviorCounts = behavior.counts();
         return json_reply(200,
                           json{{"entities", entities},
                                {"revision", target.revision()},
@@ -141,7 +155,18 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                  {"spawnPoints", creatures.spawn_points().size()},
                                  {"spawnPointsLooked", creatures.counts().pointsLooked},
                                  {"spawnScans", creatures.counts().scans},
-                                 {"creatures", creatures.count()}}}}
+                                 {"creatures", creatures.count()},
+                                 {"behavior", meter(behavior.load())},
+                                 {"behaviorOn", target.options().creatureBehavior},
+                                 {"creaturesActive", behavior.active_count()},
+                                 {"creaturesActiveLargest", behaviorCounts.largestActive},
+                                 {"creatureSteps", behaviorCounts.creatureSteps},
+                                 {"creaturesSensed", behaviorCounts.sensed},
+                                 {"targets", behaviorCounts.targetsBySight + behaviorCounts.targetsByHit},
+                                 {"attacks", behaviorCounts.attacks},
+                                 {"contactsHit", behaviorCounts.contactsHit},
+                                 {"contactsMissed", behaviorCounts.contactsMissed},
+                                 {"moves", behaviorCounts.moves}}}}
                               .dump());
     });
 }
@@ -285,6 +310,38 @@ service::HttpResponse raw_fragment(const Services& services, const RouteContext&
         log::write("dev: fragment for character %s: slot %u, type %u, %zu bytes", character.c_str(), slot, type, state.size());
         target.set_raw_fragment(entity->id, slot, type, state);
         return message(200, "fragment set");
+    });
+}
+
+service::HttpResponse raw_message(const Services& services, const RouteContext& context) {
+    const service::HttpRequest& request = context.request;
+    if (!request.host.empty()) {
+        return message(403, "forbidden");
+    }
+    const auto character = query_text(request, "character");
+    const auto type = query_integer(request, "type", 0, kMaxFragmentType);
+    const auto text = query_text(request, "body");
+    if (!character || character->empty() || !type || !text || text->size() % 2 != 0) {
+        return message(400, "give character=ID, type=N, and body=HEX");
+    }
+    if (text->size() / 2 > kMaxFragmentState) {
+        return message(400, "the body is too large for a development message");
+    }
+    std::vector<std::uint8_t> body;
+    for (std::size_t index = 0; index < text->size(); index += 2) {
+        char* end = nullptr;
+        const std::string digits = text->substr(index, 2);
+        body.push_back(static_cast<std::uint8_t>(std::strtoul(digits.c_str(), &end, 16)));
+        if (end != digits.c_str() + 2) {
+            return message(400, "the body must be hexadecimal text");
+        }
+    }
+    return in_world(services, [character = *character, type = static_cast<std::uint32_t>(*type),
+                               body = std::move(body)](world::World& target) {
+        log::write("dev: message for the client of character %s: type %u, %zu bytes", character.c_str(), type, body.size());
+        return target.development_message(character, type, body)
+                   ? message(200, "message sent")
+                   : message(404, "the character is not in the world, or no session plays it");
     });
 }
 
@@ -478,6 +535,10 @@ void register_dev_routes(Router& router, const Services& services) {
     });
     router.add("POST", "", "/v1/dev/world/touch", "dev.world_touch", bind(touch_entity));
     router.add("POST", "", "/v1/dev/world/fragment", "dev.world_fragment", bind(raw_fragment));
+    router.add("POST", "", "/v1/dev/world/message", "dev.world_message", bind(raw_message));
+    router.add("POST", "", "/v1/dev/world/heal", "dev.world_heal", command_route(services, commands::heal));
+    router.add("POST", "", "/v1/dev/world/ignore", "dev.world_ignore", command_route(services, commands::set_creatures_ignore));
+    router.add("POST", "", "/v1/dev/world/hurt", "dev.world_hurt", command_route(services, commands::hurt_character));
     router.add("GET", "", "/v1/dev/items", "dev.items", bind(list_items));
     router.add("POST", "", "/v1/dev/items/give", "dev.items_give", command_route(services, commands::give_item));
     router.add("POST", "", "/v1/dev/items/remove", "dev.items_remove", command_route(services, commands::remove_item));

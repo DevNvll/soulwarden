@@ -32,7 +32,10 @@ territory names, then of the kinds, then of the names.
 
 The pak entries have Oodle data: the tool reads them as the creature data tool does
 (creature_data.py: SOULWARDEN_OODLE_LIB, SOULWARDEN_OODLE_DLL, or the extracted files). When one
-file that it needs has no source, the tool stops with one message and writes no file.
+file that it needs has no source, the tool stops with one message and writes no file. It does
+the same for a spirit shrine or an inn whose position has a wrong form (no position, a position
+that does not have 12 bytes, a number that is not finite): tools/gamedata/check_places_tool.py is
+the check of this rule.
 
 Usage: travel_places.py [OUTPUT.json]
        travel_places.py --list          print the places, and write no file
@@ -106,7 +109,13 @@ def read_texts(sources: Sources, keys: set[str]) -> dict[str, str]:
 
 
 def read_landmarks(sources: Sources) -> list[dict]:
-    """@return Each landmark of the world with a type of KINDS: the type, the ids, and the position."""
+    """@return Each landmark of the world with a type of KINDS: the type, the ids, and the position.
+
+    A landmark of a different type is not a place for a character: it is left out. A landmark
+    with a type of KINDS must have a position of three finite numbers (12 bytes). One that does
+    not is a fault of the sources, and the tool writes no file: a file with the other places
+    looks complete, and the backend cannot see that a place is not there.
+    """
     paths = [path for path in sources.paths(REGIONS_FOLDER, "/region.metadata")
              if re.fullmatch(r"r_\+\d\d_\+\d\d/region\.metadata", path[len(REGIONS_FOLDER):])]
     if not paths:
@@ -115,15 +124,23 @@ def read_landmarks(sources: Sources) -> list[dict]:
     for path in paths:
         for root in sources.stream(path) or []:
             listed = first(root, LANDMARKS_FIELD)
-            for element in (listed.children if listed is not None else []):
+            for index, element in enumerate(listed.children if listed is not None else []):
                 fields = {child.name: child for child in element.children}
-                position = fields.get(POSITION_FIELD)
                 kind = number(fields.get(TYPE_FIELD))
-                if kind not in KINDS or position is None or position.value is None or len(position.value) != 12:
+                if kind not in KINDS:
                     continue
+                what = f"{path}: landmark {index} (type {kind}, {KINDS[kind]})"
+                position = fields.get(POSITION_FIELD)
+                if position is None or position.value is None:
+                    raise Failure(f"{what} has no position")
+                if len(position.value) != 12:
+                    raise Failure(f"{what} has a position of {len(position.value)} bytes, not of 12 bytes")
+                place = struct.unpack(">fff", position.value)
+                if not all(math.isfinite(value) for value in place):
+                    raise Failure(f"{what} has a position with a number that is not finite")
                 ids = fields.get(IDS_FIELD)
                 landmarks.append({"type": kind, "ids": [number(child) for child in (ids.children if ids is not None else [])],
-                                  "position": struct.unpack(">fff", position.value)})
+                                  "position": place})
     return landmarks
 
 
@@ -144,7 +161,8 @@ def build_document(sources: Sources) -> dict:
     seen: set[tuple] = set()
     for landmark in landmarks:
         x, y, z = (round(float(value), 3) for value in landmark["position"])
-        if not all(math.isfinite(value) for value in (x, y, z)) or not LOWEST_HEIGHT <= z <= HIGHEST_HEIGHT:
+        # A height outside the range of the wire is not a place for a character.
+        if not LOWEST_HEIGHT <= z <= HIGHEST_HEIGHT:
             continue
         # A region file has a landmark two times when two layers place it.
         if (landmark["type"], x, y, z) in seen:

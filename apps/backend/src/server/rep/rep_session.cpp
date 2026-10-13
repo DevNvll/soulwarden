@@ -97,12 +97,18 @@ constexpr std::size_t kMaxNewCreaturesInScan = 16;
  */
 constexpr float kTravelScreenDistance = 100.0F;
 /**
- * After a travel, a session with the camera estimate does not follow a camera that is
- * farther than this from the new place (horizontal, meters), for this time: the client made
- * such a report before it got the new position.
+ * After a travel, a session keeps the place of the travel until its client confirms it: an
+ * accepted position report, or a camera estimate that is near the place. A camera estimate is
+ * near when it is this distance or less from the place in the horizontal plane, and this
+ * distance or less above and below it (meters: an estimate can be some meters from the
+ * character). The session does not follow an estimate that is not near: the client made such
+ * a report before it got the new position, or it did not take the position. The time alone
+ * does not end the rule. It adds only the distance of a movement with the limits of the
+ * position check (world/position_report.h: the window speed, the rise speed, and the fall
+ * speed), from the first camera after the travel: as with a position report, a client gets a
+ * different place only after the time of a walk to it.
  */
 constexpr float kTravelCameraRange = 15.0F;
-constexpr std::chrono::milliseconds kTravelCameraHold{2000};
 
 // Hub numbers and type ids of the actor references of the self identification. The client
 // sends only the actor id of a reference (the 16-byte route of a client frame), not the hub
@@ -361,6 +367,10 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_mastery_tree_respec(body);
         break;
+    case kTypeRequestRespawn:
+        check_route(route, type, body, firstOfType);
+        handle_request_respawn(body);
+        break;
     default:
         check_route(route, type, body, firstOfType);
         if (firstOfType) {
@@ -518,6 +528,12 @@ void RepSession::log_message_counts() const {
                    m_travels,
                    static_cast<unsigned long long>(m_track.count(world::PositionVerdict::beforeTravel)));
     }
+    if (m_damageMarks != 0 || m_deaths != 0 || m_respawns != 0) {
+        log::write("rep: health of the character in the session: %llu damage mark(s) sent, %u death(s), %u respawn(s)",
+                   static_cast<unsigned long long>(m_damageMarks),
+                   m_deaths,
+                   m_respawns);
+    }
     log::write("rep: position reports of the session: %llu accepted, %llu refused (%llu too fast, %llu not finite, %llu "
                "at a height limit, %llu outside the world), %llu not in sequence, %u new input sequence(s); largest "
                "accepted distance for one tick %.3f m (input %u), largest speed between two reports %.2f m/s, largest "
@@ -597,7 +613,7 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
             continue; // The slice of the creature has no such component.
         }
         if (codec.parts != nullptr) {
-            for (hub::Bytes& state : codec.parts(entity, View::observer, PartsRequest{known.sent, kFragmentBudget})) {
+            for (hub::Bytes& state : codec.parts(entity, View::observer, PartsRequest{known.sent, kFragmentBudget, &m_clock})) {
                 fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
             }
             continue;
@@ -846,7 +862,7 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
             continue;
         }
         if (codec.parts != nullptr) {
-            for (hub::Bytes& state : codec.parts(entity, view, PartsRequest{known.sent, kFragmentBudget})) {
+            for (hub::Bytes& state : codec.parts(entity, view, PartsRequest{known.sent, kFragmentBudget, &m_clock})) {
                 fragments.push_back(PendingFragment{codec.slot, codec.type, std::move(state), false});
             }
             continue;
@@ -943,6 +959,10 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
     known.sent = m_world.revision();
     if (owner && movement) {
         m_lastAnchor = now;
+    }
+    if (owner && fullMovement) {
+        // The client has the teleport number of this state: the next travel counts from it.
+        m_clientTeleport = entity.teleport;
     }
     if (owner && m_travelNotice && fullMovement) {
         // The movement state with the new place of a travel is out. This message ends the mark
@@ -1155,7 +1175,8 @@ void RepSession::traveled(const world::Travel& travel) {
     m_followCamera = false;
     forget_camera_distance();
     m_knownBehind = kCameraBehind;
-    m_travelCameraHold = m_clock.now() + kTravelCameraHold;
+    // The same for the camera estimate: the session keeps the place until the client confirms it.
+    m_travelAnchor = TravelAnchor{travel.to, std::nullopt, false};
     if (!m_inWorld || m_closing) {
         return;
     }
@@ -1170,15 +1191,41 @@ void RepSession::traveled(const world::Travel& travel) {
 }
 
 bool RepSession::camera_before_travel(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own) {
-    if (!m_travelCameraHold) {
+    if (!m_travelAnchor) {
         return false;
     }
-    const float distance = std::hypot(input.cameraX - own.position.x, input.cameraY - own.position.y);
-    if (distance > kTravelCameraRange && now < *m_travelCameraHold) {
+    using namespace world::position_limits;
+    TravelAnchor& anchor = *m_travelAnchor;
+    // The position that the estimate gives for this camera: the camera has its start distance
+    // after a travel (RepSession::traveled).
+    const state::WorldPosition estimate = axis_point(input, camera_frame(input), kCameraBehind);
+    // The time of a movement starts at the first camera after the travel: the loading screen
+    // of the client is not a time in which the character moves.
+    if (!anchor.firstCamera) {
+        anchor.firstCamera = now;
+    }
+    const float waited = std::chrono::duration<float>(now - *anchor.firstCamera).count();
+    const float distance = world::horizontal_distance(estimate, anchor.place);
+    const float rise = estimate.z - anchor.place.z;
+    if (distance > kTravelCameraRange + kWindowSpeed * waited || rise > kTravelCameraRange + kRiseSpeed * waited
+        || -rise > kTravelCameraRange + kFallSpeed * waited) {
+        if (!anchor.logged) {
+            anchor.logged = true;
+            log::write("rep: the camera estimate is not near the place of the travel: input %u gives %.3f %.3f %.3f, the "
+                       "place is %.3f %.3f %.3f; the entity keeps the place until the client confirms it (the first report "
+                       "of this travel with this result)",
+                       static_cast<unsigned>(input.sequence),
+                       estimate.x,
+                       estimate.y,
+                       estimate.z,
+                       anchor.place.x,
+                       anchor.place.y,
+                       anchor.place.z);
+        }
         return true;
     }
-    // A camera at the new place, or the end of the time: the estimate starts again there.
-    m_travelCameraHold.reset();
+    // A camera at the new place: the client has the position, and the estimate starts again there.
+    m_travelAnchor.reset();
     resume_camera_estimate(input, now, own);
     return false;
 }
@@ -1192,6 +1239,78 @@ void RepSession::damage_dealt(const world::DamageDealt& damage) {
     send_message(kTypeDamageDealt, damage_dealt_body(m_observer.own(), damage));
 }
 
+void RepSession::damage_taken(const world::DamageTaken& damage) {
+    // The call comes from the world, in its tick (a contact of an attack of a creature).
+    if (!m_inWorld || m_closing) {
+        return;
+    }
+    // The mark with the direction of the damage, for the client of the character only. The
+    // owner and each observer of the character get its new health with the vitals state.
+    send_message(kTypeDamageTaken, damage_taken_body(m_observer.own(), damage));
+    ++m_damageMarks;
+}
+
+void RepSession::died(float respawnSeconds) {
+    // The call comes from the world, in its tick or in a task of a command.
+    const log::Context context(m_logMark);
+    if (!m_inWorld || m_closing) {
+        return;
+    }
+    // The dead mark is in the vitals state of the entity, which goes out with the next record.
+    // The client shows its death screen when it has the two.
+    send_message(kTypePlayerDeath, player_death_body(m_observer.own(), respawnSeconds));
+    ++m_deaths;
+    log::write("rep: the character is dead: message \"on player death\" (type %u) sent, %.1f s to the respawn screen",
+               kTypePlayerDeath,
+               static_cast<double>(respawnSeconds));
+}
+
+void RepSession::handle_request_respawn(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    const auto request = read_respawn_request(body);
+    if (own == nullptr) {
+        return;
+    }
+    if (!request) {
+        log::write("rep: respawn request (type %u, %zu bytes) is too short: no change", kTypeRequestRespawn, body.size());
+        return;
+    }
+    if (!own_call(*own, request->call, kTypeRequestRespawn, "respawn request")) {
+        return;
+    }
+    // The world finds the character from the session. A dead character lives again at its
+    // respawn place: the vitals state and the movement state with a new teleport number go out
+    // with the next record, and the message "on player teleport" after it (the travel path).
+    const world::HealthResult result = m_world.health().respawn(m_id);
+    if (result.error == world::HealthError::none) {
+        ++m_respawns;
+        log::write("rep: respawn request (random %d, id \"%s\"): the character lives again", request->random ? 1 : 0,
+                   request->id.c_str());
+        if (!result.travelled) {
+            // No travel was possible: the character lives again at its place, and this message
+            // ends the loading screen that the client showed for its request.
+            send_message(kTypePlayerTeleport, player_teleport_body(m_observer.own()));
+        }
+        return;
+    }
+    // The client showed its loading screen before it sent the request, and only this message
+    // ends the mark "teleport pending" of the client when no travel comes.
+    send_message(kTypePlayerTeleport, player_teleport_body(m_observer.own()));
+    log::write("rep: respawn request refused (%s): message \"on player teleport\" (type %u) sent, no change",
+               result.error == world::HealthError::alive ? "the character is not dead" : "the session has no character",
+               kTypePlayerTeleport);
+}
+
+void RepSession::development_message(std::uint32_t type, const std::vector<std::uint8_t>& body) {
+    // The call comes from the world, in a task of a command.
+    const log::Context context(m_logMark);
+    if (!m_inWorld || m_closing) {
+        return;
+    }
+    send_message(type, body);
+    log::write("rep: DEVELOPMENT COMMAND: message of the command sent: type %u, %zu bytes", type, body.size());
+}
+
 void RepSession::report_position(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own) {
     const world::PositionReport report{input.sequence,
                                        state::WorldPosition{input.characterX, input.characterY, input.characterZ},
@@ -1202,6 +1321,10 @@ void RepSession::report_position(const ClientInput& input, carrier::Clock::time_
     m_reportSign = now;
     if (m_positionSource != PositionSource::report) {
         set_position_source(PositionSource::report, input);
+    }
+    if (verdict == world::PositionVerdict::accepted) {
+        // The first accepted report after a travel is near the new place: the client confirmed it.
+        m_travelAnchor.reset();
     }
     if (verdict == world::PositionVerdict::accepted || verdict == world::PositionVerdict::noEntity) {
         return;

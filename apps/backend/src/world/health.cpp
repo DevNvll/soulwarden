@@ -1,0 +1,182 @@
+#include "world/health.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+#include "core/logging/log.h"
+#include "world/world.h"
+
+namespace soulwarden::backend::world {
+
+HealthResult Health::apply(Entity& target, float damage) {
+    HealthResult result;
+    result.entity = &target;
+    result.before = target.vitals.health;
+    result.after = target.vitals.health;
+    if (target.life.dead) {
+        result.error = HealthError::dead;
+        return result;
+    }
+    if (!std::isfinite(damage) || damage < 0.0F) {
+        result.error = HealthError::badValue;
+        return result;
+    }
+    target.vitals.health = std::max(target.vitals.health - damage, 0.0F);
+    result.after = target.vitals.health;
+    if (target.vitals.health == 0.0F) {
+        target.life.dead = true;
+        target.life.diedAt = m_world.clock().now();
+        ++target.life.deaths;
+        result.died = true;
+    }
+    m_world.touch(target.id, ComponentKey::vitals);
+    return result;
+}
+
+void Health::creature_hit(Entity& creature, const gamedata::CreatureContact& contact, Entity& target) {
+    const CreatureDamage damage = m_world.combat().creature_damage(creature, contact, target);
+    const HealthResult result = apply(target, damage.dealt);
+    if (result.error != HealthError::none) {
+        return;
+    }
+    const std::string mark = log::session_mark(target.owner, target.characterId);
+    const log::Context context(mark);
+    log::write("world: hit: creature %016llx (%s, level %u) hurts %s with %s: %.1f damage of the type %s (damage of the "
+               "creature %.1f, of the attack %.1f, level factor %.2f, armor %.1f, mitigation %.3f), health %.1f to %.1f%s",
+               static_cast<unsigned long long>(creature.id),
+               creature.creature.kind->id.c_str(),
+               creature.creature.level,
+               target.name.c_str(),
+               contact.row.c_str(),
+               static_cast<double>(damage.dealt),
+               contact.type.c_str(),
+               static_cast<double>(damage.base),
+               static_cast<double>(damage.raw),
+               static_cast<double>(damage.levelFactor),
+               static_cast<double>(damage.armor),
+               static_cast<double>(damage.mitigation),
+               static_cast<double>(result.before),
+               static_cast<double>(result.after),
+               result.died ? ": dead" : "");
+    DamageTaken taken;
+    taken.source = creature.id;
+    taken.from = creature.position;
+    taken.type = contact.wire;
+    taken.amount = damage.dealt;
+    taken.part = target.vitals.healthMax > 0.0F ? std::min(damage.dealt / target.vitals.healthMax, 1.0F) : 1.0F;
+    m_world.damage_taken(target.owner, taken);
+    if (result.died) {
+        log::write("world: character %s (%s) is dead", target.characterId.c_str(), target.name.c_str());
+        m_world.died(target.owner, kRespawnTime);
+    }
+}
+
+HealthResult Health::hurt(const std::string& characterId, float damage) {
+    Entity* target = m_world.find_character(characterId);
+    if (target == nullptr) {
+        HealthResult result;
+        result.error = HealthError::notInWorld;
+        return result;
+    }
+    const HealthResult result = apply(*target, damage);
+    if (result.error != HealthError::none) {
+        return result;
+    }
+    const std::string mark = log::session_mark(target->owner, target->characterId);
+    const log::Context context(mark);
+    log::write("world: command: %s takes %.1f damage, health %.1f to %.1f%s",
+               target->name.c_str(),
+               static_cast<double>(damage),
+               static_cast<double>(result.before),
+               static_cast<double>(result.after),
+               result.died ? ": dead" : "");
+    if (result.died) {
+        log::write("world: character %s (%s) is dead", target->characterId.c_str(), target->name.c_str());
+        m_world.died(target->owner, kRespawnTime);
+    }
+    return result;
+}
+
+HealthResult Health::heal(const std::string& characterId) {
+    HealthResult result;
+    Entity* target = m_world.find_character(characterId);
+    if (target == nullptr) {
+        result.error = HealthError::notInWorld;
+        return result;
+    }
+    result.entity = target;
+    result.before = target->vitals.health;
+    result.revived = target->life.dead;
+    target->life.dead = false;
+    target->vitals.health = target->vitals.healthMax;
+    result.after = target->vitals.health;
+    m_world.touch(target->id, ComponentKey::vitals);
+    const std::string mark = log::session_mark(target->owner, target->characterId);
+    const log::Context context(mark);
+    log::write("world: command: %s has its full health %.1f%s",
+               target->name.c_str(),
+               static_cast<double>(result.after),
+               result.revived ? ", and lives again at its place" : "");
+    return result;
+}
+
+RespawnPlace Health::respawn_place(const Entity& character) const {
+    RespawnPlace place;
+    place.position = character.position;
+    const gamedata::TravelPlaces* places = m_world.options().travelPlaces;
+    if (places == nullptr) {
+        return place;
+    }
+    float nearest = std::numeric_limits<float>::max();
+    for (const gamedata::TravelPlace& candidate : places->places()) {
+        const float away = horizontal_distance(character.position, candidate.position);
+        if (away < nearest) {
+            nearest = away;
+            place.position = candidate.position;
+            place.name = candidate.name;
+        }
+    }
+    return place;
+}
+
+HealthResult Health::respawn(SessionId session) {
+    HealthResult result;
+    Entity* target = m_world.entity_of(session);
+    if (target == nullptr) {
+        result.error = HealthError::notInWorld;
+        return result;
+    }
+    result.entity = target;
+    result.before = target->vitals.health;
+    result.after = target->vitals.health;
+    if (!target->life.dead) {
+        result.error = HealthError::alive;
+        return result;
+    }
+    const RespawnPlace place = respawn_place(*target);
+    target->life.dead = false;
+    target->vitals.health = target->vitals.healthMax;
+    result.after = target->vitals.health;
+    result.revived = true;
+    m_world.touch(target->id, ComponentKey::vitals);
+    {
+        const std::string mark = log::session_mark(target->owner, target->characterId);
+        const log::Context context(mark);
+        log::write("world: respawn of character %s (%s): it lives again with the health %.1f at %s",
+                   target->characterId.c_str(),
+                   target->name.c_str(),
+                   static_cast<double>(result.after),
+                   place.name.empty() ? "the place of its death" : place.name.c_str());
+    }
+    // The change of the place is a travel: the client takes the position of a movement state
+    // with a new teleport number. The client shows its own loading screen for a respawn.
+    // A travel that the world refuses (a place that is not a place for a character, a row
+    // that the database did not accept): the character lives again at the place of its death.
+    const std::string characterId = target->characterId;
+    result.travelled = m_world.travel(characterId, place.position, TravelScreen::off).error == TravelError::none
+                       || m_world.travel(characterId, target->position, TravelScreen::off).error == TravelError::none;
+    return result;
+}
+
+} // namespace soulwarden::backend::world

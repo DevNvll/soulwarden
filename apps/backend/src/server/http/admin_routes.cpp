@@ -104,6 +104,8 @@ constexpr NamedCommand kCommands[] = {
     {"kill_creature", nullptr, commands::kill_creature},
     {"reset_creatures", nullptr, commands::reset_creatures},
     {"travel", commands::travel},
+    {"heal", commands::heal},
+    {"set_creatures_ignore", commands::set_creatures_ignore},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
@@ -207,6 +209,8 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 if (const world::Entity* entity = target.find_character(selected)) {
                     reply["position"] = {entity->position.x, entity->position.y, entity->position.z};
                 }
+                // The health of the character, and if the creatures ignore it.
+                reply["health"] = commands::health_json(target, selected);
             }
         }
         return json_reply(200, reply.dump());

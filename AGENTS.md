@@ -21,6 +21,9 @@ backend. Read only the documents relevant to the task.
 | Creatures: the spawn points, the kinds, the record of a creature, health and death, the action of a creature, the commands | Protocol notes 4.14, `apps/backend/src/world/creatures.h`, `gamedata/creature_data.h`, `server/rep/states` (movement, vitals, marker), `server/http/creature_commands.cpp`, `tools/world creatures`, `tools/gamedata/creatures.sh`, `tools/research/creature_actions.py` |
 | A melee attack of a player on a creature: the contact report of the client, the hit check, the damage rule, the damage number | Protocol notes 2.3, 4.7, and 4.15, `apps/backend/src/world/combat.h`, `gamedata/combat_tables.h`, `server/rep/client_input.h`, `server/rep/combat_messages.h`, `server/http/aws_routes.cpp`, `tools/gamedata/combat.sh`, `tools/research/input_packet.py --contacts` |
 | The creature data of the whole world: which entries are in, which slices are out, the spawn action of a slice, the picture check of the slices | Protocol notes 4.14, `tools/gamedata/creature_data.py`, `tools/gamedata/creature_slices.json`, `tools/research/creature_tour.py` |
+| The behavior of a creature: the sense, the way to a player, the attack and its contact test, the way back, the behavior data of a slice, the two switches | Protocol notes 4.17, `apps/backend/src/world/behavior.h`, `world/navigation.h`, `world/creatures.h`, `gamedata/creature_data.h`, `tools/gamedata/creature_behavior.py`, `tools/world ignore`, test cases FT1 to FT14 |
+| The terrain heights: the height of the ground for a creature that walks | Protocol notes 4.17, `apps/backend/src/gamedata/height_maps.h`, `world/navigation.h`, `tools/gamedata/heights.sh` |
+| The health and the death of a character: the damage of a creature, the damage mark, the death screen, the respawn | Protocol notes 4.18, `apps/backend/src/world/health.h`, `world/combat.h` (`Combat::creature_damage`), `server/rep/health_messages.h`, `server/rep/states/vitals_state.cpp`, `server/http/health_commands.cpp`, `tools/world heal` |
 | The load of the world: the cost of the spawn rule, the time of a tick | `apps/backend/src/world/creatures.h` (`SpawnGrid`), `world/load_meter.h`, `tools/world list` (the line `load:`), test case WS2 |
 | Travel: the server moves a character to a different place, the travel places, the tab "Travel" | Protocol notes 4.16, `apps/backend/src/world/world.h` (`World::travel`), `server/rep/travel_messages.h`, `gamedata/travel_places.h`, `server/http/travel_commands.cpp`, `tools/world travel`, `tools/world places`, `tools/gamedata/places.sh` |
 | Ids of an entity, check of the client messages | Protocol notes 4.2, `tools/gamedata/slice_ids.sh` |
@@ -66,23 +69,28 @@ backend. Read only the documents relevant to the task.
   (`valid_position`), for each source.
 - A creature is an entity of the same table, with the kind `creature` (`world::Creature` in
   `world/entity.h`): its kind and slice (game data), its level, its direction, its life state,
-  and the action that the server started are in the entity; its health is in the vitals of
-  the entity. It has no character, no account, and no session: a function for a character
+  the action that the server started, its spawn action, and the values of its behavior
+  (`world::CreatureMind`: the mode, the target, the home) are in the entity; its health is
+  in the vitals of the entity. It has no character, no account, and no session: a function for a character
   (`World::find_character`, each system with a character id) never finds a creature. Only
-  the creature system (`world/creatures.h`) makes a creature, changes its health, and
-  removes it. The health 0 is the death: the creature gets the dead mark and the death
+  the creature system (`world/creatures.h`) makes a creature, changes its health, moves it,
+  and removes it (the behavior of the creatures, `world/behavior.h`, is a part of it). The health 0 is the death: the creature gets the dead mark and the death
   action of its slice, and its entity stays in the world (the body). A dead creature does
   not get health again. Damage goes through the same system (`Creatures::hurt`): a creature
   that lives after it plays the action `Reaction` of its slice, which has an end 1.5 s later
   (the creature then has no action of the server, and its observers get no record for it).
+  A creature that plays an attack plays no reaction. The creature gets the character that
+  hurt it as its target (`Creatures::hurt` has the attacker).
 - The spawn points (a project rule, protocol notes 4.14). The creature data has the places
   where the game has a creature. The world makes the creature of a spawn point when a
   player is 150 m or less from the point, and it removes the creature when no player is
-  200 m or less from it (`WorldOptions::creatureSpawnEnter`, `creatureSpawnLeave`; one scan
-  for each 500 ms of the world clock). A spawn point has one creature at most. A creature of
+  200 m or less from the point (`WorldOptions::creatureSpawnEnter`, `creatureSpawnLeave`; one
+  scan for each 500 ms of the world clock). The two distances are distances of the spawn
+  point, not of the creature: a creature that goes to a player and away from its point
+  stays in the world (test case FT8). A spawn point has one creature at most. A creature of
   a point that died, or that a command removed, does not come back by this rule: the point
   waits until the command `reset`, or until its respawn time (`Creatures::respawn_at`, the
-  place of the respawn timer of stage 3.5a: no code sets a time in stage 3.4a). At the
+  place of the respawn timer of stage 3.5a: no code sets a time yet). At the
   respawn time, when a player is 150 m or less from the point, the point first removes the
   body of its dead creature and then makes its new creature; with no player that near, the
   body stays and the point waits. A creature of a command has no spawn point: the distance
@@ -90,36 +98,117 @@ backend. Read only the documents relevant to the task.
 - The cost of the spawn rule depends on the players and on the points near them, not on the
   size of the world. The creature data has the spawn points of the whole world, and no scan
   looks at each of them: the points are in a grid with cells of 64 m (`world::SpawnGrid`),
-  a scan looks at the cells near each character (`World::for_each_character`) and at the
-  creatures near each character (the position index), and the points that wait are in their
-  own set (`Creatures::waiting_count`). A new rule for a spawn point or for a creature keeps
+  a scan looks at the cells that are 200 m or less from each character
+  (`World::for_each_character`) and at the creatures of the world (the creatures of the
+  points near a player, and the creatures of commands), and the points that wait are in
+  their own set (`Creatures::waiting_count`). The same for the behavior: a creature at rest
+  needs no time. The step of the behavior looks only at the creatures of one set (a target,
+  or the way back), and the vision rule runs from the characters with the position index
+  (test case FT9, with a time limit). A new rule for a spawn point or for a creature keeps
   this: test case WS2 has a world of this size and a time limit that fails for a scan of
-  all points. The world measures the real time of its ticks and of its scans
-  (`world/load_meter.h`, `World::load`, the line `load:` of `tools/world list`): these
-  values are a measurement only, and no rule of the world reads them.
+  all points. The world measures the real time of its ticks, of its scans, and of the steps
+  of the behavior (`world/load_meter.h`, `World::load`, the lines `load:` and `behavior` of
+  `tools/world list`): these values are a measurement only, and no rule of the world reads
+  them.
 - The spawn action (protocol notes 4.14). Some creature slices show no body and no name plate
   until the server starts the action that the slice names in `m_spawnAction` (the action
   `Spawn`). The creature data has the member `spawnAction` for each slice of the list
-  `spawnAction` of `tools/gamedata/creature_slices.json`: the creature system starts that
-  action when it makes the creature, with no end, and each later observer gets it in the
-  movement state. An action with an end (the reaction to a hit, the action of a command)
-  goes back to the spawn action at its end, with the start time of the creature. The list
+  `spawnAction` of `tools/gamedata/creature_slices.json`. The spawn action is a value of
+  the creature for its whole time in the world (`Creature::spawnAction`), not the action
+  that plays: the first movement state of each session for the creature has it, with the
+  start time of the creature. A reaction, an attack, a walk, and the action of a command do
+  not take it away, and the backend does not send it again at their end. A dead creature
+  has its death action in the first state of a later session; a dead creature of a slice
+  with no death action has its spawn action there, also when it died while its reaction
+  played (test case WS4). A new action of a creature keeps this rule. The list
   `notShown` of the same file has the slices that the client does not show correctly: the
   tool leaves out their spawn points. A slice goes from one list to the other only with a
   picture of the live client (`tools/research/creature_tour.py`).
+- The behavior of a creature (protocol notes 4.17; project rules, in `world/behavior.h`, with
+  each constant in the namespace `world::behavior_rules`). The game files give the values of
+  a slice (the vision, the leash, the speeds, the attacks) and no rule. A creature at rest
+  gets a character as its target when the character is in its vision (the distance of its
+  slice, and the angle of its slice to each side of its direction), or when the character
+  hurts it. It goes to its target with the run speed of its slice, in steps of 200 ms of the
+  world clock, and it starts an attack of its slice when the target is in the reach of the
+  attack. An attack is an action of the server with one contact or more: the world tests
+  each contact at its time on the world clock (the target is in the world, lives, is in the
+  reach and in the angle), and one contact that passes is one damage result
+  (`Health::creature_hit`). A creature loses its target when the target is dead, left the
+  world, is ignored, or is farther than 60 m, and at the end of its leash: it then goes to
+  its home and has its full health there. A creature has one target. No wall stops the
+  vision or the way (stage 3.4d). A kind with no attack that the data tool can use stands
+  and takes damage (859 of the 3,848 kinds).
+- The two functions of the navigation (`world/navigation.h`) are the only place where the
+  behavior gets a place: `ground_height(position)` (the height of the ground at a position
+  with a height: one place can have more than one floor) and `next_step(from, goal,
+  distance)` (the place after one step to a goal). In stage 3.4b the ground is the terrain
+  and the way is the straight line. Stage 3.4d changes the bodies of the two functions, not
+  their callers: do not compute a place of a creature in a different function.
+- The terrain heights are game data (`tools/gamedata/heights.sh`, one file for each region in
+  the folder `heights` of the game data folder, `gamedata::HeightMaps`). The backend opens a
+  region file only when a position in it is asked, reads one tile of 64 m, and keeps 512
+  tiles: do not load the 49 regions at the start. The terrain is not each floor. A creature
+  walks only when its spawn point is 1.0 m or less from the terrain height
+  (`gamedata::kTerrainTolerance`; the creature data file has the terrain height of each
+  spawn point): if not, it does not leave its place, turns to its target, and attacks in
+  its reach. Without the height files no creature leaves its place.
+- A movement state of a creature with a new position and no action makes the client show the
+  walk itself. An attack, a reaction, and the death are scope records with the tag bytes of
+  the slice (`CreatureSlice::tags`: a creature with a weapon has no variant of an attack
+  fragment with no tag, and its attack does not play with 12 bytes of 0). A session gets
+  each action one time: a later movement state has the action only when the action started
+  after the last record of that session (`CreatureAction::changed`).
+- The health and the death of a character (protocol notes 4.18). Only the health system
+  (`world/health.h`) changes the health and the life state of a character
+  (`Entity::vitals.health`, `Entity::life`); the progress system sets the maximum. The
+  damage of a creature attack is computed in one function (`Combat::creature_damage`, a
+  project rule: change it there and in the notes together): the damage of the level and of
+  the kind of the creature, the row of the contact, the level difference, and the armor of
+  the character. The health 0 is the death: the vitals state gets the dead bit (bit 0 of
+  `vitalsData`) for the owner and for each observer, and the session of the owner sends the
+  death notice (type 3950) with the time to the respawn screen (5 s). Only the session of
+  the character that took damage gets the damage mark (type 3601,
+  `SessionSink::damage_taken`). A dead character takes no damage, does no damage, and is
+  the target of no creature. The respawn request of the client (type 1938) makes the
+  character live again with its full health at the nearest travel place, or at the place
+  of its death with no travel places: the change of the place is a travel
+  (`World::travel`). The world finds the character from the session. The health and the
+  death are not in the database: each world entry starts with the full health, and a dead
+  character that leaves the world gets its respawn place in its row (`World::leave`).
+- The first vitals state of a session for a character that lives has no `vitalsData` and no
+  `healthChangeFlags` (the stored bytes of case T2). Each later vitals state of a character
+  has the two fields.
+- Two switches for the behavior. `SOULWARDEN_CREATURE_BEHAVIOR=0` (backend option
+  `--no-creature-behavior`) turns it off for a start: the creatures stand at their spawn
+  points. The command `set_creatures_ignore` (`tools/world ignore`, the mark of the tab
+  "Character") makes the creatures ignore one character: a value of the character in the
+  memory of the world, with the character id as its key (`Behavior::set_ignored`), which
+  stays when its session ends, until the backend stops.
 - Travel (protocol notes 4.16). `World::travel` moves a character that is in the world to a
-  different place with no new login: it puts the entity at the place, gives the entity the
-  next teleport number (1 to 15, `Entity::teleport`, the low 4 bits of the field
-  `teleportAndMigrationId` of the movement state), marks the movement state, writes the
-  position row at once, starts a scan of the spawn rule, and tells the session of the
-  character (`SessionSink::traveled`). The client moves its character only for a movement
+  different place with no new login: it writes the position row first, puts the entity at
+  the place, gives the entity a teleport number (1 to 15, `Entity::teleport`, the low 4 bits
+  of the field `teleportAndMigrationId` of the movement state), marks the movement state,
+  starts a scan of the spawn rule, and tells the session of the character
+  (`SessionSink::traveled`). A travel whose row the database did not accept changes nothing
+  and gives the error `TravelError::storage` (the reply 500 of a command). The teleport
+  number is one above the number that the client of the owner has
+  (`SessionSink::client_teleport`: the number of the last full movement state that the
+  session sent), not one above the number of the entity: each travel before the next
+  movement state of the owner has the same number, and 15 travels in one tick do not give
+  the client its own number again. The client moves its character only for a movement
   state with a teleport number that is different from its own: the session then sends the
   full movement state to the owner and the message 3954 after it, and, for a distance above
   100 m, the message 3951 before it (the loading screen). An observer gets the movement
   state with the new position by the usual path. After the world entry, a travel is the only
   case in which a position of the server goes to the client of the owner. The position check starts again at the new
   place (`PositionTrack::traveled`): a report of the client from before the travel is
-  refused with the cause `beforeTravel`, and it changes nothing. A travel of a character
+  refused with the cause `beforeTravel`, and it changes nothing. The session keeps the place
+  of the travel until its client confirms it (an accepted position report, or a camera
+  estimate near the place): until then the camera estimate does not follow a camera that is
+  more than 15 m from the place in the horizontal plane or in the height
+  (`RepSession::camera_before_travel`). The time alone does not end this rule: it adds only
+  the distance of a movement with the limits of the position check. A travel of a character
   that is not in the world writes its row. The world refuses a travel to a place that is
   not a place for a character (`travel_position`: the limits of the world, and a height
   from -99 m to 999 m, the range of a height on the wire).
@@ -142,8 +231,8 @@ backend. Read only the documents relevant to the task.
   check.
 - A contact is a claim of a client, not a fact. The session gives each claim to the combat
   system of the world (`world/combat.h`, `Combat::claim`), which finds the attacker from the
-  session and checks the claim: the target is a creature of the world that lives and that
-  the session observes, the reference names a component of its slice, an attack input of
+  session and checks the claim: the character lives, the target is a creature of the world
+  that lives and that the session observes, the reference names a component of its slice, an attack input of
   the client fits the contact, the character has a melee weapon in its hand, the same attack
   did not hurt the creature, the exact position of the character is 5 m or less from the
   creature, and the client made 12 claims or less in 1 s. A refused claim changes nothing
@@ -173,17 +262,23 @@ backend. Read only the documents relevant to the task.
   to the world (`World::report_position`), which finds the entity from the session, checks
   the report (`world/position_report.h`: a newer input number, finite numbers, the two limit
   values of the height, a peak speed, a speed of the height, a speed over a time window
-  of 1 s, and the total rise and the total fall of that window: each total is the sum of the
-  rises or of the falls of the accepted reports, not the difference of two heights, and the
-  time of that window is the client time, which is the time of the input numbers, never
-  more than 0.25 s ahead of the world clock and never more than 5 s behind it, so that
-  reports that come late and together keep their time; the first report of a session, and
+  of 1 s, and a budget of time for the rises and a second one for the falls of the accepted
+  reports: an accepted report takes the time of its rise from the first budget and the time
+  of its fall from the second one (the sums of the rises and of the falls, not the
+  difference of two heights), and the world clock fills each budget one time, thus the
+  rises of a session are never more than 20 m/s times the time of the world clock plus
+  0.25 s; a budget keeps the time that the client did not use, to the limit of 1 s, or of
+  the time that the client has in store when that is more: the time of the world clock that
+  its input numbers did not cover, 5.25 s at most, so that reports that come late and
+  together pass; do not give a client the time of the world clock and the time of its input
+  numbers for the same seconds; the first report of a session, and
   the first report after a travel, has the position of the entity as its reference, also
   for its height; the limits are constants from one live session, `position_limits`), and
   keeps an
   accepted position in the entity. A report that the world refuses changes no value of the world, and
   the session counts it in the log. The values of one client for the check (`PositionTrack`:
-  the last input number, the accepted positions of the window, the counts) are in its
+  the last input number, the accepted positions of the window with the two budgets of the
+  height, the counts) are in its
   session, not in the entity. The camera estimate (`RepSession::track_position`,
   `World::set_position`) is the fallback: a session uses it when its client sends no position
   field (no hook change, the switch off, a different client build), and when no report had
@@ -291,14 +386,16 @@ backend. Read only the documents relevant to the task.
   state, the vitals state, and the marker state, with the slot of each component from the
   slice (game data: `CreatureSlice::movementSlot`, `vitalsSlot`, `markerSlot`). A creature
   has only the observer view. The movement state of a creature that lives has no action
-  field: its client plays the idle action itself. Only an action that the server starts
-  (the death action, the reaction to a hit, the spawn action of a slice that needs it, the
-  action of a command) is in the state, as a scope record with the index of the action and of
-  its fragment from the action table of the slice (game data). Never put a state id of a
+  field: its client plays the idle action itself, and the walk for a creature whose
+  position changes. Only an action that the server starts (the death action, the reaction
+  to a hit, an attack, the spawn action of a slice that needs it, the action of a command)
+  is in the state, as a scope record with the index of the action and of its fragment from
+  the action table of the slice and with the tag bytes of the slice (game data). Never put a state id of a
   player (the script layers) into the state of a creature. Each vitals state of a creature
   has `healthChangeFlags` with bit 0: without it the name plate of the client keeps its old
   bar. The position of a creature is exact: the client does not move a creature to the
-  ground, and the height of a spawn point can be a floor above the terrain.
+  ground, and the height of a spawn point can be a floor above the terrain. A creature that
+  walks gets the height of each step from the navigation of the world.
 - A session sends each bundle below the size of one carrier message (1,024 bytes) when its
   fragments permit it: it cuts a record between two fragments, and it sends two fragments of
   one slot in two bundles. It sends no bundle that is larger than the limit of the client
@@ -351,7 +448,9 @@ backend. Read only the documents relevant to the task.
   window thread when the window closes and when the tool window stops. A command of the
   window keeps the character id of the snapshot that the window drew
   (`model::command(character, ...)`): do not read the selected character at send time. The
-  tabs: "Items", "Character", "Skills", "Creatures", and "Travel" (the position of the
+  tabs: "Items", "Character" (with the health of the character, the button "Heal", which
+  has the text "Revive" for a dead character, and the mark "Creatures ignore this
+  character"), "Skills", "Creatures", and "Travel" (the position of the
   character, the list of the travel places with a filter and the distance of each place, a
   button "Travel" for the selected place, and a form with three numbers). The tab
   asks the worker thread for the list of the places (`model::load_places`) until the
@@ -376,7 +475,12 @@ backend. Read only the documents relevant to the task.
   character must be in the world: if not, the reply is 404 and nothing changes. The command
   `travel` moves a character of the account of the token (a place id, or three numbers),
   the route `GET /admin/v1/catalog/places` gives the travel places, and the state of a
-  character has its position. A
+  character has its position. The command `heal` gives a character its full health (a dead
+  character lives again at its place), the command `set_creatures_ignore` (argument
+  `ignore`) makes the creatures ignore a character, and the state of a character has the
+  member `health` (the health, the dead mark, the ignore value, and if the behavior of the
+  creatures is on). The command that lowers the health of a character is a development
+  route only (`tools/world hurt`). A
   development route (`/v1/dev/creatures`, `tools/world`) has no such rule: it changes each
   creature of the world. Each creature command of the common layer has the parameter
   `commands::CreatureReach`, and each route set gives its rule. The admin routes and the
@@ -402,13 +506,20 @@ backend. Read only the documents relevant to the task.
   default when the file is not there. Numbers of a wire contract are code constants. The
   game data files now: `appearance-tables.json`, `slice-ids.json`, `creatures.json` (the
   spawn points of the creatures of the whole world, and for each kind its slice, the slots of its
-  components, its vitals ids, its health, its name, and its action table; without it the
-  world has no creature; the backend refuses a file whose levels, slots, assets, or health
-  values do not fit together, as a whole), `combat-tables.json` (the weapon of each item
+  components, its vitals ids, its health, its name, and its action table; from stage 3.4b,
+  format 2, also the behavior data: the vision, the leash, the speeds, the animation tags,
+  and the attacks of each slice, the damage of each kind and of each level, and the terrain
+  height at each spawn point; without it the world has no creature; the backend refuses a
+  file whose levels, slots, assets, health values, or behavior data do not fit together, as
+  a whole; with a file of format 1 the creatures stand at their spawn points), the folder
+  `heights` (the terrain heights, one file for each region; without it no creature leaves
+  its place), `combat-tables.json` (the weapon of each item
   with its base damage, its attribute factors, and the damage rows of its light and of its
   heavy attack, the damage rows and types, the damage values of the attributes, the level
-  and gear score values of the damage rule, and the defense values of each vitals row;
-  without it an attack of a player on a creature has no effect; the backend refuses a file
+  and gear score values of the damage rule, the defense values of each vitals row, and,
+  from stage 3.4b, the armor values of each armor item and the damage values of the level
+  differences for the damage of a creature (with a file from before, the armor of a
+  character has no effect); without it an attack of a player on a creature has no effect; the backend refuses a file
   with a damage type whose category is not `Physical`, `Elemental`, or `True`, and a file
   with an empty value list of an attribute, as a whole; the tool writes no file when a
   weapon names a damage row or a vitals row names a base row that the tables do not have,
@@ -457,6 +568,7 @@ tools/gamedata/progression.sh        # one time: progression tables for the back
 tools/gamedata/creatures.sh          # one time: creature data for the backend (spawn points, kinds, slices); needs an Oodle source
 tools/gamedata/combat.sh             # one time: combat tables for the backend (weapons, damage rows, defense values of the creatures)
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
+tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/scenarios/menu.sh RUN_LABEL    # start, go to the main menu
 tools/scenarios/play.sh RUN_LABEL    # the same, then press Play for the first character
 tools/scenarios/create.sh RUN_LABEL NAME   # menu, then create a character and enter the world
@@ -492,6 +604,9 @@ tools/world creature action 2c Spawn 3   # start an action of the action table o
 tools/world places windsward         # the travel places with a text in their id, name, or territory
 tools/world travel NAME shrine_40170 # move a character to a travel place (in the world: at once; not in the world: its row)
 tools/world travel NAME 8866 4250 137.9   # move a character to a position (--screen on|off|auto: the loading screen)
+tools/world ignore NAME on           # the creatures ignore a character (off: they attack it again)
+tools/world heal NAME                # give a character its full health (a dead character lives again at its place)
+tools/world hurt NAME 500            # lower the health of a character (the health 0 is its death)
 tools/dev-stop.sh                    # stop the development runs (not a game of the user)
 tools/dev-stop.sh --check            # status 0: no process of a development run is alive
 ```
@@ -563,7 +678,30 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   command (WS3), the bytes of a travel for the owner: the teleport number, the two messages,
   the loading screen rule (TV1), the position check after a travel (TV2), a travel with two
   sessions (TV3), the travel commands of the two route sets and the travel places file
-  (TV4), the creatures of the old place and of the new place after a travel (TV5),
+  (TV4), the creatures of the old place and of the new place after a travel (TV5), the
+  camera estimate after a travel: a camera at the old place and a camera above the new
+  place (TV6), more than one travel of a character before one movement state (TV7), a
+  travel whose position write failed, and a position that keeps its mark (TV8), the travel
+  places tool with a place whose position has a wrong form (TV9, which runs
+  `tools/gamedata/check_places_tool.py` with `python3`), a time of the world clock that
+  gives its rise and its fall one time (PR12), a creature data file with a fragment number
+  outside the range (CR14), a creature with a spawn action and no death action that dies
+  while its reaction plays (WS4), the creature file with the behavior data, a file whose
+  parts do not fit together, and an old file (FT1), the sense of a creature: the vision
+  distance and angle, a target by a hit, one target (FT2), the way to the target: the
+  speed, the ground, the position index, the states of an observer (FT3), the attack action
+  and its contact at its time, and a target that went away (FT4), the damage rule of a
+  creature attack with the worked example, and the bytes for the owner and for an observer
+  (FT5), the death of a character, the respawn request, and a dead character that leaves
+  the world (FT6), the way back: the leash, a target that is gone, the health at the home
+  (FT7), the spawn point rule for a creature that is not at its spawn point (FT8), the load
+  of the behavior with 33,856 spawn points and 50 players, with a time limit (FT9), two
+  sessions near one creature, a session far away, and a death while a second player fights
+  (FT10), the switches: the behavior off, the creatures ignore a character, the heal
+  command (FT11), a creature whose spawn point is not at the terrain height, and the spawn
+  command on a slope (FT12), a slice with a spawn action and with animation tags in a fight
+  (FT13), the reader of the terrain height files and the two functions of the navigation
+  (FT14),
   HTTP stop (H1), a world task that did not start
   (D2), position limits (P2), bundle limits (F1), sessions and stops (T11), a locked item
   and the quantity of a lock request (L1), a delete whose write failed (D3), a spawn offset
@@ -749,7 +887,10 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   in 16 territories: 133 spirit shrines and 28 inns; 15 s). It needs an Oodle library
   (`SOULWARDEN_OODLE_LIB`, or `SOULWARDEN_OODLE_DLL`): the extracted files of the work folder do
   not have the region files. `--list` prints the places and writes no file. The id of a
-  place is its kind and the id of its point of interest (`shrine_40170`, `inn_40300`).
+  place is its kind and the id of its point of interest (`shrine_40170`, `inn_40300`). The
+  tool writes no file when a spirit shrine or an inn has a position with a wrong form (no
+  position, not 12 bytes, a number that is not finite): `tools/gamedata/check_places_tool.py`
+  is the check of this rule, with made-up region files.
 - `tools/world places [TEXT]` prints the travel places, and `tools/world travel CHARACTER
   PLACE` or `tools/world travel CHARACTER X Y Z` moves a character (routes
   `/v1/dev/world/places` and `/v1/dev/world/travel`; `--screen on|off|auto` for the loading
@@ -757,6 +898,28 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   CREATURE NAME [SECONDS]` starts an action of the action table of the slice of a creature
   (a test of an action in the live client; with no time the action has no end).
   `tools/world list` prints the line `load:` with the time of the ticks and of the scans.
+- `tools/world` has the commands of stage 3.4b (routes `/v1/dev/world/ignore`, `heal`,
+  `hurt`, and `message`): `ignore CHARACTER on|off` (the creatures ignore a character:
+  turn it on before a test that is not a test of a fight, because each creature that sees
+  the character attacks it), `heal CHARACTER` (the full health; a dead character lives
+  again at its place), `hurt CHARACTER AMOUNT` (the health goes down; 0 is the death, with
+  the death screen of the client), and `message CHARACTER TYPE HEX` (one message with your
+  bytes to the session of a character: a test of a message in a live client before its
+  code). `tools/world creature action CREATURE NAME [SECONDS] --tags HEX` starts an action
+  with your tag bytes (24 hexadecimal digits). `tools/world list` prints the health of each
+  character with the mark `DEAD`, and the line `behavior` (on or OFF, the time of the
+  steps, the creatures in the step, the targets, the attacks, the contacts). `tools/world
+  creatures` prints a mark for a creature that fights (`FIGHT`), that goes home (`GOES
+  HOME`), that has no attack (`no attack`), and that does not leave its place (`stays at
+  its place`).
+- `tools/gamedata/heights.sh` writes the terrain heights to the folder `heights` of the game
+  data folder: one file for each of the 49 regions (136 MB, 2 minutes with 8 processes;
+  the pak entries of the height maps are stored data: no Oodle source). `--region NAME`
+  writes some regions, `--jobs N` sets the number of processes, and `--height X Y` prints
+  the terrain height of a position from the files and writes nothing. The creature data
+  tool reads the height maps itself: it does not need these files.
+- `tools/gamedata/creatures.sh --no-attack FILE` writes one line for each kind that does not
+  attack, with the cause (859 kinds of the supported build).
 - `tools/research/creature_tour.py` is the picture check of the creature slices: `prepare
   GAMEDATA TOUR` makes a game data folder with one kind for each slice, `run TOUR OUT`
   makes one creature of each slice in front of the character of a live run and takes one
@@ -845,7 +1008,9 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   the option `--no-melee-report`, the client gets no remote configuration document, and a
   melee attack has no effect).
 - More variables of `tools/dev-run.sh`: `SOULWARDEN_BACKEND_EXE` and `SOULWARDEN_HOOK_DLL` start a
-  different build of the backend or of the hook. `SOULWARDEN_RESEARCH_SESSION` is the research
+  different build of the backend or of the hook. `SOULWARDEN_CREATURE_BEHAVIOR=0` turns the
+  behavior of the creatures off for the run (the backend option `--no-creature-behavior`):
+  the creatures stand at their spawn points. `SOULWARDEN_RESEARCH_SESSION` is the research
   switch of the game server for live checks (`registration-result=N`, `reject=N`, `kick=N`,
   `kick-delay=SECONDS`; protocol notes 3.6; and `refuse-equipment=1`, which makes the backend
   refuse each equipment request with the message "equip item fail": the client sends only
@@ -854,6 +1019,60 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   `SOULWARDEN_HARNESS=1`. Do not use it for a run that is not a check.
 
 ## Known traps
+
+- Fights (stage 3.4b):
+  - Each creature that sees the character attacks it, also in a test of a different system:
+    the character can die while a test waits. Turn the ignore value on first
+    (`tools/world ignore Soulwarden on`: it stays until the backend stops), or start the run
+    with `SOULWARDEN_CREATURE_BEHAVIOR=0`. A creature of `tools/world creature spawn` attacks
+    too: a Grey Wolf does 119 damage with a bite and 417 with a lunge, and the character
+    has 2,186 health.
+  - A fight for a test: `tools/world ignore Soulwarden on`, `tools/hx 'look -900 0'`,
+    `tools/world creature spawn Wolf_Grey_7 Soulwarden -9 0 0 --yaw 270` (9 m to the west,
+    with its face to the character: the vision of a wolf is 12 m and 75 degrees to each
+    side), then `tools/world ignore Soulwarden off`. The backend log has one line for each
+    step of the fight (`world: creature ID (KIND) has a target`, `starts the attack`,
+    `world: hit: creature ... hurts NAME`, `world: miss`, `lost its target`, `is at its
+    home`).
+  - The pictures of a fight: the wolf runs 9 m in 1 s. Take the screenshots in a loop
+    directly after the command (`for i in 01 02 ... 24; do tools/shot NAME-$i; done`: 24
+    calls need 4 s) and put them on one sheet (`magick montage ... -tile 4x3`). The camera
+    is behind the character: a creature in front of the character can be behind its body
+    in the picture. Turn the camera to the side (`'look 900 0'`) for a side view.
+  - A creature whose spawn point is more than 1.0 m from the terrain height does not leave
+    its place (`stays at its place` in `tools/world creatures`): it attacks only a
+    character in its reach (2.2 m for the Ancient Guardian Reaver at `8572.83 4241.20
+    166.60`, which is on a floor 1.42 m above the terrain). Travel to 2 m from it. No
+    attack at 4 m is not a fault.
+  - A creature of a spawn command near a character on the terrain stands on the terrain at
+    its own place. Near a character on a floor (a porch, a ruin, the floor of a shrine) it
+    gets the height of the character and does not walk.
+  - A creature goes on the straight line, through a wall and through a rock, and it stands
+    on the terrain: a creature of a hut walks below the floor of the hut. This is the rule
+    of stage 3.4b (no path search), not a fault of a state.
+  - The client moves the body of a creature forward in some attacks (the lunge of a wolf)
+    and puts it back at the end: the position of the backend did not change.
+  - A creature with a weapon plays no attack when the tag bytes of its scope record are 0,
+    with no error and no log line. The tags of a slice are game data
+    (`tools/gamedata/creature_behavior.py`): after a change of the tool, look at one attack
+    of a creature with a weapon in the live client.
+  - The death screen: the text "YOU DIED!" with a count of 5 s, then the respawn screen
+    with the button "Respawn" at `1000 581` (window of 1256x660). The client shows its
+    loading screen for 5 s to 8 s after the click. `tools/world heal NAME` makes a dead
+    character live again at its place with no loading screen.
+  - A character is never dead after a login: the health and the death are not in the
+    database. A dead character that leaves the world is at its respawn place (the nearest
+    travel place) at its next world entry.
+  - The health bar of the HUD is grey at the full health and red below it.
+  - A travel place can have a creature that fights near it (a Highlands Goat of level 62
+    is 8 m from the Shrine of Pillars): a character that travels there or that respawns
+    there takes damage. Turn the ignore value on for a test of a travel.
+  - `tools/gamedata/heights.sh` and `tools/gamedata/creatures.sh` write into the common game
+    data folder: the next start of the user then has creatures that fight. For a test of a
+    different file, give the tool an output path and give the run its folder with
+    `SOULWARDEN_GAMEDATA_DIR` (the folder needs the other game data files and the folder
+    `heights` too).
+  - Case FT9 has a time limit of 1 s for 1,000 ticks with 50 fights (3.6 ms in one run).
 
 - Creatures (stage 3.4a):
   - The spawn points of the start area are outside the wall of the settlement. From the
@@ -888,8 +1107,8 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
     `tools/research/creature_actions.py --compare FILE SLICE` compares the table of the file
     with the table of the live client.
   - A click with the left pointer button in the world is an attack: each attack moves the
-    character 1 m to 2 m forward. An attack on a creature has no effect in stage 3.4a, and
-    the client sends only its input reports for it (no hit message).
+    character 1 m to 2 m forward (from stage 3.2a an attack hurts a creature: the block
+    "Hits").
   - `tools/gamedata/creatures.sh` needs an Oodle source for some thousand pak entries. The
     extracted files of the work folder are not complete for it: set `SOULWARDEN_OODLE_LIB` to an
     Oodle library of the computer (a `liboo2core.so`), or `SOULWARDEN_OODLE_DLL` for the helper.
@@ -902,8 +1121,9 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
     a wrong action index: look at a screenshot.
 
 - Hits (stage 3.2a):
-  - A test of an attack: `tools/hx 'look -900 0'`, `tools/world creature spawn Wolf_Grey_7
-    Soulwarden -2.2 0 0 --yaw 270`, then `tools/hx 'click 628 330'` (a light attack) or
+  - A test of an attack: `tools/world ignore Soulwarden on` (if not, the wolf attacks the
+    character, and it moves to the character), `tools/hx 'look -900 0'`, `tools/world
+    creature spawn Wolf_Grey_7 Soulwarden -2.2 0 0 --yaw 270`, then `tools/hx 'click 628 330'` (a light attack) or
     `'mousedown left' 'wait 600' 'mouseup left'` (a heavy attack). The backend log has one
     line for each hit (`world: hit: NAME hurts creature ID ... N damage of the type T ...,
     health A to B`), one line for the first refused claim of each cause (`rep: hit claim
@@ -1040,7 +1260,8 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
     400 ms.
   - Case HT11 runs `tools/gamedata/check_combat_tool.py` with `python3` (`SOULWARDEN_PYTHON`
     selects a different one): with no Python 3 the case fails. The check makes its tables in
-    memory: no file of the game.
+    memory: no file of the game. The same for case TV9 and
+    `tools/gamedata/check_places_tool.py`.
 - The tool window (F8), positions in the window of 1256x660 at its first place (the window is
   at the left side; a user can move it, and it has no saved place): tabs "Items" `50 113`,
   "Character" `125 113`, "Skills" `204 113`, "Creatures" `283 113`, "Travel" `362 113`.
@@ -1051,7 +1272,10 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   tab: search field `203 169`, first row of the result `138 218`, "+" of the quantity `203 382`, "Give" `246 382`, "Remove" of the
   first bag row `514 462` (each next row is 29 pixels lower). Character tab: "+" of the level
   `469 166`, "Set" of the level `512 166`, experience field `388 195`, "Give" `516 195`,
-  dexterity field `388 365` and its "Set" `512 365`. A click on a number field selects its
+  the button "Heal" (or "Revive") `516 253`, the mark "Creatures ignore this character"
+  `35 285`, dexterity field `388 394` and its "Set" `512 394` (each row below the mark is
+  21 pixels lower in a start with the behavior of the creatures off: the tab then has one
+  more line of text). A click on a number field selects its
   text: `'text 25'` after the click replaces the number. The layout can change: take a
   screenshot before you use a position.
 - The tool window takes each key while it shows: `tools/hx 'key 0x09'` (Tab) then moves the

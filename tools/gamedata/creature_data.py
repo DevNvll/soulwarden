@@ -84,7 +84,7 @@ item_catalog.py, and slice_ids.py of this folder.
 
 Output: see `build_document`. An id of 64 bits is a text of 16 hexadecimal digits.
 
-Usage: creature_data.py [OUTPUT.json] [--radius METERS [--center X Y]] [--report FILE]
+Usage: creature_data.py [OUTPUT.json] [--radius METERS [--center X Y]] [--report FILE] [--no-attack FILE]
        creature_data.py [OUTPUT.json] --all-slices [--spawn-all]    a file for a picture tour of the slices
        creature_data.py --find TEXT...     print the kinds whose id or name has a text (no file)
 Default output: <SOULWARDEN_GAMEDATA_DIR>/creatures.json
@@ -113,6 +113,8 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure, field_id, plain_stream  # noqa: E402
+import creature_behavior  # noqa: E402
+import height_maps  # noqa: E402
 from item_catalog import Sheet, sheet_type  # noqa: E402
 from slice_ids import (COMPONENTS_FIELD, ENTITY_TYPE, ID_FIELD, LOCAL_TRANSFORM_FIELD, NAME_FIELD,  # noqa: E402
                        NO_ENTITY, PARENT_FIELD, Element, component_id, find_field, id_value, parse)
@@ -442,8 +444,8 @@ def read_tables(sources: Sources) -> dict:
     variants: dict[int, dict] = {}
     bases: dict[int, dict] = {}
     categories: dict[int, dict] = {}
-    levels: dict[int, float] = {}
-    modifiers: dict[str, float] = {}
+    levels: dict[int, tuple[float, float, float]] = {}
+    modifiers: dict[str, tuple[float, float]] = {}
     for path in sources.paths(TABLES_FOLDER, ".datasheet"):
         if "vitals" not in path.rsplit("/", 1)[-1]:
             continue
@@ -466,14 +468,19 @@ def read_tables(sources: Sources) -> dict:
                     bases.setdefault(name_crc(name), {"id": name, "family": str(sheet.cell(row, "Family")),
                                                       "creatureType": str(sheet.cell(row, "CreatureType")),
                                                       "healthMod": float(sheet.cell(row, "HealthMod") or 0.0),
+                                                      "damageMod": float(sheet.cell(row, "DamageMod") or 0.0),
                                                       "name": str(sheet.cell(row, "DisplayName"))})
                 elif kind == CATEGORY_TYPE:
                     name = str(sheet.cell(row, "VitalsCategoryID"))
                     categories.setdefault(name_crc(name), {"id": name, "name": str(sheet.cell(row, "DisplayName"))})
                 elif kind == LEVEL_TYPE:
-                    levels[int(sheet.cell(row, "Level"))] = float(sheet.cell(row, "BaseMaxHealth"))
+                    # The health, the base damage, and the gear score of a creature of the level.
+                    levels[int(sheet.cell(row, "Level"))] = (float(sheet.cell(row, "BaseMaxHealth")),
+                                                             float(sheet.cell(row, "BaseDamage") or 0.0),
+                                                             float(sheet.cell(row, "GearScore") or 0.0))
                 else:
-                    modifiers[str(sheet.cell(row, "CategoryId"))] = float(sheet.cell(row, "CategoryHealthMod"))
+                    modifiers[str(sheet.cell(row, "CategoryId"))] = (float(sheet.cell(row, "CategoryHealthMod")),
+                                                                     float(sheet.cell(row, "CategoryDamageMod") or 0.0))
         except (struct.error, ValueError, IndexError, TypeError) as error:
             raise Failure(f"{path}: the table did not parse: {error}") from error
     for what, rows in (("level variant vitals", variants), ("base vitals", bases), ("vitals category", categories),
@@ -628,6 +635,17 @@ def read_tag_names(sources: Sources, path: str, named_by: str, depth: int = 0) -
     return names
 
 
+def controller_path_of(roots: list[Element]) -> str:
+    """@return The path of the animation controller file that the action list component of a slice names."""
+    for root in roots:
+        for node in walk(root):
+            if node.name == CONTROLLER_FIELD:
+                found = first(node, ASSET_PATH_FIELD)
+                if found is not None and found.value is not None:
+                    return found.value.decode("utf-8", "replace")
+    return ""
+
+
 def read_action_table(sources: Sources, roots: list[Element]) -> list[list] | None:
     """@return The action table of a creature slice: [action name, fragment name, fragment index, server started]
     for each action, or no value when the slice names no grid file. The position of an action in the list is its
@@ -748,7 +766,8 @@ def yaw_of(rotation: dict) -> float:
 
 
 def build_document(sources: Sources, center: tuple[float, float] | None = None, radius: float | None = None,
-                   all_slices: bool = False, details: list[dict] | None = None, spawn_all: bool = False) -> dict:
+                   all_slices: bool = False, details: list[dict] | None = None, spawn_all: bool = False,
+                   no_attack: list[dict] | None = None, ground: bool = True) -> dict:
     """@param center, radius The area of the file: a circle. No radius: the whole world.
     @param all_slices True: the file also has the spawn points of the slices of the list "notShown" (a file for a
            picture tour of the slices, not for a start of the user).
@@ -756,20 +775,35 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
            the position, the vitals row, and what the tool found for it).
     @param spawn_all With `all_slices`: each slice with a spawn action in its action table gets it in the file (a
            file for a tour that tests the spawn action).
+    @param no_attack When not null: gets one entry for each kind that does not attack, with the cause.
+    @param ground False: no read of the height maps, and each spawn point has no terrain height.
 
     Output:
-    {"format": 1, "world": TEXT, "center": [x, y], "radius": METERS, "regions": [...],
+    {"format": 2, "world": TEXT, "center": [x, y], "radius": METERS, "regions": [...],
      "counts": {...},
-     "levels": [[level, health], ...]                  the health of each level (the level table)
+     "levels": [[level, health, damage, gear score], ...]   the values of each level (the level table)
      "slices": [{"path", "asset", "sub", "root", "interestRadius", "movement", "vitals", "marker",
                  "slots": [[slot, component name, state type], ...],
                  "components": [[entity id, component id, name], ...],
                  "actions": [[action name, fragment name, fragment index, server started], ...],
-                 "spawnAction": NAME}, ...]            only for a slice that needs its spawn action
+                 "spawnAction": NAME,                  only for a slice that needs its spawn action
+                 "behavior": {"sight": [angle, distance], "combatSight": [angle, distance],
+                              "leash": [at rest, in a fight], "speed": [walk, run]},
+                 "tags": HEX,                          the tag state of its animation fragments (12 bytes)
+                 "attacks": [[action, time, [[contact time, reach, damage factor, added damage,
+                                              damage type, type number, type category, damage row], ...]], ...]},
+                ...]
      "kinds":  [{"id", "vitals", "category", "vitalsId", "categoryId", "name", "vitalsName",
-                 "family", "creatureType", "health", "level", "bodies": [[slice, percent], ...],
+                 "family", "creatureType", "health", "damage", "level", "bodies": [[slice, percent], ...],
                  "points": N}, ...]
-     "spawnPoints": [[placement id, kind, level, x, y, z, yaw, respawnMin, respawnMax], ...]}
+     "spawnPoints": [[placement id, kind, level, x, y, z, yaw, respawnMin, respawnMax, ground], ...]}
+    The members of the behavior (creature_behavior.py, protocol notes 4.17): "behavior" has the two
+    vision profiles (degrees and meters), the two leash distances (meters), and the two speeds (m/s)
+    of the slice; "attacks" has one entry for each attack: the index of its action in "actions", its
+    time in seconds, and its contacts. "damage" of a kind is its damage as a part of the base damage
+    of its level (the damage modifier of its base row times the modifier of its creature type).
+    "ground" of a spawn point is the terrain height at its place (null: the world has no height map
+    there).
     `slices`: "movement", "vitals", and "marker" are the slots of these three components (0: the
     slice has none), "components" are the components with a facet (the targets of client
     messages), and "actions" is the action table: the position of an action is its index in a
@@ -791,6 +825,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     whole_world = radius is None
     center = center or DEFAULT_CENTER
     needs_spawn_action, not_shown = read_slice_lists()
+    behavior = creature_behavior.Behavior(sources, TABLES_FOLDER)
     regions = all_region_names(sources) if whole_world else region_names(center, radius)
     counts = {"entries": 0, "inArea": 0, "usual": 0, "creatures": 0}
     left_out: dict[str, int] = {}
@@ -830,6 +865,12 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 slices[-1]["actions"] = read_action_table(sources, roots) or []
             except Failure as error:
                 raise Failure(f"the action table of {path} is not complete: {error}") from error
+            # What the behavior of a creature with this slice needs: its sense and speed values, the
+            # tags of its animation fragments, and its attacks.
+            try:
+                slices[-1].update(behavior.read(roots, controller_path_of(roots), slices[-1]["actions"]))
+            except Failure as error:
+                raise Failure(f"the behavior data of {path} is not complete: {error}") from error
         return slice_index[path]
 
     def bodies_of(spawner: dict) -> list[tuple[int, int]]:
@@ -931,7 +972,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 if category is None:
                     counts["noCategoryRow"] = counts.get("noCategoryRow", 0) + 1
                 # A base row with no creature type has no row in the modifier table: the modifier 1.
-                modifier = tables["modifiers"].get(base["creatureType"]) if base["creatureType"] else 1.0
+                modifier = tables["modifiers"].get(base["creatureType"]) if base["creatureType"] else (1.0, 1.0)
                 if modifier is None:
                     leave_out("no modifier row of the creature type", spawner=path,
                               slices=[slices[body]["path"] for body, _ in bodies])
@@ -947,7 +988,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                         "name": names.get(category["name"].lstrip("@").lower(), "") if category else vitals_name,
                         "vitalsName": vitals_name,
                         "family": base["family"], "creatureType": base["creatureType"],
-                        "health": round(base["healthMod"] * modifier, 6),
+                        "health": round(base["healthMod"] * modifier[0], 6),
+                        "damage": round(base["damageMod"] * modifier[1], 6),
                         "bodies": [list(body) for body in bodies], "levels": {}, "index": len(kinds)}
                 # The metadata of a layer has one entry for each slice of an alias with more than
                 # one slice: the entries of one placement are one spawn point.
@@ -990,7 +1032,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
         document_kinds.append({"id": kind["id"], "vitals": kind["vitals"], "category": kind["category"],
                                "vitalsId": kind["vitalsId"], "categoryId": kind["categoryId"],
                                "name": kind["name"], "vitalsName": kind["vitalsName"], "family": kind["family"],
-                               "creatureType": kind["creatureType"], "health": kind["health"], "level": level,
+                               "creatureType": kind["creatureType"], "health": kind["health"],
+                               "damage": kind["damage"], "level": level,
                                "bodies": [[renumber[body], percent] for body, percent in kind["bodies"]],
                                "points": total})
     # The spawn action of the game data goes into the file only for a slice of the list: the
@@ -1006,12 +1049,54 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
             entry["spawnAction"] = name
     counts["slicesWithSpawnAction"] = sum(1 for body in used if "spawnAction" in slices[body])
     counts["slicesWithNoActions"] = sum(1 for body in used if not slices[body]["actions"])
+    # The cause of a slice with no attack is for the report of the tool, not for the file.
+    causes = {body: slices[body].pop("noAttack", "") for body in used}
+    counts["slicesWithBehavior"] = sum(1 for body in used if "behavior" in slices[body])
+    counts["slicesWithAttacks"] = sum(1 for body in used if slices[body].get("attacks"))
+    counts["slicesWithTags"] = sum(1 for body in used if "tags" in slices[body])
+    # A kind attacks when one of its slices has an attack and the values for the way to a target.
+    quiet = 0
+    quiet_points = 0
+    for kind, entry in zip(kind_list, document_kinds):
+        bodies = [slices[body] for body, _ in kind["bodies"]]
+        if any(body.get("attacks") and body.get("behavior", {}).get("speed", [0, 0])[1] > 0 for body in bodies):
+            continue
+        quiet += 1
+        quiet_points += entry["points"]
+        if no_attack is not None:
+            cause = next((causes[body] for body, _ in kind["bodies"] if causes.get(body)), "")
+            no_attack.append({"kind": entry["id"], "name": entry["name"], "family": entry["family"],
+                              "creatureType": entry["creatureType"], "spawnPoints": entry["points"],
+                              "slices": [body["path"] for body in bodies],
+                              "cause": cause or "its slice has no speed for the way to a target"})
+    counts["kindsWithNoAttack"] = quiet
+    counts["spawnPointsWithNoAttack"] = quiet_points
+    # The terrain height at each spawn point: a creature that walks stands on the terrain, and a
+    # creature whose spawn point is not at the terrain height (a floor, a bridge, a cave) does not
+    # leave its place until the navigation data has the floors (protocol notes 4.17).
+    near = [0, 0]
+    if ground:
+        terrain = height_maps.Terrain(sources)
+        terrain.load(sorted({f"r_+{int(point[3] // REGION_SIZE):02d}_+{int(point[4] // REGION_SIZE):02d}"
+                             for point in points}))
+        for point in points:
+            height = terrain.height(point[3], point[4])
+            point.append(None if height is None else round(height, 3))
+            if height is not None:
+                near[0] += abs(point[5] - height) <= 0.3
+                near[1] += abs(point[5] - height) <= 1.0
+    else:
+        for point in points:
+            point.append(None)
+    counts["spawnPointsAtTerrainHeight"] = {"0.3": near[0], "1.0": near[1]}
     counts.update({"spawnPoints": len(points), "kinds": len(document_kinds), "slices": len(used),
                    "leftOut": dict(sorted(left_out.items()))})
     # The whole world: the radius 0, and the center has no meaning.
-    return {"format": 1, "world": WORLD, "center": list(center), "radius": 0.0 if whole_world else radius,
+    return {"format": 2, "world": WORLD, "center": list(center), "radius": 0.0 if whole_world else radius,
             "regions": regions,
-            "counts": counts, "levels": [[level, health] for level, health in sorted(tables["levels"].items())],
+            "counts": counts,
+            "levels": [[level, health, damage, gear_score]
+                       for level, (health, damage, gear_score) in sorted(tables["levels"].items())],
             "slices": [slices[body] for body in used], "kinds": document_kinds, "spawnPoints": points}
 
 
@@ -1036,6 +1121,7 @@ def main() -> int:
     parser.add_argument("--spawn-all", action="store_true",
                         help="with --all-slices: name the spawn action of each slice (a tour that tests this action)")
     parser.add_argument("--report", metavar="FILE", help="write one line for each spawn entry that is left out")
+    parser.add_argument("--no-attack", metavar="FILE", help="write one line for each kind that does not attack, with the cause")
     parser.add_argument("--find", nargs="+", metavar="TEXT", help="print the kinds with a text, and write no file")
     arguments = parser.parse_args()
     target = Path(arguments.output)
@@ -1046,10 +1132,16 @@ def main() -> int:
         return 1
     center = tuple(arguments.center) if arguments.center is not None else DEFAULT_CENTER
     details: list[dict] | None = [] if arguments.report else None
+    quiet: list[dict] | None = [] if arguments.no_attack else None
     try:
         sources = Sources(game / "assets")
         document = build_document(sources, center, arguments.radius, arguments.all_slices, details,
-                                  arguments.spawn_all and arguments.all_slices)
+                                  arguments.spawn_all and arguments.all_slices, quiet, arguments.find is None)
+        if quiet is not None:
+            listing = Path(arguments.no_attack)
+            listing.parent.mkdir(parents=True, exist_ok=True)
+            listing.write_text("".join(json.dumps(entry, separators=(",", ":")) + "\n" for entry in quiet),
+                               encoding="utf-8")
         if details is not None:
             report = Path(arguments.report)
             report.parent.mkdir(parents=True, exist_ok=True)
@@ -1091,6 +1183,12 @@ def main() -> int:
           f"{counts.get('noCategoryRow', 0)}")
     print(f"  slices with no action table: {counts['slicesWithNoActions']}; slices whose spawn action the backend starts: "
           f"{counts['slicesWithSpawnAction']}")
+    print(f"  slices with behavior values: {counts['slicesWithBehavior']}; with an attack: {counts['slicesWithAttacks']}; "
+          f"with animation tags: {counts['slicesWithTags']}")
+    print(f"  kinds that do not attack: {counts['kindsWithNoAttack']} of {counts['kinds']} "
+          f"({counts['spawnPointsWithNoAttack']} spawn points; --no-attack FILE lists them)")
+    near = counts["spawnPointsAtTerrainHeight"]
+    print(f"  spawn points 0.3 m or less from the terrain height: {near['0.3']}; 1.0 m or less: {near['1.0']}")
     print("  source: " + ", ".join(f"{count} files from the {name}" for name, count in sorted(sources.used.items())))
     return 0
 

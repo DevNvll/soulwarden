@@ -1602,6 +1602,46 @@ void creature_health_percent(const Options&) {
           "a percent value for a creature that is not there gives 404, and a percent value above 100 gives 400");
 }
 
+/**
+ * CR14: the fragment number of an action row (code review of stage 3.4c, finding C7). The JSON
+ * reader keeps a whole number above the range of a signed 64-bit value as an unsigned value.
+ * The loader made a signed value from it: 18446744073709551615 became -1, which is the value
+ * for "no fragment", and the file loaded with a death action that the slice cannot play. The
+ * loader refuses such a file as a whole.
+ */
+void creature_file_fragment_number(const Options& options) {
+    const std::filesystem::path folder = options.workDirectory / "creature-fragment-number";
+    std::filesystem::create_directories(folder);
+    // The file of CR1, with this fragment number in the row "Death" of the first slice.
+    const auto load = [&](const char* name, const json& fragment, gamedata::CreatureData& data) {
+        json document = file_document();
+        document["slices"][0]["actions"][2][2] = fragment;
+        const std::filesystem::path path = folder / name;
+        std::ofstream(path, std::ios::binary) << document.dump();
+        return data.load(path.string());
+    };
+    const auto refused = [&](const char* name, const json& fragment) {
+        gamedata::CreatureData broken;
+        const bool loaded = load(name, fragment, broken);
+        note("fragment number " + fragment.dump() + ": loaded " + std::to_string(loaded) + ", slices "
+             + std::to_string(broken.slices().size()) + ", cause \"" + broken.error() + "\"");
+        return !loaded && !broken.loaded() && broken.slices().empty() && broken.kinds().empty() && !broken.error().empty();
+    };
+    gamedata::CreatureData largest;
+    gamedata::CreatureData none;
+    check(load("largest.json", 1000000, largest) && largest.slices()[0].actions[2].fragmentIndex == 1000000
+              && largest.slices()[0].deathAction == 2U && load("none.json", -1, none)
+              && none.slices()[0].actions[2].fragmentIndex == -1 && !none.slices()[0].deathAction,
+          "the limits of the range load: the fragment number 1000000, and -1 (no fragment: the slice then has no death action)");
+    check(refused("unsigned-largest.json", std::uint64_t{18446744073709551615ULL}),
+          "the fragment number 18446744073709551615 (an unsigned value, which is -1 as a signed value) gives no data, as a "
+          "whole");
+    check(refused("unsigned-large.json", std::uint64_t{9223372036854775808ULL}) && refused("above.json", 1000001)
+              && refused("32-bits.json", std::uint64_t{4294967296ULL}) && refused("below.json", -2) && refused("part.json", 4.5),
+          "each other number outside the range gives no data: 9223372036854775808, 1000001, 4294967296, -2, and a number "
+          "that is not whole");
+}
+
 } // namespace
 
 std::vector<Case> creature_cases() {
@@ -1620,6 +1660,8 @@ std::vector<Case> creature_cases() {
         {"CR12", "creatures: two fragments of one slot, and a long fragment, in the records of a creature (review of stage 3.4a)",
          creature_command_fragments},
         {"CR13", "creatures: the health command with a percent value (review of stage 3.4a)", creature_health_percent},
+        {"CR14", "creatures: a creature data file with a fragment number outside the range (review of stage 3.4c)",
+         creature_file_fragment_number},
     };
 }
 
