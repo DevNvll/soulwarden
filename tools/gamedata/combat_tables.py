@@ -101,24 +101,60 @@ CONSTANT_FIELDS = {
     "gearScoreLimit": "Diminishing Gear Score Threshold",
 }
 WHOLE_CONSTANTS = ("gearScoreInterval", "gearScoreMinimum", "gearScoreLimit")
+# References of the tables of the supported build that name a row which no table of the game has
+# (lower case). They are facts of the game data, not faults of a source: the weapons are weapons
+# of creatures and key items, and the vitals rows are rows of creatures with no base row. A
+# weapon with such a row gets no damage row, and such a vitals row gets no defense values. Each
+# other reference that does not resolve stops the tool: a table that lost a row, or a table of a
+# different game version, must not make a file that looks complete.
+ROWS_NOT_IN_GAME = frozenset({"1h_axe_attack1", "1h_axe_attack2", "1h_knife_attack1", "2h_sword_attack1",
+                              "2h_sword_attack2"})
+BASES_NOT_IN_GAME = frozenset({"werewolf_rabid_20328", "upyr_10221a_named", "upyr_10220a", "upyr_10220b"})
+# The one column of the tool that a table of its type can have or not: each other column must be there.
+OWN_RATE_COLUMN = "WeaponBaseDamageCompoundIncrease"
 
 
-def number(value) -> float:
-    """@return The number of a cell. Some tables have a number as a text, and an empty text is 0."""
+def cell(sheet: Sheet, row: int, column: str):
+    """@return The value of one cell of a column that the tool needs. A table with no such column stops the tool:
+    a cell of an absent column would be an empty text, which the tool cannot tell from a real empty cell."""
+    if column not in sheet.columns:
+        raise Failure(f"the table {sheet.name} has no column {column}")
+    return sheet.cell(row, column)
+
+
+def number(sheet: Sheet, row: int, column: str) -> float:
+    """@return The number of a cell of a column that the tool needs. Some tables have a number as a text, and an
+    empty text is 0. A text that is not a number, and a number that is not finite, stop the tool."""
+    value = cell(sheet, row, column)
+    what = f"the cell {column} of row {row} of the table {sheet.name}"
     if isinstance(value, bool):
         return 0.0
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(str(value).strip() or 0.0)
-    except ValueError:
-        return 0.0
+    if not isinstance(value, (int, float)):
+        text = str(value).strip()
+        try:
+            value = float(text) if text else 0.0
+        except ValueError as error:
+            raise Failure(f"{what} is the text \"{text}\", not a number") from error
+    if not math.isfinite(value):
+        raise Failure(f"{what} is not a finite number")
+    return float(value)
 
 
 def finite(value: float, what: str) -> float:
     if not math.isfinite(value):
         raise Failure(f"{what} is not a finite number")
     return value
+
+
+def defense_columns(sheet: Sheet, type_names: list[str], prefix: str) -> list[str]:
+    """@return The damage types for which a base vitals table has a column with this start ("WKN": the weakness,
+    "ABS": the absorption). The tables of the game have such a column for a part of the damage types only (not
+    for the damage with no mitigation), and not each table has the same part. A table with no such column at all
+    is not a base vitals table of the game: it stops the tool."""
+    kinds = [kind for kind in type_names if prefix + kind in sheet.columns]
+    if not kinds:
+        raise Failure(f"the table {sheet.name} has no column {prefix}<damage type>")
+    return kinds
 
 
 def rounded(value: float) -> float:
@@ -179,10 +215,10 @@ def build_tables(sources: Sources) -> dict:
     damage_types = []
     for sheet in sheets[DAMAGE_TYPE_TYPE]:
         for row in range(sheet.row_count):
-            name = str(sheet.cell(row, "TypeID"))
-            wire = int(number(sheet.cell(row, "IntID")))
+            name = str(cell(sheet, row, "TypeID"))
+            wire = int(number(sheet, row, "IntID"))
             if name and 0 < wire < 256:
-                damage_types.append([name, wire, str(sheet.cell(row, "Category"))])
+                damage_types.append([name, wire, str(cell(sheet, row, "Category"))])
     if not damage_types:
         raise Failure("the damage type table has no row")
     type_names = [entry[0] for entry in damage_types]
@@ -192,12 +228,12 @@ def build_tables(sources: Sources) -> dict:
         member = ATTRIBUTE_TABLES.get(sheet.name)
         if member is None or member in attributes:
             continue
-        first = int(number(sheet.cell(0, "Level"))) if sheet.row_count else 0
+        first = int(number(sheet, 0, "Level")) if sheet.row_count else 0
         sums = []
         for row in range(sheet.row_count):
-            if int(number(sheet.cell(row, "Level"))) != first + row:
+            if int(number(sheet, row, "Level")) != first + row:
                 raise Failure(f"row {row} of the table {sheet.name} is not the attribute value {first + row}")
-            sums.append(rounded(finite(number(sheet.cell(row, "ModifierValueSum")), f"a cell of the table {sheet.name}")))
+            sums.append(rounded(number(sheet, row, "ModifierValueSum")))
         if attributes.setdefault("minimum", first) != first:
             raise Failure(f"the table {sheet.name} starts at the value {first}, not at {attributes['minimum']}")
         attributes[member] = sums
@@ -207,66 +243,91 @@ def build_tables(sources: Sources) -> dict:
 
     damage_rows = []
     row_ids: set[str] = set()
+    # The rows of the damage table that have no damage type: a weapon can name one, and it then has no damage row.
+    typeless: set[str] = set()
     for sheet in sheets[DAMAGE_TYPE]:
         if sheet.name != DAMAGE_TABLE:
             continue
         for row in range(sheet.row_count):
-            name = str(sheet.cell(row, "DamageID"))
-            kind = str(sheet.cell(row, "DamageType"))
-            if not name or name.lower() in row_ids or kind not in type_names:
+            name = str(cell(sheet, row, "DamageID"))
+            kind = str(cell(sheet, row, "DamageType"))
+            if not name or name.lower() in row_ids:
+                continue
+            if kind not in type_names:
+                # A row with no damage type is a row of an attack that does no damage (a block, a
+                # dodge). A type that the damage type table does not have is a fault of a table.
+                if kind:
+                    raise Failure(f"the damage row {name} names the damage type {kind}, which the damage type table "
+                                  f"does not have")
+                typeless.add(name.lower())
                 continue
             row_ids.add(name.lower())
-            damage_rows.append([name, str(sheet.cell(row, "WeaponCategory")), str(sheet.cell(row, "AttackType")), kind,
-                                rounded(finite(number(sheet.cell(row, "DmgCoef")), f"the damage factor of {name}")),
-                                rounded(finite(number(sheet.cell(row, "AddDmg")), f"the added damage of {name}"))])
+            damage_rows.append([name, str(cell(sheet, row, "WeaponCategory")), str(cell(sheet, row, "AttackType")), kind,
+                                rounded(number(sheet, row, "DmgCoef")), rounded(number(sheet, row, "AddDmg"))])
     if not damage_rows:
         raise Failure(f"the game copy has no damage table with the name {DAMAGE_TABLE}")
 
     weapons = []
     weapon_index: dict[str, int] = {}
+
+    def row_of(weapon: str, reference: str) -> str:
+        """@return The damage row that a weapon names, or an empty text for no row. A name that does not resolve
+        stops the tool, when it is not a name that the game itself does not have (ROWS_NOT_IN_GAME)."""
+        if reference.lower() in row_ids:
+            return reference
+        if reference and reference.lower() not in typeless and reference.lower() not in ROWS_NOT_IN_GAME:
+            raise Failure(f"the weapon {weapon} names the damage row {reference}, which the damage table "
+                          f"{DAMAGE_TABLE} does not have")
+        return ""
+
     for sheet in sheets[WEAPON_TYPE]:
         for row in range(sheet.row_count):
-            name = str(sheet.cell(row, "WeaponID"))
+            name = str(cell(sheet, row, "WeaponID"))
             if not name or name.lower() in weapon_index:
                 continue
-            light = str(sheet.cell(row, "TooltipPrimaryAttackData"))
-            heavy = str(sheet.cell(row, "TooltipAlternateAttackData"))
+            light = row_of(name, str(cell(sheet, row, "TooltipPrimaryAttackData")))
+            heavy = row_of(name, str(cell(sheet, row, "TooltipAlternateAttackData")))
             weapon_index[name.lower()] = len(weapons)
-            weapons.append([name, str(sheet.cell(row, "PrimaryUse")), str(sheet.cell(row, "MannequinTag")),
-                            rounded(finite(number(sheet.cell(row, "BaseDamage")), f"the base damage of {name}")),
-                            rounded(number(sheet.cell(row, "ScalingStrength"))),
-                            rounded(number(sheet.cell(row, "ScalingDexterity"))),
-                            rounded(number(sheet.cell(row, "ScalingIntelligence"))),
-                            rounded(number(sheet.cell(row, "ScalingFocus"))),
-                            light if light.lower() in row_ids else "", heavy if heavy.lower() in row_ids else "",
-                            rounded(number(sheet.cell(row, "WeaponBaseDamageCompoundIncrease")))])
+            weapons.append([name, str(cell(sheet, row, "PrimaryUse")), str(cell(sheet, row, "MannequinTag")),
+                            rounded(number(sheet, row, "BaseDamage")),
+                            rounded(number(sheet, row, "ScalingStrength")),
+                            rounded(number(sheet, row, "ScalingDexterity")),
+                            rounded(number(sheet, row, "ScalingIntelligence")),
+                            rounded(number(sheet, row, "ScalingFocus")),
+                            light, heavy,
+                            # The own gear score rate of a weapon. A weapon table can have no such
+                            # column (the table of the heart runes): its weapons have the rate 0,
+                            # which is the rate of the constants.
+                            rounded(number(sheet, row, OWN_RATE_COLUMN)) if OWN_RATE_COLUMN in sheet.columns else 0.0])
 
     items: dict[str, int] = {}
     for sheet in sheets[ITEM_TYPE]:
         for row in range(sheet.row_count):
-            weapon = weapon_index.get(str(sheet.cell(row, "ItemStatsRef")).lower())
-            name = str(sheet.cell(row, "ItemID")).lower()
+            weapon = weapon_index.get(str(cell(sheet, row, "ItemStatsRef")).lower())
+            name = str(cell(sheet, row, "ItemID")).lower()
             if weapon is not None and name:
                 items.setdefault(name, weapon)
 
     bases: dict[str, list] = {}
     for sheet in sheets[BASE_TYPE]:
+        weak_kinds = defense_columns(sheet, type_names, "WKN")
+        absorb_kinds = defense_columns(sheet, type_names, "ABS")
         for row in range(sheet.row_count):
-            name = str(sheet.cell(row, "VitalsID")).lower()
+            name = str(cell(sheet, row, "VitalsID")).lower()
             if not name or name in bases:
                 continue
             weakness = {}
             absorption = {}
-            for kind in type_names:
-                value = number(sheet.cell(row, "WKN" + kind))
-                if value != 0.0 and math.isfinite(value):
+            for kind in weak_kinds:
+                value = number(sheet, row, "WKN" + kind)
+                if value != 0.0:
                     weakness[kind] = rounded(value)
-                value = number(sheet.cell(row, "ABS" + kind))
-                if value != 0.0 and math.isfinite(value):
+            for kind in absorb_kinds:
+                value = number(sheet, row, "ABS" + kind)
+                if value != 0.0:
                     absorption[kind] = rounded(value)
-            bases[name] = [rounded(finite(number(sheet.cell(row, "PhysicalMitigation")), f"the mitigation of {name}")),
-                           rounded(finite(number(sheet.cell(row, "ElementalMitigation")), f"the mitigation of {name}")),
-                           weakness, absorption]
+            bases[name] = [rounded(number(sheet, row, "PhysicalMitigation")),
+                           rounded(number(sheet, row, "ElementalMitigation")), weakness, absorption]
     defenses: list[list] = []
     defense_index: dict[str, int] = {}
     vitals: dict[str, int] = {}
@@ -283,8 +344,14 @@ def build_tables(sources: Sources) -> dict:
 
     for sheet in sheets[VARIANT_TYPE]:
         for row in range(sheet.row_count):
-            name = str(sheet.cell(row, "VitalsID")).lower()
-            index = defense_of(str(sheet.cell(row, "BaseVitalsId")).lower())
+            name = str(cell(sheet, row, "VitalsID")).lower()
+            base = str(cell(sheet, row, "BaseVitalsId")).lower()
+            index = defense_of(base)
+            if name and index is None and base not in BASES_NOT_IN_GAME:
+                # Without its base row a creature has no defense values: the backend would give
+                # it the raw damage, with no sign of the fault.
+                raise Failure(f"the vitals row {name} names the base row {base or '(no name)'}, which the base vitals "
+                              f"tables do not have")
             if name and index is not None:
                 vitals.setdefault(name, index)
     # A creature can use a base row with no level variant row.

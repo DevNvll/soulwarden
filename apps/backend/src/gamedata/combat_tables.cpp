@@ -20,6 +20,10 @@ constexpr std::pair<const char*, std::size_t> kAttributeMembers[] = {
     {"strength", kStrength}, {"dexterity", kDexterity}, {"intelligence", kIntelligence}, {"focus", kFocus}};
 /** The use of a melee weapon in the weapon table of the game. */
 constexpr const char* kMeleeUse = "Combat Melee";
+/** The three damage categories of the damage type table of the game. "True" is damage with no mitigation. */
+constexpr const char* kCategoryPhysical = "Physical";
+constexpr const char* kCategoryElemental = "Elemental";
+constexpr const char* kCategoryDirect = "True";
 
 /** @return The text with the letters A to Z in lower case. */
 std::string lower(std::string_view text) {
@@ -88,6 +92,13 @@ bool CombatTables::check(const CombatData& data, std::string& error) {
     for (const DamageType& type : data.damageTypes) {
         if (type.name.empty() || type.wire == 0) {
             return fail("a damage type has no name or no number");
+        }
+    }
+    // A list with no value gives the damage 0 for each value of the attribute: the tables of
+    // the game have a row for each value of each attribute that a weapon can have a factor for.
+    for (const auto& [member, attribute] : kAttributeMembers) {
+        if (data.attributeDamage[attribute].empty()) {
+            return fail("the damage list of an attribute is empty");
         }
     }
     for (const std::vector<float>& values : data.attributeDamage) {
@@ -197,10 +208,20 @@ bool CombatTables::load(const std::string& path) {
         }
         type.name = row[0].get<std::string>();
         type.wire = static_cast<std::uint8_t>(wire);
+        // The three categories of the game table. A different text is a fault of the file: with
+        // the direct category as its default, a wrong letter would take the mitigation of each
+        // creature away for that damage type, with no sign of the fault.
         const std::string category = row[2].get<std::string>();
-        type.category = category == "Physical"    ? DamageCategory::physical
-                        : category == "Elemental" ? DamageCategory::elemental
-                                                  : DamageCategory::direct;
+        if (category == kCategoryPhysical) {
+            type.category = DamageCategory::physical;
+        } else if (category == kCategoryElemental) {
+            type.category = DamageCategory::elemental;
+        } else if (category == kCategoryDirect) {
+            type.category = DamageCategory::direct;
+        } else {
+            return fail("the damage type " + type.name + " has the category \"" + category
+                        + "\", which is not Physical, Elemental, or True");
+        }
         if (!typeIndex.emplace(type.name, static_cast<std::uint32_t>(data.damageTypes.size())).second) {
             return fail("a damage type is in the file two times");
         }

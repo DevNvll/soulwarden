@@ -13,6 +13,7 @@
 #include "server/rep/combat_messages.h"
 #include "server/rep/item_requests.h"
 #include "server/rep/replication.h"
+#include "server/rep/travel_messages.h"
 #include "state/identity.h"
 
 namespace soulwarden::backend::server::rep {
@@ -88,6 +89,20 @@ constexpr unsigned kMaxFragmentsInRecord = 255;
  * some slices in each scan interval and not all in one frame. A decision of this project.
  */
 constexpr std::size_t kMaxNewCreaturesInScan = 16;
+/**
+ * A travel of the character to a place that is farther than this gets a loading screen in its
+ * client (meters). The client has the world near its character: at a place that is far it
+ * must load the world first, and with no loading screen the user sees a character that does
+ * not move in a world that comes in. A decision of this project (protocol notes 4.16).
+ */
+constexpr float kTravelScreenDistance = 100.0F;
+/**
+ * After a travel, a session with the camera estimate does not follow a camera that is
+ * farther than this from the new place (horizontal, meters), for this time: the client made
+ * such a report before it got the new position.
+ */
+constexpr float kTravelCameraRange = 15.0F;
+constexpr std::chrono::milliseconds kTravelCameraHold{2000};
 
 // Hub numbers and type ids of the actor references of the self identification. The client
 // sends only the actor id of a reference (the 16-byte route of a client frame), not the hub
@@ -498,6 +513,11 @@ void RepSession::log_message_counts() const {
         return;
     }
     const world::PositionTrack::Largest& largest = m_track.largest();
+    if (m_travels != 0) {
+        log::write("rep: travels of the session: %u; %llu position report(s) from a place before a travel were not used",
+                   m_travels,
+                   static_cast<unsigned long long>(m_track.count(world::PositionVerdict::beforeTravel)));
+    }
     log::write("rep: position reports of the session: %llu accepted, %llu refused (%llu too fast, %llu not finite, %llu "
                "at a height limit, %llu outside the world), %llu not in sequence, %u new input sequence(s); largest "
                "accepted distance for one tick %.3f m (input %u), largest speed between two reports %.2f m/s, largest "
@@ -689,9 +709,14 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     }
     // A session observes the creatures near its character in each start. It observes the
     // characters of other players only with the option.
-    const bool scan = m_cameraSeen && now - m_lastInterestScan >= kInterestInterval;
+    // A travel of a character changes the distances at once: the session does not wait for
+    // its interval. Thus an observer gets the stop of a character that went far away, and not
+    // a record with its new place.
+    const bool scan = m_cameraSeen
+                      && (now - m_lastInterestScan >= kInterestInterval || m_world.last_travel() > m_interestTravel);
     if (scan) {
         m_lastInterestScan = now;
+        m_interestTravel = m_world.last_travel();
         for (const auto& [id, known] : m_observer.known()) {
             const world::Entity* entity = m_world.find(id);
             if (id == own.id || entity == nullptr) {
@@ -839,6 +864,8 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
             fragments.push_back(PendingFragment{raw.slot, raw.type, raw.state, true});
         }
     }
+    /** True when the record has the full movement state of the entity (its position), not only a time anchor. */
+    const bool fullMovement = movement;
     bool anchorOnly = false;
     if (owner && !movement && now - m_lastAnchor >= kAnchorInterval) {
         // The owner gets its full movement state one time. After that it gets only a new time
@@ -916,6 +943,16 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
     known.sent = m_world.revision();
     if (owner && movement) {
         m_lastAnchor = now;
+    }
+    if (owner && m_travelNotice && fullMovement) {
+        // The movement state with the new place of a travel is out. This message ends the mark
+        // "teleport pending" of the client: its loading screen can end.
+        m_travelNotice = false;
+        send_message(kTypePlayerTeleport, player_teleport_body(entity.id));
+        log::write("rep: travel: the movement state with the new position is out (teleport number %u): message \"on "
+                   "player teleport\" (type %u) sent",
+                   static_cast<unsigned>(entity.teleport),
+                   kTypePlayerTeleport);
     }
     if (owner && first) {
         log::write("rep: local player record sent");
@@ -1004,7 +1041,7 @@ void RepSession::handle_client_input(std::span<const std::uint8_t> body) {
             m_researchKickArmed = true;
             m_researchKickAt = now + m_options.research.kickDelay;
         }
-        if (!input->hasCharacter && use_camera_estimate(*input, now, *own)) {
+        if (!input->hasCharacter && use_camera_estimate(*input, now, *own) && !camera_before_travel(*input, now, *own)) {
             track_position(*input, now, *own);
         }
         m_input = *input;
@@ -1108,6 +1145,44 @@ void RepSession::claim_hit(const InputStep& step, const InputContact& contact) {
     }
 }
 
+void RepSession::traveled(const world::Travel& travel) {
+    // The call comes from the world, in a task of a command.
+    const log::Context context(m_logMark);
+    ++m_travels;
+    // The reports that the client made before it gets the new position must not put the entity
+    // back: the check starts again from the new place.
+    m_track.traveled();
+    m_followCamera = false;
+    forget_camera_distance();
+    m_knownBehind = kCameraBehind;
+    m_travelCameraHold = m_clock.now() + kTravelCameraHold;
+    if (!m_inWorld || m_closing) {
+        return;
+    }
+    const bool screen = travel.screen == world::TravelScreen::on
+                        || (travel.screen == world::TravelScreen::automatic && travel.distance > kTravelScreenDistance);
+    if (screen) {
+        send_message(kTypeTeleportWithLoadingScreen, teleport_screen_body(m_observer.own()));
+    }
+    m_travelNotice = true;
+    log::write("rep: travel of the character: %.1f m; %s", static_cast<double>(travel.distance),
+               screen ? "message \"on teleport with loading screen\" (type 3951) sent" : "no loading screen");
+}
+
+bool RepSession::camera_before_travel(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own) {
+    if (!m_travelCameraHold) {
+        return false;
+    }
+    const float distance = std::hypot(input.cameraX - own.position.x, input.cameraY - own.position.y);
+    if (distance > kTravelCameraRange && now < *m_travelCameraHold) {
+        return true;
+    }
+    // A camera at the new place, or the end of the time: the estimate starts again there.
+    m_travelCameraHold.reset();
+    resume_camera_estimate(input, now, own);
+    return false;
+}
+
 void RepSession::damage_dealt(const world::DamageDealt& damage) {
     if (!m_inWorld || m_closing) {
         return;
@@ -1132,6 +1207,22 @@ void RepSession::report_position(const ClientInput& input, carrier::Clock::time_
         return;
     }
     const auto cause = static_cast<std::size_t>(verdict);
+    if (verdict == world::PositionVerdict::beforeTravel) {
+        // The client made the report before it got the new position of a travel: not a fault.
+        if (!m_verdictLogged[cause]) {
+            m_verdictLogged[cause] = true;
+            log::write("rep: input %u has the position %.3f %.3f %.3f, which is not near the place of the travel %.3f "
+                       "%.3f %.3f: not used (the first report of the session with this cause)",
+                       static_cast<unsigned>(input.sequence),
+                       report.position.x,
+                       report.position.y,
+                       report.position.z,
+                       own.position.x,
+                       own.position.y,
+                       own.position.z);
+        }
+        return;
+    }
     if (verdict == world::PositionVerdict::outOfSequence) {
         if (!m_verdictLogged[cause]) {
             m_verdictLogged[cause] = true;

@@ -67,10 +67,11 @@ bool AttackTrack::restarted(std::uint16_t input, WorldClock::time_point now) con
 void AttackTrack::step(std::uint16_t input, bool press, bool hold, bool release, WorldClock::time_point now) {
     if (m_hasInput && !newer(input)) {
         // The input numbers of the client started again: an attack input of the old sequence
-        // fits no contact of the new one.
+        // fits no contact of the new one, and an input number of the old sequence cannot be
+        // compared with one of the new sequence.
         m_current.reset();
         m_previous.reset();
-        m_hits.clear();
+        ++m_sequence;
         m_pressed = false;
     }
     m_hasInput = true;
@@ -114,22 +115,33 @@ const AttackTrack::Press* AttackTrack::press_for(std::uint16_t input) const {
     return nullptr;
 }
 
-bool AttackTrack::same_attack(EntityId target, std::uint16_t input, WorldClock::time_point now) const {
-    for (const Hit& hit : m_hits) {
-        if (hit.target == target
-            && (steps_between(hit.input, input) < combat_limits::kSameAttackSteps
-                || now - hit.time < combat_limits::kSameAttackTime)) {
+bool HitLimits::same_attack(EntityId target, std::uint16_t input, SessionId session, std::uint32_t sequence,
+                            WorldClock::time_point now) const {
+    for (const Hit& hit : hits) {
+        if (hit.target != target) {
+            continue;
+        }
+        // The time is a value of the world clock: it applies to each session of the character.
+        // An input number is a value of one client: it applies only in its session and sequence.
+        if (now - hit.time < combat_limits::kSameAttackTime
+            || (hit.session == session && hit.sequence == sequence
+                && steps_between(hit.input, input) < combat_limits::kSameAttackSteps)) {
             return true;
         }
     }
     return false;
 }
 
-void AttackTrack::note_hit(EntityId target, std::uint16_t input, WorldClock::time_point now) {
-    while (!m_hits.empty() && now - m_hits.front().time >= combat_limits::kClaimWindow) {
-        m_hits.pop_front();
+void HitLimits::note_hit(const Hit& hit) {
+    while (!hits.empty() && hit.time - hits.front().time >= combat_limits::kClaimWindow) {
+        hits.pop_front();
     }
-    m_hits.push_back(Hit{target, input, now});
+    hits.push_back(hit);
+}
+
+bool HitLimits::idle(WorldClock::time_point now) const {
+    return (claims.empty() || now - claims.back() >= combat_limits::kClaimWindow)
+           && (hits.empty() || now - hits.back().time >= combat_limits::kClaimWindow);
 }
 
 std::uint64_t AttackTrack::refused() const {
@@ -142,18 +154,30 @@ std::uint64_t AttackTrack::refused() const {
     return total;
 }
 
-bool AttackTrack::admit(WorldClock::time_point now) {
-    while (!m_claims.empty() && now - m_claims.front() >= combat_limits::kClaimWindow) {
-        m_claims.pop_front();
+bool HitLimits::admit(WorldClock::time_point now) {
+    while (!claims.empty() && now - claims.front() >= combat_limits::kClaimWindow) {
+        claims.pop_front();
     }
-    if (m_claims.size() >= combat_limits::kClaimsInWindow) {
+    if (claims.size() >= combat_limits::kClaimsInWindow) {
         return false;
     }
-    m_claims.push_back(now);
+    claims.push_back(now);
     return true;
 }
 
 Combat::Combat(World& world, const gamedata::CombatTables* tables) : m_world(world), m_tables(tables) {}
+
+HitLimits& Combat::limits_of(const std::string& characterId) {
+    /** With more characters than this in the table, the entries with no value in a time window go away. */
+    constexpr std::size_t kSweepSize = 64;
+    if (m_limits.size() >= kSweepSize && m_limits.count(characterId) == 0) {
+        const WorldClock::time_point now = m_world.clock().now();
+        for (auto entry = m_limits.begin(); entry != m_limits.end();) {
+            entry = entry->second.idle(now) ? m_limits.erase(entry) : std::next(entry);
+        }
+    }
+    return m_limits[characterId];
+}
 
 const ItemInstance* Combat::weapon_in_hand(const Entity& attacker) {
     const Equipment& equipment = attacker.equipment;
@@ -237,7 +261,9 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
         return refuse(HitVerdict::noTables);
     }
     const WorldClock::time_point now = m_world.clock().now();
-    if (!track.admit(now)) {
+    // The limits are the limits of the character: a new session of it has the same ones.
+    HitLimits& limits = limits_of(attacker->characterId);
+    if (!limits.admit(now)) {
         return refuse(HitVerdict::tooMany);
     }
     // The target: the world finds it from the reference of the contact. A reference is two
@@ -280,7 +306,7 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     if (!rowIndex) {
         return refuse(HitVerdict::noWeapon);
     }
-    if (track.same_attack(target->id, claim.input, now)) {
+    if (limits.same_attack(target->id, claim.input, session, track.sequence(), now)) {
         return refuse(HitVerdict::sameAttack);
     }
     // The distance, with the exact position of the character that the world has.
@@ -293,7 +319,7 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     const gamedata::DamageRow& row = m_tables->damage_row(*rowIndex);
     result.damage = damage(*attacker, *weapon, item->gearScore, row, m_tables->defense_of(target->creature.kind->vitals));
     result.healthBefore = target->vitals.health;
-    track.note_hit(target->id, claim.input, now);
+    limits.note_hit(HitLimits::Hit{target->id, now, claim.input, session, track.sequence()});
     const EntityId targetId = target->id;
     const ActorId targetActor = target->actor;
     const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt);

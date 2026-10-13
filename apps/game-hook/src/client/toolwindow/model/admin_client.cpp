@@ -31,6 +31,7 @@ std::string g_wantedSearch;
 bool g_searchPending = false;
 std::string g_wantedKindSearch;
 bool g_kindSearchPending = false;
+bool g_placesPending = false;
 struct PendingCommand {
     /** The character that the window showed when the user gave the command. */
     std::string character;
@@ -169,6 +170,13 @@ void read_state(const json& reply, Snapshot& snapshot) {
             snapshot.weapons.push_back(std::move(weapon));
         }
     }
+    // The position of the character (the member is there only for a character that is in the world).
+    const json& position = member_of(reply, "position");
+    snapshot.hasPosition = position.is_array() && position.size() == 3 && position[0].is_number() && position[1].is_number()
+                           && position[2].is_number();
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        snapshot.position[axis] = snapshot.hasPosition ? position[axis].get<float>() : 0.0F;
+    }
     // The creatures near the character (the member is there only for a character with a state).
     const json& creatures = member_of(reply, "creatures");
     snapshot.creatureData = flag_of(creatures, "data");
@@ -298,6 +306,36 @@ void run_kind_search(const std::string& text) {
     ++g_version;
 }
 
+void run_places() {
+    const network::BackendReply reply = request("GET", "/admin/v1/catalog/places", {});
+    const json document = reply.status == 200 ? json::parse(reply.body, nullptr, false) : json();
+    const Guard guard;
+    g_snapshot.places.clear();
+    g_snapshot.placesLoaded = flag_of(document, "loaded");
+    // A reply that is not a list (no backend, an older backend): the window asks again later.
+    g_snapshot.placesDone = document.is_object();
+    const json& places = member_of(document, "places");
+    if (places.is_array()) {
+        for (const json& entry : places) {
+            const json& position = member_of(entry, "position");
+            if (!position.is_array() || position.size() != 3 || !position[0].is_number() || !position[1].is_number()
+                || !position[2].is_number()) {
+                continue;
+            }
+            TravelPlace place;
+            place.id = text_of(entry, "id");
+            place.kind = text_of(entry, "kind");
+            place.name = text_of(entry, "name");
+            place.territory = text_of(entry, "territory");
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                place.position[axis] = position[axis].get<float>();
+            }
+            g_snapshot.places.push_back(std::move(place));
+        }
+    }
+    ++g_version;
+}
+
 void run_command(const PendingCommand& command) {
     // The character is the character of the command, not the selected character of this
     // moment: a state reply for a different character can come while the command waits.
@@ -334,6 +372,7 @@ DWORD WINAPI worker(LPVOID) noexcept {
             bool hasCommand = false;
             bool hasSearch = false;
             bool hasKindSearch = false;
+            bool hasPlaces = false;
             {
                 const Guard guard;
                 hasCommand = std::exchange(g_commandPending, false);
@@ -348,6 +387,7 @@ DWORD WINAPI worker(LPVOID) noexcept {
                 if (hasKindSearch) {
                     kindSearchText = g_wantedKindSearch;
                 }
+                hasPlaces = std::exchange(g_placesPending, false);
             }
             if (hasCommand) {
                 run_command(command);
@@ -357,6 +397,9 @@ DWORD WINAPI worker(LPVOID) noexcept {
             }
             if (hasKindSearch) {
                 run_kind_search(kindSearchText);
+            }
+            if (hasPlaces) {
+                run_places();
             }
             if (g_active.load() || hasCommand) {
                 refresh_state();
@@ -444,6 +487,16 @@ void search_kinds(const std::string& text) noexcept {
         const Guard guard;
         g_wantedKindSearch = text;
         g_kindSearchPending = true;
+    }
+    if (g_wake != nullptr) {
+        SetEvent(g_wake);
+    }
+}
+
+void load_places() noexcept {
+    {
+        const Guard guard;
+        g_placesPending = true;
     }
     if (g_wake != nullptr) {
         SetEvent(g_wake);

@@ -27,12 +27,24 @@
 //      speed permits for that time, plus one margin. The margin thus applies one time for a
 //      window, not one time for each report. The height has a limit for a rise and a larger
 //      one for a fall, each one for the time between two reports, and the same two limits for
-//      the total rise and the total fall of the time window: that time is the time of the
-//      world clock plus the delay value, one time for a window. The total rise is the sum of
-//      the rises of the accepted reports of the window, and the total fall is the sum of their
-//      falls: a path that goes up and down has the two sums, not the difference of two
-//      heights. The first report of a session has the position of the entity as its
-//      reference, for the horizontal distance and for the height.
+//      the total rise and the total fall of a time window of the client time (below). The total
+//      rise is the sum of the rises of the accepted reports of the window, and the total fall
+//      is the sum of their falls: a path that goes up and down has the two sums, not the
+//      difference of two heights. The first report of a session has the position of the entity
+//      as its reference, for the horizontal distance and for the height.
+//
+// The client time of a report (the time of the height totals). The input number of a report is
+// the time of the client: one number for each simulation step, 30 in a second. The client time
+// is the time of the input numbers from the first accepted report, with two limits from the
+// world clock: it is not more than the time of the world clock from that report plus the delay
+// value (a client cannot make more simulation steps than the time that passed, and large
+// input numbers give no time), and it is not more than the backlog value behind that time.
+// Thus the time of a report does not come from the moment at which its datagram came: reports
+// that come late and together (a delay of the network, a client that did no step for some
+// frames) have the time of their input numbers, which the time of the world clock before them
+// covers. A rule with the time of arrival refused the valid jumps of such reports (code review
+// of stage 3.2a, finding 2). The limits for a client that changes its input numbers are in the
+// protocol notes 4.7.
 //
 // The check is a design of this project: the client has no copy of the check of the original
 // server. It finds a position that is too far from the last one. It cannot find a position
@@ -68,8 +80,13 @@ enum class PositionVerdict : std::uint8_t {
     tooFast,
     /** The session is the owner of no entity. */
     noEntity,
+    /**
+     * The world moved the character to a different place (World::travel), and the report is
+     * not near that place: the client made it before it got the new position.
+     */
+    beforeTravel,
 };
-inline constexpr std::size_t kPositionVerdictCount = 7;
+inline constexpr std::size_t kPositionVerdictCount = 8;
 
 /** @return A short text for a log line, for example "too fast". */
 [[nodiscard]] const char* position_verdict_text(PositionVerdict verdict);
@@ -123,6 +140,13 @@ inline constexpr float kSpawnHeightRange = 5.0F;
  */
 inline constexpr std::chrono::milliseconds kClockSlack{250};
 /**
+ * The client time of a report is not more than this time behind the time of the world clock
+ * plus the delay value. It is the longest delay of the reports of a client for which each of
+ * its reports keeps the time of its input number. A client can keep this time and use it
+ * later: a rise of 20 m/s for this time at one value of the world clock.
+ */
+inline constexpr std::chrono::milliseconds kReportBacklog{5000};
+/**
  * A report is newer when its input number is 1 to this value above the last one (16 bits,
  * with wrap).
  */
@@ -166,11 +190,27 @@ public:
                                         const state::WorldPosition& known,
                                         WorldClock::time_point now);
 
+    /**
+     * The world moved the character to a different place (World::travel). The check starts
+     * again as at the start of a session: no accepted report, and the position of the entity
+     * (the new place) is the reference of the next report, for the horizontal distance and for
+     * the height. A report that is not near the new place is refused (`beforeTravel`): the
+     * reports that the client made before it got the new position come after the travel, and
+     * they must not put the entity back at the old place. The limits of the first report apply
+     * (position_limits::kSpawnRange, kSpawnHeightRange), with the time from the first report
+     * after the travel: a client that does not take the new position gets the old place back
+     * only after the time of a walk to it.
+     */
+    void traveled();
+
     /** @return The number of reports with this verdict. */
     [[nodiscard]] std::uint64_t count(PositionVerdict verdict) const {
         return m_counts[static_cast<std::size_t>(verdict)];
     }
-    /** @return The number of reports that the check refused for their numbers or for their speed. */
+    /**
+     * @return The number of reports that the check refused for their numbers or for their
+     *         speed. A report from the place before a travel is not in this number.
+     */
     [[nodiscard]] std::uint64_t refused() const {
         return count(PositionVerdict::notFinite) + count(PositionVerdict::heightLimit)
                + count(PositionVerdict::outsideWorld) + count(PositionVerdict::tooFast);
@@ -196,6 +236,8 @@ private:
          */
         double totalRise{0.0};
         double totalFall{0.0};
+        /** The client time of the report, in seconds from the first accepted report (see the top of this file). */
+        double clientTime{0.0};
     };
 
     PositionVerdict counted(PositionVerdict verdict) {
@@ -212,8 +254,12 @@ private:
     std::uint32_t m_restarts{0};
     /** Time of the first report that got to the speed check. The reference time until a report is accepted. */
     std::optional<WorldClock::time_point> m_firstReport;
+    /** True from a travel of the character to the first accepted report after it. */
+    bool m_traveled{false};
     /** The accepted reports of the time window, oldest first. The newest one stays also when it is older. */
     std::deque<Sample> m_window;
+    /** The time of the first accepted report from the start of the check: the start of the client time. */
+    WorldClock::time_point m_clientStart{};
     std::array<std::uint64_t, kPositionVerdictCount> m_counts{};
     Largest m_largest;
 };

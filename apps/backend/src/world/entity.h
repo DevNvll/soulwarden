@@ -233,13 +233,16 @@ struct Creature {
     std::uint32_t level{1};
     /** Direction of the creature: the angle about the vertical axis, in degrees. 0: the creature looks north. */
     float yaw{0.0F};
+    /** The time at which the world made the creature, on the world clock: the start of its spawn action. */
+    WorldClock::time_point madeAt{};
     /** True from the moment at which the health of the creature is 0. A dead creature does not get health again. */
     bool dead{false};
     /** The time of the death, on the world clock. Stage 3.5a starts the respawn time and the time of the body here. */
     WorldClock::time_point diedAt{};
     /**
-     * The action that the server started: the death action of a dead creature, or the reaction
-     * of a creature to a hit for the time of that action. No value: the idle action of the client.
+     * The action that the server started: the spawn action of a slice that needs it (from the
+     * creation of the creature), the death action of a dead creature, or the reaction of a
+     * creature to a hit for the time of that action. No value: the idle action of the client.
      */
     std::optional<CreatureAction> action;
     /** Number of actions that the server started for this creature. The count of an action on the wire is this number. */
@@ -302,6 +305,15 @@ struct Entity {
      */
     bool positionEstimated{false};
     Revision positionRevision{0};
+    /**
+     * The teleport number of the movement state of the entity: the low 4 bits of its teleport
+     * field (protocol notes 4.6). The client of the owner takes the position of a movement
+     * state of the server only when the state has a number that is not the number of its own
+     * state. The start number of a client is 0: thus the number is 1 to 15, never 0, and the
+     * first movement state of each session puts the character at the position of the entity.
+     * World::travel gives the entity the next number.
+     */
+    std::uint8_t teleport{1};
     /** True from the first refused position: the log has one line for an entity (World::set_position). */
     bool badPositionLogged{false};
 

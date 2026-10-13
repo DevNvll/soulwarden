@@ -156,6 +156,13 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
             slice.actions.push_back(std::move(action));
         }
     }
+    // The spawn action: a member of a slice that needs it. A member with a wrong form is a fault.
+    if (entry.contains("spawnAction") && (!entry["spawnAction"].is_string() || entry["spawnAction"].get<std::string>().empty())) {
+        return false;
+    }
+    if (entry.contains("spawnAction")) {
+        slice.spawnActionName = entry["spawnAction"].get<std::string>();
+    }
     return true;
 }
 
@@ -329,6 +336,7 @@ bool CreatureData::set(std::vector<CreatureSlice> slices,
             }
         }
         slice.hitAction = slice.find_action(kHitAction);
+        slice.spawnAction = slice.spawnActionName.empty() ? std::nullopt : slice.find_action(slice.spawnActionName);
     }
     build_keys();
     return true;
@@ -367,6 +375,13 @@ bool CreatureData::check() {
             || (slice.markerSlot != 0 && !has_slot(slice, slice.markerSlot, server::rep::kTypeMarkerState))) {
             m_error = "slice " + std::to_string(index)
                       + " has a movement slot, a vitals slot, or a marker slot that is not the slot of that component in its slot list";
+            return false;
+        }
+        // The backend starts the spawn action of a slice that names one: the action table must
+        // have it, with a fragment. Without it the creature of such a slice shows no body.
+        if (!slice.spawnActionName.empty() && !slice.find_action(slice.spawnActionName)) {
+            m_error = "slice " + std::to_string(index) + " names the spawn action " + slice.spawnActionName
+                      + ", and its action table has no such action with a fragment";
             return false;
         }
         // The metadata state of a creature has the asset id of its slice: the null id names no asset.

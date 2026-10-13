@@ -25,6 +25,12 @@
 //                                                        the same, at a distance from the
 //                                                        entity of a character that is in the world
 //   POST /v1/dev/world/remove?character=ID               remove an entity that has no session
+//   POST /v1/dev/world/travel?character=ID&place=PLACE[&screen=auto|on|off]
+//   POST /v1/dev/world/travel?character=ID&x=X&y=Y&z=Z[&screen=auto|on|off]
+//                                                        move a character to a travel place or
+//                                                        to a position (a character that is not
+//                                                        in the world: its row gets the place)
+//   GET  /v1/dev/world/places                            the travel places of the game data
 //   POST /v1/dev/world/touch?character=ID                mark each component state of an entity
 //                                                        as changed: each observer gets its
 //                                                        full record again
@@ -114,7 +120,29 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
         for (const auto& [id, entity] : target.entities()) {
             entities.push_back(entity_json(entity));
         }
-        return json_reply(200, json{{"entities", entities}, {"revision", target.revision()}}.dump());
+        // The load of the backend: the real time of its ticks (a measurement, in microseconds).
+        const auto meter = [](const world::LoadMeter& load) {
+            const auto micro = [](std::chrono::nanoseconds time) {
+                return std::chrono::duration<double, std::micro>(time).count();
+            };
+            return json{{"count", load.count},
+                        {"largest", micro(load.largest)},
+                        {"mean", load.count != 0 ? micro(load.total) / static_cast<double>(load.count) : 0.0}};
+        };
+        const world::WorldLoad& load = target.load();
+        const world::Creatures& creatures = target.creatures();
+        return json_reply(200,
+                          json{{"entities", entities},
+                               {"revision", target.revision()},
+                               {"load",
+                                {{"worldTick", meter(load.worldTick)},
+                                 {"serverTick", meter(load.serverTick)},
+                                 {"spawnScan", meter(creatures.scan_load())},
+                                 {"spawnPoints", creatures.spawn_points().size()},
+                                 {"spawnPointsLooked", creatures.counts().pointsLooked},
+                                 {"spawnScans", creatures.counts().scans},
+                                 {"creatures", creatures.count()}}}}
+                              .dump());
     });
 }
 
@@ -440,6 +468,14 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("GET", "", "/v1/dev/world", "dev.world", bind(list_entities));
     router.add("POST", "", "/v1/dev/world/spawn", "dev.world_spawn", bind(spawn_entity));
     router.add("POST", "", "/v1/dev/world/remove", "dev.world_remove", bind(remove_entity));
+    router.add("POST", "", "/v1/dev/world/travel", "dev.world_travel", command_route(services, commands::travel));
+    router.add("GET", "", "/v1/dev/world/places", "dev.world_places", [&services](const RouteContext& context) {
+        if (!context.request.host.empty()) {
+            return message(403, "forbidden");
+        }
+        // The travel places do not change after the start of the backend: a read needs no world task.
+        return json_reply(200, commands::travel_places_json(services.world.options().travelPlaces).dump());
+    });
     router.add("POST", "", "/v1/dev/world/touch", "dev.world_touch", bind(touch_entity));
     router.add("POST", "", "/v1/dev/world/fragment", "dev.world_fragment", bind(raw_fragment));
     router.add("GET", "", "/v1/dev/items", "dev.items", bind(list_items));
@@ -459,6 +495,8 @@ void register_dev_routes(Router& router, const Services& services) {
                creature_route(services, commands::set_creature_health));
     router.add("POST", "", "/v1/dev/creatures/kill", "dev.creatures_kill", creature_route(services, commands::kill_creature));
     router.add("POST", "", "/v1/dev/creatures/reset", "dev.creatures_reset", creature_route(services, commands::reset_creatures));
+    router.add("POST", "", "/v1/dev/creatures/action", "dev.creatures_action",
+               creature_route(services, commands::play_creature_action));
     register_dev_progress_routes(router, services);
 }
 

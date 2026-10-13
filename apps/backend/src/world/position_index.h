@@ -35,6 +35,19 @@ inline constexpr float kMaxVerticalPosition = 100000.0F;
            && std::abs(position.z) <= kMaxVerticalPosition;
 }
 
+/**
+ * Limits of the height of a place for a character, in meters: the range of the height of a
+ * world position on the wire (-100 to 1000, protocol notes 4.6), with a margin for the spawn
+ * lift. The check of a position report refuses the two limit values of that range.
+ */
+inline constexpr float kLowestTravelHeight = -99.0F;
+inline constexpr float kHighestTravelHeight = 999.0F;
+
+/** @return True when a position is a place to which the world can move a character (World::travel). */
+[[nodiscard]] inline bool travel_position(const state::WorldPosition& position) {
+    return valid_position(position) && position.z >= kLowestTravelHeight && position.z <= kHighestTravelHeight;
+}
+
 class PositionIndex {
 public:
     /** @param cellSize Edge of one cell, in meters. */
@@ -70,15 +83,35 @@ public:
     void for_each_candidate(const state::WorldPosition& center, float range, Visit&& visit) const {
         const Cell low = cell_of(state::WorldPosition{center.x - range, center.y - range, 0.0F});
         const Cell high = cell_of(state::WorldPosition{center.x + range, center.y + range, 0.0F});
-        for (auto cell = m_cells.lower_bound(Cell{low.first, low.second}); cell != m_cells.end(); ++cell) {
-            if (cell->first.first > high.first) {
+        // One search for each column of cells that the circle touches: the cost is the cells of
+        // the circle, not the cells of the world. A circle with more columns than the index has
+        // cells (a very large range) walks the cells of the index one time. The sequence of
+        // the visits is the same for the two ways: the columns from west to east, the cells of
+        // a column from south to north, and the ids of a cell from the lowest one.
+        const std::int64_t columns = static_cast<std::int64_t>(high.first) - low.first + 1;
+        if (columns > static_cast<std::int64_t>(m_cells.size())) {
+            for (auto cell = m_cells.lower_bound(Cell{low.first, low.second}); cell != m_cells.end(); ++cell) {
+                if (cell->first.first > high.first) {
+                    break;
+                }
+                if (cell->first.second < low.second || cell->first.second > high.second) {
+                    continue;
+                }
+                for (const EntityId id : cell->second) {
+                    visit(id);
+                }
+            }
+            return;
+        }
+        for (std::int32_t column = low.first;; ++column) {
+            for (auto cell = m_cells.lower_bound(Cell{column, low.second});
+                 cell != m_cells.end() && cell->first.first == column && cell->first.second <= high.second; ++cell) {
+                for (const EntityId id : cell->second) {
+                    visit(id);
+                }
+            }
+            if (column == high.first) {
                 break;
-            }
-            if (cell->first.second < low.second || cell->first.second > high.second) {
-                continue;
-            }
-            for (const EntityId id : cell->second) {
-                visit(id);
             }
         }
     }

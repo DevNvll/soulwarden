@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <exception>
@@ -20,12 +21,14 @@
 #include "gamedata/creature_data.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/progression_tables.h"
+#include "gamedata/travel_places.h"
 #include "state/store.h"
 #include "world/combat.h"
 #include "world/creatures.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/inventory.h"
+#include "world/load_meter.h"
 #include "world/position_index.h"
 #include "world/position_report.h"
 #include "world/progress.h"
@@ -48,6 +51,40 @@
 
 namespace soulwarden::backend::world {
 
+/** How the client of a character shows a travel (World::travel). */
+enum class TravelScreen {
+    /** The session decides from the distance: a loading screen for a place that is far. */
+    automatic,
+    /** No loading screen: the movement state only. */
+    off,
+    /** A loading screen for each distance. */
+    on,
+};
+
+/** One travel of a character: what the session of its owner gets (SessionSink::traveled). */
+struct Travel {
+    state::WorldPosition from;
+    state::WorldPosition to;
+    /** The distance of the two places, in meters. */
+    float distance{0.0F};
+    TravelScreen screen{TravelScreen::automatic};
+};
+
+enum class TravelError {
+    none,
+    /** The character has no entity: it is not in the world. */
+    notInWorld,
+    /** The place is not a place for a character (travel_position). */
+    badPosition,
+};
+
+struct TravelResult {
+    TravelError error{TravelError::none};
+    /** The entity of the character. Null when `error` is not `none`. */
+    Entity* entity{nullptr};
+    float distance{0.0F};
+};
+
 /** Why a session lost its character. */
 enum class LostCause {
     /** A newer session registered the character (a character is in one session at most). */
@@ -65,6 +102,17 @@ public:
      * the call.
      */
     virtual void character_lost(LostCause cause) = 0;
+
+    /**
+     * The world moved the character of this session to a different place (World::travel). The
+     * session tells its client what the client needs for the change of the place, and it
+     * starts the check of the position reports of its client again from the new place. The
+     * movement state of the entity has the new position and a new teleport number: it goes
+     * out with the next record of the session. A sink with no client does nothing.
+     */
+    virtual void traveled(const Travel& travel) {
+        (void)travel;
+    }
 
     /**
      * The character of this session did hurt an entity (world/combat.h). The session tells
@@ -104,6 +152,14 @@ enum class SpawnError {
     badPosition,
 };
 
+/** The load of the backend: the real time of its ticks (world/load_meter.h). */
+struct WorldLoad {
+    /** One tick of the world: the tasks, the timers, the creature system, and the position saves. */
+    LoadMeter worldTick;
+    /** One tick of the game server: the tick of the world and the tick of each session. */
+    LoadMeter serverTick;
+};
+
 /** What became of a task that a different thread gave to the world (World::call). */
 enum class CallStatus {
     /** The task ran, and the caller has its value. */
@@ -134,6 +190,8 @@ struct WorldOptions {
     const gamedata::CreatureData* creatureData{nullptr};
     /** The combat tables (game data). Null: an attack of a player has no effect. */
     const gamedata::CombatTables* combatTables{nullptr};
+    /** The travel places (game data). Null: the travel command takes only a position in numbers. */
+    const gamedata::TravelPlaces* travelPlaces{nullptr};
     /**
      * The spawn point rule (horizontal, meters; a decision of this project). The world makes
      * the creature of a spawn point when a player is `creatureSpawnEnter` or less from the
@@ -293,6 +351,33 @@ public:
     PositionVerdict report_position(SessionId session, const PositionReport& report, PositionTrack& track);
 
     /**
+     * Moves a character that is in the world to a different place (a command). The world sets
+     * the position of the entity, gives it the next teleport number, marks its movement state,
+     * and writes its position row. The session of the owner gets SessionSink::traveled, and
+     * its client gets the new position with its next record (a position of the server, which
+     * the client takes: the teleport number is new). A session that observes the entity
+     * compares its interest distances at once (last_travel): it gets the new position, or the
+     * stop of the entity. The spawn point rule runs in the same tick: the creatures of the new
+     * place are in the world before a session looks for them.
+     *
+     * The position is a place on the ground, or some distance above it: the client lets the
+     * character fall to the ground (kSpawnLift).
+     */
+    TravelResult travel(const std::string& characterId,
+                        const state::WorldPosition& position,
+                        TravelScreen screen = TravelScreen::automatic);
+
+    /** @return The world revision of the last travel of a character. 0: none. */
+    [[nodiscard]] Revision last_travel() const {
+        return m_lastTravel;
+    }
+
+    /** @return The load of the backend, for the log and for the development tools. */
+    [[nodiscard]] WorldLoad& load() {
+        return m_load;
+    }
+
+    /**
      * Sets the position of an entity to an estimate (the camera of the owner). It changes the
      * position index and the position revision. It does not mark the movement state: the
      * client of the owner moves its character itself, and it must not get the estimate of the
@@ -337,6 +422,13 @@ public:
     /** Calls `visit(Entity&)` for each entity that is `range` or less from `center` (horizontal). */
     template <class Visit>
     void for_each_near(const state::WorldPosition& center, float range, Visit&& visit);
+
+    /**
+     * Calls `visit(const Entity&)` for the entity of each character that is in the world, in
+     * the sequence of the character ids. A creature is not in this list.
+     */
+    template <class Visit>
+    void for_each_character(Visit&& visit) const;
 
     /** @return The value of the revision counter: it is higher after each change of an entity. */
     [[nodiscard]] Revision revision() const {
@@ -416,6 +508,8 @@ private:
     // World thread only.
     IdAllocator m_ids;
     Revision m_revision{0};
+    Revision m_lastTravel{0};
+    WorldLoad m_load;
     /** The address of an entity stays the same until its removal. */
     std::map<EntityId, Entity> m_entities;
     std::map<std::string, EntityId> m_characters;
@@ -498,6 +592,16 @@ void World::for_each_near(const state::WorldPosition& center, float range, Visit
             visit(found->second);
         }
     });
+}
+
+template <class Visit>
+void World::for_each_character(Visit&& visit) const {
+    for (const auto& [character, id] : m_characters) {
+        const auto found = m_entities.find(id);
+        if (found != m_entities.end()) {
+            visit(found->second);
+        }
+    }
 }
 
 } // namespace soulwarden::backend::world

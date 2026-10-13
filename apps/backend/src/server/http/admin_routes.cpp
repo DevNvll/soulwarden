@@ -38,6 +38,10 @@
 //          set_creature_health creature, and health or percent
 //          kill_creature       creature
 //          reset_creatures     no argument: each spawn point that waits is free again
+//          travel              place (the id of a travel place), or x, y, z (a position in
+//                              meters): the character goes to the place. A character that is
+//                              in the world is there at once; for a character that is not in
+//                              the world, its row gets the place
 //        remove_creature, set_creature_health, and kill_creature change only a creature of
 //        the list of the character (150 m or less from it), and the character must be in the
 //        world: a different creature gives the reply 404, and nothing changes.
@@ -47,6 +51,9 @@
 //        The items of the item catalog whose id, type, or class has each word of the text.
 //   GET  /admin/v1/catalog/creatures?q=TEXT[&limit=N][&offset=N]
 //        The kinds of the creature data whose id, name, category, or family has each word.
+//   GET  /admin/v1/catalog/places
+//        The travel places of the game data: the id, the kind, the name, the territory, and the
+//        position of each one.
 // The state of a character that is in the world also has the creatures near it (the member
 // "creatures": each creature that is 150 m or less from the character, the nearest one first).
 //
@@ -96,6 +103,7 @@ constexpr NamedCommand kCommands[] = {
     {"set_creature_health", nullptr, commands::set_creature_health},
     {"kill_creature", nullptr, commands::kill_creature},
     {"reset_creatures", nullptr, commands::reset_creatures},
+    {"travel", commands::travel},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
@@ -195,6 +203,10 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 // The creatures near the character. The character of a different account never
                 // gets here: the list above has only the characters of the account of the token.
                 reply["creatures"] = commands::creatures_view(target, selected, commands::kAdminCreatureRange);
+                // The place of the character, for the travel part of the tool window.
+                if (const world::Entity* entity = target.find_character(selected)) {
+                    reply["position"] = {entity->position.x, entity->position.y, entity->position.z};
+                }
             }
         }
         return json_reply(200, reply.dump());
@@ -325,6 +337,15 @@ service::HttpResponse search_creatures(const Services& services, const AdminAcce
     return json_reply(200, reply.dump());
 }
 
+service::HttpResponse list_places(const Services& services, const AdminAccess& access, const RouteContext& context) {
+    service::HttpResponse refusal;
+    if (!caller(access, context, refusal)) {
+        return refusal;
+    }
+    // The travel places do not change after the start of the backend: a read needs no world task.
+    return json_reply(200, commands::travel_places_json(services.world.options().travelPlaces).dump());
+}
+
 } // namespace
 
 void register_admin_routes(Router& router, const Services& services, const AdminAccess& access) {
@@ -335,6 +356,7 @@ void register_admin_routes(Router& router, const Services& services, const Admin
     router.add("POST", "", "/admin/v1/commands", "admin.commands", bind(run_command));
     router.add("GET", "", "/admin/v1/catalog/items", kAdminCatalogRoute, bind(search_items));
     router.add("GET", "", "/admin/v1/catalog/creatures", kAdminCreatureCatalogRoute, bind(search_creatures));
+    router.add("GET", "", "/admin/v1/catalog/places", kAdminPlaceCatalogRoute, bind(list_places));
 }
 
 } // namespace soulwarden::backend::server::http

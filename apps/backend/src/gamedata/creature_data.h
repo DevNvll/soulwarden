@@ -91,6 +91,16 @@ struct CreatureSlice {
      * "Reaction". No value: the slice has none with a fragment, and the creature keeps its pose.
      */
     std::optional<std::uint32_t> hitAction;
+    /**
+     * Name of the action that the server starts when it makes a creature with this slice (the
+     * field m_spawnAction of the action list component, game data). The file has it only for
+     * a slice whose body and name plate show in the client only after that action (the
+     * picture tours of the slices: protocol notes 4.14). Empty: the creature starts with no
+     * action of the server.
+     */
+    std::string spawnActionName;
+    /** Index of that action in the action table. No value: the slice needs no spawn action. */
+    std::optional<std::uint32_t> spawnAction;
 
     /** @return The index of the action with this name that has a fragment, or no value. */
     [[nodiscard]] std::optional<std::uint32_t> find_action(std::string_view name) const;
@@ -158,8 +168,9 @@ public:
      * fit together: a kind or a spawn point with a level that the level table does not have, a
      * movement, vitals, or marker slot that is not the slot of that component in the slot list
      * of its slice, a slice with the null asset id, a kind whose health (the health of a level
-     * times its factor) is 0 or not finite for a level of the table, and a member "counts"
-     * with a wrong form or with a number that is not the size of its list.
+     * times its factor) is 0 or not finite for a level of the table, a spawn action that the
+     * action table of its slice does not have with a fragment, and a member "counts" with a
+     * wrong form or with a number that is not the size of its list.
      * @return False when the file is not there or is not complete. `error()` then has the cause.
      */
     [[nodiscard]] bool load(const std::string& path);

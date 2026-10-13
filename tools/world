@@ -14,6 +14,20 @@ Usage:
                                                 the same, at a distance from the character OTHER,
                                                 which is in the world (meters: east, north, up)
   tools/world remove CHARACTER                  remove an entity that has no session
+  tools/world places [TEXT]                     the travel places of the game data (the spirit
+                                                shrines and the inns of each territory) whose
+                                                id, name, or territory has the text
+  tools/world travel CHARACTER PLACE [--screen auto|on|off]
+                                                move a character to a travel place (PLACE: an id
+                                                of `tools/world places`, for example shrine_40170).
+                                                A character that is in the world is there at once,
+                                                with no new login. For a character that is not in
+                                                the world, its row gets the place
+  tools/world travel CHARACTER X Y Z [--screen auto|on|off]
+                                                the same, to a position in meters (Z: a height on
+                                                the ground, or above it: the character falls)
+                                                --screen: the loading screen of the client (auto:
+                                                a loading screen for a place more than 100 m away)
   tools/world touch CHARACTER                   send the full record of an entity again
   tools/world fragment CHARACTER SLOT TYPE HEX  give an entity one state fragment with these bytes:
                                                 a live check of a state type that has no encoder
@@ -81,6 +95,11 @@ The creatures of the world (protocol notes 4.14):
   tools/world creature kill CREATURE            set the health to 0: the creature is dead
   tools/world creature reset                    each spawn point whose creature died or was removed
                                                 makes its creature again
+  tools/world creature action CREATURE NAME [SECONDS]
+                                                start an action of the action table of the slice of
+                                                a creature (Spawn, Attack_Bite, Idle): each client
+                                                that observes it plays the action. SECONDS: the time
+                                                of an action that has an end
   tools/world fragment CREATURE SLOT TYPE HEX   the fragment command for a creature
 CREATURE is the id of a creature (16 hexadecimal digits), or the last digits of it when only one
 creature has them.
@@ -178,7 +197,7 @@ def item_text(item: dict) -> str:
             f"durability {item['durability']}/{item['maxDurability']}{marks}  instance {item['instance']}")
 
 
-def request(data_dir: Path, method: str, path: str, show_bag: bool = True) -> None:
+def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filter_text: str = "") -> None:
     process, port = backend(data_dir)
     command = ["nsenter", "-t", str(process), "-U", "-n", "--preserve-credentials", "curl", "--silent", "--max-time", "5",
                "--request", method, "--write-out", "\n%{http_code}", f"http://127.0.0.1:{port}{path}"]
@@ -218,6 +237,37 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True) -> No
         for entity in document["entities"]:
             show(entity)
         print(f"{len(document['entities'])} entities, revision {document['revision']}")
+        load = document.get("load")
+        if load:
+            def meter(name: str) -> str:
+                entry = load[name]
+                return f"{entry['count']} ({entry['mean']:.1f} us each, the largest {entry['largest']:.1f} us)"
+            print(f"load: ticks of the game server {meter('serverTick')}; ticks of the world {meter('worldTick')}; scans "
+                  f"of the spawn points {meter('spawnScan')}; {load['spawnPoints']} spawn points, "
+                  f"{load['spawnPointsLooked']} looked at in {load['spawnScans']} scans; {load['creatures']} creatures")
+    elif isinstance(document, dict) and "places" in document and "loaded" in document:
+        if not document["loaded"]:
+            print("the backend has no travel places: make the file with tools/gamedata/places.sh")
+        words = [word.lower() for word in (filter_text or "").split()]
+        shown = 0
+        for place in document["places"]:
+            text = f"{place['id']} {place['name']} {place['territory']} {place['kind']}".lower()
+            if all(word in text for word in words):
+                x, y, z = place["position"]
+                print(f"{place['id']:<20} {place['kind']:<7} {place['territory']:<20} {place['name']:<36} "
+                      f"{x:.3f} {y:.3f} {z:.3f}")
+                shown += 1
+        print(f"{shown} of {len(document['places'])} travel places")
+    elif isinstance(document, dict) and "applied" in document and "position" in document:
+        x, y, z = document["position"]
+        place = document.get("place")
+        where = f"{place['name']} ({place['territory']}), " if place else ""
+        if document["applied"] == "world":
+            print(f"world: done, the character is at {where}{x:.3f} {y:.3f} {z:.3f} ({document['distance']:.1f} m from "
+                  "its place before)")
+        else:
+            print(f"world: done, the character is not in the world: its row has {where}{x:.3f} {y:.3f} {z:.3f}, and its "
+                  "next world entry is there")
     elif isinstance(document, dict) and "entity" in document:
         show(document)
     elif isinstance(document, dict) and "items" in document:
@@ -391,6 +441,12 @@ def creature_command(data_dir: Path, arguments: list[str]) -> None:
         request(data_dir, "POST", f"/v1/dev/creatures/health?creature={creature_id(data_dir, arguments[1])}&{amount}")
     elif action == "reset" and len(arguments) == 1:
         request(data_dir, "POST", "/v1/dev/creatures/reset")
+    elif action == "action" and len(arguments) in (3, 4):
+        if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[2]):
+            fail("the action must be a name of the action table of the slice (letters, digits, and _)")
+        seconds = f"&seconds={numbers(arguments[3:], 1)[0]}" if len(arguments) == 4 else ""
+        request(data_dir, "POST", f"/v1/dev/creatures/action?creature={creature_id(data_dir, arguments[1])}"
+                                  f"&action={arguments[2]}{seconds}")
     else:
         fail("unknown creature command. tools/world --help prints the commands.")
 
@@ -502,6 +558,25 @@ def main() -> None:
             fail("the name must be the id of a weapon or of a trade skill of the game tables")
         request(data_dir, "POST", f"/v1/dev/progress/skill-experience?character={character_id(data_dir, arguments[1])}"
                                   f"&id={arguments[2]}&amount={whole(arguments[3], 'the amount')}")
+    elif command == "places" and len(arguments) in (1, 2):
+        request(data_dir, "GET", "/v1/dev/world/places", filter_text=arguments[1] if len(arguments) == 2 else "")
+    elif command == "travel" and len(arguments) >= 3:
+        words = arguments[2:]
+        screen = ""
+        if "--screen" in words:
+            place = words.index("--screen")
+            if place + 1 >= len(words) or words[place + 1] not in ("auto", "on", "off"):
+                fail("give auto, on, or off after --screen")
+            screen = f"&screen={words[place + 1]}"
+            del words[place:place + 2]
+        target = character_id(data_dir, arguments[1])
+        if len(words) == 1:
+            if not re.fullmatch(r"[A-Za-z0-9_]+", words[0]):
+                fail("the place must be an id of the travel places (tools/world places)")
+            request(data_dir, "POST", f"/v1/dev/world/travel?character={target}&place={words[0]}{screen}")
+        else:
+            x, y, z = numbers(words, 3)
+            request(data_dir, "POST", f"/v1/dev/world/travel?character={target}&x={x}&y={y}&z={z}{screen}")
     elif command in ("remove", "touch") and len(arguments) == 2:
         request(data_dir, "POST", f"/v1/dev/world/{command}?character={character_id(data_dir, arguments[1])}")
     else:

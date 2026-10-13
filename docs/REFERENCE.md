@@ -48,8 +48,9 @@ older session gets the message "Your account has connected from another game ses
 delete of a character that is in the world ends its session first.
 
 The backend has an admin interface for the tool window (routes `/admin/v1` on its loopback
-listener): the state of the characters of the account of the game, an item search, and
-commands for the items, the coin, the level, the attributes, and the skills of a character.
+listener): the state of the characters of the account of the game, an item search, the
+kinds of the creatures, the travel places, and commands for the items, the coin, the level,
+the attributes, and the skills of a character, for the creatures near it, and for a travel.
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
 
 The build has a library (`soulwarden_backend_core`), the backend program, and a test program that
@@ -100,6 +101,7 @@ tools/gamedata/items.sh            # one time: item catalog (without it the back
 tools/gamedata/progression.sh      # one time: progression tables (without them the backend gives no level and no skill point)
 tools/gamedata/creatures.sh        # one time: creature data (without it the world has no creature); needs an Oodle library (see below)
 tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect)
+tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
 linux-compat/run-soulwarden.sh
 ```
 
@@ -165,6 +167,7 @@ it is hidden, the game has its input again. The window is for the character that
 | Character | Set the level, give experience, set the coin, and set the value of each attribute (the character must have the free points for it). |
 | Skills | Set the mastery level of each weapon (each level above 1 gives one mastery point for its tree) and the level of each trade skill. |
 | Creatures | The list at the bottom has each creature that is 150 m or less from your character, the nearest one first, with its level, its health, and its distance. "Set" sets the health of a creature to the percent value above the list, "Kill" kills it, and "Remove" takes it out of the world. To make a creature, type a text in the search field (the id, the name, or the family of a kind, for example `wolf`, `risen`, `rabbit`), click a kind, set the level and the distance, and press "Spawn": the creature is that many meters to the north of your character (the window covers the left half of the picture: press F8 to see the creature). "Reset" makes each spawn point free again whose creature you killed or removed. |
+| Travel | The first line has the position of your character (meters: east, north, up). The list has each spirit shrine and each inn of the world with its territory and its distance from your character. Type a text in the filter (a part of a name or of a territory, `shrine`, or `inn`), click a place, and press "Travel": your character is at that place, with no new login. A place that is more than 100 m away shows the loading screen of the game for some seconds. The form below the list moves your character to a position in numbers ("Here" puts the position of your character into the form): give a height on the ground or above it. Your character and the camera look north after a travel. |
 
 The last line of the window shows the result of the last command, or the cause when the
 backend refused it. The client shows each change at once: the bag window (Tab), the level
@@ -271,14 +274,27 @@ button on "Confirm").
   point.
 - `tools/gamedata/creatures.sh` makes the creature data
   (`~/.local/share/soulwarden/gamedata/creatures.json`): the usual spawn points of the creatures
-  in 800 m around the start place of a new character (1,029 spawn points of 114 kinds in the
-  supported build; `--center X Y` and `--radius METERS` select a different area), and for
-  each kind its slice, the slots of its components, its vitals ids, its health, its name, and
-  its action table (protocol notes 4.14). The pak entries that it reads have Oodle data: set
+  of the whole world (32,840 spawn points of 3,848 kinds in the 25 regions of the supported
+  build, a file of 8.8 MB; `--radius METERS` with `--center X Y` writes a smaller file with
+  the spawn points of a circle), and for each kind its slice, the slots of its components,
+  its vitals ids, its health, its name, and its action table (protocol notes 4.14). The tool
+  leaves out the spawn points of 50 creature models that the client does not show
+  correctly with this backend (1,541 spawn points: the list is in
+  `tools/gamedata/creature_slices.json`), and `--report FILE` writes one line for each entry
+  that is left out. The pak entries that it reads have Oodle data: set
   `SOULWARDEN_OODLE_LIB` to an Oodle library of your computer (a `liboo2core.so`), or
   `SOULWARDEN_OODLE_DLL` to an Oodle library for Windows (the helper of
-  `tools/research/oodle_loader.c`). `tools/gamedata/creatures.sh --find TEXT` prints the
-  kinds with a text. Without the file the backend starts, and the world has no creature.
+  `tools/research/oodle_loader.c`). The tool needs about 1 minute.
+  `tools/gamedata/creatures.sh --find TEXT` prints the kinds with a text. Without the file
+  the backend starts, and the world has no creature.
+- `tools/gamedata/places.sh` makes the travel places
+  (`~/.local/share/soulwarden/gamedata/travel-places.json`): the spirit shrines and the inns of
+  each territory with their names and positions (161 places in 16 territories in the
+  supported build; protocol notes 4.16). It reads the region files and the text files of
+  the game copy, with the same Oodle sources as the creature data tool.
+  `tools/gamedata/places.sh --list` prints the places and writes no file. Without the file
+  the backend starts, the travel list is empty, and a travel takes only a position in
+  numbers.
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -287,12 +303,19 @@ button on "Confirm").
   attributes file of the game copy, from the same sources as the creature data tool.
   `tools/gamedata/combat.sh --find TEXT` prints the weapons and the creatures with a text.
   Without the file the backend starts, and an attack has no effect.
-- Creatures. With the creature data, the creatures of the start area stand at their spawn
-  points outside the settlement: rabbits, wolves, Risen, skeletons, sheep, and others. Each
+- Creatures. With the creature data, the creatures of each region of the world stand at
+  their spawn points: rabbits, wolves, Risen, skeletons, sheep, and many others. Each
   one has its body, its idle animation, its name plate with its level, and its health bar.
   The world makes the creature of a spawn point when your character comes near it (150 m),
   and removes it when no character is near (200 m). A creature does not move and does not
-  attack yet. The tab "Creatures" of the tool window
+  attack yet. Some creatures are not in the world yet (the corruption swarmers, the sulfur
+  lizards, the chameleons, and others): the client shows no body for them with this
+  backend.
+- Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
+  or to an inn of each territory, or to a position in numbers; `tools/world places` and
+  `tools/world travel` do the same in a development run. The session continues: there is
+  no new login. This is a command of this project, not the fast travel of the game: the
+  interaction "Fast Travel" of a shrine has no function yet. The tab "Creatures" of the tool window
   (F8) lists the creatures near the character, and it can make a creature of a kind, set
   its health, kill it, and remove it; `tools/world creatures`, `kinds`, and `creature` do the
   same in a development run. A creature that you killed or removed does not come back by

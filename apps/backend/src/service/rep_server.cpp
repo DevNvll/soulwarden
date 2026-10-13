@@ -240,6 +240,9 @@ void RepServer::on_disconnected(PeerId peer) {
 }
 
 void RepServer::on_tick() {
+    // The real time of the tick of the game server, with the tick of the world and of each
+    // session: a measurement for the log and for the development tools.
+    const world::LoadTimer timer(m_world.load().serverTick);
     // A session that ended in the last tick, or in a call of the transport after it, goes
     // away now: no call of its carrier connection is active here.
     for (auto client = m_clients.begin(); client != m_clients.end();) {

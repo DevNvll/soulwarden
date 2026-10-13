@@ -173,8 +173,12 @@ hub::Bytes encode_movement_state(const world::Entity& entity, View view, const w
     write_world_position(state.field(0, kWorldPosition), world::spawn_position(entity));
     state.field(0, kRotation).u8(kRotationIdentity);
     state.field(0, kLookDirection).u8(kLookDirectionNorth);
-    // The low 4 bits of the teleport field count teleports.
-    state.field(0, kTeleportId).u8(1);
+    // The low 4 bits of the teleport field are the teleport number of the entity. The high 4
+    // bits are the migration number of the client, which stays 0. The client of the owner
+    // takes the position of this state only when the number is not the number of its own
+    // state (client code at image RVA 0x486D89B): the first state of a session (the number of
+    // a new client is 0), and the state after a travel of the character (World::travel).
+    state.field(0, kTeleportId).u8(static_cast<std::uint8_t>(entity.teleport & 0x0F));
     if (view == View::owner) {
         const world::MovementPermissions& permissions = entity.movement;
         state.field(0, kDataBits)

@@ -40,9 +40,12 @@ service::HttpResponse s3_missing(const RouteContext& context) {
  * the contact (world/combat.h). Only the exact request gets it.
  */
 service::HttpResponse s3_gameplay_configuration(const RouteContext& context) {
+    // The route is a route for the exact host and the exact object path (Router::add_exact).
+    // The handler does the two compares again: a change of the route must not give the
+    // document to a different object key.
     std::string host = context.request.host;
     host = host.substr(0, host.find(':'));
-    if (host != kRemoteConfigurationHost) {
+    if (host != kRemoteConfigurationHost || context.request.path != kGameplayConfigurationPath) {
         return s3_missing(context);
     }
     service::HttpResponse response;
@@ -87,8 +90,8 @@ service::HttpResponse kinesis(const RouteContext& context) {
 void register_aws_routes(Router& router, const AwsOptions& options) {
     router.add("GET", "amazonaws.com", "/ping", "aws.ping", ping);
     if (options.meleeReport) {
-        router.add("GET", kRemoteConfigurationHost, kGameplayConfigurationPath, "aws.s3_gameplay_configuration",
-                   s3_gameplay_configuration);
+        router.add_exact("GET", kRemoteConfigurationHost, kGameplayConfigurationPath, "aws.s3_gameplay_configuration",
+                         s3_gameplay_configuration);
     }
     router.add("GET", ".s3.", "/*", "aws.s3_missing", s3_missing);
     router.add("POST", "sts.", "/", "aws.sts", sts);

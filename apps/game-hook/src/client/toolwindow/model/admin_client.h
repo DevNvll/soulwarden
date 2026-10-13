@@ -93,6 +93,16 @@ struct CreatureKind {
     unsigned spawnPoints{0};
 };
 
+/** One travel place of the backend: a place of the world to which the travel command moves a character. */
+struct TravelPlace {
+    std::string id;
+    /** "shrine" or "inn". */
+    std::string kind;
+    std::string name;
+    std::string territory;
+    float position[3]{};
+};
+
 /** The last replies of the backend. */
 struct Snapshot {
     /** False: the launcher gave no token, and the window can do nothing. */
@@ -145,6 +155,14 @@ struct Snapshot {
     unsigned kindTotal{0};
     bool kindSearchDone{false};
 
+    /** The position of the selected character in the world (meters: east, north, up). */
+    bool hasPosition{false};
+    float position[3]{};
+    /** The travel places of the backend. `placesDone`: the backend gave its list (which is empty with no file). */
+    std::vector<TravelPlace> places;
+    bool placesLoaded{false};
+    bool placesDone{false};
+
     /** True while a command is with the backend. */
     bool busy{false};
     /** The result of the last command, or empty. */
@@ -173,6 +191,9 @@ void search(const std::string& text) noexcept;
 
 /** Asks for the kinds of the creature data that a text finds. */
 void search_kinds(const std::string& text) noexcept;
+
+/** Asks for the travel places of the backend. The list does not change in one start: the window asks one time. */
+void load_places() noexcept;
 
 /**
  * Sends one command for a character. No effect while a command is with the backend.

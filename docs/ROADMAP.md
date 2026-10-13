@@ -190,7 +190,7 @@ continue in the C++ backend, and the layout below is the layout after the port.
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
 | 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | | |
-| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c in work | |
+| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
 | 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | | |
@@ -236,12 +236,13 @@ stage with a letter is a part of the system with that number.
 | 1 | 2.3a | Exact position of a character, id rule of the movement state | 0.6b | done |
 | 2 | 3.4a | Creatures spawn: the creatures of the start area stand at their spawn points, with name plate and health bar; spawn and remove commands; health and death flag by command | 2.3a | done |
 | 3 | 3.2a | The player hits a creature: the hit path of the client, the damage, the damage number, the death of the creature | 3.4a | done |
-| 4 | 3.4c | Creatures in the whole world: the creature file for each region (33,328 spawn points, 541 slices in the supported build), a picture check of each slice, the load of the spawn rule, and a travel command of the tool window | 3.4a | in work |
+| 4 | 3.4c | Creatures in the whole world: the creature file for each region (32,840 spawn points, 503 slices in the supported build), a picture check of each slice, the load of the spawn rule, and a travel command of the tool window | 3.4a | done |
 | 5 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | open |
-| 6 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
-| 7 | 1.8 | Original quest state of a new character | 1.6 | open |
-| 8 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
-| 9 | P.1, P.2 | Go port | 1.9 | open |
+| 6 | 3.4d | The path search of a creature: navigation data that a tool makes from the collision shapes of the game copy (the terrain, the solid objects, the water), loaded by the backend; a creature goes around a wall and uses stairs | 3.4b | open (the research and the extraction tool are in work) |
+| 7 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
+| 8 | 1.8 | Original quest state of a new character | 1.6 | open |
+| 9 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
+| 10 | P.1, P.2 | Go port | 1.9 | open |
 
 After the Go port, the sequence is the sequence of the summary table, with these changes:
 the other parts of the systems 3.1 to 3.7 come before milestone 4, and milestone 6 comes
@@ -865,6 +866,13 @@ the player can interact, die, and travel. All later milestones need this one.
   fast travel between shrines and settlements.
 - Implementation: death and respawn with no enemy (a command sets the health to 0); the
   respawn points in SQLite; teleport.
+- Stage 3.4c did the teleport (protocol notes 4.16): `World::travel` moves a character with
+  no new login. The client takes the position of a movement state with a new teleport
+  number, and the two messages 3951 (the loading screen) and 3954 go with it. The travel
+  places of the game data (`tools/gamedata/places.sh`) are the spirit shrines and the inns
+  of each territory. Open: the fast travel of the game (the interaction of a shrine, the
+  map, the costs), the recall to an inn, the death, and the respawn. The respawn of stage
+  3.4b can use `World::travel`.
 - Test: screenshots of the death screen, of the respawn at a camp, and of the arrival after
   fast travel.
 
@@ -980,6 +988,43 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   player, the reference character of an admin creature command, the check of the creature
   data file, the records of a creature, the animation sources of the tool, the totals of
   the height check, and the health command with 100 percent).
+- Stage 3.4c (done; protocol notes 4.14 and 4.16; evidence
+  `~/Games/soulwarden/work/evidence/world-spawn/implement/`). The creature data has the whole
+  world: 32,840 spawn points of 3,848 kinds with 503 slices in 25 regions (a file of 8.8 MB,
+  loaded in 0.2 s; the backend needs 58 MB with it). An entry with no category row is a
+  spawn point (the client shows the name of its vitals row). A picture tour
+  (`tools/research/creature_tour.py`) made one creature of each of the 553 slices in the
+  live client: 476 show a body and a name plate with no action, 27 show them after the
+  spawn action of the slice (`m_spawnAction`, which the backend starts at the creation of
+  the creature), and 50 do not show (1,541 spawn points stay out; the largest groups are
+  the sulfur lizard, the corruption swarmer, the chameleon, and the meatbags). The spawn
+  rule looks only at the grid cells near each player: 200 scans with 50 players need 25 ms
+  to 31 ms, against more than 1 s for a scan of all points (test case WS2, with a time
+  limit). The travel command moves a character to one of 161 places (spirit shrines and
+  inns) or to a position: `tools/world travel`, the admin command `travel`, and the tab
+  "Travel" of the tool window. Live: travels to shrines in Brimstone Sands, Great Cleave,
+  Monarch's Bluffs, Weaver's Fen, and Everfall, with the creatures of each place. The
+  stage also corrected the six findings of the code review of stage 3.2a (the combat tables
+  loader, the time of the height check for reports that come late, the combat data tool,
+  an input entry that ends after its position field, the exact path of the remote
+  configuration document, and the hit limits of a character over sessions). Not in this
+  stage: the 50 slices, the entries of events and encounters, and the entries with no
+  placement. For stage 3.4b: a movement of a creature must change its place in the position
+  index; the leave rule of the spawn points uses the place of the creature, and the enter
+  rule uses the place of its spawn point, thus a creature that goes 50 m or more from its
+  point needs a change of the rule; a slice with a spawn action has that action in its
+  movement state.
+- Stage 3.4d (open; research file `navigation.md`, not verified yet). The navigation files
+  of the game copy have no mesh: the original navigation data was only on the server. The
+  client stops its own character at each wall, thus the game copy has the collision shapes
+  of the world: the placements of the region files, the physics files, the height map, and
+  the water data. A tool makes the navigation data from them (game data, made by a tool in
+  `tools/gamedata`), and the backend finds a path on it. The client shows a creature at the
+  exact position of its states and looks for no floor: the path must give the height of the
+  surface. First work, outside the repository: a reader for the collision of the whole
+  world and a first grid for the start region. Open: the size of the data and the time of a
+  path search, the things that a spawner makes later, plants with a shape in their mesh
+  file, and terrain holes.
 - Test: screenshots of a creature at its spawn point, of a fight, and of its death; the
   health of the player goes down when the creature hits.
 - Risk: no data for the behavior. Then the behavior is a design of this project. Decision
@@ -1179,3 +1224,7 @@ Decision of the user (2026-10-13):
    interface is a service of the backend.
 6. Priority: creature spawn and combat as early as possible, and the social systems last
    (section 2.1 has the sequence).
+7. The path search of a creature (stage 3.4d) comes directly after stage 3.4b, before loot
+   (2026-10-13). The game copy has no navigation data: the original mesh was only on the
+   server. A tool makes the data from the collision shapes of the game copy (research file
+   `navigation.md`).

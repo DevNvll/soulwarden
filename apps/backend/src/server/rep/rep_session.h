@@ -136,6 +136,13 @@ public:
     /** The world took the character of this session away: the client gets the message "kicked". */
     void character_lost(world::LostCause cause) override;
 
+    /**
+     * The world moved the character of this session to a different place: the client gets the
+     * message for a loading screen when the place is far, and the check of its position
+     * reports starts again from the new place.
+     */
+    void traveled(const world::Travel& travel) override;
+
     /** The character of this session did hurt an entity: the client gets the message "on damage dealt". */
     void damage_dealt(const world::DamageDealt& damage) override;
 
@@ -329,6 +336,14 @@ private:
                                            const world::Entity& own);
     /** Changes the position source and writes one log line. */
     void set_position_source(PositionSource source, const ClientInput& input);
+    /**
+     * After a travel of the character, for a session with the camera estimate.
+     * @return True when the camera of this report is a camera of the place before the travel:
+     *         the client made the report before it got the new position, and the estimate
+     *         must not follow it.
+     */
+    [[nodiscard]] bool camera_before_travel(const ClientInput& input, carrier::Clock::time_point now,
+                                            const world::Entity& own);
     /** Starts the camera estimate again from a position of the entity that is exact. */
     void resume_camera_estimate(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own);
     /** Updates the position of the character from the camera of one input report. */
@@ -385,6 +400,20 @@ private:
     std::uint64_t m_creatureRecords{0};
     std::size_t m_creaturesObserved{0};
     carrier::Clock::time_point m_lastInterestScan{};
+    /** The world revision of the last travel for which this session compared its interest distances. */
+    world::Revision m_interestTravel{0};
+    /**
+     * True from a travel of the character to the bundle with its new position: the message "on
+     * player teleport" goes out after that bundle.
+     */
+    bool m_travelNotice{false};
+    /**
+     * After a travel: the time until which the camera estimate does not follow a camera that
+     * is far from the new place. No value at all other times.
+     */
+    std::optional<carrier::Clock::time_point> m_travelCameraHold;
+    /** Number of travels of the character in this session, for the log line at its end. */
+    std::uint32_t m_travels{0};
     /**
      * True from the first input report with a camera: the loading screen of the client is
      * gone, and the client has its local player entity. The client needs it before it gets

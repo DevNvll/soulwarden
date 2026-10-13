@@ -326,7 +326,10 @@ void read_tail(hub::Reader& reader, std::uint32_t mask, EntryBase& base, ClientI
         reader.u16();
     }
     if (!reader.ok()) {
+        // The body ends before the end of the entry: the entry is not complete, and a part of
+        // it is not a position. The position field was read before the missing bytes.
         input.tail = InputTail::shortBody;
+        input.hasCharacter = false;
     }
 }
 

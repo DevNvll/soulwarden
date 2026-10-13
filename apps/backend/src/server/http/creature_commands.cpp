@@ -57,12 +57,17 @@ const char* error_text(world::CreatureError error) {
         return "the health must be a number from 0 to the maximum health of the creature";
     case world::CreatureError::dead:
         return "the creature is dead: its health does not change";
+    case world::CreatureError::unknownAction:
+        return "the action table of the slice of the creature has no action with this name that has a fragment";
     }
     return "error";
 }
 
 int status_of(world::CreatureError error) {
-    return error == world::CreatureError::unknownCreature || error == world::CreatureError::unknownKind ? 404 : 400;
+    return error == world::CreatureError::unknownCreature || error == world::CreatureError::unknownKind
+                   || error == world::CreatureError::unknownAction
+               ? 404
+               : 400;
 }
 
 json creature_json(const world::Entity& entity) {
@@ -158,10 +163,7 @@ json creatures_view(world::World& target, const std::string& character, std::opt
         }
         creatures.push_back(std::move(row));
     }
-    std::size_t waiting = 0;
-    for (const world::SpawnPointState& point : system.spawn_points()) {
-        waiting += point.waiting ? 1 : 0;
-    }
+    const std::size_t waiting = system.waiting_count();
     const world::CreatureCounts& counts = system.counts();
     return json{{"data", system.has_data()},
                 {"character", character},
@@ -311,6 +313,37 @@ WorldCommand kill_creature(const std::string& character, const Arguments& argume
             return *refused;
         }
         return creature_reply(target.creatures().kill(id));
+    };
+}
+
+WorldCommand play_creature_action(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                  service::HttpResponse& refusal) {
+    const auto id = creature_id(arguments);
+    const auto action = arguments.text("action");
+    std::optional<float> seconds;
+    if (arguments.has("seconds")) {
+        seconds = arguments.number("seconds", 0.0F, 3600.0F);
+    }
+    if (!id || !action || action->empty() || (arguments.has("seconds") && !seconds)) {
+        refusal = message(400, "give creature=ID and action=NAME (an action of the action table of its slice), and when "
+                               "necessary seconds=N (the time of the action, 0 to 3600)");
+        return {};
+    }
+    return [character, id = *id, action = *action, seconds, reach](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
+        const world::CreatureResult result = target.creatures().play(id, action, seconds);
+        if (result.error == world::CreatureError::none) {
+            const world::CreatureAction& started = *result.entity->creature.action;
+            log::write("world: command: creature %s starts the action %s (index %u, fragment index %u)%s",
+                       id_text(id).c_str(),
+                       action.c_str(),
+                       started.action,
+                       started.fragment,
+                       seconds ? " with an end" : "");
+        }
+        return creature_reply(result);
     };
 }
 

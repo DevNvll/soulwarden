@@ -37,8 +37,33 @@ const gamedata::CreatureSlice* select_body(const gamedata::CreatureData& data,
 
 } // namespace
 
+void SpawnGrid::build(const std::vector<gamedata::SpawnPoint>& points) {
+    m_cells.clear();
+    m_sorted.clear();
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        m_cells[key_of(cell(points[index].position.x), cell(points[index].position.y))].push_back(
+            static_cast<std::uint32_t>(index));
+    }
+    m_sorted.reserve(m_cells.size());
+    for (const auto& [key, cellPoints] : m_cells) {
+        const auto x = static_cast<std::int64_t>(static_cast<std::int32_t>(key >> 32));
+        const auto y = static_cast<std::int64_t>(static_cast<std::int32_t>(key & 0xFFFFFFFFULL));
+        m_sorted.push_back({{x, y}, &cellPoints});
+    }
+    std::sort(m_sorted.begin(), m_sorted.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
+}
+
 Creatures::Creatures(World& world, const gamedata::CreatureData* data) : m_world(world), m_data(data) {
     load_points();
+}
+
+void Creatures::set_waiting(std::uint32_t point, bool waiting) {
+    m_points[point].waiting = waiting;
+    if (waiting) {
+        m_waiting.insert(point);
+    } else {
+        m_waiting.erase(point);
+    }
 }
 
 void Creatures::load_points() {
@@ -49,10 +74,8 @@ void Creatures::load_points() {
     }
     const std::vector<gamedata::SpawnPoint>& points = m_data->spawn_points();
     m_points.assign(points.size(), SpawnPointState{});
-    m_pointIndex = PositionIndex{};
-    for (std::size_t index = 0; index < points.size(); ++index) {
-        m_pointIndex.insert(index, points[index].position);
-    }
+    m_waiting.clear();
+    m_grid.build(points);
 }
 
 Entity* Creatures::find(EntityId id) {
@@ -77,9 +100,16 @@ Entity* Creatures::make(const gamedata::CreatureKind& kind,
     creature.level = level;
     creature.yaw = yaw;
     creature.spawnPoint = spawnPoint;
+    creature.madeAt = m_world.clock().now();
     Entity& entity = m_world.make_creature(creature, position, health);
     m_creatures.insert(entity.id);
     m_counts.largest = std::max(m_counts.largest, m_creatures.size());
+    if (body->spawnAction) {
+        // The client shows the body and the name plate of this slice only after its spawn
+        // action. The action has no end: a session that observes the creature later gets it
+        // with the time from its start, and its client then shows the creature at once.
+        start_action(entity, *body->spawnAction);
+    }
     return &entity;
 }
 
@@ -125,7 +155,7 @@ CreatureResult Creatures::remove(EntityId id) {
     }
     if (entity->creature.spawnPoint) {
         // A command took the creature away: the distance rule must not make it again.
-        m_points[*entity->creature.spawnPoint].waiting = true;
+        set_waiting(*entity->creature.spawnPoint, true);
     }
     ++m_counts.removedByCommand;
     m_world.remove_creature(id);
@@ -155,9 +185,8 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         if (entity->creature.spawnPoint) {
             // The place of the respawn time (stage 3.5a): `respawnAt` gets the time of the death
             // plus the respawn time of the spawner. With no time the point waits for a command.
-            SpawnPointState& point = m_points[*entity->creature.spawnPoint];
-            point.waiting = true;
-            point.respawnAt.reset();
+            set_waiting(*entity->creature.spawnPoint, true);
+            m_points[*entity->creature.spawnPoint].respawnAt.reset();
         }
         log::write("world: creature %016llx (%s) is dead",
                    static_cast<unsigned long long>(entity->id),
@@ -200,6 +229,30 @@ CreatureResult Creatures::hurt(EntityId id, float damage) {
     return result;
 }
 
+CreatureResult Creatures::play(EntityId id, const std::string& action, std::optional<float> seconds) {
+    CreatureResult result;
+    Entity* entity = find(id);
+    if (entity == nullptr) {
+        result.error = CreatureError::unknownCreature;
+        return result;
+    }
+    if (entity->creature.dead) {
+        result.error = CreatureError::dead;
+        return result;
+    }
+    const std::optional<std::uint32_t> index = entity->creature.body->find_action(action);
+    if (!index) {
+        result.error = CreatureError::unknownAction;
+        return result;
+    }
+    start_action(*entity, *index,
+                 seconds ? std::optional<std::chrono::milliseconds>(
+                               std::chrono::milliseconds(static_cast<long long>(std::max(*seconds, 0.0F) * 1000.0F)))
+                         : std::nullopt);
+    result.entity = entity;
+    return result;
+}
+
 void Creatures::start_action(Entity& entity, std::uint32_t action, std::optional<std::chrono::milliseconds> length) {
     const gamedata::CreatureSlice& body = *entity.creature.body;
     if (action >= body.actions.size() || body.actions[action].fragmentIndex < 0) {
@@ -234,21 +287,31 @@ void Creatures::end_actions() {
         if (entity != nullptr && entity->creature.action && entity->creature.action->ends) {
             // No mark of the movement state: the client of each observer ended the action
             // itself and plays its idle action. A session that observes the creature from now
-            // on gets a record with no action.
+            // on gets a record with no action, or with the spawn action of a slice that needs
+            // it: the client of that session shows the body only with that action. Its time is
+            // the time from the creation of the creature.
             entity->creature.action.reset();
+            const gamedata::CreatureSlice& body = *entity->creature.body;
+            if (body.spawnAction && !entity->creature.dead) {
+                CreatureAction standing;
+                standing.action = *body.spawnAction;
+                standing.fragment = static_cast<std::uint32_t>(body.actions[*body.spawnAction].fragmentIndex);
+                standing.generation = static_cast<std::uint16_t>(++entity->creature.actions);
+                standing.started = entity->creature.madeAt;
+                entity->creature.action = standing;
+            }
         }
         acting = m_acting.erase(acting);
     }
 }
 
 std::size_t Creatures::reset_spawn_points() {
-    std::size_t count = 0;
-    for (SpawnPointState& point : m_points) {
-        if (!point.waiting) {
-            continue;
-        }
-        ++count;
-        point.waiting = false;
+    // Only the points that wait: the list of all spawn points of the world is long.
+    const std::vector<std::uint32_t> waiting(m_waiting.begin(), m_waiting.end());
+    const std::size_t count = waiting.size();
+    for (const std::uint32_t index : waiting) {
+        SpawnPointState& point = m_points[index];
+        set_waiting(index, false);
         point.respawnAt.reset();
         // The body of the creature that died is in the way of the new creature.
         const Entity* body = point.entity != 0 ? find(point.entity) : nullptr;
@@ -299,34 +362,45 @@ void Creatures::tick() {
 }
 
 void Creatures::scan() {
+    const LoadTimer timer(m_scanLoad);
     const WorldClock::time_point now = m_world.clock().now();
     const WorldOptions& options = m_world.options();
+    // The cost of a scan depends on the players and on what is near them: the list of all
+    // spawn points of the world is long, and the scan does not walk it.
     std::vector<state::WorldPosition> players;
-    for (const auto& [id, entity] : m_world.entities()) {
-        if (entity.kind == EntityKind::player) {
-            players.push_back(entity.position);
-        }
+    m_world.for_each_character([&players](const Entity& entity) { players.push_back(entity.position); });
+    ++m_counts.scans;
+    m_counts.lastScanPoints = 0;
+    m_counts.lastScanCreatures = 0;
+    // A creature of a spawn point leaves the world when no player is near it. First the
+    // creatures that a player is near, from the position index of the world.
+    m_near.clear();
+    for (const state::WorldPosition& player : players) {
+        m_world.for_each_near(player, options.creatureSpawnLeave, [this](Entity& entity) {
+            ++m_counts.lastScanCreatures;
+            if (entity.kind == EntityKind::creature) {
+                m_near.insert(entity.id);
+            }
+        });
     }
-    // A creature of a spawn point leaves the world when no player is near it. The entity table
-    // changes in the loop: walk a copy of the ids.
+    // The creatures of the world are the creatures near a player, and the creatures of commands.
+    // The entity table changes in the loop: walk a copy of the ids.
     const std::vector<EntityId> creatures(m_creatures.begin(), m_creatures.end());
     for (const EntityId id : creatures) {
         const Entity* entity = find(id);
         if (entity == nullptr || !entity->creature.spawnPoint) {
             continue; // A creature of a command stays until a command removes it.
         }
-        const bool near = std::any_of(players.begin(), players.end(), [&](const state::WorldPosition& player) {
-            return horizontal_distance(player, entity->position) <= options.creatureSpawnLeave;
-        });
-        if (!near) {
+        if (m_near.count(id) == 0) {
             ++m_counts.removedByDistance;
             m_world.remove_creature(id);
         }
     }
+    m_near.clear();
     const std::vector<gamedata::SpawnPoint>& points = m_data->spawn_points();
     for (const state::WorldPosition& player : players) {
-        m_pointIndex.for_each_candidate(player, options.creatureSpawnEnter, [&](EntityId candidate) {
-            const auto index = static_cast<std::uint32_t>(candidate);
+        m_grid.for_each_candidate(player, options.creatureSpawnEnter, [&](std::uint32_t index) {
+            ++m_counts.lastScanPoints;
             const gamedata::SpawnPoint& point = points[index];
             SpawnPointState& state = m_points[index];
             if (horizontal_distance(player, point.position) > options.creatureSpawnEnter) {
@@ -339,7 +413,7 @@ void Creatures::scan() {
                 // The respawn time came: the point is free again. The body of the creature that
                 // died can be in the world still (a player stayed near it): it is in the way of
                 // the new creature, and it leaves the world first.
-                state.waiting = false;
+                set_waiting(index, false);
                 state.respawnAt.reset();
                 const Entity* body = state.entity != 0 ? find(state.entity) : nullptr;
                 if (body != nullptr && body->creature.dead) {
@@ -354,7 +428,7 @@ void Creatures::scan() {
                                         index + state.spawns);
             if (entity == nullptr) {
                 // The level table has no row for the level of the point: no creature, and no new try.
-                state.waiting = true;
+                set_waiting(index, true);
                 log::write("world: spawn point %s makes no creature: the level table has no level %u",
                            point.id.c_str(),
                            point.level);
@@ -365,6 +439,8 @@ void Creatures::scan() {
             ++m_counts.spawnedByPoint;
         });
     }
+    m_counts.pointsLooked += m_counts.lastScanPoints;
+    m_counts.creaturesLooked += m_counts.lastScanCreatures;
 }
 
 } // namespace soulwarden::backend::world

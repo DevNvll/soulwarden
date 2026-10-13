@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <cstdio>
 #include <limits>
 #include <string>
@@ -1165,6 +1166,97 @@ void rise_and_fall_totals(const Options&) {
           "in 5 s: each report is accepted");
 }
 
+
+/**
+ * PR11: reports that come late and together (code review of stage 3.2a, finding 2). The height
+ * totals of PR9 and PR10 had the time of arrival of the reports: five valid jumps whose reports
+ * came together after a delay of 4 s were refused. The totals now have the client time: the
+ * time of the input numbers, which the time of the world clock before the reports covers.
+ */
+void late_reports(const Options&) {
+    using world::position_limits::kRiseSpeed;
+    const state::WorldPosition known{100.0F, 200.0F, sent_height(kHeight)};
+    const auto start = world::WorldClock::time_point(std::chrono::seconds(1000));
+    // Five jumps in 4 s: each one starts after 0.8 s with 6.5 m/s and is 1.2 m high. The
+    // character stays at its place.
+    const auto jump_height = [](unsigned index) {
+        const float phase = static_cast<float>(index % 24) / 30.0F;
+        return kHeight + std::max(6.5F * phase - (6.5F * 6.5F / 4.8F) * phase * phase, 0.0F);
+    };
+    const auto refused_of = [&](const std::function<world::WorldClock::time_point(unsigned)>& arrival, unsigned* first) {
+        PositionTrack track;
+        unsigned refused = track.judge(PositionReport{1, known, wire_height(kHeight)}, known, start) == PositionVerdict::accepted ? 0 : 1;
+        for (unsigned index = 1; index <= 120; ++index) {
+            const float z = jump_height(index);
+            const PositionReport report{static_cast<std::uint16_t>(index + 1), state::WorldPosition{100.0F, 200.0F, sent_height(z)},
+                                        wire_height(z)};
+            if (track.judge(report, known, arrival(index)) != PositionVerdict::accepted) {
+                ++refused;
+                if (first != nullptr && *first == 0) {
+                    *first = index;
+                }
+            }
+        }
+        return refused;
+    };
+    unsigned firstRefused = 0;
+    const unsigned normal = refused_of([&](unsigned index) { return start + kTick * index; }, nullptr);
+    // The same reports come in 12 ms, 4 s after the first one (a delay of the network).
+    const unsigned late = refused_of(
+        [&](unsigned index) { return start + std::chrono::seconds(4) + std::chrono::microseconds(100) * index; }, &firstRefused);
+    // And in groups: the reports of each second come together at the end of that second.
+    const unsigned groups = refused_of([&](unsigned index) { return start + std::chrono::seconds((index + 29) / 30); }, nullptr);
+    note("five jumps of 1.2 m in 4 s (120 reports): refused at their usual times " + std::to_string(normal)
+         + ", after a delay of 4 s in 12 ms " + std::to_string(late) + " (the first refused report " + std::to_string(firstRefused)
+         + "), in groups of 1 s " + std::to_string(groups));
+    check(normal == 0, "five valid jumps pass at their usual times of arrival");
+    check(late == 0, "the same five jumps pass when their reports come together after a delay of 4 s (before the correction 16 "
+                     "of the 120 reports were refused, from report 99 on)");
+    check(groups == 0, "and when the reports of each second come together");
+
+    // What a client with wrong input numbers gets. A client that sent each report in time has
+    // no time in store: 400 reports at one clock value, each one one input number and 0.6 m
+    // higher (18 m/s in client time), get the delay value only.
+    const auto burst_rise = [&](std::chrono::seconds silence, bool reportsBefore) {
+        PositionTrack track;
+        auto time = start;
+        std::uint16_t input = 1;
+        (void)track.judge(PositionReport{input, known, wire_height(kHeight)}, known, time);
+        if (reportsBefore) {
+            // The client stands, with one report for each simulation step.
+            for (auto passed = std::chrono::microseconds(0); passed < silence; passed += kTick) {
+                time += kTick;
+                (void)track.judge(PositionReport{++input, known, wire_height(kHeight)}, known, time);
+            }
+        } else {
+            time += silence;
+        }
+        float highest = kHeight;
+        for (unsigned index = 1; index <= 400; ++index) {
+            const float z = kHeight + 0.6F * static_cast<float>(index);
+            if (track.judge(PositionReport{++input, state::WorldPosition{100.0F, 200.0F, sent_height(z)}, wire_height(z)}, known, time)
+                == PositionVerdict::accepted) {
+                highest = z;
+            }
+        }
+        return highest - kHeight;
+    };
+    const float inTime = burst_rise(std::chrono::seconds(60), true);
+    const float afterSilence = burst_rise(std::chrono::seconds(60), false);
+    const float afterShortSilence = burst_rise(std::chrono::seconds(2), false);
+    note("400 reports at one clock value with 0.6 m more each (a claim of 240 m): accepted rise after 60 s of reports in time "
+         + std::to_string(inTime) + " m, after 60 s with no report " + std::to_string(afterSilence) + " m, after 2 s with no report "
+         + std::to_string(afterShortSilence) + " m");
+    check(inTime > 10.0F && inTime <= kRiseSpeed * 1.0F,
+          "a client that sent its reports in time gets the rise of one time window at one clock value, 20 m at most: it stood "
+          "for that window, thus its rise is not more than 20 m/s over the window (the rule of the arrival times gave 25 m)");
+    check(afterSilence > 60.0F && afterSilence <= kRiseSpeed * 5.25F + 0.6F,
+          "a client that sent no report for 60 s gets the rise of 5.25 s at one clock value, 105 m (the backlog value of 5 s and "
+          "the delay value): not the rise of 60 s, and not the 240 m of its claim");
+    check(afterShortSilence > 30.0F && afterShortSilence <= kRiseSpeed * 2.25F + 0.6F,
+          "after 2 s with no report: the rise of 2.25 s, 45 m (the time of the world clock covers the client time)");
+}
+
 } // namespace
 
 std::vector<Case> position_cases() {
@@ -1180,6 +1272,9 @@ std::vector<Case> position_cases() {
         {"PR9", "position report: the total rise and fall of the time window (review of stage 2.3a)", height_over_the_window},
         {"PR10", "position report: the totals of the rises and of the falls of the time window (review of stage 3.4a)",
          rise_and_fall_totals},
+        {"PR11", "position report: valid jumps whose reports come late and together, and the limit of a client time in store "
+                 "(review of stage 3.2a)",
+         late_reports},
     };
 }
 

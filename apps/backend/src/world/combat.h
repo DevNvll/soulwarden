@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gamedata/combat_tables.h"
@@ -44,8 +46,11 @@
 // (Combat::damage), with the cells of the game tables as its input.
 //
 // The values that describe the input of one client are in an AttackTrack, which the session
-// of that client owns: its attack inputs, its last hits, and the counts for the log. World
-// thread only.
+// of that client owns: its attack inputs, and the counts for the log. The two limits of the
+// check (the claims of one time window, and the last hits of each creature) are values of the
+// character, not of a session: the combat system keeps them with the character id as their
+// key (HitLimits). A new session of a character, and a character that leaves the world and
+// enters it again, do not get new limits. World thread only.
 
 namespace soulwarden::backend::world {
 
@@ -262,8 +267,14 @@ public:
     [[nodiscard]] const Press* newest() const {
         return m_current ? &*m_current : nullptr;
     }
-    /** @return True when a hit of this creature is so near in input steps or in time that a contact is the same attack. */
-    [[nodiscard]] bool same_attack(EntityId target, std::uint16_t input, WorldClock::time_point now) const;
+    /**
+     * @return The number of the input sequence of the client: it is one more each time the
+     *         input numbers of the client start again. Two input numbers of one sequence can be
+     *         compared.
+     */
+    [[nodiscard]] std::uint32_t sequence() const {
+        return m_sequence;
+    }
     /** @return The number of claims with this verdict. */
     [[nodiscard]] std::uint64_t count(HitVerdict verdict) const {
         return m_counts[static_cast<std::size_t>(verdict)];
@@ -278,23 +289,13 @@ public:
 private:
     friend class Combat;
 
-    /** One hit of the last second: the creature, and the input number and the time of its contact. */
-    struct Hit {
-        EntityId target{0};
-        std::uint16_t input{0};
-        WorldClock::time_point time{};
-    };
-
     HitVerdict counted(HitVerdict verdict) {
         ++m_counts[static_cast<std::size_t>(verdict)];
         return verdict;
     }
-    /** Counts one claim for the rate rule. @return False when the window has too many. */
-    [[nodiscard]] bool admit(WorldClock::time_point now);
-    /** Keeps one hit for the rule "one attack hurts one creature one time". */
-    void note_hit(EntityId target, std::uint16_t input, WorldClock::time_point now);
 
     bool m_hasInput{false};
+    std::uint32_t m_sequence{0};
     std::uint16_t m_lastInput{0};
     WorldClock::time_point m_lastStep{};
     /** True while the attack input of the last step had its start mark: an attack input starts at the first such step. */
@@ -303,11 +304,42 @@ private:
     std::optional<Press> m_current;
     std::optional<Press> m_previous;
     std::uint32_t m_presses{0};
-    /** The times of the claims of the time window, oldest first. */
-    std::deque<WorldClock::time_point> m_claims;
-    /** The hits of the last second, oldest first. */
-    std::deque<Hit> m_hits;
     std::array<std::uint64_t, kHitVerdictCount> m_counts{};
+};
+
+/**
+ * The two limits of the hit check for one character: the claims of the time window, and the
+ * hits of the last second. They are values of the character (the combat system keeps them
+ * with the character id as their key), not of a session: a client that opens a new session
+ * for its character gets the limits that the character has.
+ */
+struct HitLimits {
+    /** One hit: the creature, the time of its contact, and the input number of the contact with its session and input sequence. */
+    struct Hit {
+        EntityId target{0};
+        WorldClock::time_point time{};
+        std::uint16_t input{0};
+        SessionId session{0};
+        std::uint32_t sequence{0};
+    };
+
+    /** The times of the claims of the time window, oldest first. */
+    std::deque<WorldClock::time_point> claims;
+    /** The hits of the last second, oldest first. */
+    std::deque<Hit> hits;
+
+    /** Counts one claim for the rate rule. @return False when the window has too many. */
+    [[nodiscard]] bool admit(WorldClock::time_point now);
+    /**
+     * @return True when a hit of this creature is so near in time, or in input steps of the
+     *         same session and input sequence, that a contact is the same attack.
+     */
+    [[nodiscard]] bool same_attack(EntityId target, std::uint16_t input, SessionId session, std::uint32_t sequence,
+                                   WorldClock::time_point now) const;
+    /** Keeps one hit for the rule "one attack hurts one creature one time". */
+    void note_hit(const Hit& hit);
+    /** @return True when no value of the limits is in its time window: the limits are the limits of a new character. */
+    [[nodiscard]] bool idle(WorldClock::time_point now) const;
 };
 
 class Combat {
@@ -363,9 +395,17 @@ public:
                                 const gamedata::DamageRow& row,
                                 const gamedata::DefenseRow* defense) const;
 
+    /**
+     * @return The limits of the hit check of a character. They stay when its session ends and
+     *         when its entity leaves the world.
+     */
+    [[nodiscard]] HitLimits& limits_of(const std::string& characterId);
+
 private:
     World& m_world;
     const gamedata::CombatTables* m_tables;
+    /** Character id to the limits of the character. An entry with no value in its time window goes away. */
+    std::unordered_map<std::string, HitLimits> m_limits;
 };
 
 } // namespace soulwarden::backend::world

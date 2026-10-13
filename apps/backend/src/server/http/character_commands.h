@@ -116,6 +116,18 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 /** Arguments: `id` (a weapon or a trade skill) and `amount`. */
 [[nodiscard]] WorldCommand add_skill_experience(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
+// The travel command (World::travel, server/http/travel_commands.cpp). Arguments: `place` (the
+// id of a travel place of the game data), or `x`, `y`, and `z` (a position in meters; the
+// height is a height on the ground, from -99 to 999), and when necessary `screen` ("auto",
+// "on", or "off": the loading screen of the client; "auto" is a loading screen for a place
+// that is far). A character that is in the world goes to the place at once, with no new
+// login ("applied":"world"). For a character that is not in the world, its row gets the place,
+// and its next world entry is there ("applied":"stored").
+[[nodiscard]] WorldCommand travel(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+
+/** @return The travel places of the backend: "loaded", and the list "places" (id, kind, name, territory, position). */
+[[nodiscard]] nlohmann::json travel_places_json(const gamedata::TravelPlaces* places);
+
 // The creature commands (world/creatures.h, server/http/creature_commands.cpp). The character
 // of a creature command is the reference place: the character of the user who gives it.
 
@@ -161,6 +173,14 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
                                          service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand reset_creatures(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                            service::HttpResponse& refusal);
+/**
+ * action: `creature`, `action` (the name of an action of the action table of the slice of the
+ * creature: "Spawn", "Attack_Bite"), and when necessary `seconds` (the time of an action that
+ * has an end). A development command: the creature plays the action in each client that
+ * observes it. Only the development routes have it.
+ */
+[[nodiscard]] WorldCommand play_creature_action(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                                service::HttpResponse& refusal);
 
 /**
  * @return The creatures of the world (world thread), the nearest one first: the id, the kind,

@@ -73,6 +73,8 @@ void World::run(Task& task, const char* kind) {
 
 void World::tick() {
     m_thread = std::this_thread::get_id();
+    // The real time of the tick: a measurement, not a time of the world.
+    const LoadTimer timer(m_load.worldTick);
     std::vector<Task> tasks;
     {
         std::lock_guard lock(m_mutex);
@@ -437,6 +439,61 @@ bool World::set_position(EntityId id, const state::WorldPosition& position, bool
     }
     place(*entity, position, true, moving);
     return true;
+}
+
+TravelResult World::travel(const std::string& characterId, const state::WorldPosition& position, TravelScreen screen) {
+    TravelResult result;
+    Entity* entity = find_character(characterId);
+    if (entity == nullptr) {
+        result.error = TravelError::notInWorld;
+        return result;
+    }
+    if (!travel_position(position)) {
+        result.error = TravelError::badPosition;
+        return result;
+    }
+    Travel travel;
+    travel.from = entity->position;
+    travel.to = position;
+    travel.distance =
+        std::hypot(position.x - travel.from.x, position.y - travel.from.y, position.z - travel.from.z);
+    travel.screen = screen;
+    // The place is a place on the ground: the client gets it with the spawn lift, as the
+    // position of a row, and the character falls to the ground. The next accepted position
+    // report of its client is the exact position.
+    place(*entity, position, true, false);
+    // The next number, 1 to 15: the client of the owner takes the position of a movement state
+    // only when its teleport number is new, and 0 is the start number of a client.
+    entity->teleport = static_cast<std::uint8_t>(entity->teleport % 15 + 1);
+    entity->changed[ComponentKey::movement] = m_revision;
+    m_lastTravel = m_revision;
+    {
+        const std::string mark = log::session_mark(entity->owner, entity->characterId);
+        const log::Context context(mark);
+        log::write("world: travel of character %s (%s): from %.2f %.2f %.2f to %.2f %.2f %.2f (%.1f m), teleport "
+                   "number %u",
+                   entity->characterId.c_str(),
+                   entity->name.c_str(),
+                   static_cast<double>(travel.from.x),
+                   static_cast<double>(travel.from.y),
+                   static_cast<double>(travel.from.z),
+                   static_cast<double>(position.x),
+                   static_cast<double>(position.y),
+                   static_cast<double>(position.z),
+                   static_cast<double>(travel.distance),
+                   static_cast<unsigned>(entity->teleport));
+    }
+    // The row has the new place at once: a session that ends now saves it, not the old place.
+    save_position(*entity, 0.0F);
+    // The creatures of the new place: the spawn point rule runs in this tick, not at its interval.
+    m_creatures.scan_soon();
+    const auto sink = entity->owner != 0 ? m_sinks.find(entity->owner) : m_sinks.end();
+    if (sink != m_sinks.end() && sink->second != nullptr) {
+        sink->second->traveled(travel);
+    }
+    result.entity = entity;
+    result.distance = travel.distance;
+    return result;
 }
 
 PositionVerdict World::report_position(SessionId session, const PositionReport& report, PositionTrack& track) {

@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # Make the creature data of the backend from the game copy of the user.
 # The backend reads GAMEDATA_DIR/creatures.json at its start. The file has the usual spawn
-# points of the creatures in an area of the world (default: 800 m around the start place of a
-# new character), and for each kind of creature its slice, the slots of its components, its
-# vitals ids, its health, and its name (protocol notes 4.14). Without the file the backend
-# starts, and the world has no creature.
+# points of the creatures of the whole world (each region of the game copy), and for each kind
+# of creature its slice, the slots of its components, its vitals ids, its health, its name, and
+# its action table (protocol notes 4.14). Without the file the backend starts, and the world
+# has no creature.
 # The file is game data: it stays outside the repository.
-# Usage: tools/gamedata/creatures.sh [OUTPUT.json] [--center X Y] [--radius METERS]
+# Usage: tools/gamedata/creatures.sh [OUTPUT.json]
+#        tools/gamedata/creatures.sh [OUTPUT.json] --radius METERS [--center X Y]
+#                                    a smaller file: the spawn points of a circle (with no
+#                                    center: around the start place of a new character)
+#        tools/gamedata/creatures.sh [OUTPUT.json] --report FILE
+#                                    one line in FILE for each entry that the tool leaves out
 #        tools/gamedata/creatures.sh --find TEXT...   print the kinds whose id or name has a text
+# The file creature_slices.json of this folder has the slices that need a spawn action and the
+# slices that the client does not show correctly (the tool leaves out their spawn points).
+# --all-slices writes each slice (a file for a picture check with tools/research/creature_tour.py).
 # The pak entries have Oodle data, which Python cannot read. The tool uses an Oodle library of
 # this computer (SOULWARDEN_OODLE_LIB, for example liboo2core.so), or the Oodle helper of
 # tools/research with a library for Windows (SOULWARDEN_OODLE_DLL), or the files that

@@ -16,6 +16,10 @@ float seconds(std::chrono::nanoseconds duration) {
     return std::chrono::duration<float>(duration).count();
 }
 
+double exact_seconds(std::chrono::nanoseconds duration) {
+    return std::chrono::duration<double>(duration).count();
+}
+
 } // namespace
 
 const char* position_verdict_text(PositionVerdict verdict) {
@@ -34,8 +38,16 @@ const char* position_verdict_text(PositionVerdict verdict) {
         return "too fast";
     case PositionVerdict::noEntity:
         return "no entity";
+    case PositionVerdict::beforeTravel:
+        return "not near the place of the travel";
     }
     return "not known";
+}
+
+void PositionTrack::traveled() {
+    m_window.clear();
+    m_firstReport.reset();
+    m_traveled = true;
 }
 
 float PositionTrack::seconds_from(const Sample& sample, std::uint16_t input, WorldClock::time_point now) {
@@ -76,9 +88,11 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
     }
 
     // 3. Speed.
-    // The totals of the rises and of the falls of the accepted reports, with this report.
+    // The totals of the rises and of the falls of the accepted reports, with this report, and
+    // the client time of this report.
     double totalRise = 0.0;
     double totalFall = 0.0;
+    double clientTime = 0.0;
     if (m_window.empty()) {
         // No report was accepted: the reference is the position that the world has (the spawn
         // position), from the time of the first report. The loading screen of the client is
@@ -88,15 +102,20 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
         }
         const float waited = seconds(now - *m_firstReport);
         const float allowed = std::max(kSpawnRange, kWindowSpeed * waited + kWindowMargin);
+        // After a travel, a report that is far is a report from the place before it.
+        const PositionVerdict far = m_traveled ? PositionVerdict::beforeTravel : PositionVerdict::tooFast;
         if (horizontal_distance(position, known) > allowed) {
-            return counted(PositionVerdict::tooFast);
+            return counted(far);
         }
         // The height of the first report has the same reference. Without this check the first
         // report of a session could give its character each height of the range.
         const float rise = position.z - known.z;
         if (rise > kSpawnHeightRange + kRiseSpeed * waited || -rise > kSpawnHeightRange + kFallSpeed * waited) {
-            return counted(PositionVerdict::tooFast);
+            return counted(far);
         }
+        m_traveled = false;
+        // The client time starts at the first accepted report.
+        m_clientStart = now;
     } else {
         const Sample& last = m_window.back();
         const float step = horizontal_distance(position, last.position);
@@ -122,10 +141,15 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
         if (distance > kWindowSpeed * windowSeconds + kWindowMargin) {
             return counted(PositionVerdict::tooFast);
         }
-        // The height over the time window: the total rise and the total fall have the time of
-        // the world clock, with the delay value one time. The time between two reports comes
-        // from their input numbers too (seconds_from), and each report would get the delay
-        // value again: a client with larger input number steps could rise without a limit.
+        // The height over a time window: the total rise and the total fall of the window have
+        // a limit for the time of the window. That time is the client time (the top of
+        // position_report.h): the time of the input numbers, which is not more than the time of
+        // the world clock from the first accepted report plus the delay value, one time for
+        // the session. The time between two reports comes from their input numbers too
+        // (seconds_from), and each report would get the delay value again: a client with larger
+        // input number steps could rise without a limit. The time of arrival of a report is not
+        // the time of its movement: reports that come late and together have the times of their
+        // input numbers, and the time of the world clock before them covers these times.
         //
         // The two totals are sums: each rise of the accepted reports of the window and of this
         // report, and each fall. The difference of two heights is not sufficient: a client that
@@ -137,15 +161,29 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
         // times that time, for each path: that speed is 6.5 m/s (the start of a jump, see
         // position_limits), and the limit is 20 m/s. A character that jumps 1.2 m each 0.8 s on
         // a slope goes less than 4 m up in a window of 1 s, and the limit of that window is
-        // 25 m. Reports that come together at one clock value after a delay of 0.25 s are 8
-        // simulation steps: 1.7 m up at the most (the limit is 5 m), and 14.4 m down in the
-        // fastest fall of the live session (the limit is 30 m).
-        const float clockSeconds = seconds(now - start->time) + seconds(kClockSlack);
+        // 20 m. The fastest fall of the live session is 54 m in 1 s, and the limit is 120 m.
+        const double ticks = static_cast<double>(static_cast<std::uint16_t>(report.input - last.input))
+                             / static_cast<double>(kTicksInSecond);
+        const double highest = exact_seconds(now - m_clientStart) + exact_seconds(kClockSlack);
+        clientTime = std::clamp(last.clientTime + ticks, highest - exact_seconds(kReportBacklog), highest);
+        // The start of the window of the client time: the oldest accepted report that is not
+        // older than the window in client time. With no such report: the last accepted one.
+        const Sample* since = &last;
+        for (const Sample& sample : m_window) {
+            if (clientTime - sample.clientTime <= exact_seconds(kWindow)) {
+                since = &sample;
+                break;
+            }
+        }
+        // The time of the window is not less than its time of the world clock: a client whose
+        // input numbers go slower than the world clock has the time that passed.
+        const float heightSeconds =
+            std::max(static_cast<float>(clientTime - since->clientTime), seconds(now - since->time));
         totalRise = last.totalRise + static_cast<double>(std::max(rise, 0.0F));
         totalFall = last.totalFall + static_cast<double>(std::max(-rise, 0.0F));
-        const float windowRise = static_cast<float>(totalRise - start->totalRise);
-        const float windowFall = static_cast<float>(totalFall - start->totalFall);
-        if (windowRise > kRiseSpeed * clockSeconds || windowFall > kFallSpeed * clockSeconds) {
+        const float windowRise = static_cast<float>(totalRise - since->totalRise);
+        const float windowFall = static_cast<float>(totalFall - since->totalFall);
+        if (windowRise > kRiseSpeed * heightSeconds || windowFall > kFallSpeed * heightSeconds) {
             return counted(PositionVerdict::tooFast);
         }
         if (static_cast<std::uint16_t>(report.input - last.input) == 1) {
@@ -170,7 +208,7 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
     while (m_window.size() > 1 && now - m_window.front().time > kWindow) {
         m_window.pop_front();
     }
-    m_window.push_back(Sample{report.input, now, position, totalRise, totalFall});
+    m_window.push_back(Sample{report.input, now, position, totalRise, totalFall, clientTime});
     return counted(PositionVerdict::accepted);
 }
 

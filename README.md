@@ -15,13 +15,15 @@ This is an independent project with no connection to Amazon Games. The repositor
 - The world. Your character enters, moves, and comes back at the exact place where it stood.
 - The bag, the coin, and equipment. Armor and weapons show on the body.
 - Level, attributes, weapon mastery trees, the ability bar, and trade skills.
-- Creatures at their real spawn points around the start area, 1,029 points and 114 kinds within 800 m.
+- Creatures at their real spawn points in the whole world, 32,840 points and 3,848 kinds in 25 regions.
 - Melee combat with a sword, a great axe, a hatchet, a war hammer, or a spear. A hit shows its damage number, and creatures die.
-- A tool window on F8 that gives items, sets levels and skills, and spawns or kills creatures.
+- Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
+- A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, and moves your character to a travel place.
 
 ## What does not work yet
 
 - Creatures stand still. They do not move, attack, drop loot, or come back after death.
+- Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
 - Nothing in the world gives experience. The tool window sets your level.
 - No quests, no ranged weapons, no magic, and no abilities.
 - No world clock, so some sessions are dark.
@@ -48,12 +50,13 @@ tools/build-soulwarden-game-hook.sh
 tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh     # the backend tests, with no game process
 
-tools/gamedata/appearance.sh         # six game data tools, one time each
+tools/gamedata/appearance.sh         # seven game data tools, one time each
 tools/gamedata/slice_ids.sh
 tools/gamedata/items.sh
 tools/gamedata/progression.sh
 tools/gamedata/creatures.sh
 tools/gamedata/combat.sh
+tools/gamedata/places.sh
 
 linux-compat/run-soulwarden.sh
 ```
@@ -72,12 +75,15 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `progression.sh` | No levels and no skill points |
 | `creatures.sh` | No creatures |
 | `combat.sh` | An attack does nothing |
+| `places.sh` | The travel list is empty, and you travel only to a position in numbers |
 
-Some tables of the game have Oodle compression. `creatures.sh` needs an Oodle library, which you give it with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
+Some tables of the game have Oodle compression. `creatures.sh` and `places.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
 
 ## The tool window
 
-Press F8 in the world. The window has four tabs for items, the character, skills, and creatures. It is how you get anything today, because nothing in the world gives items or experience yet.
+Press F8 in the world. The window has five tabs for items, the character, skills, creatures, and travel. It is how you get anything today, because nothing in the world gives items or experience yet.
+
+The tab "Travel" lists the spirit shrines and the inns of each territory. Type a part of a name in the filter, click a place, and press "Travel". Your character is there after a loading screen of some seconds, and the creatures of that place stand at their spawn points.
 
 While the window is open, the keyboard and the pointer go to it and not to the game. `SOULWARDEN_TOOL_WINDOW=0` starts the game without it.
 

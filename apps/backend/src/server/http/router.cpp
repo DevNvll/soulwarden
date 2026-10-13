@@ -27,11 +27,26 @@ void Router::add(std::string method, std::string host, std::string path, std::st
     m_routes.push_back({std::move(method), std::move(host), split_path(path), std::move(name), std::move(handler)});
 }
 
+void Router::add_exact(std::string method, std::string host, std::string path, std::string name, RouteHandler handler) {
+    Route route{std::move(method), std::move(host), split_path(path), std::move(name), std::move(handler)};
+    route.exactPath = std::move(path);
+    m_routes.push_back(std::move(route));
+}
+
 service::HttpResponse Router::dispatch(const service::HttpRequest& request, std::string& routeName) const {
     const std::vector<std::string> segments = split_path(request.path);
     for (const Route& route : m_routes) {
         if (route.method != "*" && route.method != request.method) {
             continue;
+        }
+        if (!route.exactPath.empty()) {
+            // The full text of the path and of the host: the segment compare below ignores an
+            // empty segment, and the host compare below is a search.
+            if (request.path != route.exactPath || request.host.substr(0, request.host.find(':')) != route.host) {
+                continue;
+            }
+            routeName = route.name;
+            return route.handler(RouteContext{request, {}});
         }
         if (!route.host.empty() && request.host.find(route.host) == std::string::npos) {
             continue;

@@ -46,6 +46,13 @@ std::string g_selectedKind;
 int g_creatureLevel = 1;
 int g_creatureDistance = 3;
 int g_creatureHealthPercent = 50;
+// The travel tab.
+char g_placeFilter[64] = "";
+std::string g_selectedPlace;
+float g_travelPosition[3]{};
+bool g_travelPositionSet = false;
+/** The time of the last request for the travel places. Below 0: no request yet. */
+double g_placesAskedAt = -1.0;
 
 /** The character that the values of the controls are for. */
 std::string g_formCharacter;
@@ -371,6 +378,121 @@ void draw_creatures() {
     }
 }
 
+/** @return The text with the letters A to Z in lower case. */
+std::string lower_text(std::string text) {
+    for (char& letter : text) {
+        if (letter >= 'A' && letter <= 'Z') {
+            letter = static_cast<char>(letter - 'A' + 'a');
+        }
+    }
+    return text;
+}
+
+void draw_travel() {
+    const float line = ImGui::GetFontSize();
+    // The list of the places does not change in one start: the window asks for it one time,
+    // and again each 5 s while the backend gave no list.
+    if (!g_data.placesDone && (g_placesAskedAt < 0.0 || ImGui::GetTime() - g_placesAskedAt >= 5.0)) {
+        g_placesAskedAt = ImGui::GetTime();
+        model::load_places();
+    }
+    if (g_data.hasPosition) {
+        ImGui::Text("The character is at %.1f %.1f %.1f (meters: east, north, up).", static_cast<double>(g_data.position[0]),
+                    static_cast<double>(g_data.position[1]), static_cast<double>(g_data.position[2]));
+        if (!g_travelPositionSet) {
+            g_travelPositionSet = true;
+            std::copy(std::begin(g_data.position), std::end(g_data.position), std::begin(g_travelPosition));
+        }
+    } else {
+        ImGui::TextColored(kDimColor, "The character is not in the world: a travel sets the place of its next world entry.");
+    }
+
+    ImGui::SeparatorText("Travel to a place");
+    if (g_data.placesDone && !g_data.placesLoaded) {
+        ImGui::TextColored(kErrorColor, "The backend has no travel places.");
+        ImGui::TextWrapped("Make the list with tools/gamedata/places.sh, then start the game again.");
+    }
+    ImGui::SetNextItemWidth(line * 24.0F);
+    ImGui::InputTextWithHint("##place-filter", "filter: name, territory, shrine, inn", g_placeFilter, sizeof(g_placeFilter));
+    const std::string filter = lower_text(g_placeFilter);
+    constexpr ImGuiTableFlags kTable = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY
+                                       | ImGuiTableFlags_SizingStretchProp;
+    const model::TravelPlace* selected = nullptr;
+    unsigned shown = 0;
+    // The space below the table: the selected place with its button, and the position form.
+    const float below = ImGui::GetFrameHeightWithSpacing() * 5.2F;
+    if (ImGui::BeginTable("places", 4, kTable, ImVec2(0.0F, std::max(line * 8.0F, ImGui::GetContentRegionAvail().y - below)))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Place", ImGuiTableColumnFlags_WidthStretch, 4.2F);
+        ImGui::TableSetupColumn("Territory", ImGuiTableColumnFlags_WidthStretch, 2.8F);
+        ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthStretch, 1.1F);
+        ImGui::TableSetupColumn("Meters", ImGuiTableColumnFlags_WidthStretch, 1.2F);
+        ImGui::TableHeadersRow();
+        for (const model::TravelPlace& place : g_data.places) {
+            if (place.id == g_selectedPlace) {
+                selected = &place;
+            }
+            if (!filter.empty() && lower_text(place.name + " " + place.territory + " " + place.kind).find(filter) == std::string::npos) {
+                continue;
+            }
+            ++shown;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::PushID(place.id.c_str());
+            if (ImGui::Selectable(place.name.c_str(), place.id == g_selectedPlace, ImGuiSelectableFlags_SpanAllColumns)) {
+                g_selectedPlace = place.id;
+                selected = &place;
+            }
+            ImGui::PopID();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(place.territory.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(place.kind.c_str());
+            ImGui::TableNextColumn();
+            if (g_data.hasPosition) {
+                ImGui::Text("%.0f", static_cast<double>(std::hypot(place.position[0] - g_data.position[0],
+                                                                    place.position[1] - g_data.position[1])));
+            }
+        }
+        ImGui::EndTable();
+    }
+    if (selected == nullptr) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(kDimColor, "Selected: none. Select a place of the list (%u of %zu show).", shown, g_data.places.size());
+    } else {
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Selected: %s, %s", selected->name.c_str(), selected->territory.c_str());
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(selected == nullptr || g_data.busy);
+    if (ImGui::Button("Travel")) {
+        send("travel", {{"place", selected->id}}, "Travel to " + selected->name + " (" + selected->territory + ")");
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SeparatorText("Travel to a position (meters: east, north, up)");
+    ImGui::SetNextItemWidth(line * 20.0F);
+    ImGui::InputFloat3("##travel-position", g_travelPosition, "%.1f");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(g_data.busy);
+    if (ImGui::Button("Travel##position")) {
+        char label[96];
+        snprintf(label, sizeof(label), "Travel to %.1f %.1f %.1f", static_cast<double>(g_travelPosition[0]),
+                 static_cast<double>(g_travelPosition[1]), static_cast<double>(g_travelPosition[2]));
+        send("travel", {{"x", g_travelPosition[0]}, {"y", g_travelPosition[1]}, {"z", g_travelPosition[2]}}, label);
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!g_data.hasPosition);
+    if (ImGui::Button("Here")) {
+        std::copy(std::begin(g_data.position), std::end(g_data.position), std::begin(g_travelPosition));
+    }
+    ImGui::EndDisabled();
+    ImGui::PushStyleColor(ImGuiCol_Text, kDimColor);
+    ImGui::TextWrapped("The height is a height on the ground, or above it: the character falls to the ground.");
+    ImGui::PopStyleColor();
+}
+
 /** One row of the character tab: a name, the value now, a control for the new value, and a button. */
 bool begin_value_row(const char* name, const char* now) {
     ImGui::TableNextRow();
@@ -606,6 +728,10 @@ void draw() noexcept {
                         }
                         if (ImGui::BeginTabItem("Creatures")) {
                             draw_creatures();
+                            ImGui::EndTabItem();
+                        }
+                        if (ImGui::BeginTabItem("Travel")) {
+                            draw_travel();
                             ImGui::EndTabItem();
                         }
                         ImGui::EndTabBar();

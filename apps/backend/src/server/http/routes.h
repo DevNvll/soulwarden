@@ -54,6 +54,7 @@ class AdminAccess;
 inline constexpr const char* kAdminStateRoute = "admin.state";
 inline constexpr const char* kAdminCatalogRoute = "admin.catalog_items";
 inline constexpr const char* kAdminCreatureCatalogRoute = "admin.catalog_creatures";
+inline constexpr const char* kAdminPlaceCatalogRoute = "admin.catalog_places";
 
 /**
  * The admin interface for the tool window of the game hook (admin_routes.cpp): the state of a

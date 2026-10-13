@@ -26,6 +26,14 @@ class Router {
 public:
     void add(std::string method, std::string host, std::string path, std::string name, RouteHandler handler);
 
+    /**
+     * Adds a route for one exact request path and one exact host (the host of the request
+     * with no port). The path compare is a compare of the full text: a path with one more
+     * "/" (at its end, at its start, or between two segments) is a different path, as it is a
+     * different object key of a storage service.
+     */
+    void add_exact(std::string method, std::string host, std::string path, std::string name, RouteHandler handler);
+
     /** @return The handler reply, or a 404 reply when no route matches. */
     [[nodiscard]] service::HttpResponse dispatch(const service::HttpRequest& request, std::string& routeName) const;
 
@@ -36,6 +44,8 @@ private:
         std::vector<std::string> segments;
         std::string name;
         RouteHandler handler;
+        /** Not empty: the route matches only this request path, and only the host `host` with no port. */
+        std::string exactPath{};
     };
 
     std::vector<Route> m_routes;

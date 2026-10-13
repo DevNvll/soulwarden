@@ -1,14 +1,18 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "gamedata/creature_data.h"
 #include "world/entity.h"
 #include "world/ids.h"
+#include "world/load_meter.h"
 #include "world/position_index.h"
 #include "world/world_clock.h"
 
@@ -22,6 +26,13 @@
 // all times: it makes the creature of a spawn point when a player is `spawnEnter` or less from
 // the point, and it removes the creature when no player is `spawnLeave` or less from the
 // creature. A spawn point has one creature at most.
+//
+// The cost of the rule depends on the players and on what is near them, not on the size of the
+// world (the creature data of the whole world has 33,000 spawn points and more). One scan
+// looks only at the spawn points in the grid cells that the circle of a player touches
+// (SpawnGrid), and at the creatures that are in the world, which are the creatures near a
+// player. It never walks the list of all spawn points. The counts of a scan are in
+// CreatureCounts, and a test case fails for a scan that looks at each point.
 //
 // A creature of a spawn point that died, or that a command removed, does not come back by the
 // distance rule: the spawn point waits. In this stage only a command makes it free again
@@ -51,6 +62,8 @@ enum class CreatureError {
     badHealth,
     /** The creature is dead: its health does not change. */
     dead,
+    /** The action table of the slice of the creature has no action with this name that has a fragment. */
+    unknownAction,
 };
 
 struct CreatureResult {
@@ -74,6 +87,72 @@ struct SpawnPointState {
     std::uint32_t spawns{0};
 };
 
+/**
+ * The spawn points by their place: a grid of square cells in the horizontal plane, with the
+ * indexes of the spawn points of each cell. The spawn points do not change after the load. A
+ * lookup costs the cells that a circle touches, for each size of the world.
+ */
+class SpawnGrid {
+public:
+    /** Makes the grid for the spawn points of the creature data. The id of a point is its index. */
+    void build(const std::vector<gamedata::SpawnPoint>& points);
+
+    /**
+     * Calls `visit(index)` for each spawn point in a cell that the circle touches: the columns
+     * from west to east, the cells of a column from south to north, and the points of a cell
+     * from the lowest index. A point of the result can be farther than `range`: the caller
+     * compares the exact distance.
+     */
+    template <class Visit>
+    void for_each_candidate(const state::WorldPosition& center, float range, Visit&& visit) const {
+        const std::int64_t lowX = cell(center.x - range);
+        const std::int64_t highX = cell(center.x + range);
+        const std::int64_t lowY = cell(center.y - range);
+        const std::int64_t highY = cell(center.y + range);
+        if ((highX - lowX + 1) * (highY - lowY + 1) > static_cast<std::int64_t>(m_sorted.size())) {
+            // A very large circle: each cell of the grid one time, in the same sequence.
+            for (const auto& [key, points] : m_sorted) {
+                if (key.first >= lowX && key.first <= highX && key.second >= lowY && key.second <= highY) {
+                    for (const std::uint32_t point : *points) {
+                        visit(point);
+                    }
+                }
+            }
+            return;
+        }
+        for (std::int64_t x = lowX; x <= highX; ++x) {
+            for (std::int64_t y = lowY; y <= highY; ++y) {
+                const auto found = m_cells.find(key_of(x, y));
+                if (found != m_cells.end()) {
+                    for (const std::uint32_t point : found->second) {
+                        visit(point);
+                    }
+                }
+            }
+        }
+    }
+
+    /** @return The number of cells that have a spawn point. */
+    [[nodiscard]] std::size_t cell_count() const {
+        return m_cells.size();
+    }
+
+private:
+    /** Edge of one cell, in meters. */
+    static constexpr float kCellSize = 64.0F;
+
+    [[nodiscard]] static std::int64_t cell(float value) {
+        return static_cast<std::int64_t>(std::floor(value / kCellSize));
+    }
+    [[nodiscard]] static std::uint64_t key_of(std::int64_t x, std::int64_t y) {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32) | static_cast<std::uint32_t>(y);
+    }
+
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> m_cells;
+    /** The cells in the sequence of a lookup, for a circle that is larger than the grid. */
+    std::vector<std::pair<std::pair<std::int64_t, std::int64_t>, const std::vector<std::uint32_t>*>> m_sorted;
+};
+
 /** Counts of the creature system, for the log and for the tests. */
 struct CreatureCounts {
     /** Creatures that the spawn points made, and that a command made. */
@@ -87,6 +166,17 @@ struct CreatureCounts {
     std::uint64_t deaths{0};
     /** The largest number of creatures in the world at one time. */
     std::size_t largest{0};
+    /** Number of scans of the spawn point rule. */
+    std::uint64_t scans{0};
+    /**
+     * Number of spawn points and of creatures that the scans looked at, and the same two
+     * numbers for the last scan: the work of a scan, which depends on the players and on what
+     * is near them.
+     */
+    std::uint64_t pointsLooked{0};
+    std::uint64_t creaturesLooked{0};
+    std::size_t lastScanPoints{0};
+    std::size_t lastScanCreatures{0};
 };
 
 class Creatures {
@@ -139,6 +229,15 @@ public:
     CreatureResult hurt(EntityId id, float damage);
 
     /**
+     * Starts an action of the action table of the slice of a creature, by its name (a
+     * development command, and the place where a behavior of a later stage starts an action).
+     * Each session that observes the creature gets the action with its movement state.
+     * @param seconds The time of an action that has an end: after it the creature has no action
+     *        of the server. No value: the action stays until a different one starts.
+     */
+    CreatureResult play(EntityId id, const std::string& action, std::optional<float> seconds = std::nullopt);
+
+    /**
      * Makes each spawn point that waits free again (a command): the distance rule makes its
      * creature again when a player is near. A dead creature of a point leaves the world.
      * @return The number of spawn points that waited.
@@ -161,6 +260,14 @@ public:
      */
     void tick();
 
+    /**
+     * The next tick does the spawn point rule, also before its interval: a player came to a
+     * different place of the world (World::travel).
+     */
+    void scan_soon() {
+        m_lastScan.reset();
+    }
+
     /** The world removed an entity: the spawn point of a creature has no creature now. */
     void entity_removed(const Entity& entity);
 
@@ -169,6 +276,14 @@ public:
 
     [[nodiscard]] const std::vector<SpawnPointState>& spawn_points() const {
         return m_points;
+    }
+    /** @return The number of spawn points that wait. */
+    [[nodiscard]] std::size_t waiting_count() const {
+        return m_waiting.size();
+    }
+    /** @return The real time of the scans of the spawn point rule (a measurement). */
+    [[nodiscard]] const LoadMeter& scan_load() const {
+        return m_scanLoad;
     }
     [[nodiscard]] const CreatureCounts& counts() const {
         return m_counts;
@@ -201,6 +316,8 @@ private:
     void scan();
     /** Makes the table of the spawn points for the creature data, when it does not have its size. */
     void load_points();
+    /** Sets or clears the mark "the point waits" of a spawn point. */
+    void set_waiting(std::uint32_t point, bool waiting);
     /**
      * Starts an action of the action table of the slice of a creature, and marks its movement
      * state. No effect for an index that the table does not have, or for an action with no fragment.
@@ -214,8 +331,13 @@ private:
     const gamedata::CreatureData* m_data;
     /** One state for each spawn point of the creature data, with the same index. */
     std::vector<SpawnPointState> m_points;
-    /** The spawn points by their place: the id of an entry is the index of the spawn point. */
-    PositionIndex m_pointIndex;
+    /** The spawn points by their place. */
+    SpawnGrid m_grid;
+    /** The spawn points that wait: the reset command walks only these. */
+    std::set<std::uint32_t> m_waiting;
+    /** The creatures that a player is near in the scan that runs: a list of the scan, with no value between two scans. */
+    std::unordered_set<EntityId> m_near;
+    LoadMeter m_scanLoad;
     std::set<EntityId> m_creatures;
     /** The creatures whose action has an end. */
     std::set<EntityId> m_acting;

@@ -7,6 +7,10 @@
 #include <string>
 #include <thread>
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 #include "core/capture/http_capture.h"
 #include "core/logging/log.h"
 #include "gamedata/appearance_tables.h"
@@ -15,6 +19,7 @@
 #include "gamedata/item_catalog.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/slice_ids.h"
+#include "gamedata/travel_places.h"
 #include "server/http/admin_access.h"
 #include "server/http/request_handler.h"
 #include "server/http/router.h"
@@ -149,6 +154,17 @@ bool parse(int argc, char** argv, Options& options) {
         }
     }
     return !options.dataDirectory.empty();
+}
+
+/**
+ * Gives the free memory of the allocator back to the system, where the C library can do that.
+ * The start of the backend reads large files: without this call the process keeps the memory
+ * of their parsed form for its whole run.
+ */
+void release_free_memory() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
 }
 
 } // namespace
@@ -289,6 +305,23 @@ int main(int argc, char** argv) {
                    combatTablesPath.c_str(),
                    combatTables.error().c_str());
     }
+    // The travel places: the places of the travel command.
+    const std::string travelPlacesPath = (gameDataDirectory / gamedata::kTravelPlacesFile).string();
+    gamedata::TravelPlaces travelPlaces;
+    if (travelPlaces.load(travelPlacesPath)) {
+        log::write("backend: travel places loaded from %s (%zu places in %zu territories)",
+                   travelPlacesPath.c_str(),
+                   travelPlaces.places().size(),
+                   travelPlaces.territory_count());
+    } else {
+        log::write("backend: no travel places at %s (%s): the travel command takes only a position in numbers. Make "
+                   "the file with tools/gamedata/places.sh",
+                   travelPlacesPath.c_str(),
+                   travelPlaces.error().c_str());
+    }
+    // The readers of the game data files are done: the memory of the parsed documents (the
+    // creature data of the whole world is a file of some megabytes) goes back to the system.
+    release_free_memory();
     // The local ticket of the game hook names the Steam account of a login. No code proves it.
     log::write("backend: stub authentication, the Steam ticket of a login is not validated");
     // One thread owns the world. With the game server listener, it is the listener thread of
@@ -300,6 +333,7 @@ int main(int argc, char** argv) {
     worldOptions.progressionTables = &progressionTables;
     worldOptions.creatureData = &creatureData;
     worldOptions.combatTables = &combatTables;
+    worldOptions.travelPlaces = &travelPlaces;
     world::World world(clock, store, appearanceTables, worldOptions);
     const server::http::Services services{store,
                                           options.repAddress,

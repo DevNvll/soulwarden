@@ -13,6 +13,7 @@
 #include "gamedata/creature_data.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/progression_tables.h"
+#include "gamedata/travel_places.h"
 #include "service/rep_server.h"
 #include "state/store.h"
 #include "support/fake_client.h"
@@ -38,7 +39,9 @@ struct ServerHost {
     gamedata::CreatureData creatures;
     /** The combat tables of the world. They are empty until a case sets them: an attack then has no effect. */
     gamedata::CombatTables combat;
-    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat)};
+    /** The travel places of the world. They are empty until a case sets them: the travel command then takes only numbers. */
+    gamedata::TravelPlaces places;
+    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat, places)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -64,6 +67,16 @@ struct ServerHost {
                                               const gamedata::CombatTables& combat) {
         world::WorldOptions options = with_game_data(catalog, progression, creatures);
         options.combatTables = &combat;
+        return options;
+    }
+
+    static world::WorldOptions with_game_data(const gamedata::ItemCatalog& catalog,
+                                              const gamedata::ProgressionTables& progression,
+                                              const gamedata::CreatureData& creatures,
+                                              const gamedata::CombatTables& combat,
+                                              const gamedata::TravelPlaces& places) {
+        world::WorldOptions options = with_game_data(catalog, progression, creatures, combat);
+        options.travelPlaces = &places;
         return options;
     }
 

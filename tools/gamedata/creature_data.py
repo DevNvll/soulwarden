@@ -33,12 +33,29 @@ Which entries become a spawn point (a rule of this project):
   - A placement of its layer is at its position (0.06 m or less).
   - Its alias has a slice with no schedule, and that slice has a movement component and a
     vitals component.
-  - The client shows that slice correctly with the record of the backend (the list
-    SLICES_NOT_CORRECT: five slices of the default area show no body).
-  - Its position is in the area of the file: a circle around a center (--center, --radius).
-    The default is 800 m around the start place of a new character: the spawn points of that
-    circle are the ones that the research counted and that the live checks of stage 3.4a
-    used. A larger area needs only a larger radius.
+  - The client shows that slice correctly with the record of the backend (the list "notShown"
+    of creature_slices.json, the result of the picture tours of the slices).
+  - Its position is in the area of the file. The default is the whole world: each region of the
+    game copy that has a layer with spawn data. --radius selects a circle (with --center, or
+    around the start place of a new character): 800 m around that place are the spawn points
+    that the research counted and that the live checks of stage 3.4a used.
+
+An entry of a layer can have no category id, or an id that the category table of this build
+does not have (608 entries of the supported build: animals and creatures of the newer areas).
+The client then shows the name of the vitals row on the name plate (live check of stage 3.4c):
+such an entry is a spawn point, and its kind has no category name. A base vitals row with no
+creature type has no row in the modifier table: its health modifier is 1.
+
+What the tool leaves out, with the count of each cause in its output (--report FILE writes one
+line for each entry):
+  - An entry with no creature family: a siege weapon, a training dummy, a barrel, a totem.
+  - An entry with no placement at its position in its layer: an object of a trap, creatures of
+    an instance of the game (Outpost Rush, the catacombs), and creatures whose placement is a
+    part of a larger slice. To find the placement, the tool would have to read each slice of
+    each placement of the layer.
+  - An entry whose slices have no movement component or no vitals component: an object that can
+    take damage (a web, a cocoon, a nest), not a creature.
+  - An entry whose slices the client does not show correctly (the list "notShown").
 
 The pak entries of the supported build have the compression method 15 (Oodle), which Python
 cannot read. Thus the tool uses the first of these sources that it has for each entry:
@@ -67,7 +84,8 @@ item_catalog.py, and slice_ids.py of this folder.
 
 Output: see `build_document`. An id of 64 bits is a text of 16 hexadecimal digits.
 
-Usage: creature_data.py [OUTPUT.json] [--center X Y] [--radius METERS]
+Usage: creature_data.py [OUTPUT.json] [--radius METERS [--center X Y]] [--report FILE]
+       creature_data.py [OUTPUT.json] --all-slices [--spawn-all]    a file for a picture tour of the slices
        creature_data.py --find TEXT...     print the kinds whose id or name has a text (no file)
 Default output: <SOULWARDEN_GAMEDATA_DIR>/creatures.json
 Environment: SOULWARDEN_GAME_DIR (default ~/Games/soulwarden/game),
@@ -160,21 +178,36 @@ COMPONENT_CLASSES = {
 }
 MOVEMENT, VITALS, MARKER = "ActionList", "Vitals", "Marker"
 
-# Slices that the client does not show correctly with the record of the backend (live tour of
-# stage 3.4a: one creature of each slice of the default area). A spawn point with only such
-# slices is not in the file, until a later stage sends what the slice needs.
-SLICES_NOT_CORRECT = {
-    "slices/characters/ancientguardian_javelineer.dynamicslice": "a blue light, no body, no name plate",
-    "slices/characters/ancientguardian_reaver.dynamicslice": "a blue light, no body, no name plate",
-    "slices/characters/ancientguardian_spearman.dynamicslice": "a blue light, no body, no name plate",
-    "slices/characters/wex_levelvariants/ancientguardian_javelineer_12.dynamicslice": "a blue light, no body, no name plate",
-    "slices/characters/corruption_swarmer.dynamicslice": "a red effect, no body, no name plate",
-}
+# The result of the picture tours of the slices (tools/research/creature_tour.py, stages 3.4a
+# and 3.4c): a file of this folder with two lists.
+#   "spawnAction"  Slices whose body and name plate show only after the spawn action of the slice
+#                  (the field m_spawnAction of its action list component). The file of the tool
+#                  names that action for these slices, and the backend starts it for each
+#                  creature that it makes.
+#   "notShown"     Slices that the client does not show correctly with the record of the backend,
+#                  with what the picture shows. A spawn point with only such slices is not in
+#                  the file of the tool, until a later stage sends what the slice needs.
+# A slice that is in no list shows its body and its name plate with no action of the server.
+SLICE_LISTS_PATH = Path(__file__).resolve().parent / "creature_slices.json"
+
+
+def read_slice_lists() -> tuple[frozenset[str], dict[str, str]]:
+    """@return The slices that need their spawn action, and the slices that the client does not show."""
+    try:
+        lists = json.loads(SLICE_LISTS_PATH.read_text(encoding="utf-8"))
+        spawn, hidden = lists["spawnAction"], lists["notShown"]
+        if not isinstance(spawn, list) or not isinstance(hidden, dict) or not all(isinstance(path, str) for path in spawn):
+            raise ValueError("the two lists do not have their form")
+    except (OSError, ValueError, KeyError) as error:
+        raise Failure(f"{SLICE_LISTS_PATH.name} (the result of the picture tours) is not there or not correct: {error}") from error
+    return frozenset(spawn), {str(path): str(reason) for path, reason in hidden.items()}
+
 
 REPLICATION_FIELD = field_id("m_replicationIndex")
 FACET_FIELDS = (field_id("m_clientFacetPtr"), field_id("m_serverFacetPtr"))
 SPAWN_RADIUS_FIELD = field_id("m_sliceSpawnRadius")
 GRID_FIELD = field_id("m_actionGridNew")
+SPAWN_ACTION_FIELD = field_id("m_spawnAction")
 CONTROLLER_FIELD = field_id("m_controllerDefinition")
 ASSET_PATH_FIELD = field_id("AssetPath")
 # An asset field has the id (16 bytes), the sub id and 12 zero bytes, the type id (16 bytes), the
@@ -229,7 +262,8 @@ def real(element: Element | None) -> float:
 class Sources:
     """The pak files of the game copy, and the content of one entry from the first source that has it."""
 
-    def __init__(self, assets: Path) -> None:
+    def __init__(self, assets: Path, wanted: tuple[str, ...] = WANTED) -> None:
+        """@param wanted The start of each path that the tool can need: the index keeps only these entries."""
         if not assets.is_dir():
             raise Failure(f"no game copy: {assets} is not a folder (SOULWARDEN_GAME_DIR is the folder of the game)")
         paks = sorted(assets.rglob("*.pak"))
@@ -241,7 +275,7 @@ class Sources:
                 with zipfile.ZipFile(pak) as archive:
                     for info in archive.infolist():
                         name = info.filename.lower().replace("\\", "/")
-                        if name.startswith(WANTED):
+                        if name.startswith(wanted):
                             self.entries.setdefault(name, (pak, info))
             except (OSError, zipfile.BadZipFile) as error:
                 raise Failure(f"{pak.name} is not a readable pak file: {error}") from error
@@ -377,6 +411,16 @@ def asset_id(element: Element | None) -> tuple[bytes, int] | None:
         return None
     guid, sub = element.value[:16], int.from_bytes(element.value[16:20], "big")
     return None if guid == bytes(16) else (guid, sub)
+
+
+def all_region_names(sources: "Sources") -> list[str]:
+    """@return The name of each region of the world that has a layer with spawn data."""
+    names = set()
+    for path in sources.paths(REGIONS_FOLDER, ".metadata"):
+        parts = path[len(REGIONS_FOLDER):].split("/")
+        if len(parts) >= 3 and parts[1] == "capitals" and re.fullmatch(r"r_\+\d\d_\+\d\d", parts[0]):
+            names.add(parts[0])
+    return sorted(names)
 
 
 def region_names(center: tuple[float, float], radius: float) -> list[str]:
@@ -678,6 +722,13 @@ def read_creature_slice(path: str, asset: tuple[bytes, int], roots: list[Element
     slice_roots = [entity for entity, parent in entities if parent == NO_ENTITY]
     if not slice_roots:
         raise Failure(f"{path}: the slice has no root entity")
+    # The action that the original server starts when it makes the creature (a text field of the
+    # action list component).
+    spawn_action = ""
+    for root in roots:
+        found = first(root, SPAWN_ACTION_FIELD)
+        if found is not None and found.value is not None and not spawn_action:
+            spawn_action = found.value.decode("utf-8", "replace")
     slots.sort()
     numbers = [slot[0] for slot in slots]
     if len(set(numbers)) != len(numbers):
@@ -686,7 +737,7 @@ def read_creature_slice(path: str, asset: tuple[bytes, int], roots: list[Element
     return {"path": path, "asset": str(uuid.UUID(bytes=asset[0])).upper(), "sub": asset[1],
             "root": f"{slice_roots[-1]:016X}", "interestRadius": round(radius, 3),
             "movement": by_name.get(MOVEMENT, 0), "vitals": by_name.get(VITALS, 0), "marker": by_name.get(MARKER, 0),
-            "slots": slots, "components": components}
+            "slots": slots, "components": components, "gameSpawnAction": spawn_action}
 
 
 def yaw_of(rotation: dict) -> float:
@@ -696,15 +747,25 @@ def yaw_of(rotation: dict) -> float:
     return math.degrees(math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))) % 360.0
 
 
-def build_document(sources: Sources, center: tuple[float, float], radius: float) -> dict:
-    """Output:
+def build_document(sources: Sources, center: tuple[float, float] | None = None, radius: float | None = None,
+                   all_slices: bool = False, details: list[dict] | None = None, spawn_all: bool = False) -> dict:
+    """@param center, radius The area of the file: a circle. No radius: the whole world.
+    @param all_slices True: the file also has the spawn points of the slices of the list "notShown" (a file for a
+           picture tour of the slices, not for a start of the user).
+    @param details When not null: gets one entry for each spawn entry that is left out (the cause, the layer,
+           the position, the vitals row, and what the tool found for it).
+    @param spawn_all With `all_slices`: each slice with a spawn action in its action table gets it in the file (a
+           file for a tour that tests the spawn action).
+
+    Output:
     {"format": 1, "world": TEXT, "center": [x, y], "radius": METERS, "regions": [...],
      "counts": {...},
      "levels": [[level, health], ...]                  the health of each level (the level table)
      "slices": [{"path", "asset", "sub", "root", "interestRadius", "movement", "vitals", "marker",
                  "slots": [[slot, component name, state type], ...],
                  "components": [[entity id, component id, name], ...],
-                 "actions": [[action name, fragment name, fragment index, server started], ...]}, ...]
+                 "actions": [[action name, fragment name, fragment index, server started], ...],
+                 "spawnAction": NAME}, ...]            only for a slice that needs its spawn action
      "kinds":  [{"id", "vitals", "category", "vitalsId", "categoryId", "name", "vitalsName",
                  "family", "creatureType", "health", "level", "bodies": [[slice, percent], ...],
                  "points": N}, ...]
@@ -713,7 +774,9 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
     slice has none), "components" are the components with a facet (the targets of client
     messages), and "actions" is the action table: the position of an action is its index in a
     movement state, and a fragment index of -1 is "no fragment" (an empty list: the slice names
-    no grid file, or its grid file has no action list). `kinds`: "vitalsId" and "categoryId" are
+    no grid file, or its grid file has no action list). "spawnAction" is the action that the
+    backend starts when it makes a creature with this slice: the client shows the body of such
+    a slice only after that action. `kinds`: "vitalsId" and "categoryId" are
     the ids on the wire, "health" is the health of the kind as a part of the health of its level
     (the health modifier of its base row times the modifier of its creature type), "level" is
     the level of the most spawn points, and "bodies" are the slices of its alias (index into
@@ -725,7 +788,10 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
     if catalog_data is None:
         sources.check_complete()
     catalog = Catalog(catalog_data)
-    regions = region_names(center, radius)
+    whole_world = radius is None
+    center = center or DEFAULT_CENTER
+    needs_spawn_action, not_shown = read_slice_lists()
+    regions = all_region_names(sources) if whole_world else region_names(center, radius)
     counts = {"entries": 0, "inArea": 0, "usual": 0, "creatures": 0}
     left_out: dict[str, int] = {}
     slices: list[dict] = []
@@ -735,9 +801,20 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
     kinds: dict[tuple, dict] = {}
     points: list[list] = []
     placed: dict[str, int] = {}
+    # The entry and the layer of the loop below, for the report of an entry that is left out.
+    current: dict = {}
 
-    def leave_out(cause: str) -> None:
+    def leave_out(cause: str, **found) -> None:
         left_out[cause] = left_out.get(cause, 0) + 1
+        if details is not None:
+            entry = current.get("entry") or {}
+            variant, base = current.get("variant"), current.get("base")
+            details.append({"cause": cause, "layer": current.get("layer", ""),
+                            "position": [round(value, 3) for value in entry.get("position", ())],
+                            "vitals": (variant or base or {}).get("id", f"{entry.get('vitals', 0):08x}"),
+                            "category": f"{entry.get('category', 0):08x}", "level": entry.get("level", 0),
+                            "family": (base or {}).get("family", ""), "creatureType": (base or {}).get("creatureType", ""),
+                            **found})
 
     def body_of(asset: tuple[bytes, int]) -> int | None:
         path = catalog.path(asset)
@@ -777,9 +854,11 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
                 continue
             entries = read_spawn_entries(roots)
             counts["entries"] += len(entries)
+            current["layer"] = metadata_path[len(REGIONS_FOLDER):-len(".metadata")]
             selected = []
             for entry in entries:
-                if math.hypot(entry["position"][0] - center[0], entry["position"][1] - center[1]) > radius:
+                if not whole_world \
+                        and math.hypot(entry["position"][0] - center[0], entry["position"][1] - center[1]) > radius:
                     continue
                 counts["inArea"] += 1
                 if not entry["coatlicue"] or entry["override"] or entry["encounter"]:
@@ -787,6 +866,7 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
                 counts["usual"] += 1
                 variant = tables["variants"].get(entry["vitals"])
                 base = tables["bases"].get(name_crc(variant["base"])) if variant else tables["bases"].get(entry["vitals"])
+                current.update(entry=entry, variant=variant, base=base)
                 if base is None or not base["family"]:
                     leave_out("no creature family (a siege object)")
                     continue
@@ -802,19 +882,25 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
             except (ValueError, AttributeError) as error:
                 raise Failure(f"{metadata_path}: the placements of the layer did not parse: {error}") from error
             for entry, variant, base in selected:
+                current.update(entry=entry, variant=variant, base=base)
                 placement = None
+                nearest = None
                 for candidate in placements:
                     where = candidate.get("worldPosition") or {}
-                    if math.dist(entry["position"], tuple(float(where.get(axis, 0.0)) for axis in "xyz")) \
-                            <= PLACEMENT_TOLERANCE:
+                    distance = math.dist(entry["position"], tuple(float(where.get(axis, 0.0)) for axis in "xyz"))
+                    if distance <= PLACEMENT_TOLERANCE:
                         placement = candidate
                         break
+                    if nearest is None or distance < nearest[0]:
+                        nearest = (distance, candidate)
                 if placement is None:
-                    leave_out("no placement at the position")
+                    leave_out("no placement at the position", placements=len(placements),
+                              nearest=round(nearest[0], 3) if nearest else None,
+                              nearestSlice=str(nearest[1].get("sliceName", "")) if nearest else "")
                     continue
                 path = spawner_path(placement, catalog, sources)
                 if path is None:
-                    leave_out("no spawner slice")
+                    leave_out("no spawner slice", placement=str(placement.get("sliceName", "")))
                     continue
                 if path not in spawners:
                     roots = sources.stream(path)
@@ -822,31 +908,44 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
                 spawner = spawners[path]
                 if spawner is None:
                     continue
-                bodies = [(body, percent) for body, percent in bodies_of(spawner)
+                candidates = bodies_of(spawner)
+                bodies = [(body, percent) for body, percent in candidates
                           if slices[body]["movement"] != 0 and slices[body]["vitals"] != 0]
                 if not bodies:
-                    leave_out("no slice with a movement component and a vitals component")
+                    leave_out("no slice with a movement component and a vitals component", spawner=path,
+                              slices=[slices[body]["path"] for body, _ in candidates],
+                              alias=catalog.path(spawner["alias"]) or "")
                     continue
-                shown = [(body, percent) for body, percent in bodies if slices[body]["path"] not in SLICES_NOT_CORRECT]
+                shown = [(body, percent) for body, percent in bodies
+                         if all_slices or slices[body]["path"] not in not_shown]
                 if not shown:
-                    leave_out("the client does not show its slice correctly (" + slices[bodies[0][0]]["path"].rsplit("/", 1)[-1] + ")")
+                    leave_out("the client does not show its slice correctly ("
+                              + slices[bodies[0][0]]["path"].rsplit("/", 1)[-1] + ")", spawner=path,
+                              slices=[slices[body]["path"] for body, _ in bodies])
                     continue
                 bodies = shown
+                # An entry can have no category id, or an id that the category table of this build does
+                # not have. The client then shows the name of the vitals row on the name plate (live
+                # check of stage 3.4c): the kind has no category name, and the id of the entry.
                 category = tables["categories"].get(entry["category"])
-                modifier = tables["modifiers"].get(base["creatureType"])
-                if category is None or modifier is None:
-                    leave_out("no category row or no modifier row of the creature type")
+                if category is None:
+                    counts["noCategoryRow"] = counts.get("noCategoryRow", 0) + 1
+                # A base row with no creature type has no row in the modifier table: the modifier 1.
+                modifier = tables["modifiers"].get(base["creatureType"]) if base["creatureType"] else 1.0
+                if modifier is None:
+                    leave_out("no modifier row of the creature type", spawner=path,
+                              slices=[slices[body]["path"] for body, _ in bodies])
                     continue
                 vitals_text = variant["id"] if variant else base["id"]
-                key = (vitals_text, category["id"], tuple(bodies))
+                key = (vitals_text, category["id"] if category else entry["category"], tuple(bodies))
                 kind = kinds.get(key)
                 if kind is None:
-                    vitals_name = (variant or base)["name"]
+                    vitals_name = names.get((variant or base)["name"].lstrip("@").lower(), "")
                     kind = kinds[key] = {
-                        "vitals": vitals_text, "category": category["id"],
+                        "vitals": vitals_text, "category": category["id"] if category else "",
                         "vitalsId": entry["vitals"], "categoryId": entry["category"],
-                        "name": names.get(category["name"].lstrip("@").lower(), ""),
-                        "vitalsName": names.get(vitals_name.lstrip("@").lower(), ""),
+                        "name": names.get(category["name"].lstrip("@").lower(), "") if category else vitals_name,
+                        "vitalsName": vitals_name,
                         "family": base["family"], "creatureType": base["creatureType"],
                         "health": round(base["healthMod"] * modifier, 6),
                         "bodies": [list(body) for body in bodies], "levels": {}, "index": len(kinds)}
@@ -865,8 +964,8 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
                                spawner["respawnMin"], spawner["respawnMax"]])
     sources.check_complete()
     if not points:
-        raise Failure(f"the area (center {center[0]:g} {center[1]:g}, radius {radius:g} m) has no spawn point of a "
-                      f"creature in the regions {', '.join(regions) or 'none'}")
+        area = "the world" if whole_world else f"the area (center {center[0]:g} {center[1]:g}, radius {radius:g} m)"
+        raise Failure(f"{area} has no spawn point of a creature in the regions {', '.join(regions) or 'none'}")
     if "" in placed:
         raise Failure("a placement of a spawn point has no id")
     # The kinds in the sequence of their first spawn point. A kind id is the vitals row; when
@@ -894,10 +993,24 @@ def build_document(sources: Sources, center: tuple[float, float], radius: float)
                                "creatureType": kind["creatureType"], "health": kind["health"], "level": level,
                                "bodies": [[renumber[body], percent] for body, percent in kind["bodies"]],
                                "points": total})
+    # The spawn action of the game data goes into the file only for a slice of the list: the
+    # backend starts it for these, and it starts no action for a slice that shows without it.
+    for body in used:
+        entry = slices[body]
+        name = entry.pop("gameSpawnAction", "")
+        has_action = any(action[0] == name and action[2] >= 0 for action in entry["actions"])
+        if entry["path"] in needs_spawn_action or (all_slices and spawn_all and has_action):
+            if not has_action:
+                raise Failure(f"{entry['path']} is in the list spawnAction of {SLICE_LISTS_PATH.name}, and its action table "
+                              f"has no action \"{name}\" with a fragment")
+            entry["spawnAction"] = name
+    counts["slicesWithSpawnAction"] = sum(1 for body in used if "spawnAction" in slices[body])
     counts["slicesWithNoActions"] = sum(1 for body in used if not slices[body]["actions"])
     counts.update({"spawnPoints": len(points), "kinds": len(document_kinds), "slices": len(used),
                    "leftOut": dict(sorted(left_out.items()))})
-    return {"format": 1, "world": WORLD, "center": list(center), "radius": radius, "regions": regions,
+    # The whole world: the radius 0, and the center has no meaning.
+    return {"format": 1, "world": WORLD, "center": list(center), "radius": 0.0 if whole_world else radius,
+            "regions": regions,
             "counts": counts, "levels": [[level, health] for level, health in sorted(tables["levels"].items())],
             "slices": [slices[body] for body in used], "kinds": document_kinds, "spawnPoints": points}
 
@@ -914,17 +1027,34 @@ def main() -> int:
     gamedata = Path(os.environ.get("SOULWARDEN_GAMEDATA_DIR") or data_home / "soulwarden/gamedata")
     parser = argparse.ArgumentParser(description="Write the creature data of the game as one JSON file.")
     parser.add_argument("output", nargs="?", default=str(gamedata / OUTPUT_NAME))
-    parser.add_argument("--center", nargs=2, type=float, default=list(DEFAULT_CENTER), metavar=("X", "Y"))
-    parser.add_argument("--radius", type=float, default=DEFAULT_RADIUS, metavar="METERS")
+    parser.add_argument("--center", nargs=2, type=float, default=None, metavar=("X", "Y"),
+                        help="the center of a smaller area (default: the start place of a new character)")
+    parser.add_argument("--radius", type=float, default=None, metavar="METERS",
+                        help="only the spawn points in a circle (default: the whole world)")
+    parser.add_argument("--all-slices", action="store_true",
+                        help="also the slices that the client does not show correctly (a file for a picture tour)")
+    parser.add_argument("--spawn-all", action="store_true",
+                        help="with --all-slices: name the spawn action of each slice (a tour that tests this action)")
+    parser.add_argument("--report", metavar="FILE", help="write one line for each spawn entry that is left out")
     parser.add_argument("--find", nargs="+", metavar="TEXT", help="print the kinds with a text, and write no file")
     arguments = parser.parse_args()
     target = Path(arguments.output)
-    if not (math.isfinite(arguments.radius) and 0.0 < arguments.radius <= 20000.0):
+    if arguments.center is not None and arguments.radius is None:
+        arguments.radius = DEFAULT_RADIUS
+    if arguments.radius is not None and not (math.isfinite(arguments.radius) and 0.0 < arguments.radius <= 20000.0):
         print("creatures: the radius must be a number from 1 to 20000. No file was written.", file=sys.stderr)
         return 1
+    center = tuple(arguments.center) if arguments.center is not None else DEFAULT_CENTER
+    details: list[dict] | None = [] if arguments.report else None
     try:
         sources = Sources(game / "assets")
-        document = build_document(sources, (arguments.center[0], arguments.center[1]), arguments.radius)
+        document = build_document(sources, center, arguments.radius, arguments.all_slices, details,
+                                  arguments.spawn_all and arguments.all_slices)
+        if details is not None:
+            report = Path(arguments.report)
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text("".join(json.dumps(entry, separators=(",", ":")) + "\n" for entry in details),
+                              encoding="utf-8")
         if arguments.find is None:
             target.parent.mkdir(parents=True, exist_ok=True)
             # The backend must not read a file that is not complete: write, then rename.
@@ -949,14 +1079,18 @@ def main() -> int:
                       f"interest radius {body['interestRadius']:g} m)")
         return 0
     counts = document["counts"]
+    area = (f"in the whole world ({len(document['regions'])} regions)" if arguments.radius is None
+            else f"in {arguments.radius:g} m around {center[0]:g} {center[1]:g} (regions {', '.join(document['regions'])})")
     print(f"{target}: {counts['spawnPoints']} spawn points of {counts['kinds']} kinds with {counts['slices']} slices, "
-          f"in {arguments.radius:g} m around {arguments.center[0]:g} {arguments.center[1]:g} "
-          f"(regions {', '.join(document['regions'])})")
+          f"{area}")
     print(f"  entries of the layers: {counts['entries']}; in the area: {counts['inArea']}; usual (not an event): "
           f"{counts['usual']}; with a creature family: {counts['creatures']}")
     for cause, count in counts["leftOut"].items():
         print(f"  left out, {cause}: {count}")
-    print(f"  slices with no action table: {counts['slicesWithNoActions']}")
+    print(f"  in the file with no category row (the name plate has the name of the vitals row): "
+          f"{counts.get('noCategoryRow', 0)}")
+    print(f"  slices with no action table: {counts['slicesWithNoActions']}; slices whose spawn action the backend starts: "
+          f"{counts['slicesWithSpawnAction']}")
     print("  source: " + ", ".join(f"{count} files from the {name}" for name, count in sorted(sources.used.items())))
     return 0
 

@@ -408,7 +408,10 @@ Research file: `~/Games/soulwarden/work/research/melee-mode.md`. Evidence of the
   `{"javelin.enable-client-authoritative-melee":true}` (50 bytes), each time. Each other
   request to that host, and each request for an object of a different S3 host, keeps the
   reply 404 with the XML code `NoSuchKey` (`server/http/aws_routes.cpp`). The compare of the
-  host is exact (with no port), and the route is for `GET` only.
+  host is exact (with no port), and the route is for `GET` only. The compare of the path is
+  a compare of the full text (`Router::add_exact`): a path with one more `/` at its end, at
+  its start, or between two parts is a different object key and gets the reply 404 (case
+  HT13; the usual routes of the backend compare path parts and ignore an empty part).
 - What the reply must have (static proof): a status from 200 to 299 (0x7479588), the header
   `Content-Length` (the reader applies no body when the length of the result is 0; 0x853252),
   and a JSON object whose member name is the full name of a registered setting. The value is
@@ -1373,7 +1376,9 @@ attack inputs, the weapon key, the item counts of the first two lists, and the m
 A body that does not parse to the camera position gives no input. An entry that the reader
 cannot read to its end (a body that ends, a list count that is larger than the body, a flag
 of the object that is not 0 or 1) gives no position and no attack data, and the reader reads
-no entry after it. The reader makes no list from a count: it compares the count with the
+no entry after it. This applies also to an entry that ends after its position field: the
+reader reads the field before it finds the end, and it then gives no position (case HT12;
+before stage 3.4c such an entry moved the character). The reader makes no list from a count: it compares the count with the
 bytes that the body has (a count of 100,000 in a short body is refused).
 
 **The check of a position report** (a design of this project: the client has no copy of the
@@ -1398,14 +1403,36 @@ positions of the time window, the counts). The check, in this sequence:
      `kPeakSpeed` (20 m/s) times the time between the two reports.
    - Height: the rise from the last accepted position is not more than `kRiseSpeed` (20 m/s)
      times that time, and the fall is not more than `kFallSpeed` (120 m/s) times that time.
-   - Height of the window: the total rise and the total fall of the accepted reports of the
-     last 1 s are each one not more than the same speed times the time of the world clock
-     plus 0.25 s, one time for a window. The total rise is the sum of the rises of the
-     accepted reports, and the total fall is the sum of their falls: they are not the
-     difference of two heights. Thus one clock value permits 5 m up and 30 m down, and a
-     window of 1 s permits 25 m up and 150 m down, also for a path that goes up and down
-     (review of stage 3.4a: with the difference of two heights, reports that went 4 m up and
-     4 m down in turns passed with 399 m of rise at one clock value).
+   - Height of the window: the total rise and the total fall of the accepted reports of a
+     time window of 1 s are each one not more than the same speed times the time of that
+     window. The total rise is the sum of the rises of the accepted reports, and the total
+     fall is the sum of their falls: they are not the difference of two heights (review of
+     stage 3.4a: with the difference of two heights, reports that went 4 m up and 4 m down in
+     turns passed with 399 m of rise at one clock value).
+   - The time of that window is the client time (stage 3.4c, review of stage 3.2a). The
+     client time of a report is the time of its input number from the first accepted report
+     (1/30 s for each number), with two limits from the world clock: it is not more than
+     the time of the world clock from that report plus 0.25 s, and it is not more than 5 s
+     (`kReportBacklog`) behind that value. The window is the last 1 s of the client time,
+     and its time is not less than its time of the world clock. Thus the time of a report
+     is not the time at which its datagram came. Reports that come late and together (a
+     delay of the network, a client that made no step for some frames) keep the time of
+     their input numbers, because the time of the world clock before them covers it: five
+     jumps of 1.2 m whose 120 reports come in 12 ms after a delay of 4 s pass (case PR11;
+     the rule with the time of arrival refused 16 of them). A client cannot make more time
+     with large input numbers: its client time stops at the time of the world clock plus
+     0.25 s, one time for the session and not one time for each window.
+   - What a client with changed input numbers gets from this rule: 20 m/s of rise for the
+     time of the world clock, as before. In one moment (one value of the world clock) it
+     gets the rise of one window (20 m) when it sent its reports in time, and the rise of
+     5.25 s (105 m) when its input numbers were slower than the world clock for 5 s or more,
+     or when it sent no report in that time. A client that sends no report for some time
+     had that rise also with the rule of the arrival times (the time between two reports).
+     The limit of the fall is 6 times these values.
+   - A limit that stays: the horizontal window rule below has the time of arrival. After a
+     delay of the network, the reports of a character that went more than 4 m in that time
+     are refused, and the entity gets its position again some seconds later (the window
+     rule permits 8 m/s, and the character goes 5.5 m/s).
    - The first report of a session has the height of the entity as its reference: 5 m up or
      down, plus the rise or the fall of the time from the first report.
    - Window: the horizontal distance from the oldest accepted position of the last 1 s (or
@@ -1414,6 +1441,15 @@ positions of the time window, the counts). The check, in this sequence:
      applies one time for a window, not one time for each report (30 reports each second).
    - The first report of a session: 5 m or less from the position that the entity has (the
      spawn position), or the window rule from the time of the first report.
+   - After a travel of the character (`World::travel`, 4.16) the check starts again as at
+     the start of a session: no accepted report, and the place of the travel is the
+     reference of the next report, for the horizontal distance and for the height (5 m, or
+     the window rule from the time of the first report after the travel). The client makes
+     some reports before it gets the new position: they are not near the place of the
+     travel, the world does not use them (verdict `beforeTravel`, not in the count of the
+     refused reports), and the entity keeps the place of the travel. A session with the
+     camera estimate does not follow a camera that is more than 15 m from the place of the
+     travel for 2 s.
    - The time between two reports is the time of their input numbers (1/30 s for each
      step), but not less than the time of the world clock (a client with a slow picture
      makes longer steps) and not more than that time plus 0.25 s (reports that come
@@ -2521,15 +2557,45 @@ chain of one spawn point in the game files:
   `IsOverride` and not `IsEncounter` (a usual spawn point, not an entry of an event); the
   base row of its vitals row has a family (a creature, not a siege object); its layer has a
   placement at its position; a slice of its alias has no schedule and has a movement
-  component and a vitals component. The entries of one placement are one spawn point: the
-  metadata has one entry for each slice of an alias with more than one slice (a left arm and
-  a right arm, a man and a woman).
-- The area of the file is a circle (default: 800 m around the start place `8880 4250`;
-  `--center`, `--radius`). Counts of the supported build for the default: 26,285 entries in
-  the layers of 4 regions, 4,423 in the circle, 1,092 usual ones, 1,076 with a creature
-  family (the 16 others are siege weapons), 1,051 spawn points after the merge of 25
-  placements with two entries, 121 kinds, 70 slices. The research counted the same 4,423,
-  1,092, and 1,076.
+  component and a vitals component; and the client shows that slice correctly (the picture
+  check below). The entries of one placement are one spawn point: the metadata has one entry
+  for each slice of an alias with more than one slice (a left arm and a right arm, a man and
+  a woman).
+- The area of the file is the whole world (stage 3.4c): each region of the game copy that has
+  a layer with spawn data. `--radius METERS` (with `--center X Y`, or around the start place
+  `8880 4250`) selects a circle for a smaller file. Counts of the supported build:
+
+  | Step | Count |
+  | --- | --- |
+  | Entries in the layers of 25 regions | 115,937 |
+  | Usual entries (`SpawnedByCoatlicue`, not `IsOverride`, not `IsEncounter`) | 37,327 |
+  | With a creature family | 36,574 |
+  | Left out: no creature family (334 siege weapons, 244 barrels, 104 training dummies, totems and other objects) | 753 |
+  | Left out: no placement at the position in the layer (215 objects of a trap or a puzzle, about 122 creatures of Outpost Rush, creatures of the catacombs, and creatures whose placement is a part of a larger slice) | 499 |
+  | Left out: no slice with a movement component and a vitals component (web traps, cocoons, nests: objects that can take damage) | 291 |
+  | Left out: the client does not show the slice correctly (50 slices, the picture check below) | 1,658 |
+  | Not a point of its own: a second entry of one placement | 1,286 |
+  | Spawn points of the file | 32,840 |
+  | Kinds | 3,848 |
+  | Slices | 503 |
+
+  With each slice (`--all-slices`) the file has 34,381 spawn points, 4,028 kinds, and 553
+  slices: the 50 slices that the client does not show keep 1,541 spawn points out. The 800 m
+  around the start place (`--radius 800`, the area of stage 3.4a) have 4,423 entries, 1,092
+  usual ones, and 1,076 with a creature family, as the research counted.
+- An entry with no category row (stage 3.4c). 608 usual entries have the category id 0 (257),
+  or an id that the category table of this build (8,283 rows) does not have (351): animals,
+  and creatures of the newer areas. The client then shows the name of the vitals row on the
+  name plate (live check: a creature of such an entry has its body, its name, its level,
+  and its health bar). Such an entry is a spawn point (585 of them are in the file), and its
+  kind has no category name. 5 entries have a base row with no creature type, which has no
+  row in the modifier table: the health modifier is then 1.
+- What can come in later. The entries with no placement need a reader for the slices of each
+  placement of a layer (the creature is a part of a larger slice). The entries of an event
+  and of an encounter (`IsOverride`, `IsEncounter`), and a slice with a schedule, need the
+  event system. The 50 slices need the cause of their picture (below). The objects with no
+  creature family and with no movement component are not creatures: they are work for the
+  systems of the siege weapons and of the objects that can take damage.
 - A kind is one vitals row with one category row and one alias. Its id for a command is the
   name of the vitals row; when more than one kind has the row, the kinds after the one with
   the most spawn points get a number (`Risen_L-R_Arm_6:2`).
@@ -2539,8 +2605,61 @@ chain of one spawn point in the game files:
   Wolf level 18: 1690.876; Fallow Scavenger (Risen) level 18: 1690.876 x 0.9 = 1521.788.
 - The level of a spawn point is the level of its metadata entry, not the number in the name
   of its row (`Wolf_Grey_7` at level 18).
-- The file of the tool for the default area has 1,029 spawn points, 114 kinds, and 65 slices:
-  the tool reads 70 slices and leaves out the 5 that show no body ("Not known, not done").
+- The file (format 1) is one JSON document of 8.8 MB: the regions, the level table, the
+  slices, the kinds, and the spawn points (each one a list of 9 values: the id of its
+  placement, the index of its kind, its level, its position, its direction, and its two
+  respawn values). The tool needs 60 s with an Oodle library (32,875 pak entries). The
+  backend loads the file in 0.17 s to 0.20 s, as a whole or not at all: its start needs
+  0.41 s to 0.46 s with the file, and 0.22 s to 0.28 s with the file of stage 3.4a or with
+  no file. Memory of the backend process (resident, `--no-rep-listener`, each other game
+  data file loaded): 37.9 MB with no creature file, 39.3 MB with the file of stage 3.4a
+  (1,029 spawn points), and 57.7 MB with the file of the whole world. The parse of the
+  document needs 94 MB at its peak (66 MB with no creature file: the item catalog): the
+  backend gives the free memory back to the system after the load of the game data
+  (`malloc_trim`; without it the process kept 99 MB). A binary form or a file for each region is not necessary at this size
+  (decision of stage 3.4c).
+- **The picture check of the slices** (stage 3.4c, `tools/research/creature_tour.py`;
+  evidence `~/Games/soulwarden/work/evidence/world-spawn/implement/tour`). The tour makes one
+  creature of each slice 5 m in front of the character on the street of the start place
+  (`prepare` adds one kind `Tour_NNNN` for each slice to a file with each slice), takes one
+  picture 5 s later, and removes the creature. `sheets` puts 25 pictures on one sheet. A
+  person then looks at each sheet. Result for the 553 slices of the world: 476 show a body
+  and a name plate with the record of this section and no action; 77 do not.
+- **The spawn action.** The action list component of a creature slice has the field
+  `m_spawnAction` (the name of an action of its action table: `Spawn`). The field is also in
+  the slices that show with no action, thus the field alone does not say which slices need
+  it. For 27 of the 77 slices the client shows
+  the body and the name plate only after the server started that action: the movement state
+  of the creature has the action as a scope record (as for the death action, below) from the
+  creation of the creature. Live proof: an Ancient Guardian Reaver shows a blue light and no
+  name plate with no action; with the action `Spawn` it has the name plate after 1 s, the
+  body stands up, and it stands after 4 s (`W3-1` to `W3-4`); an observer that comes later
+  gets the same record and sees the body at once (`W3-5`, `W3-6`: the Reaver at its spawn
+  point after a travel). The 27 slices: the Ancient Guardian javelineer (3 slices), reaver,
+  and spearman (2); the Anubian guardian brute, reaver, and spearman; the dryad prowler (2)
+  and the swamp dryad prowler; the ice dryad frostfang (2); the dune phantom huntress; the
+  dynasty maiden (2); the sand and the sulfur elemental shaman; the gold skeleton reaver; the
+  undead javelineer; the female damned bowman; the damned longswordsman commander; and 5
+  slices of world events. Two of them (the dryad prowler and the dune phantom huntress) show
+  the body only 5 s to 15 s after the record: their spawn action is longer. The list is the
+  member `spawnAction` of `tools/gamedata/creature_slices.json`: the tool writes the member
+  `spawnAction` of these slices, and the backend starts the action for each creature of such
+  a slice. They bring 875 spawn points in. The backend does not start the action for the 476
+  slices that show with no action: that would change a picture that was checked.
+- **Slices that the client does not show** (the member `notShown` of the same file, 50
+  slices, 1,541 spawn points). With the spawn action and a wait of 15 s:
+
+  | What the picture shows | Slices |
+  | --- | --- |
+  | No body and no name plate | `upyr_guardian`, `upyr_mindthief` (2), `upyr_shade`, `upyr_thrall_meatbag_purple`, `upyr_thrall_meatbag_red`; `hercyne_boar` (2), `hercyne_corvid` (2), `hercyne_reindeer` (3); `inquisitor_warden` (2); the purple and the green warden of the catacombs; `sulfurlizard`, `sulfurdragon`, `armoreddragon`, `chameleon`; `season_02_sulfur_elemental_heavy_n1`, `season_02_herikai`, `season_04_frost_king`; `evil_knight_heavy`; `corruptionheavy_dt6`; `halloweenplaguer` (its action table has no action `Spawn` with a fragment) |
+  | An effect, no body, no name plate | `corruption_swarmer` (7 slices) and `worldevent_ai_corrupted_swarmer_10223` (a red effect); `upyr_thrall_meatbag` and its green slice (white smoke); `inquisitor_flamekeeper`, `anubianguardian_horus` (2) (a flame); `lost_undead_naga` (a blue light); `dynastyheavy` (2), `corruptionheavy_dt5`, `worldevent_ai_corruption_heavy_10223`, `sulfur_elemental_heavy`, `sand_elemental_heavy`, the dark heavy boss of the catacombs (a weak light) |
+  | A body and no name plate | `underworld_catacombs_skeleton_dark_club`, `underworld_catacombs_skeleton_dark_2h_sword` (the slice has no marker component: the marker slot is 0) |
+
+  The largest groups: `sulfurlizard` (423 spawn points), `corruption_swarmer` (266, and 36
+  of its other slices), the four meatbag slices (199), `chameleon` (172), the hercyne
+  animals (93), `armoreddragon` (71). The cause is not known: the record has the same four
+  states as the record of a slice that shows. A slice goes
+  from one list to the other only with a picture of the live client.
 - The tool stops with status 1 and one message, and writes no file, when a file that a slice
   or an animation file names is not in the pak files or is not correct XML (the grid file,
   the controller file, the fragment file, a file that a fragment file imports, an action
@@ -2665,6 +2784,14 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   rotation again). The time bytes are the time from the start of the action to the state: a
   session that observes a dead creature later sends the time that passed, so that its
   client shows the end of the action.
+- The spawn action of a slice (stage 3.4c, the list above) is the same scope record, with the
+  index of the action `Spawn` and of its fragment, in the first movement state of the
+  creature. Its time is the time from the creation of the creature: the client of a session
+  that observes the creature later shows the end of the action (the body stands). An action
+  with an end (the reaction to a hit, the action of a command) replaces it, and the creature
+  gets the spawn action again at that end, with the time from its creation. A dead creature
+  keeps its death action; a dead creature of a slice with no death action keeps its spawn
+  action, so that its body stays for a later observer.
 - **The index of an action** is its position in the action table that the client makes for
   the slice (builder 0x4840D90; the table is at movement component +0xB58, one action has
   0x1A0 bytes: name +0x90, index +0x130, fragment name +0x138, fragment index +0x164). The
@@ -2735,6 +2862,27 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   spawn point has one creature at most. With no player in the world, the world has no
   creature of a spawn point. The first value is larger than each interest distance: a
   creature is in the world before a session can observe it.
+- **The cost of the spawn point rule** (stage 3.4c). The file has 32,840 spawn points, and a
+  scan must not look at each of them. The points are in a grid with cells of 64 m
+  (`world::SpawnGrid`): a scan looks at the cells that are 150 m or less from each character
+  of the world, and, for the leave rule, at the creatures that the position index has near
+  each character. The points that wait (a dead creature, a respawn time) are in their own
+  set. The cost of a scan thus depends on the number of players and on the points near
+  them. Measured in the test program (case WS2, a made-up world of 33,856 spawn points; the
+  values are from one run and change from run to run): with 1 player a scan looks at the
+  points of 36 cells at most (25 points), and 200 scans need 0.2 ms to 0.3 ms; with 50
+  players at 50 places a scan looks at 1,096 points, and 200 scans need 25 ms to 31 ms
+  (0.13 ms to 0.16 ms for each world tick with its scan), against 1,057 ms to 1,395 ms for
+  200 scans of all points for each player. The case has a time limit that a scan of all
+  points does not meet (less than one tenth of that time, and less than 400 ms). Live (run
+  `w6`, one player, 8 travels through 5 territories in 5 minutes, 32,216 ticks): a tick of
+  the game server needs 55 µs on average and 17.1 ms at most, a tick of the world 9.5 µs
+  and 15.3 ms at most, and a scan 50 µs and 5.4 ms at most; 698 scans looked at 50,052
+  points (72 for each scan). The largest values came in the runs with travels: the scan of
+  a travel makes 40 to 60 creatures and removes as many, and the world writes the position
+  row in that tick. A run with no travel (219,317 ticks, one player at one place, the
+  picture tour) had 5.9 ms as its largest tick of the game server. `tools/world list`
+  prints these values (the line `load:`).
 - **A point that waits.** A creature of a spawn point that died, or that a command removed,
   does not come back by the distance rule. The point is free again after the command
   `reset`, or at its respawn time on the world clock (`Creatures::respawn_at`: the place
@@ -2769,9 +2917,13 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
 [&range=N]`, `GET /v1/dev/creatures/kinds[?q=TEXT]`, `POST /v1/dev/creatures/spawn?character=ID
 &kind=KIND[&level=N][&dx=N&dy=N&dz=N][&yaw=N]`, `POST /v1/dev/creatures/remove?creature=ID`,
 `POST /v1/dev/creatures/health?creature=ID&health=N` (or `percent=N`), `POST
-/v1/dev/creatures/kill?creature=ID`, `POST /v1/dev/creatures/reset`, and `POST
+/v1/dev/creatures/kill?creature=ID`, `POST /v1/dev/creatures/reset`, `POST
+/v1/dev/creatures/action?creature=ID&action=NAME[&seconds=N]` (stage 3.4c: it starts an
+action of the action table of the slice by its name, with no end or with an end after the
+time; `tools/world creature action`; reply 404 for a name that the table does not have or
+that has no fragment), and `POST
 /v1/dev/world/fragment?creature=ID&slot=N&type=N&state=HEX`. The admin interface has the same
-commands (6.4). The character of a spawn command is the reference place: the new creature
+commands (6.4), but not the action command. The character of a spawn command is the reference place: the new creature
 is at its position plus the distance (east, north, up; with no distance 3 m to the north).
 The two route sets have different rules for a change of a creature (remove, health, kill):
 a development route changes each creature of the world, with no character. An admin command
@@ -2786,13 +2938,18 @@ world (6.4). The health command with `percent` 100 gives the exact maximum healt
   The option 0 with no tag bit has live proof for the death, the bite, and the reaction of
   the Grey Wolf only: a kind with a variant tag (a different wolf, a Risen with one arm) can
   need tag bits for its own fragments.
-- Five slices of the default area show no body with the record above: four Ancient Guardian
-  slices (`ancientguardian_javelineer`, `ancientguardian_javelineer_12`,
-  `ancientguardian_reaver`, `ancientguardian_spearman`) show a blue light, and
-  `corruption_swarmer` shows a red effect, each one with no name plate. Their action tables
-  have an action `Spawn`: the cause can be that these kinds wait for an action of the
-  server. The tool leaves their 22 spawn points out (`SLICES_NOT_CORRECT`). The other 65
-  slices of the area show a body, an idle pose, and a name plate (one screenshot of each).
+- 50 slices show no body or no name plate, also with their spawn action (the table above;
+  1,541 spawn points). Stage 3.4a found five such slices in the start area: the spawn action
+  corrected the four Ancient Guardian slices, and `corruption_swarmer` stays (a red effect).
+  Not tested for them: a different action of their tables, the other components of their
+  slices (a state that the backend does not send), and a longer wait than 15 s.
+- A creature of a slice with a spawn action keeps that action as the action of its movement
+  state while it has no other action: the body stands. If the client plays an idle
+  animation in that state was not checked. Stage 3.4b must check what the client shows when
+  the server starts a second action after the spawn action.
+- The picture check has one picture of each slice, with one creature of one kind and one
+  level. A slice whose kinds have different variants (tags of the action fragments) can
+  show a different body for a kind that the tour did not make.
 - The death action `Death_FB` of 13 slices, and the death of a kind with more than one death
   fragment (a death from the front or from the rear).
 - What the client does with the states that the backend does not send (the stamina
@@ -2867,7 +3024,15 @@ spear on a Grey Wolf):
 
 **The hit check** (project rule; `world/combat.h`). A contact is a claim of a client. The
 session gives each claim to the world (`Combat::claim`) with the values of its client
-(`world::AttackTrack`: the attack inputs, the last hits, the counts). The world finds the
+(`world::AttackTrack`: the attack inputs, and the counts). The two limits of the check (the
+claims of one time window, and the last hits of each creature) are values of the character,
+not of a session: the combat system keeps them with the character id as their key
+(`world::HitLimits`, `Combat::limits_of`). A new session of a character, and a character that
+leaves the world and enters it again, have the limits that the character has (case HT14;
+before stage 3.4c each new session had new limits, and 13 new sessions of one character made
+13 hits in 0.52 s). The time rule of a hit applies to each session of the character; the
+rule of the input steps applies in the session and the input sequence of the hit, because an
+input number is a value of one client. The world finds the
 attacker from the session (rule MP-5). A claim that the check refuses changes nothing, the
 client gets no reply, and the log has a line for the first refusal of each cause and the
 counts at the end of the session (`rep: hit claims of the session: ...`). The check, in this
@@ -2876,7 +3041,7 @@ sequence:
 | Check | Refusal (log text) |
 | --- | --- |
 | The backend has combat tables | no combat tables |
-| The client made 12 claims or less in the last 1 s of the world clock | too many claims |
+| The character made 12 claims or less in the last 1 s of the world clock, in all its sessions | too many claims |
 | The entity group id of the receiver is a creature of the world, and the actor id is its actor id | not a creature |
 | The group reference is the group of the receiver, and the facet target is a component of the slice of the creature | not a component of the creature |
 | The interest table of the session has the creature | not observed |
@@ -3022,6 +3187,120 @@ and of case HT4): `ccc47f93daf6bfc3 0000000100000002 040000000100000020000000000
   durability of a weapon.
 - A size of each creature and a reach of each weapon for the distance check.
 
+### 4.16 Travel: the server moves a character to a different place (behavioral proof)
+
+Stage 3.4c. Research: `~/Games/soulwarden/work/research/death-travel.md` (section 2, static
+proof, checked by a second agent). Evidence of the live runs:
+`~/Games/soulwarden/work/evidence/world-spawn/implement/` (`W5-*`, `W6-*`, `W7-*`). This is not
+the fast travel function of the game (its requests, its costs, and its shrines are system
+2.6): it is a command of the backend.
+
+**The movement state is the travel.** The client of the owner takes the position of a
+movement state of the server (slot 16, type 11) only when the low 4 bits of
+`teleportAndMigrationId` (group 0, field 31) are not the teleport number of its own predicted
+state (compare at 0x486D89B to 0x486D8B6). It then copies the server state to its predicted
+state (0x486EA80): the position, the rotation, and the look direction, with no step between
+the two places and for each distance. The start number of a client is 0, and the first
+movement state of a session has 1: the world entry is the same mechanism.
+
+| Step | What the backend sends to the session of the owner | Client code | Evidence |
+| --- | --- | --- | --- |
+| 1, only for a place that is more than 100 m away (project rule) | Message `PlayerComponentClientFacet_OnTeleportWithLoadingScreen` (type 3951): `target:u64 entity:u64 kind:u8`, with the kind 1 | Handler 0x6895A90 (invoke 0x65AC7C0): it shows a loading screen and sets the mark "teleport pending" of the player facet | Behavioral: a loading screen with a tip text for about 4 s; 1 call of 0x6895A90 for each such travel |
+| 2 | A state bundle with one record of the own character (interest 1) with the full movement state in the owner view: `rotation` (11), `lookDir` (12), `worldPosAbs` (27, the new place), `teleportAndMigrationId` (31, the next number), `timeAnchor` (40), `dataBits` (41), `moreDataBits` (42). No metadata state (4.2), and no id of a state (`idRel`, `idAbs`) | Apply 0x485A550, compare 0x486D660, copy 0x486EA80 | Behavioral: 1 call of 0x486EA80 for each travel (and 1 at the world entry); the position of the character in the client memory is the place of the state |
+| 3 | Message `PlayerComponentClientFacet_OnPlayerTeleport` (type 3954): `target:u64 entity:u64` | Handler 0x6888870 (invoke 0x6564020): it clears the mark and gives the position of the player to the world streaming | Behavioral: 2 calls of 0x6888870 for each travel, one from the message (return address 0x656405F) and one from the movement facet itself at the new teleport number (return address 0x4868625, the event dispatcher 0x4868420) |
+
+- The facet target of the two messages is the entity group id of the character plus the id
+  of the component `Player` of the root entity of the player slice (`DF0CE8C98D27619D` in the
+  supported build; the rule of 4.2). Only the session of the owner gets them: the handler of
+  3951 sets its mark with no check.
+- The teleport number is a value of the entity (`Entity::teleport`): 1 at the creation of
+  the entity, and the next number for each travel (`number % 15 + 1`: 1 to 15, never 0, the
+  start number of a client). A session that takes the entity later gets the number that the
+  entity has. The high 4 bits (the migration number of the client) stay 0.
+- The position of the state is the place of the travel plus the spawn lift (0.5 m, 4.6): the
+  place is a place on the ground, and the client lets the character fall to the ground.
+  Live: at each of the travels of the runs the character stood on the ground, and the first
+  accepted position report was 0.02 m to 0.04 m below the height of the place.
+- The rotation of the state is the identity: the character and the camera look north after
+  each travel (live: the yaw of the camera was 1.566 before and 0.000 after).
+- Live results of run `v1` (one session, three travels; `W5-trace-and-log-lines.txt`): a
+  travel of 14 m with no loading screen (the character was at the new place in the next
+  picture, 2 s later, and a walk of 1 s moved it 4.9 m); a travel of 1,694 m to a spirit
+  shrine of a different territory with the loading screen (the first position report of the
+  new place came 4.7 s after the command); and a travel of 1,691 m back. The session had no
+  new login, and the trace point 0x6769980 (player registration) had no new call.
+- Not checked: a travel with no message 3954 (the movement facet calls the same handler
+  itself, thus the message is probably not necessary; the backend sends it), the kind 0 of
+  message 3951, a travel of more than 100 m with no loading screen, and what the client of
+  an observer shows for a movement state of a different player with a new teleport number
+  (there is no second client).
+
+**The world model** (project rules; `World::travel`, `world/world.h`).
+
+- The command names a character (rule MP-9). For a character that is in the world, the world
+  sets the position of its entity (the position index, the revision), gives it the next
+  teleport number, marks its movement state (rule MP-2: each observer gets the state through
+  the usual path), and writes the position row at once. The session of the owner gets
+  `SessionSink::traveled`: it sends message 3951 when the place is far, starts the check of
+  the position reports again from the new place (4.7), and sends message 3954 after the
+  bundle with the movement state.
+- A session that observes the character compares its interest distances in its next tick,
+  not at its interval of 500 ms (`World::last_travel`): it sends the stop of the entity when
+  the new place is outside its leave distance, and the record with the new position when it
+  is inside. It never sends a record with a place that is outside. A session near the new
+  place gets a first record of the character. The same scan removes the creatures of the old
+  place from the interest table of the owner and adds the creatures of the new place.
+- The spawn point rule (4.14) runs in the tick of the travel: the creatures of the new place
+  are in the world before a session looks for them, and the creatures of the old place leave
+  the world when no other player is near them.
+- A place for a character is a position of the world with a height from -99 m to 999 m (the
+  height range of the wire is -100 m to 1000 m, and the position check refuses its two
+  limit values). The command refuses a different place, and nothing changes.
+- A character that is not in the world has no entity to move: the command writes the place
+  into its position row, and its next world entry is there (the reply has
+  `"applied":"stored"`).
+
+**The travel places** (game data, `tools/gamedata/places.sh`, file `travel-places.json`). Each
+region of the game copy has a list of territory landmarks (`TerritoryLandmarks` of
+`regions/REGION/region.metadata`): a type, a world position, and the ids of the territory, the
+area, and the point of interest that contain it. The tool takes the landmarks of two types:
+27, a spirit shrine (the place where the game puts a character after a fast travel), and 20,
+the respawn place of an inn (the place after a recall). These are the places of the game data
+where the game itself puts a character: each one is a place where a character can stand, with
+a height on the ground. A landmark of the type 1 (a settlement) has a height that is not a
+ground height (round numbers such as `4810.0 6829.0 146.0`). The name comes from the
+territory tables (table type `TerritoryDefinition`: the name key of each territory, area, and
+point of interest) and the English text files. The supported build gives 161 places in 16
+territories: 133 spirit shrines and 28 inns. The id of a place is its kind and the id of its
+point of interest (`shrine_40170`, `inn_40300`). Without the file the backend starts, and the
+travel command takes only a position in numbers.
+
+Live results (run `w6`, one session with 8 travels, 8,514 position reports accepted and none
+refused, 1 report from the place before a travel not used):
+
+| Place | Territory | Distance of the travel | What the client showed |
+| --- | --- | --- | --- |
+| Shrine of Pillars (`shrine_20430`) | Brimstone Sands | 6,514 m | The character on the floor of the shrine, the compass text "SHRINE OF PILLARS", the interaction text "Fast Travel" of the shrine, a Highlands Goat (level 62) 8 m away with its name plate; 51 creatures in 150 m |
+| Empyrean Shrine (`shrine_40353`) | Great Cleave | 4,523 m | The character on snow beside the shrine, the compass text "EMPYREAN SHRINE", two Forge Raiders (level 60) with their name plates; 47 creatures in 150 m |
+| Werna Isle Shrine (`shrine_30154`) | Monarch's Bluffs | 5,973 m | The character on the floor of the shrine, the compass text "WERNA ISLE SHRINE", a Siltboot Shaman (level 16) with its name plate; 31 creatures in 150 m |
+| Polder Shrine (`shrine_50255`), with the button of the tool window | Weaver's Fen | 3,687 m | The loading screen, then the character at the shrine, the compass text "POLDER SHRINE"; 40 creatures in 150 m |
+
+- The first position report from the new place came 3 s to 5 s after a travel with the
+  loading screen. The height of a travel place was correct at each of the 6 places of the
+  runs: the character stood on the ground or on the floor of the shrine.
+- The client shows the game time of its own clock: the places were dark (the backend sends
+  no world time).
+- A travel with numbers to a height that is 0.4 m below the ground worked (the spawn lift
+  is 0.5 m). A height that is farther below the ground was not tested.
+
+**The commands.** `tools/world places [TEXT]`, `tools/world travel CHARACTER PLACE`, and
+`tools/world travel CHARACTER X Y Z` (routes `GET /v1/dev/world/places` and `POST
+/v1/dev/world/travel`, with the argument `place`, or `x`, `y`, and `z`, and when necessary
+`screen=auto|on|off` for the loading screen); the admin command `travel` with the same
+arguments and the route `GET /admin/v1/catalog/places` (6.4); and the tab "Travel" of the
+tool window. The two route sets use one function of the common layer
+(`server/http/travel_commands.cpp`).
+
 ## 5. Open items
 
 - Creatures (4.14) stand at their spawn points, and nothing more. Open for them:
@@ -3038,18 +3317,30 @@ and of case HT4): `ccc47f93daf6bfc3 0000000100000002 040000000100000020000000000
   - The health of a creature is a rule of this project (the health of the level times two
     modifiers). The states of the other components of a creature slice (stamina, status
     effects, the paperdoll of a creature with a weapon) are not sent.
-  - Five slices of the default area show no body, and their 22 spawn points are not in the
-    creature data. The spawn points of an event, of an encounter, and the entries with a
-    schedule are not in the creature data.
-  - The creature data has only the area of 800 m around the start place.
+  - The creature data has the whole world (stage 3.4c: 32,840 spawn points). 50 slices show
+    no body or no name plate, and their 1,541 spawn points are not in the creature data
+    (4.14, the table of the picture check). The spawn points of an event, of an encounter,
+    the entries with a schedule, and the 499 entries with no placement at their position
+    are not in the creature data.
+  - A creature of a slice with a spawn action keeps that action: what the client shows when
+    the server starts a second action after it is not checked (stage 3.4b).
+- Travel (4.16) is a command of the backend. Open for it:
+  - The fast travel of the game (the interaction of a shrine, the map, the costs, the
+    recall to an inn) is system 2.6. The client shows the interaction text of a shrine, and
+    the backend has no answer for it.
+  - The character and the camera look north after a travel: the travel has no direction.
+  - A travel with no message 3954, the kind 0 of message 3951, and the picture of a travel
+    for the client of an observer are not checked (there is no second client).
+  - The height of a travel with numbers is not checked against the ground: the backend has
+    no terrain data.
 - The position of a character is exact with the position report of the game hook (4.7).
   Open for it:
   - The backend has no movement simulation and no collision data: the check of a position
     report is a speed check. A position in a wall or below the ground passes it.
   - A refused position report has no answer: the client keeps its own position, and the
     backend keeps the last accepted one until the reports are in the limits again. A teleport
-    of the server to the last accepted position is later work, and it needs a rule for the
-    first reports after it.
+    of the server to the last accepted position is later work: the travel of stage 3.4c
+    (4.16) has the wire mechanism and the rule for the first reports after it.
   - The object of mask bit 8, the fields of a value of entry +0x380 that is not 0, and the
     first two lists of an input entry have static proof only: no entry of a live run had one
     of them (4.7).
@@ -3302,8 +3593,11 @@ and no development option.
 GET  /admin/v1/state[?character=ID]
      {"account": true, "catalog": true, "revision": N,
       "characters": [{"id", "name", "level", "inWorld", "session"}, ...],
-      "selected": ID, "items": {...}, "progress": {...}, "creatures": {...}}
-     The characters of the account of the token. "items" and "progress" are for the character
+      "selected": ID, "position": [x, y, z], "items": {...}, "progress": {...},
+      "creatures": {...}}
+     The characters of the account of the token. "position": the place of the selected
+     character when it is in the world (the tab "Travel" shows it and computes the distance
+     of each place from it). "items" and "progress" are for the character
      of the request, or, with no id, for the character of the account that a session plays,
      then one that is in the world, then the first one. "items": the bag ("items": slot, item,
      quantity, gearScore, durability, locked, instance), the equipment, the coin (hundredths),
@@ -3331,6 +3625,15 @@ POST /admin/v1/commands
        set_creature_health creature, and health (a number) or percent (0 to 100)
        kill_creature       creature
        reset_creatures     no argument: each spawn point that waits is free again
+       travel              place (the id of a travel place), or x, y, z (a position in
+                           meters: a height from -99 to 999), not the two; screen (auto,
+                           on, off: the loading screen of the client, 4.16)
+     travel moves the character to the place (4.16). Reply 200 with "applied": "world", the
+     position, the distance, and the place; or with "applied": "stored" for a character
+     that is not in the world (its row has the place, and its next world entry is there).
+     Reply 404: no place with that id. Reply 400: a place and numbers together, a number
+     that is not in the limits, a wrong text for screen, a place id with no travel places
+     file.
      The character of a creature command is the reference place (4.14): it must be a
      character of the account of the token, as for each command. remove_creature,
      set_creature_health, and kill_creature change only a creature that is 150 m or less
@@ -3351,6 +3654,13 @@ GET  /admin/v1/catalog/creatures?q=TEXT[&limit=N][&offset=N]
                  "health", "spawnPoints", "slice"}, ...]}
      The kinds of the creature data whose id, name, category, or family has each word of the
      text. "health" is the health of the kind at its level.
+GET  /admin/v1/catalog/places
+     {"loaded": true,
+      "places": [{"id", "kind", "name", "territory", "territoryId", "position": [x, y, z]}, ...]}
+     The travel places of the game data (4.16): each one, with no filter (161 places in the
+     supported build). "kind": "shrine" or "inn". With no file: "loaded": false and an empty
+     list. The list does not change after the start of the backend: the tool window
+     asks for it until it has a reply, and then keeps it.
 ```
 
 Rules:

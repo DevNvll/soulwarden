@@ -5,6 +5,7 @@
 // the client. All ids, names, and files are made up: no value of a capture is here.
 
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -143,7 +144,9 @@ gamedata::CombatData test_combat() {
                         {"Strike", 6, gamedata::DamageCategory::physical},
                         {"Fire", 9, gamedata::DamageCategory::elemental}};
     data.attributeMinimum = 5;
-    for (const unsigned attribute : {world::attribute::kStrength, world::attribute::kDexterity}) {
+    // A list for each attribute that a weapon can have a factor for: the loader refuses an empty one.
+    for (const unsigned attribute : {world::attribute::kStrength, world::attribute::kDexterity,
+                                     world::attribute::kIntelligence, world::attribute::kFocus}) {
         for (int value = 0; value < 96; ++value) {
             data.attributeDamage[attribute].push_back(1.25F * static_cast<float>(value));
         }
@@ -538,11 +541,19 @@ void attack_inputs(const Options&) {
               && track.press_for(static_cast<std::uint16_t>(input + 1))->endInput == input,
           "an attack input whose end the session did not get ends at the start of the next one");
 
-    // One attack hurts one creature one time.
-    AttackTrack hits;
-    hits.step(10, true, false, false, step());
-    check(!hits.same_attack(0x77, 20, clock.now()), "no hit before: a contact is a new attack");
-    // Combat::claim keeps each hit: the track has no public function for it. See case HT5.
+    // One attack hurts one creature one time. The hits are values of the character, not of a
+    // session (world::HitLimits): the time rule applies to each session of the character, and
+    // the rule of the input steps to the session and the input sequence of the hit.
+    world::HitLimits hits;
+    check(!hits.same_attack(0x77, 20, 1, 0, clock.now()), "no hit before: a contact is a new attack");
+    hits.note_hit(world::HitLimits::Hit{0x77, clock.now(), 20, 1, 0});
+    const auto later = clock.now() + std::chrono::milliseconds(300);
+    check(hits.same_attack(0x77, 24, 1, 0, later) && !hits.same_attack(0x77, 24, 2, 0, later)
+              && !hits.same_attack(0x77, 24, 1, 1, later) && !hits.same_attack(0x78, 24, 1, 0, later)
+              && hits.same_attack(0x77, 900, 2, 0, clock.now() + std::chrono::milliseconds(200)),
+          "a contact 4 input steps after a hit of the same creature is the same attack in the session and the input "
+          "sequence of the hit only; a contact 200 ms after it is the same attack for each session of the character");
+    // Combat::claim keeps each hit of a character. See the cases HT5 and HT12.
 
     // The input number has 16 bits.
     AttackTrack wrap;
@@ -1317,6 +1328,274 @@ void remote_configuration(const Options&) {
           "with the switch off (--no-melee-report) the document is not there: the client then reports no melee contact");
 }
 
+
+/**
+ * HT10: a combat tables file with a value that is not valid is not used, as a whole (code
+ * review of stage 3.2a, finding 1): a damage category that is not a category of the game, and
+ * an empty damage list of an attribute.
+ */
+void review_bad_tables(const Options& options) {
+    std::filesystem::create_directories(options.workDirectory);
+    const auto path = options.workDirectory / "review-bad-combat.json";
+    json document = tables_document();
+    document["damageTypes"][1][2] = "Physcial";
+    std::ofstream(path) << document.dump();
+    Arena arena(false);
+    const bool loaded = arena.host.combat.load(path.string());
+    world::Entity* wolf = arena.spawn("Test_Wolf", 2.0F);
+    const float before = wolf->vitals.health;
+    Attacker attacker{arena.host, arena.a, kPlace};
+    attacker.idle(5);
+    attacker.light({contact_with(*wolf)});
+    note("a file with the damage category \"Physcial\": loaded " + std::to_string(loaded) + " (" + arena.host.combat.error()
+         + "), accepted hits " + std::to_string(arena.track().count(HitVerdict::accepted)) + ", damage "
+         + std::to_string(before - wolf->vitals.health));
+    check(!loaded && !arena.host.combat.loaded() && arena.track().count(HitVerdict::accepted) == 0
+              && arena.track().count(HitVerdict::noTables) == 1 && wolf->vitals.health == before,
+          "a damage category that is not Physical, Elemental, or True: the file is not used, and a hit has no effect (before "
+          "the correction the damage type had no mitigation: 57.6 damage and not 37.44)");
+    for (const std::string member : {"strength", "dexterity", "intelligence", "focus"}) {
+        json empty = tables_document();
+        empty["attributes"][member] = json::array();
+        std::ofstream(path) << empty.dump();
+        gamedata::CombatTables tables;
+        const bool accepted = tables.load(path.string());
+        check(!accepted && !tables.loaded() && !tables.error().empty(),
+              "an empty damage list of the attribute " + member + ": the file is not used");
+    }
+    gamedata::CombatData data = test_combat();
+    data.attributeDamage[world::attribute::kFocus].clear();
+    gamedata::CombatTables direct;
+    check(!direct.set(data) && !direct.loaded(), "the same check for data with no file");
+    std::ofstream(path) << tables_document().dump();
+    gamedata::CombatTables valid;
+    check(valid.load(path.string()) && valid.loaded(), "the file with the three categories of the game and a list for each attribute loads");
+    std::filesystem::remove(path);
+}
+
+/**
+ * HT11: the combat data tool writes no file from sources that are not complete (code review of
+ * stage 3.2a, finding 3). The check of the tool is a Python program with made-up data tables
+ * (tools/gamedata/check_combat_tool.py): this case runs it.
+ */
+void review_tool_sources(const Options& options) {
+    // The golden folder of the options is REPOSITORY/apps/backend/tests/golden.
+    const std::filesystem::path script =
+        options.goldenDirectory / ".." / ".." / ".." / ".." / "tools" / "gamedata" / "check_combat_tool.py";
+    check(std::filesystem::is_regular_file(script), "the check of the combat data tool is in the tree (the case needs --golden-dir)");
+    if (!std::filesystem::is_regular_file(script)) {
+        return;
+    }
+    std::filesystem::create_directories(options.workDirectory);
+    const auto output = options.workDirectory / "combat-tool-check.log";
+    const char* python = std::getenv("SOULWARDEN_PYTHON");
+    const std::string command = std::string(python != nullptr && *python != '\0' ? python : "python3") + " -I -B \""
+                                + script.lexically_normal().string() + "\" \"" + options.workDirectory.string() + "\" > \""
+                                + output.string() + "\" 2>&1";
+    const int status = std::system(command.c_str());
+    std::ifstream log(output);
+    unsigned correct = 0;
+    unsigned wrong = 0;
+    for (std::string line; std::getline(log, line);) {
+        note(line.substr(0, 150));
+        correct += line.rfind("ok  ", 0) == 0 ? 1 : 0;
+        wrong += line.rfind("FAIL", 0) == 0 ? 1 : 0;
+    }
+    check(status == 0 && correct == 9 && wrong == 0,
+          "the tool writes its file for complete tables and for a row name that the game itself does not have, and it writes "
+          "no file (status 1) for a damage row that is not there, a damage type that is not there, a base vitals row that is "
+          "not there, a column that is not there, a text in a number cell, a cell that is not finite, and a base vitals table "
+          "with no weakness column");
+    std::filesystem::remove(output);
+}
+
+/**
+ * HT12: an entry that ends after its position field gives no position (code review of stage
+ * 3.2a, finding 4).
+ */
+void review_short_position(const Options&) {
+    Arena arena;
+    world::Entity* own = arena.host.world.find_character(kCharacterA);
+    const float before = own->position.x;
+    const std::uint64_t accepted = arena.host.session(1).position_track().count(world::PositionVerdict::accepted);
+    InputEntry entry = report_entry(20, kPlace.x + 1.0F, kPlace.y, kPlace.z);
+    entry.value470 = true;
+    entry.cut = 1;
+    const auto parsed = read_client_input(input_entries_body({entry}));
+    check(parsed && parsed->tail == InputTail::shortBody && parsed->steps.empty() && !parsed->hasCharacter,
+          "the reader finds that the last byte of the entry is not there: the entry gives no attack data and no position");
+    arena.host.clock.advance(kTick);
+    arena.host.datagram(arena.a.peer, arena.a.input_report(entry));
+    arena.host.tick();
+    note("the position x of the character before " + std::to_string(before) + ", after " + std::to_string(own->position.x));
+    check(own->position.x == before
+              && arena.host.session(1).position_track().count(world::PositionVerdict::accepted) == accepted,
+          "the session gives no position of this entry to the world: the character stays (before the correction it moved 1 m)");
+    // The same entry with its last byte moves the character.
+    InputEntry whole = report_entry(21, kPlace.x + 0.2F, kPlace.y, kPlace.z);
+    arena.host.clock.advance(kTick);
+    arena.host.datagram(arena.a.peer, arena.a.input_report(whole));
+    check(own->position.x == kPlace.x + 0.2F, "an entry that is complete gives its position");
+}
+
+/**
+ * HT13: only the exact object path of the configuration host gets the document (code review of
+ * stage 3.2a, finding 5).
+ */
+void review_exact_configuration_path(const Options&) {
+    server::http::Router router;
+    server::http::register_aws_routes(router, server::http::AwsOptions{});
+    const auto get = [&](const std::string& host, const std::string& path) {
+        service::HttpRequest request;
+        request.method = "GET";
+        request.host = host;
+        request.path = path;
+        request.target = path;
+        std::string route;
+        const service::HttpResponse response = router.dispatch(request, route);
+        return std::make_pair(response, route);
+    };
+    const std::string host = server::http::kRemoteConfigurationHost;
+    const std::string exact = server::http::kGameplayConfigurationPath;
+    const auto document = get(host, exact);
+    const auto withPort = get(host + ":443", exact);
+    check(document.first.status == 200 && document.second == "aws.s3_gameplay_configuration"
+              && document.first.body == server::http::kMeleeReportDocument && withPort.first.status == 200,
+          "the exact path of the exact host (with a port or with no port) gets the document");
+    const std::vector<std::string> others{
+        exact + "/", "/applications//publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.1063730/versionless", "/" + exact,
+        exact + "//", "/applications/publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.1063730//versionless"};
+    for (const std::string& path : others) {
+        const auto reply = get(host, path);
+        note("path " + path + ": status " + std::to_string(reply.first.status) + ", route " + reply.second);
+        check(reply.first.status == 404 && reply.second == "aws.s3_missing" && reply.first.body.find("NoSuchKey") != std::string::npos,
+              "a path with one more \"/\" is a different object: the reply is 404 (no such key)");
+    }
+    const auto otherHost = get("evil-" + host, exact);
+    const auto longerHost = get(host + ".example", exact);
+    check(otherHost.first.status == 404 && otherHost.second == "aws.s3_missing" && longerHost.first.status == 404
+              && longerHost.first.body.find("javelin.enable") == std::string::npos,
+          "a host with a text before or after the name of the configuration host gets no document");
+}
+
+/**
+ * HT14: the two limits of the hit check are limits of the character (code review of stage
+ * 3.2a, finding 6): a new session of the character, and a character that leaves the world and
+ * enters it again, do not get new limits.
+ */
+void review_limits_of_a_character(const Options&) {
+    Arena arena;
+    gamedata::ItemDefinition definition;
+    definition.id = "TestSword";
+    definition.type = "Weapon";
+    definition.itemClass = "EquippableMainHand+Sword";
+    arena.host.catalog.set({definition});
+    state::ItemRow item;
+    item.instanceId = "0102030405060708090a0b0c0d0e0f10";
+    item.container = state::kContainerPaperdoll;
+    item.slot = world::paperdoll::kMainHand1;
+    item.itemId = "TestSword";
+    item.quantity = 1;
+    item.gearScore = 100;
+    check(arena.host.store.write_items(kCharacterA, {}, {item}), "the character has a stored sword for each new session");
+    world::Entity* wolf = arena.spawn("Test_Wolf", 2.0F);
+    const float before = wolf->vitals.health;
+    const auto start = arena.host.clock.now();
+    // One hit of a new session: a press, and a hold with a contact 8 steps later.
+    const auto hit = [&](FakeClient& client, std::uint32_t session) {
+        InputEntry press = report_entry(10, kPlace.x, kPlace.y, kPlace.z);
+        press.actionBits = {kActionAttack};
+        arena.host.datagram(client.peer, client.input_report(press));
+        arena.host.tick();
+        InputEntry hold = report_entry(18, kPlace.x, kPlace.y, kPlace.z);
+        hold.actionBits = {kActionAttackHold};
+        hold.contacts = {contact_with(*wolf)};
+        arena.host.datagram(client.peer, client.input_report(hold));
+        return arena.host.session(session).attack_track().count(HitVerdict::accepted);
+    };
+    // 13 new sessions of the same character, one after the other: each one takes the entity of
+    // the session before it. Each session opens 40 ms after the one before it.
+    unsigned accepted = 0;
+    for (unsigned round = 0; round < 13; ++round) {
+        FakeClient replacement(static_cast<std::uint16_t>(28000 + round));
+        arena.host.enter(replacement, arena.alpha.registration());
+        accepted += static_cast<unsigned>(hit(replacement, round + 2));
+    }
+    const float elapsed = std::chrono::duration<float>(arena.host.clock.now() - start).count();
+    note("13 new sessions of one character in " + std::to_string(elapsed) + " s: accepted hits " + std::to_string(accepted)
+         + ", damage " + std::to_string(before - wolf->vitals.health));
+    check(elapsed < 1.0F && accepted <= 3,
+          "the new sessions do not get past the rule \"one attack hurts one creature one time\": 3 hits at most in this time "
+          "(250 ms between two hits of one creature; before the correction each of the 13 sessions hit)");
+    check(arena.host.world.combat().limits_of(kCharacterA).hits.size() == accepted
+              && arena.host.world.combat().limits_of(kCharacterA).claims.size() <= world::combat_limits::kClaimsInWindow,
+          "the hits and the claims of the time window are values of the character");
+
+    // The claim rate: 12 claims in 1 s for the character, also over new sessions. Five wolves,
+    // so that the rule of one creature does not hide the rate rule: each new session sends
+    // five contacts, 40 ms after the session before it.
+    Arena rate;
+    check(rate.host.store.write_items(kCharacterA, {}, {item}), "a second world with the same character");
+    rate.host.catalog.set({definition});
+    std::vector<world::Entity*> wolves;
+    for (int index = 0; index < 5; ++index) {
+        wolves.push_back(rate.spawn("Test_Wolf", 1.0F + 0.2F * static_cast<float>(index)));
+    }
+    const auto began = rate.host.clock.now();
+    unsigned hits = 0;
+    unsigned tooMany = 0;
+    for (unsigned round = 0; round < 13; ++round) {
+        FakeClient replacement(static_cast<std::uint16_t>(29000 + round));
+        rate.host.enter(replacement, rate.alpha.registration());
+        InputEntry press = report_entry(10, kPlace.x, kPlace.y, kPlace.z);
+        press.actionBits = {kActionAttack};
+        rate.host.datagram(replacement.peer, replacement.input_report(press));
+        rate.host.tick();
+        InputEntry hold = report_entry(18, kPlace.x, kPlace.y, kPlace.z);
+        hold.actionBits = {kActionAttackHold};
+        for (world::Entity* target : wolves) {
+            hold.contacts.push_back(contact_with(*target));
+        }
+        rate.host.datagram(replacement.peer, replacement.input_report(hold));
+        const AttackTrack& track = rate.host.session(round + 2).attack_track();
+        hits += static_cast<unsigned>(track.count(HitVerdict::accepted));
+        tooMany += static_cast<unsigned>(track.count(HitVerdict::tooMany));
+    }
+    const float window = std::chrono::duration<float>(rate.host.clock.now() - began).count();
+    note("13 new sessions with 5 contacts each (65 claims) in " + std::to_string(window) + " s: accepted hits " + std::to_string(hits)
+         + ", refused for the claim rate " + std::to_string(tooMany));
+    check(window < 1.0F && hits <= world::combat_limits::kClaimsInWindow && tooMany == 65 - world::combat_limits::kClaimsInWindow
+              && rate.host.world.combat().limits_of(kCharacterA).claims.size() == world::combat_limits::kClaimsInWindow,
+          "the character has 12 claims in its time window of 1 s, for each number of sessions: the other 53 claims are refused "
+          "(too many claims; before the correction each session had its own 12 claims)");
+
+    // A character that leaves the world and enters it again has its limits too.
+    Arena leave;
+    check(leave.host.store.write_items(kCharacterA, {}, {item}), "a third world with the same character");
+    leave.host.catalog.set({definition});
+    world::Entity* target = leave.spawn("Test_Wolf", 2.0F);
+    Attacker first{leave.host, leave.a, kPlace};
+    first.idle(3);
+    first.light({contact_with(*target)});
+    const float afterFirst = target->vitals.health;
+    leave.host.datagram(leave.a.peer, leave.a.carrier_close());
+    leave.host.tick();
+    FakeClient again(27500);
+    leave.host.enter(again, leave.alpha.registration());
+    const bool entered = leave.host.world.find_character(kCharacterA) != nullptr;
+    InputEntry press = report_entry(10, kPlace.x, kPlace.y, kPlace.z);
+    press.actionBits = {kActionAttack};
+    leave.host.datagram(again.peer, again.input_report(press));
+    leave.host.tick();
+    InputEntry hold = report_entry(18, kPlace.x, kPlace.y, kPlace.z);
+    hold.actionBits = {kActionAttackHold};
+    hold.contacts = {contact_with(*target)};
+    leave.host.datagram(again.peer, again.input_report(hold));
+    check(entered && afterFirst < kWolfHealth && target->vitals.health == afterFirst,
+          "a character that leaves the world and enters it again in less than 250 ms does not hit the same creature a second "
+          "time: the limits stay with the character id");
+}
+
 } // namespace
 
 std::vector<Case> combat_cases() {
@@ -1330,6 +1609,16 @@ std::vector<Case> combat_cases() {
         {"HT7", "hits: the weapon in the hand and the weapon keys", weapon_keys},
         {"HT8", "hits: three sessions (two observers of one wolf, one session far away)", sessions},
         {"HT9", "hits: the remote configuration document that turns the contact report on, and its switch", remote_configuration},
+        {"HT10", "hits: a combat tables file with a category that is not known or with an empty attribute list (review of stage 3.2a)",
+         review_bad_tables},
+        {"HT11", "hits: the combat data tool writes no file from sources that are not complete (review of stage 3.2a)",
+         review_tool_sources},
+        {"HT12", "hits: an input entry that ends after its position field gives no position (review of stage 3.2a)",
+         review_short_position},
+        {"HT13", "hits: only the exact object path of the configuration host gets the document (review of stage 3.2a)",
+         review_exact_configuration_path},
+        {"HT14", "hits: the limits of the hit check stay with the character over new sessions (review of stage 3.2a)",
+         review_limits_of_a_character},
     };
 }
 
