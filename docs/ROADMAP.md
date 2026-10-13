@@ -376,7 +376,7 @@ must go into the correct place from its first version. The work has two stages, 
     session gets "kicked" with reason 2), in one task of the world. The stop of the backend
     waits for the HTTP connection threads.
   - Ids: each entity, each session, and the player manager have an actor id from the
-    allocator (`serial * 2`, `"AZOT"`, kind, `"AZOT"`). Live proof: world entry and movement
+    allocator (`serial * 2`, a tag of 4 bytes, kind, the tag again; the tag is `"SOUL"` now). Live proof: world entry and movement
     with the new ids, and each target of 55,211 client messages in three sessions agrees
     with the id rule (protocol notes 4.2). The backend checks the route and the target of
     each client message with the ids of the player slice (`tools/gamedata/slice_ids.sh`).

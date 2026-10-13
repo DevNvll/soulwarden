@@ -117,7 +117,7 @@ backend    step 1: ticket -> Steam id -> account row (found, or made) -> persona
 - With no Steam account (no `loginusers.vdf`, or `SOULWARDEN_STEAM_ID=local`) the hook uses the
   fallback identity: Steam id `0x0110000100A207A1` and the name `Soulwarden`. A token request with
   no local ticket gets the account of the same Steam id.
-- A database from before the account support has one persona, `soulwarden-persona-0001`. The first
+- A database from before the account support has one persona with a constant id. The first
   Steam id that logs in with a local ticket takes it (behavioral proof: world entry at the
   position that the database had). Each later Steam id gets a new account with random ids.
 - A token request with no local ticket of version 1 does not take that persona. It gets the
@@ -843,7 +843,8 @@ fragment := slot:size type:size state                    (reader 0x6AF2340)
 
 **Ids of an entity** (static proof `~/Games/soulwarden/work/research/ids.md`, and behavioral
 proof in the live runs of stage 0.6b for the actor ids `02000000 415A4F54 10000000 415A4F54`,
-`04...`, and `06...`):
+`04...`, and `06...`; the tag bytes of an id were `41 5A 4F 54` in that stage, and they are
+`53 4F 55 4C` ("SOUL") now, with a live proof of its own, below):
 
 ```text
 G               = first 8 bytes of the actor id as one little-endian number
@@ -869,7 +870,7 @@ component call of the client := route = actor id (16 bytes), body = target:u64 e
   in bytes 0 to 3 are safe. (This replaces the rule `(first byte & 7) == 1` of the earlier
   notes, which is the rule of a configuration that is not the default.)
 - Form of the ids of the backend (a design of this project, `world/ids.h`):
-  `serial * 2` as `u32` little-endian, `"AZOT"`, `kind:u8`, 3 zero bytes, `"AZOT"`. Kinds and
+  `serial * 2` as `u32` little-endian, `"SOUL"`, `kind:u8`, 3 zero bytes, `"SOUL"`. Kinds and
   serial ranges: player character `10` (1 to `0x0FFFFFFF`), player manager `01`
   (`0x10000000`), session `02` (from `0x10000001`), other entity `20` (from `0x20000000`).
   The world gives an entity its id when it makes the entity. An id is not used again in one
@@ -881,6 +882,13 @@ component call of the client := route = actor id (16 bytes), body = target:u64 e
   00 00 00 02` (then `...04`); and 16 of 16 targets of the capture are the targets of the
   rule (for example `335C430A8D27619F` for the player component with serial 1). Thus the
   byte order and the rule of `K` are correct for a player entity.
+- Live proof with the tag `"SOUL"` (one live run after the change of the tag bytes): the game
+  log has `Player Actor: 02000000534F554C10000000534F554C` and `InGame`; the entity group id
+  of the character is `4C554F5300000002`; each of the 5,859 component messages of the client
+  in the session has a target of the rule; the client shows a remote player (`04000000
+  534F554C ...`) and the creatures (`...000040 534F554C 20000000 534F554C`); and a melee
+  contact of the client names the actor id of its creature. The stored bytes of test case T2
+  changed only in the tag bytes.
 - The backend checks each client message against the rule (`RepSession::check_route`). The
   route must be the player manager or the actor id of an entity of the interest table of
   the session. For an entity: `entity` must be its `G`, and `target` must be a target of a
@@ -2019,7 +2027,7 @@ proof for the slots 1, 3, 5, 14, 24, 25): 0 head, 1 chest, 2 hands, 3 legs, 4 fe
 6 token (the earring), 7 ring, 8 paint, 9 the hand slot of a gathered object, 10 and 11 two
 old weapon slots, 12 arrows, 13 cartridges, 14 to 19 quick slots, 20 backpack, 24 to 26 weapon
 1 to 3, 27 to 29 the off hand item of weapon 1 to 3, 30 to 32 bags, 33 logging axe, 34 sickle,
-35 skinning knife, 36 pickaxe, 37 fishing pole, 38 soulwarden staff, 39 to 43 instruments, 44 a
+35 skinning knife, 36 pickaxe, 37 fishing pole, 38 azoth staff, 39 to 43 instruments, 44 a
 throwable object, 45 heart rune, 46 to 49 mount items. The slot database of the player
 (`sharedassets/genericassets/paperdoll.paperdolldb`, game data) has 47 rows: it has no row for
 21, 22, and 23. The values 50 and 51 are "number of slots" and "no slot".
@@ -2033,7 +2041,7 @@ the tag of the slot: `EquippableHead` (0), `EquippableChest` (1), `EquippableHan
 `EquippableBackpack` (20), `EquippableMainHand` or `EquippableTwoHand` (24 to 26),
 `EquippableOffHand` (27 to 29), `Bag` (30 to 32; the name of class number 119 is from the
 item tables), `LoggingAxe` (33), `Sickle` (34), `SkinningKnife` (35), `Pickaxe` (36),
-`FishingPole` (37), `SoulwardenStaff` (38), `InstrumentFlute`, `InstrumentGuitar`,
+`FishingPole` (37), `AzothStaff` (38), `InstrumentFlute`, `InstrumentGuitar`,
 `InstrumentMandolin`, `InstrumentUprightBass`, `InstrumentDrums` (39 to 43), `ThrowableObject`
 (44), `HeartGem` (45), `MountBuff1` (46), `MountBuff2` (47), `MountAttachment` (48, 49). The
 backend has this table (`world/item.cpp`). It has no rule for the ammunition slots (the rule

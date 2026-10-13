@@ -249,10 +249,10 @@ void context_instance(const Options&) {
           "the self identification of the two sessions is different only in the actor id of the session (the two "
           "identities and reference 2) and in the instance of its level block");
     check(selfA[1] == 0x02 && selfB[1] == 0x04 && hex_text(Bytes(selfA.begin() + 1, selfA.begin() + 17))
-                                                      == "02000020415a4f5402000000415a4f54",
-          "the session actor of session 1 is 02000020 415a4f54 02000000 415a4f54, and session 2 has the next serial");
+                                                      == "02000020534f554c02000000534f554c",
+          "the session actor of session 1 is 02000020 534f554c 02000000 534f554c, and session 2 has the next serial");
     check(hex_text(Bytes(selfA.begin() + 17, selfA.begin() + 17 + 36))
-                  == "00000001" "00000020415a4f5401000000415a4f54" "38a737ff6cad4792a2f9324736e0ee02"
+                  == "00000001" "00000020534f554c01000000534f554c" "38a737ff6cad4792a2f9324736e0ee02"
               && hex_text(Bytes(selfA.begin() + 17 + 72, selfA.begin() + 17 + 108)) == std::string(72, '0'),
           "reference 1 is the player manager of the world (hub 1), and reference 3 is null");
     // A second connection of one client: the same peer address with the next port.

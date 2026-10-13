@@ -253,7 +253,8 @@ void bag_rollback(const Options& options) {
 
 /** B11: a database of each older schema version (case RV6 of the review). */
 void older_schemas(const Options& options) {
-    // The schema texts of the versions 1 to 4, as the backends of those versions made them.
+    // The schema texts of the versions 1 to 4, as the backends of those versions made them. The one persona of an
+    // old database has a constant id: the migration to version 3 must not depend on its text.
     const char* const steps[] = {
         "CREATE TABLE backend_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
         "CREATE TABLE characters(character_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL, world_id TEXT NOT NULL, name TEXT NOT NULL,"
@@ -261,12 +262,12 @@ void older_schemas(const Options& options) {
         " creation_params TEXT NOT NULL DEFAULT '', deleted_date TEXT);"
         "CREATE UNIQUE INDEX characters_active_name ON characters(name COLLATE NOCASE) WHERE deleted_date IS NULL;"
         "INSERT INTO characters(character_id, persona_id, world_id, name, created_date, modified_date)"
-        " VALUES('migration-canary', 'soulwarden-persona-0001', 'test-world', 'MigrateCanary', '2026-01-01', '2026-01-01');",
+        " VALUES('migration-canary', 'old-persona-0001', 'test-world', 'MigrateCanary', '2026-01-01', '2026-01-01');",
         "ALTER TABLE characters ADD COLUMN position_x REAL; ALTER TABLE characters ADD COLUMN position_y REAL;"
         "ALTER TABLE characters ADD COLUMN position_z REAL;",
         "CREATE TABLE accounts(persona_id TEXT PRIMARY KEY, account_id TEXT NOT NULL UNIQUE, steam_id TEXT UNIQUE,"
         " persona_name TEXT NOT NULL DEFAULT '', created_date TEXT NOT NULL, last_login_date TEXT NOT NULL DEFAULT '');"
-        "INSERT INTO accounts(persona_id, account_id, created_date) VALUES('soulwarden-persona-0001', 'soulwarden-account-0001', '2026-01-01');"
+        "INSERT INTO accounts(persona_id, account_id, created_date) VALUES('old-persona-0001', 'old-account-0001', '2026-01-01');"
         "CREATE INDEX characters_persona ON characters(persona_id);",
         "ALTER TABLE characters ADD COLUMN archetype TEXT NOT NULL DEFAULT '';",
         "CREATE TABLE items(instance_id TEXT PRIMARY KEY, character_id TEXT NOT NULL, container INTEGER NOT NULL,"
@@ -289,7 +290,9 @@ void older_schemas(const Options& options) {
         state::Store store;
         const bool opened = store.open(path.string());
         const auto canary = store.find_character("migration-canary");
-        const bool kept = version == 0 || (canary && canary->name == "MigrateCanary" && canary->personaId == "soulwarden-persona-0001");
+        const bool kept = version == 0 || (canary && canary->name == "MigrateCanary" && canary->personaId == "old-persona-0001");
+        // A database from before version 3 has no account: the migration makes the account of its persona.
+        const bool owned = version == 0 || store.find_account("old-persona-0001").has_value();
         const Player player = add_player(store, kSteamIdA, "Tester A", kCharacterA, "Alpha", std::nullopt);
         state::ItemRow worn{"00112233445566778899aabbccddeeff", state::kContainerPaperdoll, 1, "TestChest", 1};
         state::ItemRow carried{"00112233445566778899aabbccddee00", state::kContainerBag, 0, "TestOre", 10};
@@ -312,9 +315,9 @@ void older_schemas(const Options& options) {
                              && store.currency(kCharacterA, state::kCurrencyCoin) == 0 && store.progress(kCharacterA).level == 1
                              && store.list_skills(kCharacterA).ranks.empty() && store.list_skills(kCharacterA).nodes.empty()
                              && store.list_skills(kCharacterA).bars.empty();
-        check(made && opened && schema_version(path) == 6 && kept && written && progressed && deleted,
+        check(made && opened && schema_version(path) == 6 && kept && owned && written && progressed && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 6: its character row stays, the tables take an item of the bag, an item of the "
+                  + " opens and gets version 6: its character row stays, its persona has an account, the tables take an item of the bag, an item of the "
                     "paperdoll, the coin, the level with the attribute points, and the skills, and the delete of a "
                     "character removes them");
     }

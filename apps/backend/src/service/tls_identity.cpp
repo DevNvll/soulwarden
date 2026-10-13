@@ -44,7 +44,7 @@ bool generate(TlsIdentity& identity) {
     mbedtls_x509write_crt_init(&certificate);
 
     static constexpr unsigned char kPersonalization[] = "soulwarden-local-identity";
-    static constexpr unsigned char kSerial[] = {0x41, 0x5A, 0x4F, 0x54, 0x48, 0x00, 0x01};
+    static constexpr unsigned char kSerial[] = {0x53, 0x4F, 0x55, 0x4C, 0x00, 0x01};
     std::vector<unsigned char> buffer(8192);
     bool ok = mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, kPersonalization, sizeof(kPersonalization) - 1) == 0
               && mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA)) == 0

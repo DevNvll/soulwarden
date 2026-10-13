@@ -328,8 +328,8 @@ button on "Confirm").
   menu of an item (or a double click) puts it into its slot, the entry "Unequip" of an
   equipped item puts it back into the bag, and a drag between two weapon slots changes
   their items. Armor shows on the body, a weapon hangs on the hip or is in the hand, and the
-  HUD shows the active weapon. Not there yet: the attack with a weapon, the draw and the
-  sheathe as an action of the server, the level and the attribute rules of an item, dyes and
+  HUD shows the active weapon. Not there yet: the draw and the sheathe as an action of the
+  server, the level and the attribute rules of an item, dyes and
   skins, and the body of the character in the main menu after a change of equipment (the
   menu shows the clothing of the creation).
 - `SOULWARDEN_SEED_CHARACTER` (development aid) still gives an account with no character a

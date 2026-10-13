@@ -183,7 +183,7 @@ def build_tables(contents: list[bytes]) -> dict:
                 if whole(sheet.cell(rank, key)) != rank:
                     raise Failure(f"row {rank} of the rank table {table} is not the rank {rank}")
                 experience.append(whole(sheet.cell(rank, "MaximumInfluence")))
-                cost.append(whole(sheet.cell(rank, "SoulwardenRespecCost")))
+                cost.append(whole(sheet.cell(rank, "AzothRespecCost")))
             rank_tables[table] = {"experience": experience}
             if kind == "weapon":
                 rank_tables[table]["resetCost"] = cost

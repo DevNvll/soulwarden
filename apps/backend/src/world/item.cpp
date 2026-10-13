@@ -38,7 +38,7 @@ constexpr SlotRule kSlotRules[] = {
     {35, 35, {"SkinningKnife"}},
     {36, 36, {"Pickaxe"}},
     {37, 37, {"FishingPole"}},
-    {38, 38, {"SoulwardenStaff"}},
+    {38, 38, {"AzothStaff"}},
     {39, 39, {"InstrumentFlute"}},
     {40, 40, {"InstrumentGuitar"}},
     {41, 41, {"InstrumentMandolin"}},

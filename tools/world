@@ -88,7 +88,7 @@ creature has them.
 Slots of the paperdoll: 0 head, 1 chest, 2 hands, 3 legs, 4 feet, 5 amulet, 6 earring, 7 ring,
 14 to 19 quick slots, 24 to 26 weapon 1 to 3, 27 to 29 the off hand item of weapon 1 to 3,
 30 to 32 bags, 33 logging axe, 34 sickle, 35 skinning knife, 36 pickaxe, 37 fishing pole,
-38 soulwarden staff, 45 heart rune.
+38 azoth staff, 45 heart rune.
 
 CHARACTER is a character id, or the name of a character of the database. The session of a
 client near the entity gets its record, and the client shows it as a remote player. The
@@ -112,10 +112,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dev_env  # noqa: E402
 
 DEV_MARK = b"SOULWARDEN_DEV_RUN=1"
+BACKEND_NAME = "soulwarden-backend"
 SLOT_NAMES = {0: "head", 1: "chest", 2: "hands", 3: "legs", 4: "feet", 5: "amulet", 6: "earring", 7: "ring",
               24: "weapon 1", 25: "weapon 2", 26: "weapon 3", 27: "off hand 1", 28: "off hand 2", 29: "off hand 3",
               33: "logging axe", 34: "sickle", 35: "skinning knife", 36: "pickaxe", 37: "fishing pole",
-              38: "soulwarden staff", 45: "heart rune"}
+              38: "azoth staff", 45: "heart rune"}
 CHARACTER_ID = re.compile(r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 
 
@@ -130,11 +131,13 @@ def backend(data_dir: Path) -> tuple[int, int]:
         if not directory.name.isdigit():
             continue
         try:
-            if (directory / "comm").read_text().strip() != "soulwarden-backend":
+            # The program of the command line, not the name of the process: the kernel keeps
+            # only the first 15 characters of a process name.
+            arguments = (directory / "cmdline").read_bytes().split(b"\0")
+            if Path(arguments[0].decode("utf-8", "replace")).name != BACKEND_NAME:
                 continue
             if DEV_MARK not in (directory / "environ").read_bytes().split(b"\0"):
                 continue
-            arguments = (directory / "cmdline").read_bytes().split(b"\0")
         except OSError:
             continue
         words = [word.decode("utf-8", "replace") for word in arguments]

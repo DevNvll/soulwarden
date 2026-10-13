@@ -294,8 +294,8 @@ void creature_file(const Options& options) {
               && !wolfSlice.find_action("Sound") && rabbitSlice.deathAction == 0U,
           "the action table: the death action is \"Death\" (index 2), or \"Death_FB\" for a slice with no such action; "
           "an action with no fragment is not found");
-    const gamedata::CreatureSlice::Component* component = wolfSlice.find(0x544F5A4140000000ULL, wolfSlice.target(0x544F5A4140000000ULL, wolfSlice.components[0]));
-    check(component != nullptr && component->name == "Root/Vitals" && wolfSlice.find(0x544F5A4140000000ULL, 1) == nullptr,
+    const gamedata::CreatureSlice::Component* component = wolfSlice.find(0x4C554F5340000000ULL, wolfSlice.target(0x4C554F5340000000ULL, wolfSlice.components[0]));
+    check(component != nullptr && component->name == "Root/Vitals" && wolfSlice.find(0x4C554F5340000000ULL, 1) == nullptr,
           "the facet target of a component of a slice is found for an entity group id (the id rule)");
     std::size_t total = 0;
     check(data.search("rabbit", 0, 10, &total).size() == 1 && total == 1 && data.search("", 0, 10).size() == 2
@@ -376,7 +376,7 @@ void creature_record_bytes(const Options&) {
     const world::CreatureResult made =
         host.world.creatures().spawn("Test_Wolf", state::WorldPosition{1004.0F, 1000.0F, kHeight}, 90.0F);
     check(made.error == CreatureError::none && made.entity != nullptr
-              && world::actor_text(made.entity->actor) == "00000040415a4f5420000000415a4f54",
+              && world::actor_text(made.entity->actor) == "00000040534f554c20000000534f554c",
           "the first creature of a world has the actor id of the first serial of the range of other entities (kind 20)");
     if (made.entity == nullptr) {
         return;
@@ -403,7 +403,7 @@ void creature_record_bytes(const Options&) {
     //            invulnerability, displayImmuneWhenInvulnerable, maxHealth 1690
     //   15, 5399 marker: enabled
     const std::string expected = std::string("0204")
-                                 + "000a0103" + "11111111111111111111111111111111" + "00000002" + "00000040415a4f5420000000415a4f54"
+                                 + "000a0103" + "11111111111111111111111111111111" + "00000002" + "00000040534f554c20000000534f554c"
                                  + "050b01fc000c00448003" + "66ff" + "3a" + "447b0000447a000022e9" + "01" + anchor + "0000"
                                  + "090f01bd" + "44d35c08" + "000000000000000000000000000000000000" + "01" + "44d35c08" + "0000"
                                  + "7e" + "11112222" + "33334444" + "00000012" + "00" + "00" + "069a"

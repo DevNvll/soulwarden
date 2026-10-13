@@ -6,7 +6,7 @@ namespace soulwarden::backend::world {
 namespace {
 
 /** Bytes 4 to 7 and 12 to 15 of each actor id. */
-constexpr std::array<std::uint8_t, 4> kTag{'A', 'Z', 'O', 'T'};
+constexpr std::array<std::uint8_t, 4> kTag{'S', 'O', 'U', 'L'};
 
 } // namespace
 

@@ -47,7 +47,8 @@ ALTER TABLE characters ADD COLUMN position_z REAL;
  * Version 3: player accounts. The Steam id of a login selects the account, and the persona id
  * of the account is the owner key of a character (characters.persona_id). A database from
  * before this version has one persona with a constant id and no Steam id: it becomes an
- * account that the first login takes.
+ * account that the first login takes. The statement does not name that id: it takes the
+ * persona of the characters that the database has (the oldest one).
  */
 constexpr const char* kMigration3 = R"sql(
 CREATE TABLE IF NOT EXISTS accounts(
@@ -59,8 +60,8 @@ CREATE TABLE IF NOT EXISTS accounts(
     last_login_date TEXT NOT NULL DEFAULT ''
 );
 INSERT OR IGNORE INTO accounts(persona_id, account_id, created_date)
-    SELECT persona_id, 'soulwarden-account-0001', MIN(created_date)
-    FROM characters WHERE persona_id = 'soulwarden-persona-0001' GROUP BY persona_id;
+    SELECT persona_id, 'account-0001', MIN(created_date)
+    FROM characters GROUP BY persona_id ORDER BY MIN(created_date), persona_id LIMIT 1;
 CREATE INDEX IF NOT EXISTS characters_persona ON characters(persona_id);
 )sql";
 

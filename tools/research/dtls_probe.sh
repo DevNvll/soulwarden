@@ -21,7 +21,8 @@ wait_for_log() {
 
 SOULWARDEN_NO_REP_LISTENER=1 "${repository_directory}/tools/dev-run.sh" "${label}" >/dev/null
 wait_for_log 'backend: ready' 60
-backend_pid="$(pgrep -x soulwarden-backend | head -1)"
+# The program of the command line: the name of the process has only 15 characters.
+backend_pid="$(pgrep -f '^([^ ]*/)?soulwarden-backend( |$)' | head -1)"
 (tail -f /dev/null | nsenter -t "${backend_pid}" -U -n --preserve-credentials \
     openssl s_server -dtls1_2 -accept 127.0.0.1:32210 -cert "${work_dir}/cert.pem" -key "${work_dir}/key.pem" \
     -cipher ECDHE-RSA-AES256-GCM-SHA384 -msg -state -debug >"${work_dir}/s_server-${label}.log" 2>&1) &

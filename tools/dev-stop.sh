@@ -11,6 +11,9 @@ set -uo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/dev-env.sh"
 
 game_pattern='Bin64.NewWorld[.]exe'
+# The backend by the program of its command line. The name of the process is not sufficient:
+# the kernel keeps only its first 15 characters, and pgrep -x then finds no process.
+backend_pattern='^([^ ]*/)?soulwarden-backend( |$)'
 
 if [[ "${1:-}" == "--check" ]]; then
     remaining="$(dev_processes)"
@@ -33,7 +36,7 @@ if [[ -n "${games}" ]]; then
 fi
 for ((attempt = 0; attempt < 60; ++attempt)); do
     games="$(dev_processes_matching -f "${game_pattern}")"
-    backends="$(dev_processes_matching -x soulwarden-backend)"
+    backends="$(dev_processes_matching -f "${backend_pattern}")"
     if [[ -z "${games}" && -z "${backends}" ]]; then
         break
     fi

@@ -826,9 +826,9 @@ void client_requests(const Options&) {
     send(a, alpha, kTypeSwapItems, swap_body(beta->id, 24, 25, {}, {}));
     Bytes noCall(10, 0);
     send(a, alpha, kTypeEquipItem, noCall);
-    check(log_count("rep: equip request (type 3895) names the entity 544f5a4100000004, which is not the entity of the session: no change [s1 aaaaaaaa]") == 2
-              && log_count("rep: unequip request (type 3896) names the entity 544f5a4100000004, which is not the entity of the session") == 1
-              && log_count("rep: swap request (type 3900) names the entity 544f5a4100000004, which is not the entity of the session") == 1
+    check(log_count("rep: equip request (type 3895) names the entity 4c554f5300000004, which is not the entity of the session: no change [s1 aaaaaaaa]") == 2
+              && log_count("rep: unequip request (type 3896) names the entity 4c554f5300000004, which is not the entity of the session") == 1
+              && log_count("rep: swap request (type 3900) names the entity 4c554f5300000004, which is not the entity of the session") == 1
               && log_count("rep: equip request (type 3895, 10 bytes) does not have the form of the request: no change [s1 aaaaaaaa]") == 1
               && fails() == 18 && gear_updates(b, messagesB).fails.empty(),
           "a request of session A that names the entity of B is refused with no reply, also with the route of that "
@@ -1424,7 +1424,7 @@ void large_paperdoll(const Options&) {
         {"Weapon+EquippableTwoHand+Bow", 25}, {"Weapon+EquippableMainHand+Hatchet", 26}, {"Weapon+EquippableOffHand+Shield", 27},
         {"Weapon+EquippableOffHand+Shield", 29}, {"Bag", 30}, {"Bag", 31}, {"Bag", 32}, {"EquippableTool+Axe+LoggingAxe", 33},
         {"EquippableTool+Axe+Sickle", 34}, {"EquippableTool+Axe+SkinningKnife", 35}, {"EquippableTool+Axe+Pickaxe", 36},
-        {"EquippableTool+FishingPole", 37}, {"Weapon+EquippableTool+Axe+SoulwardenStaff", 38}, {"EquippableTool+InstrumentFlute", 39},
+        {"EquippableTool+FishingPole", 37}, {"Weapon+EquippableTool+Axe+AzothStaff", 38}, {"EquippableTool+InstrumentFlute", 39},
         {"HeartGem", 45}};
     std::vector<gamedata::ItemDefinition> items;
     std::vector<std::string> names;

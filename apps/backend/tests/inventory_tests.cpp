@@ -662,7 +662,7 @@ void client_requests(const Options&) {
     // entity of a different character changes nothing, also with the route of that entity.
     send(a, alpha, kTypeDropInventoryItems, drop_body(beta->id, {{0, oreOfB, 10}}));
     send(a, beta, kTypeDropInventoryItems, drop_body(beta->id, {{0, oreOfB, 10}}));
-    check(log_count("rep: drop request (type 1838) names the entity 544f5a4100000004, which is not the entity of the session: no change [s1 aaaaaaaa]") == 2,
+    check(log_count("rep: drop request (type 1838) names the entity 4c554f5300000004, which is not the entity of the session: no change [s1 aaaaaaaa]") == 2,
           "a drop request of session A for the entity of B (an item of a different character) is refused");
 
     // Lock (type 2549).
@@ -681,7 +681,7 @@ void client_requests(const Options&) {
               && log_count("rep: lock request (type 2549, slot 0, lock): the slot has a different item instance") == 1
               && log_count("rep: lock request (type 2549, 45 bytes) does not have the form of the request") == 1
               && log_count("rep: lock request (type 2549, 44 bytes) does not have the form of the request") == 1
-              && log_count("rep: lock request (type 2549) names the entity 544f5a4100000004, which is not the entity of the session") == 1,
+              && log_count("rep: lock request (type 2549) names the entity 4c554f5300000004, which is not the entity of the session") == 1,
           "a lock request is refused for a container that is not the bag, a slot that is out of range, an empty slot, a "
           "different item instance, a lock value that is not 0 or 1, a body that is too short, and the entity of a "
           "different character");

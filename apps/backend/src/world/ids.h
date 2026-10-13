@@ -18,10 +18,10 @@
 //
 // The form of an id is a design of this project:
 //   byte 0..3    serial * 2, little-endian        (thus the first byte is even)
-//   byte 4..7    "AZOT"                           (equal in all ids, not zero)
+//   byte 4..7    "SOUL"                           (equal in all ids, not zero)
 //   byte 8       kind
 //   byte 9..11   zero
-//   byte 12..15  "AZOT"
+//   byte 12..15  "SOUL"
 // Bytes 8 to 15 are for the reader of a capture. The client does not use them.
 
 namespace soulwarden::backend::world {

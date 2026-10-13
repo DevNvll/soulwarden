@@ -431,22 +431,22 @@ void ids_and_targets(const Options&) {
         world::IdAllocator ids;
         const world::ActorId first = ids.next(world::ActorKind::playerCharacter);
         const world::ActorId second = ids.next(world::ActorKind::playerCharacter);
-        check(world::actor_text(first) == "02000000415a4f5410000000415a4f54"
-                  && world::actor_text(second) == "04000000415a4f5410000000415a4f54"
-                  && world::entity_group_id(first) == 0x544F5A4100000002ULL,
-              "the first two player actor ids are 02000000 415A4F54 10000000 415A4F54 and 04000000 ...; the entity group "
-              "id of the first one is 544F5A4100000002");
-        check(world::actor_text(ids.next(world::ActorKind::session)) == "02000020415a4f5402000000415a4f54"
-                  && world::actor_text(ids.player_manager()) == "00000020415a4f5401000000415a4f54"
-                  && world::actor_text(ids.next(world::ActorKind::otherEntity)) == "00000040415a4f5420000000415a4f54",
+        check(world::actor_text(first) == "02000000534f554c10000000534f554c"
+                  && world::actor_text(second) == "04000000534f554c10000000534f554c"
+                  && world::entity_group_id(first) == 0x4C554F5300000002ULL,
+              "the first two player actor ids are 02000000 534F554C 10000000 534F554C and 04000000 ...; the entity group "
+              "id of the first one is 4C554F5300000002");
+        check(world::actor_text(ids.next(world::ActorKind::session)) == "02000020534f554c02000000534f554c"
+                  && world::actor_text(ids.player_manager()) == "00000020534f554c01000000534f554c"
+                  && world::actor_text(ids.next(world::ActorKind::otherEntity)) == "00000040534f554c20000000534f554c",
               "the first session actor, the player manager, and the first entity that is not a player have their own "
               "serial ranges");
         std::set<world::EntityId> groups{world::entity_group_id(first), world::entity_group_id(second)};
         bool rule = true;
         for (int index = 0; index < 1000; ++index) {
             const world::ActorId actor = ids.next(index % 2 == 0 ? world::ActorKind::playerCharacter : world::ActorKind::otherEntity);
-            rule = rule && (actor.bytes[0] & 1) == 0 && actor.bytes[4] == 'A' && actor.bytes[5] == 'Z' && actor.bytes[6] == 'O'
-                   && actor.bytes[7] == 'T' && groups.insert(world::entity_group_id(actor)).second;
+            rule = rule && (actor.bytes[0] & 1) == 0 && actor.bytes[4] == 'S' && actor.bytes[5] == 'O' && actor.bytes[6] == 'U'
+                   && actor.bytes[7] == 'L' && groups.insert(world::entity_group_id(actor)).second;
         }
         check(rule && groups.size() == 1002,
               "1,002 ids: the first byte is even, bytes 4 to 7 are equal in all ids and not zero, and no two ids have "
@@ -458,8 +458,8 @@ void ids_and_targets(const Options&) {
     const std::uint64_t root = 0x1111000000000001ULL;
     const std::uint64_t otherEntity = 0x2222000000000002ULL;
     slice.set(root, {{root, 0x10, "RootComponent"}, {otherEntity, 0xFFFFFFFFFFFFFFF0ULL, "OtherComponent"}});
-    const std::uint64_t groupA = 0x544F5A4100000002ULL;
-    const std::uint64_t groupB = 0x544F5A4100000004ULL;
+    const std::uint64_t groupA = 0x4C554F5300000002ULL;
+    const std::uint64_t groupB = 0x4C554F5300000004ULL;
     const std::uint64_t targetOther = (otherEntity ^ root ^ groupA) + 0xFFFFFFFFFFFFFFF0ULL;
     check(slice.find(groupA, groupA + 0x10) != nullptr && slice.find(groupA, groupA + 0x10)->name == "RootComponent"
               && slice.find(groupA, targetOther) != nullptr && slice.find(groupA, targetOther)->name == "OtherComponent",
@@ -513,8 +513,8 @@ void ids_and_targets(const Options&) {
     check(counts.playerManager == 1, "a message with the route of the player manager is counted as such");
     const server::rep::MessageCounts& countsB = host.session(2).message_counts();
     check(countsB.componentCalls == 0 && countsB.unknownRoutes == 0, "the messages of A change no count of session B");
-    check(log_count("rep: message type 1094: target 544f5a4100000012 is the facet of component 0000000000000010 "
-                    "(RootComponent) of entity 544f5a4100000002 [s1 aaaaaaaa]")
+    check(log_count("rep: message type 1094: target 4c554f5300000012 is the facet of component 0000000000000010 "
+                    "(RootComponent) of entity 4c554f5300000002 [s1 aaaaaaaa]")
               == 1,
           "the log names the component of the first message of each type");
     host.datagram(a.peer, a.carrier_close());

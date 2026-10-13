@@ -8,7 +8,7 @@ backend. Read only the documents relevant to the task.
 | Task | Start here |
 | --- | --- |
 | Plan, stage sequence, rules for more than one player | [Roadmap](docs/ROADMAP.md) |
-| Build or start the game | [README](README.md), `linux-compat/run-soulwarden.sh` |
+| Build or start the game | [Reference](docs/REFERENCE.md) (section "Build and run"), [README](README.md), `linux-compat/run-soulwarden.sh` |
 | Test the backend with no game process | `tools/test-soulwarden-backend.sh`, `apps/backend/tests` |
 | Sessions of the game server: ids, end causes, capture folders | Protocol notes section 3.5, `apps/backend/src/service/rep_server.h` |
 | The world object: clock, task queue, timers, entity table | `apps/backend/src/world/world.h`, `entity.h`, `ids.h`, protocol notes 4.9 |
@@ -503,7 +503,7 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   `gamescope` is not installed.
 - Send test input only through `tools/hx`. Do not use a host input tool (`xdotool`,
   `ydotool`, `wtype`, `hyprctl dispatch`, `omarchy-agent-desktop key` or `enter`).
-- Identity variables (README, "Player identity"): with `SOULWARDEN_STEAM_ID` not set, a run uses
+- Identity variables (`docs/REFERENCE.md`, "Player identity"): with `SOULWARDEN_STEAM_ID` not set, a run uses
   the Steam account of the computer. `SOULWARDEN_STEAM_ID=<17 digits>` with `SOULWARDEN_PERSONA_NAME`
   selects a different account (a made-up id for a test: `76561202255233008`).
   `SOULWARDEN_STEAM_ID=local` selects the fallback identity. `SOULWARDEN_SEED_CHARACTER=<name>` gives an
@@ -1004,8 +1004,13 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
 - The processes of gamescope have the names `gamescope-wl` and `gamescopereaper`.
   `pgrep -x gamescope` finds no process in all conditions. After `tools/dev-stop.sh`, run
   `tools/dev-stop.sh --check`: it must print `no process of a development run`. Do not use
-  `pgrep -x soulwarden-backend` or `pgrep -f 'Bin64.NewWorld[.]exe'` for this check: they also
+  `pgrep -f soulwarden-backend` or `pgrep -f 'Bin64.NewWorld[.]exe'` for this check: they also
   find a game that the user started, and that game must continue.
+- The kernel keeps only the first 15 characters of a process name: the backend has the
+  process name `soulwarden-back`. `pgrep -x soulwarden-backend` finds no process (it prints
+  a warning, which a script with no error output does not show). A tool finds the backend by
+  the program of its command line (`pgrep -f '^([^ ]*/)?soulwarden-backend( |$)'`, as
+  `tools/dev-stop.sh` and `tools/world` do).
 - Wine makes sockets in the wineserver process. A wineserver from an earlier run is in the
   earlier network namespace. The launcher stops all processes of the prefix before a start.
 - Ghidra does not accept a project path with a folder that starts with a dot.
@@ -1048,7 +1053,7 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   `tools/dev-run.sh` gives the launcher only the variables that it names: add a new launcher
   variable to its list, or the variable has no effect in a development run.
 - The first Steam id that logs in to a database from before the account support takes the
-  persona `soulwarden-persona-0001` and its character. Do the first run on such a database with
+  one persona of that database and its characters. Do the first run on such a database with
   the Steam account of the user, not with an override id and not with `local`.
 - Only a login with a correct local ticket takes that persona. A hook DLL from before the
   account support sends a ticket with no Steam id (backend log: `no local ticket`): the login
@@ -1124,7 +1129,7 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   entry (the game log has `CGame::ActorContainerDisconnect`). It sends no carrier disconnect:
   the backend ends the session with the cause `idle` 30 s later. In a long live check, send
   an input in each period (`tools/hx 'look 30 0' 'look -30 0'`).
-- Each world entry gives the character a new actor id (`02000000 415A4F54 ...`, then `04...`,
+- Each world entry gives the character a new actor id (`02000000 534F554C ...`, then `04...`,
   `06...`). A capture or a log of one session does not have the target ids of the next
   session: compute them with the rule of protocol notes 4.2.
 - The world writes a position that is not saved 5 s after its last write, in its tick: a log
