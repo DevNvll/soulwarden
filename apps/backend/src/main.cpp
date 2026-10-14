@@ -18,6 +18,7 @@
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
 #include "gamedata/item_catalog.h"
+#include "gamedata/navigation_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/slice_ids.h"
 #include "gamedata/travel_places.h"
@@ -298,30 +299,53 @@ int main(int argc, char** argv) {
     const std::string heightsPath = (gameDataDirectory / gamedata::kHeightMapsFolder).string();
     gamedata::HeightMaps heightMaps;
     if (heightMaps.set_directory(heightsPath)) {
-        log::write("backend: terrain heights at %s: a creature walks on the terrain", heightsPath.c_str());
+        log::write("backend: terrain heights at %s", heightsPath.c_str());
     } else {
-        log::write("backend: no terrain heights at %s: no creature leaves its place. Make the files with "
-                   "tools/gamedata/heights.sh",
-                   heightsPath.c_str());
+        log::write("backend: no terrain heights at %s (tools/gamedata/heights.sh makes the files)", heightsPath.c_str());
+    }
+    // The navigation data: the floors and the walls of the world for the paths and the sight of
+    // the creatures. The reader reads only the header of each region file here: the world reads
+    // the tiles near the players, in a thread of its own.
+    const std::string navigationPath = (gameDataDirectory / gamedata::kNavigationFolder).string();
+    gamedata::NavigationData navigationData;
+    if (navigationData.set_directory(navigationPath)) {
+        const gamedata::NavAgent& agent = navigationData.agent();
+        log::write("backend: navigation data at %s: %zu region(s), cells of %.2f m (agent: radius %.2f m, height %.2f m, step %.2f m, "
+                   "slope %.0f degrees, wade %.2f m). A creature goes on a path of the data and does not see through a wall",
+                   navigationPath.c_str(),
+                   navigationData.regions(),
+                   static_cast<double>(agent.cell),
+                   static_cast<double>(agent.radius),
+                   static_cast<double>(agent.height),
+                   static_cast<double>(agent.step),
+                   static_cast<double>(agent.slope),
+                   static_cast<double>(agent.wade));
+    } else if (heightMaps.available()) {
+        log::write("backend: no navigation data at %s: a creature walks on the straight line on the terrain height, through "
+                   "each wall, and it sees through a wall. Make the files with tools/gamedata/navigation.sh",
+                   navigationPath.c_str());
+    } else {
+        log::write("backend: no navigation data at %s and no terrain heights: no creature leaves its place. Make the files "
+                   "with tools/gamedata/navigation.sh",
+                   navigationPath.c_str());
+    }
+    if (!navigationData.problem().empty()) {
+        log::write("backend: a navigation file is not correct and is not used: %s", navigationData.problem().c_str());
     }
     if (creatureData.loaded()) {
-        // The numbers of the behavior data: which creatures fight, and which ones do not leave
-        // their place (a spawn point that is not at the terrain height: a floor, a bridge, a cave).
+        // The numbers of the behavior data: which creatures fight.
         if (creatureData.fighting_slices() == 0) {
             log::write("backend: the creature data has no behavior data (a file of a tool from before stage 3.4b): the "
                        "creatures stand at their spawn points. Make the file again with tools/gamedata/creatures.sh");
         } else {
             log::write("backend: creature behavior data: %zu of %zu slices and %zu of %zu kinds have an attack (%zu of %zu "
-                       "spawn points); %zu of these spawn points are more than %.1f m from the terrain height: their "
-                       "creatures do not leave their place",
+                       "spawn points). A creature walks when it stands on a free floor of the navigation data",
                        creatureData.fighting_slices(),
                        creatureData.slices().size(),
                        creatureData.fighting_kinds(),
                        creatureData.kinds().size(),
                        creatureData.fighting_points(),
-                       creatureData.spawn_points().size(),
-                       creatureData.rooted_points(),
-                       static_cast<double>(gamedata::kTerrainTolerance));
+                       creatureData.spawn_points().size());
         }
     }
     if (options.creatureBehavior) {
@@ -386,6 +410,8 @@ int main(int argc, char** argv) {
     worldOptions.combatTables = &combatTables;
     worldOptions.travelPlaces = &travelPlaces;
     worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
+    worldOptions.navigationData = &navigationData;
+    worldOptions.navigationThread = true;
     worldOptions.creatureBehavior = options.creatureBehavior;
     world::World world(clock, store, appearanceTables, worldOptions);
     const server::http::Services services{store,

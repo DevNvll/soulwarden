@@ -260,11 +260,20 @@ struct CreatureMind {
     state::WorldPosition home;
     float homeYaw{0.0F};
     /**
-     * False: the creature does not leave its place. Its spawn point is not at the terrain
-     * height (a floor of a building, a bridge), or the backend has no terrain data: the
-     * creature turns to its target and attacks in its reach.
+     * True: the creature stands on a free floor of the navigation of the world (with no
+     * navigation data: on the terrain) and walks. False: it does not leave its place: it turns
+     * to its target and attacks in its reach. The value is the answer of the navigation at the
+     * first look that had the data of the place (`groundKnown`): the world reads the navigation
+     * data of a place only when a character is near it.
      */
     bool walks{false};
+    bool groundKnown{false};
+    /**
+     * The character that the creature found no way to. Until `noWayUntil` the vision of the
+     * creature does not take it as a target again (a hit does).
+     */
+    EntityId noWayTarget{0};
+    WorldClock::time_point noWayUntil{};
     /** The attack that the creature plays: an index into the attacks of its slice. No value: none. */
     std::optional<std::uint32_t> attack;
     /** The start count of the action of that attack, and its end on the world clock. */
@@ -276,6 +285,8 @@ struct CreatureMind {
     std::uint32_t attacks{0};
     /** The direction of the creature in the last movement state that the behavior marked. */
     float sentYaw{0.0F};
+    /** Steps in sequence in which a different creature stood at the place of the next step of this one. */
+    std::uint32_t blockedSteps{0};
 };
 
 /**
@@ -328,6 +339,22 @@ struct Life {
     WorldClock::time_point diedAt{};
     /** Number of deaths of the character while its entity is in the world. For the log and for the tests. */
     std::uint32_t deaths{0};
+    /**
+     * The time of the last damage that the character took or did, on the world clock. No
+     * value: none in this world entry. The health of a character comes back when this time is
+     * `Health::kRestTime` or more before now (world/health.h).
+     */
+    std::optional<WorldClock::time_point> foughtAt;
+    /**
+     * The shelter of a character that came to a place (a world entry, a travel, a respawn):
+     * until `shelterUntil` the vision of no creature takes the character as a target. While
+     * `shelterWaits` is true, the client of the character did not report a position from the
+     * place (it shows a loading screen): the time `behavior_rules::kShelterTime` starts at its
+     * first position there, and `shelterUntil` is then the latest end. The behavior of the
+     * creatures sets these values (world/behavior.h).
+     */
+    WorldClock::time_point shelterUntil{};
+    bool shelterWaits{false};
 };
 
 /** The combat values of a character. The combat system sets them (world/combat.h). */

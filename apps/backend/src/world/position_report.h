@@ -99,8 +99,14 @@ enum class PositionVerdict : std::uint8_t {
      * not near that place: the client made it before it got the new position.
      */
     beforeTravel,
+    /**
+     * The character is dead: it stays at the place of its death, and its respawn place is the
+     * travel place nearest to that place. A client cannot move it (only the health system and
+     * a travel of the server change its place).
+     */
+    dead,
 };
-inline constexpr std::size_t kPositionVerdictCount = 8;
+inline constexpr std::size_t kPositionVerdictCount = 9;
 
 /** @return A short text for a log line, for example "too fast". */
 [[nodiscard]] const char* position_verdict_text(PositionVerdict verdict);
@@ -217,6 +223,15 @@ public:
      * only after the time of a walk to it.
      */
     void traveled();
+
+    /**
+     * The world refused a report for a cause that is not a cause of this check (the character
+     * is dead): the track counts it, and it keeps its window.
+     * @return The verdict.
+     */
+    PositionVerdict refused(PositionVerdict verdict) {
+        return counted(verdict);
+    }
 
     /** @return The number of reports with this verdict. */
     [[nodiscard]] std::uint64_t count(PositionVerdict verdict) const {

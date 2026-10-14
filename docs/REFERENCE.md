@@ -103,7 +103,8 @@ tools/gamedata/progression.sh      # one time: progression tables (without them 
 tools/gamedata/creatures.sh        # one time: creature data (without it the world has no creature); needs an Oodle library (see below)
 tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
-tools/gamedata/heights.sh          # one time: terrain heights (without them no creature leaves its place); 136 MB, 2 minutes
+tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
+tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
 ```
 
@@ -304,8 +305,26 @@ button on "Confirm").
   world, 136 MB): the height of the terrain at each meter, from the height maps of the game
   copy (protocol notes 4.17). The tool needs about 2 minutes and no Oodle library. The
   backend reads only the parts of the files that it needs. `tools/gamedata/heights.sh
-  --height X Y` prints the height of a position. Without the files the backend starts, and
-  no creature leaves its place: it attacks only a character that is in its reach.
+  --height X Y` prints the height of a position. Without the files and with no navigation
+  data the backend starts, and no creature leaves its place: it attacks only a character
+  that is in its reach. From stage 3.4d the navigation tool makes this folder again at its
+  end, from the terrain that the client has (the height map with the changes near some
+  placements, protocol notes 4.19).
+- `tools/gamedata/navigation.sh` makes the navigation data
+  (`~/.local/share/soulwarden/gamedata/navigation`, one file for each of the 49 regions and
+  `navigation.json`; 1.2 GB): where a creature can stand (the terrain, the floors of
+  buildings, bridges, stairs, and rocks, shallow water), and what stops its sight, in cells
+  of 0.25 m (protocol notes 4.19). The tool reads the collision shapes, the terrain, the
+  water, and the marks of the level designers from the pak files of the game copy. It needs
+  an Oodle library (`SOULWARDEN_OODLE_LIB`), Python 3, and a C and a C++ compiler (clang or
+  gcc), and about 45 minutes with 8 processes (`--jobs N`; the largest process needs 1.7
+  GB). Its work files (2.1 GB) are in `~/Games/soulwarden/work/navigation-build`
+  (`SOULWARDEN_NAVIGATION_WORK`). A second run makes only the regions that are not complete
+  (`--force` makes each one again, `--region NAME` some of them). `--spawn-points
+  creatures.json REPORT_DIR` writes which spawn points of the creature data are on a free
+  floor. The backend reads only the tiles of 64 m near the characters, with a thread of its
+  own. Without the folder the backend starts, and a creature goes on the straight line on
+  the terrain and sees through walls.
 - `tools/gamedata/places.sh` makes the travel places
   (`~/.local/share/soulwarden/gamedata/travel-places.json`): the spirit shrines and the inns of
   each territory with their names and positions (161 places in 16 territories in the
@@ -336,11 +355,20 @@ button on "Confirm").
   for a wolf), runs to it, and attacks it. A creature that you hit attacks you too. It goes
   back to its place when you are dead or too far, or at the end of its leash (70 m for a
   wolf), and it has its full health there. The rules are rules of this project (protocol
-  notes 4.17): the game files have the values of a creature and not its behavior. Not yet:
-  path search (a creature goes on a straight line, through a wall), creatures on a floor of
-  a building, on a bridge, or in a cave (they do not leave their place), patrols, groups,
-  ranged attacks, magic, and abilities. 859 of the 3,848 kinds have no attack that the tool
-  can use: they stand.
+  notes 4.17): the game files have the values of a creature and not its behavior. 859 of
+  the 3,848 kinds have no attack that the tool can use: they stand.
+- Paths. With the navigation data of stage 3.4d (protocol notes 4.19) a creature goes around
+  walls and rocks, up stairs, on the floors of buildings and ruins, and through shallow
+  water, and it does not see you through a wall. A creature with no way to you loses you
+  and goes back. No creature comes into a settlement: its gates are closed for creatures,
+  as in the game. Not yet: jumps and drops from an edge, swimming and flying creatures,
+  doors and gates of a fort (they are not in the world of this backend), patrols, groups,
+  ranged attacks, magic, and abilities.
+- Fights that you can play (stage 3.4d): no creature attacks you for 10 s after you came
+  into the world, travelled, or respawned, unless you hit it. Out of a fight (6 s with no
+  damage) your health comes back, 3 percent each second. A creature makes its strong attack
+  (the lunge of a wolf) after three light attacks, with a pause of 1.5 s to 2.5 s after each
+  attack, and creatures of one fight do not stand at one place.
 - Health and death. An attack of a creature lowers the health of your character: the HUD
   shows the new value, a red mark shows the direction of the attacker, and a red number
   shows the damage. The backend computes the damage from the level and the kind of the

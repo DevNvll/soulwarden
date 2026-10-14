@@ -382,6 +382,7 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     if (hurt.error != CreatureError::none || hurt.entity == nullptr) {
         return refuse(HitVerdict::dead);
     }
+    m_world.health().fought(*attacker); // The health of the attacker does not come back while it fights.
     result.healthAfter = hurt.entity->vitals.health;
     result.killed = hurt.entity->creature.dead;
     result.verdict = track.counted(HitVerdict::accepted);

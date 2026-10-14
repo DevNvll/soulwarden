@@ -54,7 +54,13 @@ struct ServerHost {
     gamedata::TravelPlaces places;
     /** The terrain of the world. It has no height until a case sets one: no creature then leaves its place. */
     TestTerrain terrain;
-    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat, places, terrain)};
+    /**
+     * The navigation data of the world. It has no file until a case sets its folder: a creature
+     * then walks on the straight line on the terrain. The world thread reads the tiles itself
+     * (no thread of the navigation): each tick of a case gives the same result.
+     */
+    gamedata::NavigationData navigation;
+    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat, places, terrain, navigation)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -65,6 +71,9 @@ struct ServerHost {
         world::WorldOptions options;
         options.itemCatalog = &catalog;
         options.progressionTables = &progression;
+        // A case of a different rule starts its fight directly after the world entry or a
+        // travel: no shelter time. The cases of the shelter rule set the time of the product.
+        options.shelterTime = std::chrono::milliseconds(0);
         return options;
     }
     static world::WorldOptions with_game_data(const gamedata::ItemCatalog& catalog,
@@ -101,6 +110,18 @@ struct ServerHost {
                                               gamedata::Terrain& terrain) {
         world::WorldOptions options = with_game_data(catalog, progression, creatures, combat, places);
         options.terrain = &terrain;
+        return options;
+    }
+
+    static world::WorldOptions with_game_data(const gamedata::ItemCatalog& catalog,
+                                              const gamedata::ProgressionTables& progression,
+                                              const gamedata::CreatureData& creatures,
+                                              const gamedata::CombatTables& combat,
+                                              const gamedata::TravelPlaces& places,
+                                              gamedata::Terrain& terrain,
+                                              const gamedata::NavigationData& navigation) {
+        world::WorldOptions options = with_game_data(catalog, progression, creatures, combat, places, terrain);
+        options.navigationData = &navigation;
         return options;
     }
 

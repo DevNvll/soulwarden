@@ -92,7 +92,10 @@ json creature_json(const world::Entity& entity) {
                                                                        : "rest"},
             {"target", creature.mind.target != 0 ? id_text(creature.mind.target) : std::string()},
             {"fights", creature.body->fights()},
-            {"walks", creature.mind.walks}};
+            // `walks` has a meaning only when `groundKnown` is true: the world looks at the floor
+            // of a creature when the navigation data of its place is there.
+            {"walks", creature.mind.walks},
+            {"groundKnown", creature.mind.groundKnown}};
 }
 
 service::HttpResponse creature_reply(const world::CreatureResult& result) {
@@ -228,25 +231,31 @@ WorldCommand spawn_creature(const std::string& character, const Arguments& argum
     if (!placed) {
         offset.y = kDefaultSpawnDistance;
     }
-    float yaw = 0.0F;
+    // With no direction the creature looks at the character of the command: a creature has
+    // its vision to its front, and a creature with its back to the character does not see it.
+    std::optional<float> wantedYaw;
     if (arguments.has("yaw")) {
         const auto value = arguments.number("yaw", -360.0F, 360.0F);
         if (!value) {
             refusal = message(400, "yaw must be a number from -360 to 360 (degrees)");
             return {};
         }
-        yaw = *value;
+        wantedYaw = *value;
     }
-    return [character, kind = *kind, level, offset, yaw](world::World& target) {
+    return [character, kind = *kind, level, offset, wantedYaw](world::World& target) {
         const world::Entity* reference = target.find_character(character);
         if (reference == nullptr) {
             return message(404, "the character is not in the world: a new creature needs its place");
         }
         state::WorldPosition position{reference->position.x + offset.x, reference->position.y + offset.y,
                                       reference->position.z + offset.z};
-        // The ground is not level. A character that stands on the terrain gives the creature the
-        // terrain at the place of the creature: a creature that is not at the terrain height
-        // does not leave its place. A character on a floor gives its own height, as before.
+        const float yaw = wantedYaw                                                              ? *wantedYaw
+                          : world::horizontal_distance(position, reference->position) > 0.01F ? world::yaw_to(position, reference->position)
+                                                                                              : 0.0F;
+        // The ground is not level. A character that stands on a floor of the navigation gives the
+        // creature the floor at the place of the creature that is nearest to the height of the
+        // character: a creature on no floor does not leave its place. With no navigation data the
+        // floor is the terrain, and a character that is not on the terrain gives its own height.
         const std::optional<float> under = target.navigation().ground_height(reference->position);
         const std::optional<float> there = target.navigation().ground_height(position);
         if (under && there && std::fabs(reference->position.z - *under) <= gamedata::kTerrainTolerance) {

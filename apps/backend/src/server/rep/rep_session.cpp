@@ -1996,6 +1996,11 @@ void RepSession::handle_registration(std::uint32_t type, std::span<const std::ui
     // the character id of its login. Only an equal id makes the entity the local player
     // (client code at image RVA 0x6929DF0).
     replicate(m_clock.now());
+    // A character that a different session left dead: this client gets the death notice too
+    // (its first vitals state has the dead mark), or it has no way to the respawn screen.
+    if (const world::Entity* own = m_world.find(m_observer.own())) {
+        m_world.health().entered(*own);
+    }
 }
 
 void RepSession::send_research_kick(carrier::Clock::time_point now) {

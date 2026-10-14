@@ -908,6 +908,8 @@ void creature_commands(const Options&) {
     check(north.is_object() && north["creature"]["position"][1] == 1003.0 && north["creature"]["level"] == 20
               && north["creature"]["healthMax"] == 2000.0,
           "spawn with no place: 3 m to the north of the character; with a level: the health of that level");
+    check(north.is_object() && std::fabs(north["creature"]["yaw"].get<float>() - 180.0F) < 0.01F,
+          "spawn with no direction: the creature looks at the character of the command (to the south, 180 degrees)");
     const std::string wolf = north.is_object() ? north["creature"]["id"].get<std::string>() : "";
     check(c.dev("spawn", character + "&kind=No_Kind").status == 404 && c.dev("spawn", character).status == 400
               && c.dev("spawn", character + "&kind=Test_Wolf&dx=abc").status == 400

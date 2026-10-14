@@ -240,6 +240,24 @@ struct WorldOptions {
      */
     gamedata::Terrain* terrain{nullptr};
     /**
+     * The navigation data (game data): the floors and the walls of the world for the paths and
+     * the sight of the creatures. Null, or an object with no file: a creature walks on the
+     * straight line on the terrain height.
+     */
+    const gamedata::NavigationData* navigationData{nullptr};
+    /**
+     * True: a thread of its own reads the tiles of the navigation data (the backend). False:
+     * the world thread reads a tile when it needs it (a test: each tick gives the same result).
+     */
+    bool navigationThread{false};
+    /**
+     * The shelter of a character that came to a place (world/behavior.h): the time in which
+     * the vision of no creature takes it as a target, and the latest end of that time for a
+     * client that reports no position. 0: no shelter (a test of a different rule).
+     */
+    std::chrono::milliseconds shelterTime{behavior_rules::kShelterTime};
+    std::chrono::milliseconds shelterLongest{behavior_rules::kShelterLongest};
+    /**
      * False: the creatures have no behavior. They stand at their spawn points, as before stage
      * 3.4b (the backend option --no-creature-behavior).
      */
@@ -289,6 +307,11 @@ public:
      */
     void set_creature_behavior(bool on) {
         m_options.creatureBehavior = on;
+    }
+    /** Sets the shelter time of a character that comes to a place (WorldOptions::shelterTime): a test. World thread only. */
+    void set_shelter(std::chrono::milliseconds time, std::chrono::milliseconds longest) {
+        m_options.shelterTime = time;
+        m_options.shelterLongest = longest;
     }
 
     /** Any thread. The task runs in the world thread at the start of the next tick. */
@@ -548,7 +571,10 @@ public:
     [[nodiscard]] Health& health() {
         return m_health;
     }
-    /** @return The navigation: the ground and the next step of a creature. */
+    /** @return The navigation: the ground, the next step, and the sight of a creature. */
+    [[nodiscard]] Navigation& navigation() {
+        return m_navigation;
+    }
     [[nodiscard]] const Navigation& navigation() const {
         return m_navigation;
     }

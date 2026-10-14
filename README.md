@@ -55,7 +55,7 @@ tools/build-soulwarden-game-hook.sh
 tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh     # the backend tests, with no game process
 
-tools/gamedata/appearance.sh         # eight game data tools, one time each
+tools/gamedata/appearance.sh         # nine game data tools, one time each
 tools/gamedata/slice_ids.sh
 tools/gamedata/items.sh
 tools/gamedata/progression.sh
@@ -63,6 +63,7 @@ tools/gamedata/creatures.sh
 tools/gamedata/combat.sh
 tools/gamedata/places.sh
 tools/gamedata/heights.sh
+tools/gamedata/navigation.sh
 
 linux-compat/run-soulwarden.sh
 ```
@@ -71,7 +72,7 @@ At the main menu, select a character and press Play. `tools/steam-shortcut.py ad
 
 ### Game data
 
-The backend reads its tables from your game copy. Each tool above writes one file to `~/.local/share/soulwarden/gamedata` (`heights.sh` writes one folder with 136 MB). The backend starts without any of them, and then the feature of that file is off.
+The backend reads its tables from your game copy. Each tool above writes one file to `~/.local/share/soulwarden/gamedata` (`heights.sh` writes one folder with 136 MB, and `navigation.sh` one folder with 1.2 GB). The backend starts without any of them, and then the feature of that file is off.
 
 | Tool | Without its file |
 | --- | --- |
@@ -82,15 +83,16 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still: run the tool again |
 | `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature: run the tool again |
 | `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
-| `heights.sh` | Creatures do not leave their place. They attack only when you are in their reach |
+| `heights.sh` | With no navigation data, creatures do not leave their place. They attack only when you are in their reach |
+| `navigation.sh` | Creatures go on a straight line on the terrain, through walls and rocks, and they see you through a wall. A creature on a floor of a building does not leave its place |
 
-Some tables of the game have Oodle compression. `creatures.sh` and `places.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute, and `heights.sh` for about two minutes (it needs no Oodle library). The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
+Some tables of the game have Oodle compression. `creatures.sh` and `places.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute, and `heights.sh` for about two minutes (it needs no Oodle library). `navigation.sh` needs the Oodle library and a C and a C++ compiler, and it runs for about 45 minutes with 8 processes. It makes the navigation data of the whole world from the collision shapes of the game copy, and then the folder of `heights.sh` again. When it stops, run it again: it makes only the regions that are not complete. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
 
 ## The tool window
 
 Press F8 in the world. The window has five tabs for items, the character, skills, creatures, and travel. It is how you get anything today, because nothing in the world gives items or experience yet.
 
-The tab "Character" shows your health. "Heal" gives your character its full health, and it makes a dead character live again at its place. With the mark "Creatures ignore this character", no creature attacks you. `SOULWARDEN_CREATURE_BEHAVIOR=0` starts the game with creatures that stand still.
+The tab "Character" shows your health. "Heal" gives your character its full health, and it makes a dead character live again at its place. With the mark "Creatures ignore this character", no creature attacks you. `SOULWARDEN_CREATURE_BEHAVIOR=0` starts the game with creatures that stand still. After you come into the world, travel, or respawn, no creature attacks you for 10 seconds unless you hit it. Out of a fight, your health comes back in about 30 seconds.
 
 The tab "Travel" lists the spirit shrines and the inns of each territory. Type a part of a name in the filter, click a place, and press "Travel". Your character is there after a loading screen of some seconds, with the creatures of that place around it.
 

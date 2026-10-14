@@ -31,6 +31,9 @@
 //                                                        to a position (a character that is not
 //                                                        in the world: its row gets the place)
 //   GET  /v1/dev/world/places                            the travel places of the game data
+//   GET  /v1/dev/world/path?x0=X&y0=Y&z0=Z&x1=X&y1=Y&z1=Z the path of a creature between two places, by
+//                                                        the navigation of the world (the corners, the
+//                                                        length, the steps and the time of the search)
 //   POST /v1/dev/world/touch?character=ID                mark each component state of an entity
 //                                                        as changed: each observer gets its
 //                                                        full record again
@@ -145,6 +148,8 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
         const world::Creatures& creatures = target.creatures();
         const world::Behavior& behavior = creatures.behavior();
         const world::BehaviorCounts& behaviorCounts = behavior.counts();
+        const world::Navigation& navigation = target.navigation();
+        const world::NavigationCounts& navigationCounts = navigation.counts();
         return json_reply(200,
                           json{{"entities", entities},
                                {"revision", target.revision()},
@@ -166,7 +171,66 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                  {"attacks", behaviorCounts.attacks},
                                  {"contactsHit", behaviorCounts.contactsHit},
                                  {"contactsMissed", behaviorCounts.contactsMissed},
-                                 {"moves", behaviorCounts.moves}}}}
+                                 {"moves", behaviorCounts.moves},
+                                 {"targetsNoWay", behaviorCounts.targetsNoWay},
+                                 // The navigation: the tiles of the data, the path searches, and the sight tests.
+                                 {"navigation",
+                                  {{"data", navigation.has_data()},
+                                   {"tiles", navigationCounts.tilesHeld},
+                                   {"tilesLargest", navigationCounts.largestTilesHeld},
+                                   {"tileBytes", navigationCounts.tileBytes},
+                                   {"tilesLoaded", navigationCounts.tilesLoaded},
+                                   {"tilesDropped", navigationCounts.tilesDropped},
+                                   {"tilesMissing", navigationCounts.tilesMissing},
+                                   {"tileLoad", meter(navigation.tile_load())},
+                                   {"search", meter(navigation.search_load())},
+                                   {"pathsDirect", navigationCounts.pathsDirect},
+                                   {"searches", navigationCounts.searches},
+                                   {"searchSteps", navigationCounts.searchSteps},
+                                   {"searchesFailed", navigationCounts.searchesFailed},
+                                   {"noWay", navigationCounts.noWay},
+                                   {"largestTickSteps", navigationCounts.largestTickSteps},
+                                   {"queued", navigation.queued()},
+                                   {"largestQueue", navigationCounts.largestQueue},
+                                   {"waits", navigationCounts.waits},
+                                   {"sightTests", navigationCounts.sightTests},
+                                   {"sightStopped", navigationCounts.sightStopped}}}}}}
+                              .dump());
+    });
+}
+
+service::HttpResponse find_path(const Services& services, const RouteContext& context) {
+    const service::HttpRequest& request = context.request;
+    if (!request.host.empty()) {
+        return message(403, "forbidden");
+    }
+    state::WorldPosition from;
+    state::WorldPosition to;
+    const std::pair<const char*, float*> numbers[] = {{"x0", &from.x}, {"y0", &from.y}, {"z0", &from.z},
+                                                      {"x1", &to.x},   {"y1", &to.y},   {"z1", &to.z}};
+    for (const auto& [name, value] : numbers) {
+        const auto number = query_number(request, name);
+        if (!number) {
+            return message(400, "give the two places: x0, y0, z0, x1, y1, z1 (finite numbers)");
+        }
+        *value = *number;
+    }
+    return in_world(services, [from, to](world::World& target) {
+        // The search of this command runs now, in the world thread, with no limit of a tick: a development aid.
+        const world::PathReport report = target.navigation().find_path(from, to);
+        json corners = json::array();
+        for (const state::WorldPosition& corner : report.corners) {
+            corners.push_back({corner.x, corner.y, corner.z});
+        }
+        return json_reply(200,
+                          json{{"path", report.found},
+                               {"cause", report.cause},
+                               {"direct", report.direct},
+                               {"length", report.length},
+                               {"cells", report.cells},
+                               {"steps", report.steps},
+                               {"microseconds", std::chrono::duration<double, std::micro>(report.time).count()},
+                               {"corners", corners}}
                               .dump());
     });
 }
@@ -533,6 +597,7 @@ void register_dev_routes(Router& router, const Services& services) {
         // The travel places do not change after the start of the backend: a read needs no world task.
         return json_reply(200, commands::travel_places_json(services.world.options().travelPlaces).dump());
     });
+    router.add("GET", "", "/v1/dev/world/path", "dev.world_path", bind(find_path));
     router.add("POST", "", "/v1/dev/world/touch", "dev.world_touch", bind(touch_entity));
     router.add("POST", "", "/v1/dev/world/fragment", "dev.world_fragment", bind(raw_fragment));
     router.add("POST", "", "/v1/dev/world/message", "dev.world_message", bind(raw_message));

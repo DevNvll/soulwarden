@@ -21,8 +21,10 @@ backend. Read only the documents relevant to the task.
 | Creatures: the spawn points, the kinds, the record of a creature, health and death, the action of a creature, the commands | Protocol notes 4.14, `apps/backend/src/world/creatures.h`, `gamedata/creature_data.h`, `server/rep/states` (movement, vitals, marker), `server/http/creature_commands.cpp`, `tools/world creatures`, `tools/gamedata/creatures.sh`, `tools/research/creature_actions.py` |
 | A melee attack of a player on a creature: the contact report of the client, the hit check, the damage rule, the damage number | Protocol notes 2.3, 4.7, and 4.15, `apps/backend/src/world/combat.h`, `gamedata/combat_tables.h`, `server/rep/client_input.h`, `server/rep/combat_messages.h`, `server/http/aws_routes.cpp`, `tools/gamedata/combat.sh`, `tools/research/input_packet.py --contacts` |
 | The creature data of the whole world: which entries are in, which slices are out, the spawn action of a slice, the picture check of the slices | Protocol notes 4.14, `tools/gamedata/creature_data.py`, `tools/gamedata/creature_slices.json`, `tools/research/creature_tour.py` |
-| The behavior of a creature: the sense, the way to a player, the attack and its contact test, the way back, the behavior data of a slice, the two switches | Protocol notes 4.17, `apps/backend/src/world/behavior.h`, `world/navigation.h`, `world/creatures.h`, `gamedata/creature_data.h`, `tools/gamedata/creature_behavior.py`, `tools/world ignore`, test cases FT1 to FT14 |
-| The terrain heights: the height of the ground for a creature that walks | Protocol notes 4.17, `apps/backend/src/gamedata/height_maps.h`, `world/navigation.h`, `tools/gamedata/heights.sh` |
+| The behavior of a creature: the sense, the way to a player, the attack and its contact test, the way back, the behavior data of a slice, the two switches | Protocol notes 4.17 and 4.19, `apps/backend/src/world/behavior.h`, `world/navigation.h`, `world/creatures.h`, `gamedata/creature_data.h`, `tools/gamedata/creature_behavior.py`, `tools/world ignore`, test cases FT1 to FT14 |
+| The navigation data: where a creature can stand, its path around a wall and up stairs, what stops its sight, the tiles near the players, the tool that makes the data from the collision shapes of the game copy | Protocol notes 4.19, `apps/backend/src/world/navigation.h`, `gamedata/navigation_data.h`, `tools/gamedata/navigation.sh` (`navigation_data.py`, `collision_data.py`, `navcore.cpp`, `nav_file.py`), `tools/world path`, `tools/world track`, `tools/research/nav_draw.py`, test cases NV1 to NV12 |
+| A fight that a player can play: the 10 s with no target after a travel, the health that comes back, light and heavy attacks of a creature and their pause, creatures that do not stand at one place | Protocol notes 4.19, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/health.h`, `gamedata/creature_data.h` (`kContactGap`, `kHeavyWeight`), test cases PL1 to PL4 |
+| The terrain heights: the height of the ground at a place with no navigation data, and the terrain after the cookies of the placements | Protocol notes 4.17 and 4.19, `apps/backend/src/gamedata/height_maps.h`, `world/navigation.h`, `tools/gamedata/heights.sh`, `tools/gamedata/check_heights_tool.py` |
 | The health and the death of a character: the damage of a creature, the damage mark, the death screen, the respawn | Protocol notes 4.18, `apps/backend/src/world/health.h`, `world/combat.h` (`Combat::creature_damage`), `server/rep/health_messages.h`, `server/rep/states/vitals_state.cpp`, `server/http/health_commands.cpp`, `tools/world heal` |
 | The load of the world: the cost of the spawn rule, the time of a tick | `apps/backend/src/world/creatures.h` (`SpawnGrid`), `world/load_meter.h`, `tools/world list` (the line `load:`), test case WS2 |
 | Travel: the server moves a character to a different place, the travel places, the tab "Travel" | Protocol notes 4.16, `apps/backend/src/world/world.h` (`World::travel`), `server/rep/travel_messages.h`, `gamedata/travel_places.h`, `server/http/travel_commands.cpp`, `tools/world travel`, `tools/world places`, `tools/gamedata/places.sh` |
@@ -135,24 +137,91 @@ backend. Read only the documents relevant to the task.
   each contact at its time on the world clock (the target is in the world, lives, is in the
   reach and in the angle), and one contact that passes is one damage result
   (`Health::creature_hit`). A creature loses its target when the target is dead, left the
-  world, is ignored, or is farther than 60 m, and at the end of its leash: it then goes to
-  its home and has its full health there. A creature has one target. No wall stops the
-  vision or the way (stage 3.4d). A kind with no attack that the data tool can use stands
-  and takes damage (859 of the 3,848 kinds).
-- The two functions of the navigation (`world/navigation.h`) are the only place where the
-  behavior gets a place: `ground_height(position)` (the height of the ground at a position
-  with a height: one place can have more than one floor) and `next_step(from, goal,
-  distance)` (the place after one step to a goal). In stage 3.4b the ground is the terrain
-  and the way is the straight line. Stage 3.4d changes the bodies of the two functions, not
-  their callers: do not compute a place of a creature in a different function.
+  world, is ignored, or is farther than 60 m, at the end of its leash, and when its target
+  has no way to it: it then goes to its home and has its full health there. A creature has
+  one target. From stage 3.4d a wall stops the vision, the attack, and the way (the
+  navigation data, protocol notes 4.19). A kind with no attack that the data tool can use
+  stands and takes damage (859 of the 3,848 kinds).
+- The rules for a fight that a player can play (stage 3.4d, protocol notes 4.19; project
+  rules, each constant in `behavior_rules`, `world/health.h`, or `gamedata/creature_data.h`).
+  The shelter: for 10 s after a character came to a place (a world entry, a travel, a
+  respawn, a revive) the vision of no creature takes it as a target; the time starts at the
+  first position that its client reports from the place and ends 60 s after the arrival at
+  the latest; a creature that the character hurts takes it in this time too; a creature
+  that has the character as its target loses it at a travel (`Behavior::shelter`, the
+  values are in `Entity::life`; `WorldOptions::shelterTime`, which the test host sets to 0
+  for the cases of the other rules). The rest: a character that took no damage and did no
+  damage for 6 s gets 3 percent of its maximum health each second (`Health::tick`; a
+  creature that takes the character as its target, and each attack, start the 6 s again).
+  The attacks: two contacts of one attack that are 0.15 s or less from each other are one
+  hit (`CreatureContact::repeat`); a creature makes its light attacks in the sequence of the
+  file and one heavy attack after each three of them (`CreatureAttack::heavy`); the pause
+  after an attack is 1.5 s, and 2.5 s after a heavy attack. The crowd: a creature does not
+  end a step of its way to its target 0.5 m or less from a different creature that lives
+  (it makes a shorter step or waits, `Navigation::take_back`), and it attacks from its
+  place when the target is in the reach of its attack; creatures with the same target wait
+  for each other. A new rule of the behavior keeps the cost rule: no scan of each creature
+  of the world.
+- The functions of the navigation (`world/navigation.h`) are the only place where the
+  behavior gets a place: `ground_height(position)` (the height of the floor that is nearest
+  to the height of a position: one place can have more than one floor) and
+  `next_step(creature, from, goal, distance)` (the place after one step on the path of a
+  creature to a goal, or "the creature waits", "no way", "no ground"). `footing(position)`
+  says if a creature walks, and `sees(from, to)` if a solid is between two places. Do not
+  compute a place of a creature in a different function. With navigation data the path is
+  a path of the data; with no data of a place (no folder, a folder that is not correct, a
+  region with no file, a tile that is not correct) the two functions have the rule of stage
+  3.4b for that place (the straight line on the terrain of the folder `heights`, and
+  nothing stops the sight).
+- The navigation data (protocol notes 4.19) is game data: the folder `navigation` of the game
+  data folder, one file for each region (`r_+XX_+YY.swnav`, 32 by 32 tiles of 64 m with cells
+  of 0.25 m, each tile one zlib stream) and `navigation.json`. The tool
+  (`tools/gamedata/navigation.sh`) makes it from the collision shapes of the game copy, the
+  terrain after the cookies of the placements, the water, and the navigation marks of the
+  level designers. The size of a creature (the agent: radius 0.35 m, height 1.8 m, step
+  0.35 m, slope 50 degrees, wade 1.2 m) is a project value with a live check for each
+  number; each file has the values in its header, and the backend refuses a folder whose
+  files do not have the same values. The backend reads only the header and the directory of
+  each file at its start.
+- The world has only the tiles near its players (`navigation_rules`): each 500 ms it asks
+  for the tiles that are 96 m or less from a character and 32 m or less from a creature on
+  a path, and it removes a tile that no one asked for in 10 s. A thread of the navigation
+  reads the tiles (`WorldOptions::navigationThread`; a test host reads them in the tick):
+  the world thread reads no navigation file, and it takes the tiles that are ready at the
+  start of a tick. The thread reads only the navigation data: it reads no entity. A
+  creature whose tile is not there yet waits. Do not read all tiles of a region, and do not
+  read a tile in the world thread (the development command `tools/world path` is the one
+  exception, for a test).
+- The cost of the path search has limits (`navigation_rules`): all searches of one tick of
+  the world make 4,000 steps at most (`kTickSteps`), one search makes 60,000 steps at most
+  (`kSearchSteps`), the other searches wait in a queue, and a search continues in the next
+  tick. A goal in a different area has no way with no search (the areas of the tiles, and
+  the links over the tile edges, which the world makes only for a tile that comes or goes).
+  First the straight line, then A* on the cells. A step of a creature ends at a corner of
+  its path: the client moves a creature on the straight line between two movement states.
+  Test cases NV6 and NV10 have the limits with a time limit: a new rule keeps them.
+- Which creature walks: a creature walks when a free floor of the navigation data is 0.5 m
+  or less from its place in the plane and 0.6 m or less in the height
+  (`Navigation::footing`). The world asks when the tile of the creature is there: until then
+  the creature has no answer (`CreatureMind::groundKnown`), and it does not walk yet. A
+  creature on no free floor does not leave its place: it turns to its target and attacks in
+  its reach. 23,021 of the 24,228 spawn points of kinds that fight walk.
+- The gates of a settlement are closed for a creature: the level designers put a navigation
+  mark with no solid into each gate (three in the start settlement), and the tool makes no
+  floor free in it. A creature outside a gate sees a character in the gate, finds no way,
+  and loses its target. Do not remove these marks to make a test pass.
 - The terrain heights are game data (`tools/gamedata/heights.sh`, one file for each region in
   the folder `heights` of the game data folder, `gamedata::HeightMaps`). The backend opens a
   region file only when a position in it is asked, reads one tile of 64 m, and keeps 512
-  tiles: do not load the 49 regions at the start. The terrain is not each floor. A creature
-  walks only when its spawn point is 1.0 m or less from the terrain height
-  (`gamedata::kTerrainTolerance`; the creature data file has the terrain height of each
-  spawn point): if not, it does not leave its place, turns to its target, and attacks in
-  its reach. Without the height files no creature leaves its place.
+  tiles: do not load the 49 regions at the start. The terrain is not each floor. From stage
+  3.4d the heights are the terrain after the cookies of the placements (the client changes
+  the height map near some placements, protocol notes 4.19; `tools/gamedata/navigation.sh`
+  makes the folder again at its end), and the backend uses them only at a place with no
+  navigation data. There a creature walks only when its spawn point is 1.0 m or less from
+  the terrain height (`gamedata::kTerrainTolerance`; the creature data file has the terrain
+  height of each spawn point): if not, it does not leave its place, turns to its target,
+  and attacks in its reach. Without the height files and with no navigation data no
+  creature leaves its place.
 - A movement state of a creature with a new position and no action makes the client show the
   walk itself. An attack, a reaction, and the death are scope records with the tag bytes of
   the slice (`CreatureSlice::tags`: a creature with a weapon has no variant of an attack
@@ -499,7 +568,10 @@ backend. Read only the documents relevant to the task.
 - Dear ImGui (version 1.92.6) is in `apps/game-hook/vendor/imgui`, with no change of its
   files. The CMake file compiles each `.cpp` file below `apps/game-hook/vendor`: do not add a
   file of the library that the hook does not use (the demo file). The JSON library of the
-  backend is also in `apps/game-hook/vendor/nlohmann`.
+  backend is also in `apps/game-hook/vendor/nlohmann`. The OpenSimplex noise code
+  (`tools/gamedata/vendor/open-simplex-noise`, public domain, with its license file, no
+  change of its files) is a part of the navigation tool only: the client makes the noise of
+  the terrain rule with this code, and the tool needs equal numbers. It goes into no product.
 - A table that comes from the game files is game data. A tool in `tools/gamedata` makes it
   from the game copy into `~/.local/share/soulwarden/gamedata` (`SOULWARDEN_GAMEDATA_DIR`), the backend
   reads it at its start (`--gamedata-dir`), and the backend must start and work with a
@@ -512,8 +584,13 @@ backend. Read only the documents relevant to the task.
   height at each spawn point; without it the world has no creature; the backend refuses a
   file whose levels, slots, assets, health values, or behavior data do not fit together, as
   a whole; with a file of format 1 the creatures stand at their spawn points), the folder
-  `heights` (the terrain heights, one file for each region; without it no creature leaves
-  its place), `combat-tables.json` (the weapon of each item
+  `heights` (the terrain heights, one file for each region, from stage 3.4d after the
+  cookies of the placements), the folder `navigation` (stage 3.4d: one file for each region
+  with the floors, the water, and the sight of each cell of 0.25 m, and `navigation.json`;
+  1.2 GB for the world; without it a creature goes on the straight line on the terrain of
+  the folder `heights`, and with neither folder no creature leaves its place; the backend
+  refuses a folder with a file that is not correct, as a whole, and a tile that does not
+  decode alone), `combat-tables.json` (the weapon of each item
   with its base damage, its attribute factors, and the damage rows of its light and of its
   heavy attack, the damage rows and types, the damage values of the attributes, the level
   and gear score values of the damage rule, the defense values of each vitals row, and,
@@ -569,6 +646,7 @@ tools/gamedata/creatures.sh          # one time: creature data for the backend (
 tools/gamedata/combat.sh             # one time: combat tables for the backend (weapons, damage rows, defense values of the creatures)
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
+tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
 tools/scenarios/menu.sh RUN_LABEL    # start, go to the main menu
 tools/scenarios/play.sh RUN_LABEL    # the same, then press Play for the first character
 tools/scenarios/create.sh RUN_LABEL NAME   # menu, then create a character and enter the world
@@ -607,6 +685,9 @@ tools/world travel NAME 8866 4250 137.9   # move a character to a position (--sc
 tools/world ignore NAME on           # the creatures ignore a character (off: they attack it again)
 tools/world heal NAME                # give a character its full health (a dead character lives again at its place)
 tools/world hurt NAME 500            # lower the health of a character (the health 0 is its death)
+tools/world path NAME 8861.6 4243.4 139.5   # the path of the navigation between two places (a place: X Y Z or a character name)
+tools/world track 2c 20 --tsv FILE   # the place of a creature each 200 ms for 20 s
+python3 -B tools/research/nav_draw.py ~/.local/share/soulwarden/gamedata/navigation 8850 4230 8880 4260 OUT.png --path FILE   # a picture of the data
 tools/dev-stop.sh                    # stop the development runs (not a game of the user)
 tools/dev-stop.sh --check            # status 0: no process of a development run is alive
 ```
@@ -701,7 +782,20 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   command (FT11), a creature whose spawn point is not at the terrain height, and the spawn
   command on a slope (FT12), a slice with a spawn action and with animation tags in a fight
   (FT13), the reader of the terrain height files and the two functions of the navigation
-  (FT14),
+  (FT14), the reader of the navigation files and each file and tile that is not correct
+  (NV1), the ground at a place with more than one floor (NV2), a path around a wall and
+  through its opening, and back (NV3), a creature on a floor and on stairs (NV4), a goal with
+  no way and no search (NV5), the limit of the search steps of a tick (NV6), the tiles near
+  the characters and the thread that reads them (NV7), a wall stops the sight and the attack
+  (NV8), shallow water and deep water (NV9), the load of 50 characters with fights and path
+  searches, with a time limit, and the memory of the tiles (NV10), two sessions in two
+  regions and a session that observes a creature on its path (NV11, in `fight_tests.cpp`),
+  which creatures walk and a creature whose place has no data yet (NV12), the shelter of a
+  character that came to a place, with two characters (PL1), the health that comes back
+  (PL2), light and heavy attacks, their sequence, their pause, and the hits of an attack
+  (PL3), the crowd (PL4), the cases of the code review of stage 3.4b, each one with a
+  failure before its correction (RF1 to RF9; RF10 runs `tools/gamedata/check_heights_tool.py`
+  with `python3`),
   HTTP stop (H1), a world task that did not start
   (D2), position limits (P2), bundle limits (F1), sessions and stops (T11), a locked item
   and the quantity of a lock request (L1), a delete whose write failed (D3), a spawn offset
@@ -994,8 +1088,10 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   tested to a path outside `dist` (`SOULWARDEN_GAME_HOOK_OUTPUT`), start it with `SOULWARDEN_HOOK_DLL`,
   and build into `dist` only after a live run. The backend of the build folder
   (`~/Games/soulwarden/work/build/native-backend/apps/backend/soulwarden-backend`, made by
-  `tools/test-soulwarden-backend.sh` and by `cmake --build ... --target soulwarden_backend`) starts with
-  `SOULWARDEN_BACKEND_EXE`.
+  `cmake --build ... --target soulwarden_backend` and by `tools/build-soulwarden-backend.sh`)
+  starts with `SOULWARDEN_BACKEND_EXE`. `tools/test-soulwarden-backend.sh` builds only the
+  test program: after a change, build the backend target before a live run, or the run has
+  the old backend (stage 3.4d lost one live run this way; compare the time of the file).
 - `tools/dev-run.sh` gives the launcher the variables of the tool window by name:
   `SOULWARDEN_TOOL_WINDOW` (`0`: off), `SOULWARDEN_TOOL_WINDOW_KEY`, and `SOULWARDEN_TOOL_WINDOW_FAULT`
   (`hook`, `device`, or `swapchain`: a test of a start in which the tool window cannot
@@ -1039,17 +1135,16 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
     calls need 4 s) and put them on one sheet (`magick montage ... -tile 4x3`). The camera
     is behind the character: a creature in front of the character can be behind its body
     in the picture. Turn the camera to the side (`'look 900 0'`) for a side view.
-  - A creature whose spawn point is more than 1.0 m from the terrain height does not leave
-    its place (`stays at its place` in `tools/world creatures`): it attacks only a
-    character in its reach (2.2 m for the Ancient Guardian Reaver at `8572.83 4241.20
-    166.60`, which is on a floor 1.42 m above the terrain). Travel to 2 m from it. No
-    attack at 4 m is not a fault.
-  - A creature of a spawn command near a character on the terrain stands on the terrain at
-    its own place. Near a character on a floor (a porch, a ruin, the floor of a shrine) it
-    gets the height of the character and does not walk.
-  - A creature goes on the straight line, through a wall and through a rock, and it stands
-    on the terrain: a creature of a hut walks below the floor of the hut. This is the rule
-    of stage 3.4b (no path search), not a fault of a state.
+  - With no navigation data (stage 3.4b): a creature whose spawn point is more than 1.0 m
+    from the terrain height does not leave its place, and a creature goes on the straight
+    line, through a wall, on the terrain. With the navigation data (stage 3.4d) the Ancient
+    Guardian Reaver at `8572.83 4241.20 166.60` and the Risen of the hut walk on their
+    floors. `stays at its place` of `tools/world creatures` shows only when the world has
+    the tile of the creature (a creature far from each character has no answer yet).
+  - A creature of a spawn command stands on the floor of the navigation data at its own
+    place that is nearest to the height of the character. With no direction (the tab
+    "Creatures" sends none) it looks at the character: it sees the character after the
+    shelter time.
   - The client moves the body of a creature forward in some attacks (the lunge of a wolf)
     and puts it back at the end: the position of the backend did not change.
   - A creature with a weapon plays no attack when the tag bytes of its scope record are 0,
@@ -1073,6 +1168,35 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
     `SOULWARDEN_GAMEDATA_DIR` (the folder needs the other game data files and the folder
     `heights` too).
   - Case FT9 has a time limit of 1 s for 1,000 ticks with 50 fights (3.6 ms in one run).
+
+- Path search and playable fights (stage 3.4d):
+  - The 10 s of shelter: after a world entry, a travel, a respawn, and a revive, no creature
+    takes the character for 10 s after the first position report from the place. A test of
+    a fight waits for that time, or the character hits the creature first. A travel ends
+    each fight of the character: use a walk (`'keydown 0x57'`) to lead a creature to a
+    different place.
+  - No creature goes into the start settlement: the gates have navigation marks of the
+    level designers. A wolf outside a gate stands and looks at a character inside. A fight
+    inside the settlement needs a creature of a command inside it.
+  - `tools/world path` reads the tiles of the two places in the world thread: the line
+    `load:` then has a largest tick of 30 ms to 200 ms. Measure the load in a run with no
+    path command.
+  - A creature that waits for a different creature does not move: a queue of creatures on
+    stairs is the crowd rule, not a fault of the path. Only the creatures in the reach
+    attack.
+  - The melee contact of the client does not go through a wall: a player cannot hit a
+    creature on the other side of the yard wall of the start settlement (7 tries, 0
+    contacts).
+  - A tile is read 4 ms to 16 ms after it is asked: a creature at the edge of the tiles of a
+    character can wait some ticks. The tool window and `tools/world creatures` show the
+    creatures of the whole world: a creature far from each character has no data.
+  - `tools/gamedata/navigation.sh` writes into the common game data folder by default (1.2
+    GB): give it an output folder for a test, and give the run that folder with
+    `SOULWARDEN_GAMEDATA_DIR` (with links to the other game data files and a real folder
+    `heights`: the tool writes the heights into the folder beside its output). A link to the
+    common folder `heights` makes the tool write into the common folder.
+  - The test program builds the navigation files of a case in its work folder
+    (`TestNavRegion`: a region of the real size, flat ground where a case gives no floor).
 
 - Creatures (stage 3.4a):
   - The spawn points of the start area are outside the wall of the settlement. From the

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 #include "core/logging/log.h"
 #include "world/world.h"
@@ -24,6 +25,7 @@ HealthResult Health::apply(Entity& target, float damage) {
     }
     target.vitals.health = std::max(target.vitals.health - damage, 0.0F);
     result.after = target.vitals.health;
+    target.life.foughtAt = m_world.clock().now();
     if (target.vitals.health == 0.0F) {
         target.life.dead = true;
         target.life.diedAt = m_world.clock().now();
@@ -72,6 +74,15 @@ void Health::creature_hit(Entity& creature, const gamedata::CreatureContact& con
     }
 }
 
+void Health::entered(const Entity& character) {
+    if (character.kind != EntityKind::player || !character.life.dead) {
+        return;
+    }
+    using Seconds = std::chrono::duration<float>;
+    const float passed = Seconds(m_world.clock().now() - character.life.diedAt).count();
+    m_world.died(character.owner, std::clamp(kRespawnTime - passed, 0.0F, kRespawnTime));
+}
+
 HealthResult Health::hurt(const std::string& characterId, float damage) {
     Entity* target = m_world.find_character(characterId);
     if (target == nullptr) {
@@ -112,6 +123,10 @@ HealthResult Health::heal(const std::string& characterId) {
     target->vitals.health = target->vitals.healthMax;
     result.after = target->vitals.health;
     m_world.touch(target->id, ComponentKey::vitals);
+    if (result.revived) {
+        // A character that lives again at its place: the creatures near it do not take it at once.
+        m_world.creatures().behavior().shelter(*target, false);
+    }
     const std::string mark = log::session_mark(target->owner, target->characterId);
     const log::Context context(mark);
     log::write("world: command: %s has its full health %.1f%s",
@@ -119,6 +134,38 @@ HealthResult Health::heal(const std::string& characterId) {
                static_cast<double>(result.after),
                result.revived ? ", and lives again at its place" : "");
     return result;
+}
+
+void Health::fought(Entity& character) {
+    if (character.kind == EntityKind::player) {
+        character.life.foughtAt = m_world.clock().now();
+    }
+}
+
+void Health::tick() {
+    const WorldClock::time_point now = m_world.clock().now();
+    if (m_lastRest && now - *m_lastRest < kRestInterval) {
+        return;
+    }
+    m_lastRest = now;
+    // The cost is the number of the characters of the world, one time in each interval.
+    std::vector<EntityId> rested;
+    m_world.for_each_character([&](const Entity& character) {
+        if (!character.life.dead && character.vitals.health < character.vitals.healthMax
+            && (!character.life.foughtAt || now - *character.life.foughtAt >= kRestTime)) {
+            rested.push_back(character.id);
+        }
+    });
+    for (const EntityId id : rested) {
+        Entity* character = m_world.find(id);
+        if (character == nullptr) {
+            continue;
+        }
+        character->vitals.health =
+            std::min(character->vitals.health + character->vitals.healthMax * kRestPart, character->vitals.healthMax);
+        m_world.touch(character->id, ComponentKey::vitals);
+        ++m_rests;
+    }
 }
 
 RespawnPlace Health::respawn_place(const Entity& character) const {

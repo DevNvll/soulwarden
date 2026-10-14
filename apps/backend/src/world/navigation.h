@@ -1,81 +1,374 @@
 #pragma once
 
-#include <cmath>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "gamedata/height_maps.h"
+#include "gamedata/navigation_data.h"
 #include "state/store.h"
+#include "world/ids.h"
+#include "world/load_meter.h"
+#include "world/world_clock.h"
 
-// The navigation of a creature: where the ground is, and where the next step to a goal is.
+// The navigation of a creature: where the ground is, where the next step to a goal is, and
+// what a creature sees (protocol notes 4.19).
 //
-// These two functions are the place of the path search. In stage 3.4b they are simple: the
-// ground is the terrain (the height maps of the game), and the way to a goal is the straight
-// line. Thus a creature goes through a wall, and a creature on a floor of a building has no
-// ground here. Stage 3.4d replaces the two bodies: the navigation data that a tool makes from
-// the collision shapes of the game has each floor, and the path search goes around a wall.
-// The callers do not change then: the behavior of a creature (world/behavior.h) asks only
-// these two functions for a place.
+// The behavior of a creature (world/behavior.h) gets each place from two functions of this
+// class: `ground_height` and `next_step`. Do not compute a place of a creature in a different
+// function.
 //
-// World thread only: the terrain source reads its files when a place is asked.
+// The data. The navigation data is game data (gamedata/navigation_data.h): a grid of the whole
+// world with cells of 0.25 m, each cell with its floors, in tiles of 64 m. The world keeps
+// only the tiles near the characters and near the creatures that move. A thread of its own
+// reads a tile (the world thread does not wait for a file), and the world thread takes the
+// tiles that are ready at the start of a tick. A creature whose tile is not there yet waits.
+//
+// The path. A creature goes on a path of cells of the data. The search is A* on the cells,
+// with these limits: the steps of all searches of one tick have a limit, a search that needs
+// more continues in the next ticks, and the searches that wait come in their sequence. One
+// search has a limit too. Before a search, the areas of the tiles say if a way is there: a
+// goal with no way costs no search. A creature keeps its path, and it searches again when its
+// goal moved.
+//
+// With no navigation data the two functions use the terrain heights (gamedata/height_maps.h)
+// and the straight line, as in stage 3.4b, and no wall stops the sight.
+//
+// World thread only, but the thread that reads the tiles: it has no access to the world.
 
 namespace soulwarden::backend::world {
 
+class World;
+
+/** The values of the navigation that the game data does not give (rules of this project). */
+namespace navigation_rules {
+/** The world keeps the tiles that are this near to a character, and to a creature that moves (meters). */
+inline constexpr float kKeepDistance = 96.0F;
+inline constexpr float kMoverKeepDistance = 32.0F;
+/** The world looks for the tiles that it needs one time in this interval of the world clock. */
+inline constexpr std::chrono::milliseconds kWantInterval{500};
+/** A tile that no character and no creature needs stays this long. */
+inline constexpr std::chrono::milliseconds kDropAfter{10000};
+/** The steps of all path searches of one tick of the world, and of one search. */
+inline constexpr std::uint32_t kTickSteps = 4000;
+inline constexpr std::uint32_t kSearchSteps = 60000;
+/** A creature searches again when its goal is this far from the goal of its path (meters). */
+inline constexpr float kRepathDistance = 1.0F;
+/** A place is on a floor when a free floor is this near: in the horizontal plane, and in the height (meters). */
+inline constexpr float kSnapDistance = 1.5F;
+inline constexpr float kSnapHeight = 1.5F;
+/** A creature stands on a floor when a free floor is this near: in the horizontal plane, and in the height (meters). */
+inline constexpr float kFootingReach = 0.5F;
+inline constexpr float kFootingHeight = 0.6F;
+/** The sight goes from this height above the ground of a creature to this height above the ground of its target (meters). */
+inline constexpr float kEyeHeight = 1.5F;
+/** A path in shallow water is this much longer for the search than the same path on land. */
+inline constexpr float kWaterCost = 2.0F;
+/** A goal with no way stays a goal with no way for this time, when it does not move. */
+inline constexpr std::chrono::milliseconds kNoWayMemory{3000};
+/** The search of a creature that follows a path starts at the place that the creature has this number of cells later. */
+inline constexpr std::size_t kSpliceCells = 12;
+/** A creature that is this far from its path has no path (a command moved it). */
+inline constexpr float kOffPath = 1.0F;
+} // namespace navigation_rules
+
+/** What a step of a creature gave. */
+enum class StepKind {
+    /** The creature has a new place. */
+    moved,
+    /** The creature is at the end of its path: no new place. */
+    arrived,
+    /** No new place in this step: the tile of the creature is not there yet, or its path search waits. */
+    waiting,
+    /** The goal has no way from the place of the creature. */
+    noWay,
+    /** The creature is on no floor of the data: it cannot walk. */
+    noGround,
+};
+
+struct NavStep {
+    StepKind kind{StepKind::noGround};
+    state::WorldPosition position;
+};
+
+/** If a creature at a place can walk. */
+enum class Footing {
+    /** The data of the place is not there yet. */
+    unknown,
+    walks,
+    /** No floor for a creature at the place. */
+    rooted,
+};
+
+/** Counts of the navigation, for the log, for the development tools, and for the tests. */
+struct NavigationCounts {
+    /** Tiles that the world has now, and their bytes. */
+    std::size_t tilesHeld{0};
+    std::size_t tileBytes{0};
+    std::size_t largestTilesHeld{0};
+    /** Tiles that came from the files, that the world removed, and that have no data (no file, or a tile that is not correct). */
+    std::uint64_t tilesLoaded{0};
+    std::uint64_t tilesDropped{0};
+    std::uint64_t tilesMissing{0};
+    /** Paths with no search (a straight line that is free), and path searches. */
+    std::uint64_t pathsDirect{0};
+    std::uint64_t searches{0};
+    std::uint64_t searchSteps{0};
+    /** Searches that found no path in their limit, and goals with no way by the areas (no search). */
+    std::uint64_t searchesFailed{0};
+    std::uint64_t noWay{0};
+    /** The largest number of steps of the searches in one tick, and the largest number of searches that waited. */
+    std::uint32_t largestTickSteps{0};
+    std::size_t largestQueue{0};
+    /** Steps of creatures that waited for a tile or for a search. */
+    std::uint64_t waits{0};
+    /** Sight tests, and the ones that a solid stopped. */
+    std::uint64_t sightTests{0};
+    std::uint64_t sightStopped{0};
+};
+
+/** One corner of a path, for a development command. */
+struct PathReport {
+    bool found{false};
+    /** Why no path was found: an empty text for a path. */
+    std::string cause;
+    std::vector<state::WorldPosition> corners;
+    float length{0.0F};
+    std::size_t cells{0};
+    std::uint32_t steps{0};
+    bool direct{false};
+    std::chrono::nanoseconds time{0};
+};
+
 class Navigation {
 public:
-    /** @param terrain The terrain heights (game data). Null: no place has a ground, and no creature walks. */
-    explicit Navigation(gamedata::Terrain* terrain) : m_terrain(terrain) {}
+    /**
+     * @param data The navigation files (game data). Null, or a folder with no file: the navigation uses the terrain.
+     * @param terrain The terrain heights (game data): the ground when the navigation data has no tile for a place. Null: none.
+     * @param loaderThread True: a thread of its own reads the tiles. False: the world thread reads a tile when it needs it (a test).
+     */
+    Navigation(World& world, const gamedata::NavigationData* data, gamedata::Terrain* terrain, bool loaderThread);
+    ~Navigation();
+    Navigation(const Navigation&) = delete;
+    Navigation& operator=(const Navigation&) = delete;
 
-    /** @return True when the navigation has a source for the ground. */
+    /** @return True when the navigation has a source for the ground: the navigation data, or the terrain heights. */
     [[nodiscard]] bool available() const {
-        return m_terrain != nullptr;
+        return has_data() || m_terrain != nullptr;
+    }
+    /** @return True when the world has navigation data: paths, floors, and walls. */
+    [[nodiscard]] bool has_data() const {
+        return m_data != nullptr && m_data->available();
     }
 
     /**
      * @return The height of the ground at a position: the surface on which a creature at this
-     *         position stands. The position has a height, because one place can have more than
-     *         one floor: the result is the floor that is nearest to that height. In this stage
-     *         the terrain is the only floor, and the height of the position selects nothing.
-     *         No value: the navigation has no ground at the place.
+     *         position stands. One place can have more than one floor: the result is the floor
+     *         that is nearest to the height of the position. With no tile of the navigation
+     *         data for the place, the result is the terrain height. No value: no ground.
      */
-    [[nodiscard]] std::optional<float> ground_height(const state::WorldPosition& position) const {
-        if (m_terrain == nullptr || !std::isfinite(position.x) || !std::isfinite(position.y)) {
-            return std::nullopt;
-        }
-        return m_terrain->height(position.x, position.y);
-    }
+    [[nodiscard]] std::optional<float> ground_height(const state::WorldPosition& position) const;
 
     /**
-     * @return The place of a creature after one step from `from` to `goal`: a place on the
-     *         ground that is `distance` meters nearer to the goal on its way, or the goal with
-     *         the height of the ground when the goal is not farther than that. In this stage
-     *         the way is the straight line. No value: the creature cannot make the step (no
-     *         ground at the new place).
+     * One step of a creature to a goal: a place on a floor that is `distance` meters nearer to
+     * the goal on the path of the creature. The navigation keeps the path of each creature.
+     * @param mover The entity of the creature: the key of its path.
      * @param distance The length of the step, in meters (the speed times the time).
      */
-    [[nodiscard]] std::optional<state::WorldPosition> next_step(const state::WorldPosition& from,
-                                                                const state::WorldPosition& goal,
-                                                                float distance) const {
-        const float dx = goal.x - from.x;
-        const float dy = goal.y - from.y;
-        const float way = std::hypot(dx, dy);
-        if (!std::isfinite(way) || !std::isfinite(distance) || distance <= 0.0F) {
-            return std::nullopt;
-        }
-        state::WorldPosition next = goal;
-        if (way > distance) {
-            next.x = from.x + dx / way * distance;
-            next.y = from.y + dy / way * distance;
-        }
-        const std::optional<float> ground = ground_height(state::WorldPosition{next.x, next.y, from.z});
-        if (!ground) {
-            return std::nullopt;
-        }
-        next.z = *ground;
-        return next;
+    [[nodiscard]] NavStep next_step(EntityId mover, const state::WorldPosition& from, const state::WorldPosition& goal, float distance);
+
+    /** A creature needs its path no more (it is at its goal, it has a different goal, or it left the world). */
+    void forget(EntityId mover);
+
+    /**
+     * A creature did not take the place of its last step (`next_step` gave `moved`, and a
+     * different creature stands there): its path is at the place before that step again.
+     */
+    void take_back(EntityId mover);
+
+    /** @return If a creature at a place can walk: it stands on a free floor of the data (or, with no data, on the terrain). */
+    [[nodiscard]] Footing footing(const state::WorldPosition& position) const;
+
+    /**
+     * @return True when no solid is between the eyes of a creature at `eye` and a character at
+     *         `target` (the two positions are the places of their feet). An object that is
+     *         lower than the line does not stop the sight. With no tile of the navigation data
+     *         on the line, nothing stops the sight.
+     */
+    [[nodiscard]] bool sees(const state::WorldPosition& eye, const state::WorldPosition& target) const;
+
+    /** The world calls it in each tick: the tiles that are ready, the tiles that the world needs, and the path searches. */
+    void tick();
+
+    /**
+     * Development aid: the path between two places, searched now with no limit of a tick.
+     * The world thread reads the tiles that the path needs itself.
+     */
+    [[nodiscard]] PathReport find_path(const state::WorldPosition& from, const state::WorldPosition& to);
+
+    [[nodiscard]] const NavigationCounts& counts() const {
+        return m_counts;
+    }
+    /** @return The real time of the path searches of a tick, and of the reads of the tiles (measurements). */
+    [[nodiscard]] const LoadMeter& search_load() const {
+        return m_searchLoad;
+    }
+    [[nodiscard]] const LoadMeter& tile_load() const {
+        return m_tileLoad;
+    }
+    /** @return The number of path searches that wait now. */
+    [[nodiscard]] std::size_t queued() const {
+        return m_queue.size();
     }
 
 private:
+    /** A cell of the world with one of its floors. */
+    struct Place {
+        std::int32_t x{0};
+        std::int32_t y{0};
+        std::uint8_t floor{0};
+        float height{0.0F};
+        std::uint16_t area{0};
+        /** The floor is below shallow water. */
+        bool water{false};
+        bool operator==(const Place& other) const {
+            return x == other.x && y == other.y && floor == other.floor;
+        }
+    };
+    struct PathCell {
+        std::int32_t x{0};
+        std::int32_t y{0};
+        float height{0.0F};
+    };
+    enum class TileState { loading, ready, missing };
+    /** Two areas of two tiles that have a step between them over the edge of the tiles. */
+    using AreaLink = std::pair<std::uint64_t, std::uint64_t>;
+    struct Held {
+        TileState state{TileState::loading};
+        std::shared_ptr<const gamedata::NavTile> tile;
+        WorldClock::time_point wanted{};
+        /** The links over the edge to the tile to the east and to the tile to the north: made one time, when the second tile of the edge comes. */
+        std::vector<AreaLink> east;
+        std::vector<AreaLink> north;
+    };
+    /** The path of one creature. */
+    struct Route {
+        /** The cells of the path, and the cell that the creature goes to now. */
+        std::vector<PathCell> cells;
+        std::size_t reached{0};
+        std::size_t corner{0};
+        /** The goal of the path, and the place of the creature after its last step. */
+        state::WorldPosition goal;
+        state::WorldPosition position;
+        bool hasPosition{false};
+        /** The values before the last step (`take_back`). */
+        std::size_t stepReached{0};
+        std::size_t stepCorner{0};
+        state::WorldPosition stepPosition;
+        bool hasStep{false};
+        /**
+         * A search for this creature waits or runs: its goal. `splice`: the search started at the
+         * cell `junction` of `cells`, and the creature goes on to that cell while the search runs.
+         */
+        bool searching{false};
+        bool splice{false};
+        state::WorldPosition searchGoal;
+        std::size_t junction{0};
+        /** The goal that had no way, and until when the navigation does not look again. */
+        bool noWay{false};
+        state::WorldPosition noWayGoal;
+        WorldClock::time_point noWayUntil{};
+        WorldClock::time_point used{};
+    };
+    /** The search that runs: A* on the cells. */
+    struct Search;
+    struct Loaded {
+        std::uint64_t key{0};
+        std::shared_ptr<const gamedata::NavTile> tile;
+        std::chrono::nanoseconds time{0};
+    };
+
+    [[nodiscard]] static std::uint64_t tile_key(std::int32_t tileX, std::int32_t tileY) {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tileX)) << 32) | static_cast<std::uint32_t>(tileY);
+    }
+    /** @return The tile of a cell of the world, or null when the world does not have it now. */
+    [[nodiscard]] const gamedata::NavTile* tile_of(std::int32_t cellX, std::int32_t cellY) const;
+    /** @return The number of floors of a cell, or -1 when the world does not have its tile. */
+    [[nodiscard]] int spots(std::int32_t cellX, std::int32_t cellY, gamedata::NavSpot* out) const;
+    /** @return True when the cell has a floor that a creature at `height` steps to: `out` gets it. */
+    [[nodiscard]] bool step_to(std::int32_t cellX, std::int32_t cellY, float height, Place& out) const;
+    /** @return True when a creature can go on the straight line from one place to a different one. */
+    [[nodiscard]] bool walk_line(const Place& from, const Place& to) const;
+    /** @return The free floor that is nearest to a position: not farther than `reach` in the plane and `heightReach` in the height. */
+    [[nodiscard]] std::optional<Place> snap(const state::WorldPosition& position, float reach, float heightReach) const;
+    [[nodiscard]] state::WorldPosition center_of(const PathCell& cell) const;
+    /** @return The height of the floor at an exact place: the floor of the cell that is nearest to `height`. */
+    [[nodiscard]] std::optional<float> floor_at(float x, float y, float height, bool walkableOnly) const;
+
+    void want(std::int32_t tileX, std::int32_t tileY, WorldClock::time_point now);
+    void want_around(const state::WorldPosition& position, float distance, WorldClock::time_point now);
+    void update_wanted();
+    void insert(std::uint64_t key, std::shared_ptr<const gamedata::NavTile> tile, std::chrono::nanoseconds time);
+    void take_loaded();
+    void loader_main();
+    /** Makes the links of the edge between a tile and the tile to its east (`side` 0) or to its north (`side` 1). */
+    void link_edge(Held& low, const Held& high, int side) const;
+    /** Makes the links of the four edges of a tile that came, or removes those of a tile that goes. */
+    void link_tile(std::int32_t tileX, std::int32_t tileY, bool there);
+    /** The areas of the tiles that have a way between them over a tile edge: from the links of each edge. */
+    void link_areas() const;
+    [[nodiscard]] std::uint64_t area_of(const Place& place) const;
+    [[nodiscard]] bool connected(const Place& from, const Place& to) const;
+
+    void run_searches();
+    /** Makes the path of a search the path of its creature. */
+    void finish_search(EntityId mover, bool found, std::vector<PathCell> path);
+    /** Moves a creature along its path. */
+    [[nodiscard]] NavStep follow(Route& route, const state::WorldPosition& from, float distance);
+    /** The step with no navigation data: the straight line on the terrain. */
+    [[nodiscard]] NavStep terrain_step(const state::WorldPosition& from, const state::WorldPosition& goal, float distance) const;
+
+    World& m_world;
+    const gamedata::NavigationData* m_data;
     gamedata::Terrain* m_terrain;
+    const bool m_threaded;
+    gamedata::NavAgent m_agent;
+
+    std::unordered_map<std::uint64_t, Held> m_tiles;
+    /** The tile of the last query. */
+    mutable std::uint64_t m_lastKey{~0ULL};
+    mutable const gamedata::NavTile* m_lastTile{nullptr};
+    /** The areas of the tiles: an area of a tile to the area that it has a way to. Made again after a change of the tiles. */
+    mutable std::unordered_map<std::uint64_t, std::uint64_t> m_areaParent;
+    mutable bool m_areasCurrent{false};
+    std::optional<WorldClock::time_point> m_lastWant;
+
+    std::unordered_map<EntityId, Route> m_routes;
+    /** The creatures whose search waits, in their sequence. */
+    std::deque<EntityId> m_queue;
+    std::unique_ptr<Search> m_search;
+    EntityId m_searchMover{0};
+
+    // The thread that reads the tiles. The mutex protects the two lists and the stop mark.
+    std::thread m_loader;
+    std::mutex m_loaderMutex;
+    std::condition_variable m_loaderWake;
+    std::deque<std::uint64_t> m_requests;
+    std::vector<Loaded> m_loaded;
+    bool m_loaderStop{false};
+
+    mutable NavigationCounts m_counts;
+    LoadMeter m_searchLoad;
+    LoadMeter m_tileLoad;
 };
 
 } // namespace soulwarden::backend::world

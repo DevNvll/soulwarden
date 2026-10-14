@@ -32,6 +32,8 @@ constexpr std::size_t kTileBytes = static_cast<std::size_t>(kTileSide) * kTileSi
 constexpr std::uint32_t kMaxTileStream = 65536;
 /** The world has 7 by 7 regions: a region number above this is not a region. */
 constexpr std::uint32_t kMaxRegion = 255;
+/** The terrain of the world is not higher than this (meters): a file with a larger scale is not a height file. */
+constexpr float kMaxScale = 4096.0F;
 
 std::uint32_t read_u32(const std::uint8_t* bytes) {
     return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8)
@@ -83,7 +85,7 @@ HeightMaps::Region& HeightMaps::region(std::uint32_t x, std::uint32_t y) {
     }
     std::uint32_t bits = read_u32(header + 24);
     std::memcpy(&opened.scale, &bits, sizeof(opened.scale));
-    if (!std::isfinite(opened.scale) || !(opened.scale > 0.0F)) {
+    if (!std::isfinite(opened.scale) || !(opened.scale > 0.0F) || opened.scale > kMaxScale) {
         opened.file.close();
         ++m_counts.filesNotThere;
         return opened;
@@ -176,7 +178,12 @@ std::optional<float> HeightMaps::height(float x, float y) {
     const float partY = inY - static_cast<float>(lowY);
     const float south = at(lowX, lowY) + (at(lowX + 1, lowY) - at(lowX, lowY)) * partX;
     const float north = at(lowX, lowY + 1) + (at(lowX + 1, lowY + 1) - at(lowX, lowY + 1)) * partX;
-    return (south + (north - south) * partY) * samples->scale / 65535.0F;
+    const float height = (south + (north - south) * partY) / 65535.0F * samples->scale;
+    // No height that is not a height of the world goes to the navigation.
+    if (!std::isfinite(height) || height < 0.0F || height > kMaxScale) {
+        return std::nullopt;
+    }
+    return height;
 }
 
 } // namespace soulwarden::backend::gamedata

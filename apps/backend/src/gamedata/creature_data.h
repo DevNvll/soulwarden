@@ -78,7 +78,29 @@ struct CreatureContact {
     DamageCategory category{DamageCategory::direct};
     /** Name of the damage row of the game. For a log line only. */
     std::string row;
+    /**
+     * True: the contact is `kContactGap` or less after the contact before it. The two are one
+     * hit (two hit volumes of one swing), and the world does not test this one. The backend
+     * sets it at the load of the data.
+     */
+    bool repeat{false};
 };
+
+/**
+ * Rules of this project for the attacks of a slice (the game files have no rule for them; the
+ * behavior of the creatures uses them, world/behavior.h).
+ *
+ * Two contacts of one attack that are this near in time are one hit (seconds): 242 of the
+ * 2,091 attacks of the supported build have two contacts with the same damage row at the same
+ * time, for the two hit volumes of one swing.
+ */
+inline constexpr float kContactGap = 0.15F;
+/**
+ * A heavy attack: the sum of the damage parts of its hits is more than `kHeavyRatio` times the
+ * smallest sum of the attacks of its slice, and more than `kHeavyWeight`.
+ */
+inline constexpr float kHeavyRatio = 1.5F;
+inline constexpr float kHeavyWeight = 0.5F;
 
 /** One attack of a slice: an action of its action table with one contact or more. */
 struct CreatureAttack {
@@ -86,7 +108,13 @@ struct CreatureAttack {
     std::uint32_t action{0};
     /** The time of the action, in seconds: the creature starts no other action before its end. */
     float length{0.0F};
+    /** The contacts, in the sequence of their times (the backend sorts them at the load of the data). */
     std::vector<CreatureContact> contacts;
+    /** The sum of the damage parts of its hits (a contact with `repeat` is no hit), and the number of the hits. */
+    float weight{0.0F};
+    std::uint32_t hits{0};
+    /** True for a heavy attack of its slice (`kHeavyRatio`, `kHeavyWeight`). */
+    bool heavy{false};
 };
 
 /** One slice of a creature. */
@@ -172,6 +200,9 @@ struct CreatureSlice {
     std::optional<CreatureBehavior> behavior;
     /** The attacks of the slice. Empty: a creature with this slice does not attack. */
     std::vector<CreatureAttack> attacks;
+    /** The indexes of its attacks that are not heavy, and of its heavy attacks, in the sequence of the data. */
+    std::vector<std::uint32_t> lightAttacks;
+    std::vector<std::uint32_t> heavyAttacks;
 
     /** @return True when a creature with this slice gets a target and attacks it: the slice has a sense, a speed, and an attack. */
     [[nodiscard]] bool fights() const {

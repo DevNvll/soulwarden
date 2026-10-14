@@ -3476,19 +3476,32 @@ no floor (4.14): a creature that walks needs the height of the ground at each st
 - The heights of the tool are equal to the terrain heights of the research at six places
   (`creatures.md`: the terrain at spawn points of the start area, for example 136.54 at
   `8816.58 4288.17` and 140.11 at `8815.25 4319.13`).
+- From stage 3.4d the samples of these files are the terrain after the cookies of the
+  placements (4.19): the client changes the height map near some placements, and the tool
+  takes the changed samples of the navigation tool when they are there
+  (`SOULWARDEN_NAVIGATION_WORK/terrain/REGION.u16`; `tools/gamedata/navigation.sh` makes the
+  folder `heights` again at its end). The reader for a spawn point (`Terrain.height`) and
+  the files give one height for each place: in stage 3.4b the reader took a wrong sample in
+  the last half meter at the east edge of a region with no region to its east
+  (`tools/gamedata/check_heights_tool.py`, test case RF10).
 - **The terrain is not each floor.** A floor of a building, a bridge, a rock, and a cave
   are not in the height maps. Thus the project rule: a creature walks only when its spawn
   point is 1.0 m or less from the terrain height (`gamedata::kTerrainTolerance`). A
   creature whose spawn point is farther from the terrain does not leave its place: it
   turns to its target, and it attacks a target that is in the reach of its attack. Counts
-  of the file: 21,630 of the 32,840 spawn points are 0.3 m or less from the terrain, and
-  24,419 are 1.0 m or less from it. Of the 24,228 spawn points of kinds that fight, 6,893
-  are more than 1.0 m from the terrain: their creatures do not leave their place. The
-  backend log has these counts at the data load.
+  of the file of stage 3.4b: 21,630 of the 32,840 spawn points are 0.3 m or less from the
+  terrain, and 24,419 are 1.0 m or less from it. Of the 24,228 spawn points of kinds that
+  fight, 6,893 are more than 1.0 m from the terrain: their creatures do not leave their
+  place. With the terrain after the cookies (stage 3.4d) the counts are 22,312 and 24,797.
+  From stage 3.4d this rule is the rule only at a place with no navigation data: with the
+  data a creature walks when it stands on a free floor (4.19), and 1,207 spawn points of
+  kinds that fight do not walk.
 - A creature of a command (`tools/world creature spawn`) near a character that stands on
   the terrain (1.0 m or less) stands on the terrain at its own place: the ground is not
   level. Near a character that is not on the terrain (a floor), it gets the height of the
-  character, as before, and it does not walk.
+  character, as before, and it does not walk. With navigation data (stage 3.4d) the ground
+  of the command is the floor of the data: a creature near a character on a floor gets the
+  floor at its own place that is nearest to the height of the character, and it walks.
 
 **The two functions of the navigation** (`world/navigation.h`; the place of the path search
 of stage 3.4d). The behavior asks only these two functions for a place:
@@ -3610,18 +3623,17 @@ largest vision distance of the data around each character).
 
 **Not known, not done.**
 
-- No path search and no walls: a creature goes on the straight line, through a wall and
-  through a rock, and it sees a character through a wall (stage 3.4d). On a steep hill it
-  follows the terrain with its full speed.
-- A creature that walks stands on the terrain. A creature whose spawn point is on a floor
-  that is 1.0 m or less above the terrain (the Fallow Scavenger of the hut) walks below
-  its floor. A creature on a higher floor, on a bridge, or in a cave does not leave its
-  place (6,893 spawn points). Stage 3.4d puts the floors of the navigation data behind
-  `ground_height`.
+- From stage 3.4d (4.19) a creature goes on a path of the navigation data, stands on its
+  floor, and does not see through a wall. What this section says about the straight line,
+  about the terrain height of a spawn point, and about the pause and the sequence of the
+  attacks is the rule of stage 3.4b: it is the rule now only at a place with no navigation
+  data. The rules of stage 3.4d for the shelter of a character, the health that comes back,
+  the hits of an attack, light and heavy attacks, and the crowd are in 4.19.
 - The reach of an attack is a project value, not the shape of the game. The attack list of
   a slice has each action that passes the rule: a slice can have an attack that the
   original behavior used only in a special condition (the kick and the ground pound of a
-  miner), and the sequence of the attacks is the sequence of the file.
+  miner). The sequence of the attacks is a project rule (4.19: the light attacks in the
+  sequence of the file, and a heavy attack after each three of them).
 - The client moves the body of a creature in some attacks (root motion), and the backend
   does not move the entity.
 - The weapon of a creature does not show in its hand (the Siltboot Deckhand has an axe in
@@ -3630,8 +3642,9 @@ largest vision distance of the data around each character).
   no flee behavior (a rabbit stands).
 - The 859 kinds with no attack stand. 372 of them name a damage row that their damage
   table does not have: the row can be in a different table.
-- A creature attacks a character at a travel place and at a respawn place when it sees it
-  (a Highlands Goat of level 62 is 8 m from the Shrine of Pillars).
+- A creature near a travel place or a respawn place attacks a character there 10 s after
+  the character came (the shelter of 4.19; a Highlands Goat of level 62 is 8 m from the
+  Shrine of Pillars).
 
 ### 4.18 Health and death of a character: damage of a creature, the death screen, the respawn (behavioral proof; the rules are project rules)
 
@@ -3775,9 +3788,9 @@ vitals state of the character (slot 41, type 15; 4.5).
 - The original time to the respawn screen, the original respawn places, and the loss of
   the original game at a death (the durability of the equipment) are not known. The row
   "Random Location" is the only row of the list.
-- No regeneration of the health, no food, no potion effect, and no combat state: the
-  health of a character changes only by a creature, by a command, and at a respawn (the
-  health potion of the quick slot has no effect yet).
+- From stage 3.4d the health of a character that is not in a fight comes back (4.19: 3
+  percent of the maximum each second, 6 s after the last damage). No food, no potion effect,
+  and no combat state of the client: the health potion of the quick slot has no effect yet.
 - The character has no reaction to a hit (a stagger): the backend starts no action for the
   character.
 - Damage numbers of more than one contact at one time are on top of each other on the
@@ -3785,20 +3798,423 @@ vitals state of the character (slot 41, type 15; 4.5).
 - The flags of message 3601 other than bit 1, and the fields of `vitalsData` after its
   first byte (the "death's door" condition of the game: the backend sends 0).
 
+### 4.19 The navigation data: where a creature can stand, its path, and its sight (static proof for the game files; live proof for the terrain rule, the agent values, and what the client shows; the rules are project rules)
+
+Stage 3.4d. Research: `~/Games/soulwarden/work/research/navigation.md`. The extraction of the
+collision data: `~/Games/soulwarden/work/evidence/navigation-data/implement/RESULT.md`. The
+live checks and the live proof of this stage:
+`~/Games/soulwarden/work/evidence/path-search/implement/` (`checks/CHECKS.md` with the checks
+C1 to C14, `proof/N12-*`, `data/`). Code: `world/navigation.h` (the rules of the path and
+their constants), `gamedata/navigation_data.h` (the reader of the files), `world/behavior.h`;
+tools `tools/gamedata/navigation.sh` (`navigation_data.py`, `collision_data.py`,
+`nav_assets.py`, `nav_slices.py`, `nav_shapes.py`, `nav_terrain.py`, `navcore.cpp`,
+`nav_file.py`) and `tools/research/nav_draw.py`.
+
+**What the game copy has, and what is a rule of this project.** The navigation mesh of the
+game was on its server: no file of the game copy has it (research). The client stops its own
+character at each wall: thus the game copy has the collision shapes of the world, and it has
+the marks that the level designers made for the navigation mesh of the server. The tool makes
+the navigation data of the backend from these. The formats of the game files below are
+contracts of the supported build. The size of a creature, the cell of the data, the path
+search, and the sight rule are project rules.
+
+**The sources of one region.** A region is a square of 2048 m (`r_+XX_+YY` starts at
+x = XX * 2048, y = YY * 2048; 49 regions). The files are below
+`sharedassets/coatlicue/newworld_vitaeeterna/regions/REGION/` in the pak files.
+
+| Source | What the tool takes | World |
+| --- | --- | ---: |
+| `region.heightmap` | the terrain: 2048 by 2048 samples | 49 files |
+| `capitals/L/L.capitals.json` | the placements of a layer: the cookies of the terrain (below), and each slice that a placement names (a placement with the slice name `<PLOT>` is in the chunks already) | 85,430 placements with a slice |
+| `region.waterqt` | the water surface and the floor below it | 99.8 km2 of water |
+| `region.chunks` and the chunk slices | the colliders of the static objects (a chunk slice has the objects of one square of a layer; `chunkType` 2 is a collision chunk) | 1,167,268 collider placements |
+| `region.distribution` | the trees and the stones: a slice with a variant for each row | 2,728,908 rows |
+| `region.slicedata` | the meshes of a slice with a variant | 71,887 entries |
+
+`region.vegetation` has only the grass, the ferns, and the brambles (172.8 million instances,
+no physics file): not a source. Live check C7: the player walks through a bramble.
+
+**A solid body** (static proof: the activation of the two component sets at the image
+addresses `0x17320E0` and `0xBB0530`). A render mesh is not a solid. A body is an entity of a
+slice with one of these component sets:
+
+| Component | Type id | What gives the shape |
+| --- | --- | --- |
+| game rigid body | `5ba2d1fc-db9d-4b81-88c9-89787d5c19f1` | `m_configuration`: `m_collisionType` 0 with `m_rnrAsset` (a physics file); type 0 with no `m_rnrAsset` (the physics file of the mesh of the same entity: the product of the same source asset whose path is the mesh path with the ending `.rnr`); type 1 (the simple shapes of `m_collisionShape`, with the offset `m_center`) |
+| engine static physics with a mesh collider | `95d89791-6397-41bc-aac5-95282c8ad9d4` and `2d559eb0-f6fe-46e0-9fce-e8f375177724` | the physics file of the mesh of the entity |
+| engine static physics with a primitive collider | `95d89791-...` and `9cb3707a-73b3-4ee5-84ea-3cf86e0e3722` | the shape component of the entity: box `5edf4b9e` (`Dimensions`, the full size), sphere `e24cbff0` (`Radius`), cylinder `b0c6aa97` and capsule `967ec13d` (`Height`, `Radius`) |
+
+- The simple shapes of `m_collisionShape`: `c6651a66` (`m_box`) and `27462017` (`m_aabb`) are
+  boxes with the half size on each axis (static proof `0x169DB60`), `7f2ef312` is a sphere
+  (`m_Radius`), `709b11ea` is a capsule along z (`m_Height`, `m_Radius`).
+- The place of an entity in its slice is `m_worldTM` of its transform component (`484ae67d`:
+  12 numbers, the three basis vectors and the translation). It is relative to the root of the
+  slice, not to the parent entity (live check C1: the wall of the start settlement is at its
+  data place only with this rule). The transform of an entity of a chunk slice is relative to
+  the `WorldPosition` of its chunk.
+- An engine collider with no static physics component is no solid (a trigger). A static
+  physics component with `EnabledInitially` 0 is no solid at the start (static proof
+  `0xCC1D20`).
+- A slice can make other slices: the spawner component `b52d0d52-99cd-41be-b6f7-d2519c15bf14`
+  (`m_sliceAsset`, `m_sliceVariant`, `m_spawnOnInitialize`). The tool places the slice of a
+  spawner only when `m_spawnOnInitialize` is 1. Live checks C5 and C13b: the crafting stations
+  of the settlement and the gate of a fort (spawners that are off at the start) do not show
+  with this backend, and the player walks through their places.
+- The collision filter of a body is a text (`m_strFilter`, `CollisionFilter`). The file
+  `sharedassets/physics/default.collisionfilters` has 76 categories and 209 filters
+  (`InheritsFilters`, `IsCategories`, `CollideWithCategories`). Two bodies collide when a
+  category of one of them is in the "collide with" list of the other one (inferred from the
+  data). The filter of a creature is `AI`: it collides with `Character`, `CharacterOnly`,
+  `Static`, `Structure`, and `Terrain`. The navigation data has only the placements that stop
+  a creature (`Structure` 1.22 million, `Tree` 0.45 million, `Static` 0.29 million,
+  `Static_NotTraversable`, `CharacterOnly`, `House`, and others).
+
+**The physics file `.rnr`** (static proof: the reader at `0xCC6500`, one shape at `0x10F7920`;
+little-endian; 10,620 files in the game copy).
+
+| Part | Layout |
+| --- | --- |
+| header | magic u32 = `0x1234ABCD`, version u32 (6 or 7), set count u32 |
+| surface set | text size u32, text, count u32, u16 * count |
+| after the sets | 16 bytes; flag u8 (version 5 and more); u8 (version 7 and more); with the flag: count i16, u16 * count |
+| shapes | shape count u8, then the shapes: type u32, body, user size u32, user data (empty, or 48 bytes: a 3 by 4 matrix of f32, the transform of the shape in the file). The first shape is the collision shape |
+
+| Type | Shape | Body |
+| ---: | --- | --- |
+| 1 | box | half size 3 f32, margin f32 |
+| 2 | sphere | radius f32 |
+| 3 | convex hull | vertex count u32 (31 bits), plane count u32, vertices 3 f32, planes 4 f32, margin f32, adjacency flag u8 |
+| 5 | cylinder | end point 3 f32, end point 3 f32, radius f32, margin f32 |
+| 7 | capsule | end point 3 f32, end point 3 f32, radius f32 |
+| 10 | mesh | version u32 (100), vertex count u32, triangle count u32, vertices 3 f32, indexes 3 u16 for each triangle, flag u8 (with it: 3 u16 for each triangle), tree size u32, tree bytes |
+| 11 | compound | count u32, then for each child: a 3 by 4 matrix of f32 and a shape |
+
+14,278 of the 16,900 meshes are closed surfaces: the tool fills a closed mesh as a solid (a
+travel into a rock of the data puts the character into the shell of the rock, live).
+
+**The terrain.** `region.heightmap` is a TIFF file: 2048 by 2048 samples of 16 bits, LZW in
+strips of 4 rows, horizontal predictor. The sample of the local place (x, y) is in the row
+2047 - y and the column x, and the height is sample * 2048 / 65535 m. The height at a place
+is between the four samples around it.
+
+**The terrain is not the height map near some placements: the cookies** (static proof with
+the addresses below; live proof C14 and C13a). A placement of a capitals file can have the
+member `cookie` (`innerRadius`, `outerRadius`, `maxHeightBlend`, `edgeNoise`,
+`edgeNoiseFeatureSize`, `groundNoiseScale`; the reader `0x69B42D0` gives the defaults 0.5,
+8.0, and 0.5 to the three noise keys). The client changes the 16 bit samples of a region one
+time, directly after it read the file (`0x69E7360` calls `0x6A26A70`), so that the terrain
+near the placement goes to the height of the placement:
+
+- Only the cookies of the placements of the same region, with `maxHeightBlend` above 0,
+  sorted by their height with the lowest one first (`0x69B0440`). Each cookie changes the
+  samples that the cookies before it changed.
+- One cookie (`0x6A23AC0`) changes the samples of a square with the half side
+  1.5 * outer - 0.5 * inner around its place. For the sample (i, j) the client computes the
+  values at the place origin + (i + 1, j + 1): a shift of 1 m.
+- The values at one place (`0x6A197F0`): the target height is the height of the placement
+  plus (a + b - 1) * `groundNoiseScale`, where a and b come from two sums of noise (the
+  function `0x6A023B0`). The weight goes from 1 at the inner radius to 0 at the outer radius
+  with a smooth step, and the edge noise (`0x69F72E0`) moves the place and the radius by
+  (outer - inner) * `edgeNoise` / 2 at most. The new sample is old + (target - old) * weight
+  * blend.
+- The noise is a texture of 1024 by 1024 values (read at `0x6A29B10`) that the client makes at
+  its start (`0x6A0E2E0`, `0x6A03D70`) from OpenSimplex noise in 4 dimensions on a torus, with
+  the constant seed 77374 (`0x6A208C0`, `0x6A1CF50`). The tool makes the same texture with the
+  same public noise code (`tools/gamedata/vendor/open-simplex-noise`, public domain), and the
+  program must be compiled with no joined float operations (`-ffp-contract=off`).
+- Evidence: the height of the 760,708 vegetation instances near a cookie of the start region
+  (an instance has the height of the live ground). The median difference to the terrain goes
+  from 0.109 m (the plain height map) to 0.016 m (with the rule), and the 90 percent value
+  from 1.819 m to 0.032 m. Five live positions of the player agree with the rule (0.043 m at
+  most; -1.44 m to +1.08 m with the plain height map). The world has 5,235 cookies. The den
+  of a bear at (10788.69, 4504.78) is 4.7 m below the plain height map (C13a): a cookie, not a
+  hole in the terrain.
+- The exact sequence of the float operations is in `nav_terrain.py` and in the command
+  `cookies` of `navcore.cpp`. The terrain heights of the game data folder (`heights`) and the
+  terrain height of each spawn point of the creature file are made from the terrain after the
+  cookies: 3,143 of the 32,840 spawn points got a different terrain height (1,239 by more than
+  1.0 m).
+
+**The water.** `region.waterqt` is an object stream with `regionSize` (2048) and
+`quadtreeNodes`: a node has `Height` (the water surface), `FloorHeight`, and `Flags`. The
+nodes are in level order, a node with the height 65535 has four children in the sequence
+(0, 0), (1, 0), (0, 1), (1, 1), and the smallest square is 1 m (static proof `0x69DA800`).
+The terrain below the ocean level (`oceanLevel` 40.0 of `terrain.json`) has water too.
+
+**The navigation marks of the level designers** (static proof: the names of the areas at
+`0x39A1460` and `0x39DC880`). The navigation obstacle mesh component
+(`500a7bfe-52fe-aa45-6b0e-b1253a4d7bf7`) has `m_navArea` (0 UNWALKABLE, 3 UNWALKABLE_SOLID, 8
+WALKABLE_SOLID, 63 WALKABLE, 4 to 7 jump links), `m_meshSource`, and `m_registerWithNavMesh`.
+The tool uses two forms: a mark with the areas 0 or 3 and the source 3 (the rigid body of the
+same entity) makes the top of that solid no floor; a mark with the areas 0 or 3 and the
+source 6 (`m_inlineShape`, a list of simple shapes) is a volume with no solid in which no
+floor is free. The areas 8 and 63 change nothing. A mark with a different source is not read
+and counted (472,809 with the source 0).
+
+- **The gates of a settlement are closed for a creature.** The start settlement has three such
+  volumes, each one in a gate of its wall ((8904.68, 4297.39), (8814.05, 4210.92), and
+  (8894.8, 4146.5); boxes of 10 m by 3 m by 10 m and of 14 m by 3 m by 10 m). With these
+  marks no creature has a way into the settlement, as in the game. The player walks through
+  the gates (C2). Live proof: a wolf 8 m outside the north gate sees a character in the gate,
+  finds no way, and stays; it attacks a character that stands at the outer edge of the gate.
+
+**What the tool leaves out** (each count is in `navigation.json`): the navigation marks with
+a source that the tool does not read (472,809); the spawners that are off at the start
+(466,804: the trunk of a cut tree, the gates of a fort, the crafting stations, quest objects);
+a variant with no entry in `region.slicedata` (21,159); a collider whose mesh has no physics
+data (2,759) or no shape (2,528); a physics file or a mesh that is not in the game copy (569);
+and 300 others.
+
+**The agent: the size of a creature** (project values; one size for each creature; the tool
+has them as defaults, and each file has them in its header).
+
+| Value | Number | Cause |
+| --- | ---: | --- |
+| Cell of the file | 0.25 m | The analysis has a cell of 0.125 m, and a cell of the file is 2 by 2 analysis cells: an opening of 0.7 m stays open, and the data of the world are 1.2 GB |
+| Radius | 0.35 m | The player stops 0.44 m from a wall face (C1) and goes through the opening of the railing of the porch (C3). A radius of 0.44 m closes that opening in a grid of 0.125 m |
+| Height | 1.8 m | The height of a person: a creature does not go below a floor that is lower |
+| Step | 0.35 m | The player goes up steps of 0.2 m and not up an edge of 0.37 m (C9) |
+| Slope | 50 degrees | The player walks up terrain of 51 degrees (C10) |
+| Wade | 1.2 m | The player walks on the floor of a pond in water of 0.97 m, and the spawn points of the creatures of that pond are on that floor (C11) |
+
+**How a region becomes navigation data** (`navcore.cpp`, one tile of 64 m at a time with a
+border):
+
+1. Each triangle of each collider that stops a creature becomes spans: for each analysis
+   column that it touches, its height interval. A convex shape and a closed mesh are solids.
+   The terrain (after the cookies) is one span for each column.
+2. The top of a span is a floor when its surface is not steeper than the slope limit and the
+   free height above it is the agent height or more. A floor is free when no span of a column
+   nearer than the agent radius is in the height interval of the body (from the step height
+   to the agent height above the floor).
+3. The navigation marks: the top of a solid with the mark "not walkable" is no floor, and no
+   floor is free in a cut volume.
+4. A floor below the water surface gets a water mark: shallow (the wade limit or less) or
+   deep. A creature does not walk on a floor in deep water.
+5. A cell of the file has the free floors of its four analysis cells (floors that are 0.25 m
+   or less from each other are one floor): one place can have 16 floors.
+6. The sight: each floor has the height interval above it that is free in all four analysis
+   cells. A cell with no free floor has its surfaces as floors with the mark "blocked", so
+   that the sight over a wall has its interval too.
+
+**The file of a region** (`r_+XX_+YY.swnav` in the folder `navigation` of the game data
+folder; all numbers little-endian; a project format):
+
+```
+file      := header directory tile*
+header    := "SWNV" version:u32 (3) regionX:i32 regionY:i32
+             cell:f32 radius:f32 height:f32 step:f32 slope:f32 wade:f32   (the agent)
+             tileCells:u32 (256) tilesPerSide:u32 (32) ocean:f32
+             heightScale:f32 (the terrain height of the sample 65535: 2048) reserved:u32 * 2
+directory := (offset:u64 size:u32 plainSize:u32) * 1024      (index = tileY * 32 + tileX)
+tile      := one zlib stream of: terrain runCount:u32 run* extraCount:u32 extra*
+terrain   := u16 * 65 * 65: the terrain samples at the whole meters of the tile, each one as
+             the difference to the sample to its west (the first sample of a row: to the first
+             sample of the row to its south), 16 bits with wrap
+run       := code:u8 length:u16: the same code for `length` cells, row by row
+             0 no floor; 1 one free floor, the terrain surface, the sky above it; 2 the same
+             below shallow water; 3 the same below deep water; 4 the terrain surface, no place
+             for a creature; 4 + n: n floors follow in the extra list for each cell of the run
+extra     := height:u16 (1/32 m) flags:u8 sightLow:u8 (1/8 m) sightHigh:u8 (1/4 m)
+             flags: 1 the terrain surface, 2 shallow water, 4 deep water, 8 blocked.
+             The sight is free from height + sightLow to height + sightHigh
+             (sightLow 255: no free interval; sightHigh 255: the sky)
+```
+
+One file has 32 by 32 tiles of 64 m, and each tile is one zlib stream: the backend reads only
+the tiles near the players. `navigation.json` of the folder has the list of the regions, the
+agent values, each thing that the tools left out, the time, and the memory of the tool. The
+backend reads the header and the directory of each file at its start and refuses a folder
+with a file that is not correct (a wrong version, a region that is not the region of the file
+name, agent values outside their limits or not the same in each file, a directory entry
+outside the file): it then works with no navigation data, and the log says so. A tile that
+does not decode is refused alone (`0 with no data` of the line `navigation:`): a creature
+there walks by the rule of the terrain.
+
+**Numbers of the supported build.** The data of the world: 49 regions, 1,218,738,457 bytes
+(the largest region 76.9 MB, a region of open sea 2.2 MB), 3.08 billion free floors, 2,320,424
+placements, 5,235 cookies. The tool needs 43 minutes with 8 processes (the largest process
+1.7 GB) and 2.1 GB of work files. A second run makes only the regions that are not complete.
+The terrain heights after the cookies: 142 MB.
+
+**The navigation of the world** (`world/navigation.h`; project rules, each constant in the
+namespace `world::navigation_rules`). The behavior of a creature gets each place from two
+functions, as in stage 3.4b; their bodies changed:
+
+- `ground_height(position)`: the height of the floor of the navigation data that is nearest
+  to the height of the position (one place can have more than one floor). With no tile of
+  the place: the terrain height of the folder `heights`.
+- `next_step(creature, from, goal, distance)`: the place after one step on the path of the
+  creature. The result is a place (`moved`), "the creature waits" (the tile of its place is
+  not read yet, or its search waits), "no way", or "no ground" (the creature stands on no
+  free floor).
+- **The tiles.** One time each 500 ms the world asks for the tiles that are 96 m or less from
+  each character and 32 m or less from each creature on a path. A thread of its own reads
+  them (the world thread reads no file), and the world takes them at the start of a tick. A
+  tile that no one asked for in 10 s is removed. A creature whose tile is not there yet waits.
+- **The areas.** The reader gives each free floor of a tile the number of its area (the floors
+  that have a way to each other with steps of the step height or less). The world joins the
+  areas of two tiles over their common edge when a tile comes. A goal in a different area has
+  no way: the answer needs no search.
+- **The search.** First the straight line: when each cell on the line has a floor that the
+  creature can step to, the path is the line. If not: A* on the cells (8 directions; a
+  diagonal step needs its two side steps; a floor in shallow water costs 2 times). All
+  searches of one tick of the world make 4,000 steps at most, and one search makes 60,000
+  steps at most: the other searches wait in a queue, and a search continues in the next tick.
+  A path that needs more steps is "no way" (the navigation does not look again for 3 s).
+- **A new path.** The creature keeps its path while its goal is 1.0 m or less from the goal
+  of the path. For a goal that moved more, the creature goes on with its old path while the
+  new search runs, and the new path starts at a cell 12 cells ahead.
+- **The step.** A creature goes to the farthest cell of its path that it can reach on a
+  straight line. A step ends at such a corner of the path: the client moves a creature on
+  the straight line between two of its movement states, and a line over a corner would go
+  through the solid there.
+- **Which creature walks** (replaces the rule "1.0 m or less from the terrain height" of
+  4.17): a creature walks when a free floor of the data is 0.5 m or less from its place in
+  the plane and 0.6 m or less in the height. The world asks one time, when the tile of the
+  creature is there: until then the creature has no answer. A creature on no free floor does
+  not leave its place: it turns to its target and attacks in its reach.
+- **The sight.** A line from 1.5 m above the feet of the creature to 1.5 m above the feet of
+  its target: each cell on the line must have a free interval at the height of the line. An
+  object lower than 0.5 m above a floor does not stop it. With no tile, nothing stops the
+  sight. The vision rule and the start of an attack use it: a creature does not take a
+  character behind a wall as its target, and it does not attack through a wall.
+- **With no navigation data** (no folder, a folder that is not correct, a region with no
+  file, a tile that is not correct): the rule of stage 3.4b for that place (the straight line
+  on the terrain of the folder `heights`, and no wall stops the sight). The log of the
+  backend says at its start which one it has.
+- The world measures the navigation (`World::load`, the line `navigation:` of `tools/world
+  list`): the tiles and their bytes, the time of the tile reads, the searches and their
+  steps, the time of the searches of a tick, the goals with no way, the largest queue, and
+  the sight tests. No rule of the world reads these values.
+
+**The behavior of a creature with the navigation** (changes of 4.17; `world/behavior.h`):
+
+- A creature whose target has no way to it (a different area, a search with no path in its
+  limit, the end of its path with the target not in its reach) loses its target and goes to
+  its home, and its vision does not take that character again for 8 s. A hit of the
+  character gives the target again.
+- The way home is a path too. With no way home the creature is at its home in one step.
+- **Water and steep ground.** A creature walks in water that is 1.2 m deep or less, and its
+  path prefers dry ground (a cell in water costs 2 times). A floor in deeper water is no
+  place for a creature: a character that swims has no way to it for a creature, and the
+  creature loses its target. A creature does not go up or down ground that is steeper than
+  50 degrees, and it does not step up or down more than 0.35 m: it goes around. A character
+  on a rock or on a roof with no way up is safe from a creature with a melee attack.
+
+**The rules for a fight that a player can play** (stage 3.4d; project rules;
+`world/behavior.h`, `world/health.h`, `gamedata/creature_data.h`):
+
+- **The shelter.** For 10 s after a character came to a place (a world entry, a travel, a
+  respawn, a revive by a command) the vision of no creature takes it as a target. The time
+  starts when the client of the character reports its first position from the place (the
+  loading screen of the client is over), and it ends 60 s after the arrival at the latest. A
+  creature that has the character as its target loses it at a travel. A creature that the
+  character hurts takes it in this time too. The values are in the entity of the character
+  (`Entity::life`). Live: a character that travels to a place 9.0 m in front of an Ancient
+  Guardian Reaver is its target 10.1 s after the first position report.
+- **The rest.** A character that lives, and that took no damage and did no damage for 6 s,
+  gets 3 percent of its maximum health each second (`Health::tick`). A creature that takes
+  the character as its target, and each attack of a creature, starts the 6 s again. The
+  vitals table of the game has no value for this (`HealthBaseTickRate` is 0 for a player).
+- **The hits of an attack.** Two contacts of one attack that are 0.15 s or less from each
+  other are one hit: 242 of the 2,091 attacks have two contacts with the same damage row at
+  the same time (the two hit volumes of one swing), and in stage 3.4b each one was a damage
+  result.
+- **Light and heavy attacks.** The weight of an attack is the sum of the damage factors of
+  its hits. An attack is heavy when its weight is more than 0.5 and more than 1.5 times the
+  smallest weight of its slice (the lunge of a wolf: 0.7; its bite: 0.2). A creature makes
+  its light attacks in the sequence of the file, and one heavy attack after each three light
+  attacks. The pause after an attack is 1.5 s, and 2.5 s after a heavy attack (0.9 s in stage
+  3.4b).
+- **The crowd.** A creature does not end a step of its way to its target 0.5 m or less from a
+  different creature that lives: it makes a shorter step or waits, and it attacks from its
+  place when its target is in the reach of its attack. Creatures with the same target wait
+  for each other. A creature goes through a creature with a different target (or with none)
+  after 10 steps of waiting. The way home has no such rule.
+- Numbers of three live fights with a character of the level 26 (2,186 health, a sword of
+  the first tier, two pieces of light armor) and Grey Wolves of the level 18:
+
+| Fight | Stage 3.4b rules | Stage 3.4d rules |
+| --- | --- | --- |
+| One wolf, the character does nothing | dead after 24.4 s (92.8 damage each second; 5 bites, 4 lunges) | dead after 40.1 s (58.0 damage each second; 9 bites, 3 lunges) |
+| One wolf, the character makes light attacks and steps back (16 and 15 hits of the harness) | dead after 51.8 s (48.4 damage each second) | lives after 68.9 s with 158 health (29.4 damage each second) |
+| Three wolves, the character does nothing | dead after 10.4 s (228.7 damage each second) | dead after 11.7 s (199.5 damage each second) |
+
+**Which spawn points walk** (the report of `tools/gamedata/navigation.sh DIR --spawn-points
+creatures.json REPORT_DIR`): 31,296 of the 32,840 spawn points are on a free floor of the
+data. Of the 24,228 spawn points of kinds that fight, 23,021 walk (6,893 did not walk in
+stage 3.4b, by the rule of the terrain height). 1,207 do not walk: 545 are more than 0.6 m
+below the nearest free floor (below the ground, or in a solid of the data), 512 are more than
+0.6 m above it (on a mesh with no collision, or in the air), 86 are in deep water, 39 are on a
+surface that is no place for a creature, and 25 have no free floor at their place.
+
+**The load** (live, one character, the navigation data of the 49 regions). The backend start
+reads the 49 headers. One character has 16 tiles (9.1 MB to 11.3 MB); after a travel of
+6.4 km the world has the tiles of the two places for 10 s (32 tiles, 24.5 MB). The thread
+reads a tile in 4.8 ms to 7.0 ms on average (16.1 ms at most). The largest tick of the world
+with a world entry and two far travels: 9.6 ms (the tick of a travel writes the position row).
+A fight with five wolves on the stairs of a porch: 5 searches with 2,317 steps in one tick,
+7.4 ms; a search tick with the full 4,000 steps needs 2.2 ms to 6.1 ms. The peak memory of
+the backend process: 97 MB. For 50 characters at 50 different places the tiles need 0.5 GB
+to 0.65 GB (computed from 0.6 MB to 0.8 MB for each tile and 16 tiles for each place);
+characters at one place share their tiles. Test cases NV6 and NV10 have the limits.
+
+**The commands.** `tools/world path X0 Y0 Z0 X1 Y1 Z1 [--tsv FILE]` (route `GET
+/v1/dev/world/path`; a place can be the name of a character) prints the corners of the path
+between two places, its length, and the steps of the search. The command reads the tiles of
+the two places in the world thread: the largest tick of the line `load:` then has that time.
+`tools/world track CREATURE SECONDS [--tsv FILE]` prints the place of a creature each 200 ms.
+`tools/world list` has the line `navigation:`. `tools/research/nav_draw.py NAV_DIR X0 Y0 X1
+Y1 OUT.png --path FILE` draws the data from above with a path on it, and
+`tools/gamedata/nav_file.py at NAV_DIR X Y` prints the floors of one cell.
+
+**Not known, not done.**
+
+- The original navigation agent, the original path rules, and the original vision rule are
+  not known. One agent size is used for each creature: a large creature (a bear, a boss) goes
+  through an opening of 0.7 m, and its body is in the wall beside it.
+- The sight uses the collision shapes: an iron fence stops the vision of a creature as a
+  wall does (live: the yard fence of the start settlement), and a window does too.
+- No jump link, no drop from an edge, no climb: a creature has no way to a place that needs
+  a step of more than 0.35 m. The marks of the level designers for jump links (areas 4 to 7)
+  are counted and not used.
+- A path that needs more than 60,000 search steps is "no way": a target 5 m away behind a
+  cliff with a way around of 60 m or more is lost. Each such search uses the steps of 15
+  ticks, and the searches of the other creatures wait in that time.
+- A creature does not see a different creature as an obstacle of its path: the creatures of
+  one fight stand in a queue behind each other on a narrow way, and only the ones in the
+  reach attack. No creature goes around a different creature.
+- Objects that move, and objects of spawners that are off at the start (a door, a gate of a
+  fort, a crafting station), are not in the data. The client does not show them with this
+  backend.
+- The navigation marks with a shape of the designer that the tool does not read (the source
+  0: 472,809 marks), and the meaning of the sources 4 and 5.
+- A creature in the air or below the ground of the data (1,207 spawn points of kinds that
+  fight) does not leave its place. The list with the cause of each one is the report of the
+  tool.
+- No swimming creature and no flying creature: a creature of deep water stands.
+- The client moves a creature on the straight line between two movement states with its own
+  speed. On stairs the body follows the steps; on a path with many corners the walk can look
+  less smooth than in the game.
+
 ## 5. Open items
 
 - Creatures (4.14) fight from stage 3.4b (4.17): a creature sees a character, goes to it,
   attacks it, and goes back to its home. Open for them:
-  - No path search and no walls: a creature goes on the straight line and sees through a
-    wall, and it stands on the terrain. 6,893 spawn points of kinds that fight are more than
-    1.0 m from the terrain height (a floor, a bridge, a cave): their creatures do not leave
-    their place (stage 3.4d, with the navigation data).
+  - From stage 3.4d a creature goes on a path of the navigation data (4.19): around a wall,
+    up stairs, on the floor of a building, and through shallow water, and a wall stops its
+    vision. Open: one agent size for each creature, no jump link and no drop from an edge, a
+    path with more than 60,000 search steps is "no way", the creatures of one fight stand in
+    a queue on a narrow way, the objects of spawners that are off at the start (doors, gates
+    of a fort) are not in the data, and 1,207 spawn points of kinds that fight are on no free
+    floor of the data (their creatures do not leave their place).
   - 859 of the 3,848 kinds have no attack that the tool can use (8,612 spawn points): they
     stand. No patrol, no group aggression, no ranged attack, no magic, no ability, and no
     flee behavior.
-  - The reach of an attack of a creature is a project value, and the sequence of its
-    attacks is the sequence of the file. The backend does not move a creature in an attack
-    (the client moves the body in some attacks).
+  - The reach of an attack of a creature is a project value, and the sequence and the pause
+    of its attacks are project rules (4.19). The backend does not move a creature in an
+    attack (the client moves the body in some attacks).
   - A melee attack of a player hurts a creature (stage 3.2a, 4.15). Open for it: the items
     of "Not known, not done" of 4.15 (the kind of each attack, ranged weapons, critical hits,
     the size of a creature).
@@ -3817,8 +4233,9 @@ vitals state of the character (slot 41, type 15; 4.5).
     are not in the creature data.
 - The health and the death of a character (4.18). Open for them:
   - The damage rule of a creature attack is a project rule (the formula of the original
-    server is not known). No block, no dodge, no critical hit, no status effect, no stamina
-    cost, and no regeneration of the health.
+    server is not known). No block, no dodge, no critical hit, no status effect, and no
+    stamina cost. The health that comes back out of a fight, and the 10 s with no target
+    after a travel, are project rules too (4.19): the original values are not known.
   - The respawn place is the nearest travel place: the camps, the inns, and the houses of
     the respawn screen are system 2.6. The death has no cost (durability).
   - What the client of an observer shows for a dead remote player was not tested live.

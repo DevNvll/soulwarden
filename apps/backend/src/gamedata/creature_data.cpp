@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 
 #include <nlohmann/json.hpp>
 
@@ -31,6 +32,15 @@ constexpr float kMaxSpeed = 100.0F;
 constexpr float kMaxAttackTime = 60.0F;
 constexpr float kMaxReach = 100.0F;
 constexpr float kMaxDamageFactor = 1000000.0F;
+/**
+ * The largest damage and health of a level, and the largest health factor of a kind. With
+ * these limits each product of the damage rule (the damage of the level, the factor of the
+ * kind, the factor of a contact, and the factors of the combat tables) is a finite number:
+ * 1e9 * 1e6 * 1e6 is 1e21, far below the largest number of 32 bits (3.4e38).
+ */
+constexpr float kMaxLevelValue = 1.0e9F;
+/** The shortest attack: one millisecond, the step of the world clock of an attack. */
+constexpr float kMinAttackTime = 0.001F;
 /** Limits of a position of the world, in meters (the same as world/position_index.h). */
 constexpr float kMaxHorizontal = 1000000.0F;
 constexpr float kMaxVertical = 100000.0F;
@@ -454,6 +464,31 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
             }
         }
         slice.hitAction = slice.find_action(kHitAction);
+        // The hits of each attack, and its heavy attacks (project rules, creature_data.h).
+        slice.lightAttacks.clear();
+        slice.heavyAttacks.clear();
+        float lightest = std::numeric_limits<float>::max();
+        for (CreatureAttack& attack : slice.attacks) {
+            std::stable_sort(attack.contacts.begin(), attack.contacts.end(),
+                             [](const CreatureContact& a, const CreatureContact& b) { return a.time < b.time; });
+            attack.weight = 0.0F;
+            attack.hits = 0;
+            float last = -std::numeric_limits<float>::max();
+            for (CreatureContact& contact : attack.contacts) {
+                contact.repeat = contact.time - last <= kContactGap;
+                if (!contact.repeat) {
+                    attack.weight += contact.factor;
+                    ++attack.hits;
+                    last = contact.time;
+                }
+            }
+            lightest = std::min(lightest, attack.weight);
+        }
+        for (std::uint32_t index = 0; index < slice.attacks.size(); ++index) {
+            CreatureAttack& attack = slice.attacks[index];
+            attack.heavy = attack.weight > kHeavyWeight && attack.weight > lightest * kHeavyRatio;
+            (attack.heavy ? slice.heavyAttacks : slice.lightAttacks).push_back(index);
+        }
         slice.spawnAction = slice.spawnActionName.empty() ? std::nullopt : slice.find_action(slice.spawnActionName);
         if (slice.fights()) {
             ++m_fightingSlices;
@@ -489,11 +524,14 @@ bool CreatureData::check() {
     float highestHealth = lowestHealth;
     for (const auto& [level, row] : m_levels) {
         const float health = row.health;
-        if (level == 0 || level > kMaxLevel || !(health > 0.0F) || !std::isfinite(health)) {
+        if (level == 0 || level > kMaxLevel || !(health > 0.0F) || !std::isfinite(health) || health > kMaxLevelValue) {
             m_error = "the level table has a level or a health that is not correct";
             return false;
         }
-        if (!(row.damage >= 0.0F) || !std::isfinite(row.damage) || !(row.gearScore >= 0.0F) || !std::isfinite(row.gearScore)) {
+        // A damage above the limit gives a product that is not finite, and the damage rule
+        // would make 0 of it: the file is not correct.
+        if (!(row.damage >= 0.0F) || !std::isfinite(row.damage) || row.damage > kMaxLevelValue || !(row.gearScore >= 0.0F)
+            || !std::isfinite(row.gearScore) || row.gearScore > kMaxLevelValue) {
             m_error = "the level table has a damage or a gear score that is not correct";
             return false;
         }
@@ -544,7 +582,7 @@ bool CreatureData::check() {
         // must be in the time of its attack.
         for (const CreatureAttack& attack : slice.attacks) {
             bool correct = attack.action < slice.actions.size() && slice.actions[attack.action].fragmentIndex >= 0
-                           && std::isfinite(attack.length) && attack.length > 0.0F && attack.length <= kMaxAttackTime
+                           && std::isfinite(attack.length) && attack.length >= kMinAttackTime && attack.length <= kMaxAttackTime
                            && !attack.contacts.empty();
             for (const CreatureContact& contact : attack.contacts) {
                 correct = correct && std::isfinite(contact.time) && contact.time >= 0.0F && contact.time <= attack.length
@@ -573,8 +611,8 @@ bool CreatureData::check() {
             bodies = bodies && body.slice < m_slices.size();
             weight += body.percent;
         }
-        if (kind.id.empty() || !bodies || weight == 0 || !(kind.healthFactor > 0.0F) || kind.level == 0
-            || kind.level > kMaxLevel) {
+        if (kind.id.empty() || !bodies || weight == 0 || !(kind.healthFactor > 0.0F) || !(kind.healthFactor <= kMaxDamageFactor)
+            || kind.level == 0 || kind.level > kMaxLevel) {
             m_error = "kind " + std::to_string(index) + " has no id, no slice, no health, or no level";
             return false;
         }

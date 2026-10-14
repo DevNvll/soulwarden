@@ -42,6 +42,7 @@
 #include "support/check.h"
 #include "support/server_host.h"
 #include "support/state_decoder.h"
+#include "support/test_navigation.h"
 #include "support/test_players.h"
 #include "support/test_progression.h"
 #include "world/behavior.h"
@@ -644,7 +645,7 @@ void attack_and_contact(const Options&) {
     // After the action and the pause the creature attacks again. The character goes away in time.
     pass(host, 0.5F, {&a});
     check(!wolf->creature.action && !wolf->creature.mind.attack, "after its time the action is over");
-    pass(host, 1.0F, {&a});
+    pass(host, 0.1F + std::chrono::duration<float>(world::behavior_rules::kAttackPause).count(), {&a});
     check(wolf->creature.mind.attack && wolf->creature.mind.attacks == 2 && f.creatures().behavior().counts().attacks == 2,
           "after the pause the creature starts its next attack");
     const world::CreatureAction second = *wolf->creature.action;
@@ -1518,28 +1519,147 @@ void heights_and_navigation(const Options& options) {
     std::ofstream(folder / "r_+03_+03.swh", std::ios::binary) << "not a height file";
     check(!maps.height(3.0F * 2048.0F + 10.0F, 3.0F * 2048.0F + 10.0F), "a file of a different form gives no height");
 
-    // The two functions of the navigation: the ground, and the next step.
-    const world::Navigation none(nullptr);
-    check(!none.available() && !none.ground_height(kPlace) && !none.next_step(kPlace, kFar, 1.0F),
-          "a navigation with no terrain has no ground and no step");
-    TestTerrain slope;
-    slope.source = [](float x, float y) { return x > 1500.0F ? std::nullopt : std::optional<float>(10.0F + x * 0.01F + y * 0.0F); };
-    const world::Navigation navigation(&slope);
+    // The two functions of the navigation with no navigation data: the terrain, and the straight line.
+    // (The cases NV1 to NV12 have the navigation data.)
+    {
+        ServerHost empty;
+        world::Navigation& none = empty.world.navigation();
+        check(!none.has_data() && !none.ground_height(kPlace) && none.next_step(1, kPlace, kFar, 1.0F).kind == world::StepKind::noGround
+                  && none.footing(kPlace) == world::Footing::rooted,
+              "a navigation with no terrain height and no data has no ground and no step: a creature does not leave its place");
+    }
+    ServerHost hill;
+    hill.terrain.source = [](float x, float y) { return x > 1500.0F ? std::nullopt : std::optional<float>(10.0F + x * 0.01F + y * 0.0F); };
+    world::Navigation& navigation = hill.world.navigation();
     const std::optional<float> ground = navigation.ground_height(state::WorldPosition{1000.0F, 1000.0F, 999.0F});
-    check(ground && near(*ground, 20.0F), "the ground at a position is the terrain height at its place, for each height of the position");
-    const std::optional<state::WorldPosition> step = navigation.next_step(kPlace, state::WorldPosition{1030.0F, 1040.0F, 0.0F}, 5.0F);
-    check(step && near(step->x, 1003.0F, 0.001F) && near(step->y, 1004.0F, 0.001F) && near(step->z, 10.0F + 1003.0F * 0.01F, 0.001F),
+    check(navigation.available() && !navigation.has_data() && ground && near(*ground, 20.0F),
+          "the ground at a position is the terrain height at its place, for each height of the position");
+    const world::NavStep step = navigation.next_step(1, kPlace, state::WorldPosition{1030.0F, 1040.0F, 0.0F}, 5.0F);
+    check(step.kind == world::StepKind::moved && near(step.position.x, 1003.0F, 0.001F) && near(step.position.y, 1004.0F, 0.001F)
+              && near(step.position.z, 10.0F + 1003.0F * 0.01F, 0.001F),
           "one step: the place 5 m nearer to the goal on the straight line, with the height of the ground there");
-    const std::optional<state::WorldPosition> last = navigation.next_step(kPlace, state::WorldPosition{1003.0F, 1000.0F, 0.0F}, 5.0F);
-    check(last && last->x == 1003.0F && last->y == 1000.0F && near(last->z, 20.03F, 0.001F),
+    const world::NavStep last = navigation.next_step(1, kPlace, state::WorldPosition{1003.0F, 1000.0F, 0.0F}, 5.0F);
+    check(last.kind == world::StepKind::moved && last.position.x == 1003.0F && last.position.y == 1000.0F && near(last.position.z, 20.03F, 0.001F),
           "a step that is longer than the way ends at the goal, with the height of the ground");
-    check(!navigation.next_step(state::WorldPosition{1499.0F, 0.0F, 0.0F}, state::WorldPosition{1600.0F, 0.0F, 0.0F}, 5.0F)
-              && !navigation.next_step(kPlace, kFar, 0.0F),
+    check(navigation.next_step(1, state::WorldPosition{1499.0F, 0.0F, 0.0F}, state::WorldPosition{1600.0F, 0.0F, 0.0F}, 5.0F).kind
+                  == world::StepKind::noGround
+              && navigation.next_step(1, kPlace, kFar, 0.0F).kind == world::StepKind::noGround,
           "a step to a place with no ground, and a step with no length, give no place");
+    check(navigation.footing(state::WorldPosition{1000.0F, 1000.0F, 20.5F}) == world::Footing::walks
+              && navigation.footing(state::WorldPosition{1000.0F, 1000.0F, 22.0F}) == world::Footing::rooted
+              && navigation.sees(kPlace, kFar),
+          "with no navigation data a creature walks when it is 1.0 m or less from the terrain, and nothing stops its sight");
     std::filesystem::remove_all(folder);
 }
 
 } // namespace
+
+/**
+ * NV11 (stage 3.4d): two sessions in two regions of the navigation data, and a session that
+ * observes a creature on its path. The case is in this file for the clients of the fight cases.
+ */
+void two_regions_and_an_observer(const Options& options) {
+    FightHost f(observing());
+    ServerHost& host = f.host;
+    const std::filesystem::path folder = options.workDirectory / "navigation-two-sessions";
+    std::filesystem::remove_all(folder);
+    // Region 0 0: a wall from the south to the north at x 1010, with an opening of 1.5 m at y 1012. Region 3 2: flat ground.
+    const auto in_wall = [](float x, float y) {
+        return x > 1010.0F && x < 1010.5F && y > 980.0F && y < 1020.0F && !(y > 1012.0F && y < 1013.5F);
+    };
+    TestNavRegion first;
+    first.ground = kHeight;
+    first.tiles[{15, 15}] = [in_wall](int cellX, int cellY, std::vector<TestFloor>& floors) {
+        if (in_wall(960.0F + (static_cast<float>(cellX) + 0.5F) * 0.25F, 960.0F + (static_cast<float>(cellY) + 0.5F) * 0.25F)) {
+            floors.clear();
+            floors.push_back({kHeight + 3.0F, gamedata::NavFloor::kBlocked});
+        }
+    };
+    first.write(folder);
+    TestNavRegion second;
+    second.x = 3;
+    second.y = 2;
+    second.ground = kHeight;
+    second.write(folder);
+    check(host.navigation.set_directory(folder.string()) && host.navigation.regions() == 2, "the navigation data of two regions loads");
+    const state::WorldPosition besideA{1000.0F, 1012.0F, kHeight};
+    const state::WorldPosition farPlace{3.0F * 2048.0F + 1000.0F, 2.0F * 2048.0F + 1000.0F, kHeight};
+    const Player beta = add_player(host.store, kSteamIdB, "Tester B", kCharacterB, "Beta", besideA);
+    const Player gamma = add_player(host.store, kSteamIdC, "Tester C", kCharacterC, "Gamma", farPlace);
+    FakeClient a(27000);
+    FakeClient b(27001);
+    FakeClient c(27002);
+    std::uint16_t inputA = 0;
+    std::uint16_t inputB = 0;
+    std::uint16_t inputC = 0;
+    enter_at(host, a, f.alpha, kPlace, inputA);
+    enter_at(host, b, beta, besideA, inputB);
+    enter_at(host, c, gamma, farPlace, inputC);
+    run(host, 60, {&a, &b, &c});
+    world::Entity* alpha = host.world.find_character(kCharacterA);
+    world::Entity* observer = host.world.find_character(kCharacterB);
+    world::Entity* distant = host.world.find_character(kCharacterC);
+    check(alpha != nullptr && observer != nullptr && distant != nullptr && host.world.navigation().counts().tilesHeld >= 18,
+          "three sessions: two characters in the first region and one in the second region, and the world has the tiles of the two places");
+    // The creatures do not take the observer. Alpha and Gamma do not die in this case.
+    f.creatures().behavior().set_ignored(kCharacterB, true);
+    for (world::Entity* character : {alpha, distant}) {
+        character->vitals.healthMax = 1.0e7F;
+        character->vitals.health = 1.0e7F;
+    }
+    // A wolf on the east side of the wall, 16 m from Alpha: the wall stops its vision. A wolf 8 m from Gamma.
+    const world::Entity* wolf = f.wolf(1016.0F, 1000.0F, 90.0F);
+    const world::Entity* other = f.wolf(farPlace.x + 8.0F, farPlace.y, 90.0F);
+    const world::EntityId wolfId = wolf->id;
+    const world::EntityId otherId = other->id;
+    pass(host, 1.0F, {&a, &b, &c});
+    check(wolf->creature.mind.mode == CreatureMode::rest && other->creature.mind.target == distant->id,
+          "the wolf behind the wall has no target, and the wolf of the second region has the character of the third session");
+    const std::size_t fromA = a.got.size();
+    const std::size_t fromB = b.got.size();
+    (void)f.creatures().hurt(wolfId, 1.0F, alpha->id);
+    pass(host, 6.0F, {&a, &b, &c});
+    check(wolf->creature.mind.target == alpha->id && wolf->creature.mind.attacks >= 1 && wolf->position.x < 1005.0F,
+          "after a hit of Alpha the wolf follows it: it is on the west side of the wall and attacks");
+    // The observer gets each movement state of the wolf: the way goes through the opening.
+    const std::uint32_t numberB = interest_of(host, 2, wolfId);
+    const std::uint32_t numberA = interest_of(host, 1, wolfId);
+    const std::vector<Fragment> seen = fragments_of(b, fromB, numberB, kWolfSlots[0]);
+    const std::vector<Fragment> seenByTarget = fragments_of(a, fromA, numberA, kWolfSlots[0]);
+    std::size_t inside = 0;
+    std::size_t crossings = 0;
+    bool throughTheOpening = true;
+    std::optional<std::pair<float, float>> last;
+    std::size_t walked = 0;
+    for (const Fragment& state : seen) {
+        if (state.fields.count({0, kFieldPosition}) == 0) {
+            continue;
+        }
+        const std::pair<float, float> place = place_of(state);
+        ++walked;
+        inside += in_wall(place.first, place.second) ? 1 : 0;
+        if (last && (last->first - 1010.25F) * (place.first - 1010.25F) < 0.0F) {
+            // The line between two states that follow each other crosses the line of the wall.
+            const float part = (1010.25F - last->first) / (place.first - last->first);
+            const float y = last->second + (place.second - last->second) * part;
+            ++crossings;
+            throughTheOpening = throughTheOpening && y > 1012.0F && y < 1013.5F;
+        }
+        last = place;
+    }
+    note("the observer: " + std::to_string(seen.size()) + " movement states of the wolf, " + std::to_string(walked) + " with a place, "
+         + std::to_string(crossings) + " crossing(s) of the wall line; the target: " + std::to_string(seenByTarget.size()) + " states");
+    check(numberB >= 2 && walked >= 5 && inside == 0 && crossings == 1 && throughTheOpening,
+          "the session that observes gets the way of the wolf: no place in the wall, and the line between two states goes through the opening");
+    check(numberA >= 2 && seenByTarget.size() == seen.size(), "the session of the target gets the same movement states of the wolf");
+    check(interest_of(host, 3, wolfId) == 0 && interest_of(host, 1, otherId) == 0 && interest_of(host, 2, otherId) == 0
+              && interest_of(host, 3, otherId) >= 2,
+          "each session gets the creatures of its region only");
+    check(other->creature.mind.attacks >= 1 && distant->vitals.health < 1.0e7F && alpha->vitals.health < 1.0e7F
+              && observer->vitals.health == observer->vitals.healthMax,
+          "the two fights go on at the same time: each target takes damage, and the observer takes none");
+    std::filesystem::remove_all(folder);
+}
 
 std::vector<Case> fight_cases() {
     return {
@@ -1558,6 +1678,8 @@ std::vector<Case> fight_cases() {
         {"FT12", "fight: a creature whose spawn point is not at the terrain height does not leave its place", creature_that_does_not_walk},
         {"FT13", "fight: a slice with a spawn action and with animation tags in a fight", spawn_action_slice_in_a_fight},
         {"FT14", "fight: the reader of the terrain height files, and the two functions of the navigation", heights_and_navigation},
+        {"NV11", "navigation: two sessions in two regions, and a session that observes a creature on its path through an opening",
+         two_regions_and_an_observer},
     };
 }
 

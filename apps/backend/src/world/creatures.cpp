@@ -208,6 +208,13 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         const gamedata::CreatureSlice& body = *entity->creature.body;
         if (body.deathAction) {
             start_action(*entity, *body.deathAction);
+        } else if (entity->creature.action) {
+            // A slice with no death action: the action that plays (a reaction, an attack) is not
+            // the death action of the body. A session that observes the body from now on gets
+            // no such action: its first state has the spawn action of the slice, when the slice
+            // has one. The clients that play the action end it themselves.
+            entity->creature.action.reset();
+            m_acting.erase(entity->id);
         }
     }
     m_world.touch(id, ComponentKey::vitals);

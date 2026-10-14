@@ -190,7 +190,7 @@ continue in the C++ backend, and the layout below is the layout after the port.
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
 | 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | | |
-| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done | |
+| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
 | 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | | |
@@ -238,7 +238,7 @@ stage with a letter is a part of the system with that number.
 | 3 | 3.2a | The player hits a creature: the hit path of the client, the damage, the damage number, the death of the creature | 3.4a | done |
 | 4 | 3.4c | Creatures in the whole world: the creature file for each region (32,840 spawn points, 503 slices in the supported build), a picture check of each slice, the load of the spawn rule, and a travel command of the tool window | 3.4a | done |
 | 5 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | done |
-| 6 | 3.4d | The path search of a creature: navigation data that a tool makes from the collision shapes of the game copy (the terrain, the solid objects, the water), loaded by the backend; a creature goes around a wall and uses stairs | 3.4b | in work |
+| 6 | 3.4d | The path search of a creature: navigation data that a tool makes from the collision shapes of the game copy (the terrain, the solid objects, the water), loaded by the backend; a creature goes around a wall and uses stairs; fights that a player can play | 3.4b | done (the user tests the game before the next stage) |
 | 7 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
 | 8 | 1.8 | Original quest state of a new character | 1.6 | open |
 | 9 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
@@ -1062,24 +1062,28 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   which creatures walk. For stage 3.5a: the death of a creature is in `Creatures::hurt`
   (with the attacker), the place of the respawn timer is `Creatures::respawn_at`, and a
   creature has its full health only at its home.
-- Stage 3.4d (in work; research file `navigation.md`: two passes, status "not ready", the
-  open items are live checks of the stage). The navigation files of the game copy have no
-  mesh: the original navigation data was only on the server. The client stops its own
-  character at each wall, thus the game copy has the collision shapes of the world: the
-  placements of the region files, the physics files, the height map, and the water data. A
-  tool makes the navigation data from them (game data, made by a tool in `tools/gamedata`),
-  and the backend finds a path on it. The client shows a creature at the exact position of
-  its states and looks for no floor: the path must give the height of the surface. Work
-  before the stage, outside the repository
-  (`~/Games/soulwarden/work/evidence/navigation-data/implement/RESULT.md`): a tool reads the
-  collision of the 49 regions (2,319,942 solid placements; each of the 10,620 physics files
-  decodes), 30,065 of 33,328 spawn points are 0.3 m or less from a surface of its data, and
-  a first grid of the start region gives a path through the opening of the settlement wall
-  and up the stairs of a porch. The rule that says which collision filter stops a creature,
-  and the rule for the scattered objects, have proof from the client code. Open: the size
-  of the data and the time of a path search in the world thread, the things that the
-  original server made later (gates, crafting stations), plants with a shape in their mesh
-  file, and terrain holes (the entries of caves).
+- Stage 3.4d (done; protocol notes 4.19; result file
+  `~/Games/soulwarden/work/evidence/path-search/implement/RESULT.md`). The game copy has no
+  navigation mesh: the original one was only on the server. A tool
+  (`tools/gamedata/navigation.sh`) makes the navigation data of the whole world from the
+  collision shapes of the game copy, the terrain after the cookies of the placements (a rule
+  of the client code that changes the height map near some placements), the water, and the
+  navigation marks of the level designers: 49 regions, 1.2 GB, cells of 0.25 m with more
+  than one floor, the sight above each floor, 43 minutes with 8 processes. The backend reads
+  only the tiles near its players with a thread of its own, finds a path with A* in a limit
+  of steps for each tick, and stops the vision and the attack of a creature at a wall.
+  23,021 of the 24,228 spawn points of kinds that fight walk (6,893 did not walk in stage
+  3.4b). The gates of a settlement are closed for creatures by the marks of the level
+  designers. The stage also made the fights playable (the shelter of 10 s after a travel,
+  the health that comes back out of a fight, light and heavy attacks with a pause, one hit
+  for the two hit volumes of one swing, the crowd), and it corrected the nine findings of
+  the code review of stage 3.4b. Not in this stage: patrols, jump links, swimming and flying
+  creatures, objects that move, a second agent size, loot. Open: a path with more than
+  60,000 search steps is "no way"; the creatures of one fight stand in a queue on a narrow
+  way; doors and gates of spawners that are off at the start are not in the data. For stage
+  3.5a: a dead creature stays at its place on its floor; the place of the respawn timer is
+  `Creatures::respawn_at`; a spawn point whose creature stands on no free floor (1,207 of
+  kinds that fight) needs no path.
 - Test: screenshots of a creature at its spawn point, of a fight, and of its death; the
   health of the player goes down when the creature hits.
 - Risk: no data for the behavior. Then the behavior is a design of this project. Decision

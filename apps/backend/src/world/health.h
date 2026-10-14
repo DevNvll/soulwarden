@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "gamedata/creature_data.h"
@@ -29,6 +31,12 @@
 //   - A dead character that leaves the world is not dead at its next world entry: the world
 //     writes its respawn place into its row when it leaves, and each world entry starts with
 //     the full health. The health and the death of a character are not in the database.
+//
+// The health that comes back (a rule of this project; the vitals table of the game has no
+// value for it: its column HealthBaseTickRate is 0 for a player):
+//   - A character that lives, and that took no damage and did no damage for `kRestTime`, gets
+//     `kRestPart` of its maximum health each `kRestInterval` of the world clock, to its
+//     maximum. Its observers get the vitals state of each change.
 //
 // World thread only.
 
@@ -91,6 +99,13 @@ public:
      */
     void creature_hit(Entity& creature, const gamedata::CreatureContact& contact, Entity& target);
 
+    /**
+     * A session entered the world with a character that is dead (a second session took the
+     * character over): its client gets the death notice, with the time to the respawn screen
+     * that stays. No effect for a character that lives.
+     */
+    void entered(const Entity& character);
+
     /** A character takes damage that a command gives (a development aid, and the tests). */
     HealthResult hurt(const std::string& characterId, float damage);
 
@@ -111,14 +126,31 @@ public:
     /** @return The place at which a character that is dead now lives again. */
     [[nodiscard]] RespawnPlace respawn_place(const Entity& character) const;
 
+    /** A character did damage to a creature: it is in a fight (its health does not come back for `kRestTime`). */
+    void fought(Entity& character);
+
+    /** The world calls it in each tick: the health of the characters that are not in a fight comes back. */
+    void tick();
+
+    /** @return Number of health changes that the rest rule made. For the tests. */
+    [[nodiscard]] std::uint64_t rests() const {
+        return m_rests;
+    }
+
     /** The time from the death of a character to the respawn screen of its client, in seconds (a rule of this project). */
     static constexpr float kRespawnTime = 5.0F;
+    /** The health comes back after this time with no damage, in steps of this interval, by this part of the maximum (rules of this project). */
+    static constexpr std::chrono::milliseconds kRestTime{6000};
+    static constexpr std::chrono::milliseconds kRestInterval{1000};
+    static constexpr float kRestPart = 0.03F;
 
 private:
     /** Lowers the health of a character that lives, and makes it dead at the health 0. */
     HealthResult apply(Entity& target, float damage);
 
     World& m_world;
+    std::optional<WorldClock::time_point> m_lastRest;
+    std::uint64_t m_rests{0};
 };
 
 } // namespace soulwarden::backend::world

@@ -48,7 +48,7 @@ World::World(const WorldClock& clock,
       m_inventory(*this, store, options.itemCatalog),
       m_progress(*this, store, options.progressionTables),
       m_skills(*this, store, options.progressionTables),
-      m_navigation(options.terrain),
+      m_navigation(*this, options.navigationData, options.terrain, options.navigationThread),
       m_creatures(*this, options.creatureData),
       m_combat(*this, options.combatTables),
       m_health(*this) {}
@@ -97,9 +97,12 @@ void World::tick() {
     for (Task& task : due) {
         run(task, "timer");
     }
-    // The spawn point rule of the creatures, on the world clock.
+    // The tiles of the navigation data that are ready, and the path searches of this tick. Then
+    // the spawn point rule and the behavior of the creatures, on the world clock.
     try {
+        m_navigation.tick();
         m_creatures.tick();
+        m_health.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -289,6 +292,8 @@ EnterResult World::enter(SessionId session,
     Entity* entity = find_character(characterId);
     if (entity == nullptr) {
         entity = &make_entity(*character);
+        // A character that comes into the world: no creature takes it while its client shows the loading screen, and for some time after it.
+        m_creatures.behavior().shelter(*entity, true);
     } else if (entity->owner != 0 && entity->owner != session) {
         // A character is in one session at most: the newer session wins. The entity stays
         // with its position, and the row gets the newest position before the change of the
@@ -471,6 +476,9 @@ bool World::set_position(EntityId id, const state::WorldPosition& position, bool
     if (entity == nullptr) {
         return false;
     }
+    if (entity->kind == EntityKind::player && entity->life.dead) {
+        return false; // The camera estimate of the client does not move a dead character.
+    }
     if (!valid_position(position)) {
         // The index cannot hold the cell of such a number, and an observer must not get it.
         if (!entity->badPositionLogged) {
@@ -482,6 +490,9 @@ bool World::set_position(EntityId id, const state::WorldPosition& position, bool
                        static_cast<unsigned long long>(id));
         }
         return false;
+    }
+    if (entity->kind == EntityKind::player && entity->owner != 0) {
+        m_creatures.behavior().client_arrived(*entity); // The camera estimate of its client.
     }
     place(*entity, position, true, moving);
     return true;
@@ -563,6 +574,8 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     }
     // The creatures of the new place: the spawn point rule runs in this tick, not at its interval.
     m_creatures.scan_soon();
+    // No creature of the new place takes the character at once, and the creatures of the old place lose it.
+    m_creatures.behavior().shelter(*entity, entity->owner != 0);
     if (sink != m_sinks.end() && sink->second != nullptr) {
         sink->second->traveled(travel);
     }
@@ -577,10 +590,15 @@ PositionVerdict World::report_position(SessionId session, const PositionReport& 
     if (entity == nullptr) {
         return PositionVerdict::noEntity;
     }
+    if (entity->life.dead) {
+        // A dead character stays at the place of its death: a report of its client changes nothing.
+        return track.refused(PositionVerdict::dead);
+    }
     const PositionVerdict verdict = track.judge(report, entity->position, m_clock.now());
     if (verdict != PositionVerdict::accepted) {
         return verdict; // The entity, the index, and the row do not change.
     }
+    m_creatures.behavior().client_arrived(*entity); // The client is at the place of its character.
     const state::WorldPosition& position = report.position;
     const float moved = std::hypot(position.x - entity->position.x,
                                    position.y - entity->position.y,

@@ -13,7 +13,14 @@ predictor. The sample of the local position (x, y) of a region is in row `2047 -
 region r_+XX_+YY starts at x = XX * 2048 and y = YY * 2048.
 
 The terrain height is the height of the terrain only: a floor of a building, a bridge, and a
-cave are not in it (the navigation data of stage 3.4d has them).
+cave are not in it (the navigation data has them, tools/gamedata/navigation.sh).
+
+The height map is not the terrain of the client near some placements: a placement with a
+member `cookie` changes the terrain around it (protocol notes 4.19; the differences are up to
+some meters). The navigation tool computes the terrain after the cookies and writes it to its
+work folder (SOULWARDEN_NAVIGATION_WORK/terrain/REGION.u16). This tool takes the samples of a
+region from that file when it is there, and from the height map when it is not: its last line
+says how many regions have the cookies. tools/gamedata/navigation.sh runs this tool at its end.
 
 Output, one file for each region: OUTPUT_DIR/r_+XX_+YY.swh (all numbers little-endian)
 
@@ -37,7 +44,8 @@ Usage: height_maps.py [OUTPUT_DIR] [--region NAME ...] [--jobs N]
        height_maps.py [OUTPUT_DIR] --height X Y     print the height of a position from the files (no write)
 Default output: <SOULWARDEN_GAMEDATA_DIR>/heights
 Environment: SOULWARDEN_GAME_DIR (default ~/Games/soulwarden/game),
-             SOULWARDEN_GAMEDATA_DIR (default ~/.local/share/soulwarden/gamedata)
+             SOULWARDEN_GAMEDATA_DIR (default ~/.local/share/soulwarden/gamedata),
+             SOULWARDEN_NAVIGATION_WORK (default ~/Games/soulwarden/work/navigation-build: the terrain after the cookies)
 """
 
 from __future__ import annotations
@@ -171,6 +179,12 @@ def read_heightmap(data: bytes) -> array:
     return image
 
 
+def changed_terrain_folder() -> Path:
+    """@return The folder of the navigation tool with the terrain samples after the cookies."""
+    work = os.environ.get("SOULWARDEN_NAVIGATION_WORK") or Path.home() / "Games/soulwarden/work/navigation-build"
+    return Path(work) / "terrain"
+
+
 def region_names(sources) -> list[str]:
     """@return The name of each region of the world that has a height map."""
     names = []
@@ -201,12 +215,16 @@ def _decode(job: tuple[str, str, int, int, int]) -> tuple[str, bytes]:
 class Terrain:
     """The terrain heights of the regions of the world, decoded when a region is necessary."""
 
-    def __init__(self, sources, jobs: int = 0) -> None:
-        """@param sources The pak files of the game copy (`Sources` of creature_data.py, with the region folder)."""
+    def __init__(self, sources, jobs: int = 0, changed: Path | None = None) -> None:
+        """@param sources The pak files of the game copy (`Sources` of creature_data.py, with the region folder).
+        @param changed The folder with the terrain after the cookies (REGION.u16), from the navigation tool."""
         self.sources = sources
         self.names = set(region_names(sources))
         self.jobs = jobs or min(os.cpu_count() or 1, 8)
         self.regions: dict[str, array] = {}
+        self.changed = changed if changed is not None else changed_terrain_folder()
+        # The regions whose samples are the terrain after the cookies.
+        self.with_cookies: set[str] = set()
 
     def load(self, names: list[str]) -> None:
         """Decodes the regions of the list that the object does not have, in more than one process."""
@@ -214,6 +232,12 @@ class Terrain:
         work = []
         results = []
         for name in wanted:
+            file = self.changed / f"{name}.u16"
+            if file.is_file() and file.stat().st_size == 2 * REGION_SIZE * REGION_SIZE:
+                # The terrain after the cookies of the placements (the navigation tool made it).
+                results.append((name, file.read_bytes()))
+                self.with_cookies.add(name)
+                continue
             path = REGIONS_FOLDER + name + "/" + HEIGHTMAP_NAME
             pak, info = self.sources.entries[path]
             if info.compress_type in (0, 8):
@@ -257,13 +281,17 @@ class Terrain:
         corner = self.sample(low_x, low_y)
         if corner is None:
             return None
-        # A neighbor that the world does not have repeats the sample of the edge.
+        # A neighbor that the world does not have repeats the sample of the edge, as the files of
+        # `region_file` do: with no region to the east, the sample to the east is the sample itself,
+        # and the diagonal sample is the sample to the north.
         east = self.sample(low_x + 1, low_y)
         north = self.sample(low_x, low_y + 1)
         diagonal = self.sample(low_x + 1, low_y + 1)
+        no_east = east is None
         east = corner if east is None else east
         north = corner if north is None else north
-        diagonal = (north if east is None else east) if diagonal is None else diagonal
+        if diagonal is None:
+            diagonal = north if no_east else east
         part_x, part_y = x - low_x, y - low_y
         south_edge = corner + (east - corner) * part_x
         north_edge = north + (diagonal - north) * part_x
@@ -406,7 +434,10 @@ def main() -> int:
     except OSError as error:
         print(f"heights: {target}: {error}", file=sys.stderr)
         return 1
-    print(f"{target}: the terrain heights of {len(ordered)} region(s) of {len(names)}, {total} bytes")
+    cookies = sum(1 for name in ordered if name in terrain.with_cookies)
+    note = "each one with the cookies of its placements" if cookies == len(ordered) else \
+        f"{cookies} of them with the cookies of the placements (run tools/gamedata/navigation.sh for the others)"
+    print(f"{target}: the terrain heights of {len(ordered)} region(s) of {len(names)}, {total} bytes, {note}")
     return 0
 
 

@@ -40,6 +40,8 @@ const char* position_verdict_text(PositionVerdict verdict) {
         return "no entity";
     case PositionVerdict::beforeTravel:
         return "not near the place of the travel";
+    case PositionVerdict::dead:
+        return "the character is dead";
     }
     return "not known";
 }
