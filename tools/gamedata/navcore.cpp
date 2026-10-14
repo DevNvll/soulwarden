@@ -562,9 +562,14 @@ struct Scene {
         Collision* cache = nullptr;
         float a, b, c, d;
         if (!sample(ix, iy, a, cache)) return false;
-        if (!sample(ix + 1, iy, b, cache)) b = a;
+        // A neighbor that the world does not have repeats the sample of the edge, as in
+        // height_maps.py: with no region to the east, the diagonal sample is the sample to the
+        // north; with an east sample and no diagonal one, it is the east sample (code review of
+        // stage 3.4d, finding F11: the mean of the two gave a different height and slope).
+        const bool noEast = !sample(ix + 1, iy, b, cache);
+        if (noEast) b = a;
         if (!sample(ix, iy + 1, c, cache)) c = a;
-        if (!sample(ix + 1, iy + 1, d, cache)) d = (b + c) * 0.5f;
+        if (!sample(ix + 1, iy + 1, d, cache)) d = noEast ? c : b;
         height = (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
         if (slope != nullptr) {
             const float gx = (b - a) * (1 - fy) + (d - c) * fy;

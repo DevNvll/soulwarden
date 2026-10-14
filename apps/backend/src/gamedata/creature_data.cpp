@@ -53,6 +53,8 @@ constexpr std::int64_t kMaxFragmentIndex = 1000000;
 constexpr const char* kDeathActions[] = {"Death", "Death_FB"};
 /** The action that a creature plays when it takes a hit (live proof for the Grey Wolf: protocol notes 4.14). */
 constexpr const char* kHitAction = "Reaction";
+/** The locomotion action of a slice (creature_data.h, CreatureSlice::moveAction). */
+constexpr const char* kMoveAction = "Move_Combat";
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -464,6 +466,7 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
             }
         }
         slice.hitAction = slice.find_action(kHitAction);
+        slice.moveAction = slice.find_action(kMoveAction);
         // The hits of each attack, and its heavy attacks (project rules, creature_data.h).
         slice.lightAttacks.clear();
         slice.heavyAttacks.clear();

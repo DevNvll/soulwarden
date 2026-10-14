@@ -304,6 +304,18 @@ private:
     [[nodiscard]] const gamedata::NavTile* tile_of(std::int32_t cellX, std::int32_t cellY) const;
     /** @return The number of floors of a cell, or -1 when the world does not have its tile. */
     [[nodiscard]] int spots(std::int32_t cellX, std::int32_t cellY, gamedata::NavSpot* out) const;
+    /**
+     * @return True when the heights `low` to `high` of a line of sight in the cell of one of its
+     *         ends are in the free interval of the floor of the body there (the highest floor
+     *         below the eye `eyeZ`). No tile, no floor, or a body in a solid: true.
+     */
+    [[nodiscard]] bool end_cell_free(std::int32_t cellX, std::int32_t cellY, float eyeZ, float low, float high) const;
+    /**
+     * @return True when the world has each tile with navigation data in the rectangle of two
+     *         places, with `margin` meters around it. A tile that it does not have, or that is
+     *         on its way, gets a request (want), and the result is false: a creature waits.
+     */
+    bool tiles_ready(const state::WorldPosition& from, const state::WorldPosition& to, float margin);
     /** @return True when the cell has a floor that a creature at `height` steps to: `out` gets it. */
     [[nodiscard]] bool step_to(std::int32_t cellX, std::int32_t cellY, float height, Place& out) const;
     /** @return True when a creature can go on the straight line from one place to a different one. */

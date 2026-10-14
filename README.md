@@ -17,20 +17,21 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Level, attributes, weapon mastery trees, the ability bar, and trade skills.
 - Creatures at their real spawn points in the whole world, 32,840 points and 3,848 kinds in 25 regions.
 - Melee combat with a sword, a great axe, a hatchet, a war hammer, or a spear. A hit shows its damage number, and creatures die.
-- Creatures fight. A creature sees your character, runs to it, attacks, and goes back to its place at the end of its leash. 2,989 of the 3,848 kinds attack.
+- Creatures fight. A creature sees your character, runs to it with its run animation, attacks, and goes back to its place at the end of its leash. 2,989 of the 3,848 kinds attack.
+- Creatures find their way around walls and rocks, up stairs, and on the floors of buildings and ruins.
 - Health and death. Your character loses health and dies, and it comes back at the nearest spirit shrine or inn.
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, and moves it to a travel place.
 
 ## What does not work yet
 
-- Creatures walk in a straight line, through walls and rocks. A creature on a floor of a building, on a bridge, or in a cave stays at its place and attacks only when you are in its reach. Path search comes next.
+- Creatures do not jump, drop from an edge, or climb. A creature that has no way to you goes back to its place.
 - 859 kinds of creature have no attack yet and stand still. No creature has a ranged attack, magic, or an ability.
 - Creatures do not drop loot, give no experience, and do not come back after death.
-- Your health does not come back with time, and you cannot block or dodge. The tool window heals your character.
+- You cannot block or dodge. The tool window heals your character.
 - Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
 - Nothing in the world gives experience. The tool window sets your level.
-- No quests, no ranged weapons, no magic, and no abilities.
+- No quests, no ranged weapons, no magic, and no abilities. People in the settlements say only their first line: talk to them and press E or Escape to end the talk.
 - No world clock, so some sessions are dark.
 - One player. In a development run a second character can stand in the world, and that is all.
 

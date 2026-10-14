@@ -30,7 +30,7 @@ constexpr ComponentKey kAllComponents[] = {ComponentKey::metadata,    ComponentK
                                            ComponentKey::vitals,      ComponentKey::appearance, ComponentKey::progression,
                                            ComponentKey::attribute,   ComponentKey::currency,  ComponentKey::container,
                                            ComponentKey::paperdoll,   ComponentKey::categorical, ComponentKey::points,
-                                           ComponentKey::abilities};
+                                           ComponentKey::abilities, ComponentKey::mana};
 /** The component states of a creature. */
 constexpr ComponentKey kCreatureComponents[] = {ComponentKey::metadata, ComponentKey::movement, ComponentKey::vitals,
                                                 ComponentKey::marker};

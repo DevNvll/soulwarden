@@ -185,6 +185,17 @@ float Behavior::free_way(const Entity& creature, const Entity& target, float way
     return 0.0F;
 }
 
+const Entity* Behavior::blocker(const Entity& creature, const Entity& target, float length) const {
+    const float away = horizontal_distance(creature.position, target.position);
+    if (away < 0.01F) {
+        return nullptr;
+    }
+    const float dx = (target.position.x - creature.position.x) / away;
+    const float dy = (target.position.y - creature.position.y) / away;
+    // The end of the step that free_way looked at first.
+    return taken(creature, {creature.position.x + dx * length, creature.position.y + dy * length, creature.position.z});
+}
+
 void Behavior::no_way(Entity& creature, const Entity& target) {
     CreatureMind& mind = creature.creature.mind;
     mind.noWayTarget = target.id;
@@ -414,11 +425,20 @@ void Behavior::think(Entity& creature, float seconds) {
         if (way < wanted) {
             ++m_counts.crowded;
             if (way <= 0.05F) {
-                turn_to(creature, target->position);
-                if (away <= reach && now >= mind.ready) {
-                    start_attack(creature, *target, attackIndex);
+                // The rule of the crowd: the creature waits for a creature with the same target,
+                // and for a different creature (one with no target, a kind that does not fight)
+                // for `kCrowdPatience` steps; then it goes past it (code review of stage 3.4d,
+                // finding F7: two creatures waited for each other for all time).
+                const Entity* other = blocker(creature, *target, wanted);
+                if (other == nullptr || other->creature.mind.target == mind.target || mind.blockedSteps < behavior_rules::kCrowdPatience) {
+                    ++mind.blockedSteps;
+                    turn_to(creature, target->position);
+                    if (away <= reach && now >= mind.ready) {
+                        start_attack(creature, *target, attackIndex);
+                    }
+                    return;
                 }
-                return;
+                way = wanted;
             }
         }
     }
@@ -507,7 +527,9 @@ void Behavior::arrive(Entity& creature) {
     // some centimeters from the terrain height.
     creature.creature.yaw = mind.homeYaw;
     mind.sentYaw = mind.homeYaw;
-    m_creatures.move(creature, mind.home);
+    m_creatures.move(creature, mind.home, false);
+    // The end of the way: the client plays the idle action of the creature again.
+    m_creatures.stop(creature);
     m_creatures.restore(creature);
     mind.mode = CreatureMode::rest;
     mind.target = 0;
@@ -583,6 +605,10 @@ void Behavior::contact(const PendingContact& pending) {
             missed = "the target is out of the reach";
         } else if (away > 0.3F && angle_to(creature->position, creature->creature.yaw, target->position) > behavior_rules::kContactAngle) {
             missed = "the target is not in front of the creature";
+        } else if (!m_world.navigation().sees(creature->position, target->position)) {
+            // A wall stops a contact too: the target can go behind a wall while the attack plays
+            // (code review of stage 3.4d, finding F1).
+            missed = "a wall is between the creature and its target";
         }
     }
     if (missed != nullptr) {

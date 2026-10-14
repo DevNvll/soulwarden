@@ -12,6 +12,7 @@
 #include "server/hub/wire.h"
 #include "server/rep/combat_messages.h"
 #include "server/rep/item_requests.h"
+#include "server/rep/lock_messages.h"
 #include "server/rep/replication.h"
 #include "server/rep/travel_messages.h"
 #include "state/identity.h"
@@ -44,6 +45,12 @@ constexpr std::uint8_t kEnvelopeExtension = 0x04;
 constexpr std::chrono::milliseconds kAnchorInterval{200};
 /** Interval at which a session compares the entities near its character with its interest table. */
 constexpr std::chrono::milliseconds kInterestInterval{500};
+/**
+ * Longest wait of the new creatures after a travel for the client to confirm the new place
+ * (RepSession::m_creaturesAfterTravel): a client with no position report and no camera near
+ * the place gets its creatures after this time. A far travel needs 3 s to 8 s.
+ */
+constexpr std::chrono::seconds kCreaturesAfterTravel{20};
 /** Largest number of interest numbers in the control block of one bundle (client reader at image RVA 0x6A6DDB0). */
 constexpr std::size_t kMaxStopsInBundle = 100;
 /** Shortest time between two log lines for a camera that moves. */
@@ -371,6 +378,14 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_request_respawn(body);
         break;
+    case kTypeCutsceneEnded:
+        check_route(route, type, body, firstOfType);
+        handle_cutscene_ended(body);
+        break;
+    case kTypeCancelCommittedInteraction:
+        check_route(route, type, body, firstOfType);
+        handle_interaction_cancel(body);
+        break;
     default:
         check_route(route, type, body, firstOfType);
         if (firstOfType) {
@@ -528,6 +543,12 @@ void RepSession::log_message_counts() const {
                    m_travels,
                    static_cast<unsigned long long>(m_track.count(world::PositionVerdict::beforeTravel)));
     }
+    if (m_cutsceneEnds != 0 || m_interactionEnds != 0) {
+        log::write("rep: locks of the input of the client in the session: %u end(s) of a cutscene answered, %u end(s) of an "
+                   "interaction",
+                   m_cutsceneEnds,
+                   m_interactionEnds);
+    }
     if (m_damageMarks != 0 || m_deaths != 0 || m_respawns != 0) {
         log::write("rep: health of the character in the session: %llu damage mark(s) sent, %u death(s), %u respawn(s)",
                    static_cast<unsigned long long>(m_damageMarks),
@@ -613,8 +634,13 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
             continue; // The slice of the creature has no such component.
         }
         if (codec.parts != nullptr) {
-            for (hub::Bytes& state : codec.parts(entity, View::observer, PartsRequest{known.sent, kFragmentBudget, &m_clock})) {
+            for (hub::Bytes& state :
+                 codec.parts(entity, View::observer, PartsRequest{known.sent, kFragmentBudget, &m_clock, known.scope})) {
                 fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
+            }
+            if (codec.key == world::ComponentKey::movement) {
+                // The action that the client of this session plays now.
+                known.scope = creature_scope(entity.creature, known.sent == 0).key;
             }
             continue;
         }
@@ -728,8 +754,12 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     // A travel of a character changes the distances at once: the session does not wait for
     // its interval. Thus an observer gets the stop of a character that went far away, and not
     // a record with its new place.
+    // After a travel the new creatures wait for the client (m_creaturesAfterTravel): its
+    // confirmation of the new place starts a scan at once.
+    const bool creaturesWait = m_travelAnchor && m_creaturesAfterTravel && now < *m_creaturesAfterTravel;
     const bool scan = m_cameraSeen
-                      && (now - m_lastInterestScan >= kInterestInterval || m_world.last_travel() > m_interestTravel);
+                      && (now - m_lastInterestScan >= kInterestInterval || m_world.last_travel() > m_interestTravel
+                          || (m_creaturesWaited && !creaturesWait));
     if (scan) {
         m_lastInterestScan = now;
         m_interestTravel = m_world.last_travel();
@@ -766,6 +796,10 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     if (!scan) {
         return;
     }
+    // After a travel the new creatures wait for the client: its loading screen hides the start
+    // of their first records (the spawn action of a slice that needs it plays while the client
+    // loads, and the body of the creature stays hidden).
+    m_creaturesWaited = creaturesWait;
     // The largest interest distance of an entity is the distance of a character.
     std::vector<std::pair<float, const world::Entity*>> creatures;
     m_world.for_each_near(own.position, m_world.options().interestEnter, [&](world::Entity& entity) {
@@ -774,7 +808,7 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
         }
         const float distance = world::horizontal_distance(own.position, entity.position);
         if (entity.kind == world::EntityKind::creature) {
-            if (distance <= m_world.interest_enter(entity)) {
+            if (!creaturesWait && distance <= m_world.interest_enter(entity)) {
                 creatures.emplace_back(distance, &entity);
             }
             return;
@@ -1177,11 +1211,17 @@ void RepSession::traveled(const world::Travel& travel) {
     m_knownBehind = kCameraBehind;
     // The same for the camera estimate: the session keeps the place until the client confirms it.
     m_travelAnchor = TravelAnchor{travel.to, std::nullopt, false};
+    // The creatures of the new place come into the interest table when the loading screen of
+    // the client is gone: the client confirms the place.
+    m_creaturesAfterTravel = m_clock.now() + kCreaturesAfterTravel;
     if (!m_inWorld || m_closing) {
         return;
     }
     const bool screen = travel.screen == world::TravelScreen::on
                         || (travel.screen == world::TravelScreen::automatic && travel.distance > kTravelScreenDistance);
+    // A travel and a respawn end each lock of the input: a character that the client keeps in
+    // place (an open conversation, a cutscene with no answer) moves again at the new place.
+    end_input_lock("a travel");
     if (screen) {
         send_message(kTypeTeleportWithLoadingScreen, teleport_screen_body(m_observer.own()));
     }
@@ -1288,7 +1328,9 @@ void RepSession::handle_request_respawn(std::span<const std::uint8_t> body) {
                    request->id.c_str());
         if (!result.travelled) {
             // No travel was possible: the character lives again at its place, and this message
-            // ends the loading screen that the client showed for its request.
+            // ends the loading screen that the client showed for its request. A travel ends each
+            // lock of the input (RepSession::traveled): here the session does it.
+            end_input_lock("a respawn");
             send_message(kTypePlayerTeleport, player_teleport_body(m_observer.own()));
         }
         return;
@@ -1299,6 +1341,61 @@ void RepSession::handle_request_respawn(std::span<const std::uint8_t> body) {
     log::write("rep: respawn request refused (%s): message \"on player teleport\" (type %u) sent, no change",
                result.error == world::HealthError::alive ? "the character is not dead" : "the session has no character",
                kTypePlayerTeleport);
+}
+
+void RepSession::handle_cutscene_ended(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    const auto call = read_component_call(body);
+    if (own == nullptr) {
+        return;
+    }
+    if (!call) {
+        log::write("rep: end of a cutscene (type %u, %zu bytes) is too short: no answer", kTypeCutsceneEnded, body.size());
+        return;
+    }
+    if (!own_call(*own, *call, kTypeCutsceneEnded, "end of a cutscene")) {
+        return;
+    }
+    // The client keeps the input of its character blocked until this answer: without it the
+    // character never moves again (user test 1, a conversation with a person of the settlement).
+    send_message(kTypeCutsceneEndFinalized, cutscene_finalized_body(own->id));
+    ++m_cutsceneEnds;
+    log::write("rep: the client ended a cutscene (type %u): message \"cutscene end request finalized\" (type %u) sent, "
+               "the input of the character is free again",
+               kTypeCutsceneEnded,
+               kTypeCutsceneEndFinalized);
+}
+
+void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    const auto call = read_component_call(body);
+    if (own == nullptr) {
+        return;
+    }
+    if (!call) {
+        log::write("rep: end of an interaction (type %u, %zu bytes) is too short: no change", kTypeCancelCommittedInteraction,
+                   body.size());
+        return;
+    }
+    if (!own_call(*own, *call, kTypeCancelCommittedInteraction, "end of an interaction")) {
+        return;
+    }
+    // The backend has no interaction of a character: the client ended its own one.
+    ++m_interactionEnds;
+    log::write("rep: the client ended its interaction (type %u): the backend has no interaction state, no change",
+               kTypeCancelCommittedInteraction);
+}
+
+void RepSession::end_input_lock(const char* cause) {
+    // The order of the client: the cancel ends a conversation, whose cutscene then sends its
+    // end (the session answers it), and the answer of the cutscene frees the input at once.
+    send_message(kTypeCancelCurrentInteraction, cancel_interaction_body(m_observer.own()));
+    send_message(kTypeCutsceneEndFinalized, cutscene_finalized_body(m_observer.own()));
+    log::write("rep: %s ends each lock of the input of the client: messages \"cancel current interaction\" (type %u) and "
+               "\"cutscene end request finalized\" (type %u) sent",
+               cause,
+               kTypeCancelCurrentInteraction,
+               kTypeCutsceneEndFinalized);
 }
 
 void RepSession::development_message(std::uint32_t type, const std::vector<std::uint8_t>& body) {

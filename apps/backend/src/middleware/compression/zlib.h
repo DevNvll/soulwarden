@@ -9,10 +9,14 @@ namespace soulwarden::backend::compression {
 /**
  * Decodes one zlib stream (RFC 1950: a 2-byte header, deflate data of RFC 1951, and the
  * Adler-32 checksum of the output). The output is limited to maximumSize bytes.
+ * @param used When not null: gets the number of bytes of `stream` that the zlib stream has,
+ *        to its checksum. A caller that needs one stream and nothing after it compares it with
+ *        the size of `stream`.
  * @return False when the stream is malformed, the checksum does not match, or the output is
  *         larger than the limit.
  */
-[[nodiscard]] bool zlib_decode(std::span<const std::uint8_t> stream, std::size_t maximumSize, std::vector<std::uint8_t>& output);
+[[nodiscard]] bool zlib_decode(std::span<const std::uint8_t> stream, std::size_t maximumSize, std::vector<std::uint8_t>& output,
+                               std::size_t* used = nullptr);
 
 /**
  * @return One zlib stream that has the data in stored blocks (no compression). Each zlib

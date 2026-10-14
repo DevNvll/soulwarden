@@ -181,6 +181,15 @@ struct CreatureSlice {
      */
     std::optional<std::uint32_t> hitAction;
     /**
+     * Index of the action that a creature with this slice plays while it walks or runs: the
+     * action "Move_Combat" (410 of the 412 slices that fight have it). Its fragment is a blend
+     * of the locomotion of the slice that the client selects from the speed of the creature: a
+     * Grey Wolf gallops with the speed of its run, and stands at the speed 0. The client plays
+     * no walk with no such action: the creature slides in its pose (live proof, user test 1).
+     * No value: the slice has none with a fragment, and the creature slides.
+     */
+    std::optional<std::uint32_t> moveAction;
+    /**
      * Name of the action that the server starts when it makes a creature with this slice (the
      * field m_spawnAction of the action list component, game data). The file has it only for
      * a slice whose body and name plate show in the client only after that action (the

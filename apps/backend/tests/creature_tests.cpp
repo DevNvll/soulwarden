@@ -391,34 +391,38 @@ void creature_record_bytes(const Options&) {
     // The time anchor of the record is the time of the world clock at the bundle: its 8 bytes
     // are not a part of the stored layout.
     const std::string record = hex_text(payloads[0]);
-    const std::string anchor = record.size() == 264 ? record.substr(132, 16) : "";
+    const std::string anchor = record.size() == 294 ? record.substr(162, 16) : "";
     // The record of a Grey Wolf of the live run of stage 3.4a, with the made-up values of the
     // test for the asset, the actor, the position, and the vitals ids:
     //   interest 2, 4 fragments
     //   0, 10    metadata: AssetId with the sub id 2, GdeRef
-    //   5, 11    movement: rotation (yaw 90 degrees), lookDir, worldPosAbs, teleport id, time
-    //            anchor, dataBits, moreDataBits
+    //   5, 11    movement: rotation (yaw 90 degrees), lookDir, worldPosAbs, scopeTimeBlobEx with
+    //            no time, teleport id, scopeData with no scope, scopeInfoBlob with no record,
+    //            globalFragTags (12 bytes of 0), time anchor, dataBits, moreDataBits (user test
+    //            1: a state with no action of the server has the scope fields with no record)
     //   9, 15    vitals: HealthAmount, vitalsData (18 bytes, not dead), healthChangeFlags 1,
     //            HealthMax, HealthTickRate, vitalsId, vitalsCategoryId, vitalsLevel 18,
     //            invulnerability, displayImmuneWhenInvulnerable, maxHealth 1690
     //   15, 5399 marker: enabled
     const std::string expected = std::string("0204")
                                  + "000a0103" + "11111111111111111111111111111111" + "00000002" + "00000040534f554c20000000534f554c"
-                                 + "050b01fc000c00448003" + "66ff" + "3a" + "447b0000447a000022e9" + "01" + anchor + "0000"
+                                 + "050b01fc000c00d48303" + "66ff" + "3a" + "447b0000447a000022e9" + "00" + "01" + "00" + "00"
+                                 + "000000000000000000000000" + anchor + "0000"
                                  + "090f01bd" + "44d35c08" + "000000000000000000000000000000000000" + "01" + "44d35c08" + "0000"
                                  + "7e" + "11112222" + "33334444" + "00000012" + "00" + "00" + "069a"
                                  + "0f975401" + "0101";
-    note("record of the creature (132 bytes): " + record);
-    check(payloads[0].size() == 132 && record == expected && !anchor.empty(),
-          "the record of a creature has the bytes of the layout that the live client accepted (132 bytes; the time anchor is "
+    note("record of the creature (147 bytes): " + record);
+    check(payloads[0].size() == 147 && record == expected && !anchor.empty(),
+          "the record of a creature has the bytes of the layout that the live client accepted (147 bytes; the time anchor is "
           "the world clock)");
     const std::vector<Record> records = other_records(bundles_of(a, from));
     check(records.size() == 1 && records[0].interest == 2 && order_of(records[0]) == "(0,10) (5,11) (9,15) (15,5399) "
-              && fields_text(*fragment_of(records[0], 5)) == "(0,11) (0,12) (0,27) (0,31) (0,40) (0,41) (0,42) "
+              && fields_text(*fragment_of(records[0], 5))
+                     == "(0,11) (0,12) (0,27) (0,29) (0,31) (0,32) (0,33) (0,34) (0,40) (0,41) (0,42) "
               && fields_text(*fragment_of(records[0], 9))
                      == "(0,0) (0,2) (0,3) (0,4) (0,5) (0,8) (0,9) (0,10) (0,11) (0,12) (0,13) ",
           "the record decodes to its last byte: the metadata state and the states of the slots 5, 9, and 15 of the slice, with "
-          "no action field (the client plays the idle action itself)");
+          "the scope fields and no scope record (the client plays the idle action itself)");
 
     // A health change: one fragment with the health, the vitals data, and the change mark.
     from = a.got.size();

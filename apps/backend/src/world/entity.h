@@ -57,6 +57,8 @@ enum class ComponentKey {
     abilities,
     /** The name plate of a creature: the marker component of its slice. */
     marker,
+    /** The mana of a character (its own component; the values are in Entity::vitals). Only the owner gets it. */
+    mana,
 };
 
 /**
@@ -309,7 +311,8 @@ struct Creature {
     /**
      * The action that the server started: the death action of a dead creature, an attack, the
      * reaction of a creature to a hit, or the action of a command, for the time of that action.
-     * No value: the client selects the action itself (the idle action, the walk).
+     * No value: the client selects the action itself (the idle action), or the creature is on
+     * its way (`moving`).
      */
     std::optional<CreatureAction> action;
     /**
@@ -320,6 +323,14 @@ struct Creature {
      * no action with an end plays. No value: the slice needs none.
      */
     std::optional<CreatureAction> spawnAction;
+    /**
+     * The locomotion action of a creature on its way (the action "Move_Combat" of its slice,
+     * CreatureSlice::moveAction), from its first step to an attack or to its arrival at its
+     * home. Each movement state of the way has it, with one start count: the client selects
+     * the walk or the run from the speed of the creature, and without this action the creature
+     * slides in its pose. No value: the creature is not on a way, or its slice has no such action.
+     */
+    std::optional<CreatureAction> moving;
     /** The behavior values of the creature. */
     CreatureMind mind;
     /** Number of actions that the server started for this creature. The count of an action on the wire is this number. */

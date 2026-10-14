@@ -320,6 +320,10 @@ std::shared_ptr<const NavTile> NavTile::decode(std::int32_t tileX,
         if (number > (extraCount - used) / std::max<std::size_t>(length, 1) && length != 0) {
             return refuse("a run names more floors than the floor list has");
         }
+        if (number > kMaxFloors) {
+            // The reader keeps no part of a cell (code review of stage 3.4d, finding F3).
+            return refuse("a run names more floors for one cell than the reader keeps (16)");
+        }
         for (std::size_t index = 0; index < length; ++index, ++cell) {
             const std::size_t first = tile->m_floors.size();
             std::uint16_t before = 0;
@@ -334,13 +338,9 @@ std::shared_ptr<const NavTile> NavTile::decode(std::int32_t tileX,
                     return refuse("a floor has a flag that is not known, or the floors of a cell are not in the sequence of their heights");
                 }
                 before = value.height;
-                if (floor < kMaxFloors) {
-                    tile->m_floors.push_back(value);
-                } else {
-                    ++tile->floorsDropped;
-                }
+                tile->m_floors.push_back(value);
             }
-            const std::size_t kept = std::min(number, kMaxFloors);
+            const std::size_t kept = number;
             if (first >= (1U << 24)) {
                 return refuse("the tile has more floors than the reader can number");
             }
@@ -440,6 +440,14 @@ bool NavigationData::set_directory(const std::string& directory) {
         first = false;
         m_regions.emplace(std::make_pair(nameX, nameY), std::move(region));
     }
+    if (!m_problem.empty()) {
+        // A file that is not correct refuses the folder as a whole: a folder with a part of its
+        // regions gives the terrain rule in the others with no sign (code review of stage 3.4d,
+        // finding F9: different agent values in two files).
+        m_regions.clear();
+        m_agent = NavAgent{};
+        return false;
+    }
     return !m_regions.empty();
 }
 
@@ -472,9 +480,12 @@ std::shared_ptr<const NavTile> NavigationData::load(std::int32_t tileX, std::int
     std::vector<std::uint8_t> plain;
     std::ifstream file(region.path, std::ios::binary);
     std::shared_ptr<const NavTile> tile;
+    std::size_t used = 0;
     if (file && file.seekg(static_cast<std::streamoff>(region.offsets[index]))
         && file.read(reinterpret_cast<char*>(stream.data()), static_cast<std::streamsize>(stream.size()))
-        && compression::zlib_decode(stream, region.plainSizes[index], plain) && plain.size() == region.plainSizes[index]) {
+        && compression::zlib_decode(stream, region.plainSizes[index], plain, &used) && plain.size() == region.plainSizes[index]
+        // One zlib stream and nothing after it (code review of stage 3.4d, finding F4).
+        && used == stream.size()) {
         tile = NavTile::decode(tileX, tileY, plain, region.sampleScale, m_agent, nullptr);
     }
     count(tile ? &NavigationDataCounts::tilesRead : &NavigationDataCounts::tilesBad);

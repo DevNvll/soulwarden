@@ -1054,6 +1054,27 @@ group 1:  0 ManaAmount:f32        1, 2 afflictions      3 ManaMax:f32   4 ManaTi
   of 100, mana 100 of 100, and tick rates 0. With no progression tables it sends health 1000
   of 1000. The game log has no stat warning.
 
+`MB::ManaComponentReplicatedState` (type 1652, slot 47 of the player slice, the component
+`Mana` of the entity "Stats"; constructor 0x67088C0, apply 0x683B740; behavioral proof, user
+test 1) has 1 group with 4 fields, each a 32-bit float, big-endian (reader 0x2A42F30):
+
+```text
+group 0:  0 current   1 maximum   2 regeneration delay   3 regeneration rate
+fragment of 100 of 100:  2f b4 19 | 01 0f | 42 c8 00 00  42 c8 00 00  00 00 00 00  00 00 00 00
+```
+
+- The mana meter of the HUD (the blue bar below the crosshair, `lyshineui/hud2024/vitals/
+  manameter`; layout `ManaMeter` at x 0, y -382, 174 by 18) reads `ManaPercent` from this
+  component, not from the mana fields of the vitals state. Its start value is -1, and it has
+  the opacity 0 only at 100 percent (`opacityAtFull`). Before user test 1 the backend sent no
+  mana state: the bar showed in each picture of each stage (open problem 10 of stage 3.4c).
+- Live proof with `tools/world fragment` (slot 47, type 1652): 50 of 100 shows half of the
+  bar, 100 of 100 hides it. The backend sends the state to the owner in its first record and
+  at each change of the mana, with the values of `Entity::vitals` (the same values as group 1
+  of the vitals state) and the two rates 0: the client changes no value itself. The maximum
+  is the mana of the progression tables (`baseMana`) when the tables have it. The remote
+  player slice has no mana component: an observer gets no fragment.
+
 `MB::PlayerAppearanceComponentReplicatedState` has 1 group with 12 fields of one byte each
 (indexes into the character creation databases of the client: gender, race, skin tone,
 hairstyle, facial hair, hair color, facial hair color, eye color, face mark, scar, tattoo,
@@ -2808,15 +2829,41 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
 - Result: the wolf falls on its side and stays on the ground with the death material
   (screenshots 0.8 s, 3 s, and 8 s after the kill). The research had no live proof for a
   scope record.
+- **The client keeps the scope fields** (behavioral proof, user test 1). A state that does not
+  have the fields 29, 32, 33, and 34 leaves the scope record of an earlier state in the state
+  of the client, and the client starts the action of that record again each time that it
+  applies a later state after the end of the action: a Grey Wolf that runs after its bite
+  plays the bite again and again while it moves, and a Reaver that walks plays its spawn
+  action (its light and its rise from the ground) at each step. A record that comes again in
+  each state with a new time makes the body jump to that time each 200 ms: the user saw the
+  creatures shake. The rule of the backend (`creature_scope`, `Known::scope`): a session keeps
+  the start count of the record that it sent last for each creature (0 for the fields with no
+  record), and a movement state has the scope fields only when that changes. The fields with
+  no record are `29 00`, `32 00`, `33 00`, and the 12 tag bytes of the slice: the client then
+  ends the kept action and plays its idle action. The first record of a creature with no
+  action has these fields too (147 bytes instead of 132 for the record of case CR2).
+- **The locomotion action** (behavioral proof, user test 1). The client plays no walk and no run
+  for a creature whose position changes with no action: the creature slides in its pose. The
+  action `Move_Combat` of the action table of the slice (410 of the 412 slices that fight
+  have it, with a fragment; the two others are tendrils that do not move) is a blend of the
+  locomotion of the slice that the client selects from the speed of the creature: a Grey
+  Wolf gallops at its run speed and stands at the speed 0, and a Reaver takes steps. A
+  creature on its way has this action from its first step (`Creature::moving`), in one record
+  with one start count for the whole way; an attack replaces it, and the arrival at the home
+  ends it (the fields with no record).
 - The backend sends the full movement state with the scope fields (the position and the
   rotation again). The time bytes are the time from the start of the action to the state: a
   session that observes a dead creature later sends the time that passed, so that its
   client shows the end of the action.
 - The spawn action of a slice (stage 3.4c, the list above) is the same scope record, with the
   index of the action `Spawn` and of its fragment, in the first movement state of the
-  creature. Its time is the time from the creation of the creature: the client of a session
-  that observes the creature later shows the end of the action (the body stands). From
-  stage 3.4b the spawn action is a value of the creature for its whole time in the world
+  creature. Its time is 0 in the first state of each session (user test 1). Before, it was the
+  time from the creation of the creature, and a session that observed the creature some
+  seconds later showed only the light of the action and no body: an Ancient Guardian
+  Spearman 80 s after its creation (a light that flickers, 65 to 163 pixels in cycles of 0.3 s
+  to 0.5 s), the Reaver of the Tomb of the Old Warrior after a far travel, and "Edmand the
+  Fisher" (an undead javelineer) at 4.6 m. With the time 0 the body shows after the light,
+  also for a session that comes later. From stage 3.4b the spawn action is a value of the creature for its whole time in the world
   (`Creature::spawnAction`), not the action that plays: the first movement state of each
   session for the creature has it, and an action with an end (the reaction to a hit, an
   attack, the action of a command) does not take it away (4.17). A dead creature has its
@@ -3307,7 +3354,20 @@ movement state of a session has 1: the world entry is the same mechanism.
   the new place is outside its leave distance, and the record with the new position when it
   is inside. It never sends a record with a place that is outside. A session near the new
   place gets a first record of the character. The same scan removes the creatures of the old
-  place from the interest table of the owner and adds the creatures of the new place.
+  place from the interest table of the owner.
+- The creatures of the new place wait for the client of the owner (user test 1): they come
+  into the interest table when the client confirms the place (an accepted position report,
+  or a camera near the place; the same condition as `RepSession::camera_before_travel`), in
+  the scan of that moment, and at the latest 20 s after the travel
+  (`kCreaturesAfterTravel`). The loading screen of the client hides the start of the first
+  records: the spawn action of a slice that needs it (4.14) then played while the client
+  loaded, and the body of the creature stayed hidden (the Reaver of the Tomb of the Old
+  Warrior after a far travel). Live: after a travel of 309 m with the loading screen the
+  Reaver came into the table 2.5 s after the travel, with its body and its name plate.
+- A travel ends each lock of the input of the client (4.20): the session of the owner sends
+  the messages 3746 and 6709 before the messages of the travel (live proof: a character that
+  a conversation kept in place walks after a travel; before, the user stayed in place after
+  three travels).
 - The spawn point rule (4.14) runs in the tick of the travel: the creatures of the new place
   are in the world before a session looks for them, and the creatures of the old place leave
   the world when no other player is near them.
@@ -3549,27 +3609,29 @@ of the world clock. A creature has three modes: at rest, in a fight, on the way 
 **What the backend sends, and what the client shows** (behavioral proof, runs `f4` to `f6`).
 
 - **The walk.** A movement state with the new position and the new direction for each step
-  (5 states in 1 s), with no action field. The client moves the creature from one place to
-  the next one and selects the action itself: a Grey Wolf with the run speed 9.23 m/s runs
-  with moving legs (`F3-F4-F5-two-wolves-run-bite-...`), a Canary Miner and a Siltboot
-  Deckhand walk on two legs, and an Ancient Guardian Reaver walks 9 m. Each observer gets
-  the same states.
+  (5 states in 1 s). The first state of a way has the locomotion action of the slice
+  (`Move_Combat`, 4.14), and the other states of the way have no scope fields: the client
+  selects the walk or the run from the speed of the creature. Correction of user test 1: the
+  states of stage 3.4b had no action, and the creature slid in its pose (in the pose of its
+  last attack, or with its spawn action again: the client keeps a scope record, 4.14). The
+  pictures of stage 3.4b showed a pose of the run in some frames: the user saw the slide in
+  the live game. Each observer gets the same states.
 - **An attack** is a scope record in the movement state (4.14): the index of the action and
   of its fragment, the option 0, the tags of the slice, and the time from the start. The
-  client plays it one time. A session gets each action one time: a later movement state has
-  the action only when the action started after the last record of that session. The
-  movement states of a walk after an attack have no action, and the client goes back to the
-  action that it selects.
+  client plays it one time. A session gets the scope fields only when the action changed
+  after its last record: the next way after the attack gets the locomotion record, and a
+  state at the end of an action gets the fields with no record. A step of a way replaces a
+  reaction to a hit that plays (a creature does not slide in its reaction).
 - **The spawn action** of a slice that needs it (4.14) is a value of the creature
   (`Creature::spawnAction`) for its whole time in the world. The first movement state of
-  each session for the creature has it, with the time from the creation of the creature.
-  An attack, a reaction, and a walk do not take it away, and the backend does not send it
-  again at their end. Live: an Ancient Guardian Reaver of a command comes out of the
-  ground, walks to the character, attacks, goes back, and stands at its home
-  (`F12-reaver-of-a-command-...`): it does not go back into the ground. A dead creature
-  with a death action has that action in the first state of a later session. A dead
-  creature of a slice with no death action has its spawn action there (finding C4 of the
-  review of stage 3.4c: before, a creature that died while its reaction played lost the
+  each session for the creature has it, with the time 0 (user test 1; before, the time from
+  the creation of the creature). An attack, a reaction, and a walk do not take it away, and
+  the backend does not send it again at their end. Live: an Ancient Guardian Reaver of a
+  command comes out of the ground, walks to the character, attacks, goes back, and stands at
+  its home (`F12-reaver-of-a-command-...`): it does not go back into the ground. A dead
+  creature with a death action has that action in the first state of a later session. A
+  dead creature of a slice with no death action has its spawn action there (finding C4 of
+  the review of stage 3.4c: before, a creature that died while its reaction played lost the
   spawn action at the end of the reaction).
 - The client shows no health change and no reaction of the player character for an attack
   action alone: the damage is the health system of 4.18.
@@ -3763,6 +3825,9 @@ vitals state of the character (slot 41, type 15; 4.5).
   place come by the spawn rule. When the world refuses the travel (a row that the database
   did not accept), the character lives again at the place of its death, and the session
   sends message 3954 itself.
+- A respawn ends each lock of the input of the client (4.20): the messages 3746 and 6709 go
+  before message 3954 (with the travel of the respawn, or before the 3954 that the session
+  sends itself). Case UT1.
 - The world finds the character of a respawn request from the session. A request that
   names the entity of a different character changes nothing and gets no reply. A request
   for a character that lives changes nothing, and the session sends message 3954: only
@@ -3895,7 +3960,21 @@ travel into a rock of the data puts the character into the shell of the rock, li
 **The terrain.** `region.heightmap` is a TIFF file: 2048 by 2048 samples of 16 bits, LZW in
 strips of 4 rows, horizontal predictor. The sample of the local place (x, y) is in the row
 2047 - y and the column x, and the height is sample * 2048 / 65535 m. The height at a place
-is between the four samples around it.
+is between the four samples around it. A neighbor sample that the world does not have (the
+east and the north edge of the world) repeats the sample of the edge: with no east sample the
+diagonal sample is the north one, and with an east sample and no diagonal one it is the east
+one. The terrain reader of `navcore.cpp` took the mean of the east and the north samples for
+a missing diagonal sample (finding F11 of the code review of stage 3.4d); now the two readers
+of the tool (`height_maps.py`, `navcore.cpp`) give one height
+(`tools/gamedata/check_navigation_tool.py`, case RN10). The data of 11 regions changed, only in
+the tiles of their east or north edge: `r_+00_+06` to `r_+05_+06`, `r_+06_+00`, `r_+06_+01`,
+`r_+06_+03`, `r_+06_+05`, and `r_+06_+06` (`r_+06_+02` and `r_+06_+04` are equal).
+
+**A source that does not decode stops the tool** (finding F10 of the code review of stage
+3.4d). A placed collider whose physics file does not decode, or is not there, stops the
+region: no region file, no complete report, status 1 (before, the region had no collider
+there and looked complete). The world build of 2026-10-13 had no such file in its 49
+regions: the data does not change for this rule.
 
 **The terrain is not the height map near some placements: the cookies** (static proof with
 the addresses below; live proof C14 and C13a). A placement of a capitals file can have the
@@ -4027,9 +4106,12 @@ agent values, each thing that the tools left out, the time, and the memory of th
 backend reads the header and the directory of each file at its start and refuses a folder
 with a file that is not correct (a wrong version, a region that is not the region of the file
 name, agent values outside their limits or not the same in each file, a directory entry
-outside the file): it then works with no navigation data, and the log says so. A tile that
-does not decode is refused alone (`0 with no data` of the line `navigation:`): a creature
-there walks by the rule of the terrain.
+outside the file) as a whole: it then works with no navigation data, and the log says so.
+Before the code review of stage 3.4d (finding F9) it kept the other files of a folder with
+different agent values. A tile that does not decode is refused alone (`0 with no data` of the
+line `navigation:`): a creature there walks by the rule of the terrain. A tile is not correct
+also when a cell has more than 16 floors (the reader kept 16 of them before: finding F3) and
+when its stream has a byte after the checksum of its zlib stream (finding F4).
 
 **Numbers of the supported build.** The data of the world: 49 regions, 1,218,738,457 bytes
 (the largest region 76.9 MB, a region of open sea 2.2 MB), 3.08 billion free floors, 2,320,424
@@ -4045,9 +4127,13 @@ functions, as in stage 3.4b; their bodies changed:
   to the height of the position (one place can have more than one floor). With no tile of
   the place: the terrain height of the folder `heights`.
 - `next_step(creature, from, goal, distance)`: the place after one step on the path of the
-  creature. The result is a place (`moved`), "the creature waits" (the tile of its place is
-  not read yet, or its search waits), "no way", or "no ground" (the creature stands on no
-  free floor).
+  creature. The result is a place (`moved`), "the creature waits" (the tile of its place, of
+  its goal, of a link between two areas, or of the step itself is not there yet, or its
+  search waits), "no way", or "no ground" (the creature stands on no free floor). A tile that
+  the world does not have yet is no proof of "no way": the world asks for it, and the
+  creature waits (code review of stage 3.4d: findings F5, a path in the memory of a creature
+  that went into a tile that the world removed, and F8, a goal whose tile was on its way and
+  that the navigation kept as "no way" for 3 s).
 - **The tiles.** One time each 500 ms the world asks for the tiles that are 96 m or less from
   each character and 32 m or less from each creature on a path. A thread of its own reads
   them (the world thread reads no file), and the world takes them at the start of a tick. A
@@ -4071,14 +4157,22 @@ functions, as in stage 3.4b; their bodies changed:
   through the solid there.
 - **Which creature walks** (replaces the rule "1.0 m or less from the terrain height" of
   4.17): a creature walks when a free floor of the data is 0.5 m or less from its place in
-  the plane and 0.6 m or less in the height. The world asks one time, when the tile of the
+  the plane (the distance to the area of the cell of the floor) and 0.6 m or less in the
+  height. Before the code review of stage 3.4d the limit was 0.5 m plus one cell to the middle
+  of a cell (finding F6). The world asks one time, when the tile of the
   creature is there: until then the creature has no answer. A creature on no free floor does
   not leave its place: it turns to its target and attacks in its reach.
 - **The sight.** A line from 1.5 m above the feet of the creature to 1.5 m above the feet of
-  its target: each cell on the line must have a free interval at the height of the line. An
-  object lower than 0.5 m above a floor does not stop it. With no tile, nothing stops the
-  sight. The vision rule and the start of an attack use it: a creature does not take a
-  character behind a wall as its target, and it does not attack through a wall.
+  its target: each cell on the line must have a free interval at the height of the line. In
+  the cells of the two ends, the part of the line in the cell must be in the free interval of
+  the floor of the body there (a body in a solid stops nothing): a ceiling between a creature
+  and a character on one vertical line stops the sight (finding F2 of the code review of
+  stage 3.4d: such a line had no cell between its ends, and the creature attacked through the
+  ceiling). An object lower than 0.5 m above a floor does not stop it. With no tile, nothing
+  stops the sight. The vision rule, the start of an attack, and each contact of an attack
+  use it: a creature does not take a character behind a wall as its target, it does not
+  attack through a wall, and a contact does not hurt a target that went behind a wall while
+  the attack played (finding F1).
 - **With no navigation data** (no folder, a folder that is not correct, a region with no
   file, a tile that is not correct): the rule of stage 3.4b for that place (the straight line
   on the terrain of the folder `heights`, and no wall stops the sight). The log of the
@@ -4131,7 +4225,10 @@ functions, as in stage 3.4b; their bodies changed:
   different creature that lives: it makes a shorter step or waits, and it attacks from its
   place when its target is in the reach of its attack. Creatures with the same target wait
   for each other. A creature goes through a creature with a different target (or with none)
-  after 10 steps of waiting. The way home has no such rule.
+  after 10 steps of waiting, also in the last steps of its way, on the free line to its
+  target (finding F7 of the code review of stage 3.4d: there the patience was not counted,
+  and a creature waited for a creature with no attack for all time). The way home has no
+  such rule.
 - Numbers of three live fights with a character of the level 26 (2,186 health, a sword of
   the first tier, two pieces of light armor) and Grey Wolves of the level 18:
 
@@ -4198,8 +4295,82 @@ Y1 OUT.png --path FILE` draws the data from above with a path on it, and
   speed. On stairs the body follows the steps; on a path with many corners the walk can look
   less smooth than in the game.
 
+### 4.20 The lock of the input of a client: a conversation, a cutscene (static proof and behavioral proof, user test 1)
+
+User test 1: the user talked to a person of the start settlement, and the character never
+moved again, also after three travels. The backend log of the user had the client messages
+6705 and 2473 two seconds after the character stopped, and no answer.
+
+**What a conversation is in the client.** The key E at a person with the prompt "Talk" (the
+option `OpenConversation`, action 63, a committed interaction; `interaction.md` and
+`conversations.md` of the research) starts two things, and the client starts both itself
+with no message to the server and no answer of the server:
+
+- The interaction of the client: its record at Interactor +0x100 and +0x310 (0x4916540,
+  0x4916D60), and the block of the input report (4.7, entry field 14).
+- A player cutscene: the camera of the conversation (the picture of the person and of the
+  character, the text of the person, "E Next", "ESC Back"). Its start (0x2EF13F0) sets the
+  mark at PlayerCutscene facet +0xC24, calls method +0x420 of an interface of the player
+  entity with 1 (the input of the character is blocked), and turns the action map "default"
+  off.
+
+**The end.** At the last "Next" or at Escape the client ends the cutscene (0x2F08890). For a
+cutscene whose end the server must confirm (facet +0xC22) it does not free the input. It
+sends the end and waits:
+
+| Type | Direction | Body | Client code | Proof |
+| --- | --- | --- | --- | --- |
+| 6705 `PlayerCutsceneComponentServerFacet_OnClientCutsceneEnded` | client to server | `target:u64 entity:u64` (16 bytes; the target is the entity group id plus the component id `D49931510E1DD23F` of PlayerCutscene in the root entity) | sender 0x2EDA370, called by 0x2F08890 | live: one message for each end of a conversation |
+| 6709 `PlayerCutsceneComponentClientFacet_OnServerCutsceneEndRequestFinalized` | server to client | `target:u64 entity:u64` | handler 0x2EFE730: clears facet +0xC24, calls method +0x420 with 0, turns the action map "default" on | live: the character walks after it |
+| 2473 `InteractorComponentServerFacet_RequestCancelCommittedInteractionFromClient` | client to server | `target:u64 entity:u64 reference:32 bytes` (48 bytes; the component id `6C5718DBFE6DF612` of the Interactor) | sender 0x490AD30 | live: one message after each 6705 |
+| 3746 `InteractorComponentClientFacet_CancelCurrentInteraction` | server to client | `target:u64 entity:u64` | handler 0x490EDA0 calls 0x4916150: in a committed interaction the client cancels it and sends 2473 | live: an open conversation closes, and the client sends 2473 and 6705 |
+
+- The handler of 6709 with no cutscene changes nothing that plays: the mark is 0, method
+  +0x420 gets 0, and the map is on (live: 6709 at a time with no conversation, and the
+  character walks).
+- The handler of 6708 (`OnServerCutsceneCanceled`, 0x2EFE670) stops a cutscene that waits for
+  its grant (facet +0x130) and does not free the input: the backend does not send it.
+
+**The answers of the backend** (`server/rep/lock_messages.h`, `RepSession`):
+
+- 6705 of the own character: message 6709 at once, for the PlayerCutscene facet of the
+  character. A call that names a different entity, or that is too short, gets nothing.
+- 2473: the backend has no interaction state; it accepts the message and changes nothing.
+- A travel and a respawn send 3746 and 6709 before the messages of the travel (3951, 3954):
+  a lock of a cause that the backend does not know ends at the latest there.
+- Only the session of the owner gets these messages. The backend has no conversation: the
+  person speaks the default text of its state and the window closes (`conversations.md`).
+
+**Why a travel did not free the character.** The lock is the mark of the PlayerCutscene facet
+and the input interface of the player entity: a travel (the movement state with a new
+teleport number, 3951, 3954) does not touch them. The client sent 6705 one time, at the end
+of the conversation, and then waited for 6709 with no time limit.
+
+Live proof (run `ut1b`): the persons Tekla Petrowski (artificer, the place of the user), Hoang
+Lin (Marauder commander), and Balian Clark (magistrate): the conversation opens, ends with E,
+and the character walks 4.9 m, 7.9 m, and 8.7 m with the key W for 1.5 s. A lore page ("United
+in Blood", E Read) opens the journal and locks nothing. A travel in an open conversation
+closes it, and the character walks at the new place. A respawn: the character walks. Before
+the correction (run `ut1a`): no movement after the conversation and after a travel; the two
+development messages 3746 and 6709 (`tools/world message`) freed the character.
+
 ## 5. Open items
 
+- User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are
+  flickering up and down, they become normal when closer") was not seen in a development
+  run at the place of the user (night and fog). Measured: the backend sends no movement
+  state for a creature at rest after its first record (the log has no later record of a
+  creature at rest), and a ghost 73 m away goes up and down smoothly in a cycle of 3.4 s
+  (its idle animation; no jump between two frames of 30 frames each second). The causes in
+  the backend that the stage corrected can look so from far: the light of a spawn action
+  with no body (a light that flickers, 4.14), the start of a kept action at each state, and a
+  record with a new time in each state (4.14). The client rules of a far creature are not
+  known: the interpolation and the extrapolation of a remote creature (0x48709A0, 0x2A29860,
+  `g_actionStateExtrapolationLimitMS` 200 ms, research `navigation.md` Q5) work only with the
+  states that the backend sends; an animation level of detail was not looked for.
+- A conversation with a person, the content of a lore page, an interaction with an object
+  (4.20): the backend answers only the end of the cutscene and of the interaction. The person
+  speaks the text of its default state (no quest), and no reward or quest state changes.
 - Creatures (4.14) fight from stage 3.4b (4.17): a creature sees a character, goes to it,
   attacks it, and goes back to its home. Open for them:
   - From stage 3.4d a creature goes on a path of the navigation data (4.19): around a wall,
@@ -4291,8 +4462,8 @@ Y1 OUT.png --path FILE` draws the data from above with a path on it, and
   number was tested with a write of the number in the client memory (4.6).
 - The S key starts a turn action that moves the character only slowly (animation or state
   data that the backend does not send).
-- The other component states of the player. The states for stamina (slot 42) and mana
-  (slot 47) are static candidates only.
+- The other component states of the player. The state for stamina (slot 42) is a static
+  candidate only. The mana state (slot 47) has live proof (4.5).
 - Equipment (4.11). Open: the draw and the sheathe of a weapon and the change of the active
   weapon (the action system; the client of the owner shows its own weapon in the hand after
   an equip, and on the hip after a world entry); the rule for the ammunition slots; the

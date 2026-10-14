@@ -216,6 +216,8 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
             entity->creature.action.reset();
             m_acting.erase(entity->id);
         }
+        // A dead creature does not walk.
+        entity->creature.moving.reset();
     }
     m_world.touch(id, ComponentKey::vitals);
     result.entity = entity;
@@ -302,11 +304,40 @@ bool Creatures::start_action(Entity& entity, std::uint32_t action, std::optional
     }
     started.changed = m_world.touch(entity.id, ComponentKey::movement);
     entity.creature.action = started;
+    // The action of the server replaces the locomotion: an attack and a reaction stop the walk.
+    entity.creature.moving.reset();
     return true;
 }
 
-void Creatures::move(Entity& entity, const state::WorldPosition& position) {
+void Creatures::move(Entity& entity, const state::WorldPosition& position, bool walk) {
     m_world.place_creature(entity, position);
+    const Revision revision = m_world.touch(entity.id, ComponentKey::movement);
+    Creature& creature = entity.creature;
+    if (!walk || creature.moving || !creature.body->moveAction) {
+        return;
+    }
+    // The walk replaces an action of the server that plays (a reaction to a hit, the action of
+    // a command): a creature that changes its place plays its locomotion, not a different
+    // action (user test 1: a creature that moved in the pose of an attack). The behavior does
+    // not move a creature while its attack plays.
+    const WorldClock::time_point now = m_world.clock().now();
+    CreatureAction moving;
+    moving.action = *creature.body->moveAction;
+    moving.fragment = static_cast<std::uint32_t>(creature.body->actions[moving.action].fragmentIndex);
+    moving.generation = static_cast<std::uint16_t>(++creature.actions);
+    moving.started = now;
+    moving.tags = creature.body->tags;
+    moving.changed = revision;
+    creature.moving = moving;
+    creature.action.reset();
+    m_acting.erase(entity.id);
+}
+
+void Creatures::stop(Entity& entity) {
+    if (!entity.creature.moving) {
+        return;
+    }
+    entity.creature.moving.reset();
     m_world.touch(entity.id, ComponentKey::movement);
 }
 
@@ -333,11 +364,13 @@ void Creatures::end_actions() {
         }
         if (entity != nullptr && entity->creature.action && entity->creature.action->ends) {
             // No mark of the movement state: the client of each observer ended the action
-            // itself and plays its idle action. A session that observes the creature from now
-            // on gets a record with no action of this kind. The spawn action of a slice that
-            // needs it is not here: it is a value of the creature (Creature::spawnAction), and
-            // the end of an action does not change it, also for a creature that died while
-            // its reaction played.
+            // itself and plays its idle action. The next movement state of a session has the
+            // scope fields with no record (the key of the scope of the session changed), so
+            // that the client does not start the action again. A session that observes the
+            // creature from now on gets a record with no action of this kind. The spawn action
+            // of a slice that needs it is not here: it is a value of the creature
+            // (Creature::spawnAction), and the end of an action does not change it, also for a
+            // creature that died while its reaction played.
             entity->creature.action.reset();
         }
         acting = m_acting.erase(acting);

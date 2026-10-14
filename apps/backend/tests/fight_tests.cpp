@@ -17,6 +17,10 @@
 //   FT12  a creature whose spawn point is not at the terrain height does not leave its place
 //   FT13  a slice with a spawn action and with animation tags: the walk and the attack
 //   FT14  the reader of the terrain height files, and the two functions of the navigation
+//   UT1   the lock of the input of a client: the end of a cutscene, a travel, a respawn
+//   UT2   the locomotion action of a creature for each session
+//   UT3   the creatures of the place of a travel wait for the client
+//   UT4   the mana state of the owner
 //
 // The accounts, the characters, the creature kinds, and the places are made up.
 
@@ -37,6 +41,7 @@
 #include "server/http/request_handler.h"
 #include "server/http/routes.h"
 #include "server/rep/health_messages.h"
+#include "server/rep/lock_messages.h"
 #include "server/rep/travel_messages.h"
 #include "support/cases.h"
 #include "support/check.h"
@@ -69,6 +74,8 @@ constexpr std::uint32_t kGuardSlots[] = {4, 8, 12};
 /** Indexes of the actions of the test slices. */
 constexpr std::uint32_t kReaction = 1;
 constexpr std::uint32_t kBite = 3;
+/** The locomotion action of the test slice (CreatureSlice::moveAction). */
+constexpr std::uint32_t kMove = 6;
 constexpr std::uint32_t kSpawn = 5;
 /** The values of the test wolf: the level table of the game for the level 18. */
 constexpr float kWolfHealth = 1690.875977F;
@@ -105,7 +112,7 @@ gamedata::CreatureSlice test_slice(const char* path, std::uint8_t mark, const st
     slice.components = {{slice.root, 0x0000000000000A01ULL, "Root/Vitals"}};
     slice.actions = {{"Idle_No_Task", "Idle", 0, false}, {"Reaction", "r_R2_F", 5, true}, {"Death", "r_Death", 4, true},
                      {"Attack_Bite", "Attack_Bite", 7, false}, {"Attack_Lunge", "Attack_Lunge", 8, false},
-                     {"Spawn", "Spawn", 9, false}};
+                     {"Spawn", "Spawn", 9, false}, {"Move_Combat", "Move_Combat", 11, false}};
     return slice;
 }
 
@@ -284,11 +291,14 @@ int scope_action(const Fragment& movement) {
         return -1;
     }
     server::hub::Reader reader(movement.fields.at({0, kFieldScopeInfo}));
-    reader.size();
+    if (reader.size() == 0) {
+        return -1; // The scope fields with no record (a state with no action of the server).
+    }
     reader.u16();
     reader.size();
     return static_cast<int>(reader.size()) - 1;
 }
+
 
 /** @return The horizontal position of a movement state. */
 std::pair<float, float> place_of(const Fragment& movement) {
@@ -581,29 +591,49 @@ void way_to_the_target(const Options&) {
     host.world.for_each_near(state::WorldPosition{1030.0F, 1000.0F, kHeight}, 3.0F,
                              [&](world::Entity& entity) { old = old || entity.id == wolfId; });
     check(found && !old, "the position index of the world follows the creature into a different cell");
-    // What the session of an observer got: one movement state for each step, with no action.
+    // What the session of an observer got: one movement state for each step, with the
+    // locomotion action of the slice (user test 1: with no action the client lets the creature
+    // slide in its pose).
     const std::uint32_t number = interest_of(host, 1, wolfId);
     const std::vector<Fragment> states = fragments_of(a, from, number, kWolfSlots[0]);
     std::size_t moves = 0;
     std::size_t reactions = 0;
+    std::size_t kept = 0;
     std::size_t others = 0;
     for (const Fragment& state : states) {
         const int action = scope_action(state);
-        moves += action == -1 ? 1 : 0;
+        const bool fields = state.fields.count({0, kFieldScopeInfo}) == 1;
+        moves += action == static_cast<int>(kMove) ? 1 : 0;
         reactions += action == static_cast<int>(kReaction) ? 1 : 0;
-        others += action != -1 && action != static_cast<int>(kReaction) && action != static_cast<int>(kBite) ? 1 : 0;
+        kept += !fields ? 1 : 0;
+        others += fields && action != static_cast<int>(kMove) && action != static_cast<int>(kReaction)
+                          && action != static_cast<int>(kBite)
+                      ? 1
+                      : 0;
     }
     note("the movement states of the creature for the session: " + std::to_string(states.size()) + ", " + std::to_string(moves)
-         + " of them with no action, " + std::to_string(reactions) + " with the reaction to the hit");
-    check(number >= 2 && moves >= 4 && reactions == 1 && others == 0,
-          "the session that observes the creature gets a movement state for each step, with no action of the server: the "
-          "client plays the walk itself. The reaction to the hit goes out one time, in the state after its start");
-    const auto walk = std::find_if(states.begin(), states.end(), [](const Fragment& state) {
-        return scope_action(state) == -1 && near(place_of(state).first, 1024.0F);
+         + " with the locomotion action, " + std::to_string(reactions) + " with the reaction to the hit, " + std::to_string(kept)
+         + " with no scope fields");
+    check(number >= 2 && moves == 1 && reactions == 1 && kept >= 3 && others == 0,
+          "the session that observes the creature gets a movement state for each step: the reaction to the hit in the state "
+          "after its start, the locomotion action of the slice (Move_Combat) in the first step, which replaces the reaction, "
+          "and no scope fields in the later steps: the client keeps the locomotion and plays the walk or the run with no "
+          "jump (user test 1: a record with a new time in each state made the body shake)");
+    const auto first = std::find_if(states.begin(), states.end(), [](const Fragment& state) {
+        return scope_action(state) == static_cast<int>(kMove);
     });
-    check(walk != states.end() && near(place_of(*walk).second, 1000.0F) && near(height_of(*walk), kHeight + 2.4F, 0.02F)
-              && walk->fields.count({0, kFieldRotation}) == 1 && walk->fields.count({0, kFieldTags}) == 0,
-          "a state of the walk has the new position with the height of the ground and the direction, and no scope record");
+    const auto walk = std::find_if(states.begin(), states.end(), [](const Fragment& state) {
+        return near(place_of(state).first, 1024.0F);
+    });
+    check(first != states.end() && first->fields.count({0, kFieldTags}) == 1 && walk != states.end()
+              && near(place_of(*walk).second, 1000.0F) && near(height_of(*walk), kHeight + 2.4F, 0.02F)
+              && walk->fields.count({0, kFieldRotation}) == 1 && walk->fields.count({0, kFieldScopeInfo}) == 0,
+          "the first state of the walk has the scope record of the locomotion action with the tags of the slice, and a later "
+          "state of the walk has the new position with the height of the ground and the direction, and no scope fields");
+    const auto bite = std::find_if(first == states.end() ? states.end() : first, states.end(), [](const Fragment& state) {
+        return scope_action(state) == static_cast<int>(kBite);
+    });
+    check(!wolf->creature.moving && bite != states.end(), "at the target the attack replaces the locomotion");
     check(f.creatures().behavior().counts().moves == 5, "the count of the position changes: 5 for the way of 9.4 m");
 }
 
@@ -1387,7 +1417,7 @@ void spawn_action_slice_in_a_fight(const Options&) {
               && states[0].fields.at({0, kFieldTags}) == tags && guard->creature.mind.mode == CreatureMode::rest,
           "the first movement state of the session for a creature of a slice with a spawn action has that action, with "
           "the tag state of the slice");
-    // The fight: the walk states have no action, and the attack replaces the spawn action.
+    // The fight: the walk states have the locomotion action, and the attack replaces it.
     from = a.got.size();
     f.creatures().hurt(guardId, 1.0F, player->id);
     pass(host, 3.0F, {&a});
@@ -1395,10 +1425,13 @@ void spawn_action_slice_in_a_fight(const Options&) {
     const auto count = [&states](int action) {
         return std::count_if(states.begin(), states.end(), [action](const Fragment& state) { return scope_action(state) == action; });
     };
-    check(count(static_cast<int>(kSpawn)) == 0 && count(-1) >= 2 && count(static_cast<int>(kReaction)) == 1
+    check(count(static_cast<int>(kSpawn)) == 0 && count(static_cast<int>(kMove)) >= 1 && count(static_cast<int>(kReaction)) == 1
               && count(static_cast<int>(kBite)) >= 1,
-          "in the fight the session gets the walk with no action and the attack: the spawn action goes out one time, and "
-          "the creature does not play it again");
+          "in the fight the session gets the walk with the locomotion action and the attack: the spawn action goes out one "
+          "time, and the creature does not play it again (user test 1: a Reaver that walked played its spawn action again)");
+    const auto moving = std::find_if(states.begin(), states.end(), [](const Fragment& state) { return scope_action(state) == static_cast<int>(kMove); });
+    check(moving != states.end() && moving->fields.at({0, kFieldTags}) == tags,
+          "the state of the walk has the tag state of the slice too");
     const auto attack = std::find_if(states.begin(), states.end(), [](const Fragment& state) { return scope_action(state) == static_cast<int>(kBite); });
     check(attack != states.end() && attack->fields.at({0, kFieldTags}) == tags,
           "the state of the attack has the tag state of the slice: the tags of the weapons select the variant of the fragment");
@@ -1411,6 +1444,7 @@ void spawn_action_slice_in_a_fight(const Options&) {
     host.advance(std::chrono::seconds(4));
     from = a.got.size();
     host.world.travel(kCharacterA, kPlace);
+    report(host, a, ++input, kPlace);
     run(host, 4, {&a});
     states = fragments_of(a, from, interest_of(host, 1, guardId), kGuardSlots[0]);
     check(!states.empty() && scope_action(states[0]) == static_cast<int>(kSpawn),
@@ -1661,6 +1695,290 @@ void two_regions_and_an_observer(const Options& options) {
     std::filesystem::remove_all(folder);
 }
 
+/** @return The fields of a fragment as "(group,field) " pairs. */
+std::string field_list(const Fragment& fragment) {
+    std::string text;
+    for (const auto& [key, value] : fragment.fields) {
+        text += "(" + std::to_string(key.first) + "," + std::to_string(key.second) + ") ";
+    }
+    return text;
+}
+
+/** @return The type indexes of the messages that a client got from the message `from` on, for these types only. */
+std::vector<std::uint32_t> types_of(const FakeClient& client, std::size_t from, std::initializer_list<std::uint32_t> wanted) {
+    std::vector<std::uint32_t> types;
+    for (std::size_t index = from; index < client.got.size(); ++index) {
+        if (std::find(wanted.begin(), wanted.end(), client.got[index].type) != wanted.end()) {
+            types.push_back(client.got[index].type);
+        }
+    }
+    return types;
+}
+
+/** @return The body of a component call to a facet of the root entity of the player slice of a character. */
+Bytes root_call(world::EntityId character, std::uint64_t component, std::size_t extra = 0) {
+    server::hub::Writer body;
+    body.u64(character + component);
+    body.u64(character);
+    for (std::size_t index = 0; index < extra; ++index) {
+        body.u8(static_cast<std::uint8_t>(index));
+    }
+    return body.data();
+}
+
+/**
+ * UT1: the lock of the input of a client (user test 1). A conversation with a person of a
+ * settlement is a player cutscene of the client: at its end the client sends 6705 and keeps the
+ * input of its character blocked until the answer 6709. A travel and a respawn end each lock.
+ */
+void input_lock(const Options&) {
+    FightHost f(observing());
+    ServerHost& host = f.host;
+    check(host.places.set({{"shrine_101", "shrine", "Made-up Shrine", "East Land", 7, state::WorldPosition{1400.0F, 1300.0F, 80.0F}}}),
+          "the travel places of the case are valid");
+    const state::WorldPosition placeB{1002.0F, 1006.0F, kHeight};
+    const Player beta = add_player(host.store, kSteamIdB, "Tester B", kCharacterB, "Beta", placeB);
+    FakeClient a(27000);
+    FakeClient b(27001);
+    std::uint16_t inputA = 0;
+    std::uint16_t inputB = 0;
+    enter_at(host, a, f.alpha, kPlace, inputA);
+    enter_at(host, b, beta, placeB, inputB);
+    run(host, 20, {&a, &b});
+    const world::Entity* alpha = host.world.find_character(kCharacterA);
+    const world::EntityId id = alpha->id;
+    const auto& route = alpha->actor.bytes;
+    // The end of the cutscene of a conversation: the answer at once, for the PlayerCutscene facet.
+    std::size_t fromA = a.got.size();
+    std::size_t fromB = b.got.size();
+    host.datagram(a.peer, a.component_message(server::rep::kTypeCutsceneEnded, route, root_call(id, server::rep::kPlayerCutsceneComponent)));
+    run(host, 3, {&a, &b});
+    const std::vector<Bytes> answers = messages_of(a, server::rep::kTypeCutsceneEndFinalized, fromA);
+    check(answers.size() == 1 && answers[0] == root_call(id, server::rep::kPlayerCutsceneComponent)
+              && log_count("the client ended a cutscene (type 6705)") == 1
+              && messages_of(b, server::rep::kTypeCutsceneEndFinalized, fromB).empty(),
+          "the end of a cutscene (6705) gets the answer \"cutscene end request finalized\" (6709) for the PlayerCutscene "
+          "facet of the character (its id plus the entity group id), at once: without it the client keeps the input "
+          "blocked; the session of a different character gets nothing");
+    // The end of the interaction: no state, no reply.
+    fromA = a.got.size();
+    host.datagram(a.peer, a.component_message(server::rep::kTypeCancelCommittedInteraction, route,
+                                              root_call(id, server::rep::kInteractorComponent, 32)));
+    run(host, 3, {&a, &b});
+    check(a.got.size() == fromA || types_of(a, fromA, {server::rep::kTypeCutsceneEndFinalized, server::rep::kTypeCancelCurrentInteraction}).empty(),
+          "the end of an interaction (2473, 48 bytes) changes nothing and gets no reply");
+    check(log_count("the client ended its interaction (type 2473)") == 1, "the log names it");
+    // A call that names the entity of a different character: no answer.
+    fromA = a.got.size();
+    const world::EntityId other = host.world.find_character(kCharacterB)->id;
+    host.datagram(a.peer, a.component_message(server::rep::kTypeCutsceneEnded, route, root_call(other, server::rep::kPlayerCutsceneComponent)));
+    host.datagram(a.peer, a.component_message(server::rep::kTypeCutsceneEnded, route, Bytes{1, 2, 3}));
+    run(host, 3, {&a, &b});
+    check(messages_of(a, server::rep::kTypeCutsceneEndFinalized, fromA).empty()
+              && log_count("end of a cutscene request (type 6705) names the entity") == 1
+              && log_count("end of a cutscene (type 6705, 3 bytes) is too short") == 1,
+          "an end of a cutscene that names a different entity, or that is too short, gets no answer");
+    // A travel ends each lock: 3746 and 6709 before the messages of the travel.
+    fromA = a.got.size();
+    fromB = b.got.size();
+    check(host.world.travel(kCharacterA, kFar).error == world::TravelError::none, "a far travel of the character");
+    run(host, 3, {&a, &b});
+    const std::vector<std::uint32_t> order =
+        types_of(a, fromA, {server::rep::kTypeCancelCurrentInteraction, server::rep::kTypeCutsceneEndFinalized,
+                            server::rep::kTypeTeleportWithLoadingScreen, server::rep::kTypePlayerTeleport});
+    check(order == std::vector<std::uint32_t>{3746, 6709, 3951, 3954}
+              && messages_of(a, server::rep::kTypeCancelCurrentInteraction, fromA).at(0) == root_call(id, server::rep::kInteractorComponent)
+              && messages_of(a, server::rep::kTypeCutsceneEndFinalized, fromA).at(0) == root_call(id, server::rep::kPlayerCutsceneComponent),
+          "a travel sends \"cancel current interaction\" (3746, the Interactor facet) and \"cutscene end request "
+          "finalized\" (6709) before the loading screen (3951) and the end of the travel (3954): a character that the "
+          "client kept in place moves again");
+    check(types_of(b, fromB, {server::rep::kTypeCancelCurrentInteraction, server::rep::kTypeCutsceneEndFinalized}).empty(),
+          "the session of the other character gets none of them");
+    // The client answers the cancel of a conversation with 2473 and the end of its cutscene: the session answers again.
+    fromA = a.got.size();
+    host.datagram(a.peer, a.component_message(server::rep::kTypeCancelCommittedInteraction, route,
+                                              root_call(id, server::rep::kInteractorComponent, 32)));
+    host.datagram(a.peer, a.component_message(server::rep::kTypeCutsceneEnded, route, root_call(id, server::rep::kPlayerCutsceneComponent)));
+    run(host, 3, {&a, &b});
+    check(messages_of(a, server::rep::kTypeCutsceneEndFinalized, fromA).size() == 1,
+          "the end of the cutscene that the cancel causes gets its answer too");
+    // A respawn ends each lock.
+    report(host, a, ++inputA, kFar);
+    host.world.health().hurt(kCharacterA, 100000.0F);
+    run(host, 3, {&a, &b});
+    fromA = a.got.size();
+    server::hub::Writer respawn;
+    respawn.u64(id + server::rep::kPlayerComponent);
+    respawn.u64(id);
+    respawn.u8(1);
+    respawn.string("");
+    host.datagram(a.peer, a.component_message(server::rep::kTypeRequestRespawn, route, respawn.data()));
+    run(host, 3, {&a, &b});
+    check(!host.world.find_character(kCharacterA)->life.dead
+              && types_of(a, fromA, {server::rep::kTypeCancelCurrentInteraction, server::rep::kTypeCutsceneEndFinalized,
+                                     server::rep::kTypePlayerTeleport})
+                     == std::vector<std::uint32_t>{3746, 6709, 3954},
+          "a respawn sends the two messages before the end of its travel (3954)");
+}
+
+/**
+ * UT2: the locomotion action of a creature (user test 1). The client plays no walk for a creature
+ * whose states have no action: the creature slides in its pose. A creature on its way has the
+ * locomotion action of its slice (Move_Combat), one time for each session and each change: a
+ * record that comes again with a new time in each state makes the body shake.
+ */
+void locomotion_for_each_session(const Options&) {
+    FightHost f(observing());
+    ServerHost& host = f.host;
+    const state::WorldPosition placeB{1002.0F, 1006.0F, kHeight};
+    const Player beta = add_player(host.store, kSteamIdB, "Tester B", kCharacterB, "Beta", placeB);
+    FakeClient a(27000);
+    FakeClient b(27001);
+    std::uint16_t inputA = 0;
+    std::uint16_t inputB = 0;
+    enter_at(host, a, f.alpha, kPlace, inputA);
+    enter_at(host, b, beta, placeB, inputB);
+    run(host, 20, {&a, &b});
+    world::Entity* alpha = host.world.find_character(kCharacterA);
+    world::Entity* wolf = f.wolf(1012.0F, 1000.0F, 270.0F);
+    const world::EntityId wolfId = wolf->id;
+    pass(host, 0.7F, {&a, &b});
+    std::size_t fromA = a.got.size();
+    std::size_t fromB = b.got.size();
+    f.creatures().hurt(wolfId, 1.0F, alpha->id);
+    pass(host, 2.0F, {&a, &b});
+    const std::uint32_t wolfForA = interest_of(host, 1, wolfId);
+    const std::uint32_t wolfForB = interest_of(host, 2, wolfId);
+    const auto summary = [](const std::vector<Fragment>& states) {
+        std::string text;
+        for (const Fragment& state : states) {
+            text += state.fields.count({0, kFieldScopeInfo}) == 0 ? "." : std::to_string(scope_action(state));
+            text += " ";
+        }
+        return text;
+    };
+    const std::vector<Fragment> statesA = fragments_of(a, fromA, wolfForA, kWolfSlots[0]);
+    const std::vector<Fragment> statesB = fragments_of(b, fromB, wolfForB, kWolfSlots[0]);
+    note("the movement states of the creature for A: " + summary(statesA) + "(1 reaction, 6 locomotion, 3 bite, . no scope fields)");
+    const auto count = [](const std::vector<Fragment>& states, int action) {
+        return std::count_if(states.begin(), states.end(), [action](const Fragment& state) { return scope_action(state) == action; });
+    };
+    check(wolfForA >= 2 && wolfForB >= 2 && count(statesA, static_cast<int>(kMove)) == 1 && count(statesB, static_cast<int>(kMove)) == 1
+              && count(statesA, static_cast<int>(kBite)) == 1 && summary(statesA) == summary(statesB),
+          "each session gets the locomotion action one time for the way, and the attack one time; the other states of the "
+          "way have no scope fields; the two sessions get the same states");
+    check(host.session(1).observer().known().at(wolfId).scope == host.session(2).observer().known().at(wolfId).scope
+              && host.session(1).observer().known().at(wolfId).scope == (0x10000U | wolf->creature.action->generation),
+          "each session keeps the start count of the action that it sent (Known::scope): the attack");
+    // The target goes away: a new way, with a new locomotion record (a new start count).
+    fromA = a.got.size();
+    host.world.set_position(alpha->id, state::WorldPosition{995.0F, 1000.0F, kHeight}, true);
+    pass(host, 2.5F, {&a, &b});
+    std::vector<Fragment> again = fragments_of(a, fromA, wolfForA, kWolfSlots[0]);
+    check(count(again, static_cast<int>(kMove)) == 1, "after the attack a new way gets the locomotion action one time again");
+    // A third session that observes the creature on its way: its first record has the locomotion.
+    const Player gamma = add_player(host.store, kSteamIdC, "Tester C", kCharacterC, "Gamma", kFar);
+    FakeClient c(27002);
+    std::uint16_t inputC = 0;
+    enter_at(host, c, gamma, kFar, inputC);
+    host.world.set_position(alpha->id, state::WorldPosition{970.0F, 1000.0F, kHeight}, true);
+    pass(host, 0.3F, {&a, &b, &c});
+    const std::size_t fromC = c.got.size();
+    check(host.world.travel(kCharacterC, state::WorldPosition{1005.0F, 1010.0F, kHeight}).error == world::TravelError::none,
+          "a third character comes near the creature");
+    report(host, c, ++inputC, state::WorldPosition{1005.0F, 1010.0F, kHeight});
+    pass(host, 0.3F, {&a, &b, &c});
+    const std::vector<Fragment> statesC = fragments_of(c, fromC, interest_of(host, 3, wolfId), kWolfSlots[0]);
+    check(!statesC.empty() && statesC.front().fields.count({0, kFieldScopeInfo}) == 1
+              && scope_action(statesC.front()) == static_cast<int>(kBite) && count(statesC, static_cast<int>(kMove)) == 1
+              && wolf->creature.moving,
+          "a session that observes the creature later gets the action that plays in its first record (here the attack), "
+          "and then the locomotion of its way one time");
+    // The way home ends with the scope fields with no record: the client plays the idle action.
+    fromA = a.got.size();
+    host.world.creatures().behavior().set_ignored(kCharacterA, true);
+    pass(host, 6.0F, {&a, &b, &c});
+    const std::vector<Fragment> home = fragments_of(a, fromA, wolfForA, kWolfSlots[0]);
+    check(wolf->creature.mind.mode == CreatureMode::rest && !wolf->creature.moving && !home.empty()
+              && home.back().fields.count({0, kFieldScopeInfo}) == 1 && scope_action(home.back()) == -1,
+          "at its home the creature has no locomotion: the last state has the scope fields with no record");
+}
+
+/**
+ * UT3: the creatures of the place of a travel wait for the client (user test 1): its loading
+ * screen hides the start of a spawn action, and the body of such a creature stays hidden. They
+ * come when the client reports the new place, and at the latest 20 s after the travel.
+ */
+void creatures_after_a_travel(const Options&) {
+    FightHost f(observing());
+    ServerHost& host = f.host;
+    FakeClient a(27000);
+    std::uint16_t input = 0;
+    enter_at(host, a, f.alpha, kPlace, input);
+    host.world.set_creature_behavior(false);
+    const world::Entity* guard = f.creatures().spawn("Test_Guard", state::WorldPosition{kFar.x + 6.0F, kFar.y, kHeight}, 0.0F).entity;
+    const world::EntityId guardId = guard->id;
+    pass(host, 0.6F, {&a});
+    check(interest_of(host, 1, guardId) == 0, "the creature at the far place is not in the interest table");
+    std::size_t from = a.got.size();
+    host.world.travel(kCharacterA, kFar);
+    pass(host, 19.0F, {&a});
+    check(interest_of(host, 1, guardId) == 0 && fragments_of(a, from, 2, kGuardSlots[0]).empty(),
+          "with no report of the client from the new place, the creature does not come for 19 s");
+    pass(host, 1.5F, {&a});
+    const std::uint32_t number = interest_of(host, 1, guardId);
+    std::vector<Fragment> states = fragments_of(a, from, number, kGuardSlots[0]);
+    check(number >= 2 && !states.empty() && scope_action(states.front()) == static_cast<int>(kSpawn),
+          "20 s after the travel it comes with no report, with its spawn action");
+    // Back and again: a report from the place brings the creature at once, with its spawn action from its start.
+    host.world.travel(kCharacterA, kPlace);
+    report(host, a, ++input, kPlace);
+    pass(host, 1.0F, {&a});
+    check(interest_of(host, 1, guardId) == 0, "the creature goes out after the travel back");
+    from = a.got.size();
+    host.world.travel(kCharacterA, kFar);
+    pass(host, 0.3F, {&a});
+    check(interest_of(host, 1, guardId) == 0, "the creature waits for the client");
+    report(host, a, ++input, kFar);
+    run(host, 2, {&a});
+    states = fragments_of(a, from, interest_of(host, 1, guardId), kGuardSlots[0]);
+    const bool timed = !states.empty() && states.front().fields.count({0, 28}) == 1 && states.front().fields.count({0, 38}) == 1;
+    check(interest_of(host, 1, guardId) >= 2 && timed && scope_action(states.front()) == static_cast<int>(kSpawn)
+              && states.front().fields.at({0, 28})[0] == 0 && states.front().fields.at({0, 38})[0] == 0,
+          "the first report from the new place brings the creature in the same scan, and its spawn action has the time 0 "
+          "(the client shows the body only when the action plays from its start)");
+}
+
+/** UT4: the mana state of a character (user test 1: the blue bar below the crosshair is the mana meter). */
+void mana_state(const Options&) {
+    FightHost f(observing());
+    ServerHost& host = f.host;
+    const state::WorldPosition placeB{1002.0F, 1006.0F, kHeight};
+    const Player beta = add_player(host.store, kSteamIdB, "Tester B", kCharacterB, "Beta", placeB);
+    FakeClient a(27000);
+    FakeClient b(27001);
+    std::uint16_t inputA = 0;
+    std::uint16_t inputB = 0;
+    enter_at(host, a, f.alpha, kPlace, inputA);
+    enter_at(host, b, beta, placeB, inputB);
+    run(host, 20, {&a, &b});
+    const world::Entity* alpha = host.world.find_character(kCharacterA);
+    const std::vector<Fragment> mana = fragments_of(a, 0, 1, 47);
+    const std::vector<Fragment> vitals = fragments_of(a, 0, 1, kPlayerVitalsSlot);
+    const auto value = [](const Fragment& fragment, unsigned group, unsigned field) {
+        server::hub::Reader reader(fragment.fields.at({group, field}));
+        return reader.f32();
+    };
+    check(mana.size() == 1 && mana[0].type == 1652 && field_list(mana[0]) == "(0,0) (0,1) (0,2) (0,3) "
+              && value(mana[0], 0, 0) == alpha->vitals.mana && value(mana[0], 0, 1) == alpha->vitals.manaMax
+              && value(mana[0], 0, 2) == 0.0F && value(mana[0], 0, 3) == 0.0F,
+          "the owner gets the mana state (slot 47, type 1652) in its first record: current, maximum, and the two rates 0");
+    check(!vitals.empty() && value(vitals[0], 1, 0) == value(mana[0], 0, 0) && value(vitals[0], 1, 3) == value(mana[0], 0, 1),
+          "the vitals state and the mana state have the same values");
+    const std::uint32_t alphaForB = interest_of(host, 2, alpha->id);
+    check(alphaForB >= 2 && fragments_of(b, 0, alphaForB, 47).empty(), "an observer gets no mana state");
+}
+
 std::vector<Case> fight_cases() {
     return {
         {"FT1", "fight: the creature file with the behavior data, a file whose parts do not fit together, and an old file", behavior_data_file},
@@ -1680,6 +1998,13 @@ std::vector<Case> fight_cases() {
         {"FT14", "fight: the reader of the terrain height files, and the two functions of the navigation", heights_and_navigation},
         {"NV11", "navigation: two sessions in two regions, and a session that observes a creature on its path through an opening",
          two_regions_and_an_observer},
+        {"UT1", "user test 1: the end of a cutscene, the end of an interaction, and a travel and a respawn that end each lock "
+                "of the input, with two sessions",
+         input_lock},
+        {"UT2", "user test 1: the locomotion action of a creature, one time for each session and each change, with three sessions",
+         locomotion_for_each_session},
+        {"UT3", "user test 1: the creatures of the place of a travel wait for the client, 20 s at most", creatures_after_a_travel},
+        {"UT4", "user test 1: the mana state of the owner, and none for an observer", mana_state},
     };
 }
 

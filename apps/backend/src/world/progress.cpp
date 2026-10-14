@@ -254,6 +254,11 @@ ProgressResult Progress::change(const std::string& characterId, const char* what
         if (vitals.healthMax != entity->vitals.healthMax || vitals.health != entity->vitals.health) {
             m_world.touch(entity->id, ComponentKey::vitals);
         }
+        if (vitals.manaMax != entity->vitals.manaMax || vitals.mana != entity->vitals.mana) {
+            // The vitals state has the mana too: the two states keep the same values.
+            m_world.touch(entity->id, ComponentKey::vitals);
+            m_world.touch(entity->id, ComponentKey::mana);
+        }
         entity->vitals = vitals;
         entity->progression = sheet.progression;
         entity->attributes = sheet.attributes;

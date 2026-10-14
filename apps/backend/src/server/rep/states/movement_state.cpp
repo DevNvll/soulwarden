@@ -27,15 +27,19 @@
 //
 // creature worldPosAbs (the exact position: the client does not move a creature to the
 //          ground), rotation (the direction of the creature), lookDir, teleportAndMigrationId,
-//          timeAnchor, dataBits, and moreDataBits (both 0). No later time anchor. A creature
-//          with no action of the server plays the action that its client selects: the idle
-//          action, and the walk for a sequence of states with a new position each 200 ms. For
-//          a creature with an action of the server (the death action, an attack, a reaction),
-//          the state also has the scope fields: scopeData, scopeInfoBlob, scopeTimeBlobEx,
-//          globalFragTags (the tags of the weapons of the creature, which select the variant
-//          of a fragment), and the four bytes of the time of scope 0 (protocol notes 4.14 and
-//          4.17). The first state of a session for a creature whose slice needs its spawn
-//          action has that action.
+//          timeAnchor, dataBits, moreDataBits (both 0), globalFragTags (the tags of the weapons
+//          of the creature, which select the variant of a fragment), and the scope fields
+//          scopeData, scopeInfoBlob, and scopeTimeBlobEx (protocol notes 4.14 and 4.17). No
+//          later time anchor. For an action of the server (the death action, an attack, a
+//          reaction) the scope fields have its record, and the four bytes of the time of scope
+//          0 the time of the action. Each other state has the scope fields with no record: the
+//          client keeps the fields of a state that a later state does not have, and it starts
+//          the action of a kept record again each time that it applies a state after the end
+//          of that action (live proof, user test 1: a Reaver that walks plays its spawn action
+//          again and again, a wolf that runs after a bite plays the bite). With no record the
+//          client plays the action that it selects: the idle action, and the walk for a
+//          sequence of states with a new position each 200 ms. The first state of a session
+//          for a creature whose slice needs its spawn action has that action from its start.
 //
 // The id of a state (idAbs and idRel) is, for the original server, the number of the last
 // input of the owner that the server applied: the client looks for its predicted state with
@@ -201,7 +205,26 @@ hub::Bytes encode_movement_state(const world::Entity& entity, View view, const w
     return state.finish();
 }
 
-hub::Bytes encode_creature_movement_state(const world::Entity& entity, const world::WorldClock& clock, world::Revision since) {
+CreatureScope creature_scope(const world::Creature& creature, bool first) {
+    CreatureScope scope;
+    if (first && creature.spawnAction && !(creature.dead && creature.action)) {
+        // From its start for each session: the client shows the body only when it plays the
+        // action from the start. A spawn action with the time from the creation of a creature
+        // that a session sees later leaves the body hidden, with only the light of the action
+        // (live proof, user test 1: an Ancient Guardian Spearman 80 s after its creation).
+        scope.action = &*creature.spawnAction;
+        scope.fromStart = true;
+    } else if (creature.action) {
+        scope.action = &*creature.action;
+    } else if (creature.moving) {
+        scope.action = &*creature.moving;
+    }
+    scope.key = scope.action != nullptr ? 0x10000U | scope.action->generation : kScopeNone;
+    return scope;
+}
+
+hub::Bytes encode_creature_movement_state(const world::Entity& entity, const world::WorldClock& clock, world::Revision since,
+                                          std::uint32_t sent) {
     StateWriter state(kGroups, FieldMask::wide);
     // The position of a creature is exact: the client does not move a creature to the ground.
     write_world_position(state.field(0, kWorldPosition), entity.position);
@@ -210,24 +233,28 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, const wor
     state.field(0, kTeleportId).u8(1);
     state.field(0, kDataBits).u8(0);
     state.field(0, kMoreDataBits).u8(0);
-    // The action of the state. A creature whose slice needs its spawn action has that action in
-    // the first state of a session: the client shows the body and the name plate of such a
-    // creature only after it. The death action of a dead creature comes first: its body lies.
-    // A later state has an action only when the action started after the last record of the
-    // session (an attack, a reaction, the death): a session gets each action one time, and the
-    // client plays it to its end. A state of a walk has none, and the client then selects the
-    // walk itself.
-    const bool first = since == 0;
-    const world::CreatureAction* selected = entity.creature.action ? &*entity.creature.action : nullptr;
-    if (first && entity.creature.spawnAction && !(entity.creature.dead && selected != nullptr)) {
-        selected = &*entity.creature.spawnAction;
-    } else if (!first && selected != nullptr && selected->changed <= since) {
-        selected = nullptr;
+    // The action of the state (creature_scope). The scope fields go out only when the action
+    // changed for the session: the client keeps its action and plays it with no jump.
+    const world::Creature& creature = entity.creature;
+    const CreatureScope scope = creature_scope(creature, since == 0);
+    if (since != 0 && sent != kScopeUnknown && scope.key == sent) {
+        write_time_anchor(state, clock);
+        return state.finish();
     }
-    if (selected != nullptr) {
+    const world::CreatureAction* selected = scope.action;
+    const bool fromStart = scope.fromStart;
+    if (selected == nullptr) {
+        // No action of the server: the scope fields with no record. The client ends the action
+        // of a record that it kept from an earlier state, and it plays its idle action. Without
+        // these fields it starts the kept action again.
+        state.field(0, kScopeData).size(0);
+        state.field(0, kScopeInfoBlob).size(0);
+        state.field(0, kScopeTimeBlob).size(0);
+        state.field(0, kGlobalFragTags).raw(creature.body->tags);
+    } else {
         // The action that the server started, in scope 0. The time of the action is the time
         // from its start to this state: a client that gets the state later shows the pose of
-        // that time, not the start of the action.
+        // that time, not the start of the action. The spawn action of a first record starts at 0.
         const world::CreatureAction& action = *selected;
         hub::Writer record;
         record.u16(action.generation);
@@ -241,7 +268,8 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, const wor
         blob.raw(record.data());
         state.field(0, kScopeTimeBlob).size(0);
         state.field(0, kGlobalFragTags).raw(action.tags);
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(clock.now() - action.started).count();
+        const auto elapsed =
+            fromStart ? 0LL : std::chrono::duration_cast<std::chrono::milliseconds>(clock.now() - action.started).count();
         const std::uint64_t ticks =
             std::min<std::uint64_t>(static_cast<std::uint64_t>(std::max<long long>(elapsed, 0)) * kActionTicksPerSecond / 1000,
                                     0xFFFFFFFFULL);
@@ -257,7 +285,7 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, const wor
 std::vector<hub::Bytes> encode_creature_movement_parts(const world::Entity& entity, View, const PartsRequest& request) {
     std::vector<hub::Bytes> parts;
     if (request.clock != nullptr) {
-        parts.push_back(encode_creature_movement_state(entity, *request.clock, request.since));
+        parts.push_back(encode_creature_movement_state(entity, *request.clock, request.since, request.scope));
     }
     return parts;
 }

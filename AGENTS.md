@@ -18,13 +18,15 @@ backend. Read only the documents relevant to the task.
 | Equipment: the paperdoll, equip and unequip, visible gear, the items of an archetype | Protocol notes 4.11, `apps/backend/src/world/inventory.h`, `server/rep/states/paperdoll_state.cpp`, `tools/world equip` |
 | Level, experience, attributes of a character | Protocol notes 4.12, `apps/backend/src/world/progress.h`, `server/rep/states/attribute_state.cpp`, `tools/world level`, `tools/gamedata/progression.sh` |
 | Weapon mastery, ability bar, trade skills | Protocol notes 4.13, `apps/backend/src/world/skills.h`, `server/rep/states/skill_states.cpp`, `tools/world mastery`, `tools/research/ability_tables.py` |
-| Creatures: the spawn points, the kinds, the record of a creature, health and death, the action of a creature, the commands | Protocol notes 4.14, `apps/backend/src/world/creatures.h`, `gamedata/creature_data.h`, `server/rep/states` (movement, vitals, marker), `server/http/creature_commands.cpp`, `tools/world creatures`, `tools/gamedata/creatures.sh`, `tools/research/creature_actions.py` |
+| Creatures: the spawn points, the kinds, the record of a creature, health and death, the action of a creature (the scope fields, the locomotion of a walk), the commands | Protocol notes 4.14, `apps/backend/src/world/creatures.h`, `gamedata/creature_data.h`, `server/rep/states` (movement, vitals, marker; `creature_scope`), `server/http/creature_commands.cpp`, `tools/world creatures`, `tools/gamedata/creatures.sh`, `tools/research/creature_actions.py`, test cases UT2 and UT3 |
 | A melee attack of a player on a creature: the contact report of the client, the hit check, the damage rule, the damage number | Protocol notes 2.3, 4.7, and 4.15, `apps/backend/src/world/combat.h`, `gamedata/combat_tables.h`, `server/rep/client_input.h`, `server/rep/combat_messages.h`, `server/http/aws_routes.cpp`, `tools/gamedata/combat.sh`, `tools/research/input_packet.py --contacts` |
 | The creature data of the whole world: which entries are in, which slices are out, the spawn action of a slice, the picture check of the slices | Protocol notes 4.14, `tools/gamedata/creature_data.py`, `tools/gamedata/creature_slices.json`, `tools/research/creature_tour.py` |
 | The behavior of a creature: the sense, the way to a player, the attack and its contact test, the way back, the behavior data of a slice, the two switches | Protocol notes 4.17 and 4.19, `apps/backend/src/world/behavior.h`, `world/navigation.h`, `world/creatures.h`, `gamedata/creature_data.h`, `tools/gamedata/creature_behavior.py`, `tools/world ignore`, test cases FT1 to FT14 |
-| The navigation data: where a creature can stand, its path around a wall and up stairs, what stops its sight, the tiles near the players, the tool that makes the data from the collision shapes of the game copy | Protocol notes 4.19, `apps/backend/src/world/navigation.h`, `gamedata/navigation_data.h`, `tools/gamedata/navigation.sh` (`navigation_data.py`, `collision_data.py`, `navcore.cpp`, `nav_file.py`), `tools/world path`, `tools/world track`, `tools/research/nav_draw.py`, test cases NV1 to NV12 |
+| The navigation data: where a creature can stand, its path around a wall and up stairs, what stops its sight, the tiles near the players, the tool that makes the data from the collision shapes of the game copy | Protocol notes 4.19, `apps/backend/src/world/navigation.h`, `gamedata/navigation_data.h`, `tools/gamedata/navigation.sh` (`navigation_data.py`, `collision_data.py`, `navcore.cpp`, `nav_file.py`), `tools/world path`, `tools/world track`, `tools/research/nav_draw.py`, test cases NV1 to NV12 and RN1 to RN10 (`tools/gamedata/check_navigation_tool.py`) |
 | A fight that a player can play: the 10 s with no target after a travel, the health that comes back, light and heavy attacks of a creature and their pause, creatures that do not stand at one place | Protocol notes 4.19, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/health.h`, `gamedata/creature_data.h` (`kContactGap`, `kHeavyWeight`), test cases PL1 to PL4 |
 | The terrain heights: the height of the ground at a place with no navigation data, and the terrain after the cookies of the placements | Protocol notes 4.17 and 4.19, `apps/backend/src/gamedata/height_maps.h`, `world/navigation.h`, `tools/gamedata/heights.sh`, `tools/gamedata/check_heights_tool.py` |
+| A conversation with a person, a cutscene of the client, a character that the client keeps in place | Protocol notes 4.20, `apps/backend/src/server/rep/lock_messages.h`, `server/rep/rep_session.cpp` (`handle_cutscene_ended`, `end_input_lock`), `tools/world message`, test case UT1 |
+| The mana of a character and the mana meter of the HUD (the blue bar below the crosshair) | Protocol notes 4.5, `apps/backend/src/server/rep/states/mana_state.cpp`, test case UT4 |
 | The health and the death of a character: the damage of a creature, the damage mark, the death screen, the respawn | Protocol notes 4.18, `apps/backend/src/world/health.h`, `world/combat.h` (`Combat::creature_damage`), `server/rep/health_messages.h`, `server/rep/states/vitals_state.cpp`, `server/http/health_commands.cpp`, `tools/world heal` |
 | The load of the world: the cost of the spawn rule, the time of a tick | `apps/backend/src/world/creatures.h` (`SpawnGrid`), `world/load_meter.h`, `tools/world list` (the line `load:`), test case WS2 |
 | Travel: the server moves a character to a different place, the travel places, the tab "Travel" | Protocol notes 4.16, `apps/backend/src/world/world.h` (`World::travel`), `server/rep/travel_messages.h`, `gamedata/travel_places.h`, `server/http/travel_commands.cpp`, `tools/world travel`, `tools/world places`, `tools/gamedata/places.sh` |
@@ -80,8 +82,9 @@ backend. Read only the documents relevant to the task.
   action of its slice, and its entity stays in the world (the body). A dead creature does
   not get health again. Damage goes through the same system (`Creatures::hurt`): a creature
   that lives after it plays the action `Reaction` of its slice, which has an end 1.5 s later
-  (the creature then has no action of the server, and its observers get no record for it).
-  A creature that plays an attack plays no reaction. The creature gets the character that
+  (the creature then has no action of the server, and its observers get no record for it
+  until its next movement state, which has the scope fields with no record). A creature
+  that plays an attack plays no reaction, and a step of a way ends a reaction. The creature gets the character that
   hurt it as its target (`Creatures::hurt` has the attacker).
 - The spawn points (a project rule, protocol notes 4.14). The creature data has the places
   where the game has a creature. The world makes the creature of a spawn point when a
@@ -139,8 +142,9 @@ backend. Read only the documents relevant to the task.
   (`Health::creature_hit`). A creature loses its target when the target is dead, left the
   world, is ignored, or is farther than 60 m, at the end of its leash, and when its target
   has no way to it: it then goes to its home and has its full health there. A creature has
-  one target. From stage 3.4d a wall stops the vision, the attack, and the way (the
-  navigation data, protocol notes 4.19). A kind with no attack that the data tool can use
+  one target. From stage 3.4d a wall stops the vision, the attack, each contact of an
+  attack, and the way (the navigation data, protocol notes 4.19; a ceiling between two
+  bodies on one vertical line too). A kind with no attack that the data tool can use
   stands and takes damage (859 of the 3,848 kinds).
 - The rules for a fight that a player can play (stage 3.4d, protocol notes 4.19; project
   rules, each constant in `behavior_rules`, `world/health.h`, or `gamedata/creature_data.h`).
@@ -160,7 +164,9 @@ backend. Read only the documents relevant to the task.
   end a step of its way to its target 0.5 m or less from a different creature that lives
   (it makes a shorter step or waits, `Navigation::take_back`), and it attacks from its
   place when the target is in the reach of its attack; creatures with the same target wait
-  for each other. A new rule of the behavior keeps the cost rule: no scan of each creature
+  for each other, and a creature goes past a creature with a different target (or with
+  none) after 10 steps of waiting, also in the last steps of its way. A new rule of the
+  behavior keeps the cost rule: no scan of each creature
   of the world.
 - The functions of the navigation (`world/navigation.h`) are the only place where the
   behavior gets a place: `ground_height(position)` (the height of the floor that is nearest
@@ -181,15 +187,21 @@ backend. Read only the documents relevant to the task.
   level designers. The size of a creature (the agent: radius 0.35 m, height 1.8 m, step
   0.35 m, slope 50 degrees, wade 1.2 m) is a project value with a live check for each
   number; each file has the values in its header, and the backend refuses a folder whose
-  files do not have the same values. The backend reads only the header and the directory of
-  each file at its start.
+  files do not have the same values, as a whole, as for each other file that is not
+  correct. A tile with more than 16 floors in one cell, and a tile stream with a byte after
+  its zlib stream, are not correct. The backend reads only the header and the directory of
+  each file at its start. The tool stops (status 1, no region file) for a placed collider
+  whose physics file does not decode.
 - The world has only the tiles near its players (`navigation_rules`): each 500 ms it asks
   for the tiles that are 96 m or less from a character and 32 m or less from a creature on
   a path, and it removes a tile that no one asked for in 10 s. A thread of the navigation
   reads the tiles (`WorldOptions::navigationThread`; a test host reads them in the tick):
   the world thread reads no navigation file, and it takes the tiles that are ready at the
   start of a tick. The thread reads only the navigation data: it reads no entity. A
-  creature whose tile is not there yet waits. Do not read all tiles of a region, and do not
+  creature whose tile is not there yet waits: the tile of its place, of its goal, of a link
+  between two areas, and of each step (a path in the memory of a creature can go into a
+  tile that the world removed). A tile that the world does not have is no proof of "no
+  way". Do not read all tiles of a region, and do not
   read a tile in the world thread (the development command `tools/world path` is the one
   exception, for a test).
 - The cost of the path search has limits (`navigation_rules`): all searches of one tick of
@@ -201,7 +213,7 @@ backend. Read only the documents relevant to the task.
   its path: the client moves a creature on the straight line between two movement states.
   Test cases NV6 and NV10 have the limits with a time limit: a new rule keeps them.
 - Which creature walks: a creature walks when a free floor of the navigation data is 0.5 m
-  or less from its place in the plane and 0.6 m or less in the height
+  or less from its place in the plane (to the area of its cell) and 0.6 m or less in the height
   (`Navigation::footing`). The world asks when the tile of the creature is there: until then
   the creature has no answer (`CreatureMind::groundKnown`), and it does not walk yet. A
   creature on no free floor does not leave its place: it turns to its target and attacks in
@@ -222,12 +234,19 @@ backend. Read only the documents relevant to the task.
   height of each spawn point): if not, it does not leave its place, turns to its target,
   and attacks in its reach. Without the height files and with no navigation data no
   creature leaves its place.
-- A movement state of a creature with a new position and no action makes the client show the
-  walk itself. An attack, a reaction, and the death are scope records with the tag bytes of
-  the slice (`CreatureSlice::tags`: a creature with a weapon has no variant of an attack
-  fragment with no tag, and its attack does not play with 12 bytes of 0). A session gets
-  each action one time: a later movement state has the action only when the action started
-  after the last record of that session (`CreatureAction::changed`).
+- The client plays no walk for a creature whose position changes with no action: the
+  creature slides in its pose. A creature on its way has the locomotion action of its slice
+  (`Move_Combat`, `CreatureSlice::moveAction`, `Creature::moving`) from its first step to an
+  attack or to its home; a step replaces a reaction that plays. An attack, a reaction, the
+  death, and the locomotion are scope records with the tag bytes of the slice
+  (`CreatureSlice::tags`: a creature with a weapon has no variant of an attack fragment with
+  no tag, and its attack does not play with 12 bytes of 0). The client keeps the scope fields
+  of a state that a later state does not have, and it starts a kept action again at each
+  later state after its end; a record that comes again with a new time makes the body jump.
+  Thus a session keeps the key of the scope that it sent for each creature
+  (`Known::scope`, `creature_scope`), and a movement state has the scope fields only when
+  that key changes: the record of the new action, or the fields with no record (the client
+  plays its idle action). Protocol notes 4.14, user test 1.
 - The health and the death of a character (protocol notes 4.18). Only the health system
   (`world/health.h`) changes the health and the life state of a character
   (`Entity::vitals.health`, `Entity::life`); the progress system sets the maximum. The
@@ -280,7 +299,26 @@ backend. Read only the documents relevant to the task.
   the distance of a movement with the limits of the position check. A travel of a character
   that is not in the world writes its row. The world refuses a travel to a place that is
   not a place for a character (`travel_position`: the limits of the world, and a height
-  from -99 m to 999 m, the range of a height on the wire).
+  from -99 m to 999 m, the range of a height on the wire). The creatures of the new place
+  come into the interest table of the owner when its client confirms the place, and at the
+  latest 20 s after the travel (`kCreaturesAfterTravel`): the loading screen hides the start
+  of a spawn action. A travel and a respawn end each lock of the input of the client: the
+  session of the owner sends the messages 3746 and 6709 before the messages of the travel
+  (protocol notes 4.20).
+- The lock of the input of a client (protocol notes 4.20, `server/rep/lock_messages.h`). A
+  conversation with a person (the key E, "Talk") is a player cutscene of the client: at its
+  end the client sends 6705 and keeps the input of its character blocked until the answer
+  6709, which the session sends at once (a travel does not free it). The client also sends
+  2473 (the end of its committed interaction): the backend has no interaction state and
+  changes nothing. A call that names a different entity gets nothing. Only the session of
+  the owner gets 6709 and 3746. The backend has no conversation content, no lore content,
+  and no interaction of an object: a new message of these systems keeps this answer.
+- The mana of a character is in `Entity::vitals` and goes to its owner in two states with the
+  same values: group 1 of the vitals state, and the mana state (slot 47, type 1652, owner
+  only, `states/mana_state.cpp`). The mana meter of the HUD (the blue bar below the
+  crosshair) reads only the mana state: with no mana state it shows always. A change of the
+  mana marks the two states (`ComponentKey::vitals`, `ComponentKey::mana`). Protocol notes
+  4.5.
 - The travel places are game data (`travel-places.json`, `gamedata::TravelPlaces`): the
   spirit shrines and the inns of the territories, each with an id, a name, a territory, and
   a position. A command names a place by its id, or it gives the three numbers of a
@@ -454,12 +492,14 @@ backend. Read only the documents relevant to the task.
 - The record of a creature has the metadata state (the asset of its slice), the movement
   state, the vitals state, and the marker state, with the slot of each component from the
   slice (game data: `CreatureSlice::movementSlot`, `vitalsSlot`, `markerSlot`). A creature
-  has only the observer view. The movement state of a creature that lives has no action
-  field: its client plays the idle action itself, and the walk for a creature whose
-  position changes. Only an action that the server starts (the death action, the reaction
-  to a hit, an attack, the spawn action of a slice that needs it, the action of a command)
-  is in the state, as a scope record with the index of the action and of its fragment from
-  the action table of the slice and with the tag bytes of the slice (game data). Never put a state id of a
+  has only the observer view. The movement state of a creature at rest has the scope fields
+  with no record: its client plays the idle action itself. An action that the server starts
+  (the death action, the reaction to a hit, an attack, the spawn action of a slice that needs
+  it, the locomotion of a way, the action of a command) is in the state, as a scope record
+  with the index of the action and of its fragment from the action table of the slice and
+  with the tag bytes of the slice (game data). The spawn action of a first record has the
+  time 0: with the time from the creation of the creature the client of a later session
+  shows only its light and no body. Never put a state id of a
   player (the script layers) into the state of a creature. Each vitals state of a creature
   has `healthChangeFlags` with bit 0: without it the name plate of the client keeps its old
   bar. The position of a creature is exact: the client does not move a creature to the
@@ -795,7 +835,12 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   (PL2), light and heavy attacks, their sequence, their pause, and the hits of an attack
   (PL3), the crowd (PL4), the cases of the code review of stage 3.4b, each one with a
   failure before its correction (RF1 to RF9; RF10 runs `tools/gamedata/check_heights_tool.py`
-  with `python3`),
+  with `python3`), the cases of the code review of stage 3.4d, each one with a failure
+  before its correction (RN1 to RN9; RN10 runs `tools/gamedata/check_navigation_tool.py` with
+  `python3`, and the check compiles a small program with `navcore.cpp`), the corrections of
+  user test 1: the end of a cutscene and the lock of the input with two sessions (UT1), the
+  locomotion action with three sessions (UT2), the creatures of a travel that wait for the
+  client (UT3), and the mana state (UT4),
   HTTP stop (H1), a world task that did not start
   (D2), position limits (P2), bundle limits (F1), sessions and stops (T11), a locked item
   and the quantity of a lock request (L1), a delete whose write failed (D3), a spawn offset
@@ -1197,6 +1242,32 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
     common folder `heights` makes the tool write into the common folder.
   - The test program builds the navigation files of a case in its work folder
     (`TestNavRegion`: a region of the real size, flat ground where a case gives no floor).
+
+- User test 1 (the corrections after stage 3.4d):
+  - Still pictures do not show if a creature walks or slides: a pose of a run in some frames
+    looked like a walk in stage 3.4b, and the user saw the slide. Record a video of the agent
+    desktop (`wf-recorder -o AGENT-0 -f FILE.mp4 -r 30`, with `timeout -s INT SECONDS`; it
+    reads the output of the agent desktop and sends no input) and extract frames with
+    `ffmpeg` at 10 to 30 frames each second, near the creature.
+  - The client keeps the scope fields of a creature: a state with no scope fields after an
+    action makes the client start that action again. A new state of a creature must keep
+    the rule of `creature_scope` (protocol notes 4.14).
+  - A conversation (the key E at a person, "Talk") locks the input of the character until
+    the answer 6709. In a test: the camera of the conversation shows the person; E goes to
+    the next text, and the conversation ends at the last one. A lore page ("E Read") opens
+    the journal: two Escape keys close it (the first one goes back one step).
+  - A creature with no way to a character goes home and does not look at it for 8 s: a
+    stone 0.6 m higher than the floor around it (the Tomb of the Old Warrior) is enough.
+    Keep a test of a walk on one floor.
+  - After a travel the creatures of the new place come only after the first position report
+    of the client from the place (20 s at most): `tools/world creatures` lists them at once,
+    the interest table of the session later.
+  - `tools/world message CHARACTER TYPE HEX` sends a message to the client of a character:
+    the body starts with the facet target (the entity group id plus the id of the component
+    in the root entity of the player slice) and the entity group id. It is the fastest check
+    of a message of the server before its code (6709 and 3746 of protocol notes 4.20).
+  - The blue bar below the crosshair is the mana meter: it shows when the client has no mana
+    state, and it goes away at 100 percent.
 
 - Creatures (stage 3.4a):
   - The spawn points of the start area are outside the wall of the settlement. From the

@@ -230,6 +230,8 @@ private:
      * different creature stands at the end of the step (`kCrowdDistance`). 0: the creature stays.
      */
     [[nodiscard]] float free_way(const Entity& creature, const Entity& target, float way) const;
+    /** @return The different creature at the end of a step of `length` meters to the target, or null. */
+    [[nodiscard]] const Entity* blocker(const Entity& creature, const Entity& target, float length) const;
     /** @return A different creature that lives and stands `kCrowdDistance` or less from a place. Null: none. */
     [[nodiscard]] const Entity* taken(const Entity& creature, const state::WorldPosition& place) const;
     void contact(const PendingContact& pending);

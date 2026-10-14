@@ -310,8 +310,14 @@ public:
     /**
      * Puts a creature at a different place: the position index of the world follows it, and
      * each session that observes the creature gets its movement state.
+     * @param walk True for a step of a way: the creature plays the locomotion action of its
+     *             slice (Creature::moving) from its first step, and the walk replaces an action
+     *             of the server that plays (a reaction). False: a place with no walk (the
+     *             arrival at the home).
      */
-    void move(Entity& entity, const state::WorldPosition& position);
+    void move(Entity& entity, const state::WorldPosition& position, bool walk = true);
+    /** Ends the walk of a creature (Creature::moving): its client plays the action that it selects (the idle action). */
+    void stop(Entity& entity);
     /** Marks the movement state of a creature that changed its direction at its place. */
     void moved(Entity& entity);
     /** Gives a creature that lives its full health: a creature that is at its home again. */

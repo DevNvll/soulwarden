@@ -166,6 +166,8 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         return group == 1 ? (field == 0 || field == 3 ? 4 : field == 4 ? 2 : -1) : -1;
     case 5399: // Marker: enabled.
         return group == 0 && field == 0 ? 1 : -1;
+    case 1652: // Mana: current, maximum, regeneration delay, regeneration rate (32-bit floats).
+        return group == 0 && field < 4 ? 4 : -1;
     case 1195: // Appearance: 12 fields of one byte.
         return group == 0 && field < 12 ? 1 : -1;
     case 899: // Progression: level and bonus level (group 0), experience and rested experience (group 1).
@@ -198,6 +200,7 @@ inline unsigned group_count(std::uint32_t type) {
     switch (type) {
     case 10:
     case 5399:
+    case 1652:
     case 1195:
     case 3786:
     case 1755:

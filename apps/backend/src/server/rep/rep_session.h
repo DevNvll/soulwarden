@@ -330,6 +330,19 @@ private:
      */
     void handle_request_respawn(std::span<const std::uint8_t> body);
     /**
+     * The end of a player cutscene of the client (server/rep/lock_messages.h): the client keeps
+     * the input of its character blocked until the answer "cutscene end request finalized",
+     * which the session sends at once.
+     */
+    void handle_cutscene_ended(std::span<const std::uint8_t> body);
+    /** The end of an interaction of the client: the backend has no interaction state, and nothing changes. */
+    void handle_interaction_cancel(std::span<const std::uint8_t> body);
+    /**
+     * Ends each lock of the input that the client of the own character can have: a committed
+     * interaction (a conversation) and a player cutscene. For a travel and a respawn.
+     */
+    void end_input_lock(const char* cause);
+    /**
      * @return True when the entity of a component call is the entity of this session. False,
      *         with a log line, for a different entity: such a request changes nothing.
      */
@@ -446,6 +459,15 @@ private:
      */
     std::optional<TravelAnchor> m_travelAnchor;
     /**
+     * From a travel until the client confirms the new place (m_travelAnchor), and at the
+     * latest until this time: no new creature comes into the interest table. The client shows
+     * its loading screen in that time, and a creature that comes in then can stay hidden (the
+     * spawn action of a slice that shows its body only after it plays while the client loads).
+     */
+    std::optional<carrier::Clock::time_point> m_creaturesAfterTravel;
+    /** True when the last interest scan left the creatures out for this rule: the end of the wait starts a scan. */
+    bool m_creaturesWaited{false};
+    /**
      * The teleport number of the last full movement state of the own character that this
      * session sent: the number that its client has. 0 before the first one, which is the
      * start number of a client. World::travel counts the next number from it.
@@ -457,6 +479,9 @@ private:
     std::uint64_t m_damageMarks{0};
     std::uint32_t m_deaths{0};
     std::uint32_t m_respawns{0};
+    /** Numbers of the ends of a cutscene that the client sent, and of the ends of an interaction, for the log line at its end. */
+    std::uint32_t m_cutsceneEnds{0};
+    std::uint32_t m_interactionEnds{0};
     /**
      * True from the first input report with a camera: the loading screen of the client is
      * gone, and the client has its local player entity. The client needs it before it gets

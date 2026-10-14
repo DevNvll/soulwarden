@@ -576,7 +576,11 @@ std::optional<Navigation::Place> Navigation::snap(const state::WorldPosition& po
             const float awayX = (static_cast<float>(centerX + dx) + 0.5F) * cell - position.x;
             const float awayY = (static_cast<float>(centerY + dy) + 0.5F) * cell - position.y;
             const float flat = awayX * awayX + awayY * awayY;
-            if (flat > (reach + cell) * (reach + cell)) {
+            // The limit is the distance from the place to the area of the cell, not to its middle:
+            // a free floor farther than `reach` does not count (code review of stage 3.4d, finding F6).
+            const float edgeX = std::max(std::fabs(awayX) - cell * 0.5F, 0.0F);
+            const float edgeY = std::max(std::fabs(awayY) - cell * 0.5F, 0.0F);
+            if (edgeX * edgeX + edgeY * edgeY > reach * reach) {
                 continue;
             }
             for (int index = 0; index < count; ++index) {
@@ -717,11 +721,25 @@ bool Navigation::sees(const state::WorldPosition& eye, const state::WorldPositio
     std::int32_t beforeX = firstX;
     std::int32_t beforeY = firstY;
     NavSpot found[NavTile::kMaxFloors];
+    // The heights of the line in the cells of its two ends.
+    float firstLow = fromZ;
+    float firstHigh = fromZ;
+    float lastLow = toZ;
+    float lastHigh = toZ;
     for (std::int32_t index = 1; index < steps; ++index) {
         const float part = static_cast<float>(index) / static_cast<float>(steps);
         const auto cellX = static_cast<std::int32_t>(std::floor((eye.x + dx * part) / cell));
         const auto cellY = static_cast<std::int32_t>(std::floor((eye.y + dy * part) / cell));
-        // The cells of the two ends have the two bodies: they stop nothing.
+        const float lineZ = fromZ + (toZ - fromZ) * part;
+        if (cellX == firstX && cellY == firstY) {
+            firstLow = std::min(firstLow, lineZ);
+            firstHigh = std::max(firstHigh, lineZ);
+        }
+        if (cellX == lastX && cellY == lastY) {
+            lastLow = std::min(lastLow, lineZ);
+            lastHigh = std::max(lastHigh, lineZ);
+        }
+        // The cells of the two ends have the two bodies: the test below takes their part of the line.
         if ((cellX == beforeX && cellY == beforeY) || (cellX == firstX && cellY == firstY) || (cellX == lastX && cellY == lastY)) {
             continue;
         }
@@ -751,7 +769,44 @@ bool Navigation::sees(const state::WorldPosition& eye, const state::WorldPositio
             return false;
         }
     }
+    // The cells of the two ends: the part of the line in such a cell is in the free interval of
+    // the floor of the body there. A ceiling between two bodies on one vertical line stops the
+    // sight (code review of stage 3.4d, finding F2): the line then has no cell between its ends.
+    if (firstX == lastX && firstY == lastY) {
+        const bool free = end_cell_free(firstX, firstY, fromZ, std::min(firstLow, lastLow), std::max(firstHigh, lastHigh));
+        if (!free) {
+            ++m_counts.sightStopped;
+        }
+        return free;
+    }
+    if (!end_cell_free(firstX, firstY, fromZ, firstLow, firstHigh) || !end_cell_free(lastX, lastY, toZ, lastLow, lastHigh)) {
+        ++m_counts.sightStopped;
+        return false;
+    }
     return true;
+}
+
+bool Navigation::end_cell_free(std::int32_t cellX, std::int32_t cellY, float eyeZ, float low, float high) const {
+    NavSpot found[NavTile::kMaxFloors];
+    const int count = spots(cellX, cellY, found);
+    if (count <= 0) {
+        return true; // No tile, or no floor: nothing stops the sight there.
+    }
+    // The floor of the body: the highest floor below its eye. A body in a solid (a creature
+    // whose spawn point is in a rock) has none, and its own cell stops nothing.
+    const NavFloor* below = nullptr;
+    for (int floor = 0; floor < count; ++floor) {
+        if (static_cast<float>(found[floor].floor.height) / 32.0F <= eyeZ + 0.05F) {
+            below = &found[floor].floor;
+        }
+    }
+    if (below == nullptr || below->sightLow == NavFloor::kNoSight) {
+        return true;
+    }
+    const float base = static_cast<float>(below->height) / 32.0F;
+    const float bottom = base + static_cast<float>(below->sightLow) / 8.0F;
+    return low >= bottom - 0.05F
+           && (below->sightHigh == NavFloor::kSky || high <= base + static_cast<float>(below->sightHigh) / 4.0F + 0.25F);
 }
 
 // ---- the steps of a creature -----------------------------------------------------------------
@@ -835,6 +890,7 @@ NavStep Navigation::next_step(EntityId mover, const state::WorldPosition& from, 
     const auto near = [](const state::WorldPosition& a, const state::WorldPosition& b) {
         return horizontal_distance(a, b) <= navigation_rules::kRepathDistance && std::fabs(a.z - b.z) <= navigation_rules::kSnapHeight;
     };
+    bool pending = false;
     if (route.cells.empty() || !near(goal, route.goal)) {
         if (route.noWay && now < route.noWayUntil && near(goal, route.noWayGoal)) {
             // The same goal that had no way: the navigation does not look again yet.
@@ -851,8 +907,16 @@ NavStep Navigation::next_step(EntityId mover, const state::WorldPosition& from, 
                 route.searching = false;
                 ++m_counts.noWay;
             };
+            // A goal whose tile is on its way, or a link of two areas over a tile that is on its
+            // way, is no proof of "no way": the world asks for the tiles, and the creature waits
+            // (code review of stage 3.4d, finding F8).
+            const float around = static_cast<float>(NavTile::kMeters);
             if (!end) {
-                no_way();
+                if (tiles_ready(from, goal, 0.0F)) {
+                    no_way();
+                } else {
+                    pending = true;
+                }
             } else if (walk_line(*start, *end)) {
                 route.cells = {PathCell{start->x, start->y, start->height}, PathCell{end->x, end->y, end->height}};
                 route.reached = 0;
@@ -865,7 +929,11 @@ NavStep Navigation::next_step(EntityId mover, const state::WorldPosition& from, 
                 }
                 ++m_counts.pathsDirect;
             } else if (!connected(*start, *end)) {
-                no_way();
+                if (tiles_ready(from, goal, around)) {
+                    no_way();
+                } else {
+                    pending = true;
+                }
             } else {
                 if (!route.searching) {
                     m_queue.push_back(mover);
@@ -876,6 +944,10 @@ NavStep Navigation::next_step(EntityId mover, const state::WorldPosition& from, 
                 route.searchGoal = goal;
             }
         }
+    }
+    if (pending) {
+        ++m_counts.waits;
+        return {StepKind::waiting, from};
     }
     if (route.cells.empty()) {
         if (route.searching) {
@@ -950,11 +1022,43 @@ NavStep Navigation::follow(Route& route, const state::WorldPosition& from, float
         ++m_counts.waits;
         return {StepKind::waiting, from};
     }
+    // The world has each tile of the step: a path in the memory of a creature can go into a tile
+    // that the world removed (code review of stage 3.4d, finding F5). The world asks for it,
+    // and the creature waits at its place.
+    if (!tiles_ready(from, position, 0.0F)) {
+        route.reached = route.stepReached;
+        route.corner = route.stepCorner;
+        ++m_counts.waits;
+        return {StepKind::waiting, from};
+    }
     if (const std::optional<float> floor = floor_at(position.x, position.y, position.z, true)) {
         position.z = *floor;
     }
     route.position = position;
     return {StepKind::moved, position};
+}
+
+bool Navigation::tiles_ready(const state::WorldPosition& from, const state::WorldPosition& to, float margin) {
+    const WorldClock::time_point now = m_world.clock().now();
+    const auto edge = static_cast<float>(NavTile::kMeters);
+    const auto lowX = static_cast<std::int32_t>(std::floor((std::min(from.x, to.x) - margin) / edge));
+    const auto highX = static_cast<std::int32_t>(std::floor((std::max(from.x, to.x) + margin) / edge));
+    const auto lowY = static_cast<std::int32_t>(std::floor((std::min(from.y, to.y) - margin) / edge));
+    const auto highY = static_cast<std::int32_t>(std::floor((std::max(from.y, to.y) + margin) / edge));
+    bool ready = true;
+    for (std::int32_t y = lowY; y <= highY; ++y) {
+        for (std::int32_t x = lowX; x <= highX; ++x) {
+            if (!m_data->has_region(x, y)) {
+                continue;
+            }
+            const auto held = m_tiles.find(tile_key(x, y));
+            if (held == m_tiles.end() || held->second.state == TileState::loading) {
+                want(x, y, now);
+                ready = false;
+            }
+        }
+    }
+    return ready;
 }
 
 // ---- the searches of a tick ------------------------------------------------------------------

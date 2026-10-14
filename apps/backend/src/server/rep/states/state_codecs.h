@@ -44,6 +44,7 @@ inline constexpr std::uint32_t kTypeCategoricalState = 911;     // MB::Categoric
 inline constexpr std::uint32_t kTypePointsState = 3681;         // MB::ProgressionPointReplicatedState
 inline constexpr std::uint32_t kTypeAbilityState = 185;         // MB::AbilityComponentReplicatedState
 inline constexpr std::uint32_t kTypeMarkerState = 5399;         // MB::MarkerComponentReplicatedState
+inline constexpr std::uint32_t kTypeManaState = 1652;           // MB::ManaComponentReplicatedState
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -52,6 +53,8 @@ inline constexpr std::uint32_t kPlayerComponentSlot = 9;
 inline constexpr std::uint32_t kAppearanceSlot = 12;
 inline constexpr std::uint32_t kMovementSlot = 16;
 inline constexpr std::uint32_t kVitalsSlot = 41;
+/** The component Mana of the entity "Stats" of the player slice: the mana meter of the HUD reads it. */
+inline constexpr std::uint32_t kManaSlot = 47;
 /** The components Currency, Container (the bag), and Paperdoll (the equipment) of the entity "Inventory" of the player slice. */
 inline constexpr std::uint32_t kCurrencySlot = 60;
 inline constexpr std::uint32_t kContainerSlot = 61;
@@ -87,6 +90,8 @@ struct PartsRequest {
     std::size_t budget{0};
     /** The clock of the world, for a state with a time. Null: a caller with no clock (an encoder that needs none). */
     const world::WorldClock* clock{nullptr};
+    /** The key of the scope fields of a creature that the session sent last (Known::scope, creature_scope). */
+    std::uint32_t scope{0xFFFFFFFFU};
 };
 
 /**
@@ -176,6 +181,8 @@ struct StateCodec {
 [[nodiscard]] hub::Bytes encode_ability_bars(const world::SkillSet& skills, bool placeNumbers = false);
 /** @return The coin of the character for the owner. No byte for the observer view. */
 [[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/** @return The mana state of a character (states/mana_state.cpp): owner only. */
+[[nodiscard]] hub::Bytes encode_mana_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /**
  * @return The fragments of the bag for the owner (states/container_state.cpp): the full vector
  *         for a session that has no record of the entity, and after that only the slots that
@@ -225,16 +232,44 @@ struct ItemWire {
  */
 [[nodiscard]] hub::Bytes encode_item_look(const world::ItemInstance* item, ItemWire wire = {});
 
+/** The key of the scope fields of a creature: none sent yet (a session with no record), and the fields with no record. */
+inline constexpr std::uint32_t kScopeUnknown = 0xFFFFFFFFU;
+inline constexpr std::uint32_t kScopeNone = 0;
+
+/** The action that the client of a session must play for a creature (states/movement_state.cpp). */
+struct CreatureScope {
+    /** The action of the scope record. Null: the scope fields with no record (the idle action). */
+    const world::CreatureAction* action{nullptr};
+    /** True: the record has the time 0 (the spawn action of a first record). */
+    bool fromStart{false};
+    /** The key of this scope for the comparison with the key that the session sent last: kScopeNone or the start count. */
+    std::uint32_t key{kScopeNone};
+};
+
+/**
+ * @return The action that the client of a session must play for a creature: in the first
+ *         record of the session the spawn action of a slice that needs it (the death action of
+ *         a dead creature comes first), then the action of the server that plays (an attack, a
+ *         reaction, the death, the action of a command), then the locomotion action of a
+ *         creature on its way, then none.
+ * @param first True for the first record of the session for the creature.
+ */
+[[nodiscard]] CreatureScope creature_scope(const world::Creature& creature, bool first);
+
 /**
  * @return The movement state of a creature (states/movement_state.cpp): its position, its
- *         direction, and the action that the server started.
+ *         direction, and the action that the client must play.
  * @param since The world revision of the last record of the session for the creature. 0: the
- *        session has no record of it. The first state has the action that plays, or the spawn
- *        action of a creature whose slice needs it. A later state has an action only when the
- *        action started after that revision: a session gets each action one time.
+ *        session has no record of it.
+ * @param sent The key of the scope fields that the session sent last (kScopeUnknown: not
+ *        known). The state has the scope fields only when the scope of creature_scope has a
+ *        different key: the client keeps the fields of a state that a later state does not
+ *        have, and it plays its action with no jump. A record that comes again with a new time
+ *        makes the body jump (user test 1), and no fields after the end of a kept action make
+ *        the client start that action again.
  */
 [[nodiscard]] hub::Bytes encode_creature_movement_state(const world::Entity& entity, const world::WorldClock& clock,
-                                                        world::Revision since);
+                                                        world::Revision since, std::uint32_t sent = kScopeUnknown);
 /** @return The same, in one fragment, for a session whose last record of the creature has the revision `request.since`. */
 [[nodiscard]] std::vector<hub::Bytes> encode_creature_movement_parts(const world::Entity& entity, View view, const PartsRequest& request);
 /**

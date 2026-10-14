@@ -274,7 +274,7 @@ std::uint32_t adler32(std::span<const std::uint8_t> data) {
 
 } // namespace
 
-bool zlib_decode(std::span<const std::uint8_t> stream, std::size_t maximumSize, std::vector<std::uint8_t>& output) {
+bool zlib_decode(std::span<const std::uint8_t> stream, std::size_t maximumSize, std::vector<std::uint8_t>& output, std::size_t* used) {
     output.clear();
     constexpr std::size_t kHeaderSize = 2;
     constexpr std::size_t kChecksumSize = 4;
@@ -312,6 +312,9 @@ bool zlib_decode(std::span<const std::uint8_t> stream, std::size_t maximumSize, 
     const std::uint32_t expected = (static_cast<std::uint32_t>(checksum[0]) << 24)
                                    | (static_cast<std::uint32_t>(checksum[1]) << 16)
                                    | (static_cast<std::uint32_t>(checksum[2]) << 8) | checksum[3];
+    if (used != nullptr) {
+        *used = kHeaderSize + reader.position();
+    }
     return adler32(output) == expected;
 }
 

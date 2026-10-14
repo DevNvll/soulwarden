@@ -239,10 +239,12 @@ stage with a letter is a part of the system with that number.
 | 4 | 3.4c | Creatures in the whole world: the creature file for each region (32,840 spawn points, 503 slices in the supported build), a picture check of each slice, the load of the spawn rule, and a travel command of the tool window | 3.4a | done |
 | 5 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | done |
 | 6 | 3.4d | The path search of a creature: navigation data that a tool makes from the collision shapes of the game copy (the terrain, the solid objects, the water), loaded by the backend; a creature goes around a wall and uses stairs; fights that a player can play | 3.4b | done (the user tests the game before the next stage) |
-| 7 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
-| 8 | 1.8 | Original quest state of a new character | 1.6 | open |
-| 9 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
-| 10 | P.1, P.2 | Go port | 1.9 | open |
+| 7 | 3.4e | Patrol and wander: a creature walks its patrol route or wanders near its spawn point; the reset makes a creature immune on its way back, and it walks back on its way, not in one jump | 3.4d | open |
+| 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
+| 9 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 1.4 | open |
+| 10 | 1.8 | Original quest state of a new character | 1.6 | open |
+| 11 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
+| 12 | P.1, P.2 | Go port | 1.9 | open |
 
 After the Go port, the sequence is the sequence of the summary table, with these changes:
 the other parts of the systems 3.1 to 3.7 come before milestone 4, and milestone 6 comes
@@ -1062,6 +1064,13 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   which creatures walk. For stage 3.5a: the death of a creature is in `Creatures::hurt`
   (with the attacker), the place of the respawn timer is `Creatures::respawn_at`, and a
   creature has its full health only at its home.
+- User test 1 of stage 3.4d (done; result file
+  `~/Games/soulwarden/work/evidence/user-test-1/implement/RESULT.md`): the locomotion action
+  of a creature and the rule of its scope fields (the creatures slid in the pose of an
+  attack, protocol notes 4.14), the answer to the end of a cutscene and the end of each lock
+  of the input at a travel and a respawn (a conversation locked the character, 4.20), the
+  mana state (the blue bar, 4.5), the creatures of a travel that wait for the client, and the
+  11 findings of the code review of stage 3.4d (4.19).
 - Stage 3.4d (done; protocol notes 4.19; result file
   `~/Games/soulwarden/work/evidence/path-search/implement/RESULT.md`). The game copy has no
   navigation mesh: the original one was only on the server. A tool
@@ -1287,3 +1296,9 @@ Decision of the user (2026-10-13):
    (2026-10-13). The game copy has no navigation data: the original mesh was only on the
    server. A tool makes the data from the collision shapes of the game copy (research file
    `navigation.md`).
+
+8. Patrol and wander (stage 3.4e) come before loot (2026-10-14): the user asked for a
+   creature that patrols an area, follows and attacks a player that it sees, and runs back
+   to its spawn point at its leash. The itemization (stage 1.3b) comes after loot, when its
+   research has its second check: the user wants a full character build with the perks,
+   the gems, and the heartrune of its items.

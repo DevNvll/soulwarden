@@ -92,7 +92,7 @@ public:
     static constexpr std::int32_t kMeters = 64;
     static constexpr std::int32_t kCells = 256;
     static constexpr std::int32_t kSamples = kMeters + 1;
-    /** A cell has this number of floors at most (the file permits more: the reader drops the highest ones). */
+    /** A cell has this number of floors at most: the reader refuses a tile with a cell that has more. */
     static constexpr std::size_t kMaxFloors = 16;
 
     /** The tile in tiles of the world: the tile starts at x * 64 m, y * 64 m. */
@@ -100,8 +100,6 @@ public:
     std::int32_t y{0};
     /** The number of areas of the tile: the areas are 1 to `areas`. */
     std::uint16_t areas{0};
-    /** Floors of the file that the reader left out (more than kMaxFloors in one cell). */
-    std::uint32_t floorsDropped{0};
 
     /** @return The terrain height at a place of the tile, in meters from its south-west corner (0 to 64). */
     [[nodiscard]] float terrain_height(float inX, float inY) const;

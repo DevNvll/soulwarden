@@ -22,6 +22,11 @@ struct Known {
     std::uint32_t interest{0};
     /** World revision of the last record of the session for this entity. 0: no record. */
     world::Revision sent{0};
+    /**
+     * For a creature: the key of the scope fields of the last movement state that the session
+     * sent (states/state_codecs.h, creature_scope). 0xFFFFFFFF: none yet.
+     */
+    std::uint32_t scope{0xFFFFFFFFU};
 };
 
 class Observer {

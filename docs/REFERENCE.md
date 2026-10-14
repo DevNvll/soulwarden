@@ -364,6 +364,16 @@ button on "Confirm").
   as in the game. Not yet: jumps and drops from an edge, swimming and flying creatures,
   doors and gates of a fort (they are not in the world of this backend), patrols, groups,
   ranged attacks, magic, and abilities.
+- The animation of a creature (user test 1, protocol notes 4.14): a creature that walks or
+  runs plays the locomotion of its model (the server sends the action `Move_Combat` at the
+  start of each way), an attack replaces it, and at its place the creature plays its idle
+  action. Before, the creatures slid in their pose.
+- People and lore pages (protocol notes 4.20): you can talk to a person (E) and read a lore
+  page. A person says only the first line of its default text, and nothing in the game
+  changes. When the talk ends, your character can move at once; a travel and a respawn also
+  end each lock of your input.
+- The blue bar below the crosshair is the mana meter of the game: it shows only when your
+  mana is not full, as in the game (the backend sends the mana state from user test 1).
 - Fights that you can play (stage 3.4d): no creature attacks you for 10 s after you came
   into the world, travelled, or respawned, unless you hit it. Out of a fight (6 s with no
   damage) your health comes back, 3 percent each second. A creature makes its strong attack

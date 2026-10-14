@@ -969,6 +969,11 @@ void creatures_of_the_new_place(const Options&) {
     Seen old = seen_of(a, from, firstNumber);
     check(old.stopped && interest_of(host, 1, first) == 0, "the session gets the stop of the creature of the old place");
     host.steps(3, {&a});
+    check(interest_of(host, 1, wolf) == 0 && interest_of(host, 1, rabbit) == 0,
+          "the creatures of the new place wait for the client: no record before it reports the new place (its loading "
+          "screen hides the start of a spawn action, user test 1)");
+    report(host, a, ++input, kFar);
+    host.steps(3, {&a});
     const std::uint32_t wolfNumber = interest_of(host, 1, wolf);
     const std::uint32_t rabbitNumber = interest_of(host, 1, rabbit);
     const Seen ofWolf = seen_of(a, from, wolfNumber);
@@ -976,10 +981,11 @@ void creatures_of_the_new_place(const Options&) {
     // The stop of a number goes out before a new entity gets the number.
     check(wolfNumber >= 2 && rabbitNumber >= 2 && !ofWolf.records.empty() && !ofRabbit.records.empty()
               && fragment_of(ofWolf.records.back(), 0) != nullptr && fragment_of(ofRabbit.records.back(), 0) != nullptr,
-          "and it gets the first record of each creature of the new place (30 m and 13 m from the character)");
+          "after the report it gets the first record of each creature of the new place (30 m and 13 m from the character)");
     check(joined(travel_steps(a, from).order) == "screen state done", "with the travel messages of its own character");
     // Back to the start: the creature of the first spawn point is made again (the distance rule).
     host.world.travel(kCharacterA, kPlace);
+    report(host, a, ++input, kPlace);
     host.steps(4, {&a});
     check(creatures.spawn_points()[0].entity != 0 && creatures.spawn_points()[0].entity != first && creatures.count() == 1
               && interest_of(host, 1, creatures.spawn_points()[0].entity) >= 2 && creatures.waiting_count() == 0,
@@ -1006,7 +1012,9 @@ int scope_action(const std::optional<Fragment>& movement) {
     }
     // scopeInfoBlob: byte count, start count:u16, fragment index + 1, action index + 1, ...
     server::hub::Reader reader(movement->fields.at({0, 33}));
-    reader.size();
+    if (reader.size() == 0) {
+        return -1; // The scope fields with no record (a state with no action of the server).
+    }
     reader.u16();
     reader.size();
     return static_cast<int>(reader.size()) - 1;
@@ -1076,27 +1084,31 @@ void spawn_action_of_a_slice(const Options&) {
           "after the end of the reaction the creature has no action with an end, and its spawn action is the same, with "
           "the time of its creation");
     // A later movement state of a creature that the session has (a change of its direction):
-    // no scope record. The client must not start the spawn action a second time.
+    // the scope fields with no scope record. The client must not start the spawn action a
+    // second time, and it ends the action that it kept from the first record.
     from = a.got.size();
     creatures.moved(*creatures.find(wolfId));
     host.steps(2, {&a});
     const std::optional<Fragment> again = movement_of(a, from, wolfNumber, kWolfSlots[0]);
-    check(again && scope_action(again) == -1,
-          "a later movement state for a session that has the creature has no scope record: the spawn action goes out one "
-          "time for each session");
+    check(again && scope_action(again) == -1 && again->fields.count({0, 32}) == 1 && again->fields.count({0, 33}) == 1,
+          "a later movement state for a session that has the creature has the scope fields with no scope record: the spawn "
+          "action goes out one time for each session");
     // A session that observes the creature later: travel away and back.
     host.world.travel(kCharacterA, kFar);
     host.steps(3, {&a});
     host.advance(std::chrono::seconds(20));
     from = a.got.size();
     host.world.travel(kCharacterA, kPlace);
+    // The client reports the new place: the creatures of the place come into the interest table.
+    report(host, a, ++input, kPlace);
     host.steps(4, {&a});
     const std::optional<Fragment> later = movement_of(a, from, interest_of(host, 1, wolfId), kWolfSlots[0]);
-    const unsigned ticks = later && later->fields.count({0, 28}) == 1 ? later->fields.at({0, 28})[0] | (later->fields.at({0, 38})[0] << 8) : 0U;
+    const bool timed = later && later->fields.count({0, 28}) == 1 && later->fields.count({0, 38}) == 1;
+    const unsigned ticks = timed ? later->fields.at({0, 28})[0] | (later->fields.at({0, 38})[0] << 8) : 0xFFFFU;
     note("the time of the spawn action in the record of the later observer: " + std::to_string(ticks) + " ticks of 1/30 s");
-    check(scope_action(later) == 2 && ticks > 600,
-          "a session that observes the creature 20 s later gets the spawn action with the time from the creation of the "
-          "creature (more than 600 ticks): its client shows the body at once");
+    check(scope_action(later) == 2 && ticks == 0,
+          "a session that observes the creature 20 s later gets the spawn action from its start (time 0): the client shows "
+          "the body only after the start of the action (user test 1)");
     // The slice of the test has no death action. A creature of it that dies while its reaction
     // plays keeps its spawn action after the end of the reaction, so that its body shows for a
     // later observer too (code review of stage 3.4c, finding C4).
@@ -1112,6 +1124,7 @@ void spawn_action_of_a_slice(const Options&) {
     host.advance(std::chrono::seconds(5));
     from = a.got.size();
     host.world.travel(kCharacterA, kPlace);
+    report(host, a, ++input, kPlace);
     host.steps(4, {&a});
     check(scope_action(movement_of(a, from, interest_of(host, 1, wolfId), kWolfSlots[0])) == 2,
           "a session that observes the dead creature later gets the spawn action in its first record: the body shows");
@@ -1509,6 +1522,7 @@ void spawn_action_after_a_death_in_a_reaction(const Options&) {
     host.advance(std::chrono::seconds(5));
     from = a.got.size();
     host.world.travel(kCharacterA, kPlace);
+    report(host, a, ++input, kPlace);
     host.steps(4, {&a});
     const std::optional<Fragment> later = movement_of(a, from, interest_of(host, 1, id), kWolfSlots[0]);
     check(later.has_value() && scope_action(later) == 2,

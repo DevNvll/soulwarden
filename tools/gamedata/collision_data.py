@@ -206,7 +206,11 @@ class World:
             try:
                 parts = read_physics(self.paks.read(key[1]), self.shape_statistics)
             except Failure as error:
+                # A placed collider whose physics file does not decode (or is not there) stops
+                # the region: the navigation data would have no wall there and look complete
+                # (code review of stage 3.4d, finding F10). The world build of 2026-10-13 had none.
                 self.shape_failures[key[1]] = str(error)
+                raise Failure(f"the physics file {key[1]} of a placed collider does not decode: {error}") from error
         elif key[0] == "box":
             parts = [outward(box_part(key[1:4]))]
         elif key[0] == "sphere":
