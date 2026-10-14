@@ -82,6 +82,8 @@
 //   POST /v1/dev/creatures/health?creature=ID&health=N   (or percent=N)
 //   POST /v1/dev/creatures/kill?creature=ID
 //   POST /v1/dev/creatures/reset                         each spawn point that waits is free again
+//   POST /v1/dev/creatures/action?creature=ID&action=NAME[&seconds=N][&tags=HEX]
+//   POST /v1/dev/creatures/anchor?creature=ID&x=N&y=N&z=N  the anchor of a creature in a fight
 //   POST /v1/dev/world/fragment?creature=ID&slot=N&type=N&state=HEX
 //                                                        the fragment command for a creature
 // The commands remove, health, and kill change each creature of the world, and they need no
@@ -173,6 +175,18 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                  {"contactsMissed", behaviorCounts.contactsMissed},
                                  {"moves", behaviorCounts.moves},
                                  {"targetsNoWay", behaviorCounts.targetsNoWay},
+                                 // The roam (stage 3.4e): the creatures that patrol or wander near a character, and the reset.
+                                 {"roaming", behavior.roaming_count()},
+                                 {"roamingLargest", behaviorCounts.largestRoaming},
+                                 {"roamSteps", behaviorCounts.roamSteps},
+                                 {"waypoints", behaviorCounts.waypoints},
+                                 {"wanderPlaces", behaviorCounts.wanderPlaces},
+                                 {"roamNoWay", behaviorCounts.roamNoWay},
+                                 {"holds", behaviorCounts.holds},
+                                 {"retraces", behaviorCounts.retraces},
+                                 {"jumps", behaviorCounts.jumps},
+                                 {"immuneHits", behaviorCounts.immuneHits},
+                                 {"returns", behaviorCounts.returns},
                                  // The navigation: the tiles of the data, the path searches, and the sight tests.
                                  {"navigation",
                                   {{"data", navigation.has_data()},
@@ -189,6 +203,7 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                    {"searchSteps", navigationCounts.searchSteps},
                                    {"searchesFailed", navigationCounts.searchesFailed},
                                    {"noWay", navigationCounts.noWay},
+                                   {"partialPaths", navigationCounts.partialPaths},
                                    {"largestTickSteps", navigationCounts.largestTickSteps},
                                    {"queued", navigation.queued()},
                                    {"largestQueue", navigationCounts.largestQueue},
@@ -623,6 +638,8 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/creatures/reset", "dev.creatures_reset", creature_route(services, commands::reset_creatures));
     router.add("POST", "", "/v1/dev/creatures/action", "dev.creatures_action",
                creature_route(services, commands::play_creature_action));
+    router.add("POST", "", "/v1/dev/creatures/anchor", "dev.creatures_anchor",
+               creature_route(services, commands::move_creature_anchor));
     register_dev_progress_routes(router, services);
 }
 

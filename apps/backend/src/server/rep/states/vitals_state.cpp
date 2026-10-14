@@ -25,9 +25,16 @@
 // HealthMax, HealthTickRate, vitalsId, vitalsCategoryId, vitalsLevel, invulnerability,
 // displayImmuneWhenInvulnerable, and maxHealth. A later state (a change of the health, the
 // death) has HealthAmount, vitalsData, and healthChangeFlags (bit 0, in each state: the name
-// plate gets a health change only with it). The client makes the name, the
+// plate gets a health change only with it), and the two immune fields when the immune mark
+// changed after the last state of the session. The client makes the name, the
 // level, and the health bar of the name plate from these fields: vitalsCategoryId gives the
 // name, vitalsLevel the level, and bit 0 of vitalsData is "dead" (protocol notes 4.14).
+//
+// The immune mark (stage 3.4e, protocol notes 4.17): a creature on its way back (the reset) has
+// invulnerability 1 and displayImmuneWhenInvulnerable 1 (one byte each; the facet keeps them at
+// +0x284 and +0x285, client apply function at image RVA 0x683E670). Live check: the client
+// makes no melee contact with a creature that has invulnerability 1 (no hit mark, no claim, no
+// damage number); displayImmuneWhenInvulnerable alone changes nothing that the check saw.
 
 namespace soulwarden::backend::server::rep {
 namespace {
@@ -93,6 +100,11 @@ std::vector<hub::Bytes> encode_creature_vitals_state(const world::Entity& entity
     // Without this bit the client stores the health and tells no listener: the bar of the name
     // plate does not change (client code at image RVA 0x689FDC0; live proof).
     state.field(0, kHealthChangeFlags).u8(kHealthChangeNotify);
+    const std::uint8_t immune = creature.immune() ? 1 : 0;
+    if (request.since != 0 && creature.immuneChanged > request.since) {
+        state.field(0, kInvulnerability).u8(immune);
+        state.field(0, kDisplayImmune).u8(immune);
+    }
     if (request.since == 0) {
         // The client keeps the 16-bit maximum only from a state that has HealthMax too (client
         // code at image RVA 0x683E670).
@@ -101,8 +113,8 @@ std::vector<hub::Bytes> encode_creature_vitals_state(const world::Entity& entity
         state.field(0, kVitalsId).u32(creature.kind->vitalsId);
         state.field(0, kVitalsCategoryId).u32(creature.kind->categoryId);
         state.field(0, kVitalsLevel).u32(creature.level);
-        state.field(0, kInvulnerability).u8(0);
-        state.field(0, kDisplayImmune).u8(0);
+        state.field(0, kInvulnerability).u8(immune);
+        state.field(0, kDisplayImmune).u8(immune);
         state.field(0, kMaxHealth).u16(static_cast<std::uint16_t>(std::min(vitals.healthMax, kMaxHealthField)));
     }
     std::vector<hub::Bytes> parts;

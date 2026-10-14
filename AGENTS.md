@@ -23,6 +23,7 @@ backend. Read only the documents relevant to the task.
 | The creature data of the whole world: which entries are in, which slices are out, the spawn action of a slice, the picture check of the slices | Protocol notes 4.14, `tools/gamedata/creature_data.py`, `tools/gamedata/creature_slices.json`, `tools/research/creature_tour.py` |
 | The behavior of a creature: the sense, the way to a player, the attack and its contact test, the way back, the behavior data of a slice, the two switches | Protocol notes 4.17 and 4.19, `apps/backend/src/world/behavior.h`, `world/navigation.h`, `world/creatures.h`, `gamedata/creature_data.h`, `tools/gamedata/creature_behavior.py`, `tools/world ignore`, test cases FT1 to FT14 |
 | The navigation data: where a creature can stand, its path around a wall and up stairs, what stops its sight, the tiles near the players, the tool that makes the data from the collision shapes of the game copy | Protocol notes 4.19, `apps/backend/src/world/navigation.h`, `gamedata/navigation_data.h`, `tools/gamedata/navigation.sh` (`navigation_data.py`, `collision_data.py`, `navcore.cpp`, `nav_file.py`), `tools/world path`, `tools/world track`, `tools/research/nav_draw.py`, test cases NV1 to NV12 and RN1 to RN10 (`tools/gamedata/check_navigation_tool.py`) |
+| Patrol and wander of a creature: the routes of the spawn points, the wander values, the walk out of a fight, which creatures roam, the anchor of a fight, the reset (immune, the trail back), the wait at the place nearest to a target with no way | Protocol notes 4.14, 4.17, and 4.5, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/navigation.h` (`next_step` with `nearest`), `gamedata/creature_data.h` (`PatrolRoute`), `server/rep/states/vitals_state.cpp`, `tools/gamedata/creature_data.py` (`read_patrol`, `world_route`), `tools/world creatures`, `tools/world creature anchor`, test cases PT1 to PT10 |
 | A fight that a player can play: the 10 s with no target after a travel, the health that comes back, light and heavy attacks of a creature and their pause, creatures that do not stand at one place | Protocol notes 4.19, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/health.h`, `gamedata/creature_data.h` (`kContactGap`, `kHeavyWeight`), test cases PL1 to PL4 |
 | The terrain heights: the height of the ground at a place with no navigation data, and the terrain after the cookies of the placements | Protocol notes 4.17 and 4.19, `apps/backend/src/gamedata/height_maps.h`, `world/navigation.h`, `tools/gamedata/heights.sh`, `tools/gamedata/check_heights_tool.py` |
 | A conversation with a person, a cutscene of the client, a character that the client keeps in place | Protocol notes 4.20, `apps/backend/src/server/rep/lock_messages.h`, `server/rep/rep_session.cpp` (`handle_cutscene_ended`, `end_input_lock`), `tools/world message`, test case UT1 |
@@ -108,8 +109,9 @@ backend. Read only the documents relevant to the task.
   points near a player, and the creatures of commands), and the points that wait are in
   their own set (`Creatures::waiting_count`). The same for the behavior: a creature at rest
   needs no time. The step of the behavior looks only at the creatures of one set (a target,
-  or the way back), and the vision rule runs from the characters with the position index
-  (test case FT9, with a time limit). A new rule for a spawn point or for a creature keeps
+  or the way back) and at the creatures that roam near a character (a set that the world
+  makes from the characters with the position index each 1 s), and the vision rule runs from
+  the characters with the position index (test cases FT9 and PT9, with a time limit). A new rule for a spawn point or for a creature keeps
   this: test case WS2 has a world of this size and a time limit that fails for a scan of
   all points. The world measures the real time of its ticks, of its scans, and of the steps
   of the behavior (`world/load_meter.h`, `World::load`, the lines `load:` and `behavior` of
@@ -121,8 +123,11 @@ backend. Read only the documents relevant to the task.
   `spawnAction` of `tools/gamedata/creature_slices.json`. The spawn action is a value of
   the creature for its whole time in the world (`Creature::spawnAction`), not the action
   that plays: the first movement state of each session for the creature has it, with the
-  start time of the creature. A reaction, an attack, a walk, and the action of a command do
-  not take it away, and the backend does not send it again at their end. A dead creature
+  time 0 on the wire (`CreatureAction::started` keeps the time of the creation). When the
+  creature plays a different action at that time (a walk, an attack), the session sends that
+  action 1.5 s after the first record (`kSpawnLead` of `rep_session.cpp`; test case RU3). A
+  reaction, an attack, a walk, and the action of a command do not take the spawn action
+  away, and the backend does not send it again at their end. A dead creature
   has its death action in the first state of a later session; a dead creature of a slice
   with no death action has its spawn action there, also when it died while its reaction
   played (test case WS4). A new action of a creature keeps this rule. The list
@@ -140,12 +145,37 @@ backend. Read only the documents relevant to the task.
   each contact at its time on the world clock (the target is in the world, lives, is in the
   reach and in the angle), and one contact that passes is one damage result
   (`Health::creature_hit`). A creature loses its target when the target is dead, left the
-  world, is ignored, or is farther than 60 m, at the end of its leash, and when its target
-  has no way to it: it then goes to its home and has its full health there. A creature has
-  one target. From stage 3.4d a wall stops the vision, the attack, each contact of an
+  world, is ignored, or is farther than 60 m, and at the end of its leash: it then goes back
+  to its anchor (the reset, below). A creature whose target has no way to it goes to the
+  place nearest to the target (`next_step` with `nearest`), waits there with its target for
+  12 s (`kNoWayHold`; each attack starts the time again), attacks it in its reach, and then
+  goes back. A creature has one target. From stage 3.4d a wall stops the vision, the attack, each contact of an
   attack, and the way (the navigation data, protocol notes 4.19; a ceiling between two
   bodies on one vertical line too). A kind with no attack that the data tool can use
   stands and takes damage (859 of the 3,848 kinds).
+- Patrol, wander, and the reset (stage 3.4e, protocol notes 4.14 and 4.17; project rules,
+  each constant in `behavior_rules`). The routes of the spawn points and the wander values of
+  the slices are game data (`creatures.json` of format 3: the member `routes`, value 11 of a
+  spawn point, and the members `ambient` and `wander` of the behavior of a slice). A creature
+  at rest roams only while a character is in the leave distance of its interest
+  (`World::interest_leave`, 120 m at most); a different creature stands and needs no time. It
+  walks with the walk action of its slice (`Move`, `CreatureSlice::walkAction`, the gait
+  `Gait::walk` of `Creatures::move`) and its ambient speed, to the next waypoint of its route
+  (the policy: a loop, back and forth, at random) or to a random place of its wander range
+  (the generator of the world: `World::random_unit`, `WorldOptions::randomSeed`; no other
+  random source in the world). At a waypoint it waits for a random time of its range and
+  plays its task only when the action table of the slice has an action with that exact name;
+  a negative wait is no wait, but the waypoint of a route of one waypoint and a waypoint whose
+  task ends with `_LOOP` keep the creature there for ever. The anchor of a fight is the place
+  where the creature took its target (`CreatureMind::anchor`): the leash is measured from it,
+  the way back ends there, and the patrol or the wander goes on from it. On the way back
+  (the mode `home`) a creature is immune: it takes no damage (`Creatures::hurt` gives
+  `CreatureError::immune`, `Combat::claim` the verdict `immune`) and no target by a hit or by
+  its vision, and its vitals state has `invulnerability` and `displayImmuneWhenInvulnerable`
+  1 for each observer (`Creature::immune`, `immuneChanged`). It has its full health at the
+  anchor. A way back with no path walks the places of the way out back (the trail, one place
+  for each meter, 512 at most), and a creature is at its anchor in one step only when no
+  session can observe it (`Behavior::observed`): never a jump in front of a client.
 - The rules for a fight that a player can play (stage 3.4d, protocol notes 4.19; project
   rules, each constant in `behavior_rules`, `world/health.h`, or `gamedata/creature_data.h`).
   The shelter: for 10 s after a character came to a place (a world entry, a travel, a
@@ -171,9 +201,12 @@ backend. Read only the documents relevant to the task.
 - The functions of the navigation (`world/navigation.h`) are the only place where the
   behavior gets a place: `ground_height(position)` (the height of the floor that is nearest
   to the height of a position: one place can have more than one floor) and
-  `next_step(creature, from, goal, distance)` (the place after one step on the path of a
-  creature to a goal, or "the creature waits", "no way", "no ground"). `footing(position)`
-  says if a creature walks, and `sees(from, to)` if a solid is between two places. Do not
+  `next_step(creature, from, goal, distance, nearest)` (the place after one step on the path
+  of a creature to a goal, or "the creature waits", "no way", "no ground"; with `nearest`, a
+  goal with no way gives the path to the place nearest to it, with the mark
+  `NavStep::partial`: only for a fight). `footing(position)` says if a creature walks, and
+  `sees(from, to)` if a solid is between two places (cell by cell on the line, with the
+  exact heights of the line in each cell). Do not
   compute a place of a creature in a different function. With navigation data the path is
   a path of the data; with no data of a place (no folder, a folder that is not correct, a
   region with no file, a tile that is not correct) the two functions have the rule of stage
@@ -189,7 +222,10 @@ backend. Read only the documents relevant to the task.
   number; each file has the values in its header, and the backend refuses a folder whose
   files do not have the same values, as a whole, as for each other file that is not
   correct. A tile with more than 16 floors in one cell, and a tile stream with a byte after
-  its zlib stream, are not correct. The backend reads only the header and the directory of
+  its zlib stream, are not correct; the tool stops for a cell with more than 16 floors
+  (`kMaxCellFloors` of `navcore.cpp`), and it uses a stored report of the collision step only
+  when the report is complete, of its format and tool version, and names no physics file
+  that did not decode. The backend reads only the header and the directory of
   each file at its start. The tool stops (status 1, no region file) for a placed collider
   whose physics file does not decode.
 - The world has only the tiles near its players (`navigation_rules`): each 500 ms it asks
@@ -198,8 +234,9 @@ backend. Read only the documents relevant to the task.
   reads the tiles (`WorldOptions::navigationThread`; a test host reads them in the tick):
   the world thread reads no navigation file, and it takes the tiles that are ready at the
   start of a tick. The thread reads only the navigation data: it reads no entity. A
-  creature whose tile is not there yet waits: the tile of its place, of its goal, of a link
-  between two areas, and of each step (a path in the memory of a creature can go into a
+  creature whose tile is not there yet waits: the tile of its place, of its goal (the tile
+  of the goal itself, before the goal goes to a free floor near it), of a link between two
+  areas, and of each step (a path in the memory of a creature can go into a
   tile that the world removed). A tile that the world does not have is no proof of "no
   way". Do not read all tiles of a region, and do not
   read a tile in the world thread (the development command `tools/world path` is the one
@@ -208,7 +245,9 @@ backend. Read only the documents relevant to the task.
   the world make 4,000 steps at most (`kTickSteps`), one search makes 60,000 steps at most
   (`kSearchSteps`), the other searches wait in a queue, and a search continues in the next
   tick. A goal in a different area has no way with no search (the areas of the tiles, and
-  the links over the tile edges, which the world makes only for a tile that comes or goes).
+  the links over the tile edges, which the world makes only for a tile that comes or goes);
+  only `next_step` with `nearest` (a fight) searches for the place nearest to such a goal, in
+  the same limits.
   First the straight line, then A* on the cells. A step of a creature ends at a corner of
   its path: the client moves a creature on the straight line between two movement states.
   Test cases NV6 and NV10 have the limits with a time limit: a new rule keeps them.
@@ -237,8 +276,11 @@ backend. Read only the documents relevant to the task.
 - The client plays no walk for a creature whose position changes with no action: the
   creature slides in its pose. A creature on its way has the locomotion action of its slice
   (`Move_Combat`, `CreatureSlice::moveAction`, `Creature::moving`) from its first step to an
-  attack or to its home; a step replaces a reaction that plays. An attack, a reaction, the
-  death, and the locomotion are scope records with the tag bytes of the slice
+  attack or to its anchor, and a creature on a roam has the walk action (`Move`,
+  `CreatureSlice::walkAction`) from its first step to its waypoint or its place; a step
+  replaces a reaction that plays, also for a slice with no locomotion action, and a death
+  with no death action ends the locomotion record of each session (test cases RU4, RU2). An
+  attack, a reaction, the death, and the locomotion are scope records with the tag bytes of the slice
   (`CreatureSlice::tags`: a creature with a weapon has no variant of an attack fragment with
   no tag, and its attack does not play with 12 bytes of 0). The client keeps the scope fields
   of a state that a later state does not have, and it starts a kept action again at each
@@ -495,14 +537,18 @@ backend. Read only the documents relevant to the task.
   has only the observer view. The movement state of a creature at rest has the scope fields
   with no record: its client plays the idle action itself. An action that the server starts
   (the death action, the reaction to a hit, an attack, the spawn action of a slice that needs
-  it, the locomotion of a way, the action of a command) is in the state, as a scope record
+  it, the locomotion of a way, the walk of a roam, the task of a waypoint, the action of a
+  command) is in the state, as a scope record
   with the index of the action and of its fragment from the action table of the slice and
   with the tag bytes of the slice (game data). The spawn action of a first record has the
   time 0: with the time from the creation of the creature the client of a later session
   shows only its light and no body. Never put a state id of a
   player (the script layers) into the state of a creature. Each vitals state of a creature
   has `healthChangeFlags` with bit 0: without it the name plate of the client keeps its old
-  bar. The position of a creature is exact: the client does not move a creature to the
+  bar. The first vitals state of a creature has `invulnerability` and
+  `displayImmuneWhenInvulnerable` (1 on its way back, 0 if not), and a later one has them only
+  when the immune mark changed after the last state of the session (protocol notes 4.5). The
+  position of a creature is exact: the client does not move a creature to the
   ground, and the height of a spawn point can be a floor above the terrain. A creature that
   walks gets the height of each step from the navigation of the world.
 - A session sends each bundle below the size of one carrier message (1,024 bytes) when its
@@ -623,7 +669,9 @@ backend. Read only the documents relevant to the task.
   and the attacks of each slice, the damage of each kind and of each level, and the terrain
   height at each spawn point; without it the world has no creature; the backend refuses a
   file whose levels, slots, assets, health values, or behavior data do not fit together, as
-  a whole; with a file of format 1 the creatures stand at their spawn points), the folder
+  a whole; with a file of format 1 the creatures stand at their spawn points; from stage
+  3.4e, format 3, also the patrol route of each spawn point that has one and the ambient
+  speed and the wander values of each slice: with a file of format 2 no creature roams), the folder
   `heights` (the terrain heights, one file for each region, from stage 3.4d after the
   cookies of the placements), the folder `navigation` (stage 3.4d: one file for each region
   with the floors, the water, and the sight of each cell of 0.25 m, and `navigation.json`;
@@ -727,6 +775,7 @@ tools/world heal NAME                # give a character its full health (a dead 
 tools/world hurt NAME 500            # lower the health of a character (the health 0 is its death)
 tools/world path NAME 8861.6 4243.4 139.5   # the path of the navigation between two places (a place: X Y Z or a character name)
 tools/world track 2c 20 --tsv FILE   # the place of a creature each 200 ms for 20 s
+tools/world creature anchor 2c 8585.5 4243.1 173.26   # the anchor of a creature in a fight (a test of a way back with no path)
 python3 -B tools/research/nav_draw.py ~/.local/share/soulwarden/gamedata/navigation 8850 4230 8880 4260 OUT.png --path FILE   # a picture of the data
 tools/dev-stop.sh                    # stop the development runs (not a game of the user)
 tools/dev-stop.sh --check            # status 0: no process of a development run is alive
@@ -840,7 +889,18 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   `python3`, and the check compiles a small program with `navcore.cpp`), the corrections of
   user test 1: the end of a cutscene and the lock of the input with two sessions (UT1), the
   locomotion action with three sessions (UT2), the creatures of a travel that wait for the
-  client (UT3), and the mana state (UT4),
+  client (UT3), and the mana state (UT4), the patrol and the wander of stage 3.4e: the
+  creature file of format 3 (PT1), a loop of four waypoints with the walk action, the waits,
+  and the task (PT2), the policies and a route of one waypoint (PT3), the wander with the
+  generator of the world (PT4), a fight from a patrol with the anchor and the leash (PT5),
+  the reset: immune, the mark, the full health (PT6), a way back with no path on the trail
+  and the jump with no observer (PT7), the place nearest to a target with no way and the wait
+  (PT8), the load of the roam with 50 players and 1,500 creatures, with a time limit (PT9),
+  and two sessions with one patrol (PT10), the cases of the review of the corrections of user
+  test 1, each one of RU1 to RU6 with a failure before its correction (RU1 to RU10: the sight
+  over a cell edge, the death with no death action, the action after a first spawn record,
+  a step with no locomotion action, the travel fallback with no camera, the tile of a goal,
+  three controls, and the time 0 of a first spawn record),
   HTTP stop (H1), a world task that did not start
   (D2), position limits (P2), bundle limits (F1), sessions and stops (T11), a locked item
   and the quantity of a lock request (L1), a delete whose write failed (D3), a spawn offset
@@ -1016,7 +1076,9 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   claim is refused (`no combat tables`).
 - `tools/gamedata/creatures.sh` writes `creatures.json` to the game data folder: the spawn
   points of the whole world (32,840 spawn points, 3,848 kinds, 503 slices, 25 regions; a file
-  of 8.8 MB; 60 s with `SOULWARDEN_OODLE_LIB`). `--radius METERS` (with `--center X Y`) writes a
+  of 12.4 MB with the 19,814 patrol routes of format 3; 60 s with `SOULWARDEN_OODLE_LIB`). The
+  tool prints the counts of the routes, the policies, the waypoints, the tasks, and the kinds
+  that wander. `--radius METERS` (with `--center X Y`) writes a
   smaller file, `--report FILE` writes one line for each entry that is left out, and
   `--all-slices` also writes the slices that the client does not show (a file for a
   picture tour, not for the game data folder). The tool reads the two slice lists of
@@ -1048,9 +1110,20 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   with your tag bytes (24 hexadecimal digits). `tools/world list` prints the health of each
   character with the mark `DEAD`, and the line `behavior` (on or OFF, the time of the
   steps, the creatures in the step, the targets, the attacks, the contacts). `tools/world
-  creatures` prints a mark for a creature that fights (`FIGHT`), that goes home (`GOES
-  HOME`), that has no attack (`no attack`), and that does not leave its place (`stays at
-  its place`).
+  creatures` prints a mark for a creature that fights (`FIGHT`), that goes back (`GOES BACK
+  (immune)`, stage 3.4e), that has no attack (`no attack`), and that does not leave its place
+  (`stays at its place`).
+- `tools/world` has the marks and the command of stage 3.4e: `tools/world creatures` prints
+  `PATROL (waypoint N of M)` (with `, stays there` for a creature that stays at its waypoint
+  for ever, and `, stands: CAUSE` for a creature that does not roam now: no character near,
+  no navigation data of its place yet, no free floor at its place, no behavior data of its
+  slice), `WANDER`, `ON ITS TRAIL` (a way back with no path), and `WAITS (no way to its
+  target)`. `tools/world list` prints the line `roam` (the creatures that roam now, the
+  steps, the waypoints, the places of a wander, the ways back, the waits, the ways on the
+  trail, the jumps, and the refused hits on an immune creature). `tools/world creature
+  anchor CREATURE X Y Z` (route `/v1/dev/creatures/anchor`) moves the anchor of a creature in
+  a fight to a place: a test of a way back with no path (a place with no way to it, for
+  example a ledge).
 - `tools/gamedata/heights.sh` writes the terrain heights to the folder `heights` of the game
   data folder: one file for each of the 49 regions (136 MB, 2 minutes with 8 processes;
   the pak entries of the height maps are stored data: no Oodle source). `--region NAME`
@@ -1256,9 +1329,10 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
     the answer 6709. In a test: the camera of the conversation shows the person; E goes to
     the next text, and the conversation ends at the last one. A lore page ("E Read") opens
     the journal: two Escape keys close it (the first one goes back one step).
-  - A creature with no way to a character goes home and does not look at it for 8 s: a
-    stone 0.6 m higher than the floor around it (the Tomb of the Old Warrior) is enough.
-    Keep a test of a walk on one floor.
+  - A creature with no way to a character goes to the place nearest to it and waits there
+    12 s (stage 3.4e; before, it went home at once), then it goes back and does not look at
+    the character for 8 s: a stone higher than a step of 0.35 m (the Tomb of the Old
+    Warrior) is enough. Keep a test of a walk on one floor.
   - After a travel the creatures of the new place come only after the first position report
     of the client from the place (20 s at most): `tools/world creatures` lists them at once,
     the interest table of the session later.
@@ -1268,6 +1342,40 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
     of a message of the server before its code (6709 and 3746 of protocol notes 4.20).
   - The blue bar below the crosshair is the mana meter: it shows when the client has no mana
     state, and it goes away at 100 percent.
+
+- Patrol and wander (stage 3.4e):
+  - A window of a different program can be on the agent desktop (a person can move a window
+    there). `tools/shot` and `wf-recorder` then take that window too: its picture can have
+    private data. Take the pictures of the game with `gamescopectl screenshot FILE.png`: it
+    has only the picture of the gamescope of the run (1256x660; about 10 pictures each second
+    at most in a loop, enough for a video with `ffmpeg` and a concat list of the real times).
+  - Only a creature near a character roams: `tools/world creatures` shows `stands: no
+    character near` for a creature far from each character, and a patrol starts again at the
+    next scan (1 s) when a character comes near.
+  - The start wolf waits 10 s to 40 s at each waypoint: a video of its patrol needs 90 s or
+    more. Its track (`tools/world track ID 90 --tsv FILE`) shows the waypoints.
+  - With the ignore value on, a creature on its patrol does not see the character: turn it
+    off for a test of a fight from a patrol, and on again at the end (a lead script that
+    stops early leaves it off, and the creature takes the character again).
+  - A fight to the end of the leash: the character must walk faster than the creature can
+    attack it, and a Grey Wolf does 119 and 417 damage. Send `tools/world heal` each 2 s while
+    the character walks, and strafe (`'keydown 0x44'`) with the camera to the creature: a
+    walk forward hides the creature behind the character, and a walk backward ends at the
+    objects behind it.
+  - A sword attack gives a contact at 1.8 m or less, a spear attack only at 2.0 m or more:
+    select the sword (`tools/hx 'key 0x31'`) for a test of a hit at 1.5 m.
+  - The Tomb of the Old Warrior has two places with no way for a creature: a raised stone at
+    `8586.16 4240.15 167.15` (1.4 m above the floor; a wolf attacks from the place nearest to
+    it) and a ledge at `8585.5 4243.1 173.26` (6.7 m above the floor; a wolf waits below it,
+    out of its reach). `python3 -B tools/gamedata/nav_file.py at DATA X Y` prints the floors
+    of a cell, and `tools/world path` says if a place has a way.
+  - The camera on the ledge cannot see the place below it. Spawn the creature where the
+    camera sees its anchor: the video shows the run to the ledge and the run back.
+  - A wolf of `tools/world creature spawn` stands on the floor that is nearest to the height
+    of the character at its place: a blocked floor below the free one makes it stand (`stays
+    at its place`). Give it a height (`DZ` 0.5) to put it on the free floor.
+  - The faminegeists of Mosswater Bourg walk at 0.07 m/s (the ambient speed of their slice):
+    use an alligator of that place (1.81 m/s, a route of 56 m in the water) for a video.
 
 - Creatures (stage 3.4a):
   - The spawn points of the start area are outside the wall of the settlement. From the

@@ -51,6 +51,14 @@ constexpr std::chrono::milliseconds kInterestInterval{500};
  * the place gets its creatures after this time. A far travel needs 3 s to 8 s.
  */
 constexpr std::chrono::seconds kCreaturesAfterTravel{20};
+/**
+ * The first record of a session for a creature whose slice needs its spawn action has that action
+ * from its start, also while a different action of the server plays. The action that plays goes
+ * to the session this time later: the client shows the light of the spawn action for 1 s to 4 s
+ * and then the body (stage 3.4c), and an action in the next state can hide the body (code review
+ * of the corrections after user test 1, finding F3). A rule of this project.
+ */
+constexpr std::chrono::milliseconds kSpawnLead{1500};
 /** Largest number of interest numbers in the control block of one bundle (client reader at image RVA 0x6A6DDB0). */
 constexpr std::size_t kMaxStopsInBundle = 100;
 /** Shortest time between two log lines for a camera that moves. */
@@ -513,7 +521,7 @@ void RepSession::log_message_counts() const {
         log::write("rep: hit claims of the session: %u attack input(s), %llu melee contact(s): %llu accepted, %llu refused "
                    "(%llu not a creature, %llu not a component of the creature, %llu not observed, %llu dead, %llu no "
                    "melee weapon, %llu no attack, %llu the same attack, %llu too far, %llu bad point, %llu too many "
-                   "claims, %llu no combat tables); %llu item(s) of the projectile lists (not used)",
+                   "claims, %llu no combat tables, %llu immune); %llu item(s) of the projectile lists (not used)",
                    m_attack.presses(),
                    static_cast<unsigned long long>(m_contacts),
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::accepted)),
@@ -529,6 +537,7 @@ void RepSession::log_message_counts() const {
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::badPoint)),
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::tooMany)),
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::noTables)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::immune)),
                    static_cast<unsigned long long>(m_projectileItems));
     }
     const std::uint64_t accepted = m_track.count(world::PositionVerdict::accepted);
@@ -624,9 +633,18 @@ void RepSession::replicate(carrier::Clock::time_point now) {
 void RepSession::add_creature_record(const world::Entity& entity, Known& known, RecordBatch& batch) {
     // A creature has only the observer view, and each of its states is one small fragment.
     std::vector<PendingFragment> fragments;
+    const world::WorldClock::time_point now = m_clock.now();
+    // The action that plays after a first record with the spawn action (kSpawnLead).
+    bool scopeDue = false;
+    if (known.scopeDue && now >= *known.scopeDue) {
+        known.scopeDue.reset();
+        const std::uint32_t playing = creature_scope(entity.creature, false).key;
+        scopeDue = playing != kScopeNone && playing != known.scope;
+    }
     for (const StateCodec& codec : creature_codecs()) {
         const auto changed = entity.changed.find(codec.key);
-        if (changed == entity.changed.end() || changed->second <= known.sent) {
+        const bool due = scopeDue && codec.key == world::ComponentKey::movement;
+        if (!due && (changed == entity.changed.end() || changed->second <= known.sent)) {
             continue;
         }
         const std::uint32_t slot = slot_of(codec, entity);
@@ -641,6 +659,14 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
             if (codec.key == world::ComponentKey::movement) {
                 // The action that the client of this session plays now.
                 known.scope = creature_scope(entity.creature, known.sent == 0).key;
+                // A first record with the spawn action, while a different action plays: that
+                // action follows (kSpawnLead). A later state of the creature replaces the wait.
+                const std::uint32_t playing = creature_scope(entity.creature, false).key;
+                if (known.sent == 0 && playing != kScopeNone && playing != known.scope) {
+                    known.scopeDue = now + kSpawnLead;
+                } else if (known.sent != 0) {
+                    known.scopeDue.reset();
+                }
             }
             continue;
         }
@@ -757,7 +783,10 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     // After a travel the new creatures wait for the client (m_creaturesAfterTravel): its
     // confirmation of the new place starts a scan at once.
     const bool creaturesWait = m_travelAnchor && m_creaturesAfterTravel && now < *m_creaturesAfterTravel;
-    const bool scan = m_cameraSeen
+    // The latest time of the wait after a travel holds also for a client that sent no camera
+    // report before the travel (code review of the corrections after user test 1, finding F4).
+    const bool waitEnded = m_travelAnchor && m_creaturesAfterTravel && now >= *m_creaturesAfterTravel;
+    const bool scan = (m_cameraSeen || waitEnded)
                       && (now - m_lastInterestScan >= kInterestInterval || m_world.last_travel() > m_interestTravel
                           || (m_creaturesWaited && !creaturesWait));
     if (scan) {

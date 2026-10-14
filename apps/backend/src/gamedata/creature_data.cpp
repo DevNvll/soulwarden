@@ -23,9 +23,17 @@ using nlohmann::json;
  */
 constexpr std::uint64_t kFirstFormat = 1;
 constexpr std::uint64_t kBehaviorFormat = 2;
-/** Number of values of one spawn point: placement id, kind, level, x, y, z, yaw, respawnMin, respawnMax; format 2: and the terrain height. */
+/** Format 3 (stage 3.4e): the patrol route of a spawn point, and the wander values and the ambient speed of a slice. */
+constexpr std::uint64_t kPatrolFormat = 3;
+/**
+ * Number of values of one spawn point: placement id, kind, level, x, y, z, yaw, respawnMin,
+ * respawnMax; format 2: and the terrain height; format 3: and the index of its route (null: none).
+ */
 constexpr std::size_t kSpawnPointColumns = 9;
 constexpr std::size_t kSpawnPointColumnsWithGround = 10;
+constexpr std::size_t kSpawnPointColumnsWithRoute = 11;
+/** The longest task name of a waypoint. */
+constexpr std::size_t kLongestTask = 128;
 /** Limits of the behavior values: a distance and a reach in meters, a speed in meters in one second, a time in seconds. */
 constexpr float kMaxSenseDistance = 1000.0F;
 constexpr float kMaxSpeed = 100.0F;
@@ -55,6 +63,8 @@ constexpr const char* kDeathActions[] = {"Death", "Death_FB"};
 constexpr const char* kHitAction = "Reaction";
 /** The locomotion action of a slice (creature_data.h, CreatureSlice::moveAction). */
 constexpr const char* kMoveAction = "Move_Combat";
+/** The locomotion of a walk with no target (CreatureSlice::walkAction). */
+constexpr const char* kWalkAction = "Move";
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -220,6 +230,20 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
             || !pair("speed", behavior.walkSpeed, behavior.runSpeed)) {
             return false;
         }
+        // Format 3: the ambient speed, and the wander [on, nearest, farthest]. A member with a
+        // wrong form is a fault of the file; a slice with no member has no wander.
+        if (values.contains("ambient") && !read_real(values["ambient"], behavior.ambientSpeed)) {
+            return false;
+        }
+        if (values.contains("wander")) {
+            const json& wander = values["wander"];
+            std::uint32_t on = 0;
+            if (!wander.is_array() || wander.size() != 3 || !read_number(wander[0], on) || on > 1
+                || !read_real(wander[1], behavior.wanderNearest) || !read_real(wander[2], behavior.wanderFarthest)) {
+                return false;
+            }
+            behavior.wander = on == 1;
+        }
         slice.behavior = behavior;
     }
     if (entry.contains("attacks")) {
@@ -289,6 +313,28 @@ bool read_kind(const json& entry, CreatureKind& kind) {
     return true;
 }
 
+/** Reads one route: [policy, [[x, y, z, yaw, min wait, max wait, task, align], ...]]. */
+bool read_route(const json& row, PatrolRoute& route) {
+    std::uint32_t policy = 0;
+    if (!row.is_array() || row.size() != 2 || !read_number(row[0], policy) || policy > 3 || !row[1].is_array()) {
+        return false;
+    }
+    route.policy = static_cast<PatrolPolicy>(policy);
+    for (const json& cell : row[1]) {
+        PatrolWaypoint point;
+        std::uint32_t align = 0;
+        if (!cell.is_array() || cell.size() != 8 || !read_real(cell[0], point.position.x) || !read_real(cell[1], point.position.y)
+            || !read_real(cell[2], point.position.z) || !read_real(cell[3], point.yaw) || !read_real(cell[4], point.minWait)
+            || !read_real(cell[5], point.maxWait) || !cell[6].is_string() || !read_number(cell[7], align) || align > 1) {
+            return false;
+        }
+        point.task = cell[6].get<std::string>();
+        point.align = align == 1;
+        route.points.push_back(std::move(point));
+    }
+    return true;
+}
+
 bool read_spawn_point(const json& row, std::size_t columns, SpawnPoint& point) {
     if (!row.is_array() || row.size() != columns || !row[0].is_string() || !read_number(row[1], point.kind)
         || !read_number(row[2], point.level) || !read_real(row[3], point.position.x)
@@ -297,7 +343,14 @@ bool read_spawn_point(const json& row, std::size_t columns, SpawnPoint& point) {
         return false;
     }
     point.id = row[0].get<std::string>();
-    if (columns == kSpawnPointColumnsWithGround && !row[9].is_null()) {
+    if (columns == kSpawnPointColumnsWithRoute && !row[10].is_null()) {
+        std::uint32_t route = 0;
+        if (!read_number(row[10], route)) {
+            return false;
+        }
+        point.route = route;
+    }
+    if (columns >= kSpawnPointColumnsWithGround && !row[9].is_null()) {
         // The terrain height at the point. Null: the world has no height map there.
         float ground = 0.0F;
         if (!read_real(row[9], ground)) {
@@ -343,6 +396,9 @@ void CreatureData::clear() {
     m_slices.clear();
     m_kinds.clear();
     m_spawnPoints.clear();
+    m_routes.clear();
+    m_routedPoints = 0;
+    m_wanderingKinds = 0;
     m_levels.clear();
     m_fightingSlices = 0;
     m_fightingKinds = 0;
@@ -371,13 +427,15 @@ bool CreatureData::load(const std::string& path) {
     const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned()
                                      ? document["format"].get<std::uint64_t>()
                                      : 0;
-    if (format != kFirstFormat && format != kBehaviorFormat) {
-        m_error = "the file does not have the format 1 or 2";
+    if (format != kFirstFormat && format != kBehaviorFormat && format != kPatrolFormat) {
+        m_error = "the file does not have the format 1, 2, or 3";
         return false;
     }
-    const bool withBehavior = format == kBehaviorFormat;
-    if (!list("levels") || !list("slices") || !list("kinds") || !list("spawnPoints")) {
-        m_error = "the file does not have the lists levels, slices, kinds, and spawnPoints";
+    const bool withBehavior = format >= kBehaviorFormat;
+    const bool withRoutes = format >= kPatrolFormat;
+    if (!list("levels") || !list("slices") || !list("kinds") || !list("spawnPoints") || (withRoutes && !list("routes"))) {
+        m_error = withRoutes ? "the file does not have the lists levels, slices, kinds, spawnPoints, and routes"
+                             : "the file does not have the lists levels, slices, kinds, and spawnPoints";
         return false;
     }
     std::vector<CreatureLevel> levels;
@@ -408,10 +466,23 @@ bool CreatureData::load(const std::string& path) {
     }
     std::vector<SpawnPoint> points;
     points.reserve(document["spawnPoints"].size());
+    const std::size_t columns = withRoutes ? kSpawnPointColumnsWithRoute
+                                : withBehavior ? kSpawnPointColumnsWithGround
+                                               : kSpawnPointColumns;
     for (const json& row : document["spawnPoints"]) {
-        if (!read_spawn_point(row, withBehavior ? kSpawnPointColumnsWithGround : kSpawnPointColumns, points.emplace_back())) {
+        if (!read_spawn_point(row, columns, points.emplace_back())) {
             m_error = "spawn point " + std::to_string(points.size() - 1) + " does not have each value";
             return false;
+        }
+    }
+    std::vector<PatrolRoute> routes;
+    if (withRoutes) {
+        routes.reserve(document["routes"].size());
+        for (const json& row : document["routes"]) {
+            if (!read_route(row, routes.emplace_back())) {
+                m_error = "route " + std::to_string(routes.size() - 1) + " does not have each value";
+                return false;
+            }
         }
     }
     // The count of the tool: a file that lost a part of a list is not complete. A member
@@ -428,7 +499,7 @@ bool CreatureData::load(const std::string& path) {
             return false;
         }
     }
-    return set_full(std::move(slices), std::move(kinds), std::move(points), std::move(levels));
+    return set_full(std::move(slices), std::move(kinds), std::move(points), std::move(levels), std::move(routes));
 }
 
 bool CreatureData::set(std::vector<CreatureSlice> slices,
@@ -445,11 +516,13 @@ bool CreatureData::set(std::vector<CreatureSlice> slices,
 bool CreatureData::set_full(std::vector<CreatureSlice> slices,
                             std::vector<CreatureKind> kinds,
                             std::vector<SpawnPoint> spawnPoints,
-                            std::vector<CreatureLevel> levels) {
+                            std::vector<CreatureLevel> levels,
+                            std::vector<PatrolRoute> routes) {
     clear();
     m_slices = std::move(slices);
     m_kinds = std::move(kinds);
     m_spawnPoints = std::move(spawnPoints);
+    m_routes = std::move(routes);
     for (const CreatureLevel& level : levels) {
         m_levels[level.level] = level;
     }
@@ -467,6 +540,7 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
         }
         slice.hitAction = slice.find_action(kHitAction);
         slice.moveAction = slice.find_action(kMoveAction);
+        slice.walkAction = slice.find_action(kWalkAction);
         // The hits of each attack, and its heavy attacks (project rules, creature_data.h).
         slice.lightAttacks.clear();
         slice.heavyAttacks.clear();
@@ -502,16 +576,21 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
     // not leave its place: the numbers for the log line of the backend.
     std::vector<bool> fights(m_kinds.size(), false);
     for (std::size_t index = 0; index < m_kinds.size(); ++index) {
+        bool wanders = false;
         for (const CreatureBody& body : m_kinds[index].bodies) {
-            fights[index] = fights[index] || m_slices[body.slice].fights();
+            const CreatureSlice& slice = m_slices[body.slice];
+            fights[index] = fights[index] || slice.fights();
+            wanders = wanders || (slice.behavior && slice.behavior->wander && slice.behavior->wanderFarthest > 0.0F);
         }
         m_fightingKinds += fights[index] ? 1 : 0;
+        m_wanderingKinds += wanders ? 1 : 0;
     }
     for (const SpawnPoint& point : m_spawnPoints) {
         if (fights[point.kind]) {
             ++m_fightingPoints;
             m_rootedPoints += on_terrain(point) ? 0 : 1;
         }
+        m_routedPoints += point.route ? 1 : 0;
     }
     build_keys();
     return true;
@@ -575,7 +654,9 @@ bool CreatureData::check() {
             if (!in_range(values.sightAngle, 360.0F) || !in_range(values.combatAngle, 360.0F)
                 || !in_range(values.sightDistance, kMaxSenseDistance) || !in_range(values.combatDistance, kMaxSenseDistance)
                 || !in_range(values.restLeash, kMaxSenseDistance) || !in_range(values.combatLeash, kMaxSenseDistance)
-                || !in_range(values.walkSpeed, kMaxSpeed) || !in_range(values.runSpeed, kMaxSpeed)) {
+                || !in_range(values.walkSpeed, kMaxSpeed) || !in_range(values.runSpeed, kMaxSpeed)
+                || !in_range(values.ambientSpeed, kMaxSpeed) || !in_range(values.wanderNearest, kMaxSenseDistance)
+                || !in_range(values.wanderFarthest, kMaxSenseDistance) || values.wanderNearest > values.wanderFarthest) {
                 m_error = "slice " + std::to_string(index) + " has a behavior value that is not a number of its range";
                 return false;
             }
@@ -652,6 +733,38 @@ bool CreatureData::check() {
         }
         if (point.ground && (!std::isfinite(*point.ground) || std::abs(*point.ground) > kMaxVertical)) {
             m_error = "spawn point " + std::to_string(index) + " has a terrain height that is not a height of the world";
+            return false;
+        }
+        // The route of the point: a route of the list, with each waypoint near the point.
+        if (point.route) {
+            if (*point.route >= m_routes.size()) {
+                m_error = "spawn point " + std::to_string(index) + " names a route that the list of the routes does not have";
+                return false;
+            }
+            for (const PatrolWaypoint& waypoint : m_routes[*point.route].points) {
+                if (std::hypot(waypoint.position.x - point.position.x, waypoint.position.y - point.position.y) > kLongestPatrol) {
+                    m_error = "spawn point " + std::to_string(index) + " has a waypoint more than "
+                              + std::to_string(static_cast<int>(kLongestPatrol)) + " m from it";
+                    return false;
+                }
+            }
+        }
+    }
+    for (std::size_t index = 0; index < m_routes.size(); ++index) {
+        const PatrolRoute& route = m_routes[index];
+        bool correct = !route.points.empty() && route.points.size() <= kMaxRoutePoints;
+        for (const PatrolWaypoint& waypoint : route.points) {
+            // A wait is a time of its range, or negative for both values (no wait, or for ever).
+            const bool waits = waypoint.minWait >= 0.0F && waypoint.maxWait >= waypoint.minWait && waypoint.maxWait <= kLongestWait;
+            const bool noWait = waypoint.minWait < 0.0F && waypoint.maxWait < 0.0F;
+            correct = correct && std::isfinite(waypoint.position.x) && std::isfinite(waypoint.position.y)
+                      && std::isfinite(waypoint.position.z) && std::abs(waypoint.position.x) <= kMaxHorizontal
+                      && std::abs(waypoint.position.y) <= kMaxHorizontal && std::abs(waypoint.position.z) <= kMaxVertical
+                      && std::isfinite(waypoint.yaw) && std::isfinite(waypoint.minWait) && std::isfinite(waypoint.maxWait)
+                      && (waits || noWait) && waypoint.task.size() <= kLongestTask;
+        }
+        if (!correct) {
+            m_error = "route " + std::to_string(index) + " has no waypoint, too many, or a waypoint whose values do not fit together";
             return false;
         }
     }

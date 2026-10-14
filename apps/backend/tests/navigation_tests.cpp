@@ -6,7 +6,8 @@
 //         with no tile
 //   NV3   the path: a creature goes around a wall and through its opening, not through the wall
 //   NV4   floors: a creature on a floor above the terrain walks on its floor and goes up stairs
-//   NV5   a goal with no way: no search, the creature loses its target and goes home
+//   NV5   a goal with no way: no search for the way back; a fight goes to the place nearest to the
+//         target, waits there (stage 3.4e), loses its target, and goes back
 //   NV6   the limit of a tick: many searches at one time wait for the next ticks
 //   NV7   the tiles: the world reads the tiles near a character, removes them again, and a
 //         thread of its own reads them in the backend
@@ -584,20 +585,32 @@ void goal_with_no_way(const Options& options) {
     const std::uint64_t noWay = navigation.counts().noWay;
     (void)world.creatures().hurt(wolf->id, 1.0F, target->id);
     check(wolf->creature.mind.mode == CreatureMode::fight, "a hit gives the wolf the character in the yard as its target");
-    world.pass(0.5F);
-    check(wolf->creature.mind.mode != CreatureMode::fight && wolf->creature.mind.target == 0 && navigation.counts().noWay > noWay
-              && navigation.counts().searches == 0 && navigation.counts().searchSteps == 0
+    // A goal of a different kind (the way back, a patrol) with no way costs no search: the areas say it.
+    const std::uint64_t searches = navigation.counts().searches;
+    check(navigation.next_step(0x7E57, wolf->position, target->position, 0.2F).kind == world::StepKind::noWay
+              && navigation.counts().noWay > noWay && navigation.counts().searches == searches,
+          "a goal with no way that is not the target of a fight: no way, with no search (the areas say it)");
+    navigation.forget(0x7E57);
+    // From stage 3.4e a fight goes to the place nearest to the target, and waits there with its target.
+    world.pass(3.0F);
+    check(wolf->creature.mind.mode == CreatureMode::fight && wolf->creature.mind.holdUntil.has_value()
+              && navigation.counts().partialPaths >= 1 && wolf->position.x > 1028.5F && wolf->position.x < 1030.0F
+              && world.host.world.creatures().behavior().counts().targetsNoWay == 0,
+          "the target has no way to it: the wolf goes to the place nearest to it (at the wall of the yard) and waits there "
+          "with its target");
+    world.pass(world::behavior_rules::kNoWayHold.count() / 1000.0F);
+    check(wolf->creature.mind.mode != CreatureMode::fight && wolf->creature.mind.target == 0
               && world.host.world.creatures().behavior().counts().targetsNoWay == 1 && log_count("no way to the target") == 1,
-          "the target has no way to it: the wolf loses its target at its next step, with no search (the areas say it)");
+          "after its wait the wolf loses its target and goes back");
     world.pass(3.0F);
     check(wolf->creature.mind.mode == CreatureMode::rest && near(wolf->position.x, 1025.0F) && wolf->vitals.health == wolf->vitals.healthMax,
-          "the wolf is at its home with its full health");
+          "the wolf is at its anchor (its home) with its full health");
     const std::uint64_t byHit = world.host.world.creatures().behavior().counts().targetsByHit;
     (void)world.creatures().hurt(wolf->id, 1.0F, target->id);
-    world.pass(1.0F);
+    world.pass(1.0F + world::behavior_rules::kNoWayHold.count() / 1000.0F);
     check(world.host.world.creatures().behavior().counts().targetsByHit == byHit + 1 && wolf->creature.mind.target == 0
               && world.host.world.creatures().behavior().counts().targetsNoWay == 2,
-          "a second hit gives the target again, and the wolf loses it again: each time with no search");
+          "a second hit gives the target again, and the wolf loses it again after its wait");
     std::filesystem::remove_all(world.folder);
 }
 
@@ -867,11 +880,18 @@ void water(const Options& options) {
     }
     check(!wolfInDeep && wolf->creature.mind.attacks == 1 && wolf->position.x > 1006.0F,
           "a wolf goes through the ford to its target on the other side of the river");
-    // A target in the deep water: no way.
+    // A target in the deep water: no way. The wolf goes to the place nearest to it on a floor
+    // (not into the deep water), waits there (stage 3.4e), and then loses it.
     (void)world.host.world.travel(target->characterId, at(1003.0F, 1012.0F), world::TravelScreen::off);
-    world.pass(2.0F);
-    check(wolf->creature.mind.target == 0 && world.host.world.creatures().behavior().counts().targetsNoWay == 1,
-          "a target in deep water (more than 1.5 m from a floor for a creature) has no way to it: the wolf loses it");
+    bool heldInDeep = false;
+    for (int step = 0; step < 100 * (2 + static_cast<int>(world::behavior_rules::kNoWayHold.count() / 1000)); ++step) {
+        world.ticks(1);
+        const state::WorldPosition& place = wolf->position;
+        heldInDeep = heldInDeep || (place.x > 1000.2F && place.x < 1005.8F && !(place.y > 1000.0F && place.y < 1002.0F));
+    }
+    check(!heldInDeep && wolf->creature.mind.target == 0 && world.host.world.creatures().behavior().counts().targetsNoWay == 1,
+          "a target in deep water (more than 1.5 m from a floor for a creature) has no way to it: the wolf waits on a floor "
+          "and then loses it");
     std::filesystem::remove_all(world.folder);
 }
 
@@ -949,11 +969,17 @@ void load_with_navigation(const Options& options) {
     }
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     const world::NavigationCounts& counts = navigation.counts();
-    const world::LoadMeter& ticks = world.host.world.load().worldTick;
+    const std::uint64_t measuredTicks = world.host.world.load().worldTick.count - ticksBefore.count;
     std::size_t fighting = 0;
-    std::size_t lost = 0;
+    std::size_t holding = 0;
     for (std::size_t index = 0; index < walkers.size(); ++index) {
         fighting += walkers[index]->position.x > characters[index]->position.x - 3.5F && walkers[index]->creature.mind.attacks > 0 ? 1 : 0;
+        holding += closed[index]->creature.mind.target == characters[index]->id && closed[index]->creature.mind.holdUntil ? 1 : 0;
+    }
+    // The wolves in the yards wait at the place nearest to their character (stage 3.4e), and then they lose it.
+    world.pass(world::behavior_rules::kNoWayHold.count() / 1000.0F);
+    std::size_t lost = 0;
+    for (std::size_t index = 0; index < walkers.size(); ++index) {
         lost += closed[index]->creature.mind.target == 0 && closed[index]->creature.mind.attacks == 0 ? 1 : 0;
     }
     std::printf("        1,000 ticks with 50 fights: %.1f ms (%.3f ms each, the largest %.3f ms); %llu searches with %llu steps (the largest "
@@ -963,12 +989,15 @@ void load_with_navigation(const Options& options) {
                 counts.largestTickSteps, static_cast<unsigned long long>(counts.noWay - start.noWay),
                 std::chrono::duration<double, std::milli>(navigation.search_load().largest).count());
     check(fighting == walkers.size(), "each of the 50 wolves behind a wall went around it and attacks its character");
-    check(lost == closed.size() && counts.noWay - start.noWay >= closed.size(),
-          "each of the 50 wolves in a closed yard lost its target: a goal with no way");
-    check(counts.searches - start.searches >= walkers.size() && counts.searches - start.searches < 3 * walkers.size()
-              && counts.largestTickSteps <= world::navigation_rules::kTickSteps && counts.searchesFailed == 0,
-          "one search or two for each wolf that walks, none for a wolf with no way, and the steps of a tick in their limit");
-    check(ticks.count - ticksBefore.count == 1000 && seconds < 2.0 && largestTick < std::chrono::milliseconds(50),
+    check(holding == closed.size() && lost == closed.size(),
+          "each of the 50 wolves in a closed yard waits at the place nearest to its character, and then it loses its target");
+    check(counts.searches - start.searches >= 2 * walkers.size() && counts.searches - start.searches < 4 * walkers.size()
+              && counts.partialPaths - start.partialPaths == closed.size()
+              && counts.largestTickSteps <= world::navigation_rules::kTickSteps
+              && counts.searchesFailed - start.searchesFailed == closed.size(),
+          "one search or two for each wolf that walks, one search to the place nearest to the character for a wolf in a yard, "
+          "and the steps of a tick in their limit");
+    check(measuredTicks == 1000 && seconds < 2.0 && largestTick < std::chrono::milliseconds(50),
           "1,000 ticks of the world with 50 fights and their path searches need less than 2 s (the time limit of the case)");
     std::filesystem::remove_all(world.folder);
 }
@@ -1045,7 +1074,9 @@ void footing_when_the_data_comes(const Options& options) {
     check(world.navigation().counts().tilesLoaded >= 9, "the thread of the navigation did read the tiles");
     // The creatures get the character as their target: the first step asks the navigation for their ground.
     world.creatures().behavior().set_ignored(player.characterId, false);
-    for (int tick = 0; tick < 300; ++tick) {
+    // 3 s, and the wait of a creature with no way to its target at the place nearest to it (stage 3.4e).
+    const int ticks = 300 + static_cast<int>(world::behavior_rules::kNoWayHold.count() / 10);
+    for (int tick = 0; tick < ticks; ++tick) {
         clock.advance(std::chrono::milliseconds(10));
         world.tick();
     }
@@ -1058,7 +1089,8 @@ void footing_when_the_data_comes(const Options& options) {
           "the creature 5 m above the ground stands on no floor: it does not leave its place");
     check(platform->creature.mind.groundKnown && platform->creature.mind.walks && platform->position.x > 1010.0F
               && platform->creature.mind.mode != CreatureMode::fight && world.creatures().behavior().counts().targetsNoWay >= 1,
-          "the creature on the platform stands on a floor and walks, and it has no way down to the character: it loses its target");
+          "the creature on the platform stands on a floor and walks, and it has no way down to the character: after its wait at "
+          "the edge it loses its target");
     std::filesystem::remove_all(folder);
 }
 
@@ -1332,7 +1364,7 @@ std::vector<Case> navigation_cases() {
         {"NV2", "navigation: the ground at a place with more than one floor, and which creatures walk", ground_and_floors},
         {"NV3", "navigation: a creature goes around a wall and through its opening, and back", path_around_a_wall},
         {"NV4", "navigation: a creature on a floor above the terrain walks, and it goes up and down stairs", floors_and_stairs},
-        {"NV5", "navigation: a goal with no way costs no search, and the creature loses its target", goal_with_no_way},
+        {"NV5", "navigation: a goal with no way costs no search; a fight goes to the place nearest to the target, waits, and loses it", goal_with_no_way},
         {"NV6", "navigation: the steps of the searches of one tick have a limit, and the other searches wait", tick_limit},
         {"NV7", "navigation: the world reads the tiles near a character and removes them again, with a thread of its own", tiles_near_characters},
         {"NV8", "navigation: a wall stops the sight and the attack of a creature, a low object does not", sight_and_walls},

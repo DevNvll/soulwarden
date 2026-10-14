@@ -62,8 +62,10 @@ from nav_assets import Failure  # noqa: E402
 
 OUTPUT_FOLDER = "navigation"
 MANIFEST = "navigation.json"
-# A change of a rule of the tools: each region is made again.
-TOOL_VERSION = 1
+# A change of a rule of the tools: each region is made again. 2: a physics file that does not
+# decode stops a region (finding F10 of the code review of stage 3.4d), and a cell with more than
+# 16 floors stops it too (finding F8 of the code review of the corrections after user test 1).
+TOOL_VERSION = 2
 AGENT_VARIABLES = ("NAV_CELL", "NAV_FINE", "NAV_RADIUS", "NAV_HEIGHT", "NAV_STEP", "NAV_SLOPE", "NAV_WADE")
 _WORLD: collision_data.World | None = None
 

@@ -347,6 +347,18 @@ int main(int argc, char** argv) {
                        creatureData.fighting_points(),
                        creatureData.spawn_points().size());
         }
+        // The patrol and wander data (stage 3.4e): a creature roams only near a character.
+        if (creatureData.routes().empty() && creatureData.wandering_kinds() == 0) {
+            log::write("backend: the creature data has no patrol routes and no wander values (a file of a tool from before "
+                       "stage 3.4e): the creatures stand at their places when they have no target. Make the file again with "
+                       "tools/gamedata/creatures.sh");
+        } else {
+            log::write("backend: creature patrol data: %zu routes for %zu of %zu spawn points, %zu kinds that wander",
+                       creatureData.routes().size(),
+                       creatureData.routed_points(),
+                       creatureData.spawn_points().size(),
+                       creatureData.wandering_kinds());
+        }
     }
     if (options.creatureBehavior) {
         log::write("backend: the behavior of the creatures is on");
@@ -413,6 +425,8 @@ int main(int argc, char** argv) {
     worldOptions.navigationData = &navigationData;
     worldOptions.navigationThread = true;
     worldOptions.creatureBehavior = options.creatureBehavior;
+    // The random numbers of the world (the wander of the creatures): a different sequence in each start.
+    worldOptions.randomSeed = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     world::World world(clock, store, appearanceTables, worldOptions);
     const server::http::Services services{store,
                                           options.repAddress,

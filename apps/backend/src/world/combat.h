@@ -178,8 +178,10 @@ enum class HitVerdict : std::uint8_t {
     badPoint,
     /** The character of the session is dead: it does no damage. */
     attackerDead,
+    /** The creature is on its way back (the reset): it takes no damage (world/behavior.h). */
+    immune,
 };
-inline constexpr std::size_t kHitVerdictCount = 14;
+inline constexpr std::size_t kHitVerdictCount = 15;
 
 /** @return A short text for a log line, for example "too far". */
 [[nodiscard]] const char* hit_verdict_text(HitVerdict verdict);

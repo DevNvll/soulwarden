@@ -7,14 +7,15 @@
 #include <string>
 #include <unordered_set>
 
+#include "gamedata/creature_data.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/load_meter.h"
 #include "world/world_clock.h"
 
 // The behavior of a creature: it gets a target, goes to it, attacks it, and goes back to its
-// home. It is a part of the creature system (world/creatures.h): only that system changes a
-// creature.
+// anchor; with no target it walks its patrol or wanders. It is a part of the creature system
+// (world/creatures.h): only that system changes a creature.
 //
 // The original behavior ran on the server of the game, and the game files do not have its
 // rules (the behavior trees). Thus the behavior is a design of this project (protocol notes
@@ -36,9 +37,8 @@
 //           place of each step comes from the navigation of the world (world/navigation.h): a
 //           path of the navigation data, around a wall and up stairs, and the height of a step
 //           is the height of its floor. A creature that stands on no free floor of the data
-//           does not leave its place: it turns, and it attacks in its reach. A creature whose
-//           target has no way to it loses the target and goes home, and its vision does not
-//           take that character again for some seconds.
+//           does not leave its place: it turns, and it attacks in its reach. For a target with
+//           no way to it, see "No way".
 //   Attack. In its reach the creature starts an attack of its slice: an action that each
 //           observer plays. The world tests each contact of the attack at its time on the
 //           world clock: the target is in the world, lives, and is in the reach and in the
@@ -56,14 +56,35 @@
 //           the vision of no creature takes it as a target, and a creature that had it as its
 //           target loses it. The time starts when its client reports a position from the
 //           place. A creature that the character hurts gets it as its target in this time too.
+//   No way. A creature whose target has no way to it (a high stone, a closed yard) goes to the
+//           place that it can get to that is nearest to the target (the path of the navigation
+//           to that place), and it waits there with its target for `kNoWayHold`: it turns to
+//           the target and attacks it when it is in the reach. A new attack starts that time
+//           again. After it the creature goes back, and its vision does not take that character
+//           again for some seconds.
 //   Back.   A creature loses its target when the target is dead, left the world, is ignored
-//           by the creatures, or is too far, and when the creature is farther from its home
-//           than its leash. It then goes to its home, takes no target by its vision on the
-//           way, and has its full health at its home.
+//           by the creatures, or is too far, and when the creature is farther from its anchor
+//           than its leash. The anchor is the place where the creature took its target. The
+//           creature then runs back to its anchor (the reset): on this way it takes no damage
+//           and no target by a hit or by its vision (the vitals state has the mark
+//           "invulnerable"), and at the anchor it has its full health. A way back with no path
+//           follows the places of the way out (the trail) back; a creature jumps to its anchor
+//           only when no session can observe it.
+//   Roam.   A creature at rest with a patrol route (the spawner of its spawn point has one, game
+//           data) walks from waypoint to waypoint with the ambient speed of its slice and the
+//           walk action of its slice, waits at each waypoint for a time of its range (and plays
+//           the task of the waypoint when the action table of its slice has an action with that
+//           name), and follows the policy of the route (a loop, back and forth, at random). A
+//           creature at rest with no route whose slice wanders goes to a random place of its
+//           wander range near its home, waits, and goes again. After a reset the patrol or the
+//           wander goes on from the anchor. Only a creature that a character is near roams:
+//           the leave distance of its interest (the distance at which a session of that
+//           character can observe it); a different creature stands where it is.
 //
-// A creature at rest needs no time: only the creatures of the set `m_active` (a target, the
-// way back) are in the step, and the vision rule runs from the characters, with the position
-// index of the world. World thread only.
+// A creature that stands needs no time: only the creatures of the set `m_active` (a target, the
+// way back) and of the set `m_roaming` (a roam near a character) are in the step, the vision
+// rule runs from the characters, and the roam set comes from the characters too, with the
+// position index of the world. World thread only.
 
 namespace soulwarden::backend::world {
 
@@ -124,6 +145,24 @@ inline constexpr float kTurnAngle = 8.0F;
 inline constexpr float kSenseHeight = 12.0F;
 /** The vision of a creature does not take a character that it found no way to for this time. */
 inline constexpr std::chrono::milliseconds kNoWayPause{8000};
+/** A creature with no way to its target waits this long at the place nearest to it (with the target), then it goes back. */
+inline constexpr std::chrono::milliseconds kNoWayHold{12000};
+/** The trail of a fight: one place for each meter of the way, and this number of places at most. */
+inline constexpr float kTrailSpacing = 1.0F;
+inline constexpr std::size_t kTrailLength = 512;
+/** The world selects the creatures that roam (near a character) one time in this interval of the world clock. */
+inline constexpr std::chrono::milliseconds kRoamScanInterval{1000};
+/** A creature is at a waypoint or at a place of its wander when it is this near (meters). */
+inline constexpr float kRoamArrival = 0.3F;
+/** The speed of a walk with no target for a slice with no ambient speed and no walk speed (meters in one second). */
+inline constexpr float kDefaultAmbientSpeed = 1.5F;
+/** The wait of a creature after a walk of its wander: a time from the first to the second value. */
+inline constexpr std::chrono::milliseconds kWanderWaitShortest{4000};
+inline constexpr std::chrono::milliseconds kWanderWaitLongest{12000};
+/** Places that a creature tries for a walk of its wander in one step. */
+inline constexpr unsigned kWanderTries = 6;
+/** A creature that found no way to a waypoint or to a place of its wander waits this long before its next goal. */
+inline constexpr std::chrono::milliseconds kRoamNoWayPause{3000};
 } // namespace behavior_rules
 
 /** Counts of the behavior, for the log and for the tests. */
@@ -148,10 +187,22 @@ struct BehaviorCounts {
     std::uint64_t contactsMissed{0};
     /** Position changes of creatures. */
     std::uint64_t moves{0};
-    /** Creatures that came back to their home. */
+    /** Creatures that came back to their anchor. */
     std::uint64_t returns{0};
     /** The largest number of creatures in the step at one time. */
     std::size_t largestActive{0};
+    /** Steps of creatures that roam, the largest number of them at one time, waypoints and places of a wander that they reached. */
+    std::uint64_t roamSteps{0};
+    std::size_t largestRoaming{0};
+    std::uint64_t waypoints{0};
+    std::uint64_t wanderPlaces{0};
+    /** Roam goals with no way, holds at the place nearest to a target with no way, ways back on the trail, and jumps to the anchor. */
+    std::uint64_t roamNoWay{0};
+    std::uint64_t holds{0};
+    std::uint64_t retraces{0};
+    std::uint64_t jumps{0};
+    /** Hits that a creature on its way back did not take. */
+    std::uint64_t immuneHits{0};
 };
 
 class Behavior {
@@ -197,6 +248,27 @@ public:
     /** @return The number of creatures that are in the step now: a target, or the way back. */
     [[nodiscard]] std::size_t active_count() const {
         return m_active.size();
+    }
+    /** @return The number of creatures that roam now (a patrol or a wander near a character). */
+    [[nodiscard]] std::size_t roaming_count() const {
+        return m_roaming.size();
+    }
+    /** @return True when the creature roams now. */
+    [[nodiscard]] bool roaming(EntityId id) const {
+        return m_roaming.count(id) != 0;
+    }
+    /** @return The patrol route of a creature: the route of its spawn point (game data). Null: none. */
+    [[nodiscard]] const gamedata::PatrolRoute* route_of(const Entity& creature) const;
+    /**
+     * A development command: the anchor of a creature in a fight is a different place, and
+     * the first place of its trail (the place where it took its target is the second one). A
+     * test of the way back with no path to the anchor.
+     * @return False when the creature has no target.
+     */
+    bool move_anchor(Entity& creature, const state::WorldPosition& anchor);
+    /** A hit of a character did not hurt a creature on its way back (the combat system): for the counts. */
+    void immune_hit() {
+        ++m_counts.immuneHits;
     }
     [[nodiscard]] const BehaviorCounts& counts() const {
         return m_counts;
@@ -244,13 +316,38 @@ private:
     void arrive(Entity& creature);
     /** Turns a creature to a place, and marks its movement state when the direction changed enough. */
     void turn_to(Entity& creature, const state::WorldPosition& place);
+    /** Turns a creature to a direction (degrees), and marks its movement state when the direction changed enough. */
+    void turn(Entity& creature, float yaw);
+    /** Keeps the place of a step of a fight in the trail of the creature (CreatureMind::trail). */
+    void record_trail(Entity& creature);
+    /** One step of the way back on the trail (a way back with no path). */
+    void retrace(Entity& creature, float seconds);
+    /** @return True when a session can observe the creature: a character with a session is not farther than the leave distance of its interest. */
+    [[nodiscard]] bool observed(const Entity& creature) const;
+    /** Selects the creatures that roam: the creatures at rest with a route or a wander that a character is near. */
+    void select_roamers();
+    /** @return True when a creature roams when a character is near: it walks, and it has a route that is not complete, or a wander. */
+    [[nodiscard]] bool roams(Entity& creature);
+    /** One step of the roam of a creature: a step to its goal, its wait, or its next goal. */
+    void roam(Entity& creature, float seconds);
+    /** Gives a creature the next goal of its roam (CreatureMind::roamGoal). @return False: no goal now. */
+    bool next_roam_goal(Entity& creature);
+    /** The creature is at the goal of its roam: the wait, the task, the next waypoint. */
+    void at_roam_goal(Entity& creature);
+    /** The next waypoint of a route by its policy. */
+    void next_waypoint(CreatureMind& mind, const gamedata::PatrolRoute& route);
+    /** A creature that roamed stands where it is: no character is near it, or it took a target. */
+    void stand(Entity& creature);
     /** @return The entity of a target that a creature can fight: a character that is in the world, lives, and is not ignored. Null: none. */
     [[nodiscard]] Entity* fightable(EntityId id);
 
     World& m_world;
     Creatures& m_creatures;
-    /** The creatures that the step looks at. */
+    /** The creatures that the step looks at: a target, the way back. */
     std::set<EntityId> m_active;
+    /** The creatures at rest that roam (a patrol, a wander) because a character is near them. */
+    std::set<EntityId> m_roaming;
+    std::optional<WorldClock::time_point> m_lastRoamScan;
     /** The contacts of the attacks that play, in the sequence of their times. */
     std::multimap<WorldClock::time_point, PendingContact> m_contacts;
     /** The characters that the creatures ignore: character ids. */

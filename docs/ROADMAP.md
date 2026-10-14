@@ -239,7 +239,7 @@ stage with a letter is a part of the system with that number.
 | 4 | 3.4c | Creatures in the whole world: the creature file for each region (32,840 spawn points, 503 slices in the supported build), a picture check of each slice, the load of the spawn rule, and a travel command of the tool window | 3.4a | done |
 | 5 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | done |
 | 6 | 3.4d | The path search of a creature: navigation data that a tool makes from the collision shapes of the game copy (the terrain, the solid objects, the water), loaded by the backend; a creature goes around a wall and uses stairs; fights that a player can play | 3.4b | done (the user tests the game before the next stage) |
-| 7 | 3.4e | Patrol and wander: a creature walks its patrol route or wanders near its spawn point; the reset makes a creature immune on its way back, and it walks back on its way, not in one jump | 3.4d | open |
+| 7 | 3.4e | Patrol and wander: a creature walks its patrol route or wanders near its spawn point; the reset makes a creature immune on its way back, and it walks back on its way, not in one jump | 3.4d | done |
 | 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
 | 9 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 1.4 | open |
 | 10 | 1.8 | Original quest state of a new character | 1.6 | open |
@@ -1093,6 +1093,35 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   3.5a: a dead creature stays at its place on its floor; the place of the respawn timer is
   `Creatures::respawn_at`; a spawn point whose creature stands on no free floor (1,207 of
   kinds that fight) needs no path.
+- Stage 3.4e (done; protocol notes 4.14, 4.17, and 4.19; result file
+  `~/Games/soulwarden/work/evidence/patrol/implement/RESULT.md`). A creature patrols and
+  wanders. The creature data tool reads the patrol of each spawner (`m_patrolPathEntity`,
+  the components `AIPatrol` and `AIWaypoint`: the waypoints in world places, the wait range
+  and the task of each waypoint, the policy) and the wander values of each slice (format 3,
+  12.4 MB): 19,814 of the 32,840 spawn points have a route, and 465 kinds wander. A creature
+  roams only while a character is in the leave distance of its interest (120 m at most): it
+  walks with the walk action `Move` and the ambient speed of its slice, waits at each
+  waypoint, and follows the policy (a loop, back and forth, at random); a wander takes random
+  places of its range from the generator of the world. The leash is measured from the anchor
+  (the place where the creature took its target), the way back ends there, and the patrol
+  goes on. On the way back a creature is immune (no damage, no target by a hit, the vitals
+  state has the immune mark), it has its full health at the anchor, and with no path back it
+  walks its trail back; it jumps only when no session observes it. A creature whose target
+  has no way to it goes to the place nearest to it and waits there 12 s. Test case PT9: 1,000
+  ticks with 1,500 creatures that roam near 50 characters need 76.5 ms. Live: the start wolf
+  walks its four waypoints; a fight from a patrol to the leash and back; a wolf on its trail
+  back; the no-way wait at the Tomb of the Old Warrior; the patrols of Mosswater Bourg in
+  Everfall (9.0 kB each second of creature states for one session with 64 creatures that
+  roam). The stage also corrected the nine findings of the review of the corrections of user
+  test 1 (the sight over a cell edge, the death with no death action, the action after a
+  first spawn record, the travel fallback with no camera, the tile of a goal, the cache of the
+  collision tool, a step with no locomotion action, the floor limit of the tile writer, and
+  the spawn timing text). Not in this stage: group aggression, a creature that calls others,
+  flee, the tasks of the waypoints that are not an action of the action table (24,872 of
+  24,895), swimming and flying. Open: the client shows no immune text; two travels had no
+  effect in the client. For stage 3.5a: the death and the anchor are in `world/behavior.cpp`
+  (`died`, `take_target`); a creature that comes again at its spawn point starts its patrol
+  at the first waypoint.
 - Test: screenshots of a creature at its spawn point, of a fight, and of its death; the
   health of the player goes down when the creature hits.
 - Risk: no data for the behavior. Then the behavior is a design of this project. Decision

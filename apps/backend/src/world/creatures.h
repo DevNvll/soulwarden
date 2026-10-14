@@ -67,6 +67,21 @@ enum class CreatureError {
     dead,
     /** The action table of the slice of the creature has no action with this name that has a fragment. */
     unknownAction,
+    /** The creature is on its way back (the reset): it takes no damage. */
+    immune,
+};
+
+/** The locomotion of a change of the place of a creature (Creatures::move). */
+enum class Gait : std::uint8_t {
+    /** A place with no walk: the arrival at the end of the way back. */
+    place,
+    /** A step of a way in a fight or of the way back: the action Move_Combat of the slice (CreatureSlice::moveAction). */
+    run,
+    /**
+     * A step of a walk with no target (a patrol, a wander): the action Move of the slice
+     * (CreatureSlice::walkAction), or Move_Combat for a slice with no such action.
+     */
+    walk,
 };
 
 struct CreatureResult {
@@ -228,7 +243,8 @@ public:
      * damage, through set_health. A creature that lives after it plays the reaction action of
      * its slice, when it plays no attack. A damage that is not less than its health is its
      * death. A creature that lives gets the character that did the damage as its target, when
-     * it has none (world/behavior.h).
+     * it has none (world/behavior.h). A creature on its way back takes no damage (the error
+     * `immune`, Creature::immune).
      * @param damage The damage: a finite number that is not negative.
      * @param attacker The entity of the character that did the damage. 0: a command.
      */
@@ -310,12 +326,18 @@ public:
     /**
      * Puts a creature at a different place: the position index of the world follows it, and
      * each session that observes the creature gets its movement state.
-     * @param walk True for a step of a way: the creature plays the locomotion action of its
-     *             slice (Creature::moving) from its first step, and the walk replaces an action
-     *             of the server that plays (a reaction). False: a place with no walk (the
-     *             arrival at the home).
+     * @param gait For a step of a way (`run`, `walk`): the creature plays the locomotion action
+     *             of its gait (Creature::moving) from its first step, in one record for the way
+     *             (a new record only when the gait changes), and the step replaces an action of
+     *             the server that plays (a reaction), also for a slice with no locomotion action.
+     *             `place`: a place with no walk (the arrival at the end of the way back).
      */
-    void move(Entity& entity, const state::WorldPosition& position, bool walk = true);
+    void move(Entity& entity, const state::WorldPosition& position, Gait gait = Gait::run);
+    /**
+     * The immune mark of a creature changed (Creature::immune: its way back started or ended):
+     * each session that observes it gets the vitals state with the fields of the mark.
+     */
+    void immune_changed(Entity& entity);
     /** Ends the walk of a creature (Creature::moving): its client plays the action that it selects (the idle action). */
     void stop(Entity& entity);
     /** Marks the movement state of a creature that changed its direction at its place. */

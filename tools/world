@@ -127,6 +127,9 @@ The creatures of the world (protocol notes 4.14):
                                                 of an action that has an end. --tags: the tag state
                                                 of the fragments for this action (24 hexadecimal
                                                 digits), in the place of the tags of the slice
+  tools/world creature anchor CREATURE X Y Z    the anchor of a creature in a fight is that place
+                                                (the end of its way back): a test of a way back
+                                                with no path to the anchor
   tools/world fragment CREATURE SLOT TYPE HEX   the fragment command for a creature
 CREATURE is the id of a creature (16 hexadecimal digits), or the last digits of it when only one
 creature has them.
@@ -280,6 +283,13 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
                       f"{load['creaturesSensed']} looks of the vision rule; {load['targets']} targets, {load['attacks']} "
                       f"attacks, {load['contactsHit']} contacts that did hurt and {load['contactsMissed']} that did not, "
                       f"{load['moves']} position changes, {load.get('targetsNoWay', 0)} targets with no way")
+                if "roaming" in load:
+                    print(f"roam: {load['roaming']} creatures patrol or wander near a character now (the largest number "
+                          f"{load['roamingLargest']}), {load['roamSteps']} roam steps, {load['waypoints']} waypoints and "
+                          f"{load['wanderPlaces']} places of a wander reached, {load['roamNoWay']} roam goals with no way; reset: "
+                          f"{load['returns']} ways back, {load['holds']} waits at the place nearest to a target with no way, "
+                          f"{load['retraces']} ways back on the trail, {load['jumps']} jumps to the anchor, {load['immuneHits']} "
+                          f"hits on a creature on its way back")
             navigation = load.get("navigation")
             if navigation and navigation["data"]:
                 def part(entry: dict) -> str:
@@ -290,7 +300,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
                       f"{part(navigation['search'])}; {navigation['pathsDirect']} straight paths, {navigation['searches']} "
                       f"searches with {navigation['searchSteps']} steps (the largest number of steps in one tick "
                       f"{navigation['largestTickSteps']}), {navigation['searchesFailed']} with no path in the limit, "
-                      f"{navigation['noWay']} goals with no way; {navigation['queued']} searches wait now (the largest number "
+                      f"{navigation['noWay']} goals with no way, {navigation.get('partialPaths', 0)} paths to the place nearest to a "
+                      f"goal with no way; {navigation['queued']} searches wait now (the largest number "
                       f"{navigation['largestQueue']}), {navigation['waits']} steps of creatures that waited; "
                       f"{navigation['sightTests']} sight tests, {navigation['sightStopped']} stopped by a solid")
             elif navigation:
@@ -403,7 +414,31 @@ def creature_text(creature: dict) -> str:
     x, y, z = creature["position"]
     distance = f"  {creature['distance']:6.1f} m" if "distance" in creature else ""
     # What the creature does: it has a target, or it goes to its home. No word: it is at rest.
-    mode = {"fight": f"  FIGHT (target {creature.get('target', '')[-8:]})", "home": "  GOES HOME"}.get(creature.get("mode"), "")
+    mode = {"fight": f"  FIGHT (target {creature.get('target', '')[-8:]})", "home": "  GOES BACK (immune)"}.get(creature.get("mode"), "")
+    if creature.get("holds"):
+        mode += "  WAITS (no way to its target)"
+    if creature.get("retracing"):
+        mode += "  ON ITS TRAIL"
+    # The roam (stage 3.4e): a patrol with its waypoint, or a wander, and if the creature roams now (a character is near).
+    roam = creature.get("roam", "none")
+    stands = ""
+    if not creature.get("roaming") and creature.get("mode") == "rest":
+        if not creature.get("behaviorData", True):
+            stands = "stands: no behavior data of its slice"
+        elif not creature.get("groundKnown"):
+            stands = "stands: no navigation data of its place yet"
+        elif not creature.get("walks"):
+            stands = "stands: no free floor at its place"
+        else:
+            stands = "stands: no character near"
+    if roam == "patrol":
+        mode += f"  PATROL (waypoint {creature.get('waypoint', 0) + 1} of {creature.get('waypoints', 0)}"
+        if creature.get("settled"):
+            mode += ", stays there)"
+        else:
+            mode += f", {stands})" if stands else ")"
+    elif roam == "wander":
+        mode += "  WANDER" + (f" ({stands})" if stands else "")
     kind = "" if creature.get("fights", True) else "  no attack"
     rooted = creature.get("groundKnown", True) and not creature.get("walks", True)
     kind += "  stays at its place" if rooted and creature.get("fights", True) else ""
@@ -537,6 +572,9 @@ def creature_command(data_dir: Path, arguments: list[str]) -> None:
         seconds = f"&seconds={numbers(words, 1)[0]}" if words else ""
         request(data_dir, "POST", f"/v1/dev/creatures/action?creature={creature_id(data_dir, arguments[1])}"
                                   f"&action={arguments[2]}{seconds}{tags}")
+    elif action == "anchor" and len(arguments) == 5:
+        x, y, z = numbers(arguments[2:5], 3)
+        request(data_dir, "POST", f"/v1/dev/creatures/anchor?creature={creature_id(data_dir, arguments[1])}&x={x}&y={y}&z={z}")
     else:
         fail("unknown creature command. tools/world --help prints the commands.")
 
@@ -709,7 +747,7 @@ def main() -> None:
             x, y, z = found[0]["position"]
             if not places or (x, y, z) != places[-1][1:]:
                 places.append((time.monotonic() - started, x, y, z))
-                mode = {"fight": "FIGHT", "home": "GOES HOME"}.get(found[0].get("mode"), "at rest")
+                mode = {"fight": "FIGHT", "home": "GOES BACK"}.get(found[0].get("mode"), "at rest")
                 print(f"{places[-1][0]:6.2f} s  at {x:.3f} {y:.3f} {z:.3f}  {mode}", flush=True)
         if table:
             Path(table).write_text("kind\tx\ty\tz\n" + "".join(f"place\t{x:.3f}\t{y:.3f}\t{z:.3f}\n" for _, x, y, z in places))

@@ -1053,7 +1053,7 @@ void refusals(const Options&) {
           "three claims are refused (the same attack: a contact less than 8 steps or less than 250 ms after a hit of the "
           "same creature)");
     host.disconnect(a.peer);
-    check(log_count("rep: hit claims of the session:") == 1 && log_count("1 accepted, 37 refused (4 not a creature, 15 not a component of the creature, 1 not observed, 1 dead, 4 no melee weapon, 4 no attack, 3 the same attack, 1 too far, 2 bad point, 2 too many claims, 0 no combat tables)") == 1,
+    check(log_count("rep: hit claims of the session:") == 1 && log_count("1 accepted, 37 refused (4 not a creature, 15 not a component of the creature, 1 not observed, 1 dead, 4 no melee weapon, 4 no attack, 3 the same attack, 1 too far, 2 bad point, 2 too many claims, 0 no combat tables, 0 immune)") == 1,
           "the log of the session end has the count of the claims of each cause");
 
     // A backend with no combat tables.

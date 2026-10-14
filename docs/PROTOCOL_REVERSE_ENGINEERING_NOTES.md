@@ -1053,6 +1053,22 @@ group 1:  0 ManaAmount:f32        1, 2 afflictions      3 ManaMax:f32   4 ManaTi
   of the character (4.12: 856 for a new character, behavioral proof on the HUD), stamina 100
   of 100, mana 100 of 100, and tick rates 0. With no progression tables it sends health 1000
   of 1000. The game log has no stat warning.
+- **The immune mark of a creature** (stage 3.4e; static proof of the fields, behavioral proof
+  of what the client does). `invulnerability` and `displayImmuneWhenInvulnerable` are one
+  byte each; the facet keeps them at +0x284 and +0x285 (apply function 0x683E670). A
+  creature on its way back (the reset, 4.17) has the two fields 1, and 0 again at its anchor:
+  the first vitals state of a session has the two values, and a later state has the two
+  fields when the mark changed after the last state of the session. Live (runs `c2` and
+  `pt3`): the client makes no melee contact with a creature that has `invulnerability` 1 in
+  a direct attack (2 of 2 attacks in the check with a raw fragment, and 4 sword attacks at
+  1.5 m on a Grey Wolf on its way back, against 3 hits in 3 attacks at a wolf with no mark at
+  the same distance): no claim, no hit mark, no damage number. One swing at the wolf with no
+  mark also gave one contact on the immune wolf beside it: the backend refused that claim
+  (cause "the creature is on its way back (immune)") and nothing changed. The name plate
+  shows no mark, and `displayImmuneWhenInvulnerable` alone changed nothing that the check
+  saw. The message 1924 (`DisplayImmuneText` of the damage receiver facet, reader 0x6572380)
+  showed no text with three bodies (the damage receiver facet of the own character or of the
+  creature as the target): the backend does not send it.
 
 `MB::ManaComponentReplicatedState` (type 1652, slot 47 of the player slice, the component
 `Mana` of the entity "Stats"; constructor 0x67088C0, apply 0x683B740; behavioral proof, user
@@ -2667,6 +2683,53 @@ chain of one spawn point in the game files:
   backend gives the free memory back to the system after the load of the game data
   (`malloc_trim`; without it the process kept 99 MB). A binary form or a file for each region is not necessary at this size
   (decision of stage 3.4c).
+- **The patrol routes and the wander values** (stage 3.4e; static proof from the slices of the
+  game copy, live proof of the four waypoints of the start wolf). From stage 3.4e the tool
+  writes format 3 (12.4 MB): the member `routes` of the document, and value 11 of a spawn
+  point (the index of its route, or `null`). The chain in the game files:
+
+  | Step | Where | What it gives |
+  | --- | --- | --- |
+  | 1 | The spawner slice of the placement (step 3 above) | The field `m_patrolPathEntity`: the entity of the patrol in the same slice (no entity: no route) |
+  | 2 | That entity: the component `AIPatrol` (type `FA7FA996`) | `m_waypointIds` (the entities of the waypoints, in their sequence) and, in its server facet, `m_pathTravesalPolicy` (0 a loop, 1 back and forth, 2 at random, 3 not defined) |
+  | 3 | Each waypoint entity: the component `AIWaypoint` (type `3D1526BF`) and the transform | `m_taskName` (a text, can be empty), `m_minDuration` and `m_maxDuration` (seconds), `m_matchAlignment` (a flag); `m_worldTM` relative to the root of the slice |
+  | 4 | The placement of the spawner (step 2 above) | The world place of a waypoint: the matrix of the placement (its rotation as a quaternion, and its position) times the matrix of the waypoint. The direction is `atan2(m[4], m[0])` of the result (degrees) |
+
+  A route in the file is `[policy, [[x, y, z, yaw, minWait, maxWait, task, align], ...]]`.
+  The behavior of a slice has two new members: `ambient` (the speed with no target: the
+  blackboard value `AmbientNavMaxSpeed` of the slice, or the largest speed of the navigation
+  configuration `Wander` or `AmbientLeash` of its Pathing component) and `wander` (`[on,
+  nearest, farthest]`: the blackboard value `Enable_Wander`, and `WanderDistanceMin`,
+  `WanderDistanceMax` in meters). A slice with no `Enable_Wander` does not wander (project
+  rule). Counts of the supported build:
+
+  | Value | Count |
+  | --- | --- |
+  | Spawn points with a route (of 32,840) | 19,814 (3,253 kinds) |
+  | Policies: a loop, back and forth, at random | 13,773, 4,834, 1,207 |
+  | Routes with 1, 2, 3, 4, 5, more waypoints | 9,310, 1,647, 5,444, 2,275, 430, 708 (20 waypoints at most) |
+  | Routes left out (the spawn point has no route): a waypoint with no `AIWaypoint` component or no transform; a patrol with no waypoint; a waypoint more than 200 m from its spawn point | 357, 155, 2 |
+  | Waypoints with a task, and the tasks that are an action of the action table of the slice | 24,895, 23 |
+  | Slices with `Enable_Wander` true, false, not in the slice | 70, 0, 431 |
+  | Kinds that wander; kinds with no route and no wander | 465; 576 |
+  | Spawn points with no route whose kind wanders | 168 |
+  | Slices with the action `Move` (the walk) and `Move_Combat` (the run) | 501 and 501 of 503 |
+
+  The most usual tasks are `POI_LookAround` (2,687), `POI_Graze_LOOP` (2,020),
+  `POI_Broken_Standing_Weapon_Out_LOOP` (1,457), and `POI_Sit` (1,224): they are names of
+  the animation databases of the creatures (an ambient action with a tag), not names of the
+  action table, thus the backend plays only the 23 tasks whose name is an action of the
+  table. The start wolf (`8815.25 4319.13`) has a loop of four waypoints:
+  `8812.751 4319.135` (50 degrees, 20 s to 30 s, `POI_Sit`), `8817.751 4319.135` (270
+  degrees, 10 s to 15 s, `POI_Eat`), `8815.251 4321.635` (45 degrees, 30 s to 40 s,
+  `POI_Lay`), `8815.251 4316.635` (180 degrees, 30 s to 40 s, `POI_Sleep`). The backend
+  refuses a file whose routes do not fit together, as a whole: a route index outside the
+  list, a route with no waypoint or with more than 64, a waypoint more than 200 m from its
+  spawn point, a value that is not finite, a wait that is not "both values negative" or "0
+  to 3,600 s with the second value not less than the first one", a task of more than 128
+  characters, an ambient speed or a wander distance outside its range, and a nearest wander
+  distance above the farthest one. A file of format 2 works as before: the creatures have
+  no route and do not wander.
 - **The picture check of the slices** (stage 3.4c, `tools/research/creature_tour.py`;
   evidence `~/Games/soulwarden/work/evidence/world-spawn/implement/tour`). The tour makes one
   creature of each slice 5 m in front of the character on the street of the start place
@@ -2851,6 +2914,19 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   creature on its way has this action from its first step (`Creature::moving`), in one record
   with one start count for the whole way; an attack replaces it, and the arrival at the home
   ends it (the fields with no record).
+- **The walk of a roam** (stage 3.4e; behavioral proof, check `C1`). Out of a fight a
+  creature walks with the action `Move` of its action table (`CreatureSlice::walkAction`; 501
+  of the 503 slices of the file have it), with the ambient speed of its slice: a Grey Wolf at
+  1.75 m/s walks with its head up and its legs move with the speed. With `Move_Combat` at the
+  same speed it walks low, in the stance of a fight. A patrol and a wander use `Move` (one
+  record for each walk to a waypoint or to a place of a wander, and the fields with no
+  record at the waypoint); the way to a target and the way back use `Move_Combat`. A new
+  record goes out only when the action changes (a walk that becomes a run). Corrections of
+  the review of the corrections of user test 1: a step ends a reaction that plays also for
+  a slice with no locomotion action (finding F7, case RU4: before, the reaction stayed in
+  the state of the client); the death of a creature with no death action ends the kept
+  locomotion record of each session (F2, case RU2: before, the death marked only the vitals
+  state, and a session that had the run kept it, while the world had no action).
 - The backend sends the full movement state with the scope fields (the position and the
   rotation again). The time bytes are the time from the start of the action to the state: a
   session that observes a dead creature later sends the time that passed, so that its
@@ -2873,6 +2949,15 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   WS4). The action command with no time (`tools/world creature action NAME`) starts an
   action with no end: the first state of a later session then has that action for a slice
   with no spawn action.
+- **The action that plays after a first record with the spawn action** (finding F3 of the review
+  of the corrections of user test 1, case RU3; `kSpawnLead` in `rep_session.cpp`). A first
+  record of a creature of such a slice has the spawn action with the time 0 (finding F9, case
+  RU10: the wire time is 0, and `CreatureAction::started` keeps the time of the creation). When
+  the creature plays a different action at that time (a walk of its patrol, an attack, the
+  run of a fight), the session sends that action 1.5 s after the first record: the client
+  shows the body first, and then the action. Before, the session sent only the spawn record:
+  with no later change of the place or of the direction, the observer missed the whole
+  action. A later state of the creature replaces that wait.
 - **The index of an action** is its position in the action table that the client makes for
   the slice (builder 0x4840D90; the table is at movement component +0xB58, one action has
   0x1A0 bytes: name +0x90, index +0x130, fragment name +0x138, fragment index +0x164). The
@@ -3363,7 +3448,10 @@ movement state of a session has 1: the world entry is the same mechanism.
   records: the spawn action of a slice that needs it (4.14) then played while the client
   loaded, and the body of the creature stayed hidden (the Reaver of the Tomb of the Old
   Warrior after a far travel). Live: after a travel of 309 m with the loading screen the
-  Reaver came into the table 2.5 s after the travel, with its body and its name plate.
+  Reaver came into the table 2.5 s after the travel, with its body and its name plate. The
+  20 s also apply to a session whose client sent no camera report yet (finding F4 of the
+  review of the corrections of user test 1, case RU5: before, each interest scan needed a
+  first camera report, and no creature came into the table of such a session).
 - A travel ends each lock of the input of the client (4.20): the session of the owner sends
   the messages 3746 and 6709 before the messages of the travel (live proof: a character that
   a conversation kept in place walks after a travel; before, the user stayed in place after
@@ -3423,13 +3511,21 @@ arguments and the route `GET /admin/v1/catalog/places` (6.4); and the tab "Trave
 tool window. The two route sets use one function of the common layer
 (`server/http/travel_commands.cpp`).
 
-### 4.17 The behavior of a creature: sense, way, attack, way back (project rules; behavioral proof for what the client shows)
+**Not known.** In the live runs of stage 3.4e two travels with numbers had no effect in the
+client: the backend moved the entity and sent the movement state (teleport numbers 10 and
+13), and the client kept its character at the old place; a second travel moved it. The two
+came after a `heal` of a dead character and after a long walk with many `heal` commands. The
+cause is not known.
+
+### 4.17 The behavior of a creature: sense, way, attack, way back, patrol and wander (project rules; behavioral proof for what the client shows)
 
 Stage 3.4b. Research: `~/Games/soulwarden/work/research/creatures.md` and `damage.md`. Evidence
 of the live runs: `~/Games/soulwarden/work/evidence/fight/implement/` (`F*`, `L6-*`). Code:
 `world/behavior.h` (the rules and their constants), `world/creatures.h`, `world/navigation.h`,
 `gamedata/creature_data.h`, `gamedata/height_maps.h`; tools `tools/gamedata/creature_data.py`,
-`creature_behavior.py`, and `height_maps.py`.
+`creature_behavior.py`, and `height_maps.py`. Stage 3.4e adds the patrol, the wander, the
+anchor of a fight, the reset (immune, with the trail), and the wait at the place nearest to a
+target with no way (result file `~/Games/soulwarden/work/evidence/patrol/implement/RESULT.md`).
 
 **What is a contract of the client, and what is a rule of this project.** The behavior of a
 creature ran on the server of the game. The files of the game copy have the values of a
@@ -3454,6 +3550,9 @@ point:
 | The damage of a kind as a part of the base damage of its level | `DamageMod` of the base row of the vitals row times `CategoryDamageMod` of its creature type | Kind `damage` |
 | The base damage and the gear score of a level | `BaseDamage` and `GearScore` of the level table (`VitalsLevelData`) | `levels`: `[level, health, damage, gear score]` |
 | The terrain height at a spawn point | The height map of the region (below) | Spawn point, value 10 |
+| The speed with no target (a patrol, a wander; stage 3.4e, format 3) | The Blackboard entry `AmbientNavMaxSpeed`; the Pathing configuration `Wander` or `AmbientLeash` when the blackboard has none | `behavior.ambient` |
+| The wander (stage 3.4e) | The Blackboard entries `Enable_Wander` (a flag), `WanderDistanceMin`, `WanderDistanceMax` | `behavior.wander`: `[on, nearest, farthest]` |
+| The patrol route of a spawn point (stage 3.4e) | The spawner slice: `m_patrolPathEntity`, `AIPatrol`, `AIWaypoint` (4.14) | `routes`, and spawn point value 11 |
 
 - One contact of an attack is `[time, reach, damage factor, added damage, damage type, number
   of the type on the wire, category, name of the damage row]`. The time is the sum of the
@@ -3575,7 +3674,8 @@ of stage 3.4d). The behavior asks only these two functions for a place:
 
 **The rules of the behavior** (project rules; the constants are in the namespace
 `world::behavior_rules`). The behavior decides and moves each creature one time each 200 ms
-of the world clock. A creature has three modes: at rest, in a fight, on the way to its home.
+of the world clock. A creature has three modes: at rest (it can roam, stage 3.4e), in a
+fight, and on its way back (the reset).
 
 | Rule | Text |
 | --- | --- |
@@ -3585,12 +3685,16 @@ of the world clock. A creature has three modes: at rest, in a fight, on the way 
 | Way | A creature with a target turns to it and goes to it with the run speed of its slice, in steps of 200 ms, until the target is 0.6 m inside the reach of its next attack (not nearer than 1.0 m). Each step is a place of `next_step`: the height is the height of the ground. |
 | Attack | In that distance, and with the target not more than 3 m higher or lower, the creature starts the next attack of its slice (the attacks in the sequence of the file, again and again). The attack is an action of the server (a scope record): the creature keeps its place and its direction until the end of the action, then waits 0.9 s. |
 | Contact | The world tests each contact of an attack at its time on the world clock. The contact hurts the target when the target is in the world, lives, is not ignored, is not farther than the reach of the contact plus 0.3 m, is not more than 3 m higher or lower, and is in an angle of 70 degrees to each side of the direction of the creature. One contact that passes is one damage result (4.18). A contact of an action that a different action replaced does nothing. |
-| Way back | A creature loses its target when the target is dead, left the world, is ignored, is farther than 60 m (a travel), or when the creature is farther from its home than the leash of its slice for a fight (40 m for a slice with no leash value). It then goes to its home with its run speed. On the way it takes no target by its vision, and a hit gives it a target again. At its home it has the exact place and direction of its spawn point, and its full health. |
-| A creature that does not walk | It turns to its target (a new movement state for each 8 degrees), attacks a target that is in the reach of its next attack, and loses a target that is farther than its vision distance of a fight (30 m for a slice with no value). It is at its home at once. |
-| Health | A creature keeps its health in a fight and on the way back. It has its full health when it is at its home (no regeneration in a fight: stage 3.5a). |
+| Way back | A creature loses its target when the target is dead, left the world, is ignored, is farther than 60 m (a travel), or when the creature is farther from its anchor than the leash of its slice for a fight (40 m for a slice with no leash value). The anchor is the place where the creature took its target (stage 3.4e; before, the home). It then goes back to its anchor with its run speed (the reset). On the way it is immune: it takes no damage and no target by a hit or by its vision, and its vitals state has the immune mark (4.5). With no path back it walks the places of its way out back (the trail). At its anchor it has its full health; at its home (the spawn point) also the exact place and direction of its spawn point. |
+| No way | A creature whose target has no way to it goes to the place that it can get to that is nearest to the target, and waits there with its target for 12 s: it turns to the target and attacks it when it is in the reach. Each attack starts the 12 s again. After the wait it loses its target (the way back), and its vision does not take that character for 8 s. |
+| Roam | A creature at rest walks its patrol route, or wanders near its home, only while a character is near it (below). |
+| A creature that does not walk | It turns to its target (a new movement state for each 8 degrees), attacks a target that is in the reach of its next attack, and loses a target that is farther than its vision distance of a fight (30 m for a slice with no value). It is at its anchor at once. A creature that does not walk does not roam. |
+| Health | A creature keeps its health in a fight and on the way back. It has its full health when it is at its anchor (no regeneration in a fight: stage 3.5a). |
 | Hit of a player | The rules of 4.15 stay: the health goes down, and the creature plays the action `Reaction`. A creature that plays an attack plays no reaction: the reaction would take the attack away, and a player that hits fast would stop each attack. A dead creature has no target, and the attack that it played does no damage. |
 
-- The home of a creature is its spawn point, or the place of its spawn command.
+- The home of a creature is its spawn point, or the place of its spawn command. Its anchor is
+  the place where it took its target: for a creature at rest at its spawn point the two are
+  one place, and for a creature on its patrol the anchor is a place of its route.
 - **The spawn point rule** (4.14) uses the distance of the spawn point, for the two
   distances. A creature that goes to a player and away from its point stays in the world
   while a player is 200 m or less from the point. The leash of each slice is less than the
@@ -3604,7 +3708,41 @@ of the world clock. A creature has three modes: at rest, in a fight, on the way 
 - **The log.** One line for each new target (`world: creature ID (KIND) has a target: NAME
   (CAUSE, N m)`), for each lost target with its cause, for each attack, for each hit with
   the values of the damage rule, for each contact that did not hurt its target, and for
-  each creature that is at its home again.
+  each creature that is at its home again. From stage 3.4e: `has no way to its target NAME:
+  it goes to the place nearest to it and waits there with it`, `lost its target (CAUSE): it
+  goes back to its anchor, N m, immune`, `has no path back to its anchor: it walks the N
+  places of its way back`, `has no way to its anchor and no session observes it: it is at
+  its anchor in one step`, `is at its home (its anchor)` or `is at its anchor`.
+
+**The roam and the reset** (stage 3.4e; project rules, each constant in `behavior_rules`,
+`world/behavior.h`; the values of a slice and of a route are game data, 4.14).
+
+| Rule | Text |
+| --- | --- |
+| Who roams | A creature at rest that walks (a free floor of the navigation data), that is not dead, and that has a patrol route (its spawn point) or a slice that wanders. It roams only while a character is not farther than the leave distance of its interest (`World::interest_leave`: the radius of its slice from 20 m to 100 m, plus 20 m; 120 m at most): the distance at which a session of that character can observe it. The world selects these creatures one time each 1 s of the world clock, from the characters with the position index (`kRoamScanInterval`). A different creature stands where it is: it needs no time. |
+| Patrol | The creature walks to the next waypoint of its route with the ambient speed of its slice (1.5 m/s for a slice with no value, `kDefaultAmbientSpeed`) and the walk action (`Move`, 4.14), on the path of `next_step`. At the waypoint (0.3 m or less, `kRoamArrival`) it turns to the direction of the waypoint when the waypoint has `m_matchAlignment`, waits for a random time of the range of the waypoint (the generator of the world), and plays the task of the waypoint for that time when the action table of its slice has an action with that exact name (the letter case is not ignored). A negative wait (-1 in the game files) is no wait, with two exceptions: at the waypoint of a route of one waypoint, and at a waypoint whose task ends with `_LOOP` (the letter case is ignored), the creature stays for ever (it then needs no time, and a task with that name plays with no end). |
+| Policy | A loop: after the last waypoint the first one. Back and forth: the waypoints in their sequence, then back. At random: a random waypoint that is not the waypoint where the creature is. A route with a policy that is not defined is a loop. |
+| Wander | A creature with no route whose slice wanders goes to a random place at a random distance of its wander range (`WanderDistanceMin` to `WanderDistanceMax`, not farther than the leash of its slice at rest) from its home, in a random direction, with the ambient speed and the walk action. It tries 6 places in one step (`kWanderTries`): a place with no floor, or with a floor that is not free, is not taken. At the place it waits 4 s to 12 s (`kWanderWaitShortest`, `kWanderWaitLongest`). |
+| No way on a roam | A waypoint or a place with no way to it: the creature waits 3 s (`kRoamNoWayPause`) and takes the next goal. |
+| The first walk | Each creature starts its first walk 0 s to 4 s after its creation (a random time): the creatures of one place do not start at one time. |
+| The random numbers | The world has one generator (splitmix64, `World::random_unit`); `WorldOptions::randomSeed` gives its start value (the backend takes it from the clock at its start; a test sets it, and one value gives one sequence). |
+| Anchor | When a creature takes a target, the place where it is is its anchor, and the first place of its trail. The leash is the distance from the anchor. At the end of the way back the patrol or the wander goes on from the anchor: a patrol goes to its next waypoint. |
+| Immune | On the way back (the mode `home`) the creature takes no damage (`Creatures::hurt` gives the error `immune`; the hit check of 4.15 refuses the claim with the cause "the creature is on its way back (immune)") and no target by a hit or by its vision. The vitals state has `invulnerability` 1 and `displayImmuneWhenInvulnerable` 1 for each observer (4.5), and 0 again at the anchor. |
+| Trail | In a fight the creature keeps the places of its way: one place for each 1 m (`kTrailSpacing`), 512 places at most (`kTrailLength`; the anchor stays the first one). A way that comes back to an older place of the trail removes the places after it (the trail has no loop). |
+| No path back | When the way back to the anchor has no path (`noWay` or `noGround`), the creature walks the places of its trail back, each one with `next_step` (it does not jump). A place of the trail with no way to it is left out. When the anchor itself has no way, the creature is at its anchor in one step only when no session can observe it (no character of a client is in the leave distance of its interest); if not, it stands immune at the last place and tries again at each step. |
+| No way to the target | `next_step` with the goal "the nearest place" (4.19) gives the path to the place that the creature can get to that is nearest to the target. The creature waits there with its target for 12 s (`kNoWayHold`); each attack starts the time again. Then it loses its target with the cause `no way to the target, after its wait at the place nearest to it`. |
+
+- The commands: `tools/world creatures` prints `PATROL (waypoint N of M)`, `, stays there)`
+  (a creature that stays for ever), `, stands: CAUSE)` (no character near, no navigation data
+  of its place yet, no free floor at its place, no behavior data of its slice), `WANDER`,
+  `GOES BACK (immune)`, `ON ITS TRAIL`, and `WAITS (no way to its target)`. `tools/world
+  list` prints the line `roam` (the creatures that roam now, the steps, the waypoints, the
+  places of a wander, the goals with no way, the ways back, the waits, the ways on the trail,
+  the jumps, and the refused hits on an immune creature). The development command
+  `tools/world creature anchor CREATURE X Y Z` (route `POST
+  /v1/dev/creatures/anchor?creature=ID&x=N&y=N&z=N`) moves the anchor of a creature in a
+  fight to a different place: a test of a way back with no path (the place where it took its
+  target stays the second place of its trail).
 
 **What the backend sends, and what the client shows** (behavioral proof, runs `f4` to `f6`).
 
@@ -3638,6 +3776,12 @@ of the world clock. A creature has three modes: at rest, in a fight, on the way 
 - The client moves the body of a creature forward in some attacks (the lunge of the wolf)
   and puts it back at the position of the server at the end of the action. The position of
   the backend does not change in an attack.
+- **A roam** (stage 3.4e) is the same movement states: one for each step of 200 ms, the record
+  of the walk action `Move` at the start of each walk (4.14), and the fields with no record at
+  a waypoint (the client plays the idle action). A task of a waypoint is a scope record with
+  an end. Each observer gets the same states (case PT10).
+- **The reset** sends the vitals state with the immune mark (4.5) to each observer at the
+  start of the way back and at the anchor, and the run (`Move_Combat`) for the way.
 
 **Live results** (the character `Soulwarden`, level 26, with light chest and leg armor of
 gear score 60, 2,186 health):
@@ -3651,6 +3795,19 @@ gear score 60, 2,186 health):
 | Ancient Guardian Reaver of a command | On the terrain at the start place | It comes out of the ground (its spawn action), gets its target at 9.1 m, walks 7.4 m, attacks (1,883, 1,580, 1,429 health), goes back, and stands. |
 | Siltboot Deckhand (`Drowned_Sailor_2H_Axe_7`, level 15) | `6466.83 2880.21`, Monarch's Bluffs | Target at 9.6 m. It walks to the character and hits two times (530.7 and 216.2 damage; 2,186 to 1,440). |
 | Chalky Rabbit (level 1) | Spawn point at the start place | It has no attack: it stands 7 m from the character, and the character keeps its health. A rabbit does not flee. |
+
+Live results of stage 3.4e (runs `pc1`, `pt1`, `pt3`; videos in
+`~/Games/soulwarden/work/evidence/patrol/implement/proof`):
+
+| What | Where | What the run showed |
+| --- | --- | --- |
+| The patrol of the start wolf | Spawn point `8815.25 4319.13` | The wolf walks its loop of four waypoints with the walk action at 1.75 m/s, turns to the direction of each waypoint, and waits there (`P9-1`, 90 s, with its track). |
+| A wander | A Risen of a command at the start place | It walks to a random place of its range, waits, and walks again (`P9-2`). |
+| A fight from a patrol | The start wolf | It sees the character on its patrol, runs, attacks, follows the character to the end of its leash (measured from its anchor), turns, runs back immune, and patrols again (`P9-3`). |
+| No path back | A Grey Wolf of a command at the Tomb of the Old Warrior, its anchor moved to a ledge with no way (`tools/world creature anchor`) | It walks the 19 places of its trail back to the place where it took its target, and it stands there immune while the session observes it. After a travel of 290 m (no session near) it is at its anchor in one step (`P9-4`, track and log). |
+| No way to the target | The same tomb: the character on a raised stone (1.4 m above the floor) and on a ledge (6.7 m above it) | On the stone: the wolf goes to the nearest place (1.6 m from the character) and attacks from there; each attack starts the wait again. On the ledge: the wolf goes to the place below the ledge, waits 12.1 s, goes back immune 5.7 m to its anchor, and takes the character again 8.0 s later (`P9-5`, two videos, track, log). |
+| A far territory | Mosswater Bourg, Everfall (`10300 3300` to `10500 3400`) | 64 creatures roam near the character: ghouls, revenants, porters, faminegeists, and alligators. An alligator walks its route of 10 waypoints (56 m) back and forth in the shallow water at 1.81 m/s and waits at its two ends (`P9-6`). |
+| The immune mark | A Grey Wolf that stands immune at the end of its trail | 4 sword attacks at 1.5 m: no claim; a wolf with no mark at the same distance: 3 hits in 3 attacks (4.5). |
 
 **The load** (criterion of stage 3.4c, kept). A creature at rest needs no time: the step
 looks only at the creatures of one set (a target, or the way back), and the vision rule
@@ -3669,6 +3826,17 @@ largest vision distance of the data around each character).
   1,382 steps of 3.6 µs on average, the largest one 529 µs.
 - `World::load` has the time of the steps, and `tools/world list` prints it in the line
   `behavior`, with the counts (targets, attacks, contacts, position changes).
+- **The roam** (stage 3.4e). Only the creatures near a character roam (the set `m_roaming`, from
+  the characters each 1 s). Test case PT9 (one run): 50 characters with 20 creatures of spawn
+  points with a route and 10 creatures of commands that wander near each one (1,500 creatures
+  that roam), 500 spawn points far from each character (no creature) and 20 creatures of
+  commands far from each character (they stand): 1,000 ticks of the world (10 s of the world
+  clock) need 76.5 ms, the largest tick 3.0 ms, a step of the behavior 1.37 ms on average
+  (75,000 roam steps). The case has a time limit of 3 s.
+- Live (run `pt1`, Mosswater Bourg, one session, 64 creatures that roam near the
+  character, 142 creatures in the world): the state bundles of the creatures need 9.0 kB
+  each second on average (7.1 kB to 9.9 kB in 68 s), with 247 records of creatures each
+  second. A tick of the world needed 103 µs on average.
 
 **The switches.**
 
@@ -3700,8 +3868,16 @@ largest vision distance of the data around each character).
   does not move the entity.
 - The weapon of a creature does not show in its hand (the Siltboot Deckhand has an axe in
   the game): the backend sends no paperdoll state for a creature.
-- No patrol, no group aggression, no ranged attack, no magic, no ability of a creature, and
-  no flee behavior (a rabbit stands).
+- No group aggression, no creature that calls others, no ranged attack, no magic, no ability
+  of a creature, no swimming or flying, and no flee behavior (a rabbit stands).
+- The tasks of the waypoints are names of the animation databases (24,895 waypoints have a
+  task, and only 23 tasks are an action of the action table): the other tasks need the
+  ambient actions of the animation database with their tags (a later stage). The creature
+  stands in its idle action at such a waypoint.
+- The ambient speed is the game value with no live proof from the original server: 18 slices
+  have 0.07 m/s (the faminegeists of Mosswater Bourg move 3 m in 58 s).
+- The client can still report one contact on an immune creature (a swing at a creature beside
+  it); the backend refuses it. The client shows no immune text (4.5).
 - The 859 kinds with no attack stand. 372 of them name a damage row that their damage
   table does not have: the row can be in a different table.
 - A creature near a travel place or a respawn place attacks a character there 10 s after
@@ -3803,8 +3979,8 @@ vitals state of the character (slot 41, type 15; 4.5).
   of an observer shows for a dead remote player was not tested live (one client).
 - **A dead character** (project rules): it takes no damage; a hit claim of its client is
   refused (cause `the character is dead`); no creature has it as its target, and a creature
-  that had it loses it and goes home; a contact of an attack that plays does not hurt it.
-  Its entity stays in the world at the place of its death.
+  that had it loses it and goes back to its anchor (4.17); a contact of an attack that plays
+  does not hurt it. Its entity stays in the world at the place of its death.
 
 **The respawn** (behavioral proof, runs `f1`, `f4`, and `f6`).
 
@@ -3974,7 +4150,12 @@ the tiles of their east or north edge: `r_+00_+06` to `r_+05_+06`, `r_+06_+00`, 
 3.4d). A placed collider whose physics file does not decode, or is not there, stops the
 region: no region file, no complete report, status 1 (before, the region had no collider
 there and looked complete). The world build of 2026-10-13 had no such file in its 49
-regions: the data does not change for this rule.
+regions: the data does not change for this rule. A work file of the collision step from
+before this rule is not a complete region (finding F6 of the review of the corrections of
+user test 1, case RN10): the tool uses a stored report only when it says "complete", has the
+format and the tool version of the tool, and names no physics file that did not decode. The
+tool version is 2 (`TOOL_VERSION` of `navigation_data.py`): the next run of the tool makes
+each region again. The backend does not read the tool version.
 
 **The terrain is not the height map near some placements: the cookies** (static proof with
 the addresses below; live proof C14 and C13a). A placement of a capitals file can have the
@@ -4071,7 +4252,11 @@ border):
 4. A floor below the water surface gets a water mark: shallow (the wade limit or less) or
    deep. A creature does not walk on a floor in deep water.
 5. A cell of the file has the free floors of its four analysis cells (floors that are 0.25 m
-   or less from each other are one floor): one place can have 16 floors.
+   or less from each other are one floor): one place can have 16 floors. A cell with more
+   floors stops the tool with a message (`kMaxCellFloors` of `navcore.cpp`; finding F8 of the
+   review of the corrections of user test 1, case RN10: before, the tool wrote such a cell,
+   and the backend refused the tile). The live runs of stage 3.4e read no tile that the
+   backend refused (`0 with no data` in the line `navigation:`).
 6. The sight: each floor has the height interval above it that is free in all four analysis
    cells. A cell with no free floor has its surfaces as floors with the mark "blocked", so
    that the sight over a wall has its interval too.
@@ -4133,7 +4318,20 @@ functions, as in stage 3.4b; their bodies changed:
   the world does not have yet is no proof of "no way": the world asks for it, and the
   creature waits (code review of stage 3.4d: findings F5, a path in the memory of a creature
   that went into a tile that the world removed, and F8, a goal whose tile was on its way and
-  that the navigation kept as "no way" for 3 s).
+  that the navigation kept as "no way" for 3 s). The tile of the goal itself must be there
+  before the navigation moves the goal to a free floor near it (finding F5 of the review of
+  the corrections of user test 1, case RU6: before, a goal 1.7 m from the edge of a tile that
+  was there went to a floor of that tile, and the creature walked while the tile of its goal
+  was not there).
+- **The place nearest to a goal with no way** (stage 3.4e; `next_step` with `nearest`, for a
+  fight only). A goal with no way gives a path to the place that the creature can get to that
+  is nearest to the goal: the search goes to the cells nearest to the goal first, in the
+  limits of a search, and keeps the cell with the best estimate. The path goes to that cell
+  when it is nearer to the goal than the start by one cell or more. The steps on it have
+  `NavStep::partial`, and the arrival there is "arrived" with the same mark. A goal on no
+  free floor (a character on a stone, a roof, a ledge) has a goal place of its own for the
+  search. The creature searches again when its goal moved 3 m or more from the goal of that
+  path (`kNearestRepathDistance`). The line `navigation:` counts these paths.
 - **The tiles.** One time each 500 ms the world asks for the tiles that are 96 m or less from
   each character and 32 m or less from each creature on a path. A thread of its own reads
   them (the world thread reads no file), and the world takes them at the start of a tick. A
@@ -4141,7 +4339,8 @@ functions, as in stage 3.4b; their bodies changed:
 - **The areas.** The reader gives each free floor of a tile the number of its area (the floors
   that have a way to each other with steps of the step height or less). The world joins the
   areas of two tiles over their common edge when a tile comes. A goal in a different area has
-  no way: the answer needs no search.
+  no way: the answer needs no search (for the place nearest to such a goal in a fight, the
+  search runs, above).
 - **The search.** First the straight line: when each cell on the line has a floor that the
   creature can step to, the path is the line. If not: A* on the cells (8 directions; a
   diagonal step needs its two side steps; a floor in shallow water costs 2 times). All
@@ -4168,8 +4367,12 @@ functions, as in stage 3.4b; their bodies changed:
   the floor of the body there (a body in a solid stops nothing): a ceiling between a creature
   and a character on one vertical line stops the sight (finding F2 of the code review of
   stage 3.4d: such a line had no cell between its ends, and the creature attacked through the
-  ceiling). An object lower than 0.5 m above a floor does not stop it. With no tile, nothing
-  stops the sight. The vision rule, the start of an attack, and each contact of an attack
+  ceiling). From the review of the corrections of user test 1 (finding F1, case RU1) the test
+  goes from cell to cell on the line (each cell that the line crosses, also over the corner
+  of a cell), with the exact interval of heights of the line in each cell: before, a short
+  line over the edge of two cells tested the height of the middle of the line only, and a
+  creature saw and attacked through a ceiling there. An object lower than 0.5 m above a
+  floor does not stop it. With no tile, nothing stops the sight. The vision rule, the start of an attack, and each contact of an attack
   use it: a creature does not take a character behind a wall as its target, it does not
   attack through a wall, and a contact does not hurt a target that went behind a wall while
   the attack played (finding F1).
@@ -4185,14 +4388,17 @@ functions, as in stage 3.4b; their bodies changed:
 **The behavior of a creature with the navigation** (changes of 4.17; `world/behavior.h`):
 
 - A creature whose target has no way to it (a different area, a search with no path in its
-  limit, the end of its path with the target not in its reach) loses its target and goes to
-  its home, and its vision does not take that character again for 8 s. A hit of the
-  character gives the target again.
-- The way home is a path too. With no way home the creature is at its home in one step.
+  limit, the end of its path with the target not in its reach) goes to the place nearest to
+  its target and waits there with it for 12 s (stage 3.4e, 4.17; before, it lost its target
+  at once). Then it goes back, and its vision does not take that character again for 8 s. A
+  hit of the character gives the target again.
+- The way back is a path too. With no path back the creature walks its trail back (stage
+  3.4e), and it is at its anchor in one step only when no session can observe it (before,
+  at once).
 - **Water and steep ground.** A creature walks in water that is 1.2 m deep or less, and its
   path prefers dry ground (a cell in water costs 2 times). A floor in deeper water is no
   place for a creature: a character that swims has no way to it for a creature, and the
-  creature loses its target. A creature does not go up or down ground that is steeper than
+  creature waits at the place nearest to it (stage 3.4e). A creature does not go up or down ground that is steeper than
   50 degrees, and it does not step up or down more than 0.35 m: it goes around. A character
   on a rock or on a roof with no way up is safe from a creature with a melee attack.
 

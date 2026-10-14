@@ -50,6 +50,8 @@ const char* hit_verdict_text(HitVerdict verdict) {
         return "bad point";
     case HitVerdict::attackerDead:
         return "the character is dead";
+    case HitVerdict::immune:
+        return "the creature is on its way back (immune)";
     }
     return "unknown";
 }
@@ -337,6 +339,13 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     }
     if (target->creature.dead) {
         return refuse(HitVerdict::dead);
+    }
+    // A creature on its way back takes no damage. Its vitals state has the mark "invulnerable",
+    // and the client makes no contact with it (live check of stage 3.4e): this is the rule of
+    // the world for a claim that comes before the client has the mark.
+    if (target->creature.immune()) {
+        m_world.creatures().behavior().immune_hit();
+        return refuse(HitVerdict::immune);
     }
     // The attack input of the contact: it is on, or it went off a short time before.
     const AttackTrack::Press* attack = track.press_for(claim.input);

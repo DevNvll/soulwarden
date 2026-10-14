@@ -1192,9 +1192,18 @@ void two_sessions_and_one_creature(const Options&) {
               && messages_of(b, server::rep::kTypePlayerDeath, fromB).empty(),
           "the second session gets the dead mark of that character with its vitals state, and only the session of the "
           "dead character gets the death notice");
+    // On its way back the creature is immune (stage 3.4e): a hit changes nothing.
+    const float before = wolf->vitals.health;
+    check(f.creatures().hurt(wolfId, 50.0F, second->id).error == world::CreatureError::immune && wolf->vitals.health == before
+              && wolf->creature.mind.mode == CreatureMode::home && wolf->creature.mind.target == 0,
+          "on its way back the creature takes no damage and no target from a hit of the second character");
+    for (int step = 0; step < 50 && wolf->creature.mind.mode == CreatureMode::home; ++step) {
+        pass(host, 0.2F, {&a, &b, &c});
+    }
+    check(wolf->creature.mind.mode != CreatureMode::home, "the creature is at its anchor");
     f.creatures().hurt(wolfId, 50.0F, second->id);
     check(wolf->creature.mind.mode == CreatureMode::fight && wolf->creature.mind.target == second->id,
-          "the next hit of the second character gives the creature that character as its target");
+          "after its way back the next hit of the second character gives the creature that character as its target");
     pass(host, 3.0F, {&a, &b, &c});
     check(second->vitals.health < healthB && alpha->life.dead && alpha->vitals.health == 0.0F,
           "the creature goes to the second character and hurts it, and the dead character takes no damage");

@@ -25,7 +25,10 @@
 // distances, the leash distances, and the speeds of each slice, the attacks of each slice (an
 // action with its contact times and damage rows), the damage of each kind and of each level,
 // and the terrain height at each spawn point. A file of a tool from before stage 3.4b (format
-// 1) has none of these: the creatures of such a file stand at their spawn points.
+// 1) has none of these: the creatures of such a file stand at their spawn points. From stage
+// 3.4e (format 3) the data has the patrol route of each spawn point whose spawner has one, and
+// the wander values and the ambient speed of each slice (protocol notes 4.14): the creatures of
+// a file of format 1 or 2 have no patrol and no wander.
 //
 // The data is game data: the tool tools/gamedata/creatures.sh makes the file from the game
 // copy of the user, and the file stays outside the repository. Without the file the backend
@@ -61,6 +64,56 @@ struct CreatureBehavior {
     /** The speed of a walk and of a run in a fight (meters in one second). */
     float walkSpeed{0.0F};
     float runSpeed{0.0F};
+    /**
+     * The speed of a creature with no target: a patrol, a wander (meters in one second; the
+     * blackboard value AmbientNavMaxSpeed, or the speed of the navigation configuration
+     * "Wander"). 0: the slice has no value (format 2), and the behavior uses the walk speed.
+     */
+    float ambientSpeed{0.0F};
+    /**
+     * True: a creature of this slice with no patrol route wanders near its home (the blackboard
+     * value Enable_Wander). The distance of a place of a wander from the home, in meters
+     * (WanderDistanceMin, WanderDistanceMax).
+     */
+    bool wander{false};
+    float wanderNearest{0.0F};
+    float wanderFarthest{0.0F};
+};
+
+/** The policy of a patrol route: the field m_pathTravesalPolicy of the patrol component (client reflection 0x3B6E9F0). */
+enum class PatrolPolicy : std::uint8_t {
+    /** After the last waypoint the first one again. */
+    loop = 0,
+    /** Back and forth: after the last waypoint the waypoints before it, to the first one. */
+    bounce = 1,
+    /** A different waypoint of the route, at random. */
+    random = 2,
+    /** The value 3 of the client ("UNDEFINED"): the behavior uses the loop. */
+    undefined = 3,
+};
+
+/** One waypoint of a patrol route (game data: the waypoint component AIWaypoint of the spawner). */
+struct PatrolWaypoint {
+    state::WorldPosition position;
+    /** The direction of the waypoint (degrees, 0 north, 90 west). The creature takes it at the waypoint when `align`. */
+    float yaw{0.0F};
+    /**
+     * The wait of a creature at the waypoint, in seconds: a time from `minWait` to `maxWait`
+     * (m_minDuration, m_maxDuration). A negative value (-1 in the game files): no wait, or a
+     * wait for ever (the behavior, world/behavior.h).
+     */
+    float minWait{0.0F};
+    float maxWait{0.0F};
+    /** The task of the waypoint (m_taskName, a task of the behavior tree of the game). Empty: none. */
+    std::string task;
+    /** m_matchAlignment: the creature takes the direction of the waypoint. */
+    bool align{false};
+};
+
+/** The patrol route of a spawn point: the patrol component of its spawner, with the places of its placement. */
+struct PatrolRoute {
+    PatrolPolicy policy{PatrolPolicy::loop};
+    std::vector<PatrolWaypoint> points;
 };
 
 /** One contact of an attack: the moment at which the attack can hurt its target. */
@@ -190,6 +243,13 @@ struct CreatureSlice {
      */
     std::optional<std::uint32_t> moveAction;
     /**
+     * Index of the action that a creature with this slice plays while it walks with no target
+     * (a patrol, a wander): the action "Move" (live check of stage 3.4e: a Grey Wolf walks with
+     * its legs at its ambient speed). No value: the slice has none with a fragment, and the
+     * creature walks with `moveAction`.
+     */
+    std::optional<std::uint32_t> walkAction;
+    /**
      * Name of the action that the server starts when it makes a creature with this slice (the
      * field m_spawnAction of the action list component, game data). The file has it only for
      * a slice whose body and name plate show in the client only after that action (the
@@ -280,7 +340,16 @@ struct SpawnPoint {
      * it (a file of format 1, or a place with no height map).
      */
     std::optional<float> ground;
+    /** The patrol route of the point: an index into CreatureData::routes. No value: none (a file before format 3). */
+    std::optional<std::uint32_t> route;
 };
+
+/** Limits of a patrol route (the loader refuses a file with a route outside them). */
+inline constexpr std::size_t kMaxRoutePoints = 64;
+/** A waypoint is not farther than this from its spawn point (horizontal, meters). */
+inline constexpr float kLongestPatrol = 200.0F;
+/** The longest wait at a waypoint (seconds). */
+inline constexpr float kLongestWait = 3600.0F;
 
 /** The values of one level of the level table of the game. */
 struct CreatureLevel {
@@ -331,7 +400,8 @@ public:
     [[nodiscard]] bool set_full(std::vector<CreatureSlice> slices,
                                 std::vector<CreatureKind> kinds,
                                 std::vector<SpawnPoint> spawnPoints,
-                                std::vector<CreatureLevel> levels);
+                                std::vector<CreatureLevel> levels,
+                                std::vector<PatrolRoute> routes = {});
 
     [[nodiscard]] bool loaded() const {
         return !m_kinds.empty();
@@ -348,6 +418,21 @@ public:
     }
     [[nodiscard]] const std::vector<SpawnPoint>& spawn_points() const {
         return m_spawnPoints;
+    }
+    /** @return The patrol routes of the spawn points (SpawnPoint::route). */
+    [[nodiscard]] const std::vector<PatrolRoute>& routes() const {
+        return m_routes;
+    }
+    /** @return The route of a spawn point, or null. */
+    [[nodiscard]] const PatrolRoute* route_of(const SpawnPoint& point) const {
+        return point.route && *point.route < m_routes.size() ? &m_routes[*point.route] : nullptr;
+    }
+    /** @return The number of spawn points with a patrol route, and of kinds with a slice that wanders. */
+    [[nodiscard]] std::size_t routed_points() const {
+        return m_routedPoints;
+    }
+    [[nodiscard]] std::size_t wandering_kinds() const {
+        return m_wanderingKinds;
     }
 
     /** @return The kind with this id (the compare ignores the case of the letters A to Z), or null. */
@@ -418,6 +503,9 @@ private:
     std::vector<CreatureSlice> m_slices;
     std::vector<CreatureKind> m_kinds;
     std::vector<SpawnPoint> m_spawnPoints;
+    std::vector<PatrolRoute> m_routes;
+    std::size_t m_routedPoints{0};
+    std::size_t m_wanderingKinds{0};
     /** Level to the values of the level. */
     std::unordered_map<std::uint32_t, CreatureLevel> m_levels;
     std::size_t m_fightingSlices{0};

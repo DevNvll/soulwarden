@@ -832,7 +832,11 @@ def make_region(world: World, name: str, out: Path, force: bool = False, stamp: 
     if not force and report_path.is_file() and (out / f"{name}.swcol").is_file():
         try:
             known = json.loads(report_path.read_text())
-            if known.get("complete") and known.get("format") == FORMAT_VERSION and known.get("tool", 0) == stamp:
+            # A report with a physics file that did not decode is not complete, also when it says
+            # so: the tool before the correction of finding F10 wrote such a report with the
+            # collider left out (code review of the corrections after user test 1, finding F6).
+            if (known.get("complete") and known.get("format") == FORMAT_VERSION and known.get("tool", 0) == stamp
+                    and not known.get("physicsFilesNotDecoded")):
                 return None
         except ValueError:
             pass

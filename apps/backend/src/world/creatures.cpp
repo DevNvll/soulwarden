@@ -208,15 +208,20 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         const gamedata::CreatureSlice& body = *entity->creature.body;
         if (body.deathAction) {
             start_action(*entity, *body.deathAction);
-        } else if (entity->creature.action) {
-            // A slice with no death action: the action that plays (a reaction, an attack) is not
-            // the death action of the body. A session that observes the body from now on gets
-            // no such action: its first state has the spawn action of the slice, when the slice
-            // has one. The clients that play the action end it themselves.
+        } else if (entity->creature.action || entity->creature.moving) {
+            // A slice with no death action: the action that plays (a reaction, an attack, the
+            // locomotion of a way) is not the death action of the body. A session that observes
+            // the body from now on gets no such action: its first state has the spawn action of
+            // the slice, when the slice has one. A session that has the action gets the scope
+            // fields with no record: the client keeps the scope fields of a creature, and it would
+            // keep the run of a dead creature (code review of the corrections after user test 1,
+            // finding F2).
             entity->creature.action.reset();
             m_acting.erase(entity->id);
+            entity->creature.moving.reset();
+            m_world.touch(entity->id, ComponentKey::movement);
         }
-        // A dead creature does not walk.
+        // A dead creature does not walk (start_action ended the locomotion for a death action).
         entity->creature.moving.reset();
     }
     m_world.touch(id, ComponentKey::vitals);
@@ -237,6 +242,11 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker) {
     }
     if (!std::isfinite(damage) || damage < 0.0F) {
         result.error = CreatureError::badHealth;
+        return result;
+    }
+    if (entity->creature.immune()) {
+        // On its way back a creature takes no damage, no reaction, and no target by a hit.
+        result.error = CreatureError::immune;
         return result;
     }
     // One path with the health command and the kill command: the health 0 is the death.
@@ -309,28 +319,45 @@ bool Creatures::start_action(Entity& entity, std::uint32_t action, std::optional
     return true;
 }
 
-void Creatures::move(Entity& entity, const state::WorldPosition& position, bool walk) {
+void Creatures::move(Entity& entity, const state::WorldPosition& position, Gait gait) {
     m_world.place_creature(entity, position);
     const Revision revision = m_world.touch(entity.id, ComponentKey::movement);
-    Creature& creature = entity.creature;
-    if (!walk || creature.moving || !creature.body->moveAction) {
+    if (gait == Gait::place) {
         return;
     }
-    // The walk replaces an action of the server that plays (a reaction to a hit, the action of
+    Creature& creature = entity.creature;
+    // The step replaces an action of the server that plays (a reaction to a hit, the action of
     // a command): a creature that changes its place plays its locomotion, not a different
     // action (user test 1: a creature that moved in the pose of an attack). The behavior does
-    // not move a creature while its attack plays.
+    // not move a creature while its attack plays. A slice with no locomotion action ends the
+    // action too: its observers get the scope fields with no record (code review of the
+    // corrections after user test 1, finding F7).
+    if (creature.action) {
+        creature.action.reset();
+        m_acting.erase(entity.id);
+    }
+    const std::optional<std::uint32_t> locomotion =
+        gait == Gait::walk && creature.body->walkAction ? creature.body->walkAction : creature.body->moveAction;
+    if (!locomotion) {
+        creature.moving.reset();
+        return;
+    }
+    if (creature.moving && creature.moving->action == *locomotion) {
+        return; // One record for the whole way: the client plays the locomotion from it.
+    }
     const WorldClock::time_point now = m_world.clock().now();
     CreatureAction moving;
-    moving.action = *creature.body->moveAction;
+    moving.action = *locomotion;
     moving.fragment = static_cast<std::uint32_t>(creature.body->actions[moving.action].fragmentIndex);
     moving.generation = static_cast<std::uint16_t>(++creature.actions);
     moving.started = now;
     moving.tags = creature.body->tags;
     moving.changed = revision;
     creature.moving = moving;
-    creature.action.reset();
-    m_acting.erase(entity.id);
+}
+
+void Creatures::immune_changed(Entity& entity) {
+    entity.creature.immuneChanged = m_world.touch(entity.id, ComponentKey::vitals);
 }
 
 void Creatures::stop(Entity& entity) {

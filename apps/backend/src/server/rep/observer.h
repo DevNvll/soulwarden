@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "world/entity.h"
@@ -27,6 +28,14 @@ struct Known {
      * sent (states/state_codecs.h, creature_scope). 0xFFFFFFFF: none yet.
      */
     std::uint32_t scope{0xFFFFFFFFU};
+    /**
+     * For a creature with a spawn action: the first record of the session had the spawn action
+     * (creature_scope), and a different action of the server plays (an attack, the locomotion of
+     * a way). At this time of the world clock the session sends the movement state with that
+     * action, also with no new change of the creature (code review of the corrections after user
+     * test 1, finding F3). No value: nothing waits.
+     */
+    std::optional<world::WorldClock::time_point> scopeDue;
 };
 
 class Observer {
@@ -38,7 +47,7 @@ public:
     /** Sets the entity of the character of the session. It gets the interest number 1. */
     void set_own(world::EntityId id) {
         m_own = id;
-        m_known[id] = Known{kOwnInterest, 0};
+        m_known[id] = Known{kOwnInterest, 0, 0xFFFFFFFFU, std::nullopt};
         m_used.insert(kOwnInterest);
     }
 
@@ -63,7 +72,7 @@ public:
         if (interest > kLastInterest) {
             return 0;
         }
-        m_known[id] = Known{interest, 0};
+        m_known[id] = Known{interest, 0, 0xFFFFFFFFU, std::nullopt};
         m_used.insert(interest);
         return interest;
     }

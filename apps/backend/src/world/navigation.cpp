@@ -69,6 +69,10 @@ struct Navigation::Search {
     Place goal;
     std::uint64_t goalKey{0};
     std::uint32_t goalSlot{0};
+    /** The closed cell nearest to the goal (the estimate of the rest of the way), for a path to the place nearest to it. */
+    std::uint32_t bestSlot{0};
+    float bestEstimate{0.0F};
+    float startEstimate{0.0F};
     std::uint32_t steps{0};
     bool running{false};
     bool found{false};
@@ -122,7 +126,8 @@ struct Navigation::Search {
         steps = 0;
         start = from;
         goal = to;
-        goalKey = key_of(to);
+        // A goal with no floor (the floor number 0xFF: a place nearest to it) is never the end of the search.
+        goalKey = to.floor == 0xFF ? ~0ULL : key_of(to);
         found = false;
         full = false;
         running = true;
@@ -133,6 +138,9 @@ struct Navigation::Search {
         slot.height = from.height;
         slot.parent = *first;
         open.push_back({estimate(from.x, from.y), 0.0F, *first});
+        bestSlot = *first;
+        bestEstimate = estimate(from.x, from.y);
+        startEstimate = bestEstimate;
     }
 
     void visit(std::uint32_t from, const Place& to, float cost) {
@@ -184,6 +192,11 @@ struct Navigation::Search {
             const auto y = static_cast<std::int32_t>((slot.key >> 4) & 0xFFFFFFU);
             const float height = slot.height;
             const float cost = slot.cost;
+            const float left = estimate(x, y);
+            if (left < bestEstimate) {
+                bestEstimate = left;
+                bestSlot = top.slot;
+            }
             Place side[4];
             bool sideFree[4];
             for (int direction = 0; direction < 8; ++direction) {
@@ -215,8 +228,13 @@ struct Navigation::Search {
 
     /** @return The cells of the path that the search found, from its start to its goal. */
     [[nodiscard]] std::vector<PathCell> path() const {
+        return path_to(goalSlot);
+    }
+
+    /** @return The cells of the path from the start to a closed cell of the search. */
+    [[nodiscard]] std::vector<PathCell> path_to(std::uint32_t end) const {
         std::vector<PathCell> cells;
-        std::uint32_t at = goalSlot;
+        std::uint32_t at = end;
         for (std::size_t guard = 0; guard < kSlots; ++guard) {
             const Slot& slot = slots[at];
             cells.push_back({static_cast<std::int32_t>(slot.key >> 28), static_cast<std::int32_t>((slot.key >> 4) & 0xFFFFFFU), slot.height});
@@ -713,77 +731,108 @@ bool Navigation::sees(const state::WorldPosition& eye, const state::WorldPositio
     const float toZ = target.z + navigation_rules::kEyeHeight;
     const float dx = target.x - eye.x;
     const float dy = target.y - eye.y;
-    const auto steps = static_cast<std::int32_t>(std::ceil(std::hypot(dx, dy) / (cell * 0.5F)));
     const auto firstX = static_cast<std::int32_t>(std::floor(eye.x / cell));
     const auto firstY = static_cast<std::int32_t>(std::floor(eye.y / cell));
     const auto lastX = static_cast<std::int32_t>(std::floor(target.x / cell));
     const auto lastY = static_cast<std::int32_t>(std::floor(target.y / cell));
-    std::int32_t beforeX = firstX;
-    std::int32_t beforeY = firstY;
-    NavSpot found[NavTile::kMaxFloors];
-    // The heights of the line in the cells of its two ends.
-    float firstLow = fromZ;
-    float firstHigh = fromZ;
-    float lastLow = toZ;
-    float lastHigh = toZ;
-    for (std::int32_t index = 1; index < steps; ++index) {
-        const float part = static_cast<float>(index) / static_cast<float>(steps);
-        const auto cellX = static_cast<std::int32_t>(std::floor((eye.x + dx * part) / cell));
-        const auto cellY = static_cast<std::int32_t>(std::floor((eye.y + dy * part) / cell));
-        const float lineZ = fromZ + (toZ - fromZ) * part;
-        if (cellX == firstX && cellY == firstY) {
-            firstLow = std::min(firstLow, lineZ);
-            firstHigh = std::max(firstHigh, lineZ);
-        }
-        if (cellX == lastX && cellY == lastY) {
-            lastLow = std::min(lastLow, lineZ);
-            lastHigh = std::max(lastHigh, lineZ);
-        }
-        // The cells of the two ends have the two bodies: the test below takes their part of the line.
-        if ((cellX == beforeX && cellY == beforeY) || (cellX == firstX && cellY == firstY) || (cellX == lastX && cellY == lastY)) {
-            continue;
-        }
-        beforeX = cellX;
-        beforeY = cellY;
-        const int count = spots(cellX, cellY, found);
-        if (count < 0) {
-            continue; // No tile: nothing stops the sight there.
-        }
-        const float height = fromZ + (toZ - fromZ) * part;
-        // The floor below the line: the sight is free in its interval.
-        const NavFloor* below = nullptr;
-        for (int floor = 0; floor < count; ++floor) {
-            if (static_cast<float>(found[floor].floor.height) / 32.0F <= height + 0.05F) {
-                below = &found[floor].floor;
-            }
-        }
-        bool free = false;
-        if (below != nullptr && below->sightLow != NavFloor::kNoSight) {
-            const float base = static_cast<float>(below->height) / 32.0F;
-            const float low = base + static_cast<float>(below->sightLow) / 8.0F;
-            free = height >= low - 0.05F
-                   && (below->sightHigh == NavFloor::kSky || height <= base + static_cast<float>(below->sightHigh) / 4.0F + 0.25F);
-        }
-        if (!free) {
-            ++m_counts.sightStopped;
-            return false;
-        }
-    }
-    // The cells of the two ends: the part of the line in such a cell is in the free interval of
-    // the floor of the body there. A ceiling between two bodies on one vertical line stops the
-    // sight (code review of stage 3.4d, finding F2): the line then has no cell between its ends.
     if (firstX == lastX && firstY == lastY) {
-        const bool free = end_cell_free(firstX, firstY, fromZ, std::min(firstLow, lastLow), std::max(firstHigh, lastHigh));
+        // The two bodies are in one cell: the line between them is in the free interval of the
+        // floor of the body there. A ceiling between two bodies on one vertical line stops the
+        // sight (code review of stage 3.4d, finding F2).
+        const bool free = end_cell_free(firstX, firstY, fromZ, std::min(fromZ, toZ), std::max(fromZ, toZ));
         if (!free) {
             ++m_counts.sightStopped;
         }
         return free;
     }
+    // Each cell of the line, from cell to cell (the parameter `t` of the line at each edge of a
+    // cell), with the part of the line in that cell: the line is straight, thus its heights in
+    // a cell are the heights at the two edges of the cell. A sample of the line at fixed steps
+    // misses the part of a short line in a cell (code review of the corrections after user test
+    // 1, finding F1: two bodies on the two sides of an edge of a cell, below and above a ceiling).
+    const std::int32_t stepX = dx > 0.0F ? 1 : (dx < 0.0F ? -1 : 0);
+    const std::int32_t stepY = dy > 0.0F ? 1 : (dy < 0.0F ? -1 : 0);
+    constexpr float kNever = std::numeric_limits<float>::infinity();
+    float nextX = stepX > 0 ? ((static_cast<float>(firstX) + 1.0F) * cell - eye.x) / dx
+                : stepX < 0 ? (static_cast<float>(firstX) * cell - eye.x) / dx
+                            : kNever;
+    float nextY = stepY > 0 ? ((static_cast<float>(firstY) + 1.0F) * cell - eye.y) / dy
+                : stepY < 0 ? (static_cast<float>(firstY) * cell - eye.y) / dy
+                            : kNever;
+    const float deltaX = stepX != 0 ? cell / std::fabs(dx) : kNever;
+    const float deltaY = stepY != 0 ? cell / std::fabs(dy) : kNever;
+    const auto height_at = [&](float part) { return fromZ + (toZ - fromZ) * std::clamp(part, 0.0F, 1.0F); };
+    std::int32_t cellX = firstX;
+    std::int32_t cellY = firstY;
+    float entry = 0.0F;
+    // The heights of the line in the cells of its two ends.
+    float firstLow = fromZ;
+    float firstHigh = fromZ;
+    float lastLow = toZ;
+    float lastHigh = toZ;
+    const std::int32_t cells = std::abs(lastX - firstX) + std::abs(lastY - firstY) + 2;
+    for (std::int32_t visited = 0; visited < cells; ++visited) {
+        const float exit = std::min({nextX, nextY, 1.0F});
+        const float a = height_at(entry);
+        const float b = height_at(exit);
+        const float low = std::min(a, b);
+        const float high = std::max(a, b);
+        const bool atFirst = cellX == firstX && cellY == firstY;
+        const bool atLast = cellX == lastX && cellY == lastY;
+        if (atFirst) {
+            firstLow = std::min(firstLow, low);
+            firstHigh = std::max(firstHigh, high);
+        } else if (atLast) {
+            lastLow = std::min(lastLow, low);
+            lastHigh = std::max(lastHigh, high);
+        } else if (!line_free(cellX, cellY, low, high)) {
+            ++m_counts.sightStopped;
+            return false;
+        }
+        if (atLast || exit >= 1.0F) {
+            break;
+        }
+        // The next cell: over the edge that the line meets first (over a corner: one of the two
+        // cells beside it first, which is the stricter test).
+        if (nextX <= nextY) {
+            cellX += stepX;
+            entry = nextX;
+            nextX += deltaX;
+        } else {
+            cellY += stepY;
+            entry = nextY;
+            nextY += deltaY;
+        }
+    }
+    // The cells of the two ends: the part of the line in such a cell is in the free interval of
+    // the floor of the body there.
     if (!end_cell_free(firstX, firstY, fromZ, firstLow, firstHigh) || !end_cell_free(lastX, lastY, toZ, lastLow, lastHigh)) {
         ++m_counts.sightStopped;
         return false;
     }
     return true;
+}
+
+bool Navigation::line_free(std::int32_t cellX, std::int32_t cellY, float low, float high) const {
+    NavSpot found[NavTile::kMaxFloors];
+    const int count = spots(cellX, cellY, found);
+    if (count < 0) {
+        return true; // No tile: nothing stops the sight there.
+    }
+    // The floor below the line: the sight is free in its interval.
+    const NavFloor* below = nullptr;
+    for (int floor = 0; floor < count; ++floor) {
+        if (static_cast<float>(found[floor].floor.height) / 32.0F <= low + 0.05F) {
+            below = &found[floor].floor;
+        }
+    }
+    if (below == nullptr || below->sightLow == NavFloor::kNoSight) {
+        return false; // The line is in a solid.
+    }
+    const float base = static_cast<float>(below->height) / 32.0F;
+    const float bottom = base + static_cast<float>(below->sightLow) / 8.0F;
+    return low >= bottom - 0.05F
+           && (below->sightHigh == NavFloor::kSky || high <= base + static_cast<float>(below->sightHigh) / 4.0F + 0.25F);
 }
 
 bool Navigation::end_cell_free(std::int32_t cellX, std::int32_t cellY, float eyeZ, float low, float high) const {
@@ -854,7 +903,11 @@ void Navigation::take_back(EntityId mover) {
     route.hasStep = false;
 }
 
-NavStep Navigation::next_step(EntityId mover, const state::WorldPosition& from, const state::WorldPosition& goal, float distance) {
+NavStep Navigation::next_step(EntityId mover,
+                              const state::WorldPosition& from,
+                              const state::WorldPosition& goal,
+                              float distance,
+                              bool nearest) {
     if (!usable(from) || !usable(goal) || !std::isfinite(distance) || distance <= 0.0F) {
         return {StepKind::noGround, from};
     }
@@ -875,8 +928,24 @@ NavStep Navigation::next_step(EntityId mover, const state::WorldPosition& from, 
     if (held->second.state == TileState::missing) {
         return terrain_step(from, goal, distance); // A tile that is not correct: the rule of the terrain.
     }
+    // The tile of the goal must be there too: a free floor of a tile beside it is no proof of the
+    // way to the goal, and a path in the memory of the creature can go to a goal whose tile is
+    // not there (code review of the corrections after user test 1, finding F5). The world asks
+    // for the tile, and the creature waits.
+    if (!tiles_ready(goal, goal, 0.0F)) {
+        ++m_counts.waits;
+        return {StepKind::waiting, from};
+    }
     Route& route = m_routes[mover];
     route.used = now;
+    if (route.nearest != nearest) {
+        // A different kind of goal (a fight, the way back): the path of the other kind is of no use.
+        route.cells.clear();
+        route.searching = false;
+        route.noWay = false;
+        route.partial = false;
+        route.nearest = nearest;
+    }
     const std::optional<Place> start = snap(from, navigation_rules::kFootingReach, navigation_rules::kSnapHeight);
     if (!start) {
         route.cells.clear();
@@ -890,8 +959,11 @@ NavStep Navigation::next_step(EntityId mover, const state::WorldPosition& from, 
     const auto near = [](const state::WorldPosition& a, const state::WorldPosition& b) {
         return horizontal_distance(a, b) <= navigation_rules::kRepathDistance && std::fabs(a.z - b.z) <= navigation_rules::kSnapHeight;
     };
+    // A path to the place nearest to a goal with no way stays for a goal that moved a little.
+    const bool keepPartial = route.partial && !route.cells.empty()
+                             && horizontal_distance(goal, route.goal) <= navigation_rules::kNearestRepathDistance;
     bool pending = false;
-    if (route.cells.empty() || !near(goal, route.goal)) {
+    if (!keepPartial && (route.cells.empty() || !near(goal, route.goal))) {
         if (route.noWay && now < route.noWayUntil && near(goal, route.noWayGoal)) {
             // The same goal that had no way: the navigation does not look again yet.
         } else if (route.searching && (near(goal, route.searchGoal) || m_searchMover == mover)) {
@@ -911,30 +983,7 @@ NavStep Navigation::next_step(EntityId mover, const state::WorldPosition& from, 
             // way, is no proof of "no way": the world asks for the tiles, and the creature waits
             // (code review of stage 3.4d, finding F8).
             const float around = static_cast<float>(NavTile::kMeters);
-            if (!end) {
-                if (tiles_ready(from, goal, 0.0F)) {
-                    no_way();
-                } else {
-                    pending = true;
-                }
-            } else if (walk_line(*start, *end)) {
-                route.cells = {PathCell{start->x, start->y, start->height}, PathCell{end->x, end->y, end->height}};
-                route.reached = 0;
-                route.corner = 0;
-                route.goal = goal;
-                route.searching = false;
-                if (m_searchMover == mover && m_search && m_search->running) {
-                    m_search->running = false;
-                    m_searchMover = 0;
-                }
-                ++m_counts.pathsDirect;
-            } else if (!connected(*start, *end)) {
-                if (tiles_ready(from, goal, around)) {
-                    no_way();
-                } else {
-                    pending = true;
-                }
-            } else {
+            const auto search = [&] {
                 if (!route.searching) {
                     m_queue.push_back(mover);
                     m_counts.largestQueue = std::max(m_counts.largestQueue, m_queue.size());
@@ -942,6 +991,37 @@ NavStep Navigation::next_step(EntityId mover, const state::WorldPosition& from, 
                 route.searching = true;
                 route.splice = false;
                 route.searchGoal = goal;
+            };
+            if (!end) {
+                if (!tiles_ready(from, goal, 0.0F)) {
+                    pending = true;
+                } else if (nearest) {
+                    search(); // The goal is on no floor: the path to the place nearest to it.
+                } else {
+                    no_way();
+                }
+            } else if (walk_line(*start, *end)) {
+                route.cells = {PathCell{start->x, start->y, start->height}, PathCell{end->x, end->y, end->height}};
+                route.reached = 0;
+                route.corner = 0;
+                route.goal = goal;
+                route.partial = false;
+                route.searching = false;
+                if (m_searchMover == mover && m_search && m_search->running) {
+                    m_search->running = false;
+                    m_searchMover = 0;
+                }
+                ++m_counts.pathsDirect;
+            } else if (!connected(*start, *end)) {
+                if (!tiles_ready(from, goal, around)) {
+                    pending = true;
+                } else if (nearest) {
+                    search(); // No way by the areas: the path to the place nearest to the goal.
+                } else {
+                    no_way();
+                }
+            } else {
+                search();
             }
         }
     }
@@ -1017,7 +1097,7 @@ NavStep Navigation::follow(Route& route, const state::WorldPosition& from, float
     }
     if (horizontal_distance(position, from) < 1.0e-4F) {
         if (route.reached >= last && !route.searching) {
-            return {StepKind::arrived, from};
+            return {StepKind::arrived, from, route.partial};
         }
         ++m_counts.waits;
         return {StepKind::waiting, from};
@@ -1035,7 +1115,7 @@ NavStep Navigation::follow(Route& route, const state::WorldPosition& from, float
         position.z = *floor;
     }
     route.position = position;
-    return {StepKind::moved, position};
+    return {StepKind::moved, position, route.partial};
 }
 
 bool Navigation::tiles_ready(const state::WorldPosition& from, const state::WorldPosition& to, float margin) {
@@ -1063,7 +1143,7 @@ bool Navigation::tiles_ready(const state::WorldPosition& from, const state::Worl
 
 // ---- the searches of a tick ------------------------------------------------------------------
 
-void Navigation::finish_search(EntityId mover, bool found, std::vector<PathCell> path) {
+void Navigation::finish_search(EntityId mover, bool found, std::vector<PathCell> path, bool partial) {
     const auto entry = m_routes.find(mover);
     if (entry == m_routes.end()) {
         return;
@@ -1073,6 +1153,7 @@ void Navigation::finish_search(EntityId mover, bool found, std::vector<PathCell>
         return; // The creature got a straight path while its search waited.
     }
     route.searching = false;
+    route.partial = found && partial;
     if (!found || path.empty()) {
         route.noWay = true;
         route.noWayGoal = route.searchGoal;
@@ -1129,8 +1210,18 @@ void Navigation::run_searches() {
                 route.cells.clear();
                 start = snap(route.position, navigation_rules::kFootingReach, navigation_rules::kSnapHeight);
             }
-            const std::optional<Place> goal = snap(route.searchGoal, navigation_rules::kSnapDistance, navigation_rules::kSnapHeight);
-            if (!start || !goal || !connected(*start, *goal)) {
+            std::optional<Place> goal = snap(route.searchGoal, navigation_rules::kSnapDistance, navigation_rules::kSnapHeight);
+            if (!goal && route.nearest && usable(route.searchGoal)) {
+                // A goal on no floor: the search goes to the cells nearest to its place (a cell
+                // with no floor of the data is never the end of the search).
+                Place place;
+                place.x = static_cast<std::int32_t>(std::floor(route.searchGoal.x / m_agent.cell));
+                place.y = static_cast<std::int32_t>(std::floor(route.searchGoal.y / m_agent.cell));
+                place.floor = 0xFF;
+                place.height = route.searchGoal.z;
+                goal = place;
+            }
+            if (!start || !goal || (!route.nearest && !connected(*start, *goal))) {
                 ++m_counts.noWay;
                 finish_search(mover, false, {});
                 continue;
@@ -1148,7 +1239,18 @@ void Navigation::run_searches() {
             }
             const EntityId mover = m_searchMover;
             m_searchMover = 0;
-            finish_search(mover, m_search->found, m_search->found ? m_search->path() : std::vector<PathCell>());
+            const auto entry = m_routes.find(mover);
+            // A mover that asked for the place nearest to its goal gets the path to the closed
+            // cell nearest to the goal, when that cell is nearer than its start.
+            const bool partial = !m_search->found && entry != m_routes.end() && entry->second.nearest
+                                 && m_search->bestEstimate + m_agent.cell < m_search->startEstimate;
+            if (partial) {
+                ++m_counts.partialPaths;
+            }
+            finish_search(mover,
+                          m_search->found || partial,
+                          m_search->found ? m_search->path() : partial ? m_search->path_to(m_search->bestSlot) : std::vector<PathCell>(),
+                          partial);
         }
     }
     m_counts.largestTickSteps = std::max(m_counts.largestTickSteps, navigation_rules::kTickSteps - budget);

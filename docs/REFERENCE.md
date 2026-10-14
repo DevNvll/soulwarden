@@ -288,8 +288,10 @@ button on "Confirm").
   stage 3.4b the file (9.4 MB) also has what the behavior of a creature needs (protocol
   notes 4.17): the vision, the leash, the speeds, the animation tags, and the attacks of
   each model, the damage of each kind and of each level, and the terrain height at each
-  spawn point. With a file from before, the creatures stand at their spawn points: run the
-  tool again. `--no-attack FILE` writes one line for each kind that does not attack (859
+  spawn point. From stage 3.4e the file (12.4 MB) also has the patrol route of each spawn
+  point that has one (19,814 spawn points) and the walk speed and the wander values of each
+  model (protocol notes 4.14). With a file from before, the creatures stand at their spawn
+  points: run the tool again. `--no-attack FILE` writes one line for each kind that does not attack (859
   kinds). The tool
   leaves out the spawn points of 50 creature models that the client does not show
   correctly with this backend (1,541 spawn points: the list is in
@@ -362,8 +364,17 @@ button on "Confirm").
   water, and it does not see you through a wall. A creature with no way to you loses you
   and goes back. No creature comes into a settlement: its gates are closed for creatures,
   as in the game. Not yet: jumps and drops from an edge, swimming and flying creatures,
-  doors and gates of a fort (they are not in the world of this backend), patrols, groups,
-  ranged attacks, magic, and abilities.
+  doors and gates of a fort (they are not in the world of this backend), groups, ranged
+  attacks, magic, and abilities.
+- Patrol and wander (stage 3.4e, protocol notes 4.17). Near your character a creature walks
+  its patrol route from the game files (the wolves near the start place walk four waypoints
+  around their place and wait at each one), or it wanders near its place. A creature that
+  sees you leaves its patrol and fights; at the end of its leash (from the place where it saw
+  you) it runs back. On that way back it is immune: your hits do nothing, and it does not
+  turn back to you. At that place it has its full health again, and it goes on with its
+  patrol. A creature that cannot get to you (you stand on a high rock or a ledge) goes to the
+  place nearest to you, attacks you from there when you are in its reach, waits 12 s, and
+  then goes back. The game shows no "immune" text for a creature on its way back.
 - The animation of a creature (user test 1, protocol notes 4.14): a creature that walks or
   runs plays the locomotion of its model (the server sends the action `Move_Combat` at the
   start of each way), an attack replaces it, and at its place the creature plays its idle

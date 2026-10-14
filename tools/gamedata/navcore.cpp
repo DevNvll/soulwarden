@@ -965,6 +965,7 @@ constexpr uint32_t kNavVersion = 3;
 constexpr int kTileSamples = kTileMeters + 1;
 constexpr uint8_t kNoSight = 255, kOpenSky = 255;
 constexpr int kCodeFloors = 4;   // the code of a run with n floors is kCodeFloors + n
+constexpr size_t kMaxCellFloors = 16;   // the floors of one cell that the reader of the backend keeps (NavTile::kMaxFloors)
 // Free floors of the analysis cells of one cell that are this near in height are one floor (meters).
 constexpr float kFloorJoin = 0.25f;
 // The sight interval of a floor starts at the floor when the solid of the cell ends less than this above it (meters).
@@ -1076,7 +1077,13 @@ TileData encode_tile(Scene& scene, const Grid& grid, int border, int tileCells, 
                 for (size_t a = 0; a < air.size(); ++a)
                     if (!claimed[a]) entries.push_back({air[a].first, kFloorBlocked, air[a].first, air[a].second, true});
                 std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.height < b.height; });
-                if (entries.size() > static_cast<size_t>(255 - kCodeFloors)) entries.resize(static_cast<size_t>(255 - kCodeFloors));
+                // The reader of the backend keeps 16 floors of one cell and refuses a tile with more
+                // (gamedata/navigation_data.h, NavTile::kMaxFloors): such a cell stops the region, so
+                // that no complete region has a tile that the backend cannot use (code review of the
+                // corrections after user test 1, finding F8). The tool does not drop a floor.
+                if (entries.size() > kMaxCellFloors)
+                    throw Failure("a cell at " + std::to_string(x) + " " + std::to_string(y) + " has " + std::to_string(entries.size())
+                                  + " floors, more than the reader of the backend keeps (" + std::to_string(kMaxCellFloors) + ")");
                 uint32_t freeFloors = 0;
                 for (const Entry& entry : entries) {
                     if (entry.flags & kFloorBlocked) { ++out.blocked; continue; }

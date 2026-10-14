@@ -2,7 +2,7 @@
 
 Soulwarden runs the last retail New World: Aeternum client against a server on your own computer. No public service is involved. The game talks to a local backend and to nothing else.
 
-It is early. You can create a character, walk around the start area, put on armor, and hit a wolf with a sword until it dies. The wolf does not fight back yet.
+It is early. You can create a character, walk and travel in the whole world, put on armor, and fight the creatures of the world: they patrol, see you, attack, and go back to their place.
 
 It supports one client build, `NewWorld.exe` 1.400.6031.6004151 from Steam app 1063730, on Linux with Proton. The SHA-256 of that file is `8654f01d324636d9f74f1c793b0cc4a417c3c5fa9847d9913c358ca29e0fdc8e`.
 
@@ -19,13 +19,15 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Melee combat with a sword, a great axe, a hatchet, a war hammer, or a spear. A hit shows its damage number, and creatures die.
 - Creatures fight. A creature sees your character, runs to it with its run animation, attacks, and goes back to its place at the end of its leash. 2,989 of the 3,848 kinds attack.
 - Creatures find their way around walls and rocks, up stairs, and on the floors of buildings and ruins.
+- Creatures walk their patrol routes from the game files, or wander near their place. After a fight a creature runs back to the place where it saw you. On that way it is immune and walks the way that it came, and at that place it has its full health and patrols again.
 - Health and death. Your character loses health and dies, and it comes back at the nearest spirit shrine or inn.
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, and moves it to a travel place.
 
 ## What does not work yet
 
-- Creatures do not jump, drop from an edge, or climb. A creature that has no way to you goes back to its place.
+- Creatures do not jump, drop from an edge, climb, swim, or fly. A creature that has no way to you waits at the place nearest to you for 12 s and then goes back.
+- Creatures do not fight in groups, call others, or flee. Only 23 of the 24,895 waypoint tasks of the patrols have an animation, so a creature stands in its idle pose at the other waypoints.
 - 859 kinds of creature have no attack yet and stand still. No creature has a ranged attack, magic, or an ability.
 - Creatures do not drop loot, give no experience, and do not come back after death.
 - You cannot block or dodge. The tool window heals your character.

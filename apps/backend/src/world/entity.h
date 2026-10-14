@@ -238,11 +238,18 @@ struct CreatureAction {
 
 /** What a creature does (world/behavior.h). */
 enum class CreatureMode : std::uint8_t {
-    /** The creature is at its home and has no target. It needs no time of the world. */
+    /**
+     * The creature has no target. It stands, or it walks its patrol route or its wander while a
+     * player is near it (the roam of world/behavior.h). A creature that stands needs no time of
+     * the world.
+     */
     rest,
     /** The creature has a target: it goes to the target, and it attacks in its reach. */
     fight,
-    /** The creature lost its target and goes to its home. */
+    /**
+     * The creature lost its target and goes back to its anchor (the reset): it takes no damage
+     * and no target on this way, and it has its full health at the end of it.
+     */
     home,
 };
 
@@ -261,6 +268,37 @@ struct CreatureMind {
     /** The home of the creature: the place and the direction of its spawn point, or where a command made it. */
     state::WorldPosition home;
     float homeYaw{0.0F};
+    /**
+     * The anchor of the leash: the place where the creature took its target (a rule of this
+     * project, protocol notes 4.17). The leash of a fight is a distance from it, and the way back
+     * ends at it. A creature that stands at its home has its home as its anchor.
+     */
+    state::WorldPosition anchor;
+    /**
+     * The places of the way of the creature since it took its target, one for each meter (the
+     * first one is the anchor). A creature whose way back has no path walks these places back,
+     * and it does not jump (world/behavior.h).
+     */
+    std::vector<state::WorldPosition> trail;
+    /** True while the way back follows the trail. */
+    bool retracing{false};
+    /**
+     * A creature that has no way to its target goes to the place nearest to it and waits there
+     * with its target until this time; then it goes back. No value: it has a way, or it goes.
+     */
+    std::optional<WorldClock::time_point> holdUntil;
+    /**
+     * The roam of a creature at rest (world/behavior.h): the waypoint of its patrol route that it
+     * goes to or waits at, and the direction of a route that goes back and forth (+1 or -1).
+     */
+    std::uint32_t waypoint{0};
+    std::int8_t routeStep{1};
+    /** The place that the creature walks to with no target (a waypoint, a place of its wander). No value: none now. */
+    std::optional<state::WorldPosition> roamGoal;
+    /** The creature waits at its place with no target until this time (at a waypoint, after a walk of its wander). */
+    WorldClock::time_point roamWaitUntil{};
+    /** True: the roam of the creature is complete (a waypoint with a wait for ever, a route of one waypoint at its end). */
+    bool settled{false};
     /**
      * True: the creature stands on a free floor of the navigation of the world (with no
      * navigation data: on the terrain) and walks. False: it does not leave its place: it turns
@@ -319,8 +357,12 @@ struct Creature {
      * The spawn action of a creature whose slice needs it (protocol notes 4.14): the client
      * shows the body and the name plate of such a creature only after this action. It is a
      * value of the creature for its whole time in the world: the first movement state of each
-     * session for the creature has it, with the time from the creation of the creature, when
-     * no action with an end plays. No value: the slice needs none.
+     * session for the creature has it, with the time 0 on the wire (the client plays it from its
+     * start), also while a different action of the server plays; that action follows 1.5 s later
+     * (rep_session.cpp, kSpawnLead). `started` keeps the time of the creation of the creature: it
+     * is not the time on the wire. A dead creature has its death action in the first state of a
+     * session; a dead creature of a slice with no death action has this action there. No value:
+     * the slice needs none.
      */
     std::optional<CreatureAction> spawnAction;
     /**
@@ -333,6 +375,15 @@ struct Creature {
     std::optional<CreatureAction> moving;
     /** The behavior values of the creature. */
     CreatureMind mind;
+    /**
+     * The world revision of the last change of the immune mark (the way back): the vitals state
+     * of a session that got the creature before it has the fields of the mark again.
+     */
+    Revision immuneChanged{0};
+    /** @return True while the creature takes no damage and no target by a hit: on its way back (the reset). */
+    [[nodiscard]] bool immune() const {
+        return mind.mode == CreatureMode::home;
+    }
     /** Number of actions that the server started for this creature. The count of an action on the wire is this number. */
     std::uint32_t actions{0};
     /** The spawn point of the creature: an index into the spawn points of the creature data. No value: a command made it. */

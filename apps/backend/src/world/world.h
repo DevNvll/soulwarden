@@ -280,6 +280,12 @@ struct WorldOptions {
      */
     float creatureInterestMinimum{20.0F};
     float creatureInterestMargin{20.0F};
+    /**
+     * The start value of the random numbers of the world (World::random_unit): the places of the
+     * wander of a creature, the waits at a waypoint, a waypoint of a random route. The backend
+     * program gives a value of the time of its start; a test gives a value of its own.
+     */
+    std::uint64_t randomSeed{0x5357'4F55'4C57'4152ULL};
 };
 
 class World {
@@ -312,6 +318,21 @@ public:
     void set_shelter(std::chrono::milliseconds time, std::chrono::milliseconds longest) {
         m_options.shelterTime = time;
         m_options.shelterLongest = longest;
+    }
+    /** Sets the start value of the random numbers (WorldOptions::randomSeed): a test. World thread only. */
+    void set_random_seed(std::uint64_t seed) {
+        m_random = seed;
+    }
+    /**
+     * @return A random number from 0 (included) to 1 (not included): the one generator of the
+     *         world (splitmix64). World thread only.
+     */
+    [[nodiscard]] float random_unit() {
+        std::uint64_t value = (m_random += 0x9E3779B97F4A7C15ULL);
+        value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
+        value ^= value >> 31;
+        return static_cast<float>(value >> 40) * (1.0F / 16777216.0F);
     }
 
     /** Any thread. The task runs in the world thread at the start of the next tick. */
@@ -630,6 +651,8 @@ private:
     IdAllocator m_ids;
     Revision m_revision{0};
     Revision m_lastTravel{0};
+    /** The state of the random numbers (random_unit). */
+    std::uint64_t m_random{0};
     WorldLoad m_load;
     /** The address of an entity stays the same until its removal. */
     std::map<EntityId, Entity> m_entities;

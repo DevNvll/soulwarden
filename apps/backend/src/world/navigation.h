@@ -79,6 +79,12 @@ inline constexpr std::chrono::milliseconds kNoWayMemory{3000};
 inline constexpr std::size_t kSpliceCells = 12;
 /** A creature that is this far from its path has no path (a command moved it). */
 inline constexpr float kOffPath = 1.0F;
+/**
+ * A creature on a path to the place nearest to a goal with no way (`next_step` with `nearest`)
+ * searches again when the goal is this far from the goal of that path (meters): a search for
+ * such a goal can use the steps of many ticks.
+ */
+inline constexpr float kNearestRepathDistance = 3.0F;
 } // namespace navigation_rules
 
 /** What a step of a creature gave. */
@@ -98,6 +104,11 @@ enum class StepKind {
 struct NavStep {
     StepKind kind{StepKind::noGround};
     state::WorldPosition position;
+    /**
+     * True for a step on a path to the place nearest to a goal that has no way, and for the
+     * arrival at that place (`next_step` with `nearest`): the creature does not get to the goal.
+     */
+    bool partial{false};
 };
 
 /** If a creature at a place can walk. */
@@ -126,6 +137,8 @@ struct NavigationCounts {
     /** Searches that found no path in their limit, and goals with no way by the areas (no search). */
     std::uint64_t searchesFailed{0};
     std::uint64_t noWay{0};
+    /** Paths to the place nearest to a goal with no way (a fight, `next_step` with `nearest`). */
+    std::uint64_t partialPaths{0};
     /** The largest number of steps of the searches in one tick, and the largest number of searches that waited. */
     std::uint32_t largestTickSteps{0};
     std::size_t largestQueue{0};
@@ -183,8 +196,16 @@ public:
      * the goal on the path of the creature. The navigation keeps the path of each creature.
      * @param mover The entity of the creature: the key of its path.
      * @param distance The length of the step, in meters (the speed times the time).
+     * @param nearest True: a goal with no way gives a path to the place nearest to the goal that
+     *        the creature can get to (the search goes to the cells nearest to the goal first, in
+     *        the limits of a search), and the steps on it have `NavStep::partial` (a fight with a
+     *        target that has no way to it). False: a goal with no way gives `noWay`.
      */
-    [[nodiscard]] NavStep next_step(EntityId mover, const state::WorldPosition& from, const state::WorldPosition& goal, float distance);
+    [[nodiscard]] NavStep next_step(EntityId mover,
+                                    const state::WorldPosition& from,
+                                    const state::WorldPosition& goal,
+                                    float distance,
+                                    bool nearest = false);
 
     /** A creature needs its path no more (it is at its goal, it has a different goal, or it left the world). */
     void forget(EntityId mover);
@@ -283,6 +304,9 @@ private:
         bool splice{false};
         state::WorldPosition searchGoal;
         std::size_t junction{0};
+        /** True: the path goes to the place nearest to a goal with no way (NavStep::partial), for a mover that asked for it (`nearest`). */
+        bool nearest{false};
+        bool partial{false};
         /** The goal that had no way, and until when the navigation does not look again. */
         bool noWay{false};
         state::WorldPosition noWayGoal;
@@ -310,6 +334,8 @@ private:
      *         below the eye `eyeZ`). No tile, no floor, or a body in a solid: true.
      */
     [[nodiscard]] bool end_cell_free(std::int32_t cellX, std::int32_t cellY, float eyeZ, float low, float high) const;
+    /** @return True when the heights `low` to `high` of a line of sight in a cell between its two ends are in the free interval of the floor below them. No tile: true. */
+    [[nodiscard]] bool line_free(std::int32_t cellX, std::int32_t cellY, float low, float high) const;
     /**
      * @return True when the world has each tile with navigation data in the rectangle of two
      *         places, with `margin` meters around it. A tile that it does not have, or that is
@@ -342,8 +368,8 @@ private:
     [[nodiscard]] bool connected(const Place& from, const Place& to) const;
 
     void run_searches();
-    /** Makes the path of a search the path of its creature. */
-    void finish_search(EntityId mover, bool found, std::vector<PathCell> path);
+    /** Makes the path of a search the path of its creature. `partial`: the path goes to the place nearest to the goal. */
+    void finish_search(EntityId mover, bool found, std::vector<PathCell> path, bool partial = false);
     /** Moves a creature along its path. */
     [[nodiscard]] NavStep follow(Route& route, const state::WorldPosition& from, float distance);
     /** The step with no navigation data: the straight line on the terrain. */

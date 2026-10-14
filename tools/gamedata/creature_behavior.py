@@ -73,6 +73,7 @@ from item_catalog import Sheet, sheet_type  # noqa: E402
 WEAPON_TYPE = "WeaponItemDefinitions"
 DAMAGE_TYPE_TYPE = "DamageTypeData"
 TEXT_TYPE_ID = "03aaab3f-5c47-5a66-9ebc-d5fa4db353c9"
+BOOL_TYPE_ID = "a0ca880c-afe4-43cb-926c-59ac48496112"
 
 ANIMATION_FIELD = field_id("m_animationDatabase")
 DAMAGE_TABLE_FIELD = field_id("m_damageTable")
@@ -144,11 +145,19 @@ def rounded(value: float) -> float:
 
 def read_behavior(roots: list) -> dict | None:
     """@return The behavior values of a slice: {"sight": [angle, distance], "combatSight": [angle, distance],
-    "leash": [at rest, in a fight], "speed": [walk, run]}, or no value for a slice with no vision profile and no
-    speed (an object, not a creature that goes to a target). A value that the slice does not have is 0."""
+    "leash": [at rest, in a fight], "speed": [walk, run], "ambient": speed, "wander": [on, nearest, farthest]}, or
+    no value for a slice with no vision profile and no speed (an object, not a creature that goes to a target). A
+    value that the slice does not have is 0.
+
+    "ambient" is the speed of a creature with no target (a patrol, a wander): the blackboard value
+    AmbientNavMaxSpeed, or the largest speed of the navigation configuration "Wander" or "AmbientLeash" of the
+    Pathing component, in this sequence. "wander" is the blackboard value Enable_Wander (1: true; 0: false, or not
+    in the slice: a project rule, a slice with no value does not wander) and the distance range WanderDistanceMin,
+    WanderDistanceMax."""
     sight = [0.0, 0.0]
     combat = [0.0, 0.0]
     board: dict[str, float] = {}
+    flags: dict[str, bool] = {}
     speeds: dict[str, float] = {}
     for root in roots:
         for node in walk(root):
@@ -164,26 +173,40 @@ def read_behavior(roots: list) -> dict | None:
             speed = real(fields.get(MAX_SPEED_FIELD))
             if kind and speed is not None:
                 speeds.setdefault(kind, speed)
-            # One value of the blackboard: an element with a name (a text below it) and a value.
-            number = real(fields.get(VALUE_FIELD))
-            if number is None:
+            # One value of the blackboard: an element with a name (a text below it) and a value (a
+            # number, or a value of one byte with the type of a bool).
+            value = fields.get(VALUE_FIELD)
+            number = real(value)
+            flag = (value.value[0] != 0 if value is not None and value.value is not None and len(value.value) == 1
+                    and str(value.type_id) == BOOL_TYPE_ID else None)
+            if number is None and flag is None:
                 continue
             for entry in node.children:
                 if entry.name == VALUE_FIELD:
                     continue
                 name = text(entry) if entry.name == NAME_FIELD else text(child(entry, NAME_FIELD))
                 if name:
-                    board.setdefault(name, number)
+                    if number is not None:
+                        board.setdefault(name, number)
+                    else:
+                        flags.setdefault(name, flag)
                     break
     walk_speed = board.get("CombatWalkMaxSpeed") or speeds.get("WalkToTarget") or board.get("AmbientNavMaxSpeed") or 0.0
     run_speed = board.get("CombatRunMaxSpeed") or speeds.get("RunToTarget") or walk_speed
     if run_speed <= 0.0 and sight[1] <= 0.0:
         return None
+    ambient = board.get("AmbientNavMaxSpeed") or speeds.get("Wander") or speeds.get("AmbientLeash") or 0.0
+    nearest = max(board.get("WanderDistanceMin", 0.0), 0.0)
+    farthest = max(board.get("WanderDistanceMax", 0.0), nearest)
     return {"sight": [rounded(max(sight[0], 0.0)), rounded(max(sight[1], 0.0))],
             "combatSight": [rounded(max(combat[0], 0.0)), rounded(max(combat[1], 0.0))],
             "leash": [rounded(max(board.get("AmbientLeashDistance", 0.0), 0.0)),
                       rounded(max(board.get("CombatLeashDistance", 0.0), 0.0))],
-            "speed": [rounded(max(walk_speed, 0.0)), rounded(max(run_speed, 0.0))]}
+            "speed": [rounded(max(walk_speed, 0.0)), rounded(max(run_speed, 0.0))],
+            "ambient": rounded(max(ambient, 0.0)),
+            "wander": [1 if flags.get("Enable_Wander") else 0, rounded(nearest), rounded(farthest)],
+            # For the counts of the tool only (not a member of the file): the value of the slice.
+            "wanderFlag": flags.get("Enable_Wander")}
 
 
 def read_references(roots: list) -> dict:

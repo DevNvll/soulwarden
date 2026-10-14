@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 #include <vector>
 
 #include "core/logging/log.h"
+#include "world/creatures.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -34,9 +36,32 @@ std::chrono::milliseconds milliseconds(float seconds) {
     return std::chrono::milliseconds(static_cast<long long>(std::lround(seconds * 1000.0F)));
 }
 
-/** @return The leash of a slice in a fight: the largest distance of a creature from its home, in meters. */
+/** @return The leash of a slice in a fight: the largest distance of a creature from its anchor, in meters. */
 float leash_of(const gamedata::CreatureBehavior& values) {
     return values.combatLeash > 0.0F ? values.combatLeash : behavior_rules::kDefaultLeash;
+}
+
+/** @return The speed of a walk with no target (a patrol, a wander), in meters in one second. */
+float ambient_speed_of(const gamedata::CreatureBehavior& values) {
+    if (values.ambientSpeed > 0.0F) {
+        return values.ambientSpeed;
+    }
+    return values.walkSpeed > 0.0F ? values.walkSpeed : behavior_rules::kDefaultAmbientSpeed;
+}
+
+/** @return True for the name of a task of a waypoint that loops (the mark of the game files: "_LOOP" at its end). */
+bool loops(const std::string& task) {
+    static constexpr std::string_view kLoop = "_loop";
+    if (task.size() < kLoop.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < kLoop.size(); ++index) {
+        const char letter = task[task.size() - kLoop.size() + index];
+        if ((letter >= 'A' && letter <= 'Z' ? static_cast<char>(letter + 32) : letter) != kLoop[index]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -62,6 +87,24 @@ void Behavior::set_ignored(const std::string& characterId, bool ignored) {
     }
 }
 
+bool Behavior::move_anchor(Entity& creature, const state::WorldPosition& anchor) {
+    CreatureMind& mind = creature.creature.mind;
+    if (mind.mode != CreatureMode::fight) {
+        return false;
+    }
+    // The place where the creature took its target stays in its trail, as the second place.
+    mind.anchor = anchor;
+    mind.trail.insert(mind.trail.begin(), anchor);
+    log::write("world: command: the anchor of creature %016llx (%s) is at %.2f %.2f %.2f (%zu places in its trail)",
+               id_number(creature.id),
+               creature.creature.kind->id.c_str(),
+               static_cast<double>(anchor.x),
+               static_cast<double>(anchor.y),
+               static_cast<double>(anchor.z),
+               mind.trail.size());
+    return true;
+}
+
 Entity* Behavior::fightable(EntityId id) {
     Entity* target = id != 0 ? m_world.find(id) : nullptr;
     if (target == nullptr || target->kind != EntityKind::player || target->life.dead || ignores(target->characterId)) {
@@ -75,6 +118,10 @@ void Behavior::made(Entity& creature) {
     mind.home = creature.position;
     mind.homeYaw = creature.creature.yaw;
     mind.sentYaw = creature.creature.yaw;
+    mind.anchor = creature.position;
+    // The creatures of one place do not all start their roam at one time.
+    const auto shortest = static_cast<float>(behavior_rules::kWanderWaitShortest.count());
+    mind.roamWaitUntil = m_world.clock().now() + std::chrono::milliseconds(static_cast<long long>(m_world.random_unit() * shortest));
     // The navigation says if the creature stands on a floor: now, or when it has the data of the place.
     mind.walks = false;
     mind.groundKnown = false;
@@ -95,16 +142,32 @@ bool Behavior::can_walk(Entity& creature) {
 
 void Behavior::died(Entity& creature) {
     CreatureMind& mind = creature.creature.mind;
+    const bool wasImmune = creature.creature.immune();
     mind.mode = CreatureMode::rest;
     mind.target = 0;
     mind.attack.reset();
+    mind.trail.clear();
+    mind.holdUntil.reset();
+    if (wasImmune) {
+        m_creatures.immune_changed(creature);
+    }
     m_active.erase(creature.id);
+    m_roaming.erase(creature.id);
     m_world.navigation().forget(creature.id);
 }
 
 void Behavior::removed(const Entity& entity) {
     m_active.erase(entity.id);
+    m_roaming.erase(entity.id);
     m_world.navigation().forget(entity.id);
+}
+
+const gamedata::PatrolRoute* Behavior::route_of(const Entity& creature) const {
+    const gamedata::CreatureData* data = m_creatures.data();
+    if (data == nullptr || !creature.creature.spawnPoint || *creature.creature.spawnPoint >= data->spawn_points().size()) {
+        return nullptr;
+    }
+    return data->route_of(data->spawn_points()[*creature.creature.spawnPoint]);
 }
 
 void Behavior::shelter(Entity& character, bool waitsForClient) {
@@ -201,13 +264,24 @@ void Behavior::no_way(Entity& creature, const Entity& target) {
     mind.noWayTarget = target.id;
     mind.noWayUntil = m_world.clock().now() + behavior_rules::kNoWayPause;
     ++m_counts.targetsNoWay;
-    lose_target(creature, "no way to the target");
+    lose_target(creature, "no way to the target, after its wait at the place nearest to it");
 }
 
 void Behavior::take_target(Entity& creature, const Entity& target, const char* cause, float range) {
     CreatureMind& mind = creature.creature.mind;
+    if (m_roaming.erase(creature.id) != 0) {
+        // The walk of the roam ends: the way to the target has the run of the slice.
+        stand(creature);
+    }
     mind.mode = CreatureMode::fight;
     mind.target = target.id;
+    // The anchor of the leash: the place where the creature took its target. The way back ends
+    // there, and the patrol or the wander goes on from it.
+    mind.anchor = creature.position;
+    mind.trail.assign(1, creature.position);
+    mind.retracing = false;
+    mind.holdUntil.reset();
+    mind.roamGoal.reset();
     m_active.insert(creature.id);
     // The character is in a fight from now: its health does not come back (world/health.h).
     if (Entity* character = m_world.find(target.id)) {
@@ -227,19 +301,24 @@ void Behavior::lose_target(Entity& creature, const char* cause) {
     mind.target = 0;
     mind.mode = CreatureMode::home;
     mind.blockedSteps = 0;
-    // The path to the target is of no use for the way home: without this the creature goes
-    // on with it for some cells while the search of its way home runs.
+    mind.holdUntil.reset();
+    mind.retracing = false;
+    // The path to the target is of no use for the way back: without this the creature goes
+    // on with it for some cells while the search of its way back runs.
     m_world.navigation().forget(creature.id);
+    // From now to the anchor the creature takes no damage: each observer gets the mark.
+    m_creatures.immune_changed(creature);
     ++m_counts.targetsLost;
-    log::write("world: creature %016llx (%s) lost its target (%s): it goes to its home, %.1f m",
+    log::write("world: creature %016llx (%s) lost its target (%s): it goes back to its anchor, %.1f m, immune",
                id_number(creature.id),
                creature.creature.kind->id.c_str(),
                cause,
-               static_cast<double>(horizontal_distance(creature.position, mind.home)));
+               static_cast<double>(horizontal_distance(creature.position, mind.anchor)));
 }
 
 void Behavior::hurt_by(Entity& creature, EntityId attacker) {
-    if (!m_world.options().creatureBehavior || creature.creature.dead || !creature.creature.body->fights()) {
+    if (!m_world.options().creatureBehavior || creature.creature.dead || !creature.creature.body->fights()
+        || creature.creature.immune()) {
         return;
     }
     CreatureMind& mind = creature.creature.mind;
@@ -291,6 +370,22 @@ void Behavior::step(float seconds) {
         } else {
             think(*creature, seconds);
         }
+    }
+    // The roam of the creatures at rest near a character.
+    const WorldClock::time_point now = m_world.clock().now();
+    if (!m_lastRoamScan || now - *m_lastRoamScan >= behavior_rules::kRoamScanInterval) {
+        m_lastRoamScan = now;
+        select_roamers();
+    }
+    const std::vector<EntityId> roaming(m_roaming.begin(), m_roaming.end());
+    for (const EntityId id : roaming) {
+        Entity* creature = m_creatures.find(id);
+        if (creature == nullptr || creature->creature.dead || creature->creature.mind.mode != CreatureMode::rest) {
+            m_roaming.erase(id);
+            continue;
+        }
+        ++m_counts.roamSteps;
+        roam(*creature, seconds);
     }
 }
 
@@ -355,6 +450,15 @@ void Behavior::turn_to(Entity& creature, const state::WorldPosition& place) {
     }
 }
 
+void Behavior::turn(Entity& creature, float yaw) {
+    CreatureMind& mind = creature.creature.mind;
+    creature.creature.yaw = yaw;
+    if (turn_between(creature.creature.yaw, mind.sentYaw) >= behavior_rules::kTurnAngle) {
+        mind.sentYaw = creature.creature.yaw;
+        m_creatures.moved(creature);
+    }
+}
+
 void Behavior::think(Entity& creature, float seconds) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
@@ -377,8 +481,9 @@ void Behavior::think(Entity& creature, float seconds) {
         return;
     }
     const gamedata::CreatureBehavior& values = *body.behavior;
-    const float fromHome = horizontal_distance(creature.position, mind.home);
-    if (fromHome > leash_of(values)) {
+    // The leash is a distance from the anchor: the place where the creature took its target.
+    const float fromAnchor = horizontal_distance(creature.position, mind.anchor);
+    if (fromAnchor > leash_of(values)) {
         lose_target(creature, "the creature is at the end of its leash");
         return;
     }
@@ -442,13 +547,33 @@ void Behavior::think(Entity& creature, float seconds) {
             }
         }
     }
-    NavStep next = m_world.navigation().next_step(creature.id, creature.position, target->position, way);
+    // The way to the target, or to the place nearest to it when it has no way (`nearest`).
+    NavStep next = m_world.navigation().next_step(creature.id, creature.position, target->position, way, true);
     // A different creature at the end of the step: a shorter step, so that the creatures of a
     // queue stand near each other.
     for (float shorter = way * 0.5F; next.kind == StepKind::moved && shorter >= 0.2F && taken(creature, next.position) != nullptr;
          shorter *= 0.5F) {
         m_world.navigation().take_back(creature.id);
-        next = m_world.navigation().next_step(creature.id, creature.position, target->position, shorter);
+        next = m_world.navigation().next_step(creature.id, creature.position, target->position, shorter, true);
+    }
+    // The wait at the place nearest to a target with no way: its time starts at the first step
+    // that says so, and a step on a full path to the target ends it.
+    if (next.partial || next.kind == StepKind::arrived || next.kind == StepKind::noWay) {
+        if (!mind.holdUntil) {
+            mind.holdUntil = now + behavior_rules::kNoWayHold;
+            ++m_counts.holds;
+            log::write("world: creature %016llx (%s) has no way to its target %s: it goes to the place nearest to it and waits "
+                       "there with it (%.1f m)",
+                       id_number(creature.id),
+                       creature.creature.kind->id.c_str(),
+                       target->name.c_str(),
+                       static_cast<double>(away));
+        } else if (now >= *mind.holdUntil) {
+            no_way(creature, *target);
+            return;
+        }
+    } else if (next.kind == StepKind::moved) {
+        mind.holdUntil.reset();
     }
     switch (next.kind) {
     case StepKind::moved:
@@ -467,7 +592,8 @@ void Behavior::think(Entity& creature, float seconds) {
         mind.blockedSteps = 0;
         creature.creature.yaw = yaw_to(creature.position, next.position);
         mind.sentYaw = creature.creature.yaw;
-        m_creatures.move(creature, next.position);
+        m_creatures.move(creature, next.position, Gait::run);
+        record_trail(creature);
         ++m_counts.moves;
         break;
     case StepKind::waiting:
@@ -476,8 +602,13 @@ void Behavior::think(Entity& creature, float seconds) {
         break;
     case StepKind::arrived:
     case StepKind::noWay:
-        // The end of the path, and the target is not in the reach: the target is at a place with no way to it.
-        no_way(creature, *target);
+        // The end of the path, and the target is not in the reach: the target is at a place with
+        // no way to it. The creature waits at its place (the place nearest to the target), turns
+        // to it, and attacks it when it comes into the reach.
+        turn_to(creature, target->position);
+        if (away <= reach && level && now >= mind.ready && m_world.navigation().sees(creature.position, target->position)) {
+            start_attack(creature, *target, attackIndex);
+        }
         break;
     case StepKind::noGround:
         mind.walks = false;
@@ -496,50 +627,352 @@ void Behavior::go_home(Entity& creature, float seconds) {
         }
         mind.attack.reset();
     }
-    const float away = horizontal_distance(creature.position, mind.home);
+    const float away = horizontal_distance(creature.position, mind.anchor);
     if (away <= behavior_rules::kHomeDistance || !can_walk(creature)) {
         arrive(creature);
         return;
     }
+    if (mind.retracing) {
+        retrace(creature, seconds);
+        return;
+    }
     const float speed = creature.creature.body->behavior->runSpeed;
-    const NavStep next = m_world.navigation().next_step(creature.id, creature.position, mind.home, speed * seconds);
+    const NavStep next = m_world.navigation().next_step(creature.id, creature.position, mind.anchor, speed * seconds);
     switch (next.kind) {
     case StepKind::moved:
         creature.creature.yaw = yaw_to(creature.position, next.position);
         mind.sentYaw = creature.creature.yaw;
-        m_creatures.move(creature, next.position);
+        m_creatures.move(creature, next.position, Gait::run);
         ++m_counts.moves;
         break;
     case StepKind::waiting:
         break;
     case StepKind::arrived:
+        arrive(creature);
+        break;
     case StepKind::noWay:
     case StepKind::noGround:
-        // The end of the path, or no way and no ground on the way: the creature is at its home in one step.
-        arrive(creature);
+        // No path back: the creature walks the places of its way out back (the trail), and it
+        // does not jump to its anchor while a session can observe it.
+        mind.retracing = true;
+        m_world.navigation().forget(creature.id);
+        ++m_counts.retraces;
+        log::write("world: creature %016llx (%s) has no path back to its anchor: it walks the %zu places of its way back",
+                   id_number(creature.id),
+                   creature.creature.kind->id.c_str(),
+                   mind.trail.size());
+        retrace(creature, seconds);
         break;
     }
 }
 
+void Behavior::retrace(Entity& creature, float seconds) {
+    CreatureMind& mind = creature.creature.mind;
+    std::vector<state::WorldPosition>& trail = mind.trail;
+    while (!trail.empty() && horizontal_distance(creature.position, trail.back()) <= behavior_rules::kRoamArrival) {
+        trail.pop_back();
+    }
+    if (trail.empty()) {
+        arrive(creature);
+        return;
+    }
+    const float speed = creature.creature.body->behavior->runSpeed;
+    const NavStep next = m_world.navigation().next_step(creature.id, creature.position, trail.back(), speed * seconds);
+    switch (next.kind) {
+    case StepKind::moved:
+        creature.creature.yaw = yaw_to(creature.position, next.position);
+        mind.sentYaw = creature.creature.yaw;
+        m_creatures.move(creature, next.position, Gait::run);
+        ++m_counts.moves;
+        break;
+    case StepKind::waiting:
+        break;
+    case StepKind::arrived:
+        trail.pop_back();
+        break;
+    case StepKind::noWay:
+    case StepKind::noGround:
+        if (trail.size() > 1) {
+            trail.pop_back(); // A place with no way to it: the next older one.
+            m_world.navigation().forget(creature.id);
+            break;
+        }
+        // The anchor itself has no way: the creature is at its anchor in one step only when no
+        // session can observe it. If not, it stands and tries again.
+        if (!observed(creature)) {
+            ++m_counts.jumps;
+            log::write("world: creature %016llx (%s) has no way to its anchor and no session observes it: it is at its anchor in "
+                       "one step",
+                       id_number(creature.id),
+                       creature.creature.kind->id.c_str());
+            arrive(creature);
+        }
+        break;
+    }
+}
+
+bool Behavior::observed(const Entity& creature) const {
+    bool seen = false;
+    const float leave = m_world.interest_leave(creature);
+    m_world.for_each_character([&](const Entity& character) {
+        seen = seen || (character.owner != 0 && horizontal_distance(character.position, creature.position) <= leave);
+    });
+    return seen;
+}
+
+void Behavior::record_trail(Entity& creature) {
+    std::vector<state::WorldPosition>& trail = creature.creature.mind.trail;
+    const state::WorldPosition& place = creature.position;
+    if (!trail.empty() && horizontal_distance(trail.back(), place) < behavior_rules::kTrailSpacing) {
+        return;
+    }
+    // A way that comes back near an older place of the trail: the places after that one are of
+    // no use for the way back (the trail is a way with no loop).
+    for (std::size_t index = 0; index + 2 < trail.size(); ++index) {
+        if (horizontal_distance(trail[index], place) < behavior_rules::kTrailSpacing * 0.5F
+            && std::fabs(trail[index].z - place.z) < behavior_rules::kContactHeight) {
+            trail.resize(index + 1);
+            return;
+        }
+    }
+    if (trail.size() >= behavior_rules::kTrailLength) {
+        trail.erase(trail.begin() + 1); // The anchor stays the first place.
+    }
+    trail.push_back(place);
+}
+
 void Behavior::arrive(Entity& creature) {
     CreatureMind& mind = creature.creature.mind;
-    // The exact place and direction of the spawn point: the height of a spawn point can be
-    // some centimeters from the terrain height.
-    creature.creature.yaw = mind.homeYaw;
-    mind.sentYaw = mind.homeYaw;
-    m_creatures.move(creature, mind.home, false);
+    // The exact place of the anchor. At the spawn point: its direction too (the height of a
+    // spawn point can be some centimeters from the terrain height).
+    const bool atHome = horizontal_distance(mind.anchor, mind.home) < behavior_rules::kHomeDistance
+                        && std::fabs(mind.anchor.z - mind.home.z) < behavior_rules::kContactHeight;
+    if (atHome) {
+        creature.creature.yaw = mind.homeYaw;
+        mind.sentYaw = mind.homeYaw;
+    }
+    m_creatures.move(creature, mind.anchor, Gait::place);
     // The end of the way: the client plays the idle action of the creature again.
     m_creatures.stop(creature);
     m_creatures.restore(creature);
     mind.mode = CreatureMode::rest;
     mind.target = 0;
+    mind.trail.clear();
+    mind.retracing = false;
+    mind.holdUntil.reset();
+    // The roam goes on from the anchor: the waypoint of the route that the creature went to.
+    mind.roamGoal.reset();
+    mind.roamWaitUntil = m_world.clock().now();
+    m_creatures.immune_changed(creature);
     m_active.erase(creature.id);
     m_world.navigation().forget(creature.id);
     ++m_counts.returns;
-    log::write("world: creature %016llx (%s) is at its home, health %.1f",
+    log::write("world: creature %016llx (%s) is at %s, health %.1f",
                id_number(creature.id),
                creature.creature.kind->id.c_str(),
+               atHome ? "its home (its anchor)" : "its anchor",
                static_cast<double>(creature.vitals.health));
+}
+
+// ---- the roam: patrol and wander --------------------------------------------------------------
+
+bool Behavior::roams(Entity& creature) {
+    const Creature& body = creature.creature;
+    if (body.dead || body.mind.settled || !body.body->behavior || !can_walk(creature)) {
+        return false;
+    }
+    if (route_of(creature) != nullptr) {
+        return true;
+    }
+    const gamedata::CreatureBehavior& values = *body.body->behavior;
+    return values.wander && values.wanderFarthest > 0.0F;
+}
+
+void Behavior::select_roamers() {
+    // From the characters, with the position index: the cost depends on the creatures near a
+    // character, not on the creatures of the world.
+    std::set<EntityId> selected;
+    const float range = m_world.options().interestLeave;
+    std::vector<state::WorldPosition> places;
+    m_world.for_each_character([&](const Entity& character) { places.push_back(character.position); });
+    for (const state::WorldPosition& place : places) {
+        m_world.for_each_near(place, range, [&](Entity& creature) {
+            if (creature.kind != EntityKind::creature || creature.creature.mind.mode != CreatureMode::rest
+                || selected.count(creature.id) != 0
+                || horizontal_distance(place, creature.position) > m_world.interest_leave(creature) || !roams(creature)) {
+                return;
+            }
+            selected.insert(creature.id);
+        });
+    }
+    for (const EntityId id : m_roaming) {
+        if (selected.count(id) == 0) {
+            if (Entity* creature = m_creatures.find(id)) {
+                stand(*creature);
+            }
+        }
+    }
+    m_roaming = std::move(selected);
+    m_counts.largestRoaming = std::max(m_counts.largestRoaming, m_roaming.size());
+}
+
+void Behavior::stand(Entity& creature) {
+    m_creatures.stop(creature);
+    m_world.navigation().forget(creature.id);
+}
+
+void Behavior::roam(Entity& creature, float seconds) {
+    CreatureMind& mind = creature.creature.mind;
+    const WorldClock::time_point now = m_world.clock().now();
+    if (now < mind.roamWaitUntil) {
+        return;
+    }
+    if (!mind.roamGoal && !next_roam_goal(creature)) {
+        return;
+    }
+    const state::WorldPosition goal = *mind.roamGoal;
+    if (horizontal_distance(creature.position, goal) <= behavior_rules::kRoamArrival) {
+        at_roam_goal(creature);
+        return;
+    }
+    const float speed = ambient_speed_of(*creature.creature.body->behavior);
+    const NavStep next = m_world.navigation().next_step(creature.id, creature.position, goal, speed * seconds);
+    switch (next.kind) {
+    case StepKind::moved:
+        creature.creature.yaw = yaw_to(creature.position, next.position);
+        mind.sentYaw = creature.creature.yaw;
+        m_creatures.move(creature, next.position, Gait::walk);
+        ++m_counts.moves;
+        break;
+    case StepKind::waiting:
+        break;
+    case StepKind::arrived:
+        at_roam_goal(creature);
+        break;
+    case StepKind::noWay:
+    case StepKind::noGround:
+        // No way to the goal: the creature stands, and it takes its next goal after a pause.
+        ++m_counts.roamNoWay;
+        stand(creature);
+        if (const gamedata::PatrolRoute* route = route_of(creature)) {
+            next_waypoint(mind, *route);
+        }
+        mind.roamGoal.reset();
+        mind.roamWaitUntil = now + behavior_rules::kRoamNoWayPause;
+        break;
+    }
+}
+
+bool Behavior::next_roam_goal(Entity& creature) {
+    CreatureMind& mind = creature.creature.mind;
+    if (const gamedata::PatrolRoute* route = route_of(creature)) {
+        mind.waypoint = std::min<std::uint32_t>(mind.waypoint, static_cast<std::uint32_t>(route->points.size() - 1));
+        mind.roamGoal = route->points[mind.waypoint].position;
+        return true;
+    }
+    // The wander: a random place of the wander range near the home, on a floor. The range is
+    // not larger than the leash of the slice at rest.
+    const gamedata::CreatureBehavior& values = *creature.creature.body->behavior;
+    float farthest = values.wanderFarthest;
+    if (values.restLeash > 0.0F) {
+        farthest = std::min(farthest, values.restLeash);
+    }
+    const float nearest = std::min(values.wanderNearest, farthest);
+    constexpr float kTurn = 6.28318530718F;
+    for (unsigned attempt = 0; attempt < behavior_rules::kWanderTries; ++attempt) {
+        const float angle = m_world.random_unit() * kTurn;
+        const float length = nearest + m_world.random_unit() * (farthest - nearest);
+        state::WorldPosition place{mind.home.x + std::sin(angle) * length, mind.home.y + std::cos(angle) * length, mind.home.z};
+        const std::optional<float> ground = m_world.navigation().ground_height(place);
+        if (!ground) {
+            continue;
+        }
+        place.z = *ground;
+        if (m_world.navigation().footing(place) == Footing::rooted) {
+            continue;
+        }
+        mind.roamGoal = place;
+        return true;
+    }
+    ++m_counts.roamNoWay;
+    mind.roamWaitUntil = m_world.clock().now() + behavior_rules::kRoamNoWayPause;
+    return false;
+}
+
+void Behavior::at_roam_goal(Entity& creature) {
+    CreatureMind& mind = creature.creature.mind;
+    const WorldClock::time_point now = m_world.clock().now();
+    // The end of the walk: the client plays the idle action of the creature.
+    stand(creature);
+    mind.roamGoal.reset();
+    const gamedata::PatrolRoute* route = route_of(creature);
+    if (route == nullptr) {
+        ++m_counts.wanderPlaces;
+        const auto shortest = static_cast<float>(behavior_rules::kWanderWaitShortest.count());
+        const auto longest = static_cast<float>(behavior_rules::kWanderWaitLongest.count());
+        mind.roamWaitUntil =
+            now + std::chrono::milliseconds(static_cast<long long>(shortest + m_world.random_unit() * (longest - shortest)));
+        return;
+    }
+    ++m_counts.waypoints;
+    const gamedata::PatrolWaypoint& waypoint = route->points[mind.waypoint];
+    if (waypoint.align) {
+        turn(creature, waypoint.yaw);
+    }
+    // The wait: a time of the range of the waypoint. A negative value (-1 in the game files) is
+    // no wait, but a wait for ever at the waypoint of a route of one waypoint and at a waypoint
+    // whose task loops (rules of this project).
+    float seconds = 0.0F;
+    if (waypoint.minWait >= 0.0F) {
+        seconds = waypoint.minWait + m_world.random_unit() * (waypoint.maxWait - waypoint.minWait);
+    } else if (route->points.size() == 1 || loops(waypoint.task)) {
+        mind.settled = true;
+    }
+    // The task of the waypoint, when the action table of the slice has an action with its name.
+    if (!waypoint.task.empty() && (seconds > 0.0F || mind.settled)) {
+        if (const std::optional<std::uint32_t> action = creature.creature.body->find_action(waypoint.task)) {
+            m_creatures.start_action(creature, *action,
+                                     mind.settled ? std::nullopt : std::optional<std::chrono::milliseconds>(milliseconds(seconds)));
+        }
+    }
+    if (mind.settled) {
+        m_roaming.erase(creature.id);
+        return;
+    }
+    mind.roamWaitUntil = now + milliseconds(seconds);
+    next_waypoint(mind, *route);
+}
+
+void Behavior::next_waypoint(CreatureMind& mind, const gamedata::PatrolRoute& route) {
+    const auto count = static_cast<std::uint32_t>(route.points.size());
+    if (count <= 1) {
+        mind.waypoint = 0;
+        return;
+    }
+    switch (route.policy) {
+    case gamedata::PatrolPolicy::bounce: {
+        if (mind.routeStep != 1 && mind.routeStep != -1) {
+            mind.routeStep = 1;
+        }
+        const auto next = static_cast<std::int64_t>(mind.waypoint) + mind.routeStep;
+        if (next < 0 || next >= static_cast<std::int64_t>(count)) {
+            mind.routeStep = static_cast<std::int8_t>(-mind.routeStep);
+        }
+        mind.waypoint = static_cast<std::uint32_t>(static_cast<std::int64_t>(mind.waypoint) + mind.routeStep);
+        break;
+    }
+    case gamedata::PatrolPolicy::random: {
+        // A different waypoint of the route.
+        auto other = static_cast<std::uint32_t>(m_world.random_unit() * static_cast<float>(count - 1));
+        other = std::min(other, count - 2);
+        mind.waypoint = other >= mind.waypoint ? other + 1 : other;
+        break;
+    }
+    case gamedata::PatrolPolicy::loop:
+    case gamedata::PatrolPolicy::undefined:
+        mind.waypoint = (mind.waypoint + 1) % count;
+        break;
+    }
 }
 
 void Behavior::start_attack(Entity& creature, Entity& target, std::uint32_t attackIndex) {
@@ -556,6 +989,9 @@ void Behavior::start_attack(Entity& creature, Entity& target, std::uint32_t atta
         return;
     }
     m_world.health().fought(target);
+    if (mind.holdUntil) {
+        mind.holdUntil = now + behavior_rules::kNoWayHold; // A fight at the place nearest to the target goes on.
+    }
     mind.attack = attackIndex;
     mind.attackGeneration = creature.creature.action->generation;
     mind.attackEnds = now + length;

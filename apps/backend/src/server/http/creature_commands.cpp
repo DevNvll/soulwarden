@@ -61,6 +61,8 @@ const char* error_text(world::CreatureError error) {
         return "the creature is dead: its health does not change";
     case world::CreatureError::unknownAction:
         return "the action table of the slice of the creature has no action with this name that has a fragment";
+    case world::CreatureError::immune:
+        return "the creature is on its way back: it takes no damage";
     }
     return "error";
 }
@@ -168,11 +170,29 @@ json creatures_view(world::World& target, const std::string& character, std::opt
         return left.first != right.first ? left.first < right.first : left.second->id < right.second->id;
     });
     json creatures = json::array();
+    const world::Behavior& behavior = system.behavior();
     for (const auto& [distance, entity] : found) {
         json row = creature_json(*entity);
         if (reference != nullptr) {
             row["distance"] = distance;
         }
+        // The roam (stage 3.4e): the patrol route or the wander of the creature, and what it does now.
+        const world::CreatureMind& mind = entity->creature.mind;
+        const gamedata::PatrolRoute* route = behavior.route_of(*entity);
+        const auto& values = entity->creature.body->behavior;
+        row["roam"] = route != nullptr ? "patrol" : values && values->wander && values->wanderFarthest > 0.0F ? "wander" : "none";
+        row["roaming"] = behavior.roaming(entity->id);
+        // A creature with no behavior data of its slice has no speed: it does not roam.
+        row["behaviorData"] = values.has_value();
+        row["settled"] = mind.settled;
+        if (route != nullptr) {
+            row["waypoint"] = mind.waypoint;
+            row["waypoints"] = route->points.size();
+        }
+        row["immune"] = entity->creature.immune();
+        row["holds"] = mind.holdUntil.has_value();
+        row["retracing"] = mind.retracing;
+        row["anchor"] = {mind.anchor.x, mind.anchor.y, mind.anchor.z};
         creatures.push_back(std::move(row));
     }
     const std::size_t waiting = system.waiting_count();
@@ -382,6 +402,31 @@ WorldCommand play_creature_action(const std::string& character, const Arguments&
                        seconds ? " with an end" : "");
         }
         return creature_reply(result);
+    };
+}
+
+WorldCommand move_creature_anchor(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                  service::HttpResponse& refusal) {
+    const auto id = creature_id(arguments);
+    const auto x = arguments.number("x", -world::kMaxHorizontalPosition, world::kMaxHorizontalPosition);
+    const auto y = arguments.number("y", -world::kMaxHorizontalPosition, world::kMaxHorizontalPosition);
+    const auto z = arguments.number("z", world::kLowestTravelHeight, world::kHighestTravelHeight);
+    if (!id || !x || !y || !z) {
+        refusal = message(400, "give creature=ID and the place of the anchor in meters (x, y, and z: a height from -99 to 999)");
+        return {};
+    }
+    return [character, id = *id, reach, anchor = state::WorldPosition{*x, *y, *z}](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
+        world::Entity* entity = target.creatures().find(id);
+        if (entity == nullptr) {
+            return creature_reply(world::CreatureResult{world::CreatureError::unknownCreature, nullptr});
+        }
+        if (!target.creatures().behavior().move_anchor(*entity, anchor)) {
+            return message(409, "the creature has no target: only a creature in a fight has an anchor of a fight");
+        }
+        return creature_reply(world::CreatureResult{world::CreatureError::none, entity});
     };
 }
 

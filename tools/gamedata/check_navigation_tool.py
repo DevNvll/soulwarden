@@ -12,6 +12,16 @@ Two findings of the code review of stage 3.4d:
   the reader of height_maps.py (the rule of the files of the backend) takes the north sample.
   The two readers must give one height.
 
+Two findings of the code review of the corrections after user test 1:
+
+- F6: a complete collision report of the tool before the correction of F10, with a physics
+  file that did not decode in its list `physicsFilesNotDecoded`, was used again by the
+  corrected tool. Such a report, and a report of an earlier tool version (TOOL_VERSION of
+  navigation_data.py), must not be used again.
+- F8: the tile writer of navcore.cpp wrote a cell with 17 floors, and the backend refuses
+  such a tile. The writer must stop the region: no complete region with a tile that the
+  backend cannot use.
+
 Usage: check_navigation_tool.py WORK_FOLDER
 Status 0: each case has the expected result. The test program of the backend runs it (case RN10).
 The check compiles a small program with navcore.cpp (a C and a C++ compiler, as the tool needs).
@@ -179,11 +189,64 @@ int main() {
 
 def navcore_heights(root: Path) -> list[tuple[float, float, float]]:
     """Compiles the terrain reader of navcore.cpp with a made-up region. @return (x, y, height) for each place."""
-    folder = root / "navcore-edge"
+    result = subprocess.run([str(compile_program(root, "navcore-edge", EDGE_PROGRAM))], capture_output=True, text=True,
+                            check=True)
+    heights = []
+    for line in result.stdout.split("\n"):
+        if line.strip():
+            x, y, found, height = line.split()
+            heights.append((float(x), float(y), float(height) if found == "1" else float("nan")))
+    return heights
+
+
+FLOOR_PROGRAM = r'''
+#define main navcore_main
+#include "navcore.cpp"
+#undef main
+
+// The tile writer of navcore with one made-up grid: the first column has N floors, each other
+// column one floor of the terrain. Prints "N refused" or "N written" for 16 and 17 floors.
+int main() {
+    Scene scene;
+    auto region = std::make_unique<Collision>();
+    region->heights.assign(static_cast<size_t>(kRegionSize) * kRegionSize, 1600);
+    scene.regions.emplace(std::make_pair(0, 0), std::move(region));
+    for (unsigned count : {16U, 17U}) {
+        Grid grid;
+        grid.width = grid.height = 256;
+        for (unsigned column = 0; column < 256U * 256U; ++column) {
+            grid.first.push_back(static_cast<uint32_t>(grid.spans.size()));
+            grid.firstFloor.push_back(static_cast<uint32_t>(grid.floors.size()));
+            const unsigned floors = column == 0 ? count : 1;
+            for (unsigned index = 0; index < floors; ++index) {
+                const float height = 50.0f + index * 3.0f;
+                grid.spans.push_back({height - 0.25f, height, 1, static_cast<uint8_t>(column != 0), 0});
+                grid.floors.push_back({height, index + 1 < floors ? height + 2.75f : kFar, kFree,
+                                       static_cast<uint8_t>(column != 0 ? kFloorTerrain : 0)});
+            }
+        }
+        grid.first.push_back(static_cast<uint32_t>(grid.spans.size()));
+        grid.firstFloor.push_back(static_cast<uint32_t>(grid.floors.size()));
+        bool refused = false;
+        try {
+            (void)encode_tile(scene, grid, 0, 256, 1, 0, 0);
+        } catch (const Failure&) {
+            refused = true;
+        }
+        std::printf("%u %s\n", count, refused ? "refused" : "written");
+    }
+    return 0;
+}
+'''
+
+
+def compile_program(root: Path, name: str, text: str) -> Path:
+    """Compiles a small program with navcore.cpp. @return The program."""
+    folder = root / name
     folder.mkdir(parents=True, exist_ok=True)
-    source = folder / "navcore_edge.cpp"
-    source.write_text(EDGE_PROGRAM)
-    program = folder / "navcore-edge"
+    source = folder / f"{name}.cpp"
+    source.write_text(text)
+    program = folder / name
     noise_object = folder / "open-simplex-noise.o"
     steps = ([navigation.compiler("CC", ("clang", "gcc", "cc")), "-O2", "-ffp-contract=off", "-c",
               str(HERE / "vendor/open-simplex-noise/open-simplex-noise.c"), "-o", str(noise_object)],
@@ -193,13 +256,38 @@ def navcore_heights(root: Path) -> list[tuple[float, float, float]]:
         result = subprocess.run(step, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise RuntimeError(f"the compiler failed: {result.stderr.strip()[:500]}")
-    result = subprocess.run([str(program)], capture_output=True, text=True, check=True)
-    heights = []
+    return program
+
+
+def floor_limit(root: Path) -> dict[int, str]:
+    """@return For 16 and 17 floors in one cell: "refused" or "written" (the tile writer of navcore.cpp)."""
+    result = subprocess.run([str(compile_program(root, "navcore-floors", FLOOR_PROGRAM))], capture_output=True, text=True,
+                            check=True)
+    answers = {}
     for line in result.stdout.split("\n"):
         if line.strip():
-            x, y, found, height = line.split()
-            heights.append((float(x), float(y), float(height) if found == "1" else float("nan")))
-    return heights
+            count, answer = line.split()
+            answers[int(count)] = answer
+    return answers
+
+
+def old_cache(folder: Path, stamp: int, failures: list[str]) -> str:
+    """Puts a complete collision report of an earlier run into a folder, and runs the region writer with no --force.
+
+    @return "used" (the writer took the report), "made again", or "refused" (the writer read the sources again and
+            stopped at the physics file that does not decode)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{REGION}.swcol").write_bytes(b"a region file of an earlier run")
+    (folder / f"{REGION}.json").write_text(json.dumps({"complete": True, "format": collision.FORMAT_VERSION, "tool": stamp,
+                                                       "placements": 0, "physicsFilesNotDecoded": failures}))
+    with patch.object(collision, "read_heightmap", lambda data: array("H", [1600]) * (2048 * 2048)), \
+         patch.object(collision.Region, "read_chunks", placements(True)), \
+         contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            made = collision.make_region(made_up_world(), REGION, folder, False, navigation.TOOL_VERSION)
+        except collision.Failure:
+            return "refused"
+    return "used" if made is None else "made again"
 
 
 class OneRegion:
@@ -236,6 +324,23 @@ def main() -> int:
     report(status == 1 and not in_manifest and not written and not grid,
            f"the navigation driver stops with status 1 before the grid of the region, and writes no region file and no "
            f"manifest entry (status {status}, grid started {grid}, in the manifest {in_manifest}, file {written}) (F10)")
+
+    answer = old_cache(root / "cache-current" / "collision", navigation.TOOL_VERSION, [])
+    report(answer == "used", f"control: a complete report of the current tool with no failure is used again ({answer})")
+    answer = old_cache(root / "cache-failure" / "collision", navigation.TOOL_VERSION, [BROKEN])
+    report(answer != "used", f"a complete report with a physics file that did not decode is not used again ({answer}) (F6)")
+    answer = old_cache(root / "cache-old-tool" / "collision", 1, [])
+    report(navigation.TOOL_VERSION > 1 and answer != "used",
+           f"a complete report of the tool version 1 (before the corrections) is not used again ({answer}, tool version "
+           f"{navigation.TOOL_VERSION}) (F6)")
+    try:
+        answers = floor_limit(root)
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        report(False, f"the tile writer of navcore.cpp compiles and runs: {error}")
+        answers = {}
+    report(answers.get(16) == "written", f"control: the tile writer writes a cell with 16 floors ({answers.get(16)})")
+    report(answers.get(17) == "refused", f"the tile writer refuses a cell with 17 floors, which the backend refuses "
+           f"({answers.get(17)}) (F8)")
 
     import height_maps
     samples = array("H", [1000]) * (2048 * 2048)

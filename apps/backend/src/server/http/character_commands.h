@@ -202,6 +202,13 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
  */
 [[nodiscard]] WorldCommand play_creature_action(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                                 service::HttpResponse& refusal);
+/**
+ * anchor: `creature`, and `x`, `y`, `z` (meters). A development command: the anchor of a
+ * creature in a fight (the end of its way back, and the first place of its trail) is that
+ * place. A test of the way back with no path to the anchor. Only the development routes have it.
+ */
+[[nodiscard]] WorldCommand move_creature_anchor(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                                service::HttpResponse& refusal);
 
 /**
  * @return The creatures of the world (world thread), the nearest one first: the id, the kind,

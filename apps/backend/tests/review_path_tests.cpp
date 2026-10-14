@@ -281,7 +281,11 @@ void path_after_drop(const Options& options) {
     world.ticks(60);
     auto& nav = world.navigation();
     auto from = at(1000.0F, 1000.0F);
-    const auto goal = at(1140.0F, 1000.0F);
+    // The goal is two tiles away: from the review of the corrections after user test 1 (finding
+    // F5) each step asks for the tile of the goal, and the tile between them is the one that the
+    // world removes.
+    const auto goal = at(1200.0F, 1000.0F);
+    const auto between = at(1120.0F, 1000.0F);
     const auto report = nav.find_path(from, goal);
     check(report.found && report.direct, "setup: the direct route crosses a tile farther than the keep distance");
     auto first = nav.next_step(1234, from, goal, 1.0F);
@@ -294,8 +298,8 @@ void path_after_drop(const Options& options) {
         auto next = nav.next_step(1234, from, goal, 0.01F);
         if (next.kind == StepKind::moved) from = next.position;
     }
-    check(nav.counts().tilesDropped > 0 && nav.footing(goal) == world::Footing::unknown,
-          "setup: the route's far tile was removed");
+    check(nav.counts().tilesDropped > 0 && nav.footing(between) == world::Footing::unknown,
+          "setup: the tile on the route between the creature and its goal was removed");
     const auto next = nav.next_step(1234, from, goal, 100.0F);
     note("step kind=" + std::to_string(static_cast<int>(next.kind)) + "; x=" + std::to_string(next.position.x)
          + "; destination has no tile=" + std::to_string(nav.footing(next.position) == world::Footing::unknown));
@@ -443,10 +447,12 @@ void navigation_tool(const Options& options) {
         correct += line.rfind("ok  ", 0) == 0 ? 1 : 0;
         wrong += line.rfind("FAIL", 0) == 0 ? 1 : 0;
     }
-    check(status == 0 && correct == 6 && wrong == 0,
+    check(status == 0 && correct == 11 && wrong == 0,
           "the navigation tool stops for a placed collider whose physics file does not decode (no complete report, no "
           "region file, status 1: F10), and its terrain reader gives the height of height_maps.py at the east edge and "
-          "at the north edge of a region with no neighbor (F11)");
+          "at the north edge of a region with no neighbor (F11); the review of the corrections after user test 1: a "
+          "complete report with a physics file that did not decode, or of the tool version 1, is not used again (F6), "
+          "and the tile writer refuses a cell with 17 floors (F8)");
 }
 
 } // namespace

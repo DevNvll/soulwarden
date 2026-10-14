@@ -114,8 +114,11 @@ sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure, field_id, plain_stream  # noqa: E402
 import creature_behavior  # noqa: E402
+from collision_data import quaternion_matrix  # noqa: E402
 import height_maps  # noqa: E402
 from item_catalog import Sheet, sheet_type  # noqa: E402
+from nav_shapes import multiply  # noqa: E402
+from nav_slices import matrix_of  # noqa: E402
 from slice_ids import (COMPONENTS_FIELD, ENTITY_TYPE, ID_FIELD, LOCAL_TRANSFORM_FIELD, NAME_FIELD,  # noqa: E402
                        NO_ENTITY, PARENT_FIELD, Element, component_id, find_field, id_value, parse)
 
@@ -227,6 +230,29 @@ ENTRY_FIELDS = {name: field_id(name) for name in ("VitalsId", "VitalsCategoryId"
 SPAWNER_FIELDS = {name: field_id(name) for name in ("m_minRespawnCooldown", "m_maxRespawnCooldown",
                                                     "m_respawnAfterDeath", "m_spawnOnInitialize",
                                                     "m_spawnOnlyOnce")}
+# The patrol of a spawner (research navigation.md, Q6). The spawner component names the entity of
+# its patrol (m_patrolPathEntity); that entity has the component AIPatrol with the ids of its
+# waypoint entities in their sequence (m_waypointIds) and, in its server facet, the policy of the
+# route (m_pathTravesalPolicy: 0 LOOP, 1 BOUNCE, 2 RANDOM, 3 UNDEFINED, client reflection 0x3B6E9F0).
+# A waypoint entity has a transform (m_worldTM: its place in the slice) and the component
+# AIWaypoint with a task name, a wait time range in seconds (m_minDuration, m_maxDuration; -1: the
+# creature stays), and m_matchAlignment (the creature takes the direction of the waypoint).
+PATROL_TYPE = uuid.UUID("fa7fa996-f8c3-4cd0-8313-042fb6a66578")
+WAYPOINT_TYPE = uuid.UUID("3d1526bf-ac9c-4a5d-8b0d-00abfccd19f1")
+PATROL_PATH_FIELD = field_id("m_patrolPathEntity")
+WAYPOINT_IDS_FIELD = field_id("m_waypointIds")
+POLICY_FIELD = field_id("m_pathTravesalPolicy")
+TASK_FIELD = field_id("m_taskName")
+MIN_WAIT_FIELD = field_id("m_minDuration")
+MAX_WAIT_FIELD = field_id("m_maxDuration")
+ALIGNMENT_FIELD = field_id("m_matchAlignment")
+WORLD_TRANSFORM_FIELD = field_id("m_worldTM")
+# An entity reference with one of these values names no entity (the 11 references of the
+# research that did not resolve have the first one).
+NO_ENTITIES = frozenset({0x00000000FFFFFFFF, 0, 0xFFFFFFFFFFFFFFFF})
+POLICIES = 4
+# A waypoint farther than this from its spawn point is not a waypoint of a usual patrol (meters).
+LONGEST_PATROL = 200.0
 
 
 def name_crc(text: str) -> int:
@@ -554,12 +580,98 @@ def read_spawner(roots: list[Element]) -> dict:
                 for name, wanted in SPAWNER_FIELDS.items():
                     if node.name == wanted:
                         values.setdefault(name, node)
-    return {"alias": alias, "slice": direct,
+    patrol, cause = read_patrol(roots)
+    return {"alias": alias, "slice": direct, "patrol": patrol, "patrolCause": cause,
             "respawnMin": real(values.get("m_minRespawnCooldown")),
             "respawnMax": real(values.get("m_maxRespawnCooldown")),
             "respawnAfterDeath": number(values.get("m_respawnAfterDeath")) != 0,
             "spawnOnInitialize": number(values.get("m_spawnOnInitialize")) != 0,
             "spawnOnlyOnce": number(values.get("m_spawnOnlyOnce")) != 0}
+
+
+def reference_of(element: Element | None) -> int | None:
+    """@return The 64-bit id of an entity reference (the value is some levels below the field), or no value."""
+    if element is None:
+        return None
+    return next((int.from_bytes(node.value, "big") for node in walk(element)
+                 if node.value is not None and len(node.value) == 8), None)
+
+
+def read_patrol(roots: list[Element]) -> tuple[dict | None, str]:
+    """@return The patrol of a spawner slice in the coordinates of the slice, and a cause for a spawner with no
+    patrol or with a patrol that is not complete ("": the spawner has a patrol, or names none).
+
+    The patrol: {"policy": N, "points": [(matrix, task, min wait, max wait, alignment), ...]}, with the 3 x 4
+    matrix of each waypoint in the slice (m_worldTM: the place relative to the root of the slice, nav_slices.py)."""
+    entities: dict[int, dict] = {}
+    reference = None
+    for root in roots:
+        for element in walk(root):
+            if element.name == PATROL_PATH_FIELD and reference is None:
+                reference = reference_of(element)
+            if element.type_id != ENTITY_TYPE:
+                continue
+            identifier = id_value(next((child for child in element.children if child.name == ID_FIELD), None))
+            listed = next((child for child in element.children if child.name == COMPONENTS_FIELD), None)
+            if identifier is None or listed is None:
+                continue
+            entry = entities.setdefault(identifier, {})
+            for component in listed.children:
+                transform = find_field(component, WORLD_TRANSFORM_FIELD)
+                if transform is not None and "matrix" not in entry:
+                    entry["matrix"] = matrix_of(transform.value)
+                if component.type_id == PATROL_TYPE:
+                    ids = find_field(component, WAYPOINT_IDS_FIELD)
+                    entry["patrol"] = ([reference_of(item) for item in ids.children] if ids is not None else [],
+                                       number(first(component, POLICY_FIELD)))
+                elif component.type_id == WAYPOINT_TYPE:
+                    task = first(component, TASK_FIELD)
+                    entry["waypoint"] = (task.value.decode("utf-8", "replace") if task is not None and task.value else "",
+                                         real(first(component, MIN_WAIT_FIELD)), real(first(component, MAX_WAIT_FIELD)),
+                                         number(first(component, ALIGNMENT_FIELD)) != 0)
+    if reference is None or reference in NO_ENTITIES:
+        return None, ""
+    owner = entities.get(reference, {})
+    if "patrol" not in owner:
+        return None, "the patrol entity of the spawner has no patrol component"
+    ids, policy = owner["patrol"]
+    points = []
+    for identifier in ids:
+        if identifier is None or identifier in NO_ENTITIES:
+            continue  # An empty place of the list (an invalid id of the game data).
+        waypoint = entities.get(identifier, {})
+        if "waypoint" not in waypoint or waypoint.get("matrix") is None:
+            return None, "a waypoint of the patrol has no waypoint component or no transform"
+        points.append((waypoint["matrix"], *waypoint["waypoint"]))
+    if not points:
+        return None, "the patrol has no waypoint"
+    if policy >= POLICIES:
+        return None, "the patrol has a policy that the client does not have"
+    return {"policy": policy, "points": points}, ""
+
+
+def world_route(patrol: dict, placement: dict, spawn: tuple[float, float, float]) -> tuple[list | None, str]:
+    """@return The route of a spawn point in world coordinates: [policy, [[x, y, z, yaw, min wait, max wait, task,
+    alignment], ...]], or no value and a cause. The place of a waypoint is the matrix of the placement (its
+    position, rotation, and scale: collision_data.quaternion_matrix) times the matrix of the waypoint in the slice;
+    its yaw (degrees, 0 north, 90 west) is the angle of that matrix about the vertical axis."""
+    try:
+        placed = quaternion_matrix(placement.get("rotation") or {}, placement["worldPosition"],
+                                   float(placement.get("scale", 1.0)))
+    except (KeyError, TypeError, ValueError):
+        return None, "the placement of the spawner has no position"
+    points = []
+    for matrix, task, low, high, alignment in patrol["points"]:
+        world = multiply(placed, matrix)
+        x, y, z = world[3], world[7], world[11]
+        if not all(math.isfinite(value) for value in (x, y, z, low, high)):
+            return None, "a waypoint has a number that is not finite"
+        if math.hypot(x - spawn[0], y - spawn[1]) > LONGEST_PATROL:
+            return None, f"a waypoint is more than {LONGEST_PATROL:g} m from its spawn point"
+        yaw = math.degrees(math.atan2(world[4], world[0])) % 360.0
+        points.append([round(x, 3), round(y, 3), round(z, 3), round(yaw, 2), round(low, 3), round(high, 3), task,
+                       1 if alignment else 0])
+    return [patrol["policy"], points], ""
 
 
 def read_alias(roots: list[Element]) -> list[tuple[tuple[bytes, int], int]]:
@@ -836,6 +948,10 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     kinds: dict[tuple, dict] = {}
     points: list[list] = []
     placed: dict[str, int] = {}
+    # The patrol route of each spawn point (an index into `routes`, or no value), in the sequence of `points`.
+    routes: list[list] = []
+    point_routes: list[int | None] = []
+    route_left_out: dict[str, int] = {}
     # The entry and the layer of the loop below, for the report of an entry that is left out.
     current: dict = {}
 
@@ -1004,6 +1120,14 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                                round(entry["position"][0], 4), round(entry["position"][1], 4),
                                round(entry["position"][2], 4), round(yaw_of(placement.get("rotation") or {}), 2),
                                spawner["respawnMin"], spawner["respawnMax"]])
+                # The patrol route of the spawner, in world coordinates (the transforms of the placement).
+                route, cause = (world_route(spawner["patrol"], placement, entry["position"]) if spawner["patrol"]
+                                else (None, spawner["patrolCause"]))
+                if cause:
+                    route_left_out[cause] = route_left_out.get(cause, 0) + 1
+                point_routes.append(len(routes) if route is not None else None)
+                if route is not None:
+                    routes.append(route)
     sources.check_complete()
     if not points:
         area = "the world" if whole_world else f"the area (center {center[0]:g} {center[1]:g}, radius {radius:g} m)"
@@ -1014,7 +1138,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     # more than one kind has the row, the kinds after the one with the most spawn points get a number.
     kind_list = sorted((kind for kind in kinds.values() if kind["levels"]), key=lambda kind: kind["index"])
     kind_number = {kind["index"]: position for position, kind in enumerate(kind_list)}
-    for point in points:
+    for point, route in zip(points, point_routes):
         point[1] = kind_number[point[1]]
     by_row: dict[str, list[dict]] = {}
     for kind in kind_list:
@@ -1051,6 +1175,12 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     counts["slicesWithNoActions"] = sum(1 for body in used if not slices[body]["actions"])
     # The cause of a slice with no attack is for the report of the tool, not for the file.
     causes = {body: slices[body].pop("noAttack", "") for body in used}
+    # The value Enable_Wander of the slice is for the counts of the tool, not for the file.
+    wander_flags = {body: slices[body].get("behavior", {}).pop("wanderFlag", None) for body in used}
+    counts["slicesByEnableWander"] = {"true": sum(1 for flag in wander_flags.values() if flag is True),
+                                      "false": sum(1 for flag in wander_flags.values() if flag is False),
+                                      "notInTheSlice": sum(1 for body in used if "behavior" in slices[body]
+                                                           and wander_flags[body] is None)}
     counts["slicesWithBehavior"] = sum(1 for body in used if "behavior" in slices[body])
     counts["slicesWithAttacks"] = sum(1 for body in used if slices[body].get("attacks"))
     counts["slicesWithTags"] = sum(1 for body in used if "tags" in slices[body])
@@ -1089,15 +1219,60 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
         for point in points:
             point.append(None)
     counts["spawnPointsAtTerrainHeight"] = {"0.3": near[0], "1.0": near[1]}
+    # Value 11 of a spawn point: the index of its patrol route (format 3), or null.
+    for point, route in zip(points, point_routes):
+        point.append(route)
+    counts.update(patrol_counts(routes, point_routes, points, kind_list, document_kinds, slices, used))
+    counts["routesLeftOut"] = dict(sorted(route_left_out.items()))
     counts.update({"spawnPoints": len(points), "kinds": len(document_kinds), "slices": len(used),
                    "leftOut": dict(sorted(left_out.items()))})
     # The whole world: the radius 0, and the center has no meaning.
-    return {"format": 2, "world": WORLD, "center": list(center), "radius": 0.0 if whole_world else radius,
+    return {"format": 3, "world": WORLD, "center": list(center), "radius": 0.0 if whole_world else radius,
             "regions": regions,
             "counts": counts,
             "levels": [[level, health, damage, gear_score]
                        for level, (health, damage, gear_score) in sorted(tables["levels"].items())],
-            "slices": [slices[body] for body in used], "kinds": document_kinds, "spawnPoints": points}
+            "slices": [slices[body] for body in used], "kinds": document_kinds, "spawnPoints": points,
+            "routes": routes}
+
+
+def patrol_counts(routes: list[list], point_routes: list[int | None], points: list[list], kind_list: list[dict],
+                  document_kinds: list[dict], slices: list[dict], used: list[int]) -> dict:
+    """@return The counts of the patrols and of the wander values for the output of the tool and the file."""
+    routed_kinds: set[int] = set()
+    tasks: dict[str, int] = {}
+    tasks_with_action = 0
+    task_waypoints = 0
+    policies = [0] * POLICIES
+    sizes: dict[str, int] = {}
+    for point, route in zip(points, point_routes):
+        if route is None:
+            continue
+        routed_kinds.add(point[1])
+        policy, waypoints = routes[route]
+        policies[policy] += 1
+        sizes[str(len(waypoints))] = sizes.get(str(len(waypoints)), 0) + 1
+        bodies = [slices[body] for body, _ in kind_list[point[1]]["bodies"]]
+        for waypoint in waypoints:
+            if waypoint[6]:
+                task_waypoints += 1
+                tasks[waypoint[6]] = tasks.get(waypoint[6], 0) + 1
+                tasks_with_action += any(action[0] == waypoint[6] and action[2] >= 0 for body in bodies
+                                         for action in body["actions"])
+    wandering = 0
+    neither = 0
+    for position, kind in enumerate(kind_list):
+        bodies = [slices[body] for body, _ in kind["bodies"]]
+        wanders = any(body.get("behavior", {}).get("wander", [0, 0, 0])[0] == 1
+                      and body["behavior"]["wander"][2] > 0 for body in bodies)
+        wandering += wanders
+        neither += not wanders and position not in routed_kinds
+    return {"routes": len(routes), "spawnPointsWithRoute": sum(1 for route in point_routes if route is not None),
+            "kindsWithRoute": len(routed_kinds), "kindsThatWander": wandering, "kindsWithNoRouteAndNoWander": neither,
+            "routePolicies": {"loop": policies[0], "bounce": policies[1], "random": policies[2], "undefined": policies[3]},
+            "routeWaypoints": dict(sorted(sizes.items(), key=lambda item: int(item[0]))),
+            "waypointsWithTask": task_waypoints, "waypointTasksInTheActionTable": tasks_with_action,
+            "tasks": dict(sorted(tasks.items(), key=lambda item: -item[1])[:40])}
 
 
 def health_of(document: dict, kind: dict, level: int) -> float:
@@ -1189,6 +1364,19 @@ def main() -> int:
           f"({counts['spawnPointsWithNoAttack']} spawn points; --no-attack FILE lists them)")
     near = counts["spawnPointsAtTerrainHeight"]
     print(f"  spawn points 0.3 m or less from the terrain height: {near['0.3']}; 1.0 m or less: {near['1.0']}")
+    policies = counts["routePolicies"]
+    print(f"  spawn points with a patrol route: {counts['spawnPointsWithRoute']} ({counts['kindsWithRoute']} kinds; "
+          f"loop {policies['loop']}, back and forth {policies['bounce']}, random {policies['random']}, "
+          f"undefined {policies['undefined']}; waypoints: "
+          + ", ".join(f"{size}: {count}" for size, count in counts["routeWaypoints"].items()) + ")")
+    for cause, count in counts["routesLeftOut"].items():
+        print(f"  no route, {cause}: {count}")
+    print(f"  waypoints with a task: {counts['waypointsWithTask']}; the action table of the slice has the task: "
+          f"{counts['waypointTasksInTheActionTable']}")
+    flags = counts["slicesByEnableWander"]
+    print(f"  kinds that wander: {counts['kindsThatWander']}; kinds with no route and no wander: "
+          f"{counts['kindsWithNoRouteAndNoWander']} (slices with Enable_Wander true {flags['true']}, false "
+          f"{flags['false']}, not in the slice {flags['notInTheSlice']})")
     print("  source: " + ", ".join(f"{count} files from the {name}" for name, count in sorted(sources.used.items())))
     return 0
 
