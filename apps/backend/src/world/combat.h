@@ -380,6 +380,29 @@ public:
     HitResult claim(SessionId session, const HitClaim& claim, AttackTrack& track);
 
     /**
+     * One hit of a character on a creature that passed its check: a melee attack (claim) and
+     * each hit of an ability (world/abilities.h) come here. The damage of the row (damage()),
+     * times `factor`, goes to the creature through the creature system (Creatures::hurt with
+     * the attacker: the credit and the rewards of a kill), and the session of the attacker
+     * gets the damage number (SessionSink::damage_dealt).
+     * @param what The kind of the hit for the log line ("light attack", "Shockwave").
+     * @return The verdict `accepted` with the values of the hit, or `dead` (the creature took no damage).
+     */
+    HitResult strike(Entity& attacker,
+                     Entity& target,
+                     const std::string& itemId,
+                     const gamedata::WeaponRow& weapon,
+                     std::uint32_t gearScore,
+                     std::uint32_t rowIndex,
+                     float factor,
+                     const char* what);
+
+    /** @return The combat tables, or null. */
+    [[nodiscard]] const gamedata::CombatTables* tables() const {
+        return has_tables() ? m_tables : nullptr;
+    }
+
+    /**
      * A client selects the weapon of a key (1 or 2): the weapon slot of the paperdoll with
      * that number, when it has an item. The damage of the next attack is the damage of that
      * weapon.

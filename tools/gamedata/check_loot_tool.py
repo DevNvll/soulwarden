@@ -14,6 +14,13 @@ runs the document builder and the writer of the tool (main).
   quantity-text            a quantity "1-x"                                   status 1, the file stays
   reward-levels            the reward levels 1, 2, 4                          status 1, the file stays
   not-finite               a reward factor "nan"                              status 1, the file stays
+  variant-base             a variant names a base row that is not there       status 1, the file stays
+  event-override           a base row names a kill event that is not there    status 1, the file stays
+  creature-type            a base row names a creature type with no modifier  status 1, the file stays
+  negative-experience      a kill experience -10                              status 1, the file stays
+  negative-factor          an experience factor -1                            status 1, the file stays
+  bad-flag                 the flag text "NONE"                               status 1, the file stays
+The six cases after not-finite are the corrections of the findings F3 and F4 of the code review of stage 3.5a.
 
 The values of the valid document: the entries of a table in the sequence of their thresholds with the
 quantity ranges of the row NAME_Qty and MaxRoll of the row NAME_Probs; the references resolved by their
@@ -89,14 +96,19 @@ def bucket_sheet() -> FakeSheet:
 
 
 def sheets(case: str) -> dict:
-    rewards = [[1, 10, 310, 1], [2, 11, 320, 1], [4 if case == "reward-levels" else 3, 12, 330, 1]]
-    experience = "nan" if case == "not-finite" else "1"
+    rewards = [[1, -10 if case == "negative-experience" else 10, 310, 1], [2, 11, 320, 1], [4 if case == "reward-levels" else 3, 12, 330, 1]]
+    experience = "nan" if case == "not-finite" else "-1" if case == "negative-factor" else "1"
+    variants = [["Wolf_Grey_7", "Wolf"]] + ([["Ghost_1", "NoBase"]] if case == "variant-base" else [])
+    rock_event = "KillMissing" if case == "event-override" else "KillStructure"
+    rock_type = "Nope" if case == "creature-type" else "Critter"
+    rock_flag = "NONE" if case == "bad-flag" else "TRULE"
     base_table = "Test_Missing" if case == "base-table" else "Test_Master"
     return {
         lt.REWARD_TYPE: [FakeSheet("Rewards", ["Level", "KillExperience", "KillCurrency", "KillProgressionCurrency"], rewards)],
         lt.MODIFIER_TYPE: [FakeSheet("RewardModifiers", ["Modifiers", "Experience", "Currency", "CurrencyRewardChance",
                                                          "LootDropModifier", "ProgressionCurrencyAmount"],
-                                     [["Solo", experience, "1", "", "1", ""], ["Solo+", "2", "1.15", "0", "1", "3"]])],
+                                     [["Solo", experience, "1", "", "1", ""], ["Solo+", "2", "1.15", "0", "1", "3"],
+                                      ["Critter", "0", "0", "", "1", ""]])],
         lt.DISPARITY_TYPE: [FakeSheet("AILevelDisparity", ["LevelDisparity", "KillExpModifier", "MaxRewardLevelDelta"],
                                       [["10", "0", "10"], ["-10", "-0.4", "0"]])],
         lt.EVENT_TYPE: [FakeSheet("GameEvents", ["EventID", "CoinRewardChance"], [["KillEvent", "0.05"], ["KillStructure", "0"]]),
@@ -109,15 +121,14 @@ def sheets(case: str) -> dict:
                                                        "IgnoreLootDropModifier", "LootTableId", "LootTags", "NoExpNoCoin",
                                                        "KillEventIdOverride"],
                                  [["Wolf", "Solo", "True", "0.1", "FALSE", base_table, "Beast,Common", "", ""],
-                                  ["Rock", "Critter", "False", "", "", "", "", "TRULE", "KillStructure"]])],
-        lt.VARIANT_TYPE: [FakeSheet("LevelVariantVitals_Common", ["VitalsID", "BaseVitalsId"],
-                                    [["Wolf_Grey_7", "Wolf"], ["Ghost_1", "NoBase"]])],
+                                  ["Rock", rock_type, "False", "", "", "", "", rock_flag, rock_event]])],
+        lt.VARIANT_TYPE: [FakeSheet("LevelVariantVitals_Common", ["VitalsID", "BaseVitalsId"], variants)],
         lt.LOOT_TABLE_TYPE: [loot_table_sheet(case)],
         lt.LOOT_BUCKET_TYPE: [bucket_sheet()],
     }
 
 
-CREDIT = {"timeLimit": 120, "healthShare": 0.01, "range": 200, "receivers": 10, "modifiers": [[1.0, 1.0, 1.0], [0.7, 1.0, 0.8]]}
+CREDIT = {"timeLimit": 120, "healthShare": 0.01, "range": 200, "receivers": 2, "modifiers": [[1.0, 1.0, 1.0], [0.7, 1.0, 0.8]]}
 
 
 def valid_values(document: dict) -> list[str]:
@@ -141,7 +152,8 @@ def valid_values(document: dict) -> list[str]:
         wrong.append(f"the bucket {weapons}")
     if "Test_Rare" in document["buckets"]:
         wrong.append("a bucket that no table names")
-    if document["modifiers"].get("Solo") != [1.0, 1.0, 0.0, 1.0, None] or document["modifiers"].get("Solo+") != [2.0, 1.15, 0.0, 1.0, 3.0]:
+    if document["modifiers"].get("Solo") != [1.0, 1.0, 0.0, 1.0, None] or document["modifiers"].get("Solo+") != [2.0, 1.15, 0.0, 1.0, 3.0] \
+            or document["modifiers"].get("Critter") != [0.0, 0.0, 0.0, 1.0, None]:
         wrong.append(f"the modifiers {document['modifiers']}")
     bases = document["bases"]
     vitals = document["vitals"]
@@ -166,7 +178,8 @@ def main() -> int:
     work = Path(sys.argv[1])
     work.mkdir(parents=True, exist_ok=True)
     failures = 0
-    for case in ("valid", "unresolved-table", "unresolved-bucket", "base-table", "quantity-text", "reward-levels", "not-finite"):
+    for case in ("valid", "unresolved-table", "unresolved-bucket", "base-table", "quantity-text", "reward-levels", "not-finite",
+                 "variant-base", "event-override", "creature-type", "negative-experience", "negative-factor", "bad-flag"):
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")
         errors = io.StringIO()

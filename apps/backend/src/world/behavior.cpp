@@ -468,6 +468,11 @@ void Behavior::think(Entity& creature, float seconds) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const WorldClock::time_point now = m_world.clock().now();
+    // A stun or a knockdown of an ability holds the creature: no movement and no attack (stage
+    // 3.3a). It keeps its target.
+    if (creature.creature.held(now)) {
+        return;
+    }
     if (mind.attack) {
         // An attack plays: the creature stays at its place and keeps its direction to its end.
         if (now < mind.attackEnds) {
@@ -494,6 +499,8 @@ void Behavior::think(Entity& creature, float seconds) {
     }
     const float away = horizontal_distance(creature.position, target->position);
     const bool walks = can_walk(creature);
+    // A root of an ability keeps the creature at its place: it turns and attacks in its reach.
+    const bool rooted = creature.creature.rooted(now);
     const float farthest = walks ? behavior_rules::kLoseDistance
                                  : (values.combatDistance > 0.0F ? values.combatDistance : behavior_rules::kDefaultCombatSight);
     if (away > farthest) {
@@ -506,7 +513,7 @@ void Behavior::think(Entity& creature, float seconds) {
     const float reach = attack.contacts.front().reach;
     // A creature that walks goes some distance into the reach of its attack. A creature that does
     // not leave its place attacks a target that is in the reach.
-    const float stop = walks ? std::max(reach - behavior_rules::kReachMargin, behavior_rules::kNearest) : reach;
+    const float stop = walks && !rooted ? std::max(reach - behavior_rules::kReachMargin, behavior_rules::kNearest) : reach;
     const bool level = std::fabs(creature.position.z - target->position.z) <= behavior_rules::kContactHeight;
     const bool near = away <= stop + 0.05F && level;
     // A wall between the creature and its target stops the attack too: the creature then goes on its path.
@@ -519,13 +526,14 @@ void Behavior::think(Entity& creature, float seconds) {
         }
         return;
     }
-    if (!walks) {
+    if (!walks || rooted) {
         turn_to(creature, target->position);
         return;
     }
     // One step on the path to the target. The navigation gives the place and the height of its
     // floor. The step ends where the target is in the reach, when the line to the target is free.
-    float way = values.runSpeed * seconds;
+    // A slow of an ability lowers the speed (Creature::speed_factor).
+    float way = values.runSpeed * seconds * creature.creature.speed_factor(now);
     if (sees && away - stop < way + behavior_rules::kCrowdRange) {
         // The last steps, on the free line to the target. The step ends where the target is in
         // the reach. A different creature at its end makes it shorter: the creature then
@@ -579,7 +587,10 @@ void Behavior::think(Entity& creature, float seconds) {
             no_way(creature, *target);
             return;
         }
-    } else if (next.kind == StepKind::moved && !next.partial) {
+    } else if (next.kind == StepKind::moved) {
+        // A step on a path ends a hold: on a full path the creature has a way again, and on a
+        // partial path it goes to a new nearest place, where a new hold starts (code review of
+        // stage 3.5a, finding F7: a hold of an old nearest place ended the wait at the new one).
         mind.holdUntil.reset();
     }
     switch (next.kind) {
@@ -637,15 +648,33 @@ void Behavior::go_home(Entity& creature, float seconds) {
     // At the anchor: near it in the plane and on its floor. A creature below or above its anchor
     // on a different floor goes there on its way, and it does not jump while a session observes
     // it (code review of stage 3.4e, finding F1).
-    if (at_place(creature.position, mind.anchor, behavior_rules::kHomeDistance) || !can_walk(creature)) {
+    if (at_place(creature.position, mind.anchor, behavior_rules::kHomeDistance)) {
         arrive(creature);
+        return;
+    }
+    // A stun, a knockdown, or a root of an ability: the creature waits at its place. It is not at
+    // its anchor (code review of stage 3.5a, finding F6).
+    if (creature.creature.held(now) || creature.creature.rooted(now)) {
+        return;
+    }
+    if (!can_walk(creature)) {
+        // A creature that does not walk (no free floor at its place) and that is not at its anchor:
+        // it is at its anchor in one step only when no session can observe it; if not, it waits
+        // (code review of stage 3.5a, finding F6: a jump through a ceiling in front of a client).
+        if (!observed(creature)) {
+            ++m_counts.jumps;
+            log::write("world: creature %016llx (%s) does not walk and no session observes it: it is at its anchor in one step",
+                       id_number(creature.id),
+                       creature.creature.kind->id.c_str());
+            arrive(creature);
+        }
         return;
     }
     if (mind.retracing) {
         retrace(creature, seconds);
         return;
     }
-    const float speed = creature.creature.body->behavior->runSpeed;
+    const float speed = creature.creature.body->behavior->runSpeed * creature.creature.speed_factor(now);
     const NavStep next = m_world.navigation().next_step(creature.id, creature.position, mind.anchor, speed * seconds);
     switch (next.kind) {
     case StepKind::moved:
@@ -685,7 +714,7 @@ void Behavior::retrace(Entity& creature, float seconds) {
         arrive(creature);
         return;
     }
-    const float speed = creature.creature.body->behavior->runSpeed;
+    const float speed = creature.creature.body->behavior->runSpeed * creature.creature.speed_factor(m_world.clock().now());
     const NavStep next = m_world.navigation().next_step(creature.id, creature.position, trail.back(), speed * seconds);
     switch (next.kind) {
     case StepKind::moved:
@@ -836,7 +865,8 @@ void Behavior::stand(Entity& creature) {
 void Behavior::roam(Entity& creature, float seconds) {
     CreatureMind& mind = creature.creature.mind;
     const WorldClock::time_point now = m_world.clock().now();
-    if (now < mind.roamWaitUntil) {
+    // An effect of an ability that holds the creature or keeps it at its place stops its walk too.
+    if (now < mind.roamWaitUntil || creature.creature.held(now) || creature.creature.rooted(now)) {
         return;
     }
     if (!mind.roamGoal && !next_roam_goal(creature)) {
@@ -850,7 +880,7 @@ void Behavior::roam(Entity& creature, float seconds) {
         at_roam_goal(creature);
         return;
     }
-    const float speed = ambient_speed_of(*creature.creature.body->behavior);
+    const float speed = ambient_speed_of(*creature.creature.body->behavior) * creature.creature.speed_factor(now);
     const NavStep next = m_world.navigation().next_step(creature.id, creature.position, goal, speed * seconds);
     switch (next.kind) {
     case StepKind::moved:

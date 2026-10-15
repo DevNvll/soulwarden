@@ -2,7 +2,7 @@
 
 Soulwarden runs the last retail New World: Aeternum client against a server on your own computer. No public service is involved. The game talks to a local backend and to nothing else.
 
-It is early. You can create a character, walk and travel in the whole world, put on armor, and fight the creatures of the world: they patrol, see you, attack, and go back to their place.
+It is early. You can create a character, walk and travel in the whole world, put on armor, and fight the creatures of the world with melee attacks and with the abilities of the great axe and the war hammer: the creatures patrol, see you, attack, and go back to their place.
 
 It supports one client build, `NewWorld.exe` 1.400.6031.6004151 from Steam app 1063730, on Linux with Proton. The SHA-256 of that file is `8654f01d324636d9f74f1c793b0cc4a417c3c5fa9847d9913c358ca29e0fdc8e`.
 
@@ -17,6 +17,7 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Level, attributes, weapon mastery trees, the ability bar, and trade skills.
 - Creatures at their real spawn points in the whole world, 32,840 points and 3,848 kinds in 25 regions.
 - Melee combat with a sword, a great axe, a hatchet, a war hammer, or a spear. A hit shows its damage number, and creatures die.
+- The abilities of the great axe (Charge, Maelstrom, Gravity Well) and of the war hammer (Wrecking Ball, Shockwave, Path of Destiny), with the upgrades of their trees. An ability does its damage, its button on the HUD shows the cooldown, and a creature takes the stun, the root, the slow, the knockdown, or the weaken of the ability, with its icon at the name plate. Put the nodes and the bar in the Weapon Mastery window (K).
 - Creatures fight. A creature sees your character, runs to it with its run animation, attacks, and goes back to its place at the end of its leash. 2,989 of the 3,848 kinds attack.
 - Creatures find their way around walls and rocks, up stairs, and on the floors of buildings and ruins.
 - Creatures walk their patrol routes from the game files, or wander near their place. After a fight a creature runs back to the place where it saw you. On that way it is immune and walks the way that it came, and at that place it has its full health and patrols again.
@@ -30,11 +31,12 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures do not jump, drop from an edge, climb, swim, or fly. A creature that has no way to you waits at the place nearest to you for 12 s and then goes back.
 - Creatures do not fight in groups, call others, or flee. Only 23 of the 24,895 waypoint tasks of the patrols have an animation, so a creature stands in its idle pose at the other waypoints.
 - 859 kinds of creature have no attack yet: they do not attack you, but they patrol or wander when their data has a route. No creature has a ranged attack, magic, or an ability.
+- Only the six abilities of the great axe and the war hammer work. The abilities of the other weapons do nothing. The vortex of Gravity Well has no picture, and Maelstrom and the vortex do not pull. The passive nodes and the effects on your own character (fortify, grit, empower, heal) do nothing, and no item perk changes an ability.
 - Loot items have no rolled perks, gems, or rarity yet, and nothing drops on the ground. A full bag loses the items that have no slot.
 - You cannot block or dodge. The tool window heals your character.
 - Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
 - Only kills give experience. No quest and no gathering gives experience yet.
-- No quests, no ranged weapons, no magic, and no abilities. People in the settlements say only their first line: talk to them and press E or Escape to end the talk.
+- No quests, no ranged weapons, and no magic. People in the settlements say only their first line: talk to them and press E or Escape to end the talk.
 - No world clock, so some sessions are dark.
 - One player. In a development run a second character can stand in the world, and that is all.
 
@@ -59,13 +61,14 @@ tools/build-soulwarden-game-hook.sh
 tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh     # the backend tests, with no game process
 
-tools/gamedata/appearance.sh         # ten game data tools, one time each
+tools/gamedata/appearance.sh         # eleven game data tools, one time each
 tools/gamedata/slice_ids.sh
 tools/gamedata/items.sh
 tools/gamedata/progression.sh
 tools/gamedata/creatures.sh
 tools/gamedata/combat.sh
 tools/gamedata/loot.sh
+tools/gamedata/abilities.sh
 tools/gamedata/places.sh
 tools/gamedata/heights.sh
 tools/gamedata/navigation.sh
@@ -85,9 +88,10 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `slice_ids.sh` | The server does not check the target of a client message |
 | `items.sh` | No items, and a new character has no clothing |
 | `progression.sh` | No levels and no skill points |
-| `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still: run the tool again |
+| `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still; with a file from before the ability stage, a knockdown shows the small hit reaction: run the tool again |
 | `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature; with a file from before the loot stage, a kill gives no weapon mastery experience: run the tool again |
 | `loot.sh` | A kill gives no experience, no coin, and no loot |
+| `abilities.sh` | An ability does nothing |
 | `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
 | `heights.sh` | With no navigation data, creatures do not leave their place. They attack only when you are in their reach |
 | `navigation.sh` | Creatures go on a straight line on the terrain, through walls and rocks, and they see you through a wall. A creature on a floor of a building does not leave its place |

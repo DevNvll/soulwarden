@@ -774,6 +774,27 @@ def controller_path_of(roots: list[Element]) -> str:
     return ""
 
 
+# The reaction fragments of the five power levels (r_R0_F to r_R4_F: the reaction to a hit from the front). Stage
+# 3.3a: the knockdown of an ability plays power 4, a stagger power 2 (live check L6: the fragment file of the Grey Wolf
+# has them).
+REACTION_FRAGMENTS = ("r_R0_F", "r_R1_F", "r_R2_F", "r_R3_F", "r_R4_F")
+
+
+def read_reaction_fragments(sources: Sources, roots: list[Element]) -> list[int] | None:
+    """@return The fragment index of each reaction of REACTION_FRAGMENTS (-1: the fragment file has none), or no value
+    when the slice names no controller with a fragment file. The rule of the index is the rule of the action table."""
+    controller_path = controller_path_of(roots)
+    controller = read_xml(sources, controller_path, "the action list component of the slice") if controller_path else None
+    fragment_file = controller.find("Fragments") if controller is not None else None
+    if fragment_file is None:
+        return None
+    names = read_tag_names(sources, fragment_file.get("filename", ""), game_path(controller_path)) or []
+    positions: dict[str, int] = {}
+    for position, name in enumerate(names):
+        positions.setdefault(name.lower(), position)
+    return [positions.get(name.lower(), -1) for name in REACTION_FRAGMENTS]
+
+
 def read_action_table(sources: Sources, roots: list[Element]) -> list[list] | None:
     """@return The action table of a creature slice: [action name, fragment name, fragment index, server started]
     for each action, or no value when the slice names no grid file. The position of an action in the list is its
@@ -914,6 +935,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                  "slots": [[slot, component name, state type], ...],
                  "components": [[entity id, component id, name], ...],
                  "actions": [[action name, fragment name, fragment index, server started], ...],
+                 "reactions": [r_R0_F, ..., r_R4_F],   the fragment index of the reaction of each
+                                                       power level (-1: none); only for a slice whose
+                                                       fragment file has one of them (stage 3.3a)
                  "spawnAction": NAME,                  only for a slice that needs its spawn action
                  "behavior": {"sight": [angle, distance], "combatSight": [angle, distance],
                               "leash": [at rest, in a fight], "speed": [walk, run]},
@@ -995,6 +1019,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
             slices.append(read_creature_slice(path, asset, roots))
             try:
                 slices[-1]["actions"] = read_action_table(sources, roots) or []
+                reactions = read_reaction_fragments(sources, roots)
+                if reactions is not None and any(index >= 0 for index in reactions):
+                    slices[-1]["reactions"] = reactions
             except Failure as error:
                 raise Failure(f"the action table of {path} is not complete: {error}") from error
             # What the behavior of a creature with this slice needs: its sense and speed values, the

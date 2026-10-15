@@ -62,7 +62,22 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   1 for each observer (`Creature::immune`, `immuneChanged`). It has its full health at the
   anchor. A way back with no path walks the places of the way out back (the trail, one place
   for each meter, 512 at most), and a creature is at its anchor in one step only when no
-  session can observe it (`Behavior::observed`): never a jump in front of a client.
+  session can observe it (`Behavior::observed`): never a jump in front of a client. This is
+  true also for a creature that cannot walk (no free floor at its place): it is not at its
+  anchor because it cannot walk, and while a session observes it, it waits (review of stage
+  3.5a, finding F6, case RL6).
+- The effects of an ability (stage 3.3a, protocol notes 4.22, [Abilities](abilities.md)). The
+  behavior obeys the effects of `Creature::effects` and `Creature::knockedUntil` at each step:
+  a stun, a knockdown, and a stagger (`Creature::held`) stop each step of the creature (no
+  movement, no attack, no turn; it keeps its target); a root (`Creature::rooted`) stops each
+  movement (on the way to a target the creature turns to it and attacks it in the reach of
+  its attack, as a creature that does not walk); a slow (`Creature::speed_factor`, the
+  strongest slow) lowers the speed of each step: the way to a target, the way back, the
+  trail, and a roam. A creature with a root or a stun on its way back waits at its place: it
+  is not at its anchor. A creature on its way back takes no new effect.
+- A creature with no way to its target (stage 3.4e) holds 12 s at the nearest place. A step
+  on a new path ends the hold, also a step on a partial path to a new nearest place: a new
+  hold starts at the end of that path (review of stage 3.5a, finding F7, case RL7).
 - The rules for a fight that a player can play (stage 3.4d, protocol notes 4.19; project
   rules, each constant in `behavior_rules`, `world/health.h`, or `gamedata/creature_data.h`).
   The shelter: for 10 s after a character came to a place (a world entry, a travel, a

@@ -15,6 +15,7 @@
 #include "core/logging/log.h"
 #include "gamedata/appearance_tables.h"
 #include "gamedata/combat_tables.h"
+#include "gamedata/ability_data.h"
 #include "gamedata/loot_tables.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
@@ -419,6 +420,21 @@ int main(int argc, char** argv) {
                    lootTablesPath.c_str(),
                    lootTables.error().c_str());
     }
+    // The ability data (stage 3.3a): the cooldowns, the status effects, and the spells of the abilities.
+    const std::string abilityDataPath = (gameDataDirectory / gamedata::kAbilityDataFile).string();
+    gamedata::AbilityData abilityData;
+    if (abilityData.load(abilityDataPath)) {
+        log::write("backend: ability data loaded from %s (%zu cooldowns, %zu status effects, %zu spells)",
+                   abilityDataPath.c_str(),
+                   abilityData.tables().cooldowns.size(),
+                   abilityData.tables().statusEffects.size(),
+                   abilityData.tables().spells.size());
+    } else {
+        log::write("backend: no ability data at %s (%s): each ability press is refused. Make the file with "
+                   "tools/gamedata/abilities.sh",
+                   abilityDataPath.c_str(),
+                   abilityData.error().c_str());
+    }
     // The travel places: the places of the travel command.
     const std::string travelPlacesPath = (gameDataDirectory / gamedata::kTravelPlacesFile).string();
     gamedata::TravelPlaces travelPlaces;
@@ -449,6 +465,7 @@ int main(int argc, char** argv) {
     worldOptions.combatTables = &combatTables;
     worldOptions.travelPlaces = &travelPlaces;
     worldOptions.lootTables = &lootTables;
+    worldOptions.abilityData = &abilityData;
     worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
     worldOptions.navigationData = &navigationData;
     worldOptions.navigationThread = true;

@@ -127,6 +127,10 @@ FLAG_TEXTS_NOT_IN_GAME = {"trule": True}
 RANGE_TEXTS_NOT_IN_GAME = {"49-59-59": "49-59"}
 # Texts of the cell LootDropChance that are not a number: no loot drops (the chance 0). A fact of the game data.
 CHANCE_TEXTS_NOT_IN_GAME = frozenset({"z"})
+# Variant vitals rows whose base row the game does not have (a fact of the game data of the supported build): the
+# creature tool leaves out such a kind too. A different variant with no base row stops the tool (code review of stage
+# 3.5a, finding F3).
+VARIANTS_WITH_NO_BASE_IN_GAME = frozenset({"werewolf_rabid_20328", "upyr_10221a_named", "upyr_10220a", "upyr_10220b"})
 
 
 def is_true(value) -> bool:
@@ -135,7 +139,8 @@ def is_true(value) -> bool:
     text = str(value).strip().lower()
     if text in TRUE_TEXTS:
         return True
-    if text in ("", "false", "0", "none"):
+    # "none" is not a flag text (code review of stage 3.5a, finding F4).
+    if text in ("", "false", "0"):
         return False
     if text in FLAG_TEXTS_NOT_IN_GAME:
         return FLAG_TEXTS_NOT_IN_GAME[text]
@@ -267,8 +272,12 @@ def read_rewards(sheets: dict[str, list[Sheet]]) -> dict:
         level = int(number_of(rewards.source(row, "Level"), what))
         if level != len(rows) + 1:
             raise Failure(f"{what} is the level {level}, not {len(rows) + 1}")
-        rows.append([level] + [int(number_of(rewards.source(row, name), what))
-                               for name in ("KillExperience", "KillCurrency", "KillProgressionCurrency")])
+        values = [number_of(rewards.source(row, name), what) for name in ("KillExperience", "KillCurrency", "KillProgressionCurrency")]
+        # The range of the backend: not negative (code review of stage 3.5a, finding F4). The whole part is the value
+        # (a cell of the game has the text "340.00000000000006").
+        if any(value < 0 or value > 0xFFFFFFFF for value in values):
+            raise Failure(f"{what} has a reward that is negative or too large")
+        rows.append([level] + [int(value) for value in values])
 
     modifiers_sheet = one_table(sheets, MODIFIER_TYPE, MODIFIER_TABLE)
     names = ("Modifiers", "Experience", "Currency", "CurrencyRewardChance", "LootDropModifier", "ProgressionCurrencyAmount")
@@ -287,6 +296,10 @@ def read_rewards(sheets: dict[str, list[Sheet]]) -> dict:
                            rounded(number_of(modifiers_sheet.source(row, "CurrencyRewardChance"), what)),
                            rounded(number_of(modifiers_sheet.source(row, "LootDropModifier"), what, 1.0)),
                            rounded(number_of(progression, what)) if progression else None]
+        # The ranges of the backend (code review of stage 3.5a, finding F4): no negative factor, a chance from 0 to 1.
+        factors = modifiers[name]
+        if min(factors[0], factors[1], factors[3]) < 0 or not 0 <= factors[2] <= 1 or (factors[4] is not None and factors[4] < 0):
+            raise Failure(f"the reward factors of the creature type {name} ({what}) are not in the range of the backend")
 
     disparity_sheet = one_table(sheets, DISPARITY_TYPE, DISPARITY_TABLE)
     for name in ("LevelDisparity", "KillExpModifier", "MaxRewardLevelDelta"):
@@ -370,7 +383,11 @@ def read_vitals(sheets: dict[str, list[Sheet]]) -> tuple[list, dict, dict]:
             if not identifier or identifier in vitals:
                 continue
             if base not in base_index:
-                missing += 1  # A variant row with no base row: the creature tool leaves out such a kind too.
+                # A variant row with no base row: a fact of the game data for some rows, which the creature tool leaves
+                # out too. Each other one stops the tool (code review of stage 3.5a, finding F3).
+                if identifier not in VARIANTS_WITH_NO_BASE_IN_GAME:
+                    raise Failure(f"the variant vitals row {identifier} names the base row {base}, which the tables do not have")
+                missing += 1
                 continue
             vitals[identifier] = base_index[base]
     counts["variantsWithNoBase"] = missing
@@ -529,6 +546,14 @@ def build_tables(sources: Sources) -> dict:
     bases, vitals, vitals_counts = read_vitals(sheets)
     wanted_events = {KILL_EVENT.lower()} | {base[8].lower() for base in bases if base[8]}
     document["events"] = read_events(sheets, wanted_events)
+    # Each reference of a base row resolves (code review of stage 3.5a, finding F3): the event of a kill and the
+    # creature type.
+    absent_events = sorted(event for event in wanted_events if event not in document["events"])
+    if absent_events:
+        raise Failure("the game events have no event " + ", ".join(absent_events))
+    absent_types = sorted({base[1] for base in bases if base[1] and base[1] not in document["modifiers"]})
+    if absent_types:
+        raise Failure("the reward modifiers have no creature type " + ", ".join(absent_types))
     roots = sorted({base[5] for base in bases if base[5]})
     tables, buckets, loot_counts = read_loot(sheets, roots)
     # A vitals row whose table the loot tables do not have, and a reference that does not resolve: the game has no
@@ -536,6 +561,8 @@ def build_tables(sources: Sources) -> dict:
     if loot_counts["unresolved"]:
         raise Failure("the loot tables have no table or bucket with the id(s) "
                       + ", ".join(sorted(loot_counts["unresolved"])))
+    if len(credit["modifiers"]) < credit["receivers"]:
+        raise Failure(f"the credit data has {len(credit['modifiers'])} modifiers for {credit['receivers']} characters")
     document["credit"] = credit
     document["bases"] = bases
     document["vitals"] = vitals

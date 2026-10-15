@@ -1,4 +1,5 @@
 #include <map>
+#include <set>
 #include <string>
 
 #include "core/logging/log.h"
@@ -81,9 +82,12 @@ WorldCommand roll_loot(const std::string& character, const Arguments& arguments,
         for (std::uint64_t roll = 0; roll < count; ++roll) {
             const std::vector<world::LootDrop> drops = target.rewards().roll(*vitals, context, forced);
             withLoot += drops.empty() ? 0 : 1;
+            // "rolls" counts each roll that gave the item one time, also when the roll gave it more
+            // than one time (code review of stage 3.5a, finding F10); "quantity" counts each drop.
+            std::set<std::string> counted;
             for (const world::LootDrop& drop : drops) {
                 auto& entry = items[drop.itemId];
-                entry.first += 1;
+                entry.first += counted.insert(drop.itemId).second ? 1 : 0;
                 entry.second += drop.quantity;
             }
         }

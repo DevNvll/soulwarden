@@ -11,6 +11,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 | --- | --- |
 | Creatures: the spawn points, the kinds, the record of a creature, health and death, the action of a creature (the scope fields, the locomotion of a walk), the commands | Protocol notes 4.14, `apps/backend/src/world/creatures.h`, `gamedata/creature_data.h`, `server/rep/states` (movement, vitals, marker; `creature_scope`), `server/http/creature_commands.cpp`, `tools/world creatures`, `tools/gamedata/creatures.sh`, `tools/research/creature_actions.py`, test cases UT2 and UT3 |
 | The creature data of the whole world: which entries are in, which slices are out, the spawn action of a slice, the picture check of the slices | Protocol notes 4.14, `tools/gamedata/creature_data.py`, `tools/gamedata/creature_slices.json`, `tools/research/creature_tour.py` |
+| The status effects of an ability on a creature: the stun, the root, the slow, the weaken, the knockdown and the stagger, the status state (the icons at the name plate) | Protocol notes 4.22, [Abilities](abilities.md), `world/creatures.h` (`Creatures::apply_effect`, `knock`), `world/entity.h` (`CreatureEffect`, `Creature::held`, `rooted`, `speed_factor`, `damage_factor`), `server/rep/states/status_state.cpp`, `tools/world creature effect`, test cases AB6 to AB8 |
 | The load of the world: the cost of the spawn rule, the time of a tick | `apps/backend/src/world/creatures.h` (`SpawnGrid`), `world/load_meter.h`, `tools/world list` (the line `load:`), test case WS2 |
 
 ## Rules
@@ -46,7 +47,8 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   `world::respawn_time`: from the smallest to the largest value of the spawner with the
   generator of the world, the smallest value when the largest is not larger, 30 s for two
   values of 0; `Creatures::respawn_at` sets a different one); a point whose creature a command
-  removed has no respawn time. At the respawn time, when a player is 150 m or less from the
+  removed has no respawn time, also when the creature was dead (the command clears the
+  respawn time: review of stage 3.5a, finding F8, case RL8). At the respawn time, when a player is 150 m or less from the
   point, the point first removes the body of its dead creature and then makes its new
   creature; with no player that near, the body stays (the distance rule removes it at 200 m)
   and the point waits. The respawn times are values of the world, not of the database. A
@@ -77,7 +79,9 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   creature plays a different action at that time (a walk, an attack), the session sends that
   action 1.5 s after the first record (`kSpawnLead` of `rep_session.cpp`; test case RU3); a
   movement state in the 1.5 s (a step of a walk) has no scope fields
-  (`PartsRequest::keepScope`, test case RP3). A
+  (`PartsRequest::keepScope`, test case RP3). At the end of the 1.5 s the session sends each
+  scope that is different from the scope that it sent, also the fields with no record when
+  the walk ended in the 1.5 s (review of stage 3.5a, finding F5, case RL5). A
   reaction, an attack, a walk, and the action of a command do not take the spawn action
   away, and the backend does not send it again at their end. A dead creature
   has its death action in the first state of a later session; a dead creature of a slice
@@ -111,9 +115,29 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   records by the rule of each entity: a second fragment for one slot, and a fragment that
   makes the record larger than one carrier message, go in a later record, and each later
   record of a creature starts a new bundle.
+- The status effects (stage 3.3a, protocol notes 4.22). An ability gives a creature an effect
+  of a status row of the game data (`CreatureEffect` in `Creature::effects`: the stun, the
+  root, the slow, the weaken, the end at the next hit, the end on the world clock) or a
+  knockdown or a stagger (`Creature::knockedUntil`). Only the creature system changes them:
+  `Creatures::apply_effect` (the same status again gets the later end) and
+  `Creatures::knock`. A dead creature and a creature on its way back take no effect. A stun
+  stops the attack that plays and starts the action `Stun` of the slice
+  (`CreatureSlice::stunAction`); a knockdown (power 4) or a stagger (power 2) starts the
+  action `Reaction` with the reaction fragment of its power (`CreatureSlice::reactions`, the
+  fragments `r_R0_F` to `r_R4_F` of the slice). While a stun or a knockdown holds the
+  creature (`Creature::held`), a hit starts no reaction; a hit ends a stun whose row has
+  `StopOnHitCount`. The world ends each effect at its time at the start of a tick
+  (`Creatures::end_effects`): it looks only at the creatures with an effect. At the end of
+  a stun the next movement state has the scope fields with no record. The behavior obeys
+  each effect ([Creature behavior](creature-behavior.md)), and the creature damage obeys a
+  weaken (`Creature::damage_factor`, `Combat::creature_damage`).
 - The record of a creature has the metadata state (the asset of its slice), the movement
-  state, the vitals state, and the marker state, with the slot of each component from the
-  slice (game data: `CreatureSlice::movementSlot`, `vitalsSlot`, `markerSlot`). A creature
+  state, the vitals state, the marker state, and the status state, with the slot of each
+  component from the slice (game data: `CreatureSlice::movementSlot`, `vitalsSlot`,
+  `markerSlot`, `statusSlot`: the slot of the state type 4236 of the slot list of the
+  slice). The status state has only the compact map of the effects whose row has
+  `ShowInNameplates` (the icons at the name plate); a slice with no status slot gets no
+  status state. A creature
   has only the observer view. The movement state of a creature at rest has the scope fields
   with no record: its client plays the idle action itself. An action that the server starts
   (the death action, the reaction to a hit, an attack, the spawn action of a slice that needs
@@ -143,6 +167,8 @@ tools/world creature kill 2c         # kill it (the death action, the dead mark)
 tools/world creature remove 2c       # take it out of the world
 tools/world creature reset           # each spawn point that waits makes its creature again
 tools/world creature action 2c Spawn 3   # start an action of the action table of its slice (3 s; no time: no end)
+tools/world creature effect 2c WarHammer_Shockwave_Stun 5   # a status effect of the game data for 5 s (no time: the time of its row)
+tools/world creature effect 2c knockdown 2                  # a knockdown (or stagger) for 2 s
 ```
 
 - `tools/gamedata/creatures.sh` writes `creatures.json` to the game data folder: the spawn
@@ -154,7 +180,10 @@ tools/world creature action 2c Spawn 3   # start an action of the action table o
   `--all-slices` also writes the slices that the client does not show (a file for a
   picture tour, not for the game data folder). The tool reads the two slice lists of
   `tools/gamedata/creature_slices.json`, and it stops when that file is not correct or when
-  a slice of the list `spawnAction` has no action `Spawn` with a fragment.
+  a slice of the list `spawnAction` has no action `Spawn` with a fragment. Each slice has the
+  member `reactions` (stage 3.3a): the fragment indexes of `r_R0_F` to `r_R4_F` of its
+  action `Reaction` (-1: the slice has no such fragment). With a file from before, a
+  knockdown plays the fragment of the hit reaction.
 - `tools/gamedata/creatures.sh --no-attack FILE` writes one line for each kind that does not
   attack, with the cause (859 kinds of the supported build).
 - `tools/research/creature_tour.py` is the picture check of the creature slices: `prepare

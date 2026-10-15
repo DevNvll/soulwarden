@@ -32,6 +32,11 @@
 //          set_weapon_mastery  weapon ("SwordAbilityTable" or "sword"), level (1 to 20: each
 //                              level above 1 gives one mastery point), experience
 //          set_trade_skill     skill ("Mining"), level, experience
+//          assign_node         weapon, node (the id text of a node of the tree): one mastery
+//                              point on the node, with the rules of a request of a client
+//          set_ability_bar     weapon, slot (0 to 2), ability (the id text of an active node
+//                              of the character, or "none")
+//          reset_cooldowns     no argument: each cooldown of the abilities of the character ends
 //          spawn_creature      kind (an id of the creature data), level, dx, dy, dz, yaw: a
 //                              creature near the character (3 m to the north with no place)
 //          remove_creature     creature (the id of a creature: 16 hexadecimal digits)
@@ -101,6 +106,9 @@ constexpr NamedCommand kCommands[] = {
     {"set_attribute", commands::set_attribute},
     {"set_weapon_mastery", commands::set_weapon_mastery},
     {"set_trade_skill", commands::set_trade_skill},
+    {"assign_node", commands::assign_node},
+    {"reset_cooldowns", commands::reset_cooldowns},
+    {"set_ability_bar", commands::set_ability_bar},
     // The creature commands: the character of the command is the reference place.
     {"spawn_creature", nullptr, commands::spawn_creature},
     {"remove_creature", nullptr, commands::remove_creature},

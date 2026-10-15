@@ -59,6 +59,10 @@ enum class ComponentKey {
     marker,
     /** The mana of a character (its own component; the values are in Entity::vitals). Only the owner gets it. */
     mana,
+    /** The cooldowns of the abilities of a character (stage 3.3a). Only the owner gets them. */
+    cooldowns,
+    /** The status effects of a creature (stage 3.3a): the icons at its name plate. */
+    status,
 };
 
 /**
@@ -344,6 +348,34 @@ struct CreditEntry {
 };
 
 /**
+ * One status effect on a creature (stage 3.3a, world/abilities.h): a stun, a root, a slow, or a
+ * weaken of an ability. The values come from the status row of the effect (game data); the
+ * creature system keeps the effect until its end on the world clock (Creatures::apply_effect).
+ */
+struct CreatureEffect {
+    /** The id text of the status row ("WarHammer_Shockwave_Stun"). */
+    std::string status;
+    /** The number of the effect on the wire (gamedata::StatusRow::index). */
+    std::uint16_t index{0};
+    /** True: each observer gets the icon of the effect at the name plate of the creature. */
+    bool shown{false};
+    /** True: the creature does not move and does not attack. */
+    bool stun{false};
+    /** True: the creature does not move (it turns and attacks). */
+    bool root{false};
+    /** The factor of the speed of the creature (1: no slow). */
+    float speed{1.0F};
+    /** The part of the damage of the creature that the effect adds (-0.1: a weaken of 10 percent). */
+    float damage{0.0F};
+    /** The effect ends at the next hit that the creature takes (a stun of Shockwave). */
+    bool endsOnHit{false};
+    /** The end of the effect on the world clock. */
+    WorldClock::time_point ends{};
+    /** The entity of the character whose ability made the effect. */
+    EntityId source{0};
+};
+
+/**
  * The values of a creature. The creature system sets them (world/creatures.h). The health of a
  * creature is in Entity::vitals, and its position in Entity::position.
  */
@@ -408,6 +440,66 @@ struct Creature {
      * at its anchor (the reset).
      */
     std::vector<CreditEntry> credit;
+    /** The status effects on the creature (stage 3.3a). The creature system removes each one at its end. */
+    std::vector<CreatureEffect> effects;
+    /**
+     * The end of a knockdown or a stagger of an ability (stage 3.3a): until this time the
+     * creature does not move and does not attack. No value: none.
+     */
+    std::optional<WorldClock::time_point> knockedUntil;
+
+    /** @return True while an effect holds the creature: no movement and no attack (a stun, a knockdown). */
+    [[nodiscard]] bool held(WorldClock::time_point now) const {
+        if (knockedUntil && now < *knockedUntil) {
+            return true;
+        }
+        for (const CreatureEffect& effect : effects) {
+            if (effect.stun && now < effect.ends) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /** @return True while a root holds the creature at its place (it turns and attacks). */
+    [[nodiscard]] bool rooted(WorldClock::time_point now) const {
+        for (const CreatureEffect& effect : effects) {
+            if (effect.root && now < effect.ends) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /** @return The factor of the speed of the creature: the strongest slow (a rule of this project). */
+    [[nodiscard]] float speed_factor(WorldClock::time_point now) const {
+        float factor = 1.0F;
+        for (const CreatureEffect& effect : effects) {
+            if (now < effect.ends && effect.speed < factor) {
+                factor = effect.speed;
+            }
+        }
+        return factor < 0.0F ? 0.0F : factor;
+    }
+    /** @return The factor of the damage of the creature: 1 plus the sum of the weakens (not less than 0). */
+    [[nodiscard]] float damage_factor(WorldClock::time_point now) const {
+        float part = 0.0F;
+        for (const CreatureEffect& effect : effects) {
+            if (now < effect.ends) {
+                part += effect.damage;
+            }
+        }
+        return part < -1.0F ? 0.0F : 1.0F + part;
+    }
+};
+
+/**
+ * The cooldown of one ability of a character (stage 3.3a, world/abilities.h): a value of the
+ * character in the world, with the character id as its key (roadmap, rule MP-1).
+ */
+struct AbilityCooldown {
+    /** The start of the cooldown, its end, and the earliest end that a change leaves (the minimum time of the data). */
+    WorldClock::time_point start{};
+    WorldClock::time_point end{};
+    WorldClock::time_point minEnd{};
 };
 
 /**
@@ -523,6 +615,12 @@ struct Entity {
     CombatState combat;
     /** The life state of the character. The health system changes it (world/health.h). */
     Life life;
+    /**
+     * The cooldowns of the abilities of the character, with the ability id as the key. The
+     * abilities system (world/abilities.h) keeps them with the character id as their key and
+     * puts a copy here for the cooldown state of the owner.
+     */
+    std::map<std::uint32_t, AbilityCooldown> cooldowns;
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */
     std::vector<RawFragment> rawFragments;
 

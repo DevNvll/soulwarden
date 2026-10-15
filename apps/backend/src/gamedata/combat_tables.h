@@ -182,6 +182,11 @@ public:
 
     /** @return The weapon of an item (the compare ignores the case of the letters A to Z), or null for an item with no weapon. */
     [[nodiscard]] const WeaponRow* weapon_of(std::string_view itemId) const;
+    /**
+     * @return The index of the damage row with this id (the compare ignores the case of the
+     *         letters A to Z): the row of an ability (stage 3.3a). No value: no such row.
+     */
+    [[nodiscard]] std::optional<std::uint32_t> row_index(std::string_view id) const;
     /** @return The damage row with this index. The index must come from a weapon of these tables. */
     [[nodiscard]] const DamageRow& damage_row(std::uint32_t index) const {
         return m_data.damageRows[index];
@@ -212,6 +217,8 @@ private:
     [[nodiscard]] static bool check(const CombatData& data, std::string& error);
 
     CombatData m_data;
+    /** Lower-case id of each damage row to its index. */
+    std::unordered_map<std::string, std::uint32_t> m_rows;
     std::string m_error;
 };
 

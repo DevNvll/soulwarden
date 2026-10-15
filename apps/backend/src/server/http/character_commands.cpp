@@ -323,6 +323,85 @@ WorldCommand add_skill_experience(const std::string& character, const Arguments&
     };
 }
 
+WorldCommand reset_cooldowns(const std::string& character, const Arguments&, service::HttpResponse&) {
+    return [character](world::World& target) {
+        if (target.store().find_character(character) == std::nullopt) {
+            return message(404, "the store has no character with this id");
+        }
+        const bool inWorld = target.abilities().reset_cooldowns(character);
+        log::write("world: command: each cooldown of the abilities of character %s ended", character.c_str());
+        return json_reply(200, json{{"message", "done"}, {"applied", inWorld ? "world" : "stored"}}.dump());
+    };
+}
+
+json abilities_json(world::World& target, const std::string& character) {
+    json cooldowns = json::array();
+    const world::WorldClock::time_point now = target.clock().now();
+    if (const auto* timers = target.abilities().cooldowns_of(character)) {
+        for (const auto& [ability, timer] : *timers) {
+            if (timer.end > now) {
+                const gamedata::ProgressionTables* tables = target.options().progressionTables;
+                const gamedata::AbilityNode* node = tables != nullptr ? tables->node(ability) : nullptr;
+                cooldowns.push_back({{"ability", node != nullptr ? node->id : std::to_string(ability)},
+                                     {"seconds", std::chrono::duration<double>(timer.end - now).count()}});
+            }
+        }
+    }
+    const world::AbilityCounts& counts = target.abilities().counts();
+    json presses = json::object();
+    for (std::size_t verdict = 0; verdict < world::kCastVerdictCount; ++verdict) {
+        presses[world::cast_verdict_text(static_cast<world::CastVerdict>(verdict))] = counts.presses[verdict];
+    }
+    return {{"loaded", target.abilities().has_data()},
+            {"cooldowns", cooldowns},
+            {"presses", presses},
+            {"contactHits", counts.contactHits},
+            {"areaHits", counts.areaHits},
+            {"areaLooked", counts.areaLooked},
+            {"shots", counts.shots},
+            {"vortexes", counts.vortexes},
+            {"effects", counts.effects},
+            {"effectsRefused", counts.effectsRefused},
+            {"blocked", counts.blocked}};
+}
+
+WorldCommand assign_node(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    const auto weapon = arguments.text("weapon");
+    const auto node = arguments.text("node");
+    if (!weapon || weapon->empty() || !node || node->empty()) {
+        refusal = message(400, "give weapon=NAME and node=ID (the id text of a node of the tree)");
+        return {};
+    }
+    return [character, weapon = *weapon, node = *node](world::World& target) {
+        const gamedata::ProgressionTables* tables = target.options().progressionTables;
+        const gamedata::ProgressionRow* row = tables != nullptr ? tables->progression(progression_name(tables, weapon)) : nullptr;
+        const gamedata::AbilityNode* found = tables != nullptr ? tables->node(node) : nullptr;
+        if (row == nullptr || found == nullptr) {
+            return message(404, "the progression tables have no such weapon or node");
+        }
+        return skill_reply(target.skills().assign(character, row->wireId, found->wireId, 1));
+    };
+}
+
+WorldCommand set_ability_bar(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    const auto weapon = arguments.text("weapon");
+    const auto slot = arguments.integer("slot", 0, world::kBarSlots - 1);
+    const auto ability = arguments.text("ability");
+    if (!weapon || weapon->empty() || !slot || !ability || ability->empty()) {
+        refusal = message(400, "give weapon=NAME, slot=N (0 to 2), and ability=ID (or none)");
+        return {};
+    }
+    return [character, weapon = *weapon, slot = static_cast<std::uint32_t>(*slot), ability = *ability](world::World& target) {
+        const gamedata::ProgressionTables* tables = target.options().progressionTables;
+        const gamedata::ProgressionRow* row = tables != nullptr ? tables->progression(progression_name(tables, weapon)) : nullptr;
+        const gamedata::AbilityNode* found = tables != nullptr && ability != "none" ? tables->node(ability) : nullptr;
+        if (row == nullptr || (ability != "none" && found == nullptr)) {
+            return message(404, "the progression tables have no such weapon or node");
+        }
+        return skill_reply(target.skills().set_bar(character, row->wireId, slot, found != nullptr ? found->wireId : 0));
+    };
+}
+
 std::optional<json> items_view(world::World& target, const std::string& character) {
     const auto holdings = target.inventory().holdings(character);
     if (!holdings) {

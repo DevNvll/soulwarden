@@ -224,6 +224,56 @@ bool Store::execute(const char* sql) {
     return true;
 }
 
+bool Store::begin_write() {
+    // In a batch the write is a savepoint of its transaction (Store::Batch).
+    return execute(m_batch > 0 ? "SAVEPOINT store_write" : "BEGIN IMMEDIATE");
+}
+
+bool Store::end_write(bool ok) {
+    if (m_batch > 0) {
+        if (ok && execute("RELEASE store_write")) {
+            return true;
+        }
+        (void)execute("ROLLBACK TO store_write");
+        (void)execute("RELEASE store_write");
+        return false;
+    }
+    if (ok && execute("COMMIT")) {
+        return true;
+    }
+    (void)execute("ROLLBACK");
+    return false;
+}
+
+Store::Batch::Batch(Store& store) : m_store(store) {
+    m_store.m_mutex.lock();
+    m_open = m_store.m_database != nullptr && m_store.execute("BEGIN IMMEDIATE");
+    if (m_open) {
+        ++m_store.m_batch;
+    }
+}
+
+Store::Batch::~Batch() {
+    if (m_open && !m_done) {
+        --m_store.m_batch;
+        (void)m_store.execute("ROLLBACK");
+    }
+    m_store.m_mutex.unlock();
+}
+
+bool Store::Batch::commit() {
+    if (!m_open || m_done) {
+        return false;
+    }
+    m_done = true;
+    --m_store.m_batch;
+    if (m_store.execute("COMMIT")) {
+        return true;
+    }
+    (void)m_store.execute("ROLLBACK");
+    return false;
+}
+
 bool Store::open(const std::string& path) {
     std::lock_guard lock(m_mutex);
     if (sqlite3_open(path.c_str(), &m_database) != SQLITE_OK) {
@@ -564,7 +614,7 @@ bool Store::write_items(const std::string& characterId,
                         const std::vector<ItemRow>& rows,
                         std::optional<std::uint64_t> coin) {
     std::lock_guard lock(m_mutex);
-    if (!execute("BEGIN IMMEDIATE")) {
+    if (!begin_write()) {
         return false;
     }
     bool ok = true;
@@ -594,8 +644,7 @@ bool Store::write_items(const std::string& characterId,
         sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(*coin));
         ok = sqlite3_step(statement.handle) == SQLITE_DONE;
     }
-    if (!ok || !execute("COMMIT")) {
-        (void)execute("ROLLBACK");
+    if (!end_write(ok)) {
         return false;
     }
     return true;
@@ -671,7 +720,7 @@ ProgressRow Store::progress(const std::string& characterId) {
 
 bool Store::set_progress(const std::string& characterId, const ProgressRow& row, std::optional<std::uint64_t> coin) {
     std::lock_guard lock(m_mutex);
-    if (!execute("BEGIN IMMEDIATE")) {
+    if (!begin_write()) {
         return false;
     }
     bool ok = true;
@@ -703,8 +752,7 @@ bool Store::set_progress(const std::string& characterId, const ProgressRow& row,
     if (!ok) {
         log::write("store: no write of the progress of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
     }
-    if (!ok || !execute("COMMIT")) {
-        (void)execute("ROLLBACK");
+    if (!end_write(ok)) {
         return false;
     }
     return true;
@@ -764,7 +812,7 @@ SkillRows Store::list_skills(const std::string& characterId) {
 
 bool Store::write_skills(const std::string& characterId, const SkillRows& rows) {
     std::lock_guard lock(m_mutex);
-    if (!execute("BEGIN IMMEDIATE")) {
+    if (!begin_write()) {
         return false;
     }
     bool ok = true;
@@ -810,8 +858,7 @@ bool Store::write_skills(const std::string& characterId, const SkillRows& rows) 
     if (!ok) {
         log::write("store: no write of the skills of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
     }
-    if (!ok || !execute("COMMIT")) {
-        (void)execute("ROLLBACK");
+    if (!end_write(ok)) {
         return false;
     }
     return true;

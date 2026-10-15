@@ -65,6 +65,10 @@ constexpr const char* kHitAction = "Reaction";
 constexpr const char* kMoveAction = "Move_Combat";
 /** The locomotion of a walk with no target (CreatureSlice::walkAction). */
 constexpr const char* kWalkAction = "Move";
+/** The action of a stunned creature (CreatureSlice::stunAction, live check L6 of stage 3.3a). */
+constexpr const char* kStunAction = "Stun";
+/** The state type of the status effect component (MB::StatusEffectsComponentReplicatedState). */
+constexpr std::uint32_t kStatusEffectsType = 4236;
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -197,6 +201,20 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
             action.fragmentIndex = static_cast<std::int32_t>(fragment);
             action.serverStarted = row[3].get<bool>();
             slice.actions.push_back(std::move(action));
+        }
+    }
+    // The reaction fragments of each power level (stage 3.3a): a member of a file of a newer tool.
+    if (entry.contains("reactions")) {
+        const json& reactions = entry["reactions"];
+        if (!reactions.is_array() || reactions.size() != slice.reactions.size()) {
+            return false;
+        }
+        for (std::size_t power = 0; power < slice.reactions.size(); ++power) {
+            if (!reactions[power].is_number_integer() || reactions[power].get<std::int64_t>() < -1
+                || reactions[power].get<std::int64_t>() > kMaxFragmentIndex) {
+                return false;
+            }
+            slice.reactions[power] = static_cast<std::int32_t>(reactions[power].get<std::int64_t>());
         }
     }
     // The spawn action: a member of a slice that needs it. A member with a wrong form is a fault.
@@ -541,6 +559,13 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
         slice.hitAction = slice.find_action(kHitAction);
         slice.moveAction = slice.find_action(kMoveAction);
         slice.walkAction = slice.find_action(kWalkAction);
+        slice.stunAction = slice.find_action(kStunAction);
+        slice.statusSlot = 0;
+        for (const CreatureSlice::Slot& slot : slice.slots) {
+            if (slot.stateType == kStatusEffectsType && slice.statusSlot == 0) {
+                slice.statusSlot = slot.slot;
+            }
+        }
         // The hits of each attack, and its heavy attacks (project rules, creature_data.h).
         slice.lightAttacks.clear();
         slice.heavyAttacks.clear();

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "gamedata/ability_data.h"
 #include "gamedata/appearance_tables.h"
 #include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
@@ -63,7 +64,10 @@ struct ServerHost {
     gamedata::NavigationData navigation;
     /** The loot tables of the world. They are empty until a case sets them: a kill then gives nothing. */
     gamedata::LootTables loot;
-    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot)};
+    /** The ability data of the world (stage 3.3a). It is empty until a case sets it: each ability press is then refused. */
+    gamedata::AbilityData abilities;
+    world::World world{clock, store, tables,
+                       with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -138,6 +142,19 @@ struct ServerHost {
                                               const gamedata::LootTables& loot) {
         world::WorldOptions options = with_game_data(catalog, progression, creatures, combat, places, terrain, navigation);
         options.lootTables = &loot;
+        return options;
+    }
+    static world::WorldOptions with_game_data(const gamedata::ItemCatalog& catalog,
+                                              const gamedata::ProgressionTables& progression,
+                                              const gamedata::CreatureData& creatures,
+                                              const gamedata::CombatTables& combat,
+                                              const gamedata::TravelPlaces& places,
+                                              gamedata::Terrain& terrain,
+                                              const gamedata::NavigationData& navigation,
+                                              const gamedata::LootTables& loot,
+                                              const gamedata::AbilityData& abilities) {
+        world::WorldOptions options = with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot);
+        options.abilityData = &abilities;
         return options;
     }
 

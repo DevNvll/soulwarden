@@ -4615,12 +4615,20 @@ stage 1.3, 1.5, and 1.6. The HUD (`lootticker2024.luac`) shows one line for each
 
 - The tool stops (status 1, no file) for a reference of a table, of a bucket, or of a vitals
   row that does not resolve, a quantity or a range text that is not a number, reward levels
-  that do not start at 1 and go up by 1, and a number that is not finite. Facts of the game
+  that do not start at 1 and go up by 1, and a number that is not finite. From stage 3.3a
+  (code review of stage 3.5a, findings F3 and F4) also for a variant vitals row whose base row
+  is not there, a kill event override or a creature type of a base row that the events or the
+  reward modifiers do not have, fewer credit modifiers than receivers, a negative reward or
+  reward factor, a coin chance outside 0 to 1, and the flag text "NONE". Facts of the game
   data that the tool accepts, each one in a list of the tool: the flag text "TRULE" (true),
-  the chance text "z" (0), and the tag range "49-59-59" (49 to 59). The check is
-  `tools/gamedata/check_loot_tool.py` (case LT8).
+  the chance text "z" (0), the tag range "49-59-59" (49 to 59), and the four variant rows with
+  no base row (`VARIANTS_WITH_NO_BASE_IN_GAME`: Werewolf_Rabid_20328, Upyr_10221a_Named,
+  Upyr_10220a, Upyr_10220b). The whole part of a reward is its value (a cell has the text
+  "340.00000000000006"). The check is `tools/gamedata/check_loot_tool.py` (cases LT8, RL3).
 - The backend refuses a file whose parts do not fit together, as a whole (case LT1): with no
-  file (or no valid file) a kill gives nothing, as before stage 3.5a. A combat tables file of
+  file (or no valid file) a kill gives nothing, as before stage 3.5a. From stage 3.3a (finding
+  F2, case RL2) this includes a base row whose creature type or kill event the file does not
+  have, and fewer credit modifiers than receivers. A combat tables file of
   a tool from before has no mastery: a kill then gives no mastery experience.
 - The respawn values of a spawner (`m_minRespawnCooldown`, `m_maxRespawnCooldown`) are in the
   creature file since stage 3.4a (spawn point values 7 and 8): 16,713 points have 360 and 360,
@@ -4637,9 +4645,10 @@ stage 1.3, 1.5, and 1.6. The HUD (`lootticker2024.luac`) shows one line for each
 | NoExpNoCoin | No experience, no mastery, and no coin (764 base rows); the loot is rolled. |
 | The coin | The chance is `CurrencyRewardChance` of the creature type when it is above 0, or the coin chance of the kill event of the vitals row (0.05). With that chance (the generator of the world): `KillCurrency` of the reward level times the coin factor of the creature type times the credit modifier, the whole part (hundredths of a coin). |
 | The loot | A vitals row with `CanDropLoot` and a loot table. The outer chance is `LootDropChance` times the loot factor of the creature type (not with `IgnoreLootDropModifier`) times the loot factor of the credit; with that chance the loot table of the row is rolled (below). |
-| The items and the coin | One transaction of the inventory system (`Inventory::grant`): each item goes into the stacks of the item that are not full first, then into new stacks in the first empty slots; each slot that changed has the cause 1 (the loot notice). The coin is in the same transaction (`Store::write_items` with the coin), not above the wallet limit. When the database refuses the change, no item and no coin changes (case LT4). |
+| The items and the coin | The inventory system (`Inventory::grant`): each item goes into the stacks of the item that are not full first, then into new stacks in the first empty slots, with the whole quantity of the drop (not the limit of the give command: finding F11, case RL11); each slot that changed has the cause 1 (the loot notice). The coin is in the same write (`Store::write_items` with the coin), not above the wallet limit. |
+| One change | From stage 3.3a (code review of stage 3.5a, finding F1; roadmap rule MP-7) the reward of one character is one transaction of the store (`Store::Batch`): the experience, the mastery, the items, and the coin. Each write of the three systems is a savepoint of it. When the store refuses a write, the transaction writes nothing, and the entity of the character gets its values of before again (each system changed it after its own write): no part of the reward is given (case RL1, `RewardCounts::refused`). A part that a rule refuses (a mastery that the progression tables do not have) is not given, and the other parts are. |
 | A full bag | The bag has 500 slots at most (the vector of the client). An item that has no slot is not given: the world has no item on the ground in this stage (`loot.md` 3.2: an ItemDrop needs a loot entity and the LootTracker). The other items, the coin, the experience, and the mastery are given. The weight of the items is not a limit (the client shows the encumbrance). |
-| The respawn time | At the death of a creature of a spawn point, the point waits until the death plus the respawn time of its spawner: a time from the smallest to the largest value with the generator of the world when the largest value is larger; the smallest value when it is not (a largest value of 0 is no value: the version converter of the client, 0x3BF6720, gives an old spawner only `m_minRespawnCooldown`); 30 s for two values of 0 (`kShortestRespawn`, 4 points). Then, with a player 150 m or less from the point, the body leaves the world and the point makes a new creature (a new entity id, full health, its patrol from the first waypoint); with no player near, the body leaves by the distance rule (200 m) and the point waits for a player. A creature that a command removed has no respawn time: its point waits for the command `reset`. The respawn time costs nothing in a scan: a scan looks only at the points near a player (case LT7). The respawn times are not in the database. |
+| The respawn time | At the death of a creature of a spawn point, the point waits until the death plus the respawn time of its spawner: a time from the smallest to the largest value with the generator of the world when the largest value is larger; the smallest value when it is not (a largest value of 0 is no value: the version converter of the client, 0x3BF6720, gives an old spawner only `m_minRespawnCooldown`); 30 s for two values of 0 (`kShortestRespawn`, 4 points). Then, with a player 150 m or less from the point, the body leaves the world and the point makes a new creature (a new entity id, full health, its patrol from the first waypoint); with no player near, the body leaves by the distance rule (200 m) and the point waits for a player. A creature that a command removed has no respawn time, also a dead body with a respawn time of its death (finding F8, case RL8): its point waits for the command `reset`. The respawn time costs nothing in a scan: a scan looks only at the points near a player (case LT7). The respawn times are not in the database. |
 | The loot switch | A development value of a character (the debug message `DebugSetForceDropAILoot` of the client, type 1356, `loot.md` 3.3): the outer chance and the coin chance of its kills pass. `tools/world loot CHARACTER on`, the admin command `set_force_loot`, the mark "Each kill drops loot and coin" of the tab "Character" of the tool window. |
 
 **The roll of a loot table** (the rules of the roller of the client, 0x368B070, with the
@@ -4689,8 +4698,9 @@ generator of the world; `loot.md` 1.3 and 1.4):
 **The commands** (development routes only, but the switch): `tools/world loot CHARACTER
 on|off` (`POST /v1/dev/world/force-loot?character=ID&force=0|1`; admin `set_force_loot` with
 `force`; the state of a character has `health.forceLoot`), `tools/world roll KIND [LEVEL]
-[--count N] [--forced] [--character CHARACTER]` (`GET /v1/dev/loot/roll`: the count of each
-item of N rolls; nothing is given), `tools/world creature respawn CREATURE SECONDS` (`POST
+[--count N] [--forced] [--character CHARACTER]` (`GET /v1/dev/loot/roll`: for each item the
+rolls that gave it, one for each roll also when a roll gave it more than one time (finding F10,
+case RL10), and the quantity of all its drops; nothing is given), `tools/world creature respawn CREATURE SECONDS` (`POST
 /v1/dev/creatures/respawn?creature=ID&seconds=N`: the respawn time of the spawn point of a
 dead creature from now). `tools/world list` has the line `rewards`, and `tools/world
 creatures` has the respawn time of the point of a dead creature.
@@ -4727,6 +4737,186 @@ in weapon slot 2 at mastery level 8):
   Territory Standing` 7), the currency of a season, and the loot of a quest.
 - An item on the ground and the LootTracker (slot 33, type 982) with its AI loot entry; the
   timers of a chest (60 min) and of the AI loot (5 min).
+
+### 4.22 Abilities: the keys of the bar, the cast, the cooldown state, the status effects of a creature (live proof of stage 3.3a; the rules are project rules with the values of the game data)
+
+Stage 3.3a. Research: `~/Games/soulwarden/work/research/ability-use.md` (two passes, "not
+ready") and `abilities-effects.md`. Live checks L1 to L8 and the live proof:
+`~/Games/soulwarden/work/evidence/abilities/implement/` (`live/LIVE-CHECKS.md`, `live/L*`,
+`proof/V*`). Code: `world/abilities.h` (the rules, `ability_rules`, `Abilities::plan`),
+`gamedata/ability_data.h`, `world/creatures.h` (`apply_effect`, `knock`), `world/behavior.cpp`,
+`world/combat.h` (`Combat::strike`, `Combat::claim`), `server/rep/client_input.h`,
+`server/rep/states/cooldown_state.cpp`, `server/rep/states/status_state.cpp`; tools
+`tools/gamedata/abilities.sh` (`abilities.py`) and `tools/gamedata/creatures.sh` (the reaction
+fragments of a slice). Test cases AB1 to AB12.
+
+**The keys** (live proof L1, static proof `0x651C180`, `0x6870BB0`). A key of the bar sets bits
+of the action words of the input entry (4.7). The first entry of a press has the press bit and
+the virtual bit, one or two entries have the hold bit, and one entry has the release bit:
+
+| Key (place of the bar) | Press | Virtual | Hold | Release |
+| --- | ---: | ---: | ---: | ---: |
+| Q (place 0, input number 402) | 402 | 479 | 39 | 211 |
+| R (place 1, input number 115) | 115 | 571 | 332 | 196 |
+| F (place 2, input number 139) | 139 | 523 | 207 | 172 |
+
+- The bits are the same for each weapon: the weapon in the hand and its bar give the ability
+  (`Abilities::press`).
+- The client plays the ability with no answer of the server: the animation, the movement of
+  Charge (about 10 m), and its own cooldown (the setter 0x6923930 runs at the press with the
+  ability id as the key). It does not play a press in its own cooldown, and it sends the bits
+  of that press. Its HUD shows no countdown for its own cooldown (live L1).
+- The client has no message for an ability start and none for a refusal (L2: no client message
+  other than 1589 near a press; `abilities-effects.md` 2). A cooldown of the server alone does
+  not stop the client: a press in it plays the ability (L2). The backend sends no refusal and
+  no correction (none is proved).
+- One press after the first weapon change of a session sent the key bits, and the client did
+  not play the ability (no setter call, live L1 and run r2). Its input entries were equal to
+  the entries of a press that played, in each field. The cause is not known: the backend
+  cannot see it, and it takes such a press as a cast.
+- After a travel the body of the character faces north, also when the camera faces a
+  different direction. Wrecking Ball and Charge go in the direction of the body (live run r3):
+  a short walk turns the body to the camera.
+
+**The contacts of an ability** (live proof L3). The client reports each melee contact of an
+ability in the third list of its input entry, as for an attack (4.15): provider FFFFFFFF, and no
+ability id. Measured (input steps of 1/30 s from the press):
+
+| Ability | Contacts |
+| --- | --- |
+| Wrecking Ball | one, 24 steps after the press (0.8 s) |
+| Charge | one, 14 steps after the press, for a creature 6 m in front; none for a creature that the run went past |
+| Maelstrom (with No Reprieve) | two, 14 and 26 steps after the press (the two spins), with two different hit volumes |
+| Gravity Well | one, 16 steps after the press (the swing of the axe) |
+| Shockwave, Path of Destiny | none: no item in any list (L7) |
+
+**The shot of Gravity Well** (live proof L7). 15 steps after the press (the marker
+`CastGavityWellProjectile` at 0.533 s) the entry has one item of the second list (192 bytes,
+4.7): the origin at the character (1.5 m higher), the direction of the camera, and at byte 180
+the value `attack` 8E14366B, the CRC-32 of "gravitywell" (the `RangedAttackName` of the spell
+row). The client shows no vortex: the vortex of the game is an entity of the server (the slice
+`slices/items/weapons/greataxe_gravitywell_vortex.dynamicslice`), which this backend does not
+make. The backend reads the origin, the direction, and the attack of each shot
+(`InputShot`).
+
+**The cooldown state** (live proof L4; static proof: constructor 0x66F3C90, writer 0x666C2B0,
+reader 0x6951A10, apply 0x683B0B0, getter 0x67E9840). Slot 45 of the player slice, type 2932
+(`MB::CooldownTimersComponentReplicatedState`), owner only (the remote player slice has no
+such component):
+
+```text
+group mask 01, field mask 07 (fields 0, 1, 2: the maps of the places 0, 1, 2 of the bar)
+field := 00 (no change entries) 01 sequence:size64 count:size ( abilityId:u32 end:u64 minimumEnd:u64 )*
+```
+
+- The three outer keys of the component (+0x5D4, +0x5D8, +0x5DC) are 0x192, 0x73, 0x8B in the
+  live client: the input numbers 402, 115, 139 of the three places. The apply function gives
+  field N to key N: field 0 is the map of place 0 of the bar of each weapon (Charge and
+  Wrecking Ball), and the key in a map is the ability id (live: Charge in field 0 shows the
+  countdown on Q).
+- The two times are the server time in microseconds: the time of the world clock (the steady
+  clock of the backend, the clock of the registration reply, 3.4) divided by 1,000. The client
+  shows the end minus its actor time as the countdown (live: 19 then 15 for an end 20 s after
+  the send). The second time is the minimum end (the start plus `MinTime` of the data:
+  `ability-use.md` Q4).
+- The backend sends each map in the full form with the world revision of the change as its
+  sequence: a list with a larger sequence replaces the list of the client. A cooldown that
+  ended leaves the maps at the next change. No fragment in the first record of a character
+  with no cooldown (the stored bytes of case T2 did not change).
+- A cooldown is per ability, not per place (live: Charge started 6 s after Wrecking Ball, both
+  on place 0).
+
+**The status effects of a creature** (live proof L5; static proof: constructor 0x4013900,
+apply 0x4028F70, compact reader 0x4044030). The component `StatusEffects` of a creature slice
+(state type 4236; its slot is a value of the slice: 8 for the Grey Wolf, `CreatureSlice::
+statusSlot` from the slot list of the creature data). Group 3 has the maps of an observer:
+field 0 the full map (`statusIndex:u16 wallEnd:u64 potency:f16 stacks:u8 flags:u8`) and field 1
+the compact map (`statusIndex:u16 packed:u8`, bits 0 to 6 the stacks, bit 7 the potency 1).
+
+- The client shows the icon of an effect at the name plate of a creature from the compact map
+  only: the full map alone shows no icon, and an empty compact map removes each icon (live
+  L5). The backend sends only the compact map (`00 01 sequence count (index 81)*`), with the
+  effects whose status row has `ShowInNameplates`.
+- The number of an effect is the position of the CRC-32 of its lower-case id in the list of
+  the CRC values of all rows of the status tables in the unsigned order, with the duplicate
+  (Sanctuary): the list of the live client (manager `[[0x14A333CE8]]` +0x218) has 4,517
+  entries, and WarHammer_Shockwave_Stun is 1710, WarHammer_Ult_SlowOnCC 1728,
+  GreatAxe_Vortex_Root 1059, Status_Passive_GreatAxe_Gravity_Root_Hold 2182 (the "all rows"
+  candidates of the research; the tool gives the same numbers).
+- A compact entry has no end: the server sends the list again at the end of an effect.
+
+**The actions of a control effect** (live proof L6, run r2). The action `Stun` of a slice
+(fragment `r_Stun_Loop`, 432 of 503 slices) plays a stun pose. The action `Reaction` with the
+fragment `r_R4_F` of the slice (the reaction of the power 4, 454 slices) plays a knockdown: the
+Grey Wolf rears up and falls on its back (`first-run/R2-01-*`, `proof/V01-*`). The fragment
+indexes of the reactions of the five powers (`r_R0_F` to `r_R4_F`) are a member `reactions` of
+a slice of the creature file (`tools/gamedata/creature_data.py`, `read_reaction_fragments`).
+
+**The data** (game data, `tools/gamedata/abilities.sh`, file `ability-data.json` of format 1):
+
+| Value | Source in the game files | Member |
+| --- | --- | --- |
+| The cooldown of each ability (98) | `CooldownData`: `AbilityID`, `Time`, `MinTime` | `cooldowns` |
+| Each status effect (4,516 ids of 4,517 rows): its number, `BaseDuration`, `MoveSpeedMod`, `Stunned`, `NoNav`, `StopOnHitCount`, `ShowInNameplates`, `DMGStandard` | Each `StatusEffectData` table | `statusEffects` |
+| Each spell (1,777): `Radius`, `Height`, `CastDistance`, `NumToSpawn`, `SpawnRate`, `Duration` | Each `SpellData` table | `spells` |
+| The damage rows of the abilities | `DamageTable` (the combat tables, 4.15) | `combat-tables.json` |
+
+The tool stops (no file) for a table type that is not there, a number that is not finite, a
+negative cooldown, a flag text that is not a flag, and two rows of one list with one id and
+different values. The backend refuses a file that is not complete as a whole; with no file it
+refuses each press (`no data`).
+
+**The rules** (project rules; the values of the data where it has a value):
+
+| Rule | What the backend does |
+| --- | --- |
+| The cast | The session gives each press bit of a new input step (one cast for each input sequence: a client sends an entry in five reports) to the world (`Abilities::press`), with the input number, the look direction of the camera, and the lock (a travel that the client did not confirm). The world finds the character from the session, the weapon in its hand (`Combat::weapon_in_hand`) and its ability table (the weapon mastery of the weapon row), and the ability of the place of the key on the bar of that table. It refuses (no cast, no cost, no hit, no message) when the character is dead, the input is locked, the weapon has no ability table, the place is empty, the character does not have the node, the ability has no rule here or the data has no row for it, its cooldown runs, or a different cast plays (the time of the cast below). |
+| The cooldown | At an accepted press, the cooldown of the data (`Time`, and the minimum `MinTime`) on the world clock: a value of the character with the character id as its key (`Abilities`), which a new session and a new entity of the character keep. |
+| The cost | 0: the data gives the six abilities no direct cost (`ability-use.md` Q2), and the client predicts none (live L8: the stamina bar stays full, no mana meter). |
+| Melee phases | A contact of the session of the caster in the window of a phase (input steps from the press, and the same time on the world clock plus 0.5 s) is a hit of that phase (`Combat::claim`), with its damage row; one hit of a creature for each phase. The hit check of a melee attack stays (the target, the observer, the immune mark, the weapon, the distance, the point, the rate). The damage goes through `Combat::strike`, the one function of each hit: `Combat::damage` with the row, `Creatures::hurt` with the attacker (the credit and the rewards of a kill), the damage number to the owner. |
+| Area phases | At the time of a phase (a timer of the world clock), the creatures of its circle from the position index (`World::for_each_near`: no scan of the world), not more than 3 m higher or lower (or the `Height` of the spell), with no wall between the center and the creature (`Navigation::sees`), 32 at most (the nearest first); each one gets the damage and the effects one time for each phase. A creature on its way back takes nothing. A caster that left the world or died does nothing. |
+| The effects | A status effect has the values of its row: a stun (`Stunned`: no movement, no attack; its attack that plays stops, and it plays its action `Stun`), a root (`NoNav`: no movement; it turns and attacks in its reach), a slow (`MoveSpeedMod`: the speed of each step times 1 + the value; the strongest slow of the effects), a weaken (`DMGStandard`: the damage of the creature times 1 + the value, `Combat::creature_damage`), the end at the next hit (`StopOnHitCount`). The same effect again gets the later end. A knockdown (power 4) or a stagger (power 2): the action `Reaction` with the reaction fragment of the power, and no movement and no attack for 2 s or 1 s. The world ends each effect at its time (only the creatures with an effect). A creature on its way back takes no effect, and a creature with a root or a stun on its way back waits (it is not at its anchor). |
+| Charge | One phase: steps 3 to 90, row `GreatAxe_Engage1` (the build has no upgrade of Charge). Cast time 0.5 s. |
+| Maelstrom | Phase 1: steps 3 to 20 (to 45 with no No Reprieve), row `GreatAxe_Maelstrom` with `_Reach` (Storm's Reach) and `_RP2` (Gravity); phase 2 with No Reprieve: steps 21 to 45, row `GreatAxe_Maelstrom_NoReprieve` (`_RP2`). Gravity: the root `Status_Passive_GreatAxe_Gravity_Root_Hold` (0.4 s) 0.33 s after a hit. Cast time 0.9 s. |
+| Gravity Well | The swing: steps 3 to 30, row `GreatAxe_GravityWell` (0.25). The projectile: the first shot of the session with the attack "gravitywell" (for an origin more than 5 m from the character, the origin is the character, 1.5 m higher), or with no shot the server throws it from the character in the direction of the press 0.83 s after it. It flies in the plane to the first creature that is 1 m or less from its line, to a wall, or to `CastDistance` of `Spell_GreatAxe_GravityWell_Projectile` (10 m), at 20 m/s; the vortex starts there (the radius of `Spell_GreatAxe_GravityWell_Vortex`, `_Upgrade` with Unyielding: 4 m): the root `GreatAxe_Vortex_Root` (1 s) and the slow `GreatAxe_Vortex` (60 percent, 3 s). 3 s later the burst: row `GreatAxe_GravityWell_Burst` (Corruption), with Crowded Well 10 percent more for each creature in the vortex, 5 at most. Cast time 0.6 s. |
+| Wrecking Ball | One phase: steps 3 to 45, row `Warhammer_Damage_WreckingBall` (`_Push` with Breathing Room), a knockdown, and Aftershock. Cast time 0.8 s. |
+| Shockwave | 0.8 s after the press: the circle of `WarHammer_Spell_Shockwave` around the caster (3 m; `_L2` and the row `_L2` with Meteoric Crater: 4 m), row `Warhammer_Damage_Shockwave`; the stun `WarHammer_Shockwave_Stun` (2 s, ends at the next hit), the weaken `WarHammer_Shockwave_Weaken` with Frailty (10 percent, 10 s), and Aftershock. Cast time 0.8 s. |
+| Path of Destiny | From 1 s after the press: `NumToSpawn` circles of the spell (3) of its `Radius` (4 m), one each `CastDistance` (3.8 m) in front of the caster in the direction of the press, `SpawnRate` (200 ms) apart; one phase (a creature takes one hit of the path). The spell and the row `_L2` with Seismic Waves, `_L3` with Seismic Waves and Stimulated Reduction; Seismic Waves: a stagger; Stimulated Reduction: each hit takes 5 percent of the cooldown of the data away (5 hits at most, not below the minimum end); Aftershock. Cast time 1 s. |
+| Aftershock | Each hit of an ability of the war hammer (Wrecking Ball, Shockwave, Path of Destiny) with the node gives `WarHammer_Ult_SlowOnCC` (20 percent, 4 s). |
+| The observers | Each session that observes the creature gets its status state (the icons) and its movement state (the action of the effect); only the session of the caster gets the cooldown state and the damage number (case AB9). |
+| The cost of an area | A phase looks only at the entities of the position index near its center; the end of the effects looks only at the creatures with an effect (case AB10: 100 Shockwaves near 40 creatures in a world of 4,040 creatures). |
+
+**The commands** (development routes; the admin interface has `reset_cooldowns`,
+`assign_node`, and `set_ability_bar`): `tools/world cooldowns CHARACTER [reset]` (`GET
+/v1/dev/abilities?character=ID`, `POST /v1/dev/abilities/reset`), `tools/world node CHARACTER
+WEAPON NODE...` (`POST /v1/dev/progress/node`: one mastery point through the skill system, with
+the rules of the tree), `tools/world bar CHARACTER WEAPON SLOT ABILITY` (`POST
+/v1/dev/progress/bar`), `tools/world creature effect CREATURE STATUS [SECONDS]` (`POST
+/v1/dev/creatures/effect`: an effect of the data, or `knockdown` or `stagger`). `tools/world
+list` has the line `abilities`.
+
+**Not known, not done** (stage 3.3a):
+
+- The abilities of the other weapons (26 tables). Each one needs its live check of L1 and L3
+  (which phases send a contact, their windows), its rule in `Abilities::plan` (its phases,
+  rows, spells, and effects), and for a spell or a projectile its area rule (L7): the bow, the
+  musket, the blunderbuss, the staffs, and the gauntlets send projectiles (the second list),
+  whose hit rule the backend does not have.
+- An entity of a spell (the vortex of Gravity Well, the effects of Path of Destiny and
+  Shockwave): the client shows only what it plays itself.
+- The pull of Maelstrom and of the vortex (`ImpactDistanceY`): the creature does not move to
+  the caster.
+- The effects on the caster and the passive nodes: Safety Measures (fortify), Unyielding,
+  Enduring Strike and Hardened Steel (grit), the empower nodes, Critical Gains, Keen Edge,
+  Critical Condition, Mauler's Resolve, Crowded Protection, Center of Attention, Outnumbered,
+  Guarded Sprint, Concussive Impact, Prevailing Spirit, Epitome of Bonk, Exhaustive Attacks
+  (no stamina of a creature), Death's Embrace, Greed, Mauler's Fury, Power Through Pain, and
+  Absorb (no projectile of a creature is blocked). Critical hits.
+- The counts of the activities of the ability state (slot 46, fields 3 and 4) and a refusal or
+  a correction for a press that the backend refuses.
+- The full status map of an observer (its wall clock) and the status state of the owner (the
+  tray of a player).
+- The cause of the press after the first weapon change that the client did not play.
 
 ## 5. Open items
 

@@ -30,10 +30,10 @@ constexpr ComponentKey kAllComponents[] = {ComponentKey::metadata,    ComponentK
                                            ComponentKey::vitals,      ComponentKey::appearance, ComponentKey::progression,
                                            ComponentKey::attribute,   ComponentKey::currency,  ComponentKey::container,
                                            ComponentKey::paperdoll,   ComponentKey::categorical, ComponentKey::points,
-                                           ComponentKey::abilities, ComponentKey::mana};
+                                           ComponentKey::abilities, ComponentKey::mana, ComponentKey::cooldowns};
 /** The component states of a creature. */
 constexpr ComponentKey kCreatureComponents[] = {ComponentKey::metadata, ComponentKey::movement, ComponentKey::vitals,
-                                                ComponentKey::marker};
+                                                ComponentKey::marker, ComponentKey::status};
 
 } // namespace
 
@@ -52,7 +52,8 @@ World::World(const WorldClock& clock,
       m_creatures(*this, options.creatureData),
       m_combat(*this, options.combatTables),
       m_health(*this),
-      m_rewards(*this, options.lootTables) {
+      m_rewards(*this, options.lootTables),
+      m_abilities(*this, options.abilityData, options.combatTables) {
     m_random = options.randomSeed;
 }
 
@@ -198,6 +199,7 @@ Entity& World::make_entity(const state::Character& character) {
     m_inventory.load(entity);
     m_progress.load(entity);
     m_skills.load(entity);
+    m_abilities.entered(entity);
     const Revision revision = ++m_revision;
     entity.positionRevision = revision;
     for (const ComponentKey key : kAllComponents) {

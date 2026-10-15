@@ -115,6 +115,22 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand set_trade_skill(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /** Arguments: `id` (a weapon or a trade skill) and `amount`. */
 [[nodiscard]] WorldCommand add_skill_experience(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+// The cooldown commands (stage 3.3a, world/abilities.h). reset_cooldowns: no argument. Each
+// cooldown of the abilities of the character ends; its client gets the empty maps.
+[[nodiscard]] WorldCommand reset_cooldowns(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * @return The abilities of a character (world thread): "cooldowns" (each ability id with its
+ *         remaining seconds), and the counts of the abilities of the world ("presses" by cause,
+ *         the hits, the effects).
+ */
+[[nodiscard]] nlohmann::json abilities_json(world::World& world, const std::string& character);
+// The tree and the bar commands (stage 3.3a, world/skills.h): the same rules as the requests of
+// a client. assign_node: `weapon` (as for the mastery) and `node` (the id text of the node of the
+// game table, "Ability_WarHammer_WreckingBall"): one mastery point on the node.
+// set_ability_bar: `weapon`, `slot` (0 to 2), and `ability` (the id text of an active node that
+// the character has, or "none": an empty place).
+[[nodiscard]] WorldCommand assign_node(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand set_ability_bar(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
 // The travel command (World::travel, server/http/travel_commands.cpp). Arguments: `place` (the
 // id of a travel place of the game data), or `x`, `y`, and `z` (a position in meters; the
@@ -219,6 +235,16 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
  * place. A test of the way back with no path to the anchor. Only the development routes have it.
  */
 [[nodiscard]] WorldCommand move_creature_anchor(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                                service::HttpResponse& refusal);
+
+/**
+ * effect: `creature`, `status` (the id text of a status row of the ability data,
+ * "WarHammer_Shockwave_Stun", or "knockdown" or "stagger"), and when necessary `seconds` (the time
+ * of the effect; no value: the time of the data, 2 s for a knockdown and 1 s for a stagger). A
+ * development command (stage 3.3a): the creature takes the effect through the creature system, as
+ * from an ability. Only the development routes have it.
+ */
+[[nodiscard]] WorldCommand give_creature_effect(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                                 service::HttpResponse& refusal);
 
 /**

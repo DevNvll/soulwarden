@@ -117,6 +117,8 @@ struct RewardCounts {
     std::uint64_t tableVisits{0};
     std::uint64_t items{0};
     std::uint64_t itemsLost{0};
+    /** Rewards of a character that the store did not write: no part of them was given (finding F1 of the review of stage 3.5a). */
+    std::uint64_t refused{0};
     /** A table that a roll visited a second time in its own path (the guard of the client). */
     std::uint64_t guards{0};
 };

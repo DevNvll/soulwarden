@@ -9,7 +9,8 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
 | Task | Start here |
 | --- | --- |
 | Level, experience, attributes of a character | Protocol notes 4.12, `apps/backend/src/world/progress.h`, `server/rep/states/attribute_state.cpp`, `tools/world level`, `tools/gamedata/progression.sh` |
-| Weapon mastery, ability bar, trade skills | Protocol notes 4.13, `apps/backend/src/world/skills.h`, `server/rep/states/skill_states.cpp`, `tools/world mastery`, `tools/research/ability_tables.py` |
+| Weapon mastery, ability bar, trade skills | Protocol notes 4.13, `apps/backend/src/world/skills.h`, `server/rep/states/skill_states.cpp`, `tools/world mastery`, `tools/world node`, `tools/world bar`, `tools/research/ability_tables.py` |
+| The use of an ability of the bar (the cast, the cooldown) | [Abilities](abilities.md), protocol notes 4.22 |
 
 ## Rules
 
@@ -58,6 +59,8 @@ tools/world mastery NAME sword 5     # set the mastery level of a weapon (each l
 tools/world tradeskill NAME Mining 50    # set the level of a trade skill
 tools/world skillxp NAME sword 100   # give experience to a weapon mastery or to a trade skill
 tools/world progress NAME            # the level, the attributes, the masteries, and the trade skills
+tools/world node NAME greataxe Ability_Greataxe_Charge   # assign nodes of a weapon tree (one point each, the rules of the tree)
+tools/world bar NAME greataxe 0 Ability_Greataxe_Charge  # put an ability on a place (0, 1, 2) of the bar of a weapon
 ```
 
 - `tools/world` has the commands for the level, the attributes, and the skills of a character
@@ -67,7 +70,12 @@ tools/world progress NAME            # the level, the attributes, the masteries,
   `dexterity`, `intelligence`; the character must have the points), `mastery CHARACTER WEAPON
   LEVEL [EXPERIENCE]` (level 1 to 20; `WEAPON` is `sword`, `bow`, `greataxe`, `firemagic`,
   ..., or the id of the game table, `SwordAbilityTable`), `tradeskill CHARACTER SKILL LEVEL
-  [EXPERIENCE]` (`Mining`, `Cooking`, ...; 0 to 200), and `skillxp CHARACTER NAME AMOUNT`.
+  [EXPERIENCE]` (`Mining`, `Cooking`, ...; 0 to 200), `skillxp CHARACTER NAME AMOUNT`, `node
+  CHARACTER WEAPON NODE...` (stage 3.3a, route `POST /v1/dev/progress/node`, admin command
+  `assign_node`: the node ids of the game table in the sequence of the tree; each one costs one
+  mastery point, and the skill system checks the rules of the tree as for a request of the
+  client), and `bar CHARACTER WEAPON SLOT ABILITY` (route `POST /v1/dev/progress/bar`, admin
+  command `set_ability_bar`: an ability node that the character has, on the place 0, 1, or 2; `none` empties the place).
   The character can be in the world or not. The client shows a change at once: the level
   notice, the character window (K key, `tools/hx 'key 0x4B'`), the HUD.
 - `tools/gamedata/progression.sh` writes `progression-tables.json` to the game data folder,

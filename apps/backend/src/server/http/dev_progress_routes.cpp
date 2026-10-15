@@ -35,6 +35,13 @@
 //   POST /v1/dev/progress/skill-experience?character=ID&id=NAME&amount=N
 //                                                         give experience to a weapon mastery or
 //                                                         to a trade skill
+//   POST /v1/dev/progress/node?character=ID&weapon=NAME&node=ID
+//                                                         spend one mastery point on a node of a
+//                                                         weapon tree (ID: the id text of the node)
+//   POST /v1/dev/progress/bar?character=ID&weapon=NAME&slot=N&ability=ID
+//                                                         put an active ability that the character
+//                                                         has on a place (0 to 2) of the bar of a
+//                                                         weapon (ID "none": an empty place)
 // tools/world sends these requests to the backend of a development run.
 
 namespace soulwarden::backend::server::http {
@@ -71,6 +78,8 @@ void register_dev_progress_routes(Router& router, const Services& services) {
                command_route(services, commands::set_trade_skill));
     router.add("POST", "", "/v1/dev/progress/skill-experience", "dev.progress_skill_experience",
                command_route(services, commands::add_skill_experience));
+    router.add("POST", "", "/v1/dev/progress/node", "dev.progress_node", command_route(services, commands::assign_node));
+    router.add("POST", "", "/v1/dev/progress/bar", "dev.progress_bar", command_route(services, commands::set_ability_bar));
 }
 
 } // namespace soulwarden::backend::server::http

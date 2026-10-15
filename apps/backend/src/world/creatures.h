@@ -255,6 +255,26 @@ public:
     CreatureResult hurt(EntityId id, float damage, EntityId attacker = 0);
 
     /**
+     * Gives a creature a status effect of an ability (stage 3.3a, world/abilities.h) until its
+     * end on the world clock. A stun stops the movement and the attack of the creature (its
+     * attack that plays stops, and it plays the action "Stun" of its slice), a root stops its
+     * movement, a slow lowers its speed, and a weaken lowers its damage (world/behavior.h,
+     * Combat::creature_damage). The same status again gives the effect the later end. Each
+     * observer gets the icon of an effect that shows at the name plate (the status state). A
+     * dead creature and a creature on its way back take no effect.
+     * @return False: the creature took no effect.
+     */
+    bool apply_effect(Entity& entity, const CreatureEffect& effect);
+    /**
+     * A knockdown or a stagger of an ability: the creature plays the reaction of the power (its
+     * fragment of the slice; the fragment of the action "Reaction" for a slice with no such
+     * fragment), and it does not move and does not attack for the time. Its attack that plays
+     * stops. A dead creature and a creature on its way back take none.
+     * @return False: the creature took none.
+     */
+    bool knock(Entity& entity, unsigned power, std::chrono::milliseconds time);
+
+    /**
      * Starts an action of the action table of the slice of a creature, by its name (a
      * development command, and the place where a behavior of a later stage starts an action).
      * Each session that observes the creature gets the action with its movement state.
@@ -388,6 +408,10 @@ private:
     void set_waiting(std::uint32_t point, bool waiting);
     /** Removes the action of each creature whose action has an end that came. */
     void end_actions();
+    /** Removes each effect whose end came, from the creatures that have effects (m_affected). */
+    void end_effects();
+    /** The stun of a creature ended: its action "Stun" stops, and each observer gets its idle action. */
+    void end_stun(Entity& entity);
 
     World& m_world;
     const gamedata::CreatureData* m_data;
@@ -406,6 +430,8 @@ private:
     std::set<EntityId> m_creatures;
     /** The creatures whose action has an end. */
     std::set<EntityId> m_acting;
+    /** The creatures with an effect or a knockdown of an ability: the end of effects looks only at these. */
+    std::set<EntityId> m_affected;
     CreatureCounts m_counts;
     std::optional<WorldClock::time_point> m_lastScan;
     /** Number of creatures that commands made. It selects the slice of an alias with more than one. */

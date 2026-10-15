@@ -26,6 +26,9 @@ std::vector<Case> review_corrections_cases();
 std::vector<Case> patrol_cases();
 std::vector<Case> review_patrol_cases();
 std::vector<Case> loot_cases();
+std::vector<Case> ability_cases();
+std::vector<Case> review_loot_cases();
+std::vector<Case> review_scope_cases();
 
 std::vector<Case> all_cases() {
     std::vector<Case> cases;
@@ -33,7 +36,7 @@ std::vector<Case> all_cases() {
                               equipment_cases(), review_cases(), review_inventory_cases(), progress_cases(), skill_cases(),
                               review_progress_cases(), admin_cases(), position_cases(), creature_cases(), combat_cases(),
                               world_spawn_cases(), fight_cases(), navigation_cases(), review_fight_cases(), review_path_cases(),
-                              review_corrections_cases(), patrol_cases(), review_patrol_cases(), loot_cases()}) {
+                              review_corrections_cases(), patrol_cases(), review_patrol_cases(), loot_cases(), ability_cases(), review_loot_cases(), review_scope_cases()}) {
         cases.insert(cases.end(), group.begin(), group.end());
     }
     return cases;

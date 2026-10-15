@@ -93,6 +93,13 @@
 //                                                        its creature again in N s
 //   POST /v1/dev/world/fragment?creature=ID&slot=N&type=N&state=HEX
 //                                                        the fragment command for a creature
+//   POST /v1/dev/creatures/effect?creature=ID&status=NAME[&seconds=N]
+//                                                        a creature takes an effect of the ability
+//                                                        data, or a knockdown or a stagger (stage 3.3a)
+// The abilities of a character (world/abilities.h, stage 3.3a):
+//   GET  /v1/dev/abilities?character=ID                  the cooldowns of the character and the
+//                                                        counts of the abilities
+//   POST /v1/dev/abilities/reset?character=ID            each cooldown of the character ends
 // The commands remove, health, and kill change each creature of the world, and they need no
 // character (the rule CreatureReach::world of character_commands.h). The admin interface has a
 // different rule for them.
@@ -208,6 +215,8 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                    {"items", target.rewards().counts().items},
                                    {"itemsLost", target.rewards().counts().itemsLost},
                                    {"time", meter(target.rewards().load())}}},
+                                 // The abilities (stage 3.3a): the presses by cause, the hits, and the effects.
+                                 {"abilities", commands::abilities_json(target, "")},
                                  {"spawnPointsWaiting", creatures.waiting_count()},
                                  {"removedByRespawn", creatures.counts().removedByRespawn},
                                  // The navigation: the tiles of the data, the path searches, and the sight tests.
@@ -672,6 +681,19 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/creatures/reset", "dev.creatures_reset", creature_route(services, commands::reset_creatures));
     router.add("POST", "", "/v1/dev/creatures/action", "dev.creatures_action",
                creature_route(services, commands::play_creature_action));
+    router.add("POST", "", "/v1/dev/creatures/effect", "dev.creatures_effect",
+               creature_route(services, commands::give_creature_effect));
+    router.add("GET", "", "/v1/dev/abilities", "dev.abilities", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        return in_world(services, [character = *character](world::World& target) {
+            return json_reply(200, commands::abilities_json(target, character).dump());
+        });
+    });
+    router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));
     router.add("POST", "", "/v1/dev/creatures/anchor", "dev.creatures_anchor",
                creature_route(services, commands::move_creature_anchor));
     router.add("POST", "", "/v1/dev/creatures/respawn", "dev.creatures_respawn",

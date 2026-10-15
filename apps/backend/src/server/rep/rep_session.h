@@ -359,6 +359,8 @@ private:
      * report: a second copy changes nothing.
      */
     void handle_attacks(const ClientInput& input);
+    /** Gives the press of a key of the ability bar to the world (stage 3.3a), and writes a refusal to the log. */
+    void press_ability(const ClientInput& input, const InputStep& step);
     /** Gives one melee contact to the world, and writes the result to the log. */
     void claim_hit(const InputStep& step, const InputContact& contact);
     /**
@@ -517,6 +519,9 @@ private:
     world::AttackTrack m_attack;
     /** True for each cause of a refused hit claim that has its log line. */
     std::array<bool, world::kHitVerdictCount> m_hitVerdictLogged{};
+    /** The presses of the ability keys of the session, and the first refusal of each cause in the log. */
+    std::uint64_t m_abilityPresses{0};
+    std::array<bool, world::kCastVerdictCount> m_castVerdictLogged{};
     /** Number of melee contacts and of items of the two projectile lists that the client sent. */
     std::uint64_t m_contacts{0};
     std::uint64_t m_projectileItems{0};

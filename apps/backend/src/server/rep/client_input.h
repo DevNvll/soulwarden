@@ -93,6 +93,18 @@ struct InputContact {
     std::array<float, 3> direction{};
 };
 
+/**
+ * One shot of an input entry (an item of the second list, 192 bytes; client readers 0x2A1A0D0,
+ * 0x2A1A590): the projectile of a ranged attack or of an ability. The backend reads the start,
+ * the direction, and the attack (the CRC-32 of the lower-case name of the ranged attack: the
+ * projectile of Gravity Well has "gravitywell", live check L7 of stage 3.3a).
+ */
+struct InputShot {
+    std::array<float, 3> origin{};
+    std::array<float, 3> direction{};
+    std::uint32_t attack{0};
+};
+
 /** What the backend reads of each entry of a report for the attacks of the character. */
 struct InputStep {
     /** Input number of the entry. */
@@ -103,9 +115,17 @@ struct InputStep {
     bool attackRelease{false};
     /** The key of a weapon of the paperdoll came: 1 or 2. 0: none. */
     std::uint8_t weaponKey{0};
-    /** Number of items of the two projectile lists. The backend does not use them yet. */
+    /**
+     * The press of a key of the ability bar came (the bits "ability1", "ability2", "ability3":
+     * 402, 115, 139; live check L1 of stage 3.3a): 1, 2, or 3 for the place 0, 1, or 2. 0: none.
+     * The bit is in the first entry of a press only (the hold and the release have their own bits).
+     */
+    std::uint8_t abilityKey{0};
+    /** Number of items of the two projectile lists. */
     std::uint32_t projectileHits{0};
     std::uint32_t shots{0};
+    /** The shots of the second list (the projectile of an ability). */
+    std::vector<InputShot> shotItems;
     std::vector<InputContact> contacts;
 };
 

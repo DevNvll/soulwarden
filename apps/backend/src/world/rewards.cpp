@@ -407,24 +407,42 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
             reward.items = roll(*vitals, context, forced, share.loot);
             reward.lootGate = m_counts.lootGates != gates;
         }
-        // The experience of the character, and the same amount for the mastery of the weapon in its hand.
-        if (reward.experience != 0) {
-            const ProgressResult gained = m_world.progress().add_experience(character.characterId, reward.experience);
-            if (gained.ok()) {
-                m_counts.experience += reward.experience;
-            }
+        // The reward of one character is one change (code review of stage 3.5a, finding F1; roadmap
+        // rule MP-7): the experience, the mastery, and the items and the coin are written in one
+        // transaction of the store (Store::Batch). A write that the store refuses gives no part of
+        // the reward: the transaction writes nothing, and the entity gets its values of before
+        // again (each system changed it after its own write).
+        const Progression progressionBefore = character.progression;
+        const Attributes attributesBefore = character.attributes;
+        const Vitals vitalsBefore = character.vitals;
+        const SkillSet skillsBefore = character.skills;
+        const Bag bagBefore = character.bag;
+        const Wallet walletBefore = character.wallet;
+        state::Store::Batch batch(m_world.store());
+        bool written = batch.open();
+        std::uint32_t itemsLost = 0;
+        std::size_t itemsGiven = 0;
+        bool gained = false;
+        bool granted = false;
+        // The experience of the character, and the same amount for the mastery of the weapon in its
+        // hand. A part that a rule refuses (a mastery that the tables do not have) is not given,
+        // and the other parts are; a write that the store refuses ends the whole reward.
+        if (written && reward.experience != 0) {
+            const ProgressResult experience = m_world.progress().add_experience(character.characterId, reward.experience);
+            written = experience.error != ProgressError::storeFailed;
+            gained = experience.ok();
             const ItemInstance* weapon = Combat::weapon_in_hand(character);
             const gamedata::WeaponRow* row = weapon != nullptr && combat != nullptr ? combat->weapon_of(weapon->itemId) : nullptr;
-            if (row != nullptr && !row->mastery.empty()) {
+            if (written && row != nullptr && !row->mastery.empty()) {
                 const SkillResult mastered = m_world.skills().add_experience(character.characterId, row->mastery, reward.experience);
+                written = mastered.error != ProgressError::storeFailed;
                 if (mastered.ok()) {
                     reward.mastery = row->mastery;
-                    m_counts.masteryExperience += reward.experience;
                 }
             }
         }
-        // The items and the coin: one transaction of the inventory system.
-        if (!reward.items.empty() || reward.coin != 0) {
+        // The items and the coin.
+        if (written && (!reward.items.empty() || reward.coin != 0)) {
             std::vector<GrantItem> grants;
             grants.reserve(reward.items.size());
             for (const LootDrop& drop : reward.items) {
@@ -432,11 +450,39 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
             }
             std::vector<GrantItem> lost;
             const ItemResult given = m_world.inventory().grant(character.characterId, grants, reward.coin, &lost);
-            if (given.ok()) {
-                for (const GrantItem& item : lost) {
-                    reward.itemsLost += item.quantity;
-                }
-                m_counts.items += reward.items.size() - std::min(reward.items.size(), lost.size());
+            written = given.error != ItemError::storeFailed;
+            granted = given.ok();
+            for (const GrantItem& item : lost) {
+                itemsLost += item.quantity;
+            }
+            itemsGiven = reward.items.size() - std::min(reward.items.size(), lost.size());
+        }
+        written = written && batch.commit();
+        if (!written) {
+            character.progression = progressionBefore;
+            character.attributes = attributesBefore;
+            character.vitals = vitalsBefore;
+            character.skills = skillsBefore;
+            character.bag = bagBefore;
+            character.wallet = walletBefore;
+            for (const ComponentKey key : {ComponentKey::progression, ComponentKey::attribute, ComponentKey::vitals,
+                                           ComponentKey::mana, ComponentKey::categorical, ComponentKey::points,
+                                           ComponentKey::container, ComponentKey::currency}) {
+                m_world.touch(character.id, key);
+            }
+            ++m_counts.refused;
+            log::write("world: reward: the store did not write the reward of %s for the kill of creature %016llx: no part of it "
+                       "is given",
+                       character.name.c_str(),
+                       id_number(creature.id));
+            continue;
+        }
+        m_counts.experience += gained ? reward.experience : 0;
+        m_counts.masteryExperience += reward.mastery.empty() ? 0 : reward.experience;
+        if (!reward.items.empty() || reward.coin != 0) {
+            if (granted) {
+                reward.itemsLost = itemsLost;
+                m_counts.items += itemsGiven;
                 m_counts.coin += reward.coin;
                 m_counts.coinRewards += reward.coin != 0 ? 1 : 0;
             } else {

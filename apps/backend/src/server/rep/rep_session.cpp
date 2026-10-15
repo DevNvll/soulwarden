@@ -521,7 +521,7 @@ void RepSession::log_message_counts() const {
         log::write("rep: hit claims of the session: %u attack input(s), %llu melee contact(s): %llu accepted, %llu refused "
                    "(%llu not a creature, %llu not a component of the creature, %llu not observed, %llu dead, %llu no "
                    "melee weapon, %llu no attack, %llu the same attack, %llu too far, %llu bad point, %llu too many "
-                   "claims, %llu no combat tables, %llu immune); %llu item(s) of the projectile lists (not used)",
+                   "claims, %llu no combat tables, %llu immune); %llu item(s) of the projectile lists",
                    m_attack.presses(),
                    static_cast<unsigned long long>(m_contacts),
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::accepted)),
@@ -539,6 +539,10 @@ void RepSession::log_message_counts() const {
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::noTables)),
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::immune)),
                    static_cast<unsigned long long>(m_projectileItems));
+    }
+    if (m_abilityPresses != 0) {
+        log::write("rep: ability presses of the session: %llu (the casts and the refusals are in the line abilities of tools/world list)",
+                   static_cast<unsigned long long>(m_abilityPresses));
     }
     const std::uint64_t accepted = m_track.count(world::PositionVerdict::accepted);
     const std::uint64_t outOfSequence = m_track.count(world::PositionVerdict::outOfSequence);
@@ -640,8 +644,11 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
     bool scopeDue = false;
     if (known.scopeDue && now >= *known.scopeDue) {
         known.scopeDue.reset();
+        // Each scope that is not the scope of the client, also the fields with no record: a walk
+        // that ended in the lead must not leave the spawn action in the client (code review of
+        // stage 3.5a, finding F5).
         const std::uint32_t playing = creature_scope(entity.creature, false).key;
-        scopeDue = playing != kScopeNone && playing != known.scope;
+        scopeDue = playing != known.scope;
     }
     const bool leading = known.scopeDue.has_value();
     for (const StateCodec& codec : creature_codecs()) {
@@ -1170,6 +1177,19 @@ void RepSession::handle_attacks(const ClientInput& input) {
         }
         m_attack.step(step.sequence, step.attackPress, step.attackHold, step.attackRelease, now);
         m_projectileItems += step.projectileHits + step.shots;
+        if (step.abilityKey != 0) {
+            press_ability(input, step);
+        }
+        // A shot of the client: the projectile of an ability of its character (Gravity Well).
+        for (const InputShot& item : step.shotItems) {
+            world::AbilityShot shot;
+            shot.input = step.sequence;
+            shot.sequence = m_attack.sequence();
+            shot.attack = item.attack;
+            shot.origin = state::WorldPosition{item.origin[0], item.origin[1], item.origin[2]};
+            shot.direction = item.direction;
+            m_world.abilities().shot(m_id, shot);
+        }
         for (const InputContact& contact : step.contacts) {
             claim_hit(step, contact);
         }
@@ -1190,6 +1210,29 @@ void RepSession::handle_attacks(const ClientInput& input) {
         if (m_attack.newer(step->sequence)) {
             take(*step);
         }
+    }
+}
+
+void RepSession::press_ability(const ClientInput& input, const InputStep& step) {
+    // The world finds the character from the session and the ability from the bar of the weapon
+    // in its hand (world/abilities.h). A press that it refuses changes nothing and gets no
+    // message: the client has none for it (live check L2 of stage 3.3a).
+    world::AbilityPress press;
+    press.place = static_cast<unsigned>(step.abilityKey - 1);
+    press.input = step.sequence;
+    press.sequence = m_attack.sequence();
+    press.yaw = input.hasLook ? input.lookYaw : m_input.lookYaw;
+    // The lock of the input: the client did not confirm the place of a travel (its loading screen).
+    press.locked = m_travelAnchor.has_value();
+    const world::CastVerdict verdict = m_world.abilities().press(m_id, press);
+    ++m_abilityPresses;
+    const auto cause = static_cast<std::size_t>(verdict);
+    if (verdict != world::CastVerdict::accepted && !m_castVerdictLogged[cause]) {
+        m_castVerdictLogged[cause] = true;
+        log::write("rep: ability press refused (%s): key %u, input %u (the first press of the session with this cause)",
+                   world::cast_verdict_text(verdict),
+                   static_cast<unsigned>(step.abilityKey),
+                   static_cast<unsigned>(step.sequence));
     }
 }
 

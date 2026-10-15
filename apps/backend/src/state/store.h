@@ -158,6 +158,32 @@ struct SkillRows {
 /** Durable player state in one SQLite database. One writer connection, serialized by a mutex. */
 class Store {
 public:
+    /**
+     * One transaction for the writes of more than one system (code review of stage 3.5a, finding
+     * F1: the reward of a kill is one change, roadmap rule MP-7). While a batch is open, each write
+     * of `set_progress`, `write_skills`, and `write_items` of its thread is a savepoint of its
+     * transaction, and a different thread waits for the end of the batch. `commit` writes all of
+     * them; a batch that ends with no commit writes none of them.
+     */
+    class Batch {
+    public:
+        explicit Batch(Store& store);
+        ~Batch();
+        Batch(const Batch&) = delete;
+        Batch& operator=(const Batch&) = delete;
+        /** @return True when the transaction of the batch started. */
+        [[nodiscard]] bool open() const {
+            return m_open;
+        }
+        /** @return True when each write of the batch is in the database. False: none of them is. */
+        [[nodiscard]] bool commit();
+
+    private:
+        Store& m_store;
+        bool m_open{false};
+        bool m_done{false};
+    };
+
     Store() = default;
     ~Store();
     Store(const Store&) = delete;
@@ -259,6 +285,11 @@ public:
     [[nodiscard]] bool write_skills(const std::string& characterId, const SkillRows& rows);
 
 private:
+    /** Starts a write: a transaction, or a savepoint in a batch. */
+    bool begin_write();
+    /** Ends a write: commits it when `ok`, if not rolls it back. @return True when it is written (in a batch: in the batch). */
+    bool end_write(bool ok);
+
     [[nodiscard]] bool execute(const char* sql);
     [[nodiscard]] bool migrate();
     /** Inserts one item row of a character. The caller holds the mutex and has a transaction. */
@@ -266,7 +297,10 @@ private:
     /** The caller holds the mutex. */
     [[nodiscard]] bool name_in_use(const std::string& name);
 
-    std::mutex m_mutex;
+    /** Recursive: a batch holds it, and the writes of its thread lock it again (Store::Batch). */
+    std::recursive_mutex m_mutex;
+    /** Number of open batches (0 or 1). */
+    unsigned m_batch{0};
     sqlite3* m_database{nullptr};
 };
 

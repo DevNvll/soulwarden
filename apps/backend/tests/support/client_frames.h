@@ -155,6 +155,20 @@ inline constexpr unsigned kActionAttackHold = 191;
 inline constexpr unsigned kActionAttackRelease = 567;
 inline constexpr unsigned kActionWeapon1 = 9;
 inline constexpr unsigned kActionWeapon2 = 355;
+/** The press of the three keys of the ability bar (Q, R, F), their virtual bits, and the hold and release bits of Q (stage 3.3a, live check L1). */
+inline constexpr unsigned kActionAbility1 = 402;
+inline constexpr unsigned kActionAbility2 = 115;
+inline constexpr unsigned kActionAbility3 = 139;
+inline constexpr unsigned kActionAbility1Virtual = 479;
+inline constexpr unsigned kActionAbility1Hold = 39;
+inline constexpr unsigned kActionAbility1Release = 211;
+
+/** One shot of an input entry: an item of its second list (192 bytes; the start, the direction, and the attack at byte 180). */
+struct InputShotItem {
+    std::array<float, 3> origin{};
+    std::array<float, 3> direction{-1.0F, 0.0F, 0.0F};
+    std::uint32_t attack{0};
+};
 
 /** One melee contact of an input entry: an item of its third list (96 bytes). */
 struct InputContactItem {
@@ -219,6 +233,8 @@ struct InputEntry {
      */
     std::uint32_t projectileHits{0};
     std::uint32_t shots{0};
+    /** Shots with their values: they come after the `shots` items of zeros. */
+    std::vector<InputShotItem> shotItems;
     std::vector<InputContactItem> contacts;
     /** A value that is not negative replaces the count of the third list: the entry then has no item for it. */
     int contactCount{-1};
@@ -355,8 +371,18 @@ inline void write_input_entry(server::hub::Writer& w, const InputEntry& entry, c
     }
     fields.size(entry.projectileHits);
     fields.zeros(entry.projectileHits * 104);
-    fields.size(entry.shots);
+    fields.size(entry.shots + static_cast<std::uint32_t>(entry.shotItems.size()));
     fields.zeros(entry.shots * 192);
+    for (const InputShotItem& shot : entry.shotItems) {
+        for (const auto& vector : {shot.origin, shot.direction}) {
+            for (const float value : vector) {
+                fields.f32(value);
+            }
+        }
+        fields.zeros(180 - 24);
+        fields.u32(shot.attack);
+        fields.zeros(8);
+    }
     fields.size(entry.contactCount >= 0 ? static_cast<std::uint32_t>(entry.contactCount)
                                         : static_cast<std::uint32_t>(entry.contacts.size()));
     for (const InputContactItem& contact : entry.contacts) {

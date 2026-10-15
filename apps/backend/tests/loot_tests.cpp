@@ -267,7 +267,10 @@ gamedata::LootData loot_data() {
     data.credit.healthShare = 0.01F;
     data.credit.range = 200.0F;
     data.credit.receivers = 10;
-    data.credit.modifiers = {{1.0F, 1.0F, 1.0F}, {0.7F, 1.0F, 0.8F}, {0.55F, 1.0F, 0.6F}};
+    // A modifier for each number of receivers (the loader needs one, finding F2 of the review of
+    // stage 3.5a): the last one for 3 to 10 characters.
+    data.credit.modifiers = {{1.0F, 1.0F, 1.0F}, {0.7F, 1.0F, 0.8F}};
+    data.credit.modifiers.resize(10, {0.55F, 1.0F, 0.6F});
     for (std::uint32_t level = 1; level <= 30; ++level) {
         std::array<std::pair<std::uint32_t, std::uint32_t>, gamedata::kGearScoreTiers> ranges{};
         for (std::uint32_t tier = 0; tier < gamedata::kGearScoreTiers; ++tier) {
@@ -418,10 +421,11 @@ void loot_file(const Options& options) {
     json document{
         {"format", 1},
         {"rewards", {{1, 10, 310, 1}, {2, 11, 320, 1}, {3, 12, 330, 1}}},
-        {"modifiers", {{"Solo", {1, 1, 0, 1, nullptr}}, {"Solo+", {2, 1.15, 0, 1, nullptr}}, {"Rich", {1, 1, 0.5, 1, 3.0}}}},
+        {"modifiers", {{"Solo", {1, 1, 0, 1, nullptr}}, {"Solo+", {2, 1.15, 0, 1, nullptr}}, {"Rich", {1, 1, 0.5, 1, 3.0}},
+                       {"Critter", {0, 0, 0, 1, nullptr}}}},
         {"disparity", {{10, 0, 10}, {-10, -0.4, 0}}},
         {"events", {{"killevent", 0.05}, {"KillStructure", 0}}},
-        {"credit", {{"timeLimit", 120}, {"healthShare", 0.01}, {"range", 200}, {"receivers", 10}, {"modifiers", {{1, 1, 1}, {0.7, 1, 0.8}}}}},
+        {"credit", {{"timeLimit", 120}, {"healthShare", 0.01}, {"range", 200}, {"receivers", 2}, {"modifiers", {{1, 1, 1}, {0.7, 1, 0.8}}}}},
         {"gearScore", {{100, 100, 100, 100, 100, 100, 100, 100, 100, 100}, {100, 120, 100, 130, 100, 130, 100, 130, 100, 130}}},
         {"lootCeiling", {{1, 100}, {2, 120}}},
         {"bases", {{"Wolf", "Solo", true, 0.1, false, "Master", {"Beast", "Common"}, false, ""},
@@ -1240,11 +1244,12 @@ void loot_tool(const Options& options) {
         correct += line.rfind("ok  ", 0) == 0 ? 1 : 0;
         wrong += line.rfind("FAIL", 0) == 0 ? 1 : 0;
     }
-    check(status == 0 && correct == 7 && wrong == 0,
+    check(status == 0 && correct == 13 && wrong == 0,
           "the loot tool writes the document of complete tables (the entries in the sequence of their thresholds, the "
           "references resolved, the tag ranges, the odds, the empty cells), and it stops with status 1 and keeps the file that "
           "was there for a table, a bucket, or a vitals table reference that does not resolve, a quantity text, reward levels "
-          "with a gap, and a number that is not finite");
+          "with a gap, a number that is not finite, and (code review of stage 3.5a, F3 and F4) a variant, an event, or a "
+          "creature type that does not resolve, a negative reward or factor, and the flag text NONE");
 }
 
 } // namespace

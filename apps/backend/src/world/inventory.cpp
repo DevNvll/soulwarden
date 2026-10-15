@@ -474,8 +474,9 @@ ItemResult Inventory::grant(const std::string& characterId,
                     m_catalog != nullptr && m_catalog->loaded() ? m_catalog->find(grant.itemId) : nullptr;
                 std::uint32_t placed = 0;
                 if (definition != nullptr && !definition->type.empty() && grant.quantity != 0) {
-                    placed = put(carried.bag, *definition, std::min(grant.quantity, kGiveLimit), grant.gearScore, true,
-                                 sync::kItemGathered, touched.bag);
+                    // The quantity of the drop, not the limit of the give command: `put` stops at the
+                    // size of a stack and at the slots of the bag (code review of stage 3.5a, finding F11).
+                    placed = put(carried.bag, *definition, grant.quantity, grant.gearScore, true, sync::kItemGathered, touched.bag);
                 }
                 // An item that the catalog does not have, and the part that the bag has no slot for: the
                 // character does not get it (the world has no item on the ground).

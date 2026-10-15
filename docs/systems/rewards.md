@@ -8,7 +8,7 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
 
 | Task | Start here |
 | --- | --- |
-| The rewards of a kill: the credit, the experience, the weapon mastery, the loot tables and their roll, the coin, the delivery with the loot notice, the loot switch; the respawn of a creature of a spawn point | Protocol notes 4.21, `apps/backend/src/world/rewards.h` (`reward_rules`, `respawn_time`), `gamedata/loot_tables.h`, `world/inventory.h` (`Inventory::grant`), `world/creatures.h` (`Creatures::hurt`, `respawn_at`), `server/http/loot_commands.cpp`, `tools/gamedata/loot.sh` (`loot_tables.py`, `check_loot_tool.py`), `tools/world loot`, `tools/world roll`, `tools/world creature respawn`, test cases LT1 to LT8 |
+| The rewards of a kill: the credit, the experience, the weapon mastery, the loot tables and their roll, the coin, the delivery with the loot notice, the loot switch; the respawn of a creature of a spawn point | Protocol notes 4.21, `apps/backend/src/world/rewards.h` (`reward_rules`, `respawn_time`), `gamedata/loot_tables.h`, `world/inventory.h` (`Inventory::grant`), `world/creatures.h` (`Creatures::hurt`, `respawn_at`), `server/http/loot_commands.cpp`, `tools/gamedata/loot.sh` (`loot_tables.py`, `check_loot_tool.py`), `tools/world loot`, `tools/world roll`, `tools/world creature respawn`, test cases LT1 to LT8, RL1 to RL3, RL8, RL10, RL11 |
 
 ## Rules
 
@@ -35,6 +35,24 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
   kill (the territory standing, the Azoth) goes into `Rewards::killed` and through the system
   of its state. The cost: a kill looks only at the credit list of its creature, and a roll
   at the tables of its path (test case LT7, with a time limit).
+- The reward of a character is one change (review of stage 3.5a, finding F1, case RL1). The
+  experience, the weapon mastery, the items, and the coin of one character go into one
+  transaction of the store (`state::Store::Batch`; the write of each system is a save point
+  in it). When the store refuses a write, the reward writes no row, it puts the values of
+  the entity back (progression, attributes, vitals, skills, bag, coin), it marks these
+  component states again, and it counts the reward as refused (`RewardCounts::refused`, the
+  log line "the store did not write the reward"). A refusal of a rule (a full bag, the
+  largest level) is not a refusal of the store: the other parts of the reward stay.
+- A drop goes into the bag whole when the bag has space for it (finding F11, case RL11). The
+  limit of the give command (100,000) is a limit of that command only, not of
+  `Inventory::grant`. Only the stack size and the capacity of the bag limit a drop.
+- The respawn: a command removal of a dead creature (`tools/world creature remove`) clears the
+  respawn time of its spawn point (finding F8, case RL8): the point stays empty until a reset.
+  The removal of a body by the distance keeps the respawn time.
+- The loot file is complete as a whole (finding F2, case RL2). The backend refuses the file
+  (and gives no reward) when a base row names a creature type that the reward modifiers do
+  not have or an event that the events do not have, or when the credit data has fewer credit
+  modifiers than receivers. A default is only for a file that is not there.
 
 ## Commands
 
@@ -49,8 +67,9 @@ tools/world creature respawn 2c 20   # the dead creature 2c: its spawn point mak
   "Character": the outer drop chance and the coin chance of each kill of the character pass;
   a value of the memory of the world until the backend stops), `roll KIND [LEVEL] [--count N]
   [--forced] [--character CHARACTER]` (route `/v1/dev/loot/roll`: the loot table of a kind,
-  rolled N times with the generator of the world, 10,000 at most, with the count of each
-  item; no item goes to a bag), and `creature respawn CREATURE SECONDS` (route
+  rolled N times with the generator of the world, 10,000 at most; for each item the number of
+  rolls that gave it, one for each roll also when a roll gave it more than one time (finding
+  F10, case RL10), and the quantity of all its drops; no item goes to a bag), and `creature respawn CREATURE SECONDS` (route
   `/v1/dev/creatures/respawn`: the spawn point of a dead creature makes its creature again
   after that time, when a player is 150 m or less from the point). `tools/world list` prints
   the line `rewards` (the kills, the kills with no credit, the rewards, the experience, the
@@ -67,8 +86,15 @@ tools/world creature respawn 2c 20   # the dead creature 2c: its spawn point mak
   tables do not have, when a column that it reads is not there, and when a cell is not a
   finite number or has a form that it does not know: the texts that the game itself has with
   a wrong form are in the lists `FLAG_TEXTS_NOT_IN_GAME`, `CHANCE_TEXTS_NOT_IN_GAME`, and
-  `RANGE_TEXTS_NOT_IN_GAME` of the tool. `tools/gamedata/check_loot_tool.py` is the check of
-  these rules, with made-up tables. `tools/gamedata/combat.sh` from stage 3.5a also writes the
+  `RANGE_TEXTS_NOT_IN_GAME` of the tool. It also writes no file (findings F3 and F4 of the
+  review of stage 3.5a) when a variant vitals row names a base row that the tables do not
+  have (the four variants of the game with no base row are in the list
+  `VARIANTS_WITH_NO_BASE_IN_GAME`), when a base row names a creature type or an event that the
+  tables do not have, when the credit data has fewer modifiers than receivers, when a kill
+  reward is negative, when a reward factor is negative or a chance is not from 0 to 1, and for
+  the flag text `none`. These are the ranges of the backend: the tool does not replace a
+  working file with a file that the backend refuses. `tools/gamedata/check_loot_tool.py` is
+  the check of these rules, with made-up tables (13 cases; case RL3 runs it). `tools/gamedata/combat.sh` from stage 3.5a also writes the
   weapon mastery of each weapon (value 12 of a weapon): with a file from before, a kill gives
   no mastery experience.
 

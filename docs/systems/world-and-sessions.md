@@ -45,7 +45,14 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   to 4 and the weapon slots 24 to 29) and nothing of the other slots. A paperdoll fragment
   has only the slots that changed. The progression encoder has the two views too: the owner
   gets the level and the experience, and an observer gets the level (the name tag of a remote
-  player shows it). The attribute state and the three skill states are for the owner only.
+  player shows it). The attribute state, the three skill states, and the cooldown state
+  (stage 3.3a) are for the owner only. The status state of a creature (stage 3.3a) has only
+  the observer view.
+- A change of more than one system is one change of the store (review of stage 3.5a, finding
+  F1): the caller opens a batch (`state::Store::Batch`, one transaction), the write of each
+  system is a save point in it (`Store::begin_write`, `end_write`), and the batch commits at
+  its end. With no commit the batch writes nothing, and the caller puts the entity values
+  back and marks their states again (the reward of a kill, `Rewards::killed`).
 - A session sends each bundle below the size of one carrier message (1,024 bytes) when its
   fragments permit it: it cuts a record between two fragments, and it sends two fragments of
   one slot in two bundles. It sends no bundle that is larger than the limit of the client

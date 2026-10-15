@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 14> codecs{{
+    static constexpr std::array<StateCodec, 15> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -36,13 +36,16 @@ std::span<const StateCodec> player_codecs() {
         {world::ComponentKey::categorical, kCategoricalSlot, kTypeCategoricalState, encode_categorical_state, nullptr, true},
         {world::ComponentKey::points, kPointsSlot, kTypePointsState, nullptr, encode_points_state, true},
         {world::ComponentKey::abilities, kAbilitySlot, kTypeAbilityState, nullptr, encode_ability_state, true},
+        // The cooldowns of the abilities (stage 3.3a): owner only, after the bars that name the
+        // abilities of the maps.
+        {world::ComponentKey::cooldowns, kCooldownSlot, kTypeCooldownState, nullptr, encode_cooldown_state, true},
     }};
     return codecs;
 }
 
 std::span<const StateCodec> creature_codecs() {
     // The slot of each component is a value of the slice of the creature (game data).
-    static constexpr std::array<StateCodec, 4> codecs{{
+    static constexpr std::array<StateCodec, 5> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::movement, 0, kTypeMovementState, nullptr, encode_creature_movement_parts, false,
          [](const world::Entity& entity) { return entity.creature.body->movementSlot; }},
@@ -50,6 +53,9 @@ std::span<const StateCodec> creature_codecs() {
          [](const world::Entity& entity) { return entity.creature.body->vitalsSlot; }},
         {world::ComponentKey::marker, 0, kTypeMarkerState, encode_marker_state, nullptr, false,
          [](const world::Entity& entity) { return entity.creature.body->markerSlot; }},
+        // The status effects of abilities on the creature (stage 3.3a): the icons at its name plate.
+        {world::ComponentKey::status, 0, kTypeStatusEffectsState, nullptr, encode_creature_status_state, false,
+         [](const world::Entity& entity) { return entity.creature.body->statusSlot; }},
     }};
     return codecs;
 }

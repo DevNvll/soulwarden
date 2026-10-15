@@ -45,6 +45,8 @@ inline constexpr std::uint32_t kTypePointsState = 3681;         // MB::Progressi
 inline constexpr std::uint32_t kTypeAbilityState = 185;         // MB::AbilityComponentReplicatedState
 inline constexpr std::uint32_t kTypeMarkerState = 5399;         // MB::MarkerComponentReplicatedState
 inline constexpr std::uint32_t kTypeManaState = 1652;           // MB::ManaComponentReplicatedState
+inline constexpr std::uint32_t kTypeCooldownState = 2932;       // MB::CooldownTimersComponentReplicatedState
+inline constexpr std::uint32_t kTypeStatusEffectsState = 4236;  // MB::StatusEffectsComponentReplicatedState
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -71,6 +73,8 @@ inline constexpr std::uint32_t kAttributeSlot = 27;
 inline constexpr std::uint32_t kCategoricalSlot = 65;
 inline constexpr std::uint32_t kPointsSlot = 67;
 inline constexpr std::uint32_t kAbilitySlot = 46;
+/** The component CooldownTimers of the entity "Stats" of the player slice (stage 3.3a). */
+inline constexpr std::uint32_t kCooldownSlot = 45;
 
 enum class View {
     owner,
@@ -185,6 +189,18 @@ struct StateCodec {
  *        request that it refused).
  */
 [[nodiscard]] hub::Bytes encode_ability_bars(const world::SkillSet& skills, bool placeNumbers = false);
+/**
+ * @return The cooldowns of the abilities of a character for the owner (states/cooldown_state.cpp):
+ *         the three maps of the places of the bar. No fragment for the observer view, and none in
+ *         the first record of a character with no cooldown.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_cooldown_state(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The status effects of a creature for an observer (states/status_state.cpp): the compact
+ *         map with the effects that show at the name plate. No fragment in the first record of a
+ *         creature with no such effect.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_creature_status_state(const world::Entity& entity, View view, const PartsRequest& request);
 /** @return The coin of the character for the owner. No byte for the observer view. */
 [[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The mana state of a character (states/mana_state.cpp): owner only. */

@@ -295,7 +295,9 @@ CreatureDamage Combat::creature_damage(const Entity& creature,
             damage.mitigation = damage.armor / (damage.armor + against);
         }
     }
-    damage.dealt = damage.raw * std::max(damage.levelFactor, 0.0F) * std::max(1.0F - damage.mitigation, 0.0F);
+    // A weaken of an ability on the creature lowers its damage (stage 3.3a, Creature::damage_factor).
+    damage.dealt = damage.raw * std::max(damage.levelFactor, 0.0F) * std::max(1.0F - damage.mitigation, 0.0F)
+                   * creature.creature.damage_factor(m_world.clock().now());
     if (!std::isfinite(damage.dealt) || damage.dealt < 0.0F) {
         damage.dealt = 0.0F;
     }
@@ -347,6 +349,35 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
         m_world.creatures().behavior().immune_hit();
         return refuse(HitVerdict::immune);
     }
+    // A contact in the window of a phase of an ability that plays (world/abilities.h): a hit of
+    // that phase, with its damage row. The hit check of a melee attack stays.
+    if (const std::optional<MeleePhase> phase =
+            m_world.abilities().contact_phase(*attacker, session, claim.input, track.sequence(), target->id)) {
+        if (phase->done) {
+            return refuse(HitVerdict::sameAttack);
+        }
+        const gamedata::WeaponRow* weapon = m_tables->weapon_of(phase->itemId);
+        if (weapon == nullptr || !weapon->melee) {
+            return refuse(HitVerdict::noWeapon);
+        }
+        if (distance(attacker->position, target->position) > combat_limits::kMeleeReach + combat_limits::kReachTolerance) {
+            return refuse(HitVerdict::tooFar);
+        }
+        if (!valid_position(claim.point) || distance(claim.point, target->position) > combat_limits::kPointRange) {
+            return refuse(HitVerdict::badPoint);
+        }
+        limits.note_hit(HitLimits::Hit{target->id, now, claim.input, session, track.sequence()});
+        const AbilityKind kind = m_world.abilities().kind_of(phase->cast);
+        result = strike(*attacker, *target, phase->itemId, *weapon, phase->gearScore, phase->row, 1.0F, ability_name(kind));
+        if (result.verdict != HitVerdict::accepted) {
+            return refuse(result.verdict);
+        }
+        result.verdict = track.counted(HitVerdict::accepted);
+        if (Entity* hurt = m_world.creatures().find(target->id)) {
+            m_world.abilities().contact_hit(phase->cast, phase->phase, *attacker, *hurt);
+        }
+        return result;
+    }
     // The attack input of the contact: it is on, or it went off a short time before.
     const AttackTrack::Press* attack = track.press_for(claim.input);
     if (attack == nullptr) {
@@ -381,27 +412,58 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     if (!valid_position(claim.point) || distance(claim.point, target->position) > combat_limits::kPointRange) {
         return refuse(HitVerdict::badPoint);
     }
-    const gamedata::DamageRow& row = m_tables->damage_row(*rowIndex);
-    result.damage = damage(*attacker, *weapon, item->gearScore, row, m_tables->defense_of(target->creature.kind->vitals));
-    result.healthBefore = target->vitals.health;
     limits.note_hit(HitLimits::Hit{target->id, now, claim.input, session, track.sequence()});
-    const EntityId targetId = target->id;
-    const ActorId targetActor = target->actor;
-    const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt, attacker->id);
-    if (hurt.error != CreatureError::none || hurt.entity == nullptr) {
-        return refuse(HitVerdict::dead);
+    const AttackKind kind = result.kind;
+    result = strike(*attacker, *target, item->itemId, *weapon, item->gearScore, *rowIndex, 1.0F,
+                    kind == AttackKind::heavy ? "heavy attack" : "light attack");
+    result.kind = kind;
+    if (result.verdict != HitVerdict::accepted) {
+        return refuse(result.verdict);
     }
-    m_world.health().fought(*attacker); // The health of the attacker does not come back while it fights.
+    result.verdict = track.counted(HitVerdict::accepted);
+    return result;
+}
+
+HitResult Combat::strike(Entity& attacker,
+                         Entity& target,
+                         const std::string& itemId,
+                         const gamedata::WeaponRow& weapon,
+                         std::uint32_t gearScore,
+                         std::uint32_t rowIndex,
+                         float factor,
+                         const char* what) {
+    HitResult result;
+    result.verdict = HitVerdict::dead;
+    if (!has_tables() || rowIndex >= m_tables->data().damageRows.size()) {
+        result.verdict = HitVerdict::noTables;
+        return result;
+    }
+    const gamedata::DamageRow& row = m_tables->damage_row(rowIndex);
+    result.damage = damage(attacker, weapon, gearScore, row, m_tables->defense_of(target.creature.kind->vitals));
+    if (factor != 1.0F) {
+        result.damage.dealt *= std::max(factor, 0.0F);
+    }
+    result.healthBefore = target.vitals.health;
+    const EntityId targetId = target.id;
+    const ActorId targetActor = target.actor;
+    const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt, attacker.id);
+    if (hurt.error != CreatureError::none || hurt.entity == nullptr) {
+        if (hurt.error == CreatureError::immune) {
+            result.verdict = HitVerdict::immune;
+        }
+        return result;
+    }
+    m_world.health().fought(attacker); // The health of the attacker does not come back while it fights.
     result.healthAfter = hurt.entity->vitals.health;
     result.killed = hurt.entity->creature.dead;
-    result.verdict = track.counted(HitVerdict::accepted);
-    log::write("world: hit: %s hurts creature %016llx (%s) with %s (%s attack, row %s): %.1f damage of the type %s (weapon "
+    result.verdict = HitVerdict::accepted;
+    log::write("world: hit: %s hurts creature %016llx (%s) with %s (%s, row %s): %.1f damage of the type %s (weapon "
                "%.1f, with attributes and level %.1f, before the defense %.1f), health %.1f to %.1f%s",
-               attacker->name.c_str(),
+               attacker.name.c_str(),
                static_cast<unsigned long long>(targetId),
                hurt.entity->creature.kind->id.c_str(),
-               item->itemId.c_str(),
-               result.kind == AttackKind::heavy ? "heavy" : "light",
+               itemId.c_str(),
+               what,
                row.id.c_str(),
                result.damage.dealt,
                m_tables->damage_type(row.type).name.c_str(),
@@ -417,7 +479,7 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     dealt.type = result.damage.type;
     dealt.amount = result.damage.dealt;
     dealt.killed = result.killed;
-    m_world.damage_dealt(attacker->owner, dealt);
+    m_world.damage_dealt(attacker.owner, dealt);
     return result;
 }
 

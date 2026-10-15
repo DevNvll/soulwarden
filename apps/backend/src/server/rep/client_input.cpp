@@ -64,6 +64,15 @@ constexpr unsigned kActionAttackRelease = 567;
 /** The keys of the two weapons of the paperdoll ("Use_MainHandSlot_1", "Use_MainHandSlot_2"). */
 constexpr unsigned kActionWeapon1 = 9;
 constexpr unsigned kActionWeapon2 = 355;
+/**
+ * The press of the three keys of the ability bar ("ability1", "ability2", "ability3"; Q, R, F of
+ * the default profile). Live proof of stage 3.3a (L1): the bit is in the first entry of a press,
+ * with the bit "abilityN_virtual"; the next entries have the hold bit and then the release bit.
+ */
+constexpr unsigned kActionAbility[3] = {402, 115, 139};
+/** Offsets in a shot item of the second list: the start, the direction, and the attack (reader 0x2A1A590). */
+constexpr std::size_t kShotDirection = 12;
+constexpr std::size_t kShotAttack = 180;
 
 /** The values of an entry that the next entry of the message has when it does not send them. */
 struct EntryBase {
@@ -279,7 +288,19 @@ void read_tail(hub::Reader& reader, std::uint32_t mask, EntryBase& base, ClientI
         input.tail = InputTail::shortBody;
         return;
     }
-    reader.raw(step.shots * kShotSize);
+    for (std::uint32_t index = 0; index < step.shots; ++index) {
+        const auto item = reader.raw(kShotSize);
+        if (item.size() != kShotSize) {
+            break;
+        }
+        hub::Reader fields(item);
+        InputShot shot;
+        shot.origin = read_vector(fields);
+        shot.direction = read_vector(fields);
+        fields.raw(kShotAttack - 2 * kShotDirection);
+        shot.attack = fields.u32();
+        step.shotItems.push_back(shot);
+    }
     if (!read_count(reader, kContactSize, contacts)) {
         input.tail = InputTail::shortBody;
         return;
@@ -379,6 +400,11 @@ std::optional<ClientInput> read_entry(hub::Reader& reader, EntryBase& base, Inpu
             step.weaponKey = 1;
         } else if (has_action(words, index, kActionWeapon2)) {
             step.weaponKey = 2;
+        }
+        for (std::uint8_t place = 0; place < 3; ++place) {
+            if (step.abilityKey == 0 && has_action(words, index, kActionAbility[place])) {
+                step.abilityKey = static_cast<std::uint8_t>(place + 1);
+            }
         }
     }
     for (float& axis : input.axes) {

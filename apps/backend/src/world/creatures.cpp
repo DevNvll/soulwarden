@@ -164,8 +164,11 @@ CreatureResult Creatures::remove(EntityId id) {
         return result;
     }
     if (entity->creature.spawnPoint) {
-        // A command took the creature away: the distance rule must not make it again.
+        // A command took the creature away: the distance rule must not make it again, and no
+        // respawn time of a death before it does (code review of stage 3.5a, finding F8). Only
+        // the command `reset` makes the point free.
         set_waiting(*entity->creature.spawnPoint, true);
+        m_points[*entity->creature.spawnPoint].respawnAt.reset();
     }
     ++m_counts.removedByCommand;
     m_world.remove_creature(id);
@@ -276,9 +279,17 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker) {
     }
     if (result.error == CreatureError::none && !entity->creature.dead) {
         const gamedata::CreatureSlice& body = *entity->creature.body;
+        // A stun that ends at the next hit (the stun of Shockwave) ends now (stage 3.3a).
+        const auto breaks = std::find_if(entity->creature.effects.begin(), entity->creature.effects.end(),
+                                         [](const CreatureEffect& effect) { return effect.stun && effect.endsOnHit; });
+        if (breaks != entity->creature.effects.end()) {
+            breaks->ends = m_world.clock().now();
+            end_effects();
+        }
         // A creature that plays an attack does not stop it for a hit: the reaction would take
-        // the action of the attack away, and a player that hits fast would stop each attack.
-        if (body.hitAction && !entity->creature.mind.attack) {
+        // the action of the attack away, and a player that hits fast would stop each attack. A
+        // creature that an effect holds keeps the action of the effect (the stun, the knockdown).
+        if (body.hitAction && !entity->creature.mind.attack && !entity->creature.held(m_world.clock().now())) {
             start_action(*entity, *body.hitAction, kReactionTime);
         }
         if (attacker != 0) {
@@ -405,6 +416,117 @@ void Creatures::restore(Entity& entity) {
     m_world.touch(entity.id, ComponentKey::vitals);
 }
 
+bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
+    Creature& creature = entity.creature;
+    if (creature.dead || creature.immune()) {
+        return false;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    const bool wasHeld = creature.held(now);
+    const auto same = std::find_if(creature.effects.begin(), creature.effects.end(),
+                                   [&](const CreatureEffect& existing) { return existing.status == effect.status; });
+    if (same != creature.effects.end()) {
+        // The same status again: the later end (StackMax 1 of the six abilities).
+        same->ends = std::max(same->ends, effect.ends);
+        same->source = effect.source;
+    } else {
+        creature.effects.push_back(effect);
+    }
+    m_affected.insert(entity.id);
+    if (effect.stun && !wasHeld) {
+        // A stun stops the attack that plays (its contacts do nothing: the action is a different
+        // one) and the walk. The creature plays the action "Stun" of its slice for the stun.
+        creature.mind.attack.reset();
+        if (creature.body->stunAction) {
+            start_action(entity, *creature.body->stunAction);
+        } else {
+            creature.moving.reset();
+            m_world.touch(entity.id, ComponentKey::movement);
+        }
+    }
+    if (effect.shown) {
+        m_world.touch(entity.id, ComponentKey::status);
+    }
+    log::write("world: effect: creature %016llx (%s) has %s for %.1f s%s%s%s",
+               static_cast<unsigned long long>(entity.id),
+               creature.kind->id.c_str(),
+               effect.status.c_str(),
+               std::chrono::duration<double>(effect.ends - now).count(),
+               effect.stun ? ": stun" : "",
+               effect.root ? ": root" : "",
+               effect.speed < 1.0F ? ": slow" : "");
+    return true;
+}
+
+bool Creatures::knock(Entity& entity, unsigned power, std::chrono::milliseconds time) {
+    Creature& creature = entity.creature;
+    if (creature.dead || creature.immune() || !creature.body->hitAction) {
+        return false;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    creature.mind.attack.reset();
+    creature.knockedUntil = now + time;
+    m_affected.insert(entity.id);
+    // The reaction of the power: the action "Reaction" with the fragment of that power of the
+    // slice (r_R4_F for a knockdown), or with the fragment of its action.
+    if (start_action(entity, *creature.body->hitAction, time)) {
+        const std::size_t level = std::min<std::size_t>(power, creature.body->reactions.size() - 1);
+        if (creature.body->reactions[level] >= 0) {
+            creature.action->fragment = static_cast<std::uint32_t>(creature.body->reactions[level]);
+        }
+    }
+    log::write("world: effect: creature %016llx (%s) has a reaction of power %u for %.1f s (it does not move and does not attack)",
+               static_cast<unsigned long long>(entity.id),
+               creature.kind->id.c_str(),
+               power,
+               std::chrono::duration<double>(time).count());
+    return true;
+}
+
+void Creatures::end_stun(Entity& entity) {
+    Creature& creature = entity.creature;
+    if (creature.body->stunAction && creature.action && creature.action->action == *creature.body->stunAction) {
+        // The client keeps the scope fields of a creature: the next movement state has the
+        // fields with no record, and the client plays the idle action (creature_scope).
+        creature.action.reset();
+        m_acting.erase(entity.id);
+    }
+    m_world.touch(entity.id, ComponentKey::movement);
+}
+
+void Creatures::end_effects() {
+    const WorldClock::time_point now = m_world.clock().now();
+    for (auto affected = m_affected.begin(); affected != m_affected.end();) {
+        Entity* entity = find(*affected);
+        if (entity == nullptr) {
+            affected = m_affected.erase(affected);
+            continue;
+        }
+        Creature& creature = entity->creature;
+        bool stunEnded = false;
+        bool shownEnded = false;
+        for (auto effect = creature.effects.begin(); effect != creature.effects.end();) {
+            if (now < effect->ends && !creature.dead) {
+                ++effect;
+                continue;
+            }
+            stunEnded = stunEnded || effect->stun;
+            shownEnded = shownEnded || effect->shown;
+            effect = creature.effects.erase(effect);
+        }
+        if (creature.knockedUntil && (now >= *creature.knockedUntil || creature.dead)) {
+            creature.knockedUntil.reset();
+        }
+        if (shownEnded) {
+            m_world.touch(entity->id, ComponentKey::status);
+        }
+        if (stunEnded && !creature.dead && !creature.held(now)) {
+            end_stun(*entity);
+        }
+        affected = creature.effects.empty() && !creature.knockedUntil ? m_affected.erase(affected) : std::next(affected);
+    }
+}
+
 void Creatures::end_actions() {
     const WorldClock::time_point now = m_world.clock().now();
     for (auto acting = m_acting.begin(); acting != m_acting.end();) {
@@ -466,6 +588,7 @@ void Creatures::entity_removed(const Entity& entity) {
     }
     m_creatures.erase(entity.id);
     m_acting.erase(entity.id);
+    m_affected.erase(entity.id);
     m_behavior.removed(entity);
     if (entity.creature.spawnPoint && m_points[*entity.creature.spawnPoint].entity == entity.id) {
         m_points[*entity.creature.spawnPoint].entity = 0;
@@ -477,6 +600,8 @@ void Creatures::tick() {
         return;
     }
     load_points();
+    // The end of the effects of abilities first: a creature whose stun ended moves in this tick.
+    end_effects();
     // The behavior first: a contact of an attack is due at the latest at the end of its action.
     m_behavior.tick();
     end_actions();

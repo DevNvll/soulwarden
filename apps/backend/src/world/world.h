@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "core/logging/log.h"
+#include "gamedata/ability_data.h"
 #include "gamedata/appearance_tables.h"
 #include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
@@ -23,6 +24,7 @@
 #include "gamedata/progression_tables.h"
 #include "gamedata/travel_places.h"
 #include "state/store.h"
+#include "world/abilities.h"
 #include "world/combat.h"
 #include "world/creatures.h"
 #include "world/entity.h"
@@ -237,6 +239,8 @@ struct WorldOptions {
     const gamedata::TravelPlaces* travelPlaces{nullptr};
     /** The loot tables and the kill rewards (game data). Null: a kill gives nothing. */
     const gamedata::LootTables* lootTables{nullptr};
+    /** The ability data (game data, stage 3.3a). Null: the backend refuses each ability press. */
+    const gamedata::AbilityData* abilityData{nullptr};
     /**
      * The terrain heights (game data): the ground for a creature that walks. Null: no creature
      * leaves its place. The world asks it only in the world thread.
@@ -599,6 +603,10 @@ public:
     [[nodiscard]] Rewards& rewards() {
         return m_rewards;
     }
+    /** @return The abilities: the casts, the cooldowns, and the effects of the abilities of each character. */
+    [[nodiscard]] Abilities& abilities() {
+        return m_abilities;
+    }
     /** @return The navigation: the ground, the next step, and the sight of a creature. */
     [[nodiscard]] Navigation& navigation() {
         return m_navigation;
@@ -678,6 +686,7 @@ private:
     Combat m_combat;
     Health m_health;
     Rewards m_rewards;
+    Abilities m_abilities;
 };
 
 template <class Result>

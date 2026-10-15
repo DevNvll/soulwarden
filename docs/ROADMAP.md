@@ -189,7 +189,7 @@ continue in the C++ backend, and the layout below is the layout after the port.
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
-| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | | |
+| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
@@ -241,7 +241,7 @@ stage with a letter is a part of the system with that number.
 | 6 | 3.4d | The path search of a creature: navigation data that a tool makes from the collision shapes of the game copy (the terrain, the solid objects, the water), loaded by the backend; a creature goes around a wall and uses stairs; fights that a player can play | 3.4b | done (the user tests the game before the next stage) |
 | 7 | 3.4e | Patrol and wander: a creature walks its patrol route or wanders near its spawn point; the reset makes a creature immune on its way back, and it walks back on its way, not in one jump | 3.4d | done |
 | 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | done |
-| 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | open |
+| 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | done |
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | open |
 | 11 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" | 1.3b | open |
 | 12 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
@@ -969,6 +969,46 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   state and its tables; perks of items; consumables (food and potions, message 2917).
 - Test: an ability starts, its button shows the cooldown, a potion gives health, a food
   effect shows as an icon.
+- Stage 3.3a (done, protocol notes 4.22, document `docs/systems/abilities.md`; evidence
+  `~/Games/soulwarden/work/evidence/abilities/implement/`): the six abilities of the great axe
+  (Charge, Maelstrom, Gravity Well) and of the war hammer (Wrecking Ball, Shockwave, Path of
+  Destiny) of the build of the user. The live checks L1 to L8 came first: the three keys of
+  the bar set bits of the action words of the input report; the client plays an ability with
+  no answer of the server, and it has no message for a start or a refusal; the client reports
+  the melee contacts of an ability as the contacts of an attack (Maelstrom two, Charge,
+  Wrecking Ball, and the swing of Gravity Well one), Gravity Well also one shot, and Shockwave
+  and Path of Destiny nothing; the cooldown state (slot 45, type 2932) has one map for each
+  place of the bar with the server time in microseconds; the icon of a status effect at the
+  name plate of a creature comes only from the compact map of its status state (type 4236),
+  with the position of the CRC of the status id in the list of all status rows; the action
+  `Stun` and the reaction fragments of a slice play the stun and the knockdown; the client
+  predicts no cost. A new tool (`tools/gamedata/abilities.sh`, file `ability-data.json`, 0.4
+  MB) writes the cooldowns, the status effects, and the spells of the game data; the creature
+  tool writes the reaction fragments of each slice. The world takes a press of a key (the
+  character from the session, the weapon in the hand, its bar, the node, the cooldown, the
+  lock, no other cast; a refused press changes nothing), starts the cooldown of the data on
+  the world clock (a value of the character; the owner gets the countdown on the HUD), gives
+  the hits of the melee phases through the contact check and `Combat::strike`, the hits of
+  the areas through the position index and `Navigation::sees` (one hit of a creature for each
+  phase), and the stun, root, slow, weaken, knockdown, and stagger of the data to the
+  creatures through the creature system; the behavior obeys them, a creature on its way back
+  takes none, and each observer sees the icon and the action. The nodes of the build select
+  the rows, spells, and effects (Storm's Reach, Gravity, No Reprieve, Unyielding, Crowded
+  Well, Breathing Room, Meteoric Crater, Frailty, Seismic Waves, Stimulated Reduction,
+  Aftershock). The cost is 0. Test cases AB1 to AB12; AB10: 100 Shockwaves near 40 creatures
+  in a world of 4,040 creatures in 0.12 s (limit 5 s). Live: a video of each ability with its
+  animation and its damage numbers, the countdown and a press in it, a stunned, a slowed, and
+  a rooted wolf beside a wolf with no effect, Shockwave and Path of Destiny on two wolves, and
+  a kill by Charge with its rewards. The stage also corrected the eleven findings of the
+  review of stage 3.5a (the reward of a kill as one change of the store, the checks of the
+  loot file in the backend and in the tool, the scope at the end of a spawn lead, a jump of a
+  creature that cannot walk, the hold at a new nearest place, the respawn after a command
+  removal, the credit rule of the reference, the counts of the roll command, and a large
+  drop). Not in this stage: the abilities of the other weapons, a spell entity (the vortex
+  shows no picture), the pull of Maelstrom and of the vortex, the effects on the caster and
+  the passive nodes (fortify, grit, empower, critical hits, heal), a refusal message, and the
+  perks of an item that change an ability (stage 1.3b: protocol notes 4.22 "Not known, not
+  done").
 
 ### 3.4 Creatures: spawn, behavior, navigation
 

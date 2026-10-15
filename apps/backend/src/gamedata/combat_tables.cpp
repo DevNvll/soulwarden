@@ -176,13 +176,23 @@ bool CombatTables::set(CombatData data) {
         return false;
     }
     m_data = std::move(data);
+    m_rows.clear();
+    for (std::uint32_t index = 0; index < m_data.damageRows.size(); ++index) {
+        m_rows.emplace(lower(m_data.damageRows[index].id), index);
+    }
     m_error.clear();
     return true;
+}
+
+std::optional<std::uint32_t> CombatTables::row_index(std::string_view id) const {
+    const auto found = m_rows.find(lower(id));
+    return found == m_rows.end() ? std::nullopt : std::optional<std::uint32_t>(found->second);
 }
 
 bool CombatTables::load(const std::string& path) {
     const auto fail = [this](const std::string& text) {
         m_data = CombatData{};
+        m_rows.clear();
         m_error = text;
         return false;
     };
@@ -392,9 +402,7 @@ bool CombatTables::load(const std::string& path) {
     if (!check(data, error)) {
         return fail(error);
     }
-    m_data = std::move(data);
-    m_error.clear();
-    return true;
+    return set(std::move(data));
 }
 
 const WeaponRow* CombatTables::weapon_of(std::string_view itemId) const {

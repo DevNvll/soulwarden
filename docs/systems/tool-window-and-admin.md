@@ -63,9 +63,13 @@ protocol notes (section 6).
   `ignore`) makes the creatures ignore a character, the command `set_force_loot` (argument
   `force`) is the loot switch of a character, and the state of a character has the member
   `health` (the health, the dead mark, the ignore value, the loot switch, and if the
-  behavior of the creatures is on). The command that lowers the health of a character, the
-  roll of a loot table, and the respawn time of a spawn point are development routes only
-  (`tools/world hurt`, `roll`, `creature respawn`). A
+  behavior of the creatures is on). The commands `assign_node` (arguments `weapon`, `node`),
+  `set_ability_bar` (arguments `weapon`, `slot`, `ability`), and `reset_cooldowns` (no
+  argument) are the node, bar, and cooldown commands of stage 3.3a
+  ([Abilities](abilities.md)); the tool window has no button for them yet. The command that
+  lowers the health of a character, the roll of a loot table, the respawn time of a spawn
+  point, and an effect on a creature are development routes only (`tools/world hurt`, `roll`,
+  `creature respawn`, `creature effect`). A
   development route (`/v1/dev/creatures`, `tools/world`) has no such rule: it changes each
   creature of the world. Each creature command of the common layer has the parameter
   `commands::CreatureReach`, and each route set gives its rule. The admin routes and the

@@ -369,6 +369,46 @@ WorldCommand kill_creature(const std::string& character, const Arguments& argume
     };
 }
 
+WorldCommand give_creature_effect(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                  service::HttpResponse& refusal) {
+    const auto id = creature_id(arguments);
+    const auto status = arguments.text("status");
+    std::optional<float> seconds;
+    if (arguments.has("seconds")) {
+        seconds = arguments.number("seconds", 0.0F, 3600.0F);
+    }
+    if (!id || !status || status->empty() || (arguments.has("seconds") && !seconds)) {
+        refusal = message(400, "give creature=ID and status=NAME (a status row of the ability data, or knockdown or "
+                               "stagger), and when necessary seconds=N (0 to 3600)");
+        return {};
+    }
+    return [character, id = *id, status = *status, seconds, reach](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
+        world::Entity* creature = target.creatures().find(id);
+        if (creature == nullptr) {
+            return message(404, "the world has no creature with this id");
+        }
+        bool done = false;
+        if (status == "knockdown" || status == "stagger") {
+            const bool knockdown = status == "knockdown";
+            const auto time = seconds ? std::chrono::milliseconds(static_cast<long long>(*seconds * 1000.0F))
+                                      : (knockdown ? world::ability_rules::kKnockdownTime : world::ability_rules::kStaggerTime);
+            done = target.creatures().knock(*creature, knockdown ? world::ability_rules::kKnockdownPower
+                                                                 : world::ability_rules::kStaggerPower, time);
+        } else {
+            done = target.abilities().apply_status(*creature, status, 0, seconds);
+        }
+        if (!done) {
+            return message(400, "the creature took no effect: the ability data has no such status, or the creature is dead "
+                                "or on its way back");
+        }
+        log::write("world: command: creature %s has the effect %s", id_text(id).c_str(), status.c_str());
+        return creature_reply(world::CreatureResult{world::CreatureError::none, creature});
+    };
+}
+
 WorldCommand play_creature_action(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                   service::HttpResponse& refusal) {
     const auto id = creature_id(arguments);

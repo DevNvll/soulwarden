@@ -191,6 +191,10 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         return progress_wire::points_value_size(group, field, rest);
     case 185: // Ability: the bar of each weapon.
         return progress_wire::ability_value_size(group, field, rest);
+    case 2932: // CooldownTimers (stage 3.3a): the three maps of the places of the bar, 20 bytes for each entry.
+        return group == 0 && field < 3 ? progress_wire::list_size(rest, 20, 1000) : -1;
+    case 4236: // StatusEffects of a creature (stage 3.3a): group 3, the full map (14 bytes) and the compact map (3 bytes).
+        return group == 3 && field < 2 ? progress_wire::list_size(rest, field == 0 ? 14 : 3, 1000) : -1;
     default:
         return -1;
     }
@@ -208,7 +212,10 @@ inline unsigned group_count(std::uint32_t type) {
     case 911:
     case 3681:
     case 185:
+    case 2932:
         return 1;
+    case 4236:
+        return 4;
     case 3935:
     case 3183:
         return 3;

@@ -50,8 +50,9 @@ delete of a character that is in the world ends its session first.
 The backend has an admin interface for the tool window (routes `/admin/v1` on its loopback
 listener): the state of the characters of the account of the game, an item search, the
 kinds of the creatures, the travel places, and commands for the items, the coin, the level,
-the attributes, the skills, and the health of a character, for the creatures near it, and
-for a travel.
+the attributes, the skills, the nodes and the ability bars (`assign_node`,
+`set_ability_bar`), the cooldowns (`reset_cooldowns`), and the health of a character, for the
+creatures near it, and for a travel.
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
 
 The build has a library (`soulwarden_backend_core`), the backend program, and a test program that
@@ -103,6 +104,7 @@ tools/gamedata/progression.sh      # one time: progression tables (without them 
 tools/gamedata/creatures.sh        # one time: creature data (without it the world has no creature); needs an Oodle library (see below)
 tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect; from stage 3.5a also the weapon mastery of each weapon)
 tools/gamedata/loot.sh             # one time: loot tables and kill rewards (without them a kill gives nothing); 10 s
+tools/gamedata/abilities.sh        # one time: ability data (cooldowns, status effects, spells; without it an ability does nothing)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
@@ -153,7 +155,12 @@ weapon 1; `tools/world --help` has the list). A command for a character that is 
 world changes its rows in the database. For a fight: `ignore CHARACTER on|off` (the
 creatures ignore a character), `heal CHARACTER` (its full health; a dead character lives
 again at its place), `hurt CHARACTER AMOUNT` (its health goes down), and `message CHARACTER
-TYPE HEX` (one message with bytes of the caller to the client of a character).
+TYPE HEX` (one message with bytes of the caller to the client of a character). For the
+abilities (stage 3.3a): `node CHARACTER WEAPON NODE...` (assign nodes of a weapon tree, one
+mastery point each), `bar CHARACTER WEAPON SLOT ABILITY` (an ability on the place 0, 1, or 2
+of the bar of a weapon), `cooldowns CHARACTER [reset]` (the cooldowns that run; reset: each
+one ends), and `creature effect CREATURE STATUS [SECONDS]` (a status effect of the ability
+data on a creature, or `knockdown` or `stagger`); `list` has the line `abilities`.
 The backend has these commands only with the option `--dev-commands`, and it accepts that
 option and the research switch only when its process has `SOULWARDEN_HARNESS=1`.
 
@@ -358,7 +365,18 @@ button on "Confirm").
   sources as the creature data tool (the extracted files of the work folder are sufficient
   for it, and `SOULWARDEN_OODLE_LIB` reads the pak files). `tools/gamedata/loot.sh --find TEXT` prints the
   loot data of the creatures and of the tables with a text. Without the file the backend
-  starts, and a kill gives nothing.
+  starts, and a kill gives nothing. The tool writes no file (and keeps the file that is
+  there) when the tables have a reference that does not resolve or a value that the backend
+  refuses (protocol notes 4.21).
+- `tools/gamedata/abilities.sh` makes the ability data
+  (`~/.local/share/soulwarden/gamedata/ability-data.json`, 0.4 MB): the cooldown of each
+  ability, the values of each status effect (its time, the stun, the root, the slow, the
+  weaken, its icon), and the shape of each spell (protocol notes 4.22). It reads the data
+  tables of the game copy, from the same sources as the creature data tool.
+  `tools/gamedata/abilities.sh --find TEXT` prints the rows with a text. Without the file the
+  backend starts, and an ability does nothing. The creature data tool (stage 3.3a) also
+  writes the reaction fragments of each creature model: with a file from before, a
+  knockdown shows the small hit reaction.
 - Creatures. With the creature data, the creatures of each region of the world stand at
   their spawn points: rabbits, wolves, Risen, skeletons, sheep, and many others. Each
   one has its body, its idle animation, its name plate with its level, and its health bar.
@@ -435,8 +453,24 @@ button on "Confirm").
   attack, the attributes and the level of the character, and the defense values of the
   creature. The client finds each contact itself and reports it, and the backend checks each
   report (the creature, the distance, the weapon, the time of the attack): the rules are
-  rules of this project (protocol notes 4.15). Not yet: ranged weapons and magic, abilities,
-  critical hits, and blocks.
+  rules of this project (protocol notes 4.15). Not yet: ranged weapons and magic, critical
+  hits, and blocks.
+- Abilities (stage 3.3a, protocol notes 4.22, `docs/systems/abilities.md`). With the ability
+  data, the keys Q, R, and F use the three abilities of the bar of the weapon in your hand:
+  Charge, Maelstrom, and Gravity Well of the great axe, and Wrecking Ball, Shockwave, and Path
+  of Destiny of the war hammer. A hit of an ability shows its damage number. Shockwave stuns
+  the creatures around you, Path of Destiny hits the creatures on a line in front of you,
+  Wrecking Ball knocks a creature down, and Gravity Well throws a vortex that holds the
+  creatures in it and slows them, with a burst 3 s later. The button of the ability on the
+  HUD shows its cooldown (the time of the game data); a press in the cooldown does nothing.
+  The upgrades of the tree change the abilities as in the game (Storm's Reach, No Reprieve,
+  Gravity, Unyielding, Crowded Well, Breathing Room, Meteoric Crater, Frailty, Seismic Waves,
+  Stimulated Reduction, Aftershock). A stunned or rooted creature does not move, a slowed
+  creature runs slower, and the icon of the effect shows at its name plate. A creature on its
+  way back takes no effect. An ability has no cost. Not yet: the abilities of the other
+  weapons, a picture of the vortex, the pull of Maelstrom and of the vortex, the passive
+  nodes and the effects on your own character (fortify, grit, empower, heal), and the perks
+  of an item that change an ability.
 - Rewards of a kill. With the loot tables of stage 3.5a (`tools/gamedata/loot.sh`; protocol
   notes 4.21), a creature that your hits killed gives your character its experience (the
   experience table of the game with the level of the creature, its type, and the level
@@ -445,9 +479,9 @@ button on "Confirm").
   about 1 of 10 kills; then the loot tables of the game decide the item). The HUD shows one
   line for each change ("+27 XP", "+27 War Hammer Mastery", "+4.80 Coin", the name of the
   item), and the items are in the bag (Tab key) with a gear score of the range of the level.
-  Your character gets the rewards when its hits did 1 percent or more of the health of the
-  creature in the last 120 s, it lives, and it is 200 m or less from the creature; with
-  more characters, each one gets less experience. A creature that the health command or the
+  Your character gets the rewards when all its hits on the creature did 1 percent or more of
+  its maximum health, its last hit was 120 s or less before the death, it lives, and it is
+  200 m or less from the creature; with more characters, each one gets less experience. A creature that the health command or the
   kill command killed gives nothing. The mark "Each kill drops loot and coin" of the tab
   "Character" of the tool window (F8) makes each kill of your character drop loot and coin.
   Not yet: the perks and the rarity of an item instance (an item shows only the perks of its
@@ -465,7 +499,8 @@ button on "Confirm").
   experience and weapon mastery experience (stage 3.5a); `tools/world level`, `xp`,
   `attribute`, `mastery`, `tradeskill`, and `skillxp` set the values in a development run,
   and the tool window (F8) sets them in each start of the game. The largest level is 60, and the largest trade skill level
-  is 200. Not there yet: the use of an ability, the effects of an attribute other than the
+  is 200. Not there yet: the abilities of the weapons other than the great axe and the war
+  hammer, the effects of an attribute other than the
   health, and the reset of a weapon tree from mastery level 11 on (it has a cost in a
   currency that the backend does not have).
 - Equipment. The inventory screen has the equipment panel. The entry "Equip" of the action

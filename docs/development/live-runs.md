@@ -159,6 +159,11 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   desktop (`wf-recorder -o AGENT-0 -f FILE.mp4 -r 30`, with `timeout -s INT SECONDS`; it
   reads the output of the agent desktop and sends no input) and extract frames with
   `ffmpeg` at 10 to 30 frames each second, near the creature.
+- A video from `gamescopectl screenshot` in a loop has only the picture of the game. The
+  command writes the file some time after it returns, and some calls write no file: in stage
+  3.3a 65 of 108 calls in 9 s gave a frame. Wait 1 s or more after the last call, use only
+  the frames that are there, and give each frame its real time (a concat list of `ffmpeg`
+  with the `duration` of each frame). Check the video with `ffprobe` and a sheet of frames.
 - A window of a different program can be on the agent desktop (a person can move a window
   there). `tools/shot` and `wf-recorder` then take that window too: its picture can have
   private data. Take the pictures of the game with `gamescopectl screenshot FILE.png`: it

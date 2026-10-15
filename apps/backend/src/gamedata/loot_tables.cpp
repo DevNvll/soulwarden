@@ -218,6 +218,19 @@ bool LootTables::check(LootData& data, std::string& error) {
         if (!std::isfinite(base.dropChance) || base.dropChance < 0.0F || (base.table && *base.table >= data.tables.size())) {
             return fail("the loot data of the vitals row " + base.id + " is not valid");
         }
+        // Each reference of a base row resolves (code review of stage 3.5a, finding F2): a file
+        // with a part that is not there is not complete, and the backend does not use it.
+        if (!base.creatureType.empty() && data.modifiers.find(base.creatureType) == data.modifiers.end()) {
+            return fail("the vitals row " + base.id + " names the creature type " + base.creatureType + ", which the file does not have");
+        }
+        if (!base.event.empty() && data.events.find(lower_text(base.event)) == data.events.end()) {
+            return fail("the vitals row " + base.id + " names the kill event " + base.event + ", which the file does not have");
+        }
+    }
+    // A credit modifier for each number of characters that can get a reward.
+    if (credit.modifiers.size() < credit.receivers) {
+        return fail("the credit data has " + std::to_string(credit.modifiers.size()) + " modifiers for " +
+                    std::to_string(credit.receivers) + " characters");
     }
     return true;
 }

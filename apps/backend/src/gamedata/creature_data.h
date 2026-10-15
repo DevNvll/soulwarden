@@ -250,6 +250,25 @@ struct CreatureSlice {
      */
     std::optional<std::uint32_t> walkAction;
     /**
+     * Index of the action "Stun" (the fragment r_Stun_Loop of the slices with it: 432 of 503):
+     * a creature with this slice plays it while a stun effect holds it (stage 3.3a, live check
+     * L6). No value: the slice has none with a fragment, and a stunned creature keeps its pose.
+     */
+    std::optional<std::uint32_t> stunAction;
+    /**
+     * The fragment index of the reaction of each power level (r_R0_F to r_R4_F of the fragment
+     * file of the controller of the slice: the reaction to a hit from the front). The action
+     * "Reaction" with one of them plays the reaction of that power (stage 3.3a: a knockdown
+     * plays power 4). -1: the slice has no such fragment, and the reaction keeps the fragment
+     * of its action. A file of a tool from before stage 3.3a has none.
+     */
+    std::array<std::int32_t, 5> reactions{-1, -1, -1, -1, -1};
+    /**
+     * Slot of the status effect component of the slice (the component "StatusEffects", state
+     * type 4236): the creature state of its status effects goes there (stage 3.3a). 0: none.
+     */
+    std::uint32_t statusSlot{0};
+    /**
      * Name of the action that the server starts when it makes a creature with this slice (the
      * field m_spawnAction of the action list component, game data). The file has it only for
      * a slice whose body and name plate show in the client only after that action (the

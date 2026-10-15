@@ -9,6 +9,7 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
 | Task | Start here |
 | --- | --- |
 | A melee attack of a player on a creature: the contact report of the client, the hit check, the damage rule, the damage number | Protocol notes 2.3, 4.7, and 4.15, `apps/backend/src/world/combat.h`, `gamedata/combat_tables.h`, `server/rep/client_input.h`, `server/rep/combat_messages.h`, `server/http/aws_routes.cpp`, `tools/gamedata/combat.sh`, `tools/research/input_packet.py --contacts` |
+| A hit of an ability: the contact of an ability phase, the hit of an area, the weaken of a creature | Protocol notes 4.22, [Abilities](abilities.md), `world/combat.h` (`Combat::claim`, `Combat::strike`), `world/abilities.h` (`Abilities::contact_phase`), test cases AB4, AB5 |
 | The mana of a character and the mana meter of the HUD (the blue bar below the crosshair) | Protocol notes 4.5, `apps/backend/src/server/rep/states/mana_state.cpp`, test case UT4 |
 | The health and the death of a character: the damage of a creature, the damage mark, the death screen, the respawn | Protocol notes 4.18, `apps/backend/src/world/health.h`, `world/combat.h` (`Combat::creature_damage`), `server/rep/health_messages.h`, `server/rep/states/vitals_state.cpp`, `server/http/health_commands.cpp`, `tools/world heal` |
 
@@ -56,7 +57,10 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   that lives and that the session observes, the reference names a component of its slice, an attack input of
   the client fits the contact, the character has a melee weapon in its hand, the same attack
   did not hurt the creature, the exact position of the character is 5 m or less from the
-  creature, and the client made 12 claims or less in 1 s. A refused claim changes nothing
+  creature, and the client made 12 claims or less in 1 s. A contact in the window of a
+  phase of an ability of the character (stage 3.3a, `Abilities::contact_phase`) is a hit of
+  that phase: the damage row of the phase, the weapon of the cast, and one hit of a creature
+  for each phase in place of each attack; the other checks stay. A refused claim changes nothing
   and gets no reply; the log counts the refusals with their cause. The values of one client
   for the check (`world::AttackTrack`: its attack inputs and the counts) are in its session,
   as the values of the position check. The two limits of a hit (the rate of the claims, and
@@ -74,6 +78,13 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   goes down through the creature system, each observer gets the vitals state, and only the
   session of the attacker gets the damage number (`SessionSink::damage_dealt`, message type
   2071 for the damage receiver facet of its own character). The client computes no damage.
+  Each hit of a player on a creature goes through one function (`Combat::strike`, stage
+  3.3a): `Combat::damage` with the row, `Creatures::hurt` with the attacker (the target, the
+  credit, the rewards of a kill), the damage number, and the log line. A melee attack, the
+  contact of an ability, and the hit of an area of an ability use it; a new hit uses it too.
+  The damage of a creature to a character (`Combat::creature_damage`) is multiplied by the
+  weaken of the creature (`Creature::damage_factor`: 1 plus the `DMGStandard` of each of its
+  effects, not below 0).
 - The weapon in the hand of a character is the item of the weapon slot that its client
   selected with a weapon key (`Entity::combat.selectedWeapon`), or the first weapon slot
   with an item. The sheathe bits and the active bits of the paperdoll state do not follow
@@ -93,7 +104,8 @@ tools/world hurt NAME 500            # lower the health of a character (the heal
   and `SOULWARDEN_OODLE_LIB` reads the pak files. `tools/gamedata/combat.sh --find TEXT...` prints
   the weapons and the creatures with a text (`1hswordt1`, `wolf_grey_7`). The backend log
   says at the start if the tables are loaded. With no file the backend starts, and each hit
-  claim is refused (`no combat tables`).
+  claim is refused (`no combat tables`). The damage rows of the abilities (the rows
+  `GreatAxe_*` and `Warhammer_Damage_*`) are in the same file (`CombatTables::row_index`).
 
 ## Traps
 
