@@ -32,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-DEFAULT_GAME_DIR = Path.home() / ".local/share/Steam/steamapps/common/New World"
+DEFAULT_GAME_DIR = Path.home() / "Games/soulwarden/game"
 DEFAULT_WORK_DIR = Path.home() / "Games/soulwarden/work"
 
 
