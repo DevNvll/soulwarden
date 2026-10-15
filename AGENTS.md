@@ -23,7 +23,8 @@ backend. Read only the documents relevant to the task.
 | The creature data of the whole world: which entries are in, which slices are out, the spawn action of a slice, the picture check of the slices | Protocol notes 4.14, `tools/gamedata/creature_data.py`, `tools/gamedata/creature_slices.json`, `tools/research/creature_tour.py` |
 | The behavior of a creature: the sense, the way to a player, the attack and its contact test, the way back, the behavior data of a slice, the two switches | Protocol notes 4.17 and 4.19, `apps/backend/src/world/behavior.h`, `world/navigation.h`, `world/creatures.h`, `gamedata/creature_data.h`, `tools/gamedata/creature_behavior.py`, `tools/world ignore`, test cases FT1 to FT14 |
 | The navigation data: where a creature can stand, its path around a wall and up stairs, what stops its sight, the tiles near the players, the tool that makes the data from the collision shapes of the game copy | Protocol notes 4.19, `apps/backend/src/world/navigation.h`, `gamedata/navigation_data.h`, `tools/gamedata/navigation.sh` (`navigation_data.py`, `collision_data.py`, `navcore.cpp`, `nav_file.py`), `tools/world path`, `tools/world track`, `tools/research/nav_draw.py`, test cases NV1 to NV12 and RN1 to RN10 (`tools/gamedata/check_navigation_tool.py`) |
-| Patrol and wander of a creature: the routes of the spawn points, the wander values, the walk out of a fight, which creatures roam, the anchor of a fight, the reset (immune, the trail back), the wait at the place nearest to a target with no way | Protocol notes 4.14, 4.17, and 4.5, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/navigation.h` (`next_step` with `nearest`), `gamedata/creature_data.h` (`PatrolRoute`), `server/rep/states/vitals_state.cpp`, `tools/gamedata/creature_data.py` (`read_patrol`, `world_route`), `tools/world creatures`, `tools/world creature anchor`, test cases PT1 to PT10 |
+| Patrol and wander of a creature: the routes of the spawn points, the wander values, the walk out of a fight, which creatures roam, the anchor of a fight, the reset (immune, the trail back), the wait at the place nearest to a target with no way | Protocol notes 4.14, 4.17, and 4.5, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/navigation.h` (`next_step` with `nearest`), `gamedata/creature_data.h` (`PatrolRoute`), `server/rep/states/vitals_state.cpp`, `tools/gamedata/creature_data.py` (`read_patrol`, `world_route`, `check_creature_tool.py`), `tools/world creatures`, `tools/world creature anchor`, test cases PT1 to PT10 and RP1 to RP9 |
+| The rewards of a kill: the credit, the experience, the weapon mastery, the loot tables and their roll, the coin, the delivery with the loot notice, the loot switch; the respawn of a creature of a spawn point | Protocol notes 4.21, `apps/backend/src/world/rewards.h` (`reward_rules`, `respawn_time`), `gamedata/loot_tables.h`, `world/inventory.h` (`Inventory::grant`), `world/creatures.h` (`Creatures::hurt`, `respawn_at`), `server/http/loot_commands.cpp`, `tools/gamedata/loot.sh` (`loot_tables.py`, `check_loot_tool.py`), `tools/world loot`, `tools/world roll`, `tools/world creature respawn`, test cases LT1 to LT8 |
 | A fight that a player can play: the 10 s with no target after a travel, the health that comes back, light and heavy attacks of a creature and their pause, creatures that do not stand at one place | Protocol notes 4.19, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/health.h`, `gamedata/creature_data.h` (`kContactGap`, `kHeavyWeight`), test cases PL1 to PL4 |
 | The terrain heights: the height of the ground at a place with no navigation data, and the terrain after the cookies of the placements | Protocol notes 4.17 and 4.19, `apps/backend/src/gamedata/height_maps.h`, `world/navigation.h`, `tools/gamedata/heights.sh`, `tools/gamedata/check_heights_tool.py` |
 | A conversation with a person, a cutscene of the client, a character that the client keeps in place | Protocol notes 4.20, `apps/backend/src/server/rep/lock_messages.h`, `server/rep/rep_session.cpp` (`handle_cutscene_ended`, `end_input_lock`), `tools/world message`, test case UT1 |
@@ -86,7 +87,10 @@ backend. Read only the documents relevant to the task.
   (the creature then has no action of the server, and its observers get no record for it
   until its next movement state, which has the scope fields with no record). A creature
   that plays an attack plays no reaction, and a step of a way ends a reaction. The creature gets the character that
-  hurt it as its target (`Creatures::hurt` has the attacker).
+  hurt it as its target (`Creatures::hurt` has the attacker). A creature on its way back is
+  immune for each source: a hit, the health command, and the kill command do not lower its
+  health (`Creatures::set_health` gives `CreatureError::immune`; a health that goes up is not a
+  damage; test case RP7).
 - The spawn points (a project rule, protocol notes 4.14). The creature data has the places
   where the game has a creature. The world makes the creature of a spawn point when a
   player is 150 m or less from the point, and it removes the creature when no player is
@@ -95,12 +99,16 @@ backend. Read only the documents relevant to the task.
   point, not of the creature: a creature that goes to a player and away from its point
   stays in the world (test case FT8). A spawn point has one creature at most. A creature of
   a point that died, or that a command removed, does not come back by this rule: the point
-  waits until the command `reset`, or until its respawn time (`Creatures::respawn_at`, the
-  place of the respawn timer of stage 3.5a: no code sets a time yet). At the
-  respawn time, when a player is 150 m or less from the point, the point first removes the
-  body of its dead creature and then makes its new creature; with no player that near, the
-  body stays and the point waits. A creature of a command has no spawn point: the distance
-  rule does not remove it.
+  waits until the command `reset`, or until its respawn time. The death of a creature gives
+  its point the respawn time of its spawner (stage 3.5a, protocol notes 4.21,
+  `world::respawn_time`: from the smallest to the largest value of the spawner with the
+  generator of the world, the smallest value when the largest is not larger, 30 s for two
+  values of 0; `Creatures::respawn_at` sets a different one); a point whose creature a command
+  removed has no respawn time. At the respawn time, when a player is 150 m or less from the
+  point, the point first removes the body of its dead creature and then makes its new
+  creature; with no player that near, the body stays (the distance rule removes it at 200 m)
+  and the point waits. The respawn times are values of the world, not of the database. A
+  creature of a command has no spawn point: the distance rule does not remove it.
 - The cost of the spawn rule depends on the players and on the points near them, not on the
   size of the world. The creature data has the spawn points of the whole world, and no scan
   looks at each of them: the points are in a grid with cells of 64 m (`world::SpawnGrid`),
@@ -125,7 +133,9 @@ backend. Read only the documents relevant to the task.
   that plays: the first movement state of each session for the creature has it, with the
   time 0 on the wire (`CreatureAction::started` keeps the time of the creation). When the
   creature plays a different action at that time (a walk, an attack), the session sends that
-  action 1.5 s after the first record (`kSpawnLead` of `rep_session.cpp`; test case RU3). A
+  action 1.5 s after the first record (`kSpawnLead` of `rep_session.cpp`; test case RU3); a
+  movement state in the 1.5 s (a step of a walk) has no scope fields
+  (`PartsRequest::keepScope`, test case RP3). A
   reaction, an attack, a walk, and the action of a command do not take the spawn action
   away, and the backend does not send it again at their end. A dead creature
   has its death action in the first state of a later session; a dead creature of a slice
@@ -148,11 +158,13 @@ backend. Read only the documents relevant to the task.
   world, is ignored, or is farther than 60 m, and at the end of its leash: it then goes back
   to its anchor (the reset, below). A creature whose target has no way to it goes to the
   place nearest to the target (`next_step` with `nearest`), waits there with its target for
-  12 s (`kNoWayHold`; each attack starts the time again), attacks it in its reach, and then
+  12 s (`kNoWayHold`; the time starts at that place, not on the way to it, test case RP4;
+  each attack starts the time again), attacks it in its reach, and then
   goes back. A creature has one target. From stage 3.4d a wall stops the vision, the attack, each contact of an
   attack, and the way (the navigation data, protocol notes 4.19; a ceiling between two
-  bodies on one vertical line too). A kind with no attack that the data tool can use
-  stands and takes damage (859 of the 3,848 kinds).
+  bodies on one vertical line too). A kind with no attack that the data tool can use (859
+  of the 3,848 kinds) takes no target and takes damage; it patrols or wanders with the roam
+  data of its spawn point and of its slice, as each other creature (test case RP9).
 - Patrol, wander, and the reset (stage 3.4e, protocol notes 4.14 and 4.17; project rules,
   each constant in `behavior_rules`). The routes of the spawn points and the wander values of
   the slices are game data (`creatures.json` of format 3: the member `routes`, value 11 of a
@@ -166,7 +178,11 @@ backend. Read only the documents relevant to the task.
   random source in the world). At a waypoint it waits for a random time of its range and
   plays its task only when the action table of the slice has an action with that exact name;
   a negative wait is no wait, but the waypoint of a route of one waypoint and a waypoint whose
-  task ends with `_LOOP` keep the creature there for ever. The anchor of a fight is the place
+  task ends with `_LOOP` keep the creature there for ever (after a fight it goes there again
+  and plays the task again, test case RP8). A creature is at a waypoint, at a place of its
+  trail, and at its anchor only on the floor of that place (`behavior_rules::kFloorTolerance`,
+  1.0 m): a place on a different floor is no arrival, and the navigation decides (test cases
+  RP1, RP2). The anchor of a fight is the place
   where the creature took its target (`CreatureMind::anchor`): the leash is measured from it,
   the way back ends there, and the patrol or the wander goes on from it. On the way back
   (the mode `home`) a creature is immune: it takes no damage (`Creatures::hurt` gives
@@ -289,6 +305,29 @@ backend. Read only the documents relevant to the task.
   (`Known::scope`, `creature_scope`), and a movement state has the scope fields only when
   that key changes: the record of the new action, or the fields with no record (the client
   plays its idle action). Protocol notes 4.14, user test 1.
+- The rewards of a kill (stage 3.5a, protocol notes 4.21; project rules in `world/rewards.h`,
+  each constant in `reward_rules`, with the values of the game data `loot-tables.json`,
+  `gamedata::LootTables`). A kill is the death of a creature by the hit of a character
+  (`Creatures::hurt` with an attacker): the creature system calls `Rewards::hit` for each hit
+  (the credit entry of the character in the creature, `Creature::credit`) and
+  `Rewards::killed` at the death. A death by the health command or by the kill command gives
+  nothing. The credit (the credit data of the game): the hits of a character did 1 percent or
+  more of the maximum health, its last hit was 120 s or less before the death, and it is in
+  the world, lives, is not ignored, and is 200 m or less from the creature; 10 characters at
+  most, and the credit modifiers of the game for their number. The reset takes the credit
+  away (`Creatures::restore`). The experience goes through `Progress::add_experience`, the
+  same amount to the weapon mastery of the weapon in the hand through
+  `Skills::add_experience` (`WeaponRow::mastery` of the combat tables: a project rule, the
+  factor of the game is an empty cell), and the items and the coin through
+  `Inventory::grant`, in one transaction, with the cause `sync::kItemGathered` (1, the loot
+  notice of the HUD). The roll of a loot table follows the rules of the roller of the client
+  with the generator of the world only (`World::random_unit`). A full bag: an item with no
+  free slot is not given, and the coin and the experience are. The loot switch
+  (`Rewards::set_forced`, `tools/world loot`, the admin command `set_force_loot`) is a value
+  of the world with the character id as its key, until the backend stops. A new reward of a
+  kill (the territory standing, the Azoth) goes into `Rewards::killed` and through the system
+  of its state. The cost: a kill looks only at the credit list of its creature, and a roll
+  at the tables of its path (test case LT7, with a time limit).
 - The health and the death of a character (protocol notes 4.18). Only the health system
   (`world/health.h`) changes the health and the life state of a character
   (`Entity::vitals.health`, `Entity::life`); the progress system sets the maximum. The
@@ -604,8 +643,8 @@ backend. Read only the documents relevant to the task.
   window keeps the character id of the snapshot that the window drew
   (`model::command(character, ...)`): do not read the selected character at send time. The
   tabs: "Items", "Character" (with the health of the character, the button "Heal", which
-  has the text "Revive" for a dead character, and the mark "Creatures ignore this
-  character"), "Skills", "Creatures", and "Travel" (the position of the
+  has the text "Revive" for a dead character, the mark "Creatures ignore this
+  character", and the mark "Each kill drops loot and coin"), "Skills", "Creatures", and "Travel" (the position of the
   character, the list of the travel places with a filter and the distance of each place, a
   button "Travel" for the selected place, and a form with three numbers). The tab
   asks the worker thread for the list of the places (`model::load_places`) until the
@@ -632,10 +671,12 @@ backend. Read only the documents relevant to the task.
   the route `GET /admin/v1/catalog/places` gives the travel places, and the state of a
   character has its position. The command `heal` gives a character its full health (a dead
   character lives again at its place), the command `set_creatures_ignore` (argument
-  `ignore`) makes the creatures ignore a character, and the state of a character has the
-  member `health` (the health, the dead mark, the ignore value, and if the behavior of the
-  creatures is on). The command that lowers the health of a character is a development
-  route only (`tools/world hurt`). A
+  `ignore`) makes the creatures ignore a character, the command `set_force_loot` (argument
+  `force`) is the loot switch of a character, and the state of a character has the member
+  `health` (the health, the dead mark, the ignore value, the loot switch, and if the
+  behavior of the creatures is on). The command that lowers the health of a character, the
+  roll of a loot table, and the respawn time of a spawn point are development routes only
+  (`tools/world hurt`, `roll`, `creature respawn`). A
   development route (`/v1/dev/creatures`, `tools/world`) has no such rule: it changes each
   creature of the world. Each creature command of the common layer has the parameter
   `commands::CreatureReach`, and each route set gives its rule. The admin routes and the
@@ -684,13 +725,26 @@ backend. Read only the documents relevant to the task.
   and gear score values of the damage rule, the defense values of each vitals row, and,
   from stage 3.4b, the armor values of each armor item and the damage values of the level
   differences for the damage of a creature (with a file from before, the armor of a
-  character has no effect); without it an attack of a player on a creature has no effect; the backend refuses a file
+  character has no effect), and, from stage 3.5a, the weapon mastery of each weapon (value
+  12 of a weapon row; with a file from before, a kill gives no mastery experience); without it an attack of a player on a creature has no effect; the backend refuses a file
   with a damage type whose category is not `Physical`, `Elemental`, or `True`, and a file
   with an empty value list of an attribute, as a whole; the tool writes no file when a
   weapon names a damage row or a vitals row names a base row that the tables do not have,
   when a column that it reads is not there, and when a cell is not a finite number: the
   names that the game itself does not have are in the two lists `ROWS_NOT_IN_GAME` and
-  `BASES_NOT_IN_GAME` of the tool), `travel-places.json` (the spirit shrines and the inns
+  `BASES_NOT_IN_GAME` of the tool), `loot-tables.json` (stage 3.5a: the experience and the
+  coin of a kill of each creature level, the reward factors of each creature type, the
+  level differences, the coin chance of the kill events, the credit data of the game, the
+  gear score ranges of each level and the loot ceiling of each creature level, the loot data
+  of each vitals row, and the loot tables and the loot buckets that a vitals row can reach;
+  without it a kill gives nothing; the backend refuses a file whose parts do not fit
+  together, as a whole: a reference of a vitals row, of a table entry, or of a bucket that
+  does not resolve, a range whose end is below its start, a factor or a chance outside its
+  range, reward levels that do not start at 1 and go up by 1, no kill event, credit data with
+  no modifier; the tool writes no file for a reference that does not resolve, a text that is
+  not a number or a range, and a number that is not finite: the texts of the game data with
+  a typing fault are in the lists `FLAG_TEXTS_NOT_IN_GAME`, `CHANCE_TEXTS_NOT_IN_GAME`, and
+  `RANGE_TEXTS_NOT_IN_GAME` of the tool), `travel-places.json` (the spirit shrines and the inns
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
@@ -732,6 +786,7 @@ tools/gamedata/items.sh              # one time: item catalog for the backend (i
 tools/gamedata/progression.sh        # one time: progression tables for the backend (levels, attributes, skills)
 tools/gamedata/creatures.sh          # one time: creature data for the backend (spawn points, kinds, slices); needs an Oodle source
 tools/gamedata/combat.sh             # one time: combat tables for the backend (weapons, damage rows, defense values of the creatures)
+tools/gamedata/loot.sh               # one time: rewards of a kill for the backend (loot tables, experience and coin of each level, credit, gear score limits; 10 s)
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
@@ -776,6 +831,9 @@ tools/world hurt NAME 500            # lower the health of a character (the heal
 tools/world path NAME 8861.6 4243.4 139.5   # the path of the navigation between two places (a place: X Y Z or a character name)
 tools/world track 2c 20 --tsv FILE   # the place of a creature each 200 ms for 20 s
 tools/world creature anchor 2c 8585.5 4243.1 173.26   # the anchor of a creature in a fight (a test of a way back with no path)
+tools/world loot NAME on             # each kill of a character drops loot and coin (the loot switch; off: the chances of the game data)
+tools/world roll Wolf_Grey_7 --count 1000   # roll the loot table of a kind 1000 times and count the items (--forced, --character NAME)
+tools/world creature respawn 2c 20   # the dead creature 2c: its spawn point makes a new creature in 20 s (a player must be near)
 python3 -B tools/research/nav_draw.py ~/.local/share/soulwarden/gamedata/navigation 8850 4230 8880 4260 OUT.png --path FILE   # a picture of the data
 tools/dev-stop.sh                    # stop the development runs (not a game of the user)
 tools/dev-stop.sh --check            # status 0: no process of a development run is alive
@@ -900,7 +958,20 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   test 1, each one of RU1 to RU6 with a failure before its correction (RU1 to RU10: the sight
   over a cell edge, the death with no death action, the action after a first spawn record,
   a step with no locomotion action, the travel fallback with no camera, the tile of a goal,
-  three controls, and the time 0 of a first spawn record),
+  three controls, and the time 0 of a first spawn record), the cases of the code review of
+  stage 3.4e, each one with a failure before its correction (RP1 to RP9, with no RP6: an
+  anchor and a waypoint on a different floor, a walk in the lead of a first spawn record,
+  the wait with no way at the nearest place, the creature tool with a patrol source that is
+  not complete, which runs `tools/gamedata/check_creature_tool.py` with `python3`, the
+  commands on an immune creature, a task of a waypoint for ever after a fight, and a
+  creature with no attack that patrols), the rewards of a kill of stage 3.5a: the loot tables
+  file, a file whose parts do not fit together, no file, and the weapon mastery of the
+  combat tables (LT1), the credit of a kill (LT2), the experience and the weapon mastery of
+  a kill with a level up (LT3), the outer chance, the roll rules, the gear score, the
+  delivery with the loot notice cause, and a full bag (LT4), the respawn time of a spawn
+  point (LT5), two sessions near one creature (LT6), the load of the kills and of the
+  respawn timers near 50 players, with a time limit (LT7), and the loot tables tool with
+  made-up tables (LT8, which runs `tools/gamedata/check_loot_tool.py` with `python3`),
   HTTP stop (H1), a world task that did not start
   (D2), position limits (P2), bundle limits (F1), sessions and stops (T11), a locked item
   and the quantity of a lock request (L1), a delete whose write failed (D3), a spawn offset
@@ -1124,6 +1195,33 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   anchor CREATURE X Y Z` (route `/v1/dev/creatures/anchor`) moves the anchor of a creature in
   a fight to a place: a test of a way back with no path (a place with no way to it, for
   example a ledge).
+- `tools/world` has the commands of stage 3.5a: `loot CHARACTER on|off` (route
+  `/v1/dev/world/force-loot`, the mark "Each kill drops loot and coin" of the tab
+  "Character": the outer drop chance and the coin chance of each kill of the character pass;
+  a value of the memory of the world until the backend stops), `roll KIND [LEVEL] [--count N]
+  [--forced] [--character CHARACTER]` (route `/v1/dev/loot/roll`: the loot table of a kind,
+  rolled N times with the generator of the world, 10,000 at most, with the count of each
+  item; no item goes to a bag), and `creature respawn CREATURE SECONDS` (route
+  `/v1/dev/creatures/respawn`: the spawn point of a dead creature makes its creature again
+  after that time, when a player is 150 m or less from the point). `tools/world list` prints
+  the line `rewards` (the kills, the kills with no credit, the rewards, the experience, the
+  coin, the items given and not given, the time of the rewards, the spawn points that wait,
+  and the bodies that a respawn removed), and `tools/world creatures` prints the time to the
+  new creature of a dead creature of a spawn point.
+- `tools/gamedata/loot.sh` writes `loot-tables.json` to the game data folder (1.8 MB, 10 s):
+  the rewards of a kill of each level, the factors of the creature types, the level
+  differences, the credit data, the loot data of each vitals row, the 108 loot tables and
+  the 85 loot buckets that a creature can reach, and the gear score limits of each level.
+  The extracted files of the work folder are sufficient for it (`SOULWARDEN_OODLE_LIB` reads
+  the pak files). `--find TEXT...` prints the loot data of the vitals rows and of the tables
+  with a text. The tool writes no file when a table names a loot table or a bucket that the
+  tables do not have, when a column that it reads is not there, and when a cell is not a
+  finite number or has a form that it does not know: the texts that the game itself has with
+  a wrong form are in the lists `FLAG_TEXTS_NOT_IN_GAME`, `CHANCE_TEXTS_NOT_IN_GAME`, and
+  `RANGE_TEXTS_NOT_IN_GAME` of the tool. `tools/gamedata/check_loot_tool.py` is the check of
+  these rules, with made-up tables. `tools/gamedata/combat.sh` from stage 3.5a also writes the
+  weapon mastery of each weapon (value 12 of a weapon): with a file from before, a kill gives
+  no mastery experience.
 - `tools/gamedata/heights.sh` writes the terrain heights to the folder `heights` of the game
   data folder: one file for each of the 49 regions (136 MB, 2 minutes with 8 processes;
   the pak entries of the height maps are stored data: no Oodle source). `--region NAME`
@@ -1377,6 +1475,42 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   - The faminegeists of Mosswater Bourg walk at 0.07 m/s (the ambient speed of their slice):
     use an alligator of that place (1.81 m/s, a route of 56 m in the water) for a video.
 
+- The rewards of a kill and the respawn (stage 3.5a):
+  - A character with the ignore value on gets no reward from a kill: turn it off for the
+    kill (`tools/world ignore NAME off`), and on again after it. With
+    `SOULWARDEN_CREATURE_BEHAVIOR=0` no creature attacks, and the ignore value is not
+    necessary.
+  - The credit needs hits of 1 percent of the maximum health of the creature or more. The
+    health command lowers the health with no credit: a creature with a low health after
+    `tools/world creature health` dies by one small hit, and the kill gives nothing (a lion
+    at 20 health in one run). Set a health that the hits of the test take away (250 for a
+    bobcat of level 25), or use no health command.
+  - A creature of `tools/world creature spawn` has no spawn point: its kill gives the
+    rewards, but no respawn. A test of the respawn needs a creature of a spawn point.
+  - With the behavior on, a creature of a command roams (a Risen walked out of the picture):
+    start a run for a kill video with `SOULWARDEN_CREATURE_BEHAVIOR=0`.
+  - Most kills give no item: a Grey Wolf of level 7 gave an item in 83 of 2,000 rolls. A
+    live test of an item uses the loot switch (`tools/world loot NAME on`, or the mark of
+    the tab "Character"); `tools/world roll KIND --count 1000` shows the chances. The switch
+    goes away when the backend stops.
+  - A critter (a Young Scorpling) gives nothing: its creature type has the experience 0,
+    and its vitals row cannot drop loot.
+  - The client removes the body of a dead creature after 300 s (a delayed event of its
+    slice). A respawn time of 360 s (a bobcat) thus comes after the body went away in the
+    client. `tools/world creature respawn ID 20` makes a test of the respawn short.
+  - A weapon at the largest mastery rank (rank 20 of the character `Soulwarden`) gets no
+    experience notice. Use a weapon at a lower rank (the war hammer at rank 8) for a test of
+    the mastery notice. A world entry selects the first weapon slot: a key `2`
+    (`tools/hx 'key 0x32'`) selects weapon slot 2.
+  - The loot notice of the HUD shows for about 5 s at the right side: take the pictures of a
+    kill in a loop of `gamescopectl screenshot` directly after the last hit.
+  - `log::Context` keeps a pointer to its text: give it a string in a variable, not a
+    temporary (a log line of the rewards had bytes of free memory at its end before this
+    correction).
+  - The mark "Each kill drops loot and coin" of the tab "Character" is one row below the mark
+    "Creatures ignore this character" (`35 314` in the window of 1256x660): each row below it
+    is 29 pixels lower than in stage 3.4e. Take a screenshot before you use a position.
+
 - Creatures (stage 3.4a):
   - The spawn points of the start area are outside the wall of the settlement. From the
     default spawn place the character cannot walk to them through the wall (the wall is at
@@ -1576,9 +1710,10 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   first bag row `514 462` (each next row is 29 pixels lower). Character tab: "+" of the level
   `469 166`, "Set" of the level `512 166`, experience field `388 195`, "Give" `516 195`,
   the button "Heal" (or "Revive") `516 253`, the mark "Creatures ignore this character"
-  `35 285`, dexterity field `388 394` and its "Set" `512 394` (each row below the mark is
-  21 pixels lower in a start with the behavior of the creatures off: the tab then has one
-  more line of text). A click on a number field selects its
+  `35 285`, the mark "Each kill drops loot and coin" `35 314`, dexterity field `388 423` and
+  its "Set" `512 423` (each row below the two marks is 21 pixels lower in a start with the
+  behavior of the creatures off: the tab then has one more line of text; dexterity `388
+  444`). A click on a number field selects its
   text: `'text 25'` after the click replaces the number. The layout can change: take a
   screenshot before you use a position.
 - The tool window takes each key while it shows: `tools/hx 'key 0x09'` (Tab) then moves the

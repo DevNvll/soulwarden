@@ -34,7 +34,8 @@ json health_json(world::World& target, const std::string& character) {
     const world::Entity* entity = target.find_character(character);
     json reply{{"inWorld", entity != nullptr},
                {"creaturesIgnore", target.creatures().behavior().ignores(character)},
-               {"creatureBehavior", target.options().creatureBehavior}};
+               {"creatureBehavior", target.options().creatureBehavior},
+               {"forceLoot", target.rewards().forced(character)}};
     if (entity != nullptr) {
         reply["health"] = entity->vitals.health;
         reply["healthMax"] = entity->vitals.healthMax;

@@ -34,6 +34,7 @@
 #include "world/position_index.h"
 #include "world/position_report.h"
 #include "world/progress.h"
+#include "world/rewards.h"
 #include "world/skills.h"
 #include "world/world_clock.h"
 
@@ -234,6 +235,8 @@ struct WorldOptions {
     const gamedata::CombatTables* combatTables{nullptr};
     /** The travel places (game data). Null: the travel command takes only a position in numbers. */
     const gamedata::TravelPlaces* travelPlaces{nullptr};
+    /** The loot tables and the kill rewards (game data). Null: a kill gives nothing. */
+    const gamedata::LootTables* lootTables{nullptr};
     /**
      * The terrain heights (game data): the ground for a creature that walks. Null: no creature
      * leaves its place. The world asks it only in the world thread.
@@ -592,6 +595,10 @@ public:
     [[nodiscard]] Health& health() {
         return m_health;
     }
+    /** @return The rewards of a kill: the credit, the experience, the mastery, the loot, and the coin (a part of the creature system). */
+    [[nodiscard]] Rewards& rewards() {
+        return m_rewards;
+    }
     /** @return The navigation: the ground, the next step, and the sight of a creature. */
     [[nodiscard]] Navigation& navigation() {
         return m_navigation;
@@ -670,6 +677,7 @@ private:
     Creatures m_creatures;
     Combat m_combat;
     Health m_health;
+    Rewards m_rewards;
 };
 
 template <class Result>

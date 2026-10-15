@@ -32,6 +32,11 @@ unsigned long long id_number(EntityId id) {
     return static_cast<unsigned long long>(id);
 }
 
+/** @return True when a creature at `place` is at `goal`: this near in the plane, and on the floor of the goal. */
+bool at_place(const state::WorldPosition& place, const state::WorldPosition& goal, float range) {
+    return horizontal_distance(place, goal) <= range && std::fabs(place.z - goal.z) <= behavior_rules::kFloorTolerance;
+}
+
 std::chrono::milliseconds milliseconds(float seconds) {
     return std::chrono::milliseconds(static_cast<long long>(std::lround(seconds * 1000.0F)));
 }
@@ -556,9 +561,11 @@ void Behavior::think(Entity& creature, float seconds) {
         m_world.navigation().take_back(creature.id);
         next = m_world.navigation().next_step(creature.id, creature.position, target->position, shorter, true);
     }
-    // The wait at the place nearest to a target with no way: its time starts at the first step
-    // that says so, and a step on a full path to the target ends it.
-    if (next.partial || next.kind == StepKind::arrived || next.kind == StepKind::noWay) {
+    // The wait at the place nearest to a target with no way: its time starts when the creature
+    // is at that place (the end of its path, or no step nearer), not at the first step of the
+    // path to it (code review of stage 3.4e, finding F4). A step on a full path to the target
+    // ends it.
+    if (next.kind == StepKind::arrived || next.kind == StepKind::noWay) {
         if (!mind.holdUntil) {
             mind.holdUntil = now + behavior_rules::kNoWayHold;
             ++m_counts.holds;
@@ -572,7 +579,7 @@ void Behavior::think(Entity& creature, float seconds) {
             no_way(creature, *target);
             return;
         }
-    } else if (next.kind == StepKind::moved) {
+    } else if (next.kind == StepKind::moved && !next.partial) {
         mind.holdUntil.reset();
     }
     switch (next.kind) {
@@ -627,8 +634,10 @@ void Behavior::go_home(Entity& creature, float seconds) {
         }
         mind.attack.reset();
     }
-    const float away = horizontal_distance(creature.position, mind.anchor);
-    if (away <= behavior_rules::kHomeDistance || !can_walk(creature)) {
+    // At the anchor: near it in the plane and on its floor. A creature below or above its anchor
+    // on a different floor goes there on its way, and it does not jump while a session observes
+    // it (code review of stage 3.4e, finding F1).
+    if (at_place(creature.position, mind.anchor, behavior_rules::kHomeDistance) || !can_walk(creature)) {
         arrive(creature);
         return;
     }
@@ -669,7 +678,7 @@ void Behavior::go_home(Entity& creature, float seconds) {
 void Behavior::retrace(Entity& creature, float seconds) {
     CreatureMind& mind = creature.creature.mind;
     std::vector<state::WorldPosition>& trail = mind.trail;
-    while (!trail.empty() && horizontal_distance(creature.position, trail.back()) <= behavior_rules::kRoamArrival) {
+    while (!trail.empty() && at_place(creature.position, trail.back(), behavior_rules::kRoamArrival)) {
         trail.pop_back();
     }
     if (trail.empty()) {
@@ -760,9 +769,12 @@ void Behavior::arrive(Entity& creature) {
     mind.trail.clear();
     mind.retracing = false;
     mind.holdUntil.reset();
-    // The roam goes on from the anchor: the waypoint of the route that the creature went to.
+    // The roam goes on from the anchor: the waypoint of the route that the creature went to. A
+    // creature that stayed at a waypoint for ever (`settled`) goes to that waypoint again and
+    // plays its task again: the fight replaced the task (code review of stage 3.4e, finding F8).
     mind.roamGoal.reset();
     mind.roamWaitUntil = m_world.clock().now();
+    mind.settled = false;
     m_creatures.immune_changed(creature);
     m_active.erase(creature.id);
     m_world.navigation().forget(creature.id);
@@ -831,7 +843,10 @@ void Behavior::roam(Entity& creature, float seconds) {
         return;
     }
     const state::WorldPosition goal = *mind.roamGoal;
-    if (horizontal_distance(creature.position, goal) <= behavior_rules::kRoamArrival) {
+    // At the goal: near it in the plane and on its floor. A waypoint on a different floor is no
+    // arrival: the navigation finds the way to it, or says that it has none (code review of
+    // stage 3.4e, finding F2).
+    if (at_place(creature.position, goal, behavior_rules::kRoamArrival)) {
         at_roam_goal(creature);
         return;
     }

@@ -19,8 +19,9 @@ extracted).
                                                   factors, the damage rows of its light and of
                                                   its heavy attack (the columns
                                                   TooltipPrimaryAttackData and
-                                                  TooltipAlternateAttackData), and its own
-                                                  gear score rate
+                                                  TooltipAlternateAttackData), its own gear
+                                                  score rate, and its weapon mastery (the column
+                                                  WeaponMasteryCategoryId, stage 3.5a)
   DamageTable (DamageData)                        for each damage row: the weapon category, the
                                                   attack type, the damage type, the damage
                                                   factor, the damage that the row adds
@@ -44,7 +45,7 @@ Output: {"format": 1,
 "attributes": {"minimum": N, "strength": [...], "dexterity": [...], "intelligence": [...], "focus": [...]},
 "damageRows": [[id, weaponCategory, attackType, damageType, factor, added], ...],
 "weapons": [[id, use, tags, baseDamage, strength, dexterity, intelligence, focus, lightRow, heavyRow,
-gearScoreRate], ...],
+gearScoreRate, mastery], ...],
 "items": {"<item id in lower case>": weapon, ...},
 "defenses": [[physicalMitigation, elementalMitigation, {"<damage type>": weakness, ...},
 {"<damage type>": absorption, ...}], ...],
@@ -120,8 +121,9 @@ ARMOR_FIELDS = {
 ROWS_NOT_IN_GAME = frozenset({"1h_axe_attack1", "1h_axe_attack2", "1h_knife_attack1", "2h_sword_attack1",
                               "2h_sword_attack2"})
 BASES_NOT_IN_GAME = frozenset({"werewolf_rabid_20328", "upyr_10221a_named", "upyr_10220a", "upyr_10220b"})
-# The one column of the tool that a table of its type can have or not: each other column must be there.
+# The columns of the tool that a table of its type can have or not: each other column must be there.
 OWN_RATE_COLUMN = "WeaponBaseDamageCompoundIncrease"
+MASTERY_COLUMN = "WeaponMasteryCategoryId"
 
 
 def cell(sheet: Sheet, row: int, column: str):
@@ -308,7 +310,10 @@ def build_tables(sources: Sources) -> dict:
                             # The own gear score rate of a weapon. A weapon table can have no such
                             # column (the table of the heart runes): its weapons have the rate 0,
                             # which is the rate of the constants.
-                            rounded(number(sheet, row, OWN_RATE_COLUMN)) if OWN_RATE_COLUMN in sheet.columns else 0.0])
+                            rounded(number(sheet, row, OWN_RATE_COLUMN)) if OWN_RATE_COLUMN in sheet.columns else 0.0,
+                            # The weapon mastery of the weapon (stage 3.5a: the mastery experience of a
+                            # kill). Empty for a weapon of a creature and for a tool.
+                            str(cell(sheet, row, MASTERY_COLUMN)).strip() if MASTERY_COLUMN in sheet.columns else ""])
 
     items: dict[str, int] = {}
     for sheet in sheets[ITEM_TYPE]:

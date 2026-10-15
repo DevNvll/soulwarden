@@ -14,6 +14,7 @@
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
 #include "gamedata/item_catalog.h"
+#include "gamedata/loot_tables.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/travel_places.h"
 #include "service/rep_server.h"
@@ -60,7 +61,9 @@ struct ServerHost {
      * (no thread of the navigation): each tick of a case gives the same result.
      */
     gamedata::NavigationData navigation;
-    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat, places, terrain, navigation)};
+    /** The loot tables of the world. They are empty until a case sets them: a kill then gives nothing. */
+    gamedata::LootTables loot;
+    world::World world{clock, store, tables, with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -122,6 +125,19 @@ struct ServerHost {
                                               const gamedata::NavigationData& navigation) {
         world::WorldOptions options = with_game_data(catalog, progression, creatures, combat, places, terrain);
         options.navigationData = &navigation;
+        return options;
+    }
+
+    static world::WorldOptions with_game_data(const gamedata::ItemCatalog& catalog,
+                                              const gamedata::ProgressionTables& progression,
+                                              const gamedata::CreatureData& creatures,
+                                              const gamedata::CombatTables& combat,
+                                              const gamedata::TravelPlaces& places,
+                                              gamedata::Terrain& terrain,
+                                              const gamedata::NavigationData& navigation,
+                                              const gamedata::LootTables& loot) {
+        world::WorldOptions options = with_game_data(catalog, progression, creatures, combat, places, terrain, navigation);
+        options.lootTables = &loot;
         return options;
     }
 

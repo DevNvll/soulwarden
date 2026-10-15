@@ -284,13 +284,15 @@ bool CombatTables::load(const std::string& path) {
         data.damageRows.push_back(std::move(row));
     }
     // The weapons: [id, use, tags, base damage, strength, dexterity, intelligence, focus, light
-    // row, heavy row, gear score rate].
+    // row, heavy row, gear score rate, mastery]. A file of a tool from before stage 3.5a has no
+    // mastery (11 values): the weapons then give no mastery experience for a kill.
     if (!document["weapons"].is_array()) {
         return fail("the weapons are not a list");
     }
     for (const json& entry : document["weapons"]) {
         WeaponRow weapon;
-        if (!entry.is_array() || entry.size() != 11 || !entry[0].is_string() || !entry[1].is_string() || !entry[2].is_string()
+        if (!entry.is_array() || (entry.size() != 11 && entry.size() != 12) || !entry[0].is_string() || !entry[1].is_string()
+            || !entry[2].is_string() || (entry.size() == 12 && !entry[11].is_string())
             || !read_float(entry[3], weapon.baseDamage) || !read_float(entry[4], weapon.scaling[kStrength])
             || !read_float(entry[5], weapon.scaling[kDexterity]) || !read_float(entry[6], weapon.scaling[kIntelligence])
             || !read_float(entry[7], weapon.scaling[kFocus]) || !entry[8].is_string() || !entry[9].is_string()
@@ -299,6 +301,9 @@ bool CombatTables::load(const std::string& path) {
         }
         weapon.id = entry[0].get<std::string>();
         weapon.melee = entry[1].get<std::string>() == kMeleeUse;
+        if (entry.size() == 12) {
+            weapon.mastery = entry[11].get<std::string>();
+        }
         weapon.tags = entry[2].get<std::string>();
         const auto row_of = [&](const json& name, std::optional<std::uint32_t>& row) {
             const std::string text = name.get<std::string>();

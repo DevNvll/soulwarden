@@ -51,7 +51,8 @@ World::World(const WorldClock& clock,
       m_navigation(*this, options.navigationData, options.terrain, options.navigationThread),
       m_creatures(*this, options.creatureData),
       m_combat(*this, options.combatTables),
-      m_health(*this) {
+      m_health(*this),
+      m_rewards(*this, options.lootTables) {
     m_random = options.randomSeed;
 }
 

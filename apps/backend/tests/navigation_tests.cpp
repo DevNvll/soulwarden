@@ -884,7 +884,9 @@ void water(const Options& options) {
     // (not into the deep water), waits there (stage 3.4e), and then loses it.
     (void)world.host.world.travel(target->characterId, at(1003.0F, 1012.0F), world::TravelScreen::off);
     bool heldInDeep = false;
-    for (int step = 0; step < 100 * (2 + static_cast<int>(world::behavior_rules::kNoWayHold.count() / 1000)); ++step) {
+    // The 12 s of the wait start at the place nearest to the target, after the way to it (code
+    // review of stage 3.4e, finding F4): 4 s for the way and the search.
+    for (int step = 0; step < 100 * (4 + static_cast<int>(world::behavior_rules::kNoWayHold.count() / 1000)); ++step) {
         world.ticks(1);
         const state::WorldPosition& place = wolf->position;
         heldInDeep = heldInDeep || (place.x > 1000.2F && place.x < 1005.8F && !(place.y > 1000.0F && place.y < 1002.0F));

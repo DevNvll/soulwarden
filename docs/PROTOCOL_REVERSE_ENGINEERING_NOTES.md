@@ -2957,7 +2957,11 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   run of a fight), the session sends that action 1.5 s after the first record: the client
   shows the body first, and then the action. Before, the session sent only the spawn record:
   with no later change of the place or of the direction, the observer missed the whole
-  action. A later state of the creature replaces that wait.
+  action. A later state of the creature in the 1.5 s (a step of a walk: a patrol sends one
+  each 200 ms) has the position and no scope fields (`PartsRequest::keepScope`): the client
+  keeps the spawn action, and the action that plays follows at the end of the 1.5 s (finding
+  F3 of the review of stage 3.4e, case RP3; before, the first step of the walk sent the walk
+  at once and the lead was gone).
 - **The index of an action** is its position in the action table that the client makes for
   the slice (builder 0x4840D90; the table is at movement component +0xB58, one action has
   0x1A0 bytes: name +0x90, index +0x130, fragment name +0x138, fragment index +0x164). The
@@ -3054,9 +3058,10 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   prints these values (the line `load:`).
 - **A point that waits.** A creature of a spawn point that died, or that a command removed,
   does not come back by the distance rule. The point is free again after the command
-  `reset`, or at its respawn time on the world clock (`Creatures::respawn_at`: the place
-  of the respawn timer of stage 3.5a; no code sets a time now). The body of a dead creature
-  stays in the world until a command or the distance rule removes it. At the respawn time of
+  `reset`, or at its respawn time on the world clock (`Creatures::respawn_at`): from stage
+  3.5a the death of a creature gives its point the respawn time of its spawner (4.21); a
+  point whose creature a command removed waits for `reset`. The body of a dead creature
+  stays in the world until its respawn time, a command, or the distance rule removes it. At the respawn time of
   a point, when a player is 150 m or less from it, the point first removes the body of its
   dead creature and then makes its new creature (the count `removedByRespawn`). With no
   player that near, the body stays and the point waits.
@@ -3720,17 +3725,17 @@ fight, and on its way back (the reset).
 | Rule | Text |
 | --- | --- |
 | Who roams | A creature at rest that walks (a free floor of the navigation data), that is not dead, and that has a patrol route (its spawn point) or a slice that wanders. It roams only while a character is not farther than the leave distance of its interest (`World::interest_leave`: the radius of its slice from 20 m to 100 m, plus 20 m; 120 m at most): the distance at which a session of that character can observe it. The world selects these creatures one time each 1 s of the world clock, from the characters with the position index (`kRoamScanInterval`). A different creature stands where it is: it needs no time. |
-| Patrol | The creature walks to the next waypoint of its route with the ambient speed of its slice (1.5 m/s for a slice with no value, `kDefaultAmbientSpeed`) and the walk action (`Move`, 4.14), on the path of `next_step`. At the waypoint (0.3 m or less, `kRoamArrival`) it turns to the direction of the waypoint when the waypoint has `m_matchAlignment`, waits for a random time of the range of the waypoint (the generator of the world), and plays the task of the waypoint for that time when the action table of its slice has an action with that exact name (the letter case is not ignored). A negative wait (-1 in the game files) is no wait, with two exceptions: at the waypoint of a route of one waypoint, and at a waypoint whose task ends with `_LOOP` (the letter case is ignored), the creature stays for ever (it then needs no time, and a task with that name plays with no end). |
+| Patrol | The creature walks to the next waypoint of its route with the ambient speed of its slice (1.5 m/s for a slice with no value, `kDefaultAmbientSpeed`) and the walk action (`Move`, 4.14), on the path of `next_step`. At the waypoint (0.3 m or less, `kRoamArrival`) it turns to the direction of the waypoint when the waypoint has `m_matchAlignment`, waits for a random time of the range of the waypoint (the generator of the world), and plays the task of the waypoint for that time when the action table of its slice has an action with that exact name (the letter case is not ignored). A negative wait (-1 in the game files) is no wait, with two exceptions: at the waypoint of a route of one waypoint, and at a waypoint whose task ends with `_LOOP` (the letter case is ignored), the creature stays for ever (it then needs no time, and a task with that name plays with no end). A fight replaces that task: after the reset the creature goes to the waypoint again and plays its task again (finding F8 of the review of stage 3.4e, case RP8; before, it stood with no task for ever). The waypoint is reached only on its floor (the row "No path back"). |
 | Policy | A loop: after the last waypoint the first one. Back and forth: the waypoints in their sequence, then back. At random: a random waypoint that is not the waypoint where the creature is. A route with a policy that is not defined is a loop. |
 | Wander | A creature with no route whose slice wanders goes to a random place at a random distance of its wander range (`WanderDistanceMin` to `WanderDistanceMax`, not farther than the leash of its slice at rest) from its home, in a random direction, with the ambient speed and the walk action. It tries 6 places in one step (`kWanderTries`): a place with no floor, or with a floor that is not free, is not taken. At the place it waits 4 s to 12 s (`kWanderWaitShortest`, `kWanderWaitLongest`). |
 | No way on a roam | A waypoint or a place with no way to it: the creature waits 3 s (`kRoamNoWayPause`) and takes the next goal. |
 | The first walk | Each creature starts its first walk 0 s to 4 s after its creation (a random time): the creatures of one place do not start at one time. |
 | The random numbers | The world has one generator (splitmix64, `World::random_unit`); `WorldOptions::randomSeed` gives its start value (the backend takes it from the clock at its start; a test sets it, and one value gives one sequence). |
 | Anchor | When a creature takes a target, the place where it is is its anchor, and the first place of its trail. The leash is the distance from the anchor. At the end of the way back the patrol or the wander goes on from the anchor: a patrol goes to its next waypoint. |
-| Immune | On the way back (the mode `home`) the creature takes no damage (`Creatures::hurt` gives the error `immune`; the hit check of 4.15 refuses the claim with the cause "the creature is on its way back (immune)") and no target by a hit or by its vision. The vitals state has `invulnerability` 1 and `displayImmuneWhenInvulnerable` 1 for each observer (4.5), and 0 again at the anchor. |
+| Immune | On the way back (the mode `home`) the creature takes no damage (`Creatures::hurt` gives the error `immune`; the hit check of 4.15 refuses the claim with the cause "the creature is on its way back (immune)") and no target by a hit or by its vision. The health command and the kill command do not lower its health either (the reply 400 "the creature is on its way back: it takes no damage"; finding F7 of the review of stage 3.4e, case RP7): a creature on its way back does not die, and a kill and its rewards (4.21) come only from a fight. The vitals state has `invulnerability` 1 and `displayImmuneWhenInvulnerable` 1 for each observer (4.5), and 0 again at the anchor. |
 | Trail | In a fight the creature keeps the places of its way: one place for each 1 m (`kTrailSpacing`), 512 places at most (`kTrailLength`; the anchor stays the first one). A way that comes back to an older place of the trail removes the places after it (the trail has no loop). |
-| No path back | When the way back to the anchor has no path (`noWay` or `noGround`), the creature walks the places of its trail back, each one with `next_step` (it does not jump). A place of the trail with no way to it is left out. When the anchor itself has no way, the creature is at its anchor in one step only when no session can observe it (no character of a client is in the leave distance of its interest); if not, it stands immune at the last place and tries again at each step. |
-| No way to the target | `next_step` with the goal "the nearest place" (4.19) gives the path to the place that the creature can get to that is nearest to the target. The creature waits there with its target for 12 s (`kNoWayHold`); each attack starts the time again. Then it loses its target with the cause `no way to the target, after its wait at the place nearest to it`. |
+| No path back | A creature is at its anchor, at a place of its trail, and at a waypoint when it is near the place in the plane and on its floor: the two heights are 1.0 m or less apart (`kFloorTolerance`; two floors of one cell are farther apart). A place on a different floor is no arrival: the navigation finds the way to it or says that it has none (findings F1 and F2 of the review of stage 3.4e, cases RP1 and RP2: before, a creature below its anchor jumped through the ceiling while a session observed it, and a creature below a waypoint of a floor with no way played the task of the waypoint). When the way back to the anchor has no path (`noWay` or `noGround`), the creature walks the places of its trail back, each one with `next_step` (it does not jump). A place of the trail with no way to it is left out. When the anchor itself has no way, the creature is at its anchor in one step only when no session can observe it (no character of a client is in the leave distance of its interest); if not, it stands immune at the last place and tries again at each step. |
+| No way to the target | `next_step` with the goal "the nearest place" (4.19) gives the path to the place that the creature can get to that is nearest to the target. The creature waits there with its target for 12 s (`kNoWayHold`); each attack starts the time again. The 12 s start when the creature is at that place (the end of its path, or no step nearer), not at the first step of the path to it (finding F4 of the review of stage 3.4e, case RP4: before, a way of more than 12 s ended before the place). Then it loses its target with the cause `no way to the target, after its wait at the place nearest to it`. |
 
 - The commands: `tools/world creatures` prints `PATROL (waypoint N of M)`, `, stays there)`
   (a creature that stays for ever), `, stands: CAUSE)` (no character near, no navigation data
@@ -3878,8 +3883,11 @@ largest vision distance of the data around each character).
   have 0.07 m/s (the faminegeists of Mosswater Bourg move 3 m in 58 s).
 - The client can still report one contact on an immune creature (a swing at a creature beside
   it); the backend refuses it. The client shows no immune text (4.5).
-- The 859 kinds with no attack stand. 372 of them name a damage row that their damage
-  table does not have: the row can be in a different table.
+- The 859 kinds with no attack do not attack: they take no target. A kind with no attack
+  that has the roam data (a patrol route or the wander values, and the behavior data of its
+  slice) patrols or wanders as each other creature (finding F9 of the review of stage 3.4e,
+  case RP9). 372 of them name a damage row that their damage table does not have: the row
+  can be in a different table.
 - A creature near a travel place or a respawn place attacks a character there 10 s after
   the character came (the shelter of 4.19; a Highlands Goat of level 62 is 8 m from the
   Shrine of Pillars).
@@ -4560,6 +4568,166 @@ closes it, and the character walks at the new place. A respawn: the character wa
 the correction (run `ut1a`): no movement after the conversation and after a travel; the two
 development messages 3746 and 6709 (`tools/world message`) freed the character.
 
+### 4.21 The rewards of a kill and the respawn of a creature (behavioral proof of what the client shows; the rules are project rules with the values of the game data)
+
+Stage 3.5a. Research: `~/Games/soulwarden/work/research/loot.md` (verified). Evidence of the
+live runs: `~/Games/soulwarden/work/evidence/loot/implement/` (`live/R1-*`, `live/L*`). Code:
+`world/rewards.h` (the rules, `reward_rules`), `gamedata/loot_tables.h`, `world/creatures.h`
+(the respawn time), `world/inventory.h` (`Inventory::grant`), `server/http/loot_commands.cpp`;
+tools `tools/gamedata/loot.sh` (`loot_tables.py`) and `tools/gamedata/combat.sh` (the weapon
+mastery of a weapon). Test cases LT1 to LT8.
+
+**What the client shows** (behavioral proof, runs `loot-l1` to `loot-l4`). The backend sends
+no new message: the rewards are changes of four states of the owner that the client has from
+stage 1.3, 1.5, and 1.6. The HUD (`lootticker2024.luac`) shows one line for each change:
+
+| Change | State | What the HUD shows | Proof |
+| --- | --- | --- | --- |
+| A new item or a larger stack | Container state of the bag (slot 61, type 1755): a journal entry with `ActionCausingSync` 1 (`ItemGathered`) for each slot that changed | The loot notice: the icon and the name of the item ("Longsword", "Fire Staff", "Padded Flawed Jasper Amulet", "Trapper Boots") | Static: 0x48D5EC0, 0x48E4130, 0x48E2CC0 (`loot.md` 3.1). Live: `R1-*` (a give command with the cause 1), `L8-01`, `L8-05`, `L8-07` (kills) |
+| The total of the experience | Progression state (slot 70, type 899), group 1 field 0 | "+27 XP" (the difference of the totals), and "LEVEL 27" for a new level (group 0 field 0) | Live: `R1-*`, `L8-01`, `L8-11` |
+| The coin | Currency state (slot 60, type 3786) | "+4.80 Coin" (the difference) | Live: `R1-*`, `L8-01` |
+| The experience of a weapon mastery | Categorical progression state (slot 65, type 911): the rank and the experience in the rank | "+27 War Hammer Mastery" with the bar of the rank; a new rank also changes the point state (slot 67): "UPGRADE AVAILABLE, mastery points" | Live: `R1-*`, `L8-01`, `L8-05`, `L8-07` |
+
+- The cause 0 (`ItemAdded`, the default of the give command) is not in the masks of the notice
+  (research). The load of the bag at a world entry has the cause 0x11: no notice.
+- The notice of an item shows also for a slot that is new in the vector (a full bag of 6 slots
+  got the slot 6 with the cause 1: "Longsword").
+- An item has five perk indexes 0 on the wire (stage 1.3b adds the perks of an instance). The
+  client shows the perks and the gem that the item definition itself has: the amulet
+  `AmuletJasperT2` shows "+1.19% Max Health" and "Strike Ward I", and its rarity "Uncommon"
+  (live `L8-10`). A weapon of a drop table shows "Common" and its gear score (`L8-03`).
+
+**The data** (game data, `tools/gamedata/loot.sh`, file `loot-tables.json` of format 1; 1.8 MB):
+
+| Value | Source in the game files | Member of the file |
+| --- | --- | --- |
+| The experience, the coin (hundredths), and the progression amount of a kill of each creature level (70 levels) | Table `Rewards` (`RewardData`): `KillExperience`, `KillCurrency`, `KillProgressionCurrency` | `rewards` |
+| The factors of each creature type (99 types: Solo, Solo+, Elite, Critter, ...) | Table `RewardModifiers`: `Experience`, `Currency`, `CurrencyRewardChance`, `LootDropModifier`, `ProgressionCurrencyAmount` (an empty cell in each row of the supported build: null) | `modifiers` |
+| The level difference (the creature level minus the level of the character) | Table `AILevelDisparity`: `KillExpModifier`, `MaxRewardLevelDelta` | `disparity` |
+| The coin chance of the kill event and of each override | Game events (`GameEventData`): `KillEvent` (`CoinRewardChance` 0.05) and each `KillEventIdOverride` of a vitals row | `events` |
+| The credit data | `playerbaseattributes.pbadb`: `Event Credit Data` (`Credit Time Limit Seconds` 120, `Credit Health Threshold Percentage` 0.01, `Credit Range Limit Meters` 200, the 10 `Event Credit Modifiers`: experience, loot, and currency factors for 1 to 10 characters) and `Max AI Loot Receiver Count` 10 | `credit` |
+| The gear score range of each item tier at each level | Table `XPLevels`: `GSLimitT1` to `GSLimitT5` (the row `Level Number` K is the level K + 1) | `gearScore` |
+| The largest gear score of the loot of a creature level | Table `VitalsLevels`: `AILootGSCeiling` | `lootCeiling` |
+| The loot data of each vitals row | The base vitals tables (`VitalsBaseData`): `CreatureType`, `CanDropLoot`, `LootDropChance`, `IgnoreLootDropModifier`, `LootTableId`, `LootTags`, `NoExpNoCoin`, `KillEventIdOverride`; the level variant rows (`BaseVitalsId`) | `bases` (7,408), `vitals` (8,779 ids) |
+| The loot tables that a vitals row can reach (108) | `LootTablesData`: the rows `NAME` (`AND/OR`, `RollBonusSetting`, `Conditions`, `ConditionOverridesRoll`, `UseLevelGS`, `GSBonus`, `ItemN`, `GearScoreRangeN`), `NAME_Qty`, and `NAME_Probs` (`MaxRoll`, the thresholds) | `tables` |
+| The loot buckets that such a table names (85) | `LootBucketData`: `LootBucketN` (row 0), `ItemN`, `QuantityN`, `TagsN`, `MatchOneN`, `OddsN` | `buckets` |
+| The weapon mastery of a weapon | `WeaponItemDefinitions`: `WeaponMasteryCategoryId` (125 of 587 weapons: the weapons of a player) | `combat-tables.json`: value 12 of a weapon row |
+
+- The tool stops (status 1, no file) for a reference of a table, of a bucket, or of a vitals
+  row that does not resolve, a quantity or a range text that is not a number, reward levels
+  that do not start at 1 and go up by 1, and a number that is not finite. Facts of the game
+  data that the tool accepts, each one in a list of the tool: the flag text "TRULE" (true),
+  the chance text "z" (0), and the tag range "49-59-59" (49 to 59). The check is
+  `tools/gamedata/check_loot_tool.py` (case LT8).
+- The backend refuses a file whose parts do not fit together, as a whole (case LT1): with no
+  file (or no valid file) a kill gives nothing, as before stage 3.5a. A combat tables file of
+  a tool from before has no mastery: a kill then gives no mastery experience.
+- The respawn values of a spawner (`m_minRespawnCooldown`, `m_maxRespawnCooldown`) are in the
+  creature file since stage 3.4a (spawn point values 7 and 8): 16,713 points have 360 and 360,
+  15,800 have 360 and 0, 184 have 360 and 15, and 143 have other values.
+
+**The rules** (project rules; the values are the values of the game data):
+
+| Rule | What the backend does |
+| --- | --- |
+| A kill | A death of a creature by the hit of a character (`Creatures::hurt` with an attacker). A death by the health command or by the kill command gives nothing. |
+| The credit | Each hit of a character adds its damage (not more than the health that the creature had) to the credit entry of that character in the creature (`Creature::credit`). At the death a character gets the rewards when its damage is 1 percent or more of the maximum health of the creature, its last hit was 120 s or less before the death, and it is in the world, lives, is not ignored by the creatures (`tools/world ignore`), and is 200 m or less from the creature (the credit data of the game, a rule of this project for an AI kill). 10 characters at most, the most damage first. The credit modifier of the game for that number of characters applies to the experience and the coin (1 character: 1; 2: 0.7 and 0.8; 3: 0.55 and 0.6); the loot factor is 1. The credit of a creature goes away when it is at its anchor with its full health (the reset). |
+| The experience | The reward level is the creature level, at most the level of the character plus `MaxRewardLevelDelta` of the level difference (10 for +10 to +20). A difference outside the table has the row at its end (-20 or +20); a difference with no row (-9 to +2) has no factor. The experience is `KillExperience` of the reward level times the credit modifier times the experience factor of the creature type times (1 + `KillExpModifier` of the difference), the whole part (the calculation of the client, 0x5C4C1D0; `loot.md` 5.1). It goes to `Progress::add_experience`. Worked example: a Grey Wolf of level 18 (Solo) and a character of level 26: the difference -8 has no row, `KillExperience` 27: 27 experience. A Sacred Starhide of level 61 and a character of level 26: the difference +35 has the row +20 (delta 10): the reward level 36, 45 experience. |
+| The weapon mastery | The weapon in the hand of the character (`Combat::weapon_in_hand`, 4.15) and the mastery of its weapon row (`WeaponMasteryCategoryId`): that mastery gets the same amount as the character, through `Skills::add_experience` (4.13). No weapon, or a weapon with no mastery: none. A rule of this project: the factor of the game (`ProgressionCurrencyAmount`) is an empty cell in each row of the supported build, and the kill handler of the client (0x31FD9E0) gives an empty weapon list to the calculation; the client builds a list of the masteries of the weapons of the slots 24 to 26 for a different event (0x31C2280). |
+| NoExpNoCoin | No experience, no mastery, and no coin (764 base rows); the loot is rolled. |
+| The coin | The chance is `CurrencyRewardChance` of the creature type when it is above 0, or the coin chance of the kill event of the vitals row (0.05). With that chance (the generator of the world): `KillCurrency` of the reward level times the coin factor of the creature type times the credit modifier, the whole part (hundredths of a coin). |
+| The loot | A vitals row with `CanDropLoot` and a loot table. The outer chance is `LootDropChance` times the loot factor of the creature type (not with `IgnoreLootDropModifier`) times the loot factor of the credit; with that chance the loot table of the row is rolled (below). |
+| The items and the coin | One transaction of the inventory system (`Inventory::grant`): each item goes into the stacks of the item that are not full first, then into new stacks in the first empty slots; each slot that changed has the cause 1 (the loot notice). The coin is in the same transaction (`Store::write_items` with the coin), not above the wallet limit. When the database refuses the change, no item and no coin changes (case LT4). |
+| A full bag | The bag has 500 slots at most (the vector of the client). An item that has no slot is not given: the world has no item on the ground in this stage (`loot.md` 3.2: an ItemDrop needs a loot entity and the LootTracker). The other items, the coin, the experience, and the mastery are given. The weight of the items is not a limit (the client shows the encumbrance). |
+| The respawn time | At the death of a creature of a spawn point, the point waits until the death plus the respawn time of its spawner: a time from the smallest to the largest value with the generator of the world when the largest value is larger; the smallest value when it is not (a largest value of 0 is no value: the version converter of the client, 0x3BF6720, gives an old spawner only `m_minRespawnCooldown`); 30 s for two values of 0 (`kShortestRespawn`, 4 points). Then, with a player 150 m or less from the point, the body leaves the world and the point makes a new creature (a new entity id, full health, its patrol from the first waypoint); with no player near, the body leaves by the distance rule (200 m) and the point waits for a player. A creature that a command removed has no respawn time: its point waits for the command `reset`. The respawn time costs nothing in a scan: a scan looks only at the points near a player (case LT7). The respawn times are not in the database. |
+| The loot switch | A development value of a character (the debug message `DebugSetForceDropAILoot` of the client, type 1356, `loot.md` 3.3): the outer chance and the coin chance of its kills pass. `tools/world loot CHARACTER on`, the admin command `set_force_loot`, the mark "Each kill drops loot and coin" of the tab "Character" of the tool window. |
+
+**The roll of a loot table** (the rules of the roller of the client, 0x368B070, with the
+generator of the world; `loot.md` 1.3 and 1.4):
+
+- The conditions: a condition that is a numeric tag of the roll adds its value to the bonus;
+  of the other conditions (tags) one must be a tag of the roll, or the table gives nothing.
+  The numeric tags of a kill: `Level` (the level of the character), `EnemyLevel` (the creature
+  level), `MinContLevel` and `MinEnemyContLevel` (the lower one of the two levels), and
+  `GlobalMod` (0). The tags of a kill are the `LootTags` of the vitals row ("Beast",
+  "Common"). A loot limit (`[LIM]...`), a territory, a season, and an event are not tags: a
+  table with only such conditions gives nothing.
+- The roll: `ConditionOverridesRoll`: the bonus is the roll. Else `AddToRoll`: a whole number
+  from 1 to `MaxRoll` (1 for `MaxRoll` 0) plus the bonus; `ClampMax`: a number from
+  min(bonus + 1, `MaxRoll`) to `MaxRoll` (0 for `MaxRoll` 0); `IgnoreBonus`: from 1 to
+  `MaxRoll`. An empty setting is `AddToRoll`. A whole number of a range is uniform (the model
+  of `loot.md` 1.3: the float helper of the client is not exactly uniform).
+- An entry is reached when its threshold is the roll or less (the entries are in the sequence
+  of their thresholds). AND: each reached entry (from the highest one down). OR: one entry of
+  the highest reached threshold; one of the entries with that threshold, each with the same
+  chance.
+- An entry: an item with its quantity (a whole number of its range; a largest quantity of 0
+  gives 0); a table visited quantity times; a bucket with quantity selections.
+- A bucket selection: each candidate whose tags fit (a numeric tag: the value is in the range,
+  the two ends included; a tag of one number has the range to 10000, the bucket parser of the
+  client, 0x4458900; MatchOne: one tag is enough, else each tag), then each candidate with its
+  odds (`OddsN`, 1 for an empty cell), then one of the candidates that are left with the same
+  chance, and a quantity of its range. The loot bias (`LootBiasingEnabled`) and the filter of
+  the looted items (`FilterLootedItemsN`) are not done.
+- A table that a path visits a second time gives nothing (the guard of the client: "Attempting
+  to visit table '%s' for a second time"); a path is 32 tables deep at most, and a roll gives
+  64 items at most.
+- The gear score of an item (a model of 0x367F590 and 0x368EBE0, `loot.md` 2.1): the
+  `GearScoreOverride` of the item; or the range of the nearest entry that has one; or, with
+  `UseLevelGS` of a table on the path, the range `GSLimitT<tier>` of the lower one of the two
+  levels, not above `AILootGSCeiling` of the creature level; or the range of the item table.
+  The `GSBonus` of the tables on the path adds to it. Not above the largest gear score of the
+  item; the smallest gear score of the item table is not a limit (a Fire Staff of tier 2 with
+  200 to 300 in its table has 196 from a Grey Wolf of level 18: `GSLimitT2` of the level 18
+  is 180 to 220, the ceiling 220).
+- Measured with the data of the supported build (`tools/world roll`): a Grey Wolf of level 18
+  for a character of level 26 gives an item in 83 of 2,000 kills (the outer chance 0.1, then
+  the common table: 35 percent no entry, the gear table: 40 percent no entry); with the loot
+  switch a Risen of level 18 gives one of 51 items (weapons and armor of tier 2, the Lost
+  family armor, ectoplasm, Azure vials, travel stones).
+
+**The commands** (development routes only, but the switch): `tools/world loot CHARACTER
+on|off` (`POST /v1/dev/world/force-loot?character=ID&force=0|1`; admin `set_force_loot` with
+`force`; the state of a character has `health.forceLoot`), `tools/world roll KIND [LEVEL]
+[--count N] [--forced] [--character CHARACTER]` (`GET /v1/dev/loot/roll`: the count of each
+item of N rolls; nothing is given), `tools/world creature respawn CREATURE SECONDS` (`POST
+/v1/dev/creatures/respawn?creature=ID&seconds=N`: the respawn time of the spawn point of a
+dead creature from now). `tools/world list` has the line `rewards`, and `tools/world
+creatures` has the respawn time of the point of a dead creature.
+
+**Live results** (the character `Soulwarden`, level 26 then 27, the war hammer `2hWarhammerT2`
+in weapon slot 2 at mastery level 8):
+
+| Kill | Where | What the client showed |
+| --- | --- | --- |
+| Grey Wolf (`Wolf_Grey_7`, level 18), with the behavior of the creatures on | Start area, `8806 4312` | "+27 War Hammer Mastery", "+27 XP", "+4.80 Coin", "Fire Staff" (gear score 196; `L8-01`, `L8-03`). The wolf bit the character once before its death. |
+| Fallow Scavenger (a Risen, level 18) | The street of the start settlement | "+27 War Hammer Mastery", "+27 XP", "+4.80 Coin", "Padded Flawed Jasper Amulet" (gear score 190; `L8-05`, `L8-10`). Two kills before it gave no item (the common table). |
+| Sacred Starhide (a bobcat, level 61) | Brimstone Sands, `7172.6 8272.2` | "+45 War Hammer Mastery", "+45 XP", "+6.60 Coin", "Trapper Boots" (gear score 270; `L8-07`, `L8-09`) |
+| A Sacred Starhide with the experience 20 below the next level | Brimstone Sands | "LEVEL 27" with the four notices (`L8-11`) |
+| Young Scorpling (a Critter, `CanDropLoot` false) | Brimstone Sands | No notice: the creature type Critter has the experience factor 0 (`L8-06-a-critter-...`) |
+| Sacred Nemean (level 61, 28,348 health) after the health command 20 | Brimstone Sands | No notice: the hit did 20 damage, less than 1 percent of the health (`L2-...`) |
+| The respawn of the Sacred Starhide of the spawn point | Brimstone Sands | 360 s after the death (the spawner 360 and 360) the client had no body (the client removes it after 300 s), and at the next scan the creature stood at its point with its name plate and its full health (`L5-02`, log line `world: creature ... of the kind Bobcat_61 ... (spawn point)`). |
+
+**Not known, not done (stage 1.3b and later):**
+- The perks of an instance: the final perk allocator of the client is not proved (`loot.md`
+  2.2 and Unknowns 3 and 4: `PerkChance`, `PerkBucketOverridesN`, the perk counts of the
+  gear score ranges of `PerkGenerationData`, `MinLevelRollPerks` 7). Stage 1.3b must export
+  the perk index list of the client (not the perk CRC), roll the perks of each new instance
+  from the perk buckets of its definition and of its table entry, write them into the five
+  perk places of the item on the wire and into the database (a column for each place), and
+  derive no rarity byte: the client computes the rarity from the perks (0x5C528D0).
+- The gems, the dyes, the bind rule of a new instance (`BindOnPickup` is sent as the flag of
+  the definition), the loot bias for the equipment of the character (`LootBiasingChance` of
+  `XPLevels`), the loot limits and their counters (`javelindata_lootlimits`), the filter of
+  the looted items, the tags of a territory, of an event, and of a mutation, the high water
+  mark (`HWMMult`), and the `ChanceToExceedIndex` of a table.
+- The original credit rule of an AI kill (the credit data is the data of a game event; the
+  group credit modifiers are not used), rested experience, the Azoth and the territory
+  standing of a kill (`TerritoryStanding` of the creature type, `Minimum AI Level For
+  Territory Standing` 7), the currency of a season, and the loot of a quest.
+- An item on the ground and the LootTracker (slot 33, type 982) with its AI loot entry; the
+  timers of a chest (60 min) and of the AI loot (5 min).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are
@@ -4587,18 +4755,23 @@ development messages 3746 and 6709 (`tools/world message`) freed the character.
     of a fort) are not in the data, and 1,207 spawn points of kinds that fight are on no free
     floor of the data (their creatures do not leave their place).
   - 859 of the 3,848 kinds have no attack that the tool can use (8,612 spawn points): they
-    stand. No patrol, no group aggression, no ranged attack, no magic, no ability, and no
-    flee behavior.
+    do not attack, and a kind of them with roam data patrols or wanders (stage 3.4e). No
+    group aggression, no ranged attack, no magic, no ability, and no flee behavior.
   - The reach of an attack of a creature is a project value, and the sequence and the pause
     of its attacks are project rules (4.19). The backend does not move a creature in an
     attack (the client moves the body in some attacks).
   - A melee attack of a player hurts a creature (stage 3.2a, 4.15). Open for it: the items
     of "Not known, not done" of 4.15 (the kind of each attack, ranged weapons, critical hits,
     the size of a creature).
-  - A creature that died does not come back: no respawn timer, no loot, no experience (stage
-    3.5a). The place of the timer is `Creatures::respawn_at`. The body of a dead creature
-    stays in the world of the backend until a command or the distance rule removes it; the
-    client removes the body itself after about 5 minutes.
+  - The rewards of a kill and the respawn (stage 3.5a, 4.21). Open: the perks, the gems,
+    and the rarity of an item instance (stage 1.3b), the loot bias for the equipment of a
+    character, the loot limits (`[LIM]` conditions are not met), the filter of the looted
+    items, the tags of a territory and of an event, group credit, rested experience, the
+    territory standing and the Azoth of a kill, an item on the ground (ItemDrop, the
+    LootTracker), and the persistence of the respawn times (a start of the backend makes
+    each spawn point free). The body of a dead creature stays in the world of the backend
+    until its respawn time, a command, or the distance rule removes it; the client removes
+    the body itself after about 5 minutes.
   - The health of a creature is a rule of this project (the health of the level times two
     modifiers). A creature has its full health again at its home, and no regeneration in a
     fight. The states of the other components of a creature slice (stamina, status effects,
@@ -4686,8 +4859,8 @@ development messages 3746 and 6709 (`tools/world message`) freed the character.
   of the player in the client (the entitlements); the effects of an attribute other than the
   health (damage, the threshold abilities); the placing behavior request (6397); a source of
   experience in the game (the systems of a kill, a quest, and gathering call the experience
-  function later); the text "N XP to Level M" of the open character window, which is one
-  state behind.
+  function later: a kill does from stage 3.5a, 4.21); the text "N XP to Level M" of the open
+  character window, which is one state behind.
 - Skills (4.13). Open: the cost of a tree reset from rank 10 on (the currency "Azoth", which
   the backend does not have: it refuses such a reset); the use of an ability and its cooldown
   (the cooldown state, slot 45; system 3.3); the effect of a passive node; the table versions

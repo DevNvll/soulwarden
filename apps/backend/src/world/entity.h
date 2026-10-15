@@ -330,6 +330,20 @@ struct CreatureMind {
 };
 
 /**
+ * The damage that one character did to a creature in its life (world/rewards.h): the credit of a
+ * kill. The rewards of a kill go to the characters whose entry passes the credit rule.
+ */
+struct CreditEntry {
+    /** The entity of the character. The id of an entity is not used again. */
+    EntityId character{0};
+    std::string characterId;
+    /** The sum of the damage of its hits (not more than the health that the creature had). */
+    float damage{0.0F};
+    /** The time of its last hit, on the world clock. */
+    WorldClock::time_point last{};
+};
+
+/**
  * The values of a creature. The creature system sets them (world/creatures.h). The health of a
  * creature is in Entity::vitals, and its position in Entity::position.
  */
@@ -344,7 +358,7 @@ struct Creature {
     WorldClock::time_point madeAt{};
     /** True from the moment at which the health of the creature is 0. A dead creature does not get health again. */
     bool dead{false};
-    /** The time of the death, on the world clock. Stage 3.5a starts the respawn time and the time of the body here. */
+    /** The time of the death, on the world clock: the respawn time of its spawn point starts here (world/creatures.h). */
     WorldClock::time_point diedAt{};
     /**
      * The action that the server started: the death action of a dead creature, an attack, the
@@ -388,6 +402,12 @@ struct Creature {
     std::uint32_t actions{0};
     /** The spawn point of the creature: an index into the spawn points of the creature data. No value: a command made it. */
     std::optional<std::uint32_t> spawnPoint;
+    /**
+     * The characters that hurt the creature in its life, one entry for each character (the credit
+     * of a kill, world/rewards.h). The entries go away when the creature has its full health again
+     * at its anchor (the reset).
+     */
+    std::vector<CreditEntry> credit;
 };
 
 /**

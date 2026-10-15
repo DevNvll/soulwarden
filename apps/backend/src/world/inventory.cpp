@@ -72,20 +72,26 @@ std::string slot_list(const std::set<std::uint32_t>& slots) {
     return text.empty() ? "none" : text;
 }
 
-/** @return A new item instance of an item of the catalog, with the start values of the item table. */
+/**
+ * @return A new item instance of an item of the catalog, with the start values of the item table.
+ * @param loot True: a gear score of a loot roll (world/rewards.h). It is not below 1 and not above
+ *        the largest gear score of the item; the smallest gear score of the item table is not a
+ *        lower limit for it (the loot generation of the client, loot.md 2.1).
+ */
 ItemInstance new_item(const gamedata::ItemDefinition& definition,
                       std::uint32_t quantity,
                       std::optional<std::uint32_t> gearScore,
-                      std::uint32_t chrono) {
+                      std::uint32_t chrono,
+                      bool loot = false) {
     ItemInstance item;
     item.instance = new_instance();
     item.itemId = definition.id;
     item.index = definition.index;
     item.quantity = quantity;
     if (definition.maxGearScore != 0) {
-        const std::uint32_t low = definition.minGearScore;
+        const std::uint32_t low = loot ? 1U : definition.minGearScore;
         const std::uint32_t high = std::max(definition.maxGearScore, low);
-        const std::uint32_t standard = definition.gearScoreOverride != 0 ? definition.gearScoreOverride : low;
+        const std::uint32_t standard = definition.gearScoreOverride != 0 ? definition.gearScoreOverride : definition.minGearScore;
         item.gearScore = std::clamp(gearScore.value_or(standard), low, high);
     }
     item.durability = std::min(definition.durability, kMaxItemDurability);
@@ -125,6 +131,52 @@ std::optional<std::uint32_t> own_slot(std::string_view itemClass, Free&& free) {
         return first;
     }
     return std::nullopt;
+}
+
+/**
+ * Puts a quantity of an item into a bag: first into the stacks of the item that are not full, then
+ * into new stacks in the first empty slots.
+ * @return The quantity that the bag took: less than `quantity` when the bag has no free slot for the rest.
+ */
+std::uint32_t put(Bag& bag,
+                  const gamedata::ItemDefinition& definition,
+                  std::uint32_t quantity,
+                  std::optional<std::uint32_t> gearScore,
+                  bool loot,
+                  std::uint8_t action,
+                  std::set<std::uint32_t>& changed) {
+    const std::uint32_t maxStack = std::clamp<std::uint32_t>(definition.maxStack, 1, kMaxItemQuantity);
+    const std::uint8_t flags = definition.bindOnPickup ? kItemBound : 0;
+    std::uint32_t left = quantity;
+    // First the stacks of the item that are not full.
+    for (std::uint32_t index = 0; index < bag.slots.size() && left > 0; ++index) {
+        BagSlot& slot = bag.slots[index];
+        if (!slot.item || slot.item->itemId != definition.id || slot.item->quantity >= maxStack
+            || (slot.item->flags & kItemBound) != flags) {
+            continue;
+        }
+        const std::uint32_t moved = std::min(left, maxStack - slot.item->quantity);
+        slot.item->quantity += moved;
+        slot.action = action;
+        changed.insert(index);
+        left -= moved;
+    }
+    // Then new stacks in the first empty slots.
+    std::uint32_t search = 0;
+    while (left > 0) {
+        const auto target = free_slot(bag, search);
+        if (!target) {
+            break;
+        }
+        ItemInstance item = new_item(definition, std::min(left, maxStack), gearScore, bag.nextChrono++, loot);
+        left -= item.quantity;
+        BagSlot& slot = slot_at(bag, *target);
+        slot.item = std::move(item);
+        slot.action = action;
+        changed.insert(*target);
+        search = *target + 1;
+    }
+    return quantity - left;
 }
 
 } // namespace
@@ -262,7 +314,7 @@ std::optional<Holdings> Inventory::holdings(const std::string& characterId) {
 }
 
 template <class Change>
-ItemResult Inventory::change(const std::string& characterId, const char* what, Change&& apply) {
+ItemResult Inventory::change(const std::string& characterId, const char* what, Change&& apply, std::optional<std::uint64_t> coin) {
     ItemResult result;
     Entity* entity = m_world.find_character(characterId);
     // The log line names the session that plays the character.
@@ -315,11 +367,15 @@ ItemResult Inventory::change(const std::string& characterId, const char* what, C
     for (const std::uint32_t slot : touched.equipment) {
         place(before.equipment.item(slot), items.equipment.item(slot), state::kContainerPaperdoll, slot);
     }
-    // All rows of the change are one transaction.
-    if ((!removed.empty() || !rows.empty()) && !m_store.write_items(characterId, removed, rows)) {
+    // All rows of the change are one transaction, with the coin of a grant.
+    if ((!removed.empty() || !rows.empty() || coin) && !m_store.write_items(characterId, removed, rows, coin)) {
         result.error = ItemError::storeFailed;
         log::write("inventory: %s of character %s refused: %s", what, characterId.c_str(), item_error_text(result.error));
         return result;
+    }
+    if (entity != nullptr && coin && *coin != entity->wallet.coin) {
+        entity->wallet.coin = *coin;
+        m_world.touch(entity->id, ComponentKey::currency);
     }
     if (entity != nullptr) {
         // One mark for each state that changed: each session that observes the entity gets
@@ -385,40 +441,51 @@ ItemResult Inventory::give(const std::string& characterId,
         if (quantity == 0 || quantity > kGiveLimit) {
             return ItemError::badQuantity;
         }
-        const std::uint32_t maxStack = std::clamp<std::uint32_t>(definition->maxStack, 1, kMaxItemQuantity);
-        const std::uint8_t flags = definition->bindOnPickup ? kItemBound : 0;
         const std::uint8_t action = std::min(options.action, sync::kLargest);
-        std::uint32_t left = quantity;
-        // First the stacks of the item that are not full.
-        for (std::uint32_t index = 0; index < bag.slots.size() && left > 0; ++index) {
-            BagSlot& slot = bag.slots[index];
-            if (!slot.item || slot.item->itemId != definition->id || slot.item->quantity >= maxStack
-                || (slot.item->flags & kItemBound) != flags) {
-                continue;
-            }
-            const std::uint32_t moved = std::min(left, maxStack - slot.item->quantity);
-            slot.item->quantity += moved;
-            slot.action = action;
-            changed.insert(index);
-            left -= moved;
-        }
-        // Then new stacks in the first empty slots.
-        std::uint32_t search = 0;
-        while (left > 0) {
-            const auto target = free_slot(bag, search);
-            if (!target) {
-                return ItemError::bagFull;
-            }
-            ItemInstance item = new_item(*definition, std::min(left, maxStack), options.gearScore, bag.nextChrono++);
-            left -= item.quantity;
-            BagSlot& slot = slot_at(bag, *target);
-            slot.item = std::move(item);
-            slot.action = action;
-            changed.insert(*target);
-            search = *target + 1;
-        }
-        return ItemError::none;
+        // All or nothing: the change is not written when the bag has no place for all of it.
+        return put(bag, *definition, quantity, options.gearScore, false, action, changed) == quantity ? ItemError::none
+                                                                                                    : ItemError::bagFull;
     });
+}
+
+ItemResult Inventory::grant(const std::string& characterId,
+                            const std::vector<GrantItem>& items,
+                            std::uint64_t coin,
+                            std::vector<GrantItem>* lost) {
+    const std::string what = "grant of " + std::to_string(items.size()) + " item(s) and " + std::to_string(coin / 100) + "."
+                             + (coin % 100 < 10 ? "0" : "") + std::to_string(coin % 100) + " coin";
+    // The coin of the character after the grant: the wallet limit of the client is the largest value.
+    std::optional<std::uint64_t> wallet;
+    if (coin != 0) {
+        std::uint64_t now = 0;
+        if (const Entity* entity = m_world.find_character(characterId)) {
+            now = entity->wallet.coin;
+        } else {
+            now = m_store.currency(characterId, state::kCurrencyCoin);
+        }
+        wallet = std::min(now + coin, kWalletLimit);
+    }
+    return change(
+        characterId,
+        what.c_str(),
+        [&](Carried& carried, Touched& touched) {
+            for (const GrantItem& grant : items) {
+                const gamedata::ItemDefinition* definition =
+                    m_catalog != nullptr && m_catalog->loaded() ? m_catalog->find(grant.itemId) : nullptr;
+                std::uint32_t placed = 0;
+                if (definition != nullptr && !definition->type.empty() && grant.quantity != 0) {
+                    placed = put(carried.bag, *definition, std::min(grant.quantity, kGiveLimit), grant.gearScore, true,
+                                 sync::kItemGathered, touched.bag);
+                }
+                // An item that the catalog does not have, and the part that the bag has no slot for: the
+                // character does not get it (the world has no item on the ground).
+                if (placed < grant.quantity && lost != nullptr) {
+                    lost->push_back(GrantItem{grant.itemId, grant.quantity - placed, grant.gearScore});
+                }
+            }
+            return ItemError::none;
+        },
+        wallet);
 }
 
 ItemResult Inventory::remove(const std::string& characterId, std::uint32_t slot, std::optional<std::uint32_t> quantity) {

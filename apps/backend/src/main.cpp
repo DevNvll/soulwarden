@@ -15,6 +15,7 @@
 #include "core/logging/log.h"
 #include "gamedata/appearance_tables.h"
 #include "gamedata/combat_tables.h"
+#include "gamedata/loot_tables.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
 #include "gamedata/item_catalog.h"
@@ -392,6 +393,32 @@ int main(int argc, char** argv) {
                    combatTablesPath.c_str(),
                    combatTables.error().c_str());
     }
+    // The loot tables and the kill rewards: the experience, the mastery, the loot, and the coin of a kill.
+    const std::string lootTablesPath = (gameDataDirectory / gamedata::kLootTablesFile).string();
+    gamedata::LootTables lootTables;
+    if (lootTables.load(lootTablesPath)) {
+        std::size_t masteries = 0;
+        for (const gamedata::WeaponRow& weapon : combatTables.data().weapons) {
+            masteries += weapon.mastery.empty() ? 0 : 1;
+        }
+        log::write("backend: loot tables loaded from %s (%zu reward levels, %zu creature types, %zu vitals rows, %zu loot "
+                   "tables, %zu loot buckets; %zu weapons with a mastery in the combat tables)",
+                   lootTablesPath.c_str(),
+                   lootTables.data().rewards.size(),
+                   lootTables.data().modifiers.size(),
+                   lootTables.data().vitals.size(),
+                   lootTables.data().tables.size(),
+                   lootTables.data().buckets.size(),
+                   masteries);
+        if (masteries == 0) {
+            log::write("backend: the combat tables have no weapon mastery (a file of a tool from before stage 3.5a): a "
+                       "kill gives no mastery experience. Make the file again with tools/gamedata/combat.sh");
+        }
+    } else {
+        log::write("backend: no loot tables at %s (%s): a kill gives nothing. Make the file with tools/gamedata/loot.sh",
+                   lootTablesPath.c_str(),
+                   lootTables.error().c_str());
+    }
     // The travel places: the places of the travel command.
     const std::string travelPlacesPath = (gameDataDirectory / gamedata::kTravelPlacesFile).string();
     gamedata::TravelPlaces travelPlaces;
@@ -421,6 +448,7 @@ int main(int argc, char** argv) {
     worldOptions.creatureData = &creatureData;
     worldOptions.combatTables = &combatTables;
     worldOptions.travelPlaces = &travelPlaces;
+    worldOptions.lootTables = &lootTables;
     worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
     worldOptions.navigationData = &navigationData;
     worldOptions.navigationThread = true;

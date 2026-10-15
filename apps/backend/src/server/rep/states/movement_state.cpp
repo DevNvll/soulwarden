@@ -224,7 +224,7 @@ CreatureScope creature_scope(const world::Creature& creature, bool first) {
 }
 
 hub::Bytes encode_creature_movement_state(const world::Entity& entity, const world::WorldClock& clock, world::Revision since,
-                                          std::uint32_t sent) {
+                                          std::uint32_t sent, bool keepScope) {
     StateWriter state(kGroups, FieldMask::wide);
     // The position of a creature is exact: the client does not move a creature to the ground.
     write_world_position(state.field(0, kWorldPosition), entity.position);
@@ -237,7 +237,7 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, const wor
     // changed for the session: the client keeps its action and plays it with no jump.
     const world::Creature& creature = entity.creature;
     const CreatureScope scope = creature_scope(creature, since == 0);
-    if (since != 0 && sent != kScopeUnknown && scope.key == sent) {
+    if (since != 0 && (keepScope || (sent != kScopeUnknown && scope.key == sent))) {
         write_time_anchor(state, clock);
         return state.finish();
     }
@@ -285,7 +285,7 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, const wor
 std::vector<hub::Bytes> encode_creature_movement_parts(const world::Entity& entity, View, const PartsRequest& request) {
     std::vector<hub::Bytes> parts;
     if (request.clock != nullptr) {
-        parts.push_back(encode_creature_movement_state(entity, *request.clock, request.since, request.scope));
+        parts.push_back(encode_creature_movement_state(entity, *request.clock, request.since, request.scope, request.keepScope));
     }
     return parts;
 }

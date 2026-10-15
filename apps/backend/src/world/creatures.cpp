@@ -187,16 +187,29 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         result.error = CreatureError::badHealth;
         return result;
     }
+    if (entity->creature.immune() && health < entity->vitals.health) {
+        // On its way back a creature takes no damage from any source: a hit, the health command,
+        // and the kill command (code review of stage 3.4e, finding F7). A health that goes up
+        // is not a damage.
+        result.error = CreatureError::immune;
+        return result;
+    }
     entity->vitals.health = health;
     if (health == 0.0F) {
         entity->creature.dead = true;
         entity->creature.diedAt = m_world.clock().now();
         ++m_counts.deaths;
         if (entity->creature.spawnPoint) {
-            // The place of the respawn time (stage 3.5a): `respawnAt` gets the time of the death
-            // plus the respawn time of the spawner. With no time the point waits for a command.
-            set_waiting(*entity->creature.spawnPoint, true);
-            m_points[*entity->creature.spawnPoint].respawnAt.reset();
+            // The respawn time of the spawner from the time of the death (world/rewards.h,
+            // respawn_time): from then on the point makes its creature again when a player is near
+            // it, and the body leaves the world first. The command `reset` makes it free at once.
+            const std::uint32_t point = *entity->creature.spawnPoint;
+            set_waiting(point, true);
+            const std::chrono::milliseconds wait = respawn_time(m_data->spawn_points()[point], m_world.random_unit());
+            m_points[point].respawnAt = entity->creature.diedAt + wait;
+            log::write("world: spawn point %s makes its creature again in %.0f s, when a player is near it",
+                       m_data->spawn_points()[point].id.c_str(),
+                       std::chrono::duration<double>(wait).count());
         }
         log::write("world: creature %016llx (%s) is dead",
                    static_cast<unsigned long long>(entity->id),
@@ -250,7 +263,17 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker) {
         return result;
     }
     // One path with the health command and the kill command: the health 0 is the death.
+    const float dealt = std::min(damage, entity->vitals.health);
     result = set_health(id, std::max(entity->vitals.health - damage, 0.0F));
+    // The credit of the kill: the damage of each character (world/rewards.h). A death by a hit of
+    // a character gives the rewards of the kill to the characters with the credit.
+    Entity* character = attacker != 0 && result.error == CreatureError::none ? m_world.find(attacker) : nullptr;
+    if (character != nullptr && character->kind == EntityKind::player) {
+        m_world.rewards().hit(*entity, *character, dealt);
+        if (entity->creature.dead) {
+            m_world.rewards().killed(*entity);
+        }
+    }
     if (result.error == CreatureError::none && !entity->creature.dead) {
         const gamedata::CreatureSlice& body = *entity->creature.body;
         // A creature that plays an attack does not stop it for a hit: the reaction would take
@@ -373,6 +396,8 @@ void Creatures::moved(Entity& entity) {
 }
 
 void Creatures::restore(Entity& entity) {
+    // At its anchor with its full health: the damage of the fight gives no credit any more.
+    m_world.rewards().restored(entity);
     if (entity.creature.dead || entity.vitals.health == entity.vitals.healthMax) {
         return;
     }

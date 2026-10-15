@@ -92,6 +92,12 @@ struct PartsRequest {
     const world::WorldClock* clock{nullptr};
     /** The key of the scope fields of a creature that the session sent last (Known::scope, creature_scope). */
     std::uint32_t scope{0xFFFFFFFFU};
+    /**
+     * True: the movement state of a creature has no scope fields, also for a different action:
+     * the client of the session plays the spawn action of a first record, and the action that
+     * plays follows at the end of the lead of that spawn action (rep_session.cpp, kSpawnLead).
+     */
+    bool keepScope{false};
 };
 
 /**
@@ -267,9 +273,12 @@ struct CreatureScope {
  *        have, and it plays its action with no jump. A record that comes again with a new time
  *        makes the body jump (user test 1), and no fields after the end of a kept action make
  *        the client start that action again.
+ * @param keepScope True: no scope fields for a session that has a record of the creature, also
+ *        for a different action (the lead of a spawn action, PartsRequest::keepScope).
  */
 [[nodiscard]] hub::Bytes encode_creature_movement_state(const world::Entity& entity, const world::WorldClock& clock,
-                                                        world::Revision since, std::uint32_t sent = kScopeUnknown);
+                                                        world::Revision since, std::uint32_t sent = kScopeUnknown,
+                                                        bool keepScope = false);
 /** @return The same, in one fragment, for a session whose last record of the creature has the revision `request.since`. */
 [[nodiscard]] std::vector<hub::Bytes> encode_creature_movement_parts(const world::Entity& entity, View view, const PartsRequest& request);
 /**

@@ -224,11 +224,14 @@ public:
      * instance ids of `removed`, then writes each row of `rows` (a row with the instance id of
      * a row that is there replaces it). The character id is the owner key: a row of a different
      * character is not removed and not replaced.
+     * @param coin When it has a value: the new coin of the character, in the same transaction
+     *        (the loot of a kill).
      * @return False when the database did not accept the change. Then no row changed.
      */
     [[nodiscard]] bool write_items(const std::string& characterId,
                                    const std::vector<std::string>& removed,
-                                   const std::vector<ItemRow>& rows);
+                                   const std::vector<ItemRow>& rows,
+                                   std::optional<std::uint64_t> coin = {});
 
     /** @return The amount of one currency of a character. 0 when the character has no row for it. */
     [[nodiscard]] std::uint64_t currency(const std::string& characterId, const std::string& currencyId);

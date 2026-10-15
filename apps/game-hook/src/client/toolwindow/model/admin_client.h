@@ -134,6 +134,8 @@ struct Snapshot {
     bool creaturesIgnore{false};
     /** False: the behavior of the creatures is off for this start of the backend. */
     bool creatureBehavior{true};
+    /** True: each kill of the character drops loot and coin (the loot switch of the backend, stage 3.5a). */
+    bool forceLoot{false};
     Attribute attributes[kAttributeCount]{};
     /** Hundredths of a coin. */
     std::uint64_t coin{0};

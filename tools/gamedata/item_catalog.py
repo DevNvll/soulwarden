@@ -146,6 +146,15 @@ class Sheet:
             return struct.unpack_from("<f", self._data, offset + 4)[0]
         return bool(raw)
 
+    def source(self, row: int, name: str) -> str:
+        """@return The source text of one cell of each kind: an empty number cell is an empty text here, and 0 in
+        cell(). An absent column gives an empty text."""
+        column = self.columns.get(name)
+        if column is None:
+            return ""
+        offset = self._cells + (row * self._column_count + column) * 8
+        return self._text(struct.unpack_from("<I", self._data, offset)[0])
+
 
 def sheet_type(data: bytes) -> str:
     """@return The table type of a data table file, with no read of its cells."""

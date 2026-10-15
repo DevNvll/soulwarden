@@ -42,6 +42,10 @@
 //                              meters): the character goes to the place. A character that is
 //                              in the world is there at once; for a character that is not in
 //                              the world, its row gets the place
+//          heal                no argument: the full health (a dead character lives again)
+//          set_creatures_ignore ignore (1 or 0): the creatures ignore the character
+//          set_force_loot      force (1 or 0): each kill of the character drops loot and coin
+//                              (the loot switch, stage 3.5a)
 //        remove_creature, set_creature_health, and kill_creature change only a creature of
 //        the list of the character (150 m or less from it), and the character must be in the
 //        world: a different creature gives the reply 404, and nothing changes.
@@ -106,6 +110,7 @@ constexpr NamedCommand kCommands[] = {
     {"travel", commands::travel},
     {"heal", commands::heal},
     {"set_creatures_ignore", commands::set_creatures_ignore},
+    {"set_force_loot", commands::set_force_loot},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */

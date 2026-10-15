@@ -62,9 +62,12 @@ Usage:
 The items, the equipment, and the coin of a character (the character can be in the world or
 not: a command for a character that is not in the world changes its rows in the database):
   tools/world items CHARACTER                   the items of the bag, the equipment, and the coin
-  tools/world give CHARACTER ITEM [QUANTITY]    give a quantity of an item (default 1). ITEM is
+  tools/world give CHARACTER ITEM [QUANTITY] [--action N]
+                                                give a quantity of an item (default 1). ITEM is
                                                 the ItemID text of the item catalog, for example
-                                                1hSwordT1 (tools/gamedata/items.sh --find ITEM)
+                                                1hSwordT1 (tools/gamedata/items.sh --find ITEM).
+                                                --action: the cause of the change on the wire
+                                                (1: the loot notice of the HUD, protocol notes 4.10)
   tools/world take CHARACTER SLOT [QUANTITY]    remove the item of a slot, or a quantity of it
   tools/world coin CHARACTER AMOUNT             set the coin, for example 123.45
   tools/world move CHARACTER FROM TO            move the item of a slot to a different slot: an
@@ -130,6 +133,21 @@ The creatures of the world (protocol notes 4.14):
   tools/world creature anchor CREATURE X Y Z    the anchor of a creature in a fight is that place
                                                 (the end of its way back): a test of a way back
                                                 with no path to the anchor
+  tools/world creature respawn CREATURE SECONDS the spawn point of a dead creature makes its
+                                                creature again in this time (from now), when a
+                                                player is 150 m or less from it
+
+The rewards of a kill (protocol notes 4.21):
+  tools/world loot CHARACTER on|off             the loot switch: each kill of the character drops
+                                                loot and coin (the outer chances pass), or the
+                                                chances of the game data again
+  tools/world roll KIND [LEVEL] [--count N] [--forced] [--character CHARACTER]
+                                                roll the loot table of a kind N times (default 1)
+                                                and count the items; nothing is given. LEVEL: the
+                                                creature level (default: the level of the kind);
+                                                --forced: the outer chance passes; --character:
+                                                the level of that character (default: the creature
+                                                level)
   tools/world fragment CREATURE SLOT TYPE HEX   the fragment command for a creature
 CREATURE is the id of a creature (16 hexadecimal digits), or the last digits of it when only one
 creature has them.
@@ -228,6 +246,10 @@ def item_text(item: dict) -> str:
             f"durability {item['durability']}/{item['maxDurability']}{marks}  instance {item['instance']}")
 
 
+def meter_of(entry: dict) -> str:
+    return f"{entry['count']} ({entry['mean']:.1f} us each, the largest {entry['largest']:.1f} us)"
+
+
 def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filter_text: str = "") -> None:
     process, port = backend(data_dir)
     command = ["nsenter", "-t", str(process), "-U", "-n", "--preserve-credentials", "curl", "--silent", "--max-time", "5",
@@ -290,6 +312,18 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
                           f"{load['returns']} ways back, {load['holds']} waits at the place nearest to a target with no way, "
                           f"{load['retraces']} ways back on the trail, {load['jumps']} jumps to the anchor, {load['immuneHits']} "
                           f"hits on a creature on its way back")
+            rewards = load.get("rewards")
+            if rewards:
+                if rewards["data"]:
+                    print(f"rewards: {rewards['kills']} kills ({rewards['killsWithNoCredit']} with no character with the "
+                          f"credit), {rewards['credited']} rewards of a character, {rewards['experience']} experience, "
+                          f"{rewards['masteryExperience']} mastery experience, {rewards['coin'] / 100:.2f} coin, "
+                          f"{rewards['lootGates']} loot chances that passed, {rewards['items']} items given, "
+                          f"{rewards['itemsLost']} items not given; the time of the rewards {meter_of(rewards['time'])}; "
+                          f"{load.get('spawnPointsWaiting', 0)} spawn points wait, {load.get('removedByRespawn', 0)} bodies "
+                          f"removed at a respawn")
+                else:
+                    print("rewards: the backend has no loot tables (tools/gamedata/loot.sh makes them): a kill gives nothing")
             navigation = load.get("navigation")
             if navigation and navigation["data"]:
                 def part(entry: dict) -> str:
@@ -341,7 +375,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             state = (f", health {document['health']:.1f} of {document['healthMax']:.1f}"
                      f"{' DEAD' if document.get('dead') else ''}")
         ignore = "the creatures ignore it" if document["creaturesIgnore"] else "the creatures do not ignore it"
-        print(f"world: {document.get('message', 'done')}{state}; {ignore} ({where})")
+        loot = "; each kill drops loot and coin (the loot switch)" if document.get("forceLoot") else ""
+        print(f"world: {document.get('message', 'done')}{state}; {ignore}{loot} ({where})")
     elif isinstance(document, dict) and "applied" in document and "position" in document:
         x, y, z = document["position"]
         place = document.get("place")
@@ -352,6 +387,15 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         else:
             print(f"world: done, the character is not in the world: its row has {where}{x:.3f} {y:.3f} {z:.3f}, and its "
                   "next world entry is there")
+    elif isinstance(document, dict) and "rollsWithLoot" in document:
+        print(f"{document['kind']} (vitals row {document['vitals']}, loot table {document['table'] or 'none'}, tags "
+              f"{','.join(document['tags']) or 'none'}, drops loot: {document['canDropLoot']}, outer chance "
+              f"{document['dropChance']}): creature level {document['creatureLevel']}, character level "
+              f"{document['characterLevel']}, {document['rolls']} rolls{' (the outer chance passes)' if document['forced'] else ''}")
+        for item in sorted(document["items"], key=lambda entry: -entry["rolls"]):
+            print(f"  {item['rolls']:>6} roll(s)  {item['quantity']:>7} x {item['item']}")
+        print(f"{document['rollsWithLoot']} of {document['rolls']} rolls gave an item; "
+              f"{len(document['items'])} different items")
     elif isinstance(document, dict) and "entity" in document:
         show(document)
     elif isinstance(document, dict) and "items" in document:
@@ -442,6 +486,8 @@ def creature_text(creature: dict) -> str:
     kind = "" if creature.get("fights", True) else "  no attack"
     rooted = creature.get("groundKnown", True) and not creature.get("walks", True)
     kind += "  stays at its place" if rooted and creature.get("fights", True) else ""
+    if "respawnIn" in creature:
+        kind += f"  its spawn point makes a new creature in {creature['respawnIn']:.0f} s (a player near it)"
     return (f"creature {creature['id']}  {creature['kind']:<28} {creature['name']:<22} level {creature['level']:>2}  "
             f"health {creature['health']:.1f} of {creature['healthMax']:.1f}{'  DEAD' if creature['dead'] else ''}  "
             f"position {x:.3f} {y:.3f} {z:.3f}{distance}  {'spawn point' if creature['spawnPoint'] else 'command'}"
@@ -575,6 +621,9 @@ def creature_command(data_dir: Path, arguments: list[str]) -> None:
     elif action == "anchor" and len(arguments) == 5:
         x, y, z = numbers(arguments[2:5], 3)
         request(data_dir, "POST", f"/v1/dev/creatures/anchor?creature={creature_id(data_dir, arguments[1])}&x={x}&y={y}&z={z}")
+    elif action == "respawn" and len(arguments) == 3:
+        seconds = numbers(arguments[2:3], 1)[0]
+        request(data_dir, "POST", f"/v1/dev/creatures/respawn?creature={creature_id(data_dir, arguments[1])}&seconds={seconds}")
     else:
         fail("unknown creature command. tools/world --help prints the commands.")
 
@@ -636,12 +685,18 @@ def main() -> None:
         creature_command(data_dir, arguments[1:])
     elif command == "items" and len(arguments) == 2:
         request(data_dir, "GET", f"/v1/dev/items?character={character_id(data_dir, arguments[1])}")
-    elif command == "give" and len(arguments) in (3, 4):
+    elif command == "give" and len(arguments) in (3, 4, 5, 6):
+        action = ""
+        if len(arguments) >= 5 and arguments[-2] == "--action":
+            action = f"&action={whole(arguments[-1], 'the action')}"
+            arguments = arguments[:-2]
+        if len(arguments) not in (3, 4):
+            fail("tools/world give CHARACTER ITEM [QUANTITY] [--action N]")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[2]):
             fail("the item must be the ItemID text of the item catalog")
         quantity = whole(arguments[3], "the quantity") if len(arguments) == 4 else 1
         request(data_dir, "POST", f"/v1/dev/items/give?character={character_id(data_dir, arguments[1])}"
-                                  f"&item={arguments[2]}&quantity={quantity}")
+                                  f"&item={arguments[2]}&quantity={quantity}{action}")
     elif command == "take" and len(arguments) in (3, 4):
         quantity = f"&quantity={whole(arguments[3], 'the quantity')}" if len(arguments) == 4 else ""
         request(data_dir, "POST", f"/v1/dev/items/remove?character={character_id(data_dir, arguments[1])}"
@@ -776,6 +831,27 @@ def main() -> None:
     elif command == "ignore" and len(arguments) == 3 and arguments[2] in ("on", "off"):
         request(data_dir, "POST", f"/v1/dev/world/ignore?character={character_id(data_dir, arguments[1])}"
                                   f"&ignore={1 if arguments[2] == 'on' else 0}")
+    elif command == "loot" and len(arguments) == 3 and arguments[2] in ("on", "off"):
+        request(data_dir, "POST", f"/v1/dev/world/force-loot?character={character_id(data_dir, arguments[1])}"
+                                  f"&force={1 if arguments[2] == 'on' else 0}")
+    elif command == "roll" and len(arguments) >= 2:
+        words = arguments[2:]
+        query = f"kind={arguments[1]}"
+        if not re.fullmatch(r"[A-Za-z0-9_:+.-]+", arguments[1]):
+            fail("the kind must be an id of the creature data (tools/world kinds TEXT)")
+        while words:
+            word = words.pop(0)
+            if word == "--forced":
+                query += "&forced=1"
+            elif word in ("--count", "--character") and words:
+                value = words.pop(0)
+                query += (f"&count={whole(value, 'the count')}" if word == "--count"
+                          else f"&character={character_id(data_dir, value)}")
+            elif re.fullmatch(r"\d+", word):
+                query += f"&level={word}"
+            else:
+                fail("tools/world roll KIND [LEVEL] [--count N] [--forced] [--character CHARACTER]")
+        request(data_dir, "GET", f"/v1/dev/loot/roll?{query}")
     elif command == "hurt" and len(arguments) == 3:
         request(data_dir, "POST", f"/v1/dev/world/hurt?character={character_id(data_dir, arguments[1])}"
                                   f"&amount={numbers(arguments[2:], 1)[0]}")

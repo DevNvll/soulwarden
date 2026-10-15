@@ -193,6 +193,13 @@ json creatures_view(world::World& target, const std::string& character, std::opt
         row["holds"] = mind.holdUntil.has_value();
         row["retracing"] = mind.retracing;
         row["anchor"] = {mind.anchor.x, mind.anchor.y, mind.anchor.z};
+        // The respawn time of the spawn point of a dead creature (stage 3.5a): seconds from now.
+        if (entity->creature.dead && entity->creature.spawnPoint) {
+            const world::SpawnPointState& point = system.spawn_points()[*entity->creature.spawnPoint];
+            if (point.waiting && point.respawnAt) {
+                row["respawnIn"] = std::max(0.0, std::chrono::duration<double>(*point.respawnAt - target.clock().now()).count());
+            }
+        }
         creatures.push_back(std::move(row));
     }
     const std::size_t waiting = system.waiting_count();
@@ -426,6 +433,34 @@ WorldCommand move_creature_anchor(const std::string& character, const Arguments&
         if (!target.creatures().behavior().move_anchor(*entity, anchor)) {
             return message(409, "the creature has no target: only a creature in a fight has an anchor of a fight");
         }
+        return creature_reply(world::CreatureResult{world::CreatureError::none, entity});
+    };
+}
+
+WorldCommand set_respawn_time(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                              service::HttpResponse& refusal) {
+    const auto id = creature_id(arguments);
+    const auto seconds = arguments.number("seconds", 0.0F, 86400.0F);
+    if (!id || !seconds) {
+        refusal = message(400, "give creature=ID (a dead creature of a spawn point) and seconds (0 to 86400)");
+        return {};
+    }
+    return [character, id = *id, reach, seconds = *seconds](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
+        world::Entity* entity = target.creatures().find(id);
+        if (entity == nullptr) {
+            return creature_reply(world::CreatureResult{world::CreatureError::unknownCreature, nullptr});
+        }
+        if (!entity->creature.dead || !entity->creature.spawnPoint) {
+            return message(409, "the creature is not a dead creature of a spawn point");
+        }
+        const auto time = target.clock().now() + std::chrono::milliseconds(static_cast<long long>(seconds * 1000.0F));
+        (void)target.creatures().respawn_at(*entity->creature.spawnPoint, time);
+        log::write("world: command: the spawn point of creature %016llx makes its creature again in %.0f s",
+                   static_cast<unsigned long long>(id),
+                   static_cast<double>(seconds));
         return creature_reply(world::CreatureResult{world::CreatureError::none, entity});
     };
 }

@@ -561,7 +561,8 @@ std::vector<ItemRow> Store::list_items(const std::string& characterId) {
 
 bool Store::write_items(const std::string& characterId,
                         const std::vector<std::string>& removed,
-                        const std::vector<ItemRow>& rows) {
+                        const std::vector<ItemRow>& rows,
+                        std::optional<std::uint64_t> coin) {
     std::lock_guard lock(m_mutex);
     if (!execute("BEGIN IMMEDIATE")) {
         return false;
@@ -583,6 +584,15 @@ bool Store::write_items(const std::string& characterId,
     }
     for (const ItemRow& row : rows) {
         ok = ok && insert_item(characterId, row);
+    }
+    if (ok && coin) {
+        Statement statement(m_database,
+                            "INSERT INTO currencies(character_id, currency_id, amount) VALUES(?1,?2,?3) "
+                            "ON CONFLICT(character_id, currency_id) DO UPDATE SET amount=excluded.amount");
+        statement.bind(1, characterId);
+        statement.bind(2, kCurrencyCoin);
+        sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(*coin));
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
     }
     if (!ok || !execute("COMMIT")) {
         (void)execute("ROLLBACK");

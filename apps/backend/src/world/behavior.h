@@ -139,6 +139,13 @@ inline constexpr float kDefaultLeash = 40.0F;
 inline constexpr float kDefaultCombatSight = 30.0F;
 /** A creature is at its home when it is this near (meters). */
 inline constexpr float kHomeDistance = 0.05F;
+/**
+ * Two places are on one floor for an arrival (at the anchor, at a place of the trail, at a
+ * waypoint) when their heights are this near (meters). Two floors of one cell of the navigation
+ * data are farther apart (the height of a creature, 1.8 m): a place on a different floor is no
+ * arrival, and the navigation decides the way (code review of stage 3.4e, findings F1 and F2).
+ */
+inline constexpr float kFloorTolerance = 1.0F;
 /** A creature that turns on its place gets a new movement state when its direction changed by this angle (degrees). */
 inline constexpr float kTurnAngle = 8.0F;
 /** The vision of a creature looks at a character whose height is this near (meters). */

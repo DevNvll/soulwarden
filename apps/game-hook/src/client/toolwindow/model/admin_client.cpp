@@ -152,6 +152,8 @@ void read_state(const json& reply, Snapshot& snapshot) {
     snapshot.dead = flag_of(health, "dead");
     snapshot.creaturesIgnore = flag_of(health, "creaturesIgnore");
     snapshot.creatureBehavior = !health.is_object() || !health.contains("creatureBehavior") || flag_of(health, "creatureBehavior");
+    // A backend from before stage 3.5a has no loot switch: the value is false.
+    snapshot.forceLoot = flag_of(health, "forceLoot");
     const json& attributes = member_of(progress, "attributes");
     for (unsigned index = 0; index < kAttributeCount; ++index) {
         const json& attribute = member_of(attributes, kAttributeNames[index]);

@@ -21,18 +21,19 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures find their way around walls and rocks, up stairs, and on the floors of buildings and ruins.
 - Creatures walk their patrol routes from the game files, or wander near their place. After a fight a creature runs back to the place where it saw you. On that way it is immune and walks the way that it came, and at that place it has its full health and patrols again.
 - Health and death. Your character loses health and dies, and it comes back at the nearest spirit shrine or inn.
+- Rewards of a kill. A creature that you kill gives experience and weapon mastery experience, sometimes coin, and sometimes loot from the loot tables of the game, with the notices of the HUD. A creature of a spawn point comes back after its respawn time, 6 minutes for most of them.
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
-- A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, and moves it to a travel place.
+- A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.
 
 ## What does not work yet
 
 - Creatures do not jump, drop from an edge, climb, swim, or fly. A creature that has no way to you waits at the place nearest to you for 12 s and then goes back.
 - Creatures do not fight in groups, call others, or flee. Only 23 of the 24,895 waypoint tasks of the patrols have an animation, so a creature stands in its idle pose at the other waypoints.
-- 859 kinds of creature have no attack yet and stand still. No creature has a ranged attack, magic, or an ability.
-- Creatures do not drop loot, give no experience, and do not come back after death.
+- 859 kinds of creature have no attack yet: they do not attack you, but they patrol or wander when their data has a route. No creature has a ranged attack, magic, or an ability.
+- Loot items have no rolled perks, gems, or rarity yet, and nothing drops on the ground. A full bag loses the items that have no slot.
 - You cannot block or dodge. The tool window heals your character.
 - Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
-- Nothing in the world gives experience. The tool window sets your level.
+- Only kills give experience. No quest and no gathering gives experience yet.
 - No quests, no ranged weapons, no magic, and no abilities. People in the settlements say only their first line: talk to them and press E or Escape to end the talk.
 - No world clock, so some sessions are dark.
 - One player. In a development run a second character can stand in the world, and that is all.
@@ -58,12 +59,13 @@ tools/build-soulwarden-game-hook.sh
 tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh     # the backend tests, with no game process
 
-tools/gamedata/appearance.sh         # nine game data tools, one time each
+tools/gamedata/appearance.sh         # ten game data tools, one time each
 tools/gamedata/slice_ids.sh
 tools/gamedata/items.sh
 tools/gamedata/progression.sh
 tools/gamedata/creatures.sh
 tools/gamedata/combat.sh
+tools/gamedata/loot.sh
 tools/gamedata/places.sh
 tools/gamedata/heights.sh
 tools/gamedata/navigation.sh
@@ -84,7 +86,8 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `items.sh` | No items, and a new character has no clothing |
 | `progression.sh` | No levels and no skill points |
 | `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still: run the tool again |
-| `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature: run the tool again |
+| `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature; with a file from before the loot stage, a kill gives no weapon mastery experience: run the tool again |
+| `loot.sh` | A kill gives no experience, no coin, and no loot |
 | `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
 | `heights.sh` | With no navigation data, creatures do not leave their place. They attack only when you are in their reach |
 | `navigation.sh` | Creatures go on a straight line on the terrain, through walls and rocks, and they see you through a wall. A creature on a floor of a building does not leave its place |
@@ -93,9 +96,9 @@ Some tables of the game have Oodle compression. `creatures.sh` and `places.sh` n
 
 ## The tool window
 
-Press F8 in the world. The window has five tabs for items, the character, skills, creatures, and travel. It is how you get anything today, because nothing in the world gives items or experience yet.
+Press F8 in the world. The window has five tabs for items, the character, skills, creatures, and travel. It gives items, levels, and skills at once; in the world only kills give them yet.
 
-The tab "Character" shows your health. "Heal" gives your character its full health, and it makes a dead character live again at its place. With the mark "Creatures ignore this character", no creature attacks you. `SOULWARDEN_CREATURE_BEHAVIOR=0` starts the game with creatures that stand still. After you come into the world, travel, or respawn, no creature attacks you for 10 seconds unless you hit it. Out of a fight, your health comes back in about 30 seconds.
+The tab "Character" shows your health. "Heal" gives your character its full health, and it makes a dead character live again at its place. With the mark "Creatures ignore this character", no creature attacks you, and your kills give nothing. With the mark "Each kill drops loot and coin", each kill of your character drops loot and coin (without it, a wolf drops loot in about 1 of 10 kills). `SOULWARDEN_CREATURE_BEHAVIOR=0` starts the game with creatures that stand still. After you come into the world, travel, or respawn, no creature attacks you for 10 seconds unless you hit it. Out of a fight, your health comes back in about 30 seconds.
 
 The tab "Travel" lists the spirit shrines and the inns of each territory. Type a part of a name in the filter, click a place, and press "Travel". Your character is there after a loading screen of some seconds, with the creatures of that place around it.
 

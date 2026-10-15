@@ -253,6 +253,12 @@ NO_ENTITIES = frozenset({0x00000000FFFFFFFF, 0, 0xFFFFFFFFFFFFFFFF})
 POLICIES = 4
 # A waypoint farther than this from its spawn point is not a waypoint of a usual patrol (meters).
 LONGEST_PATROL = 200.0
+# The patrols of the retail data that the tool leaves out, each with its cause (the counts are in the
+# member "routesLeftOut" of the file). Each other fault of a patrol source stops the tool.
+ROUTE_NO_WAYPOINT_COMPONENT = "a waypoint of the patrol has no waypoint component or no transform"
+ROUTE_EMPTY = "the patrol has no waypoint"
+ROUTE_TOO_LONG = f"a waypoint is more than {LONGEST_PATROL:g} m from its spawn point"
+RETAIL_ROUTE_CAUSES = (ROUTE_NO_WAYPOINT_COMPONENT, ROUTE_EMPTY, ROUTE_TOO_LONG)
 
 
 def name_crc(text: str) -> int:
@@ -631,22 +637,32 @@ def read_patrol(roots: list[Element]) -> tuple[dict | None, str]:
                                          number(first(component, ALIGNMENT_FIELD)) != 0)
     if reference is None or reference in NO_ENTITIES:
         return None, ""
-    owner = entities.get(reference, {})
+    # A reference that the slice does not have, a transform with a number that is not finite, and
+    # a policy that the client does not have are faults of the source: the tool stops (code review
+    # of stage 3.4e, findings F5 and F6). The cases of the retail data that the tool leaves out are
+    # the explicit causes of RETAIL_ROUTE_CAUSES.
+    if reference not in entities:
+        raise Failure("a spawner names a patrol entity that its slice does not have")
+    owner = entities[reference]
     if "patrol" not in owner:
-        return None, "the patrol entity of the spawner has no patrol component"
+        raise Failure("the patrol entity of a spawner has no patrol component")
     ids, policy = owner["patrol"]
+    if policy >= POLICIES:
+        raise Failure(f"a patrol has the policy {policy}, which the client does not have")
     points = []
     for identifier in ids:
         if identifier is None or identifier in NO_ENTITIES:
             continue  # An empty place of the list (an invalid id of the game data).
-        waypoint = entities.get(identifier, {})
+        if identifier not in entities:
+            raise Failure("a patrol names a waypoint entity that its slice does not have")
+        waypoint = entities[identifier]
         if "waypoint" not in waypoint or waypoint.get("matrix") is None:
-            return None, "a waypoint of the patrol has no waypoint component or no transform"
+            return None, ROUTE_NO_WAYPOINT_COMPONENT
+        if not all(math.isfinite(value) for value in waypoint["matrix"]):
+            raise Failure("the transform of a waypoint has a number that is not finite")
         points.append((waypoint["matrix"], *waypoint["waypoint"]))
     if not points:
-        return None, "the patrol has no waypoint"
-    if policy >= POLICIES:
-        return None, "the patrol has a policy that the client does not have"
+        return None, ROUTE_EMPTY
     return {"policy": policy, "points": points}, ""
 
 
@@ -664,11 +680,11 @@ def world_route(patrol: dict, placement: dict, spawn: tuple[float, float, float]
     for matrix, task, low, high, alignment in patrol["points"]:
         world = multiply(placed, matrix)
         x, y, z = world[3], world[7], world[11]
-        if not all(math.isfinite(value) for value in (x, y, z, low, high)):
-            return None, "a waypoint has a number that is not finite"
-        if math.hypot(x - spawn[0], y - spawn[1]) > LONGEST_PATROL:
-            return None, f"a waypoint is more than {LONGEST_PATROL:g} m from its spawn point"
         yaw = math.degrees(math.atan2(world[4], world[0])) % 360.0
+        if not all(math.isfinite(value) for value in (*world, low, high, yaw)):
+            raise Failure("a waypoint has a number that is not finite (its place, its rotation, or its wait)")
+        if math.hypot(x - spawn[0], y - spawn[1]) > LONGEST_PATROL:
+            return None, ROUTE_TOO_LONG
         points.append([round(x, 3), round(y, 3), round(z, 3), round(yaw, 2), round(low, 3), round(high, 3), task,
                        1 if alignment else 0])
     return [patrol["policy"], points], ""
@@ -1124,6 +1140,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 route, cause = (world_route(spawner["patrol"], placement, entry["position"]) if spawner["patrol"]
                                 else (None, spawner["patrolCause"]))
                 if cause:
+                    if cause not in RETAIL_ROUTE_CAUSES:
+                        raise Failure(f"the patrol of the spawner of placement {placement.get('id', '')} is not complete: {cause}")
                     route_left_out[cause] = route_left_out.get(cause, 0) + 1
                 point_routes.append(len(routes) if route is not None else None)
                 if route is not None:
@@ -1326,10 +1344,15 @@ def main() -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             # The backend must not read a file that is not complete: write, then rename.
             temporary = target.with_name(target.name + ".tmp")
-            temporary.write_text(json.dumps(document, separators=(",", ":")) + "\n", encoding="utf-8")
+            # A number that is not finite is not JSON: the backend would refuse the whole file
+            # (code review of stage 3.4e, finding F6). json.dumps then stops with ValueError.
+            temporary.write_text(json.dumps(document, separators=(",", ":"), allow_nan=False) + "\n", encoding="utf-8")
             temporary.replace(target)
     except Failure as error:
         print(f"creatures: {error}. No file was written.", file=sys.stderr)
+        return 1
+    except ValueError as error:
+        print(f"creatures: the document has a number that is not finite ({error}). No file was written.", file=sys.stderr)
         return 1
     except OSError as error:
         print(f"creatures: {target}: {error}", file=sys.stderr)

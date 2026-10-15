@@ -175,7 +175,7 @@ continue in the C++ backend, and the layout below is the layout after the port.
 | 1.5 | Level, experience, attributes | 1.2, 0.6b | S | verified | done | |
 | 1.6 | Weapon mastery, ability bar, trade skills | 1.5 | M | verified | done | |
 | 1.7 | Tool window and admin interface | 1.3, 1.5 | M | verified | done | |
-| 1.8 | Original quest state of a new character | 1.4, 1.6 | M | verified | | |
+| 1.8 | The generic quest engine: each quest from the quest data of the game (before: the original quest state of a new character) | 1.4, 1.6 | M | verified | | |
 | 1.9 | Acceptance test from an empty database | 1.1 to 1.8 | S | not necessary | | |
 | P.1 | Go port, part 1: monorepo, HTTP services, and store | 1.9 | M | not necessary | | |
 | P.2 | Go port, part 2: game server, world, and the systems of milestone 1 | P.1 | L | not necessary | | |
@@ -190,8 +190,8 @@ continue in the C++ backend, and the layout below is the layout after the port.
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
 | 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | | |
-| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done | |
-| 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | | |
+| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
+| 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
 | 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | | |
 | 4.1 | Objective progress, completion, rewards | 1.8, 2.5 | L | verified | | |
@@ -240,11 +240,17 @@ stage with a letter is a part of the system with that number.
 | 5 | 3.4b | A creature fights: it goes to the player, attacks, and goes back at the leash distance; the player can die and come back (the necessary part of 2.6) | 3.2a | done |
 | 6 | 3.4d | The path search of a creature: navigation data that a tool makes from the collision shapes of the game copy (the terrain, the solid objects, the water), loaded by the backend; a creature goes around a wall and uses stairs; fights that a player can play | 3.4b | done (the user tests the game before the next stage) |
 | 7 | 3.4e | Patrol and wander: a creature walks its patrol route or wanders near its spawn point; the reset makes a creature immune on its way back, and it walks back on its way, not in one jump | 3.4d | done |
-| 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | open |
-| 9 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 1.4 | open |
-| 10 | 1.8 | Original quest state of a new character | 1.6 | open |
-| 11 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
-| 12 | P.1, P.2 | Go port | 1.9 | open |
+| 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | done |
+| 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | open |
+| 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | open |
+| 11 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" | 1.3b | open |
+| 12 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
+| 13 | P.1, P.2 | Go port | 1.9 | open |
+
+Decisions of the user (2026-10-14): the abilities come directly after loot and experience
+("prioritize the abilities", "after loot and experience"), and itemization after the
+abilities. The quests are one generic engine that reads the quest data of the game, not one
+stage for each quest: stage 1.8 is now that engine.
 
 After the Go port, the sequence is the sequence of the summary table, with these changes:
 the other parts of the systems 3.1 to 3.7 come before milestone 4, and milestone 6 comes
@@ -1133,6 +1139,36 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
 - Research (`loot.md`, verified): the loot tables and their conditions; the loot window; world containers;
   experience and weapon mastery experience for a kill.
 - Test: a dead creature gives items to the bag, and the experience bar moves.
+- Stage 3.5a (done, protocol notes 4.21): the rewards of a kill and the respawn of a creature.
+  A new tool (`tools/gamedata/loot.sh`, file `loot-tables.json`, 1.8 MB, 10 s) writes the
+  experience and the coin of a kill of each level, the factors of the 99 creature types, the
+  level differences, the credit data, the loot data of the 8,779 vitals ids, the 108 loot
+  tables and the 85 loot buckets that a creature can reach, and the gear score limits of each
+  level; the combat tables have the weapon mastery of each weapon. A kill by a hit of a
+  character gives each character with the credit (1 percent of the health or more, the last
+  hit 120 s or less before the death, in the world, alive, not ignored, 200 m or less, 10
+  characters at most) the experience of the calculation of the client (through
+  `Progress::add_experience`: a level up), the same amount to the mastery of the weapon in
+  its hand (through the skill system), the coin with its chance, and the loot: the loot
+  table of the creature, rolled with the rules of the roller of the client and the generator
+  of the world, with the gear score of each new item. The items and the coin go into the bag
+  in one transaction of the inventory system with the cause "ItemGathered": the client shows
+  its loot notice, "+N XP", "+N Coin", and "+N Mastery". An item with no free slot is not
+  given (no item on the ground in this stage). A spawn point makes its creature again after
+  the respawn time of its spawner (360 s for most points), when a player is 150 m or less
+  from it. A loot switch of a character (the tool window, `tools/world loot`) makes each kill
+  drop loot and coin. Test case LT7: 591 kills with their rolls near 50 players need 36 ms
+  to 48 ms (limit 1 s), 10,000 rolls 173 ms to 215 ms (limit 2 s). Live: kills of a Grey Wolf and of a Risen in the start area, of a
+  bobcat of level 61 in Brimstone Sands (an item, the mastery, the coin), a level up by a
+  kill, and the bobcat at its spawn point 360 s after its death. The stage also corrected the
+  nine findings of the review of stage 3.4e (an anchor and a waypoint on a different floor,
+  the walk in the lead of a first spawn record, the start of the no-way wait, a patrol source
+  that is not complete, a number that is not finite in the creature tool, the commands on an
+  immune creature, a task of a waypoint for ever after a fight, and the text of the kinds with
+  no attack). Not in this stage: the perks, the gems, and the rarity of an instance (stage
+  1.3b), an item on the ground, chests, gathering, territory standing, the loot of a quest,
+  and the loot of a group. For stage 1.3b: protocol notes 4.21 ("Not known, not done") lists
+  what the roll of a new instance must add.
 
 ### 3.6 Gathering and fishing
 

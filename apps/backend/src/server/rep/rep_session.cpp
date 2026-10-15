@@ -634,13 +634,16 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
     // A creature has only the observer view, and each of its states is one small fragment.
     std::vector<PendingFragment> fragments;
     const world::WorldClock::time_point now = m_clock.now();
-    // The action that plays after a first record with the spawn action (kSpawnLead).
+    // The action that plays after a first record with the spawn action (kSpawnLead). Until the
+    // end of the lead a movement state of the creature (a step of its walk) has no scope fields:
+    // the client plays the spawn action from its start (code review of stage 3.4e, finding F3).
     bool scopeDue = false;
     if (known.scopeDue && now >= *known.scopeDue) {
         known.scopeDue.reset();
         const std::uint32_t playing = creature_scope(entity.creature, false).key;
         scopeDue = playing != kScopeNone && playing != known.scope;
     }
+    const bool leading = known.scopeDue.has_value();
     for (const StateCodec& codec : creature_codecs()) {
         const auto changed = entity.changed.find(codec.key);
         const bool due = scopeDue && codec.key == world::ComponentKey::movement;
@@ -653,19 +656,19 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
         }
         if (codec.parts != nullptr) {
             for (hub::Bytes& state :
-                 codec.parts(entity, View::observer, PartsRequest{known.sent, kFragmentBudget, &m_clock, known.scope})) {
+                 codec.parts(entity, View::observer,
+                             PartsRequest{known.sent, kFragmentBudget, &m_clock, known.scope, leading && known.sent != 0})) {
                 fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
             }
-            if (codec.key == world::ComponentKey::movement) {
+            if (codec.key == world::ComponentKey::movement && !(leading && known.sent != 0)) {
                 // The action that the client of this session plays now.
                 known.scope = creature_scope(entity.creature, known.sent == 0).key;
                 // A first record with the spawn action, while a different action plays: that
-                // action follows (kSpawnLead). A later state of the creature replaces the wait.
+                // action follows at the end of the lead (kSpawnLead), also when the creature
+                // moves in that time.
                 const std::uint32_t playing = creature_scope(entity.creature, false).key;
                 if (known.sent == 0 && playing != kScopeNone && playing != known.scope) {
                     known.scopeDue = now + kSpawnLead;
-                } else if (known.sent != 0) {
-                    known.scopeDue.reset();
                 }
             }
             continue;

@@ -806,11 +806,12 @@ void no_way_to_the_target(const Options& options) {
     (void)world.creatures().hurt(wolf->id, 1.0F, player->id);
     world.pass(3.0F);
     note("the creature is at x " + std::to_string(wolf->position.x) + " z " + std::to_string(wolf->position.z));
-    check(wolf->creature.mind.mode == CreatureMode::fight && wolf->creature.mind.holdUntil && wolf->position.x > 1008.5F
-              && wolf->position.x <= 1010.1F && near(wolf->position.z, kHeight, 0.05F)
-              && world.host.world.navigation().counts().partialPaths >= 1,
+    // The wait of 12 s starts when the creature is at that place and the target is out of its
+    // reach (code review of stage 3.4e, finding F4): here it attacks from the edge first.
+    check(wolf->creature.mind.mode == CreatureMode::fight && wolf->position.x > 1008.5F && wolf->position.x <= 1010.1F
+              && near(wolf->position.z, kHeight, 0.05F) && world.host.world.navigation().counts().partialPaths >= 1,
           "the stone has no way up for the creature: it goes to the place nearest to the character (the edge of the stone) and "
-          "waits there with its target");
+          "stays there with its target");
     check(wolf->creature.mind.attacks >= 1 && player->vitals.health < 100000.0F,
           "the character is in the reach of its attack from the edge: the creature attacks it");
     // The character goes to the middle of the stone, 5 m from each edge: out of the reach. After the wait the creature goes back.

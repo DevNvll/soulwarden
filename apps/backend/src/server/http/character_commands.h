@@ -139,10 +139,21 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
                                                 service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand hurt_character(const std::string& character, const Arguments& arguments,
                                           service::HttpResponse& refusal);
+
+// The loot commands (world/rewards.h, server/http/loot_commands.cpp).
+// set_force_loot: `force` (1 or 0). A development switch of a character (the debug message
+// DebugSetForceDropAILoot of the client): the outer loot chance and the coin chance of its kills
+// pass. A value of the world with the character id as its key, until the backend stops.
+// roll_loot: `kind` (a kind of the creature data), and when necessary `level` (the creature level;
+// the level of the kind), `count` (1 to 10000 rolls), `forced` (1: the outer chance passes). A
+// development command: it rolls the loot table of the kind for the level of the character and
+// gives nothing; the reply has the count of each item. Only the development routes have it.
+[[nodiscard]] WorldCommand set_force_loot(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand roll_loot(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /**
  * @return The health of a character (world thread): "inWorld", "creaturesIgnore",
- *         "creatureBehavior" (the switch of the backend), and for a character that is in the
- *         world "health", "healthMax", and "dead".
+ *         "creatureBehavior" (the switch of the backend), "forceLoot" (the loot switch), and for a
+ *         character that is in the world "health", "healthMax", and "dead".
  */
 [[nodiscard]] nlohmann::json health_json(world::World& world, const std::string& character);
 
@@ -209,6 +220,14 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
  */
 [[nodiscard]] WorldCommand move_creature_anchor(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                                 service::HttpResponse& refusal);
+
+/**
+ * respawn: `creature` (a dead creature of a spawn point) and `seconds`. A development command: the
+ * spawn point makes its creature again in this time (from now), when a player is near it, and its
+ * body leaves the world first. Only the development routes have it.
+ */
+[[nodiscard]] WorldCommand set_respawn_time(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                            service::HttpResponse& refusal);
 
 /**
  * @return The creatures of the world (world thread), the nearest one first: the id, the kind,

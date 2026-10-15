@@ -71,6 +71,12 @@ struct WeaponRow {
     std::optional<std::uint32_t> heavyRow;
     /** The gear score rate of this weapon. 0: the rate of the constants. */
     float gearScoreRate{0.0F};
+    /**
+     * The weapon mastery of the weapon: the id text of its progression (WeaponMasteryCategoryId,
+     * "SwordAbilityTable"). Empty: none (a weapon of a creature, a tool), or a file of a tool from
+     * before stage 3.5a.
+     */
+    std::string mastery;
 };
 
 /** The defense values of one creature kind (its base vitals row). */

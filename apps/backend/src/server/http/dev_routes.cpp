@@ -46,6 +46,11 @@
 //   POST /v1/dev/world/ignore?character=ID&ignore=0|1    the creatures ignore the character (or not)
 //   POST /v1/dev/world/hurt?character=ID&amount=N        a character takes damage (the health 0
 //                                                        is its death)
+//   POST /v1/dev/world/force-loot?character=ID&force=0|1 the loot switch: each kill of the
+//                                                        character drops loot and coin (or not)
+//   GET  /v1/dev/loot/roll?kind=KIND[&level=N][&count=N][&forced=1][&character=ID]
+//                                                        roll the loot table of a kind many times
+//                                                        and count the items (nothing is given)
 //   POST /v1/dev/world/message?character=ID&type=N&body=HEX
 //                                                        send the client of a character one
 //                                                        message with these bytes (a live check
@@ -84,6 +89,8 @@
 //   POST /v1/dev/creatures/reset                         each spawn point that waits is free again
 //   POST /v1/dev/creatures/action?creature=ID&action=NAME[&seconds=N][&tags=HEX]
 //   POST /v1/dev/creatures/anchor?creature=ID&x=N&y=N&z=N  the anchor of a creature in a fight
+//   POST /v1/dev/creatures/respawn?creature=ID&seconds=N the spawn point of a dead creature makes
+//                                                        its creature again in N s
 //   POST /v1/dev/world/fragment?creature=ID&slot=N&type=N&state=HEX
 //                                                        the fragment command for a creature
 // The commands remove, health, and kill change each creature of the world, and they need no
@@ -187,6 +194,22 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                  {"jumps", behaviorCounts.jumps},
                                  {"immuneHits", behaviorCounts.immuneHits},
                                  {"returns", behaviorCounts.returns},
+                                 // The rewards of the kills (stage 3.5a).
+                                 {"rewards",
+                                  {{"data", target.rewards().has_data()},
+                                   {"kills", target.rewards().counts().kills},
+                                   {"killsWithNoCredit", target.rewards().counts().killsWithNoCredit},
+                                   {"credited", target.rewards().counts().credited},
+                                   {"experience", target.rewards().counts().experience},
+                                   {"masteryExperience", target.rewards().counts().masteryExperience},
+                                   {"coin", target.rewards().counts().coin},
+                                   {"lootGates", target.rewards().counts().lootGates},
+                                   {"rolls", target.rewards().counts().rolls},
+                                   {"items", target.rewards().counts().items},
+                                   {"itemsLost", target.rewards().counts().itemsLost},
+                                   {"time", meter(target.rewards().load())}}},
+                                 {"spawnPointsWaiting", creatures.waiting_count()},
+                                 {"removedByRespawn", creatures.counts().removedByRespawn},
                                  // The navigation: the tiles of the data, the path searches, and the sight tests.
                                  {"navigation",
                                   {{"data", navigation.has_data()},
@@ -619,6 +642,17 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/world/heal", "dev.world_heal", command_route(services, commands::heal));
     router.add("POST", "", "/v1/dev/world/ignore", "dev.world_ignore", command_route(services, commands::set_creatures_ignore));
     router.add("POST", "", "/v1/dev/world/hurt", "dev.world_hurt", command_route(services, commands::hurt_character));
+    router.add("POST", "", "/v1/dev/world/force-loot", "dev.world_force_loot", command_route(services, commands::set_force_loot));
+    router.add("GET", "", "/v1/dev/loot/roll", "dev.loot_roll", [&services](const RouteContext& context) {
+        if (!context.request.host.empty()) {
+            return message(403, "forbidden");
+        }
+        service::HttpResponse refusal;
+        // The character is not necessary: with one, the roll has its level.
+        const std::string character = query_text(context.request, "character").value_or("");
+        commands::WorldCommand step = commands::roll_loot(character, commands::QueryArguments(context.request), refusal);
+        return step ? in_world(services, std::move(step)) : refusal;
+    });
     router.add("GET", "", "/v1/dev/items", "dev.items", bind(list_items));
     router.add("POST", "", "/v1/dev/items/give", "dev.items_give", command_route(services, commands::give_item));
     router.add("POST", "", "/v1/dev/items/remove", "dev.items_remove", command_route(services, commands::remove_item));
@@ -640,6 +674,8 @@ void register_dev_routes(Router& router, const Services& services) {
                creature_route(services, commands::play_creature_action));
     router.add("POST", "", "/v1/dev/creatures/anchor", "dev.creatures_anchor",
                creature_route(services, commands::move_creature_anchor));
+    router.add("POST", "", "/v1/dev/creatures/respawn", "dev.creatures_respawn",
+               creature_route(services, commands::set_respawn_time));
     register_dev_progress_routes(router, services);
 }
 

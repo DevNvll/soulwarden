@@ -93,6 +93,15 @@ struct GiveOptions {
     std::uint8_t action{sync::kItemAdded};
 };
 
+/** One item of a grant (Inventory::grant): the loot of a kill. */
+struct GrantItem {
+    /** The ItemID text of the item catalog. */
+    std::string itemId;
+    std::uint32_t quantity{0};
+    /** The gear score of a new instance. No value: the value of the item table. */
+    std::optional<std::uint32_t> gearScore;
+};
+
 /** One entry of a drop request: a quantity of the item instance in a slot. */
 struct DropEntry {
     std::uint32_t slot{0};
@@ -144,6 +153,20 @@ public:
                     std::string_view itemId,
                     std::uint32_t quantity,
                     const GiveOptions& options = {});
+
+    /**
+     * Gives the loot of a kill to a character (world/rewards.h): the items and the coin in one
+     * transaction. Each slot that changes has the cause "ItemGathered" (sync::kItemGathered): the
+     * client shows its loot notice for it. An item goes into the stacks of the item that are not
+     * full first, then into new stacks; a part that the bag has no free slot for, and an item that
+     * the catalog does not have, is not given (it goes into `lost`), and the other items and the
+     * coin are given. The coin is not more than the wallet limit. A gear score of an item is the
+     * gear score of the roll (not below 1, and not above the largest gear score of the item).
+     */
+    ItemResult grant(const std::string& characterId,
+                     const std::vector<GrantItem>& items,
+                     std::uint64_t coin,
+                     std::vector<GrantItem>* lost = nullptr);
 
     /** Removes a quantity from the item of a slot. No quantity: the full stack. */
     ItemResult remove(const std::string& characterId, std::uint32_t slot, std::optional<std::uint32_t> quantity = {});
@@ -247,9 +270,12 @@ private:
         std::set<std::uint32_t> equipment;
     };
 
-    /** A change of the bag and of the equipment: `apply(Carried&, Touched&)` gives an ItemError. */
+    /**
+     * A change of the bag and of the equipment: `apply(Carried&, Touched&)` gives an ItemError.
+     * @param coin When it has a value: the new coin of the character, in the transaction of the rows.
+     */
     template <class Change>
-    ItemResult change(const std::string& characterId, const char* what, Change&& apply);
+    ItemResult change(const std::string& characterId, const char* what, Change&& apply, std::optional<std::uint64_t> coin = {});
     /** A change of the bag only: `apply(Bag&, std::set<std::uint32_t>&)` gives an ItemError. */
     template <class Change>
     ItemResult change_bag(const std::string& characterId, const char* what, Change&& apply);

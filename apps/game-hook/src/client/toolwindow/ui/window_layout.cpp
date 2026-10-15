@@ -569,6 +569,12 @@ void draw_character() {
     if (ImGui::Checkbox("Creatures ignore this character", &ignore)) {
         send("set_creatures_ignore", {{"ignore", ignore}}, ignore ? "Creatures ignore the character" : "Creatures attack the character");
     }
+    // The loot switch (stage 3.5a): each kill of the character drops loot and coin (the outer
+    // chances of the game data pass). A value of the backend for this character, until its stop.
+    bool loot = g_data.forceLoot;
+    if (ImGui::Checkbox("Each kill drops loot and coin", &loot)) {
+        send("set_force_loot", {{"force", loot}}, loot ? "Each kill drops loot and coin" : "The kills have the chances of the game data");
+    }
     if (!g_data.creatureBehavior) {
         ImGui::TextColored(kDimColor, "The behavior of the creatures is off for this start: they stand.");
     }

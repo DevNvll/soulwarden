@@ -38,11 +38,13 @@
 // CreatureCounts, and a test case fails for a scan that looks at each point.
 //
 // A creature of a spawn point that died, or that a command removed, does not come back by the
-// distance rule: the spawn point waits. In this stage only a command makes it free again
-// (reset_spawn_points). The respawn time of a later stage has its place here: a spawn point
-// that waits has a time of the world clock (`respawnAt`) at which it is free again. The body of
-// the dead creature can be in the world at that time (a player stayed near it): the point
-// removes it before it makes its new creature.
+// distance rule: the spawn point waits. A point whose creature died gets its respawn time from
+// the data of its spawner (world/rewards.h, respawn_time): a time of the world clock
+// (`respawnAt`) at which it is free again. A point whose creature a command removed waits for the
+// command `reset` (reset_spawn_points), which makes each point that waits free at once. The body
+// of the dead creature can be in the world at the respawn time (a player stayed near it): the
+// point removes it before it makes its new creature. The respawn time costs nothing in a scan: a
+// scan looks only at the points near a player.
 //
 // World thread only.
 
@@ -97,8 +99,8 @@ struct SpawnPointState {
     /** True: the creature of the point died or a command removed it. The point makes no creature. */
     bool waiting{false};
     /**
-     * The time at which a point that waits is free again. No value: only a command makes it
-     * free. No code sets a time in this stage (the respawn time is stage 3.5a).
+     * The time at which a point that waits is free again: the death of its creature plus the
+     * respawn time of its spawner. No value: only a command makes it free (a removal by a command).
      */
     std::optional<WorldClock::time_point> respawnAt;
     /** Number of creatures that the point made. It selects the slice of an alias with more than one. */
@@ -229,7 +231,9 @@ public:
 
     /**
      * Sets the health of a creature. The health 0 is the death of the creature: it gets the
-     * dead mark, and its spawn point waits. The entity stays in the world (the body).
+     * dead mark, and its spawn point waits. The entity stays in the world (the body). A creature
+     * on its way back is immune: a lower health gives the error `immune` and changes nothing
+     * (the same rule as a hit, for the health command and the kill command).
      */
     CreatureResult set_health(EntityId id, float health);
 
@@ -270,11 +274,11 @@ public:
     std::size_t reset_spawn_points();
 
     /**
-     * Sets the time of the world clock at which a spawn point that waits is free again: the
-     * place of the respawn time (stage 3.5a calls it at the death of a creature). No effect for
-     * a point that does not wait. From that time on, the point makes its creature again when a
-     * player is near it (the distance rule): the body of the dead creature then leaves the
-     * world first.
+     * Sets the time of the world clock at which a spawn point that waits is free again (the death
+     * of a creature sets the respawn time of its spawner; a test or a command can set a different
+     * one). No effect for a point that does not wait. From that time on, the point makes its
+     * creature again when a player is near it (the distance rule): the body of the dead creature
+     * then leaves the world first.
      * @return False when the creature data has no spawn point with this index.
      */
     bool respawn_at(std::uint32_t spawnPoint, WorldClock::time_point time);

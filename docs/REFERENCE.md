@@ -101,7 +101,8 @@ tools/gamedata/slice_ids.sh        # one time: ids of the player slice (optional
 tools/gamedata/items.sh            # one time: item catalog (without it the backend gives no item, and a new character has no clothing)
 tools/gamedata/progression.sh      # one time: progression tables (without them the backend gives no level and no skill point)
 tools/gamedata/creatures.sh        # one time: creature data (without it the world has no creature); needs an Oodle library (see below)
-tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect)
+tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect; from stage 3.5a also the weapon mastery of each weapon)
+tools/gamedata/loot.sh             # one time: loot tables and kill rewards (without them a kill gives nothing); 10 s
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
@@ -170,7 +171,7 @@ it is hidden, the game has its input again. The window is for the character that
 | Tab | What you can do |
 | --- | --- |
 | Items | Type a text in the search field to find items of the catalog (the text is compared with the id, the type, and the class of an item, for example `sword`, `potionhealth`, `ore`, `consumable`). Click an item, set the quantity, and press "Give": the item is in the bag. The list "Bag" has each item of the bag with a "Remove" button. |
-| Character | Set the level, give experience, set the coin, and set the value of each attribute (the character must have the free points for it). The row "Health" shows the health of your character: "Heal" gives it its full health, and for a dead character the button has the text "Revive" (the character lives again at its place, and the death screen closes). With the mark "Creatures ignore this character", no creature takes your character as its target; the value stays until the backend stops. |
+| Character | Set the level, give experience, set the coin, and set the value of each attribute (the character must have the free points for it). The row "Health" shows the health of your character: "Heal" gives it its full health, and for a dead character the button has the text "Revive" (the character lives again at its place, and the death screen closes). With the mark "Creatures ignore this character", no creature takes your character as its target, and a kill gives it nothing; the mark "Each kill drops loot and coin" makes each kill of your character drop loot and coin (the loot switch, stage 3.5a). The two values stay until the backend stops. |
 | Skills | Set the mastery level of each weapon (each level above 1 gives one mastery point for its tree) and the level of each trade skill. |
 | Creatures | The list at the bottom has each creature that is 150 m or less from your character, the nearest one first, with its level, its health, and its distance. "Set" sets the health of a creature to the percent value above the list, "Kill" kills it, and "Remove" takes it out of the world. To make a creature, type a text in the search field (the id, the name, or the family of a kind, for example `wolf`, `risen`, `rabbit`), click a kind, set the level and the distance, and press "Spawn": the creature is that many meters to the north of your character (the window covers the left half of the picture: press F8 to see the creature). "Reset" makes each spawn point free again whose creature you killed or removed. |
 | Travel | The first line has the position of your character (meters: east, north, up). The list has each spirit shrine and each inn of the world with its territory and its distance from your character. Type a text in the filter (a part of a name or of a territory, `shrine`, or `inn`), click a place, and press "Travel": your character is at that place, with no new login. A place that is more than 100 m away shows the loading screen of the game for some seconds. The form below the list moves your character to a position in numbers ("Here" puts the position of your character into the form): give a height on the ground or above it. Your character and the camera look north after a travel. |
@@ -341,10 +342,23 @@ button on "Confirm").
   the damage values of the attributes, the level and gear score values, the defense
   values of each creature (protocol notes 4.15), and, from stage 3.4b, the armor values of
   each armor item and the damage values of the level differences (protocol notes 4.18:
-  with a file from before, your armor does not lower the damage of a creature). It reads the data tables and the base
+  with a file from before, your armor does not lower the damage of a creature), and, from
+  stage 3.5a, the weapon mastery of each weapon (with a file from before, a kill gives no
+  mastery experience: run the tool again). It reads the data tables and the base
   attributes file of the game copy, from the same sources as the creature data tool.
   `tools/gamedata/combat.sh --find TEXT` prints the weapons and the creatures with a text.
   Without the file the backend starts, and an attack has no effect.
+- `tools/gamedata/loot.sh` makes the loot tables
+  (`~/.local/share/soulwarden/gamedata/loot-tables.json`, 1.8 MB, 10 s): the experience and the
+  coin of a kill of each creature level, the reward factors of each creature type, the level
+  differences, the credit data of the game, the loot data of each creature (may it drop
+  loot, its chance, its loot table, its tags), the 108 loot tables and the 85 loot buckets
+  that a creature can reach, and the gear score ranges of each level (protocol notes 4.21).
+  It reads the data tables and the base attributes file of the game copy, from the same
+  sources as the creature data tool (the extracted files of the work folder are sufficient
+  for it, and `SOULWARDEN_OODLE_LIB` reads the pak files). `tools/gamedata/loot.sh --find TEXT` prints the
+  loot data of the creatures and of the tables with a text. Without the file the backend
+  starts, and a kill gives nothing.
 - Creatures. With the creature data, the creatures of each region of the world stand at
   their spawn points: rabbits, wolves, Risen, skeletons, sheep, and many others. Each
   one has its body, its idle animation, its name plate with its level, and its health bar.
@@ -358,7 +372,8 @@ button on "Confirm").
   back to its place when you are dead or too far, or at the end of its leash (70 m for a
   wolf), and it has its full health there. The rules are rules of this project (protocol
   notes 4.17): the game files have the values of a creature and not its behavior. 859 of
-  the 3,848 kinds have no attack that the tool can use: they stand.
+  the 3,848 kinds have no attack that the tool can use: they do not attack you, and a kind
+  of them with a patrol route or wander values patrols or wanders as each other creature.
 - Paths. With the navigation data of stage 3.4d (protocol notes 4.19) a creature goes around
   walls and rocks, up stairs, on the floors of buildings and ruins, and through shallow
   water, and it does not see you through a wall. A creature with no way to you loses you
@@ -407,8 +422,10 @@ button on "Confirm").
   interaction "Fast Travel" of a shrine has no function yet. The tab "Creatures" of the tool window
   (F8) lists the creatures near the character, and it can make a creature of a kind, set
   its health, kill it, and remove it; `tools/world creatures`, `kinds`, and `creature` do the
-  same in a development run. A creature that you killed or removed does not come back by
-  itself (the respawn timer is later work): the button "Reset" makes its spawn point free.
+  same in a development run. A creature of a spawn point that you killed comes back at its
+  respawn time (6 minutes for most spawners, protocol notes 4.21) when you are 150 m or less
+  from its point; a creature that you removed does not come back by itself: the button
+  "Reset" makes each spawn point that waits free at once.
 - Melee attacks. With the combat tables, a melee attack of your character that touches a
   creature lowers its health: a click of the left pointer button is a light attack, and a
   hold is a heavy attack. The damage number shows at the creature, the creature plays its
@@ -419,7 +436,22 @@ button on "Confirm").
   creature. The client finds each contact itself and reports it, and the backend checks each
   report (the creature, the distance, the weapon, the time of the attack): the rules are
   rules of this project (protocol notes 4.15). Not yet: ranged weapons and magic, abilities,
-  critical hits, blocks, loot, and experience.
+  critical hits, and blocks.
+- Rewards of a kill. With the loot tables of stage 3.5a (`tools/gamedata/loot.sh`; protocol
+  notes 4.21), a creature that your hits killed gives your character its experience (the
+  experience table of the game with the level of the creature, its type, and the level
+  difference), the same amount to the weapon mastery of the weapon in your hand, sometimes
+  coin (5 percent of the kills for most creatures), and sometimes items (a wolf gives loot in
+  about 1 of 10 kills; then the loot tables of the game decide the item). The HUD shows one
+  line for each change ("+27 XP", "+27 War Hammer Mastery", "+4.80 Coin", the name of the
+  item), and the items are in the bag (Tab key) with a gear score of the range of the level.
+  Your character gets the rewards when its hits did 1 percent or more of the health of the
+  creature in the last 120 s, it lives, and it is 200 m or less from the creature; with
+  more characters, each one gets less experience. A creature that the health command or the
+  kill command killed gives nothing. The mark "Each kill drops loot and coin" of the tab
+  "Character" of the tool window (F8) makes each kill of your character drop loot and coin.
+  Not yet: the perks and the rarity of an item instance (an item shows only the perks of its
+  definition), items on the ground, and loot for a group.
 - The bag (Tab key) shows the items and the coin of the character. The tool window (F8)
   gives and removes items, and `tools/world give` gives items in a development run. The backend handles the drop request of the client (drag an
   item to the area "Drop items": the item is gone, the world has no items on the ground yet;
@@ -429,10 +461,10 @@ button on "Confirm").
   and "Respec" makes them free again. The tab "Weapon Mastery" shows the level of each
   weapon; in the tree of a weapon, a click on a node and "Assign" spend a mastery point, and
   an active ability goes to the ability bar of the HUD. The tab "Trade Skills" shows the
-  level of each trade skill. A character starts with level 1 and no skill, and nothing in
-  the game gives experience yet: `tools/world level`, `xp`, `attribute`, `mastery`,
-  `tradeskill`, and `skillxp` set the values in a development run, and the tool window (F8)
-  sets them in each start of the game. The largest level is 60, and the largest trade skill level
+  level of each trade skill. A character starts with level 1 and no skill. A kill gives
+  experience and weapon mastery experience (stage 3.5a); `tools/world level`, `xp`,
+  `attribute`, `mastery`, `tradeskill`, and `skillxp` set the values in a development run,
+  and the tool window (F8) sets them in each start of the game. The largest level is 60, and the largest trade skill level
   is 200. Not there yet: the use of an ability, the effects of an attribute other than the
   health, and the reset of a weapon tree from mastery level 11 on (it has a cost in a
   currency that the backend does not have).
