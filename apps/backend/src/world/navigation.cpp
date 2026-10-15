@@ -16,6 +16,10 @@ using gamedata::NavSpot;
 using gamedata::NavTile;
 
 constexpr float kSqrt2 = 1.41421356F;
+/** The height step of the points of a blocked part of a line in one cell (line_stop; code review of stage 3.3b-S3, finding F4). */
+constexpr float kLineSample = 0.05F;
+/** The largest number of such points in one cell: a vertical segment of 6.4 m. */
+constexpr int kLineSamplesMost = 128;
 
 std::int32_t floor_div(std::int32_t value, std::int32_t divisor) {
     return value >= 0 ? value / divisor : -((-value + divisor - 1) / divisor);
@@ -850,6 +854,19 @@ std::optional<float> Navigation::line_stop(const state::WorldPosition& from, con
         const float b = height_at(exit);
         if (!line_free(cellX, cellY, std::min(a, b), std::max(a, b))) {
             ++m_counts.lineStopped;
+            // The first blocked point of the part of the line in this cell (code review of stage 3.3b-S3, finding F4): a steep
+            // line (a shot down at a creature) has its ground at the end of its part in the cell, not at its entry. Points of
+            // the part at height steps of kLineSample; the entry when no single point is blocked (a thin solid between two
+            // points).
+            const float rise = std::fabs(b - a);
+            const int samples = std::clamp(static_cast<int>(std::ceil(rise / kLineSample)), 1, kLineSamplesMost);
+            for (int sample = 0; sample <= samples; ++sample) {
+                const float part = entry + (std::min(exit, 1.0F) - entry) * static_cast<float>(sample) / static_cast<float>(samples);
+                const float height = height_at(part);
+                if (!line_free(cellX, cellY, height, height)) {
+                    return std::clamp(part, 0.0F, 1.0F);
+                }
+            }
             return std::clamp(entry, 0.0F, 1.0F);
         }
         if ((cellX == lastX && cellY == lastY) || exit >= 1.0F) {

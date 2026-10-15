@@ -6,7 +6,7 @@ finding F5: a delay of a delayed event with a value of one byte (not a 32-bit fl
 the vortex then came at the start of the spell. This check gives the entry point of the tool one spell table and one
 slice (a spell component, a delayed event of slot 7 to a child entity with the damage row of the burst) with a source
 provider that reads no game copy, and compares the status and the output file of each case. The test program of the
-backend runs it (case RG5).
+backend runs it (case RG5; the case trap-slice: case SB1 of stage 3.3b-S2b).
 
 Usage: check_spell_tool.py WORK_FOLDER
 Status 0: each case has the expected result.
@@ -50,15 +50,18 @@ def component(kind, serial: int, fields: list) -> Element:
     return element(kind=kind, children=[base, *fields])
 
 
-def slice_nodes(delay: bytes) -> list[Element]:
-    """@return The nodes of a slice: a root entity with a Spell component (slot 1) and a delayed event (slot 7) of `delay`."""
-    spell_kind = uuid.UUID(next(key for key, value in tool.COMPONENT_CLASSES.items() if value[0] == "Spell"))
+def slice_nodes(delay: bytes, trap: bool = False) -> list[Element]:
+    """@return The nodes of a slice: a root entity with a Spell component (slot 1) and a delayed event (slot 7) of `delay`.
+    `trap`: a PositionInTheWorld component (slot 1) in place of the Spell component, and an event that starts at a trigger
+    (format 2, stage 3.3b-S2b)."""
+    spell_kind = uuid.UUID(next(key for key, value in tool.COMPONENT_CLASSES.items() if value[0] == ("PositionInTheWorld" if trap else "Spell")))
     delay_kind = uuid.UUID(next(key for key, value in tool.COMPONENT_CLASSES.items() if value[0] == "DelayedEvent"))
     transform = element(children=[element(tool.LOCAL_TRANSFORM_FIELD), identifier(tool.PARENT_FIELD, tool.NO_ENTITY)])
     spell = component(spell_kind, 11, [element(tool.REPLICATION_FIELD, b"\x01")])
     event = [element(tool.ENTITY_REF_FIELD, children=[identifier(tool.ID_FIELD, 200)]), element(tool.EVENT_TYPE_FIELD, b"\x02")]
+    flags = [element(tool.START_ON_INIT_FIELD, b"\x00"), element(tool.START_ON_TRIGGER_FIELD, b"\x01")] if trap else []
     delayed = component(delay_kind, 12, [element(tool.REPLICATION_FIELD, b"\x07"), element(tool.DELAY_FIELD, delay),
-                                         element(tool.EVENT_FIELD, children=event)])
+                                         element(tool.EVENT_FIELD, children=event), *flags])
     root = element(kind=tool.ENTITY_TYPE, children=[identifier(tool.ID_FIELD, 100), element(tool.NAME_FIELD, b"Vortex", tool.TEXT_TYPE),
                                                     element(tool.COMPONENTS_FIELD, children=[transform, spell, delayed]),
                                                     element(tool.SPAWN_RADIUS_FIELD, struct.pack(">f", 50.0))])
@@ -72,7 +75,7 @@ def slice_nodes(delay: bytes) -> list[Element]:
 def run(work: Path, case: str, delay: bytes) -> tuple[int, str]:
     sheet = FakeSheet("Spells", [{"SpellID": "Test_Spell", "SpellPrefabPath": PREFAB}])
     path = tool.slice_path(PREFAB)
-    roots = slice_nodes(delay)
+    roots = slice_nodes(delay, case == "trap-slice")
 
     class Sources:
         used: dict = {}
@@ -80,8 +83,8 @@ def run(work: Path, case: str, delay: bytes) -> tuple[int, str]:
         def __init__(self, *arguments) -> None:
             pass
 
-        def paths(self, *arguments):
-            return ["table"]
+        def paths(self, prefix: str, suffix: str):
+            return ["table"] if suffix == ".datasheet" else []
 
         def read(self, *arguments):
             return b"made-up"
@@ -117,8 +120,17 @@ def main() -> int:
     failures = 0
     status, text = run(work, "valid", struct.pack(">f", 3.0))
     events = json.loads(text)["slices"][0]["events"] if status == 0 and text != MARK else []
-    passed = status == 0 and events == [[7, 3.0, 2, "Burst", "GreatAxe_GravityWell_Burst", False]]
+    passed = status == 0 and events == [[7, 3.0, 2, "Burst", "GreatAxe_GravityWell_Burst", False, "Vortex", True, False]]
     print(f"{'ok  ' if passed else 'FAIL'}  valid: status {status}, events {events}")
+    failures += 0 if passed else 1
+    # Format 2 (stage 3.3b-S2b): a slice with a PositionInTheWorld component and no Spell component is a spell entity (the
+    # trap), and an event keeps its start flags (an event that starts at a trigger).
+    status, text = run(work, "trap-slice", struct.pack(">f", 0.5))
+    entry = json.loads(text)["slices"][0] if status == 0 and text != MARK else {}
+    passed = (status == 0 and entry.get("spellSlot") == 0 and entry.get("positionSlot") == 1
+              and entry.get("events") == [[7, 0.5, 2, "Burst", "GreatAxe_GravityWell_Burst", False, "Vortex", False, True]])
+    print(f"{'ok  ' if passed else 'FAIL'}  trap-slice: status {status}, slots {entry.get('spellSlot')} {entry.get('positionSlot')}, "
+          f"events {entry.get('events')}")
     failures += 0 if passed else 1
     for case, delay in (("bad-delay-width", b"\x00"), ("delay-not-finite", struct.pack(">f", float("nan")))):
         status, text = run(work, case, delay)

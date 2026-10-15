@@ -42,13 +42,20 @@ Output: {"format": 1, "counts": {...},
 "slices": [[path, baseSpeed, extraSpeed, timeForMaxSpeed, [x, y, z] acceleration, flyingLifetime, stuckLifetime], ...],
 "ammo": [[id, type, damageModifier, slice], ...],
 "weapons": [[weaponId, profile, ammoType], ...],
-"shots": [[profile, attack, row, charge, slice, spell, manaCost, heavy, ammoSlot, consume], ...]}.
+"shots": [[profile, attack, row, charge, slice, spell, manaCost, heavy, ammoSlot, consume(, ability)], ...]}.
+A shot with the 11th value `ability` true (stage 3.3b-S2b) is a projectile spell of an ability of a player weapon (a Projectile
+spell of a player profile whose row has the attack type Ability or MagicSpell: the shot of the Pylon, the Beacon, the trap of
+the musket): only the abilities system of the backend launches it.
 `slice` is an index into `slices`; -1 in a shot: the slice of the ammunition of the shot. `spell` is empty for a clip of
 an animation database. `heavy` is true for a row with the attack type Heavy. A clip whose damage row is not a light or a
 heavy row of the player damage table (a clip of a creature, of an ability) is not a shot of the file. The tool stops with
 status 1 and writes no file when a file that it needs has no source, when a table has no column that the tool reads, when
-a number of the ranged attack data or of a projectile slice is not a finite number of its size, and when a ChargeValue of a
-clip is not a number (tools/gamedata/check_projectile_tool.py).
+a number of the ranged attack data or of a projectile slice is not a finite number of its size, when a ChargeValue of a
+clip is not a number, when a SliceOverride of a clip or the prefab of a spell shot names no slice with a projectile component,
+when a player weapon profile (PLAYER_PROFILES) has no shot of its light or heavy row, and when the ammunition of an empty slot
+of a weapon whose shot takes the slice of its ammunition has no slice (code review of stage 3.3b-S3, finding F7;
+tools/gamedata/check_projectile_tool.py). An ammunition prefab that names no slice is -1 (the siege and creature ammunition of
+the game copy: 9 rows): no shot of a player takes it.
 
 The tool needs only the standard library of Python and the modules of this folder.
 
@@ -94,6 +101,9 @@ SPELL_COLUMNS = ("SpellID", "SpellPrefabPath", "CastingTypes", "RangedAttackProf
 DAMAGE_COLUMNS = ("DamageID", "WeaponCategory", "AttackType")
 # The attack types of the rows of a basic attack (the damage table): a row of an ability ("Ability") is not a basic shot.
 BASIC_ATTACK_TYPES = ("Light", "Heavy")
+# The attack types of the rows of the abilities (stage 3.3b-S2b: the projectile spells of an ability; the rows of the magic
+# abilities have MagicSpell: IceMagic_Pylon).
+ABILITY_ATTACK_TYPES = ("Ability", "MagicSpell")
 
 # The ranged attack data (the field names of the client: research abilities-shared.md Q3, abilities-ranged.md Q2).
 PROFILES_FIELD = field_id("m_rangedAttackProfiles")
@@ -262,6 +272,34 @@ def read_sheets(sources: Sources) -> dict[str, list[Sheet]]:
     return sheets
 
 
+# The ammunition of an empty slot of each ammunition type (client code: the initializers at image RVA 0x221E50 and 0x221E70):
+# the slice of a shot with the slice -1.
+DEFAULT_AMMO = {"arrow": "defaultarrow", "shot": "defaultshot"}
+# The profiles of the weapons of a player whose basic attacks are shots (research abilities-ranged.md Q2: the bow, the musket,
+# the blunderbuss; abilities-magic.md Q2: the four magic weapons). The other profiles of the weapon table are creatures and
+# thrown weapons with no basic shot.
+PLAYER_PROFILES = ("bow", "musket", "blunderbuss", "fireball", "icemagic", "lifestaff", "voidgauntlet")
+
+
+def check_joins(shot_rows: list, light_heavy: dict, weapons: list, ammo: list, profiles: dict) -> None:
+    """Stops the tool when the joins that the backend needs are not complete (code review of stage 3.3b-S3, finding F7): each
+    profile of PLAYER_PROFILES of a weapon with a light or heavy row (TooltipPrimaryAttackData, TooltipAlternateAttackData) has a shot of such a
+    row (an animation database with no clip, or no animation database, gives none), and the ammunition of an empty slot of the
+    ammunition type of each weapon whose shot takes the slice of the ammunition (slice -1) has a slice."""
+    for profile, wanted in sorted(light_heavy.items()):
+        if profile not in PLAYER_PROFILES:
+            continue
+        if not any(entry[0].lower() == profile and entry[2].lower() in wanted for entry in shot_rows):
+            raise Failure(f"the profile {profiles.get(profile, profile)} has no shot of its light or heavy row")
+    slice_of_ammo = {entry[0].lower(): entry[3] for entry in ammo}
+    fallback_profiles = {entry[0].lower() for entry in shot_rows if entry[4] < 0}
+    for weapon, profile, ammo_type in weapons:
+        default = DEFAULT_AMMO.get(ammo_type.lower())
+        if profile.lower() in fallback_profiles and default is not None and slice_of_ammo.get(default, -1) < 0:
+            raise Failure(f"the weapon {weapon} shoots the ammunition of an empty slot, and the ammunition {default} has no projectile "
+                          "slice")
+
+
 def build_document(sources: Sources) -> dict:
     sheets = read_sheets(sources)
     radb = sources.stream(RADB_PATH)
@@ -288,17 +326,22 @@ def build_document(sources: Sources) -> dict:
     slices: list[list] = []
     slice_index: dict[str, int] = {}
 
-    def projectile_slice(prefab: str) -> int:
+    def projectile_slice(prefab: str, required: bool) -> int:
+        """@return The index of the projectile slice of a prefab, or -1 for an empty prefab. A prefab that names no slice of the
+        game copy, or a slice with no projectile component, is -1 for a row that the backend does not need (an ammunition of a
+        siege weapon), and stops the tool for a prefab that a shot needs (a SliceOverride, the prefab of a spell): -1 there
+        would mean "the slice of the ammunition" (code review of stage 3.3b-S3, finding F7)."""
         if not prefab.strip():
             return -1
         path = slice_path(prefab)
-        if path in slice_index:
-            return slice_index[path]
-        roots = sources.stream(path) if sources.has(path) else None
-        entry = read_projectile_slice(path, roots) if roots is not None else None
-        slice_index[path] = len(slices) if entry is not None else -1
-        if entry is not None:
-            slices.append(entry)
+        if path not in slice_index:
+            roots = sources.stream(path) if sources.has(path) else None
+            entry = read_projectile_slice(path, roots) if roots is not None else None
+            slice_index[path] = len(slices) if entry is not None else -1
+            if entry is not None:
+                slices.append(entry)
+        if required and slice_index[path] < 0:
+            raise Failure(f"the projectile slice {path} of a shot has no source or no projectile component")
         return slice_index[path]
 
     ammo = []
@@ -311,7 +354,7 @@ def build_document(sources: Sources) -> dict:
             if not isinstance(modifier, float) or not math.isfinite(modifier):
                 raise Failure(f"the ammunition {identifier} has a DamageModifier that is not a number")
             ammo.append([identifier, str(sheet.cell(row, "AmmoType")).strip(), round(modifier, 6),
-                         projectile_slice(str(sheet.source(row, "AmmoPrefabPath")))])
+                         projectile_slice(str(sheet.source(row, "AmmoPrefabPath")), False)])
 
     weapons = []
     light_heavy: dict[str, set[str]] = {}
@@ -349,7 +392,7 @@ def build_document(sources: Sources) -> dict:
                     continue
                 key = (profile, attack.lower(), row[0].lower(), charge)
                 slot = AMMO_SLOTS.get(clip.get("AmmoSlot", "").strip(), 0) if clip.get("UseAmmo", "") == "true" else 0
-                shots.setdefault(key, [profiles[profile], attack, row[0], charge, projectile_slice(clip.get("SliceOverride", "")),
+                shots.setdefault(key, [profiles[profile], attack, row[0], charge, projectile_slice(clip.get("SliceOverride", ""), True),
                                        "", "", row[2] == "Heavy", slot, clip.get("ConsumeAmmo", "") == "true"])
     sources.check_complete()
     # The spells of a magic weapon: a projectile spell of the profile with the light or the heavy row of the weapon.
@@ -366,14 +409,41 @@ def build_document(sources: Sources) -> dict:
                 continue
             key = (profile, attack.lower(), damage, identifier.lower())
             shots.setdefault(key, [profiles[profile], attack, rows[damage][0], 0.0,
-                                   projectile_slice(str(sheet.source(row, "SpellPrefabPath"))), identifier,
+                                   projectile_slice(str(sheet.source(row, "SpellPrefabPath")), True), identifier,
                                    str(sheet.cell(row, "ManaCost")).strip(), rows[damage][2] == "Heavy", 0, False])
+    sources.check_complete()
+    # The projectile spells of the abilities of a player weapon (stage 3.3b-S2b: the shot of the Pylon, the Beacon, the trap of
+    # the musket): a Projectile spell of a player profile whose row is a row of an ability (the attack type Ability). The mark
+    # `ability` (the 11th value): only the abilities system launches it; a shot item of a basic attack does not fit it. A spell
+    # whose prefab names no projectile slice is left out (a count).
+    ability_shots = 0
+    ability_no_slice = 0
+    for sheet in sheets[SPELL_TYPE]:
+        for row in range(sheet.row_count):
+            identifier = str(sheet.cell(row, "SpellID")).strip()
+            profile = str(sheet.cell(row, "RangedAttackProfile")).strip().lower()
+            damage = str(sheet.cell(row, "DamageTableRow")).strip().lower()
+            attack = str(sheet.cell(row, "RangedAttackName")).strip()
+            if not identifier or profile not in PLAYER_PROFILES or "projectile" not in str(sheet.cell(row, "CastingTypes")).lower() \
+                    or damage not in rows or rows[damage][2] not in ABILITY_ATTACK_TYPES or (profile, attack.lower()) not in attack_names:
+                continue
+            key = (profile, attack.lower(), damage, identifier.lower())
+            if key in shots:
+                continue
+            index = projectile_slice(str(sheet.source(row, "SpellPrefabPath")), False)
+            if index < 0:
+                ability_no_slice += 1
+                continue
+            shots[key] = [profiles[profile], attack, rows[damage][0], 0.0, index, identifier, str(sheet.cell(row, "ManaCost")).strip(),
+                          False, 0, False, True]
+            ability_shots += 1
     sources.check_complete()
 
     shot_rows = sorted(shots.values(), key=lambda entry: (entry[0].lower(), entry[1].lower(), entry[2].lower(), entry[5].lower()))
+    check_joins(shot_rows, light_heavy, weapons, ammo, profiles)
     return {"format": 1,
             "counts": {"attacks": len(attacks), "slices": len(slices), "ammo": len(ammo), "weapons": len(weapons),
-                       "shots": len(shot_rows)},
+                       "shots": len(shot_rows), "abilityShots": ability_shots, "abilityShotsWithNoSlice": ability_no_slice},
             "attacks": attacks, "slices": slices, "ammo": ammo, "weapons": weapons, "shots": shot_rows}
 
 
@@ -411,7 +481,8 @@ def main() -> int:
         return 1
     counts = document["counts"]
     print(f"{target}: {counts['attacks']} ranged attacks, {counts['slices']} projectile slices, {counts['ammo']} ammunition rows, "
-          f"{counts['weapons']} weapons with a profile, {counts['shots']} shots of basic attacks (source: "
+          f"{counts['weapons']} weapons with a profile, {counts['shots'] - counts['abilityShots']} shots of basic attacks, "
+          f"{counts['abilityShots']} projectile spells of abilities (source: "
           f"{', '.join(f'{count} from the {name}' for name, count in sorted(sources.used.items()))})")
     return 0
 

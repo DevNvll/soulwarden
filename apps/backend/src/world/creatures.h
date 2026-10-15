@@ -253,8 +253,10 @@ public:
      * `immune`, Creature::immune).
      * @param damage The damage: a finite number that is not negative.
      * @param attacker The entity of the character that did the damage. 0: a command.
+     * @param threat The entity that the creature takes as its target in the place of the attacker (stage 3.3b-S2b: the Pylon
+     *        whose shot did the damage). 0: the attacker.
      */
-    CreatureResult hurt(EntityId id, float damage, EntityId attacker = 0);
+    CreatureResult hurt(EntityId id, float damage, EntityId attacker = 0, EntityId threat = 0);
 
     /**
      * Gives a creature a status effect of an ability (stage 3.3a, world/abilities.h) until its

@@ -1,8 +1,8 @@
 # Projectiles
 
 Read this document before a change of the shot of a ranged or magic basic attack (the bow, the musket, the fire staff,
-the ice gauntlet, the life staff, the void gauntlet), its flight, or its hit, and before a live test of a shot (stage
-3.3b-S3). The wire contracts and the client code are in the protocol notes (section 4.27, and 4.7 for the input entry).
+the ice gauntlet, the life staff, the void gauntlet), its flight, or its hit, before a change of the projectile of an
+ability (the trap, the Beacon, the shots of the Pylon: stage 3.3b-S2b), and before a live test of a shot (stage 3.3b-S3). The wire contracts and the client code are in the protocol notes (section 4.27, and 4.7 for the input entry).
 The damage is in [Combat and health](combat-and-health.md), the capsule of a creature in [Creatures](creatures.md), the
 line test of a wall in [Navigation](navigation.md), and the projectile of Gravity Well (an ability) in
 [Abilities](abilities.md).
@@ -18,13 +18,16 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 | The projectile data of the game: the profiles, the slices, the ammunition, the weapons, the shots | `tools/gamedata/projectiles.sh` (`projectiles.py`, `check_projectile_tool.py`), `gamedata/projectile_data.h`, [Game data](../development/game-data.md), test cases PJ1, PJ11 |
 | Two sessions, the load | Test cases PJ9, PJ10 |
 | A shot of the server for a character with no client | `Projectiles::launch_character`, `commands::shoot`, `tools/world shoot` |
+| The projectile of an ability: the toss of the trap, the Beacon, the shots of the Pylon | `Projectiles::launch_spell` (`SpellShot`, `SpellLanding`), `Abilities::takes_shot`, `Abilities::throw_spell`, `Spells::summon_shot`, [Spell entities](spells.md), test cases SB3, SB5, SB6, SB9 |
+| The corrections of the code review of stage 3.3b-S3 (F1 to F8) | `tests/review_projectile_tests.cpp`, test cases RJ1 to RJ8 |
 
 ## Rules
 
 - The projectile system (`world/projectiles.h`, `world::Projectiles`) owns the shots and the projectiles in the air. They
   are values of the world with the character as their key (rule MP-1): no session has a flight timer. A session gives each
-  shot item of a new input step to the world (`RepSession::shoot`); the item of Gravity Well (the attack "gravitywell")
-  goes to the abilities system. The world finds the character from the session (rule MP-5).
+  shot item of a new input step to the world (`RepSession::shoot`). An item whose attack is the attack of the projectile
+  of a cast that waits for its shot goes to the abilities system (`Abilities::takes_shot`): Gravity Well ("gravitywell"),
+  the trap ("traps"), the Beacon ("heavy"). With no such cast the item is a shot of a basic attack (test case SB9). The world finds the character from the session (rule MP-5).
 - The client reports no later hit (live checks L2 and L5: no item and no message after a shot that hits a creature, a
   wall, or nothing). Thus the server follows each projectile itself and decides its hit. The one hit that the client
   reports is the hit near the muzzle: the receiver of the shot item.
@@ -44,6 +47,16 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   check L2: 14 steps light, 16 steps charged) and 4 steps for a magic weapon (the condition of 0.1667 s of the fragment
   Attack_Start_Charge, less one step). A ranged weapon keeps no hold bit: the attack track keeps the release of each press
   (`AttackTrack::Press::released`).
+- One shot for each press (code review of stage 3.3b-S3, finding F2, test case RJ2): the attack track marks the press of an
+  accepted shot (`AttackTrack::Press::shot`); a second item for that press is refused (`repeated`), also after its ledger
+  entry ended. A press that ended with no release fits for 30 input steps after its end.
+- The weapon of the press (finding F3, test case RJ3): the attack track keeps the weapon in the hand at the press (its slot
+  and its instance: `Combat::weapon_key`). A shot whose weapon is not that weapon, or a press in which the weapon changed,
+  fits no press (`noAttack`).
+- The hold on the world clock (finding F5, test case RJ5): the time from the step of the press to the step of the release
+  (or of the shot), as the session got them, must not be shorter than the steps of the hold (1/30 s each) less 200 ms
+  (`kHoldSlack`, a decision of an agent: the reports of a client come with a delay). Input numbers alone do not give the
+  hold.
 - The ledger. Each accepted launch has its entry with the character, the session, the input sequence, and the number of
   its press as the key: one projectile for each press. A second item of one press (a repeated datagram, two items in one
   entry) is refused (`repeated`). The entry stays for the life time of the projectile and 10 s after it. The 32 local
@@ -58,7 +71,8 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   of the largest capsule of the creature data) and at the cells of the navigation data on it (`Navigation::line_stop`).
   The first creature that lives and is not on its way back, whose capsule the segment touches with the radius of the
   projectile (the profile: 0.15 m for a light arrow, 0.275 m for a charged one) and 0.25 m (`kHitTolerance`, a decision
-  for the user: the network delay), takes one hit through `Combat::strike`: the row of the shot, the weapon and the gem of
+  for the user: the network delay), takes one hit through `Combat::strike` when no wall is between the point of the segment and the surface of its capsule
+  (the tolerance does not reach through a wall: finding F6, test case RJ6): the row of the shot, the weapon and the gem of
   the launch, the damage modifier of the ammunition (1.2 for each arrow and shot of the game data), and the point of the
   hit as the source of its impact. The projectile ends: no pierce, no bounce (the profiles of the basic attacks have no
   bounce; the penetration depth of 0.2 m of the bow has no known use). A wall or the ground first: the projectile ends with
@@ -67,8 +81,12 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 - The hit near the muzzle. A shot item with a receiver: the receiver must be a creature of the world with a reference of
   its slice (its actor, its entity, the facet target of a hit volume), the session must observe it, the profile must have
   a near range, and the capsule must be in the near range (with the radius of the projectile and 0.25 m) of the origin,
-  with the point 4 m or less from the creature and no wall between. The hit is at the launch, and no projectile flies. A
+  with the point 4 m or less from the creature and no wall between. The receiver must be the first creature on the line of
+  the launch in the near range (a sweep in the direction of the item), with no wall between the launch place and the
+  surface of its capsule (finding F1, test case RJ1). The hit is at the launch, and no projectile flies. A
   dead creature or one on its way back is passed: the server flies the projectile.
+- The wall test of a segment (`Navigation::line_stop`) gives the first blocked point of the segment in a cell, not the
+  entry of the cell (finding F4, test case RJ4): a shot down at a creature hits the creature before the ground.
 - The capsule of a creature (game data and a decision of an agent): the capsule of the CharacterComponent of its slice
   (`CreatureCapsule`: the radius, the length of the segment, the axis in the frame of the creature, the offset), turned by
   the direction of the creature, with its lowest point at the feet of the creature (the game files do not say where it is).
@@ -81,7 +99,23 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 - The cost of the rules. The tick looks only at the projectiles in the air, each segment only at the creatures near it and
   at the cells of its line (test case PJ10: 100 shots in a world of 4,040 creatures, the same looks as with 80 creatures).
 - With no projectile data (no file, a file that is not complete) the backend starts, and each shot is refused (`no
-  projectile data`).
+  projectile data`). The loader refuses a number that is not a finite 32-bit float (finding F8, test case RJ8).
+
+### The projectile of an ability (stage 3.3b-S2b)
+
+- A shot rule of the data with the 11th value true is the projectile spell of an ability (the toss of the trap, the
+  projectile of the Beacon, the shot of the Pylon): only the abilities system launches it (`Projectiles::launch_spell`). A
+  shot item of a basic attack never fits it (`ProjectileData::shots` does not give it; `ProjectileData::ability_shot` finds
+  it by its spell).
+- The launch has no rules of a press and no ledger: the cast of the abilities system is the press (one cast, one throw).
+  The flight, the walls, the capsules, and the hit are the rules of a basic shot. The projectile ends at its first hit.
+- The row of the shot gives the damage: a row with no damage factor and no added damage (the toss of the trap) does no
+  damage. A character is a target only for a projectile with `characters` (the Beacon: TargetTypes All; not its caster,
+  not a dead one), and it takes no damage. The spell that shoots (the Pylon) is not a target of its shots.
+- A creature that a shot of a summon hurts takes the summon as its target (`SpellShot::threat`).
+- At the end of the flight (a hit, a wall or the ground, the range, the life time) the abilities system gets the landing
+  (`SpellLanding`: the point and the entity that it hit): the trap and the Beacon start there. A caster that leaves the
+  world ends the projectile with no landing.
 
 ## Commands
 

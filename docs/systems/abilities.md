@@ -17,6 +17,7 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 | A melee hit of an ability (Charge, Maelstrom, Wrecking Ball, the swing of Gravity Well) | `Abilities::contact_phase`, `Combat::claim`, `Combat::strike` ([Combat and health](combat-and-health.md)), test case AB4 |
 | An area of an ability (Shockwave, Path of Destiny, the vortex and the burst of Gravity Well) | `Abilities::run_area`, `throw_projectile`, `World::for_each_near`, `Navigation::sees`, test cases AB5 to AB7, AB10 |
 | The vortex of Gravity Well as a spell entity: its record, its times, its cancel | [Spell entities](spells.md), `Abilities::spell_phase`, test cases SP2 to SP6 |
+| The Pylon, the trap, the Beacon (stage 3.3b-S2b): the plan, the spawn, the payment, the held cooldown, the shot of the cast | `Abilities::plan` (`SpellPlan`), `Abilities::spawn_summon`, `Abilities::throw_spell`, `Abilities::spell_landed`, `Abilities::start_held_cooldown`, [Spell entities](spells.md), test cases SB2 to SB10 |
 | A cast for a character with no client (a remote test character) | `Abilities::press_character`, `commands::cast_ability`, test case SP9 |
 | The effects on a creature: stun, root, slow, weaken, knockdown, stagger, the icons | `Creatures::apply_effect`, `Creatures::knock`, `world/behavior.cpp`, `server/rep/states/status_state.cpp`, test cases AB8, AB9 |
 | The ability data of the game | `tools/gamedata/abilities.sh` (`abilities.py`), `gamedata/ability_data.h`, [Game data](../development/game-data.md) |
@@ -120,6 +121,22 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   after the press when no shot came (also for a character with no client: `tools/world
   cast`). Each other shot item goes to the projectile system (stage 3.3b-S3,
   [Projectiles](projectiles.md)): the basic attacks of the ranged and magic weapons.
+- The spell entity of a cast (stage 3.3b-S2b, `CastPlan::spell`, [Spell entities](spells.md)). Each row and each spell of
+  the plan must be in the data (the spell rows, the ability shot of the projectile data, the status rows of the effects, the
+  cost id of the payment), or the press is refused (`noRule`).
+  - Ice Pylon of the ice gauntlet (`IceMagic_IcePylon`): the spawn of `IceMagic_Spell_Pylon` at 0.6 s in front of the
+    caster; the payment of 15 mana at the spawn (the press pays nothing; a press with less mana than that cost is refused:
+    `noMana`); an indefinite cooldown from the press to the end of the Pylon, then the cooldown of the data (10 s).
+  - Traps of the musket (`Ability_Musket_Traps`): the toss `Musket_Trap_Toss` (`_DMG` with `Upgrade_Musket_TrapRend`), whose
+    landing makes the trap; the effects of the trap hit: `Musket_Trap_Root` (and `Musket_Trap_Rend` with the node).
+  - Beacon of the life staff (`Ability_Lifestaff_Beacon`): the projectile `Spell_Ability_Lifestaff_Beacon_Projectile`
+    (`_Upgrade`, `_Upgrade2`, `_Upgrade3` by the chain of the nodes Infused Light, Radiance's Blessing, Speed of Light; a
+    decision of an agent), whose landing makes the area of its `SecondarySpellID` on the entity that it hit. The press pays
+    16 mana (the cost of the projectile spell).
+  - The projectile of the trap and of the Beacon comes from the shot item of the client (the trap: the attack "traps", 8
+    input steps after the press; the Beacon: the attack "heavy", 4 input steps after the press; live check of stage
+    3.3b-S2b), or the server throws it 0.3 s after the time of the cast fragment (0.267 s and 0.133 s) when no item came. The
+    Pylon has no shot item (live check: the client sends no item and no message for the Pylon).
 - The impact of a hit (stage 3.3b-S4, [Forced movement](forced-movement.md)): each hit of an ability goes through
   `Combat::strike` with its source (the center of an area or of a spell; the caster for a melee phase), and a creature
   that lives after it moves by the impact of the row. The start of the vortex gives the impact of its pull row

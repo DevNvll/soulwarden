@@ -37,8 +37,12 @@ constexpr ComponentKey kAllComponents[] = {ComponentKey::metadata,    ComponentK
  * for a character with no status. A full record again (touch_all) does not send them.
  */
 constexpr ComponentKey kEnteredComponents[] = {ComponentKey::status, ComponentKey::statMultipliers};
-/** The component states of a spell entity (stage 3.3b-S2a). */
-constexpr ComponentKey kSpellComponents[] = {ComponentKey::metadata, ComponentKey::spell, ComponentKey::delayedEvents};
+/**
+ * The component states of a spell entity (stage 3.3b-S2a; stage 3.3b-S2b: the place of a slice with no Spell component, the vitals
+ * of a summon or a trap). A codec gives no fragment for a state that the slice of the spell does not have.
+ */
+constexpr ComponentKey kSpellComponents[] = {ComponentKey::metadata, ComponentKey::spell, ComponentKey::spellPlace, ComponentKey::vitals,
+                                             ComponentKey::delayedEvents};
 /** The component states of a creature. */
 constexpr ComponentKey kCreatureComponents[] = {ComponentKey::metadata, ComponentKey::movement, ComponentKey::vitals,
                                                 ComponentKey::marker, ComponentKey::status};
@@ -252,6 +256,10 @@ void World::remove_entity(EntityId id) {
     }
     const Entity& entity = found->second;
     m_index.erase(id, entity.position);
+    // The auras that follow the entity end with it (stage 3.3b-S2b: no aura stays with no attachment).
+    if (entity.kind == EntityKind::creature || entity.kind == EntityKind::player) {
+        m_spells.target_left(id);
+    }
     if (entity.kind == EntityKind::creature) {
         log::write("world: creature %016llx (%s) removed",
                    static_cast<unsigned long long>(entity.id),
@@ -539,6 +547,30 @@ void World::remove_spell(EntityId id) {
     if (entity != nullptr && entity->kind == EntityKind::spell) {
         remove_entity(id);
     }
+}
+
+void World::place_spell(Entity& entity, const state::WorldPosition& position) {
+    if (entity.kind != EntityKind::spell || !valid_position(position)) {
+        return;
+    }
+    if (entity.position.x == position.x && entity.position.y == position.y && entity.position.z == position.z) {
+        return;
+    }
+    m_index.move(entity.id, entity.position, position);
+    entity.position = position;
+    entity.positionRevision = ++m_revision;
+}
+
+bool World::friendly(const Entity& a, const Entity& b) const {
+    if (a.kind != EntityKind::player || b.kind != EntityKind::player) {
+        return false;
+    }
+    return a.characterId == b.characterId || m_testFriends.contains({a.characterId, b.characterId});
+}
+
+void World::set_test_friends(const std::string& characterA, const std::string& characterB) {
+    m_testFriends.insert({characterA, characterB});
+    m_testFriends.insert({characterB, characterA});
 }
 
 bool World::remove_probe(EntityId id) {

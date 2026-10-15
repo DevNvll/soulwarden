@@ -103,8 +103,8 @@ void delayed_slot(const Options&) {
     slice.interestRadius = 50.0F;
     slice.spellSlot = 1;
     slice.slots = {{1, "Spell", 2912}, {6, "DelayedEvent", 3139}, {7, "DelayedEvent", 3139}};
-    slice.events = {{6, 3.1F, gamedata::spell_event::kDeactivate, "DetectionVolume", "", false},
-                    {7, 3.0F, gamedata::spell_event::kActivate, "Burst", "GreatAxe_GravityWell_Burst", false}};
+    slice.events = {{6, 3.1F, gamedata::spell_event::kDeactivate, "DetectionVolume", "", false, "DestroyDelay", true, true},
+                    {7, 3.0F, gamedata::spell_event::kActivate, "Burst", "GreatAxe_GravityWell_Burst", false, "DestroyDelay", true, true}};
     gamedata::SpellTables complete;
     complete.slices = {slice};
     complete.spells = {{"Review_Spell", 0}};

@@ -92,6 +92,11 @@ enum class ComponentKey {
     /** The delayed event states of a spell entity: the time that is left for each event of its slice. */
     delayedEvents,
     /**
+     * The place of a spell entity whose slice has no Spell component (stage 3.3b-S2b: the trap of the musket): the
+     * PositionInTheWorld state of its slice (type 13).
+     */
+    spellPlace,
+    /**
      * The movement of a character for its observers (stage 3.3b-S4): its position, its direction, and its action while it
      * makes the dash of an ability (Charge). The owner does not get it: its client moves its character itself.
      */
@@ -608,6 +613,12 @@ struct AbilityCooldown {
      * a command of the server does not (the server has no message for the client cooldown).
      */
     WorldClock::time_point clientEnd{};
+    /**
+     * True while the summon of the cast lives (stage 3.3b-S2b: the Pylon; the action IceMagic_IcePylon_Cooldown of the game
+     * data holds an indefinite cooldown, and the ordinary cooldown starts at the end of the summon). The owner gets the end
+     * as all ones (client setter at image RVA 0x6923930: duration -1).
+     */
+    bool indefinite{false};
 };
 
 /** What gave a character a status (stage 3.3b-S1, world/statuses.h). */
@@ -624,6 +635,8 @@ enum class StatusSourceKind : std::uint8_t {
     ability,
     /** The end status of a status (OnEndStatusEffect). */
     status,
+    /** The area of a spell entity (stage 3.3b-S2b: the Beacon): the status ends when the character leaves the area or the spell ends. */
+    spell,
 };
 
 /** The source of a status of a character. The status system removes the statuses of a source together (a gear item). */
@@ -762,6 +775,24 @@ struct RawFragment {
     Revision changed{0};
 };
 
+/** The kind of the rules of a spell entity (world/spells.h). */
+enum class SpellRole : std::uint8_t {
+    /** The phases of a cast at its place (stage 3.3b-S2a: the vortex of Gravity Well). */
+    area,
+    /** A summon with health that shoots the spell of its AutoSpell component (stage 3.3b-S2b: the Pylon of the ice gauntlet). */
+    summon,
+    /** A trap that triggers one time at a creature in its detection volume (stage 3.3b-S2b: the trap of the musket). */
+    trap,
+    /** An area that follows its target and gives its statuses to the friends in it (stage 3.3b-S2b: the Beacon of the life staff). */
+    aura,
+};
+
+/** A trigger of an entity of the slice of a spell (stage 3.3b-S2b): the events of the slice that start at its trigger run from `at`. */
+struct SpellTrigger {
+    std::string entity;
+    WorldClock::time_point at{};
+};
+
 /**
  * The values of a spell entity (stage 3.3b-S2a, world/spells.h): its spell row, its caster, and its times on the world clock.
  * Only the spell system changes them. The record of the spell (states/spell_state.cpp) comes from them.
@@ -783,6 +814,17 @@ struct SpellBody {
     bool endsOnCasterDeath{false};
     /** The cast of the abilities system whose phases the spell runs (world/abilities.h). 0: none. */
     std::uint64_t cast{0};
+    /** Stage 3.3b-S2b: the kind of its rules. */
+    SpellRole role{SpellRole::area};
+    /** The entity that the spell follows (field 6 of the Spell state: the Beacon on a character or a creature). 0: none. */
+    EntityId attached{0};
+    ActorId attachedActor;
+    /** The row of the base vitals tables of a summon or a trap (game data): its armor. Null: no health. Entity::vitals has the health. */
+    const gamedata::SpellVitalsRow* vitalsRow{nullptr};
+    /** True from the start of its end chain (a death, the end of the life of a summon, a trigger): no shot, no damage, no trigger. */
+    bool ending{false};
+    /** The triggers of the entities of its slice, in their sequence (the death chain of the Pylon, the trigger of the trap). */
+    std::vector<SpellTrigger> triggers;
 };
 
 /** Development aid: the slice of a probe entity (EntityKind::probe) and its interest distance. */

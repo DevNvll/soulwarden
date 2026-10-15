@@ -25,6 +25,9 @@ constexpr AbilityRule kRules[] = {
     {"Ability_WarHammer_Shockwave", AbilityKind::shockwave, "Shockwave"},
     {"Ability_WarHammer_PathOfDestiny", AbilityKind::pathOfDestiny, "Path of Destiny"},
     {"Ability_Rapier_Riposte", AbilityKind::riposte, "Riposte"},
+    {"IceMagic_IcePylon", AbilityKind::icePylon, "Ice Pylon"},
+    {"Ability_Musket_Traps", AbilityKind::traps, "Traps"},
+    {"Ability_Lifestaff_Beacon", AbilityKind::beacon, "Beacon"},
 };
 
 /** The id text of the ranged attack of the projectile of Gravity Well (the value "attack" of its shot is its CRC-32). */
@@ -57,6 +60,8 @@ bool has_node(const SkillSet& skills, const char* table, const char* node) {
 constexpr const char* kGreatAxe = "GreatAxeAbilityTable";
 constexpr const char* kWarHammer = "WarHammerAbilityTable";
 constexpr const char* kRapier = "RapierAbilityTable";
+constexpr const char* kMusket = "MusketAbilityTable";
+constexpr const char* kLifeMagic = "LifeMagicAbilityTable";
 
 std::chrono::milliseconds milliseconds(float seconds) {
     return std::chrono::milliseconds(static_cast<long long>(std::lround(seconds * 1000.0F)));
@@ -267,6 +272,63 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         plan.phases.push_back(out);
         break;
     }
+    case AbilityKind::icePylon: {
+        // Ice Pylon (stage 3.3b-S2b; research abilities-magic.md Q4, the game data): the cast makes the prefab of its spell
+        // IceMagic_Spell_Pylon at 0.6 s of the cast fragment (player_magicgauntlet_ice.adb); the action
+        // IceMagic_IcePylon_Cooldown pays the cost of the spell IceMagic_Spell_Pylon_UI (ManaCost IceMagic_IcePylon: 15) at the
+        // spawn and holds the cooldown while the Pylon lives. The other Pylon spells of the nodes (_Regen, _Refresh, _Ultimate)
+        // are the part of the ice gauntlet.
+        plan.length = std::chrono::milliseconds(600);
+        SpellPlan spell;
+        spell.role = SpellRole::summon;
+        spell.spell = "IceMagic_Spell_Pylon";
+        spell.at = std::chrono::milliseconds(600);
+        spell.payment = "IceMagic_IcePylon";
+        plan.spell = spell;
+        break;
+    }
+    case AbilityKind::traps: {
+        // Traps of the musket (stage 3.3b-S2b; research abilities-ranged.md Q4.10, the game data): Musket_Spell_Trap tosses
+        // Musket_Trap_Toss (the projectile slice trap_bear_projectile), whose hit makes the trap (Musket_Trap_Set, the slice
+        // Trap_Bear); with Trapped Damage (Upgrade_Musket_TrapRend) the _DMG spells. The offense of the trap has the row
+        // Musket_Trap (Musket_Trap_DMG) with its StatusEffect Musket_Trap_Root (and Musket_Trap_Rend). The shot item of the client
+        // comes 8 input steps after the press (live check of stage 3.3b-S2b): the server throws for a character with no client.
+        const bool damage = has_node(skills, kMusket, "Upgrade_Musket_TrapRend");
+        plan.length = std::chrono::milliseconds(600);
+        SpellPlan spell;
+        spell.role = SpellRole::trap;
+        spell.projectile = damage ? "Musket_Trap_Toss_DMG" : "Musket_Trap_Toss";
+        spell.spell = damage ? "Musket_Trap_Set_DMG" : "Musket_Trap_Set";
+        spell.at = std::chrono::milliseconds(267);
+        spell.effects = damage ? std::vector<std::string>{"Musket_Trap_Root", "Musket_Trap_Rend"} : std::vector<std::string>{"Musket_Trap_Root"};
+        plan.spell = spell;
+        break;
+    }
+    case AbilityKind::beacon: {
+        // Beacon of the life staff (stage 3.3b-S2b; research abilities-magic.md Q4, the game data): the projectile
+        // Spell_Ability_Lifestaff_Beacon_Projectile (TargetTypes All, the row LifeStaff_Beacon) makes its SecondarySpellID, the
+        // area Spell_Ability_Lifestaff_Beacon_AOE, on the entity that it hits (AttachToOwner, StickWhenAttached). The nodes of the
+        // chain Infused Light, Radiance's Blessing, Speed of Light select the _Upgrade, _Upgrade2, _Upgrade3 spells (a decision of
+        // an agent from the spell rows: radius 4 m, then 15 s, then the haste). The shot item of the client comes 4 input steps
+        // after the press (live check of stage 3.3b-S2b).
+        unsigned upgrades = 0;
+        for (const char* node : {"Upgrade_Lifestaff_Protection_AoeInc", "Upgrade_Lifestaff_Protection_DurOnLow", "Upgrade_Lifestaff_Protection_AddHaste"}) {
+            if (!has_node(skills, kLifeMagic, node)) {
+                break;
+            }
+            ++upgrades;
+        }
+        static constexpr const char* kProjectiles[] = {"Spell_Ability_Lifestaff_Beacon_Projectile", "Spell_Ability_Lifestaff_Beacon_Projectile_Upgrade",
+                                                       "Spell_Ability_Lifestaff_Beacon_Projectile_Upgrade2", "Spell_Ability_Lifestaff_Beacon_Projectile_Upgrade3"};
+        plan.length = std::chrono::milliseconds(600);
+        SpellPlan spell;
+        spell.role = SpellRole::aura;
+        spell.projectile = kProjectiles[upgrades];
+        spell.at = std::chrono::milliseconds(133);
+        spell.characters = true;
+        plan.spell = spell;
+        break;
+    }
     }
     return plan;
 }
@@ -368,12 +430,34 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         log::write("world: ability: the data has no status effect %s of %s", planned->window.c_str(), rule->name);
         return refuse(CastVerdict::noRule);
     }
+    // The spell entity of the cast (stage 3.3b-S2b): its spell rows, the projectile spell in the projectile data, the status rows of
+    // its effects. The area of the Beacon is the SecondarySpellID of its projectile (game data).
+    if (planned->spell) {
+        SpellPlan& spell = *planned->spell;
+        const gamedata::SpellRow* projectileRow = spell.projectile.empty() ? nullptr : m_data->spell(spell.projectile);
+        if (spell.spell.empty() && projectileRow != nullptr) {
+            spell.spell = std::string(projectileRow->cells.text("SecondarySpellID"));
+        }
+        const gamedata::ProjectileData* projectiles = m_world.options().projectileData;
+        const bool shotData = spell.projectile.empty()
+                              || (projectileRow != nullptr && projectiles != nullptr && projectiles->loaded() && projectiles->ability_shot(spell.projectile));
+        bool effects = true;
+        for (const std::string& status : spell.effects) {
+            effects = effects && m_data->status(status) != nullptr;
+        }
+        if (spell.spell.empty() || m_data->spell(spell.spell) == nullptr || !shotData || !effects
+            || (!spell.payment.empty() && !m_data->mana_cost(spell.payment))) {
+            log::write("world: ability: the data has no spell %s, no projectile %s, a status, or the cost of %s", spell.spell.c_str(),
+                       spell.projectile.c_str(), rule->name);
+            return refuse(CastVerdict::noRule);
+        }
+    }
     const WorldClock::time_point now = m_world.clock().now();
     CharacterState& state = m_characters[character->characterId];
     // The cooldown of the server, and the cooldown of the client: the client does not play a press in its own cooldown,
     // also when the cooldown of the server ended before (a reset command; stage 1.3b, I8, live check I8-05).
     const auto running = state.cooldowns.find(ability);
-    if (running != state.cooldowns.end() && (now < running->second.end || now < running->second.clientEnd)) {
+    if (running != state.cooldowns.end() && (running->second.indefinite || now < running->second.end || now < running->second.clientEnd)) {
         return refuse(CastVerdict::cooldown);
     }
     if (state.cast) {
@@ -391,6 +475,13 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     const float cost = mana_cost(*character, *planned);
     if (cost > 0.0F && character->vitals.mana + 0.001F < cost) {
         return refuse(CastVerdict::noMana);
+    }
+    // A summon pays at its spawn (stage 3.3b-S2b: the Pylon): a press with less mana than that cost makes no cast.
+    if (planned->spell && !planned->spell->payment.empty()) {
+        const float payment = mana_cost_of(*character, planned->spell->payment);
+        if (payment > 0.0F && character->vitals.mana + 0.001F < payment) {
+            return refuse(CastVerdict::noMana);
+        }
     }
     Cast cast;
     cast.number = m_nextCast++;
@@ -419,6 +510,13 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     timer.end = now + milliseconds(cooldown->time);
     timer.minEnd = now + milliseconds(cooldown->minTime);
     timer.clientEnd = timer.end;
+    if (cast.plan.spell && cast.plan.spell->role == SpellRole::summon) {
+        // The Pylon (stage 3.3b-S2b): the cooldown holds while the summon lives (the action IceMagic_IcePylon_Cooldown: an
+        // indefinite cooldown), and the cooldown of the data starts at its end (end_held_cooldown). The client starts its own
+        // cooldown at the message Pylon_Spawn of the server, which the backend does not send: no cooldown of the client.
+        timer.indefinite = true;
+        timer.clientEnd = now;
+    }
     state.cooldowns[ability] = timer;
     state.cast = cast.number;
     const std::uint64_t number = cast.number;
@@ -463,6 +561,30 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
             }
         });
     }
+    if (stored.plan.spell) {
+        // The spell entity of the cast (stage 3.3b-S2b): the spawn of a summon at its time; the projectile of a trap or a Beacon
+        // from the shot item of the client, or from the server when no shot came (a character with no client).
+        ++stored.pending;
+        if (stored.plan.spell->role == SpellRole::summon) {
+            m_world.after(stored.plan.spell->at, [this, number](World&) { spawn_summon(number); });
+        } else {
+            m_world.after(stored.plan.spell->at + kThrowWait, [this, number](World&) {
+                const auto found = m_casts.find(number);
+                if (found == m_casts.end()) {
+                    return;
+                }
+                Cast& late = found->second;
+                --late.pending;
+                if (!late.thrown) {
+                    const Entity* caster = m_world.find(late.caster);
+                    const std::array<float, 2> ahead = direction_of(late.yaw);
+                    state::WorldPosition origin = caster != nullptr ? caster->position : late.place;
+                    origin.z += 1.5F;
+                    throw_spell(late, origin, {ahead[0], ahead[1], 0.0F});
+                }
+            });
+        }
+    }
     publish(stored.characterId);
     if (cost > 0.0F) {
         change_mana(*character, -cost, ability_name(stored.plan.kind));
@@ -496,8 +618,7 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
         return;
     }
     const auto found = m_casts.find(*state->second.cast);
-    if (found == m_casts.end() || found->second.plan.kind != AbilityKind::gravityWell || found->second.thrown
-        || found->second.session != session || shot.attack != gamedata::progression_id(kGravityWellAttack)) {
+    if (found == m_casts.end() || found->second.thrown || found->second.session != session || !takes_shot(session, shot.attack)) {
         return;
     }
     ++m_counts.shots;
@@ -518,7 +639,198 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
         const std::array<float, 2> ahead = direction_of(cast.yaw);
         direction = {ahead[0], ahead[1], 0.0F};
     }
+    if (cast.plan.spell) {
+        // The trap, the Beacon (stage 3.3b-S2b): the projectile of the spell flies on the server (the direction of the item, a
+        // unit vector; the client reports no hit).
+        const float size = std::hypot(direction[0], direction[1], direction[2]);
+        throw_spell(cast, origin, {direction[0] / size, direction[1] / size, direction[2] / size});
+        return;
+    }
     throw_projectile(cast, origin, direction);
+}
+
+bool Abilities::takes_shot(SessionId session, std::uint32_t attack) const {
+    const Entity* character = m_world.entity_of(session);
+    const auto state = character != nullptr ? m_characters.find(character->characterId) : m_characters.end();
+    if (state == m_characters.end() || !state->second.cast) {
+        return false;
+    }
+    const auto found = m_casts.find(*state->second.cast);
+    if (found == m_casts.end() || found->second.thrown || found->second.session != session) {
+        return false;
+    }
+    const Cast& cast = found->second;
+    if (cast.plan.kind == AbilityKind::gravityWell) {
+        return attack == gamedata::progression_id(kGravityWellAttack);
+    }
+    if (!cast.plan.spell || cast.plan.spell->projectile.empty()) {
+        return false;
+    }
+    // The ranged attack of the projectile spell (the trap: "Traps"; the Beacon: "Heavy"): the value "attack" of its shot item.
+    const gamedata::ProjectileData* projectiles = m_world.options().projectileData;
+    const gamedata::ShotRule* rule = projectiles != nullptr && projectiles->loaded() ? projectiles->ability_shot(cast.plan.spell->projectile) : nullptr;
+    return rule != nullptr && attack == gamedata::progression_id(rule->attack);
+}
+
+HitWeapon Abilities::weapon_of(const Cast& cast) const {
+    HitWeapon weapon;
+    weapon.itemId = cast.itemId;
+    weapon.slot = cast.slot;
+    weapon.row = m_combat != nullptr ? m_combat->weapon_of(cast.itemId) : nullptr;
+    weapon.gearScore = cast.gearScore;
+    weapon.ability = ability_text(cast.ability);
+    return weapon;
+}
+
+void Abilities::throw_spell(Cast& cast, const state::WorldPosition& origin, const std::array<float, 3>& direction) {
+    cast.thrown = true;
+    const gamedata::ProjectileData* projectiles = m_world.options().projectileData;
+    const gamedata::ShotRule* rule =
+        projectiles != nullptr && projectiles->loaded() && cast.plan.spell ? projectiles->ability_shot(cast.plan.spell->projectile) : nullptr;
+    if (rule == nullptr) {
+        return;
+    }
+    const std::uint64_t number = cast.number;
+    SpellShot shot;
+    shot.caster = cast.caster;
+    shot.rule = rule;
+    shot.origin = origin;
+    shot.direction = direction;
+    shot.weapon = weapon_of(cast);
+    shot.conversion = CastConversion{cast.conversionType, cast.conversionPart};
+    shot.characters = cast.plan.spell->characters;
+    shot.landed = [this, number](const SpellLanding& landing) { spell_landed(number, landing); };
+    ++cast.pending;
+    if (m_world.projectiles().launch_spell(shot).verdict != ShotVerdict::accepted) {
+        --cast.pending;
+    }
+}
+
+void Abilities::spell_landed(std::uint64_t number, const SpellLanding& landing) {
+    const auto found = m_casts.find(number);
+    if (found == m_casts.end() || !found->second.plan.spell) {
+        return;
+    }
+    Cast& cast = found->second;
+    if (cast.pending > 0) {
+        --cast.pending;
+    }
+    const SpellPlan& plan = *cast.plan.spell;
+    SpellRequest request;
+    request.spellId = plan.spell;
+    request.caster = cast.caster;
+    request.cast = number;
+    request.role = plan.role;
+    request.weapon = weapon_of(cast);
+    request.conversion = CastConversion{cast.conversionType, cast.conversionPart};
+    request.effects = plan.effects;
+    state::WorldPosition place = landing.point;
+    if (plan.role == SpellRole::aura) {
+        // The area of the Beacon: on the entity that the projectile hit (a creature, a character), or on the ground at the end of
+        // its flight. The radius, the life, and the statuses of its spell row (game data).
+        request.attach = landing.struck;
+        if (const gamedata::SpellRow* row = m_data->spell(plan.spell)) {
+            request.radius = row->radius;
+            request.life = std::chrono::milliseconds(static_cast<long long>(std::lround(std::max(row->duration, 0.0F))));
+            const std::string_view statuses = row->cells.text("StatusEffects");
+            std::size_t start = 0;
+            while (start < statuses.size()) {
+                const std::size_t comma = statuses.find(',', start);
+                const std::string_view part = statuses.substr(start, comma == std::string_view::npos ? std::string_view::npos : comma - start);
+                if (!part.empty() && m_data->status(part) != nullptr) {
+                    request.statuses.emplace_back(part);
+                }
+                start = comma == std::string_view::npos ? statuses.size() : comma + 1;
+            }
+        }
+    }
+    if (request.attach == 0) {
+        // On the ground below the point (the navigation data; with no data the point of the landing).
+        if (const std::optional<float> ground = m_world.navigation().ground_height(place)) {
+            place.z = *ground;
+        }
+    }
+    request.position = place;
+    if (const Entity* spell = m_world.spells().make(request)) {
+        cast.spell = spell->id;
+        ++cast.pending;
+    }
+}
+
+void Abilities::spawn_summon(std::uint64_t number) {
+    const auto found = m_casts.find(number);
+    if (found == m_casts.end() || !found->second.plan.spell) {
+        return;
+    }
+    Cast& cast = found->second;
+    if (cast.pending > 0) {
+        --cast.pending;
+    }
+    const SpellPlan& plan = *cast.plan.spell;
+    Entity* caster = m_world.find(cast.caster);
+    if (caster == nullptr || caster->kind != EntityKind::player || caster->life.dead) {
+        end_held_cooldown(cast.characterId, cast.ability, false);
+        return;
+    }
+    // The place: CharRelPosOffsetY of the spell row in front of the caster (the direction of the press), on the ground
+    // (NoTargetSpawnFromRaycast; the navigation data gives the floor).
+    const gamedata::SpellRow* row = m_data->spell(plan.spell);
+    const float ahead = row != nullptr ? row->cells.number("CharRelPosOffsetY") : 0.0F;
+    const std::array<float, 2> front = direction_of(cast.yaw);
+    state::WorldPosition place{caster->position.x + front[0] * ahead, caster->position.y + front[1] * ahead, caster->position.z};
+    if (const std::optional<float> ground = m_world.navigation().ground_height(place); ground && std::fabs(*ground - caster->position.z) < 3.0F) {
+        place.z = *ground;
+    }
+    // The payment at the spawn (the action IceMagic_IcePylon_Cooldown pays the cost of the UI spell; the one mana path).
+    const float cost = plan.payment.empty() ? 0.0F : mana_cost_of(*caster, plan.payment);
+    if (cost > 0.0F && caster->vitals.mana + 0.001F < cost) {
+        log::write("world: ability: %s has less mana than the cost of %s (%.1f) at its spawn: no summon", caster->name.c_str(), plan.spell.c_str(),
+                   static_cast<double>(cost));
+        end_held_cooldown(cast.characterId, cast.ability, false);
+        return;
+    }
+    SpellRequest request;
+    request.spellId = plan.spell;
+    request.caster = cast.caster;
+    request.cast = number;
+    request.role = plan.role;
+    request.position = place;
+    request.weapon = weapon_of(cast);
+    request.conversion = CastConversion{cast.conversionType, cast.conversionPart};
+    const Entity* spell = m_world.spells().make(request);
+    if (spell == nullptr) {
+        end_held_cooldown(cast.characterId, cast.ability, false);
+        return;
+    }
+    if (cost > 0.0F) {
+        if (Entity* payer = m_world.find(cast.caster)) {
+            change_mana(*payer, -cost, ability_name(cast.plan.kind));
+        }
+    }
+    cast.spell = spell->id;
+    ++cast.pending;
+}
+
+void Abilities::end_held_cooldown(const std::string& characterId, std::uint32_t ability, bool countdown) {
+    const auto state = m_characters.find(characterId);
+    const AbilityRule* rule = rule_of(ability);
+    const gamedata::CooldownRow* row = rule != nullptr && has_data() ? m_data->cooldown(rule->id) : nullptr;
+    if (state == m_characters.end() || row == nullptr) {
+        return;
+    }
+    const auto timer = state->second.cooldowns.find(ability);
+    if (timer == state->second.cooldowns.end() || !timer->second.indefinite) {
+        return;
+    }
+    // The cooldown of the data from the end of the summon (the action IceMagic_IcePylon_Cooldown; game data: 10 s), or no
+    // cooldown after a spawn that failed.
+    const WorldClock::time_point now = m_world.clock().now();
+    timer->second.indefinite = false;
+    timer->second.start = now;
+    timer->second.end = countdown ? now + milliseconds(row->time) : now;
+    timer->second.minEnd = countdown ? now + milliseconds(row->minTime) : now;
+    timer->second.clientEnd = now;
+    publish(characterId);
 }
 
 void Abilities::throw_projectile(Cast& cast, const state::WorldPosition& origin, const std::array<float, 3>& direction) {
@@ -704,6 +1016,10 @@ void Abilities::spell_ended(std::uint64_t number, EntityId spell) {
         found->second.spell = 0;
         if (found->second.pending > 0) {
             --found->second.pending;
+        }
+        // The cooldown that held while the summon lived starts now (stage 3.3b-S2b: the Pylon).
+        if (found->second.plan.spell && found->second.plan.spell->role == SpellRole::summon) {
+            end_held_cooldown(found->second.characterId, found->second.ability, true);
         }
     }
 }
@@ -893,11 +1209,12 @@ void Abilities::publish(const std::string& characterId) {
     // cooldowns of the server that run: the client keeps an entry until a new map comes.
     const WorldClock::time_point now = m_world.clock().now();
     for (auto timer = state->second.cooldowns.begin(); timer != state->second.cooldowns.end();) {
-        timer = std::max(timer->second.end, timer->second.clientEnd) <= now ? state->second.cooldowns.erase(timer) : std::next(timer);
+        timer = !timer->second.indefinite && std::max(timer->second.end, timer->second.clientEnd) <= now ? state->second.cooldowns.erase(timer)
+                                                                                                       : std::next(timer);
     }
     entity->cooldowns.clear();
     for (const auto& [ability, timer] : state->second.cooldowns) {
-        if (timer.end > now) {
+        if (timer.indefinite || timer.end > now) {
             entity->cooldowns.emplace(ability, timer);
         }
     }
@@ -913,11 +1230,12 @@ void Abilities::entered(Entity& character) {
     state->second.cast.reset();
     const WorldClock::time_point now = m_world.clock().now();
     for (auto timer = state->second.cooldowns.begin(); timer != state->second.cooldowns.end();) {
-        timer = std::max(timer->second.end, timer->second.clientEnd) <= now ? state->second.cooldowns.erase(timer) : std::next(timer);
+        timer = !timer->second.indefinite && std::max(timer->second.end, timer->second.clientEnd) <= now ? state->second.cooldowns.erase(timer)
+                                                                                                       : std::next(timer);
     }
     character.cooldowns.clear();
     for (const auto& [ability, timer] : state->second.cooldowns) {
-        if (timer.end > now) {
+        if (timer.indefinite || timer.end > now) {
             character.cooldowns.emplace(ability, timer);
         }
     }
@@ -935,6 +1253,7 @@ bool Abilities::reset_cooldowns(const std::string& characterId, bool client) {
         }
         timer->second.end = now;
         timer->second.minEnd = now;
+        timer->second.indefinite = false;
         ++timer;
     }
     if (Entity* entity = m_world.find_character(characterId)) {
@@ -957,6 +1276,16 @@ float Abilities::mana_cost(const Entity& character, const CastPlan& plan) const 
         const std::string_view costId = spell->cells.text("ManaCost");
         if (!costId.empty() && m_data->mana_cost(costId)) {
             return mana_cost_of(character, costId);
+        }
+    }
+    // The projectile spell of the spell entity of the cast (stage 3.3b-S2b: the Beacon, ManaCost LifeStaff_Beacon, 16), paid at the
+    // press as each cost. A summon pays at its spawn (SpellPlan::payment).
+    if (plan.spell && plan.spell->payment.empty() && !plan.spell->projectile.empty()) {
+        if (const gamedata::SpellRow* spell = m_data->spell(plan.spell->projectile)) {
+            const std::string_view costId = spell->cells.text("ManaCost");
+            if (!costId.empty() && m_data->mana_cost(costId)) {
+                return mana_cost_of(character, costId);
+            }
         }
     }
     return 0.0F;
@@ -1411,7 +1740,7 @@ void Abilities::reduce_weapon_cooldowns(Entity& character, float part) {
         const auto timer = state->second.cooldowns.find(ability);
         const AbilityRule* rule = rule_of(ability);
         const gamedata::CooldownRow* row = rule != nullptr ? m_data->cooldown(rule->id) : nullptr;
-        if (timer == state->second.cooldowns.end() || row == nullptr || timer->second.end <= now) {
+        if (timer == state->second.cooldowns.end() || row == nullptr || timer->second.end <= now || timer->second.indefinite) {
             continue;
         }
         const auto cut = milliseconds(row->time * part);

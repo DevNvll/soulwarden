@@ -71,7 +71,8 @@ constexpr std::array<const char*, attribute::kCount> kAttributeColumns = {"MODCo
 bool ticks(const gamedata::StatusRow& row) {
     return row.cells.number("TickRate") > 0.0F
            && (row.cells.number("Health") != 0.0F || row.cells.number("HealthModifierPercent") != 0.0F
-               || row.cells.number("Mana") != 0.0F || row.cells.number("ManaModifierPercent") != 0.0F);
+               || row.cells.number("HealthModifierDamageBased") != 0.0F || row.cells.number("Mana") != 0.0F
+               || row.cells.number("ManaModifierPercent") != 0.0F);
 }
 
 } // namespace
@@ -259,6 +260,10 @@ void Statuses::give(Entity& character, const gamedata::StatusRow& row, float amo
     if (health > 0.0F) {
         m_world.health().heal_amount(character, health * m_world.gear().heal_factor(character), row.id.c_str());
         ++m_counts.heals;
+    } else if (row.cells.number("HealthModifierDamageBased") != 0.0F) {
+        // A heal of a part of the damage of the source (the Beacon): the pulse comes at the time of the data, and the amount
+        // needs the heal base of stage 3.3b-S6 (not known now). No health.
+        ++m_counts.pulsesWithNoHeal;
     }
     const float mana = (row.cells.number("Mana") + row.cells.number("ManaModifierPercent") * character.vitals.manaMax) * amount;
     if (mana != 0.0F) {

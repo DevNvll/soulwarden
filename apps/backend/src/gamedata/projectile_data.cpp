@@ -1,5 +1,6 @@
 #include "gamedata/projectile_data.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 
@@ -41,7 +42,9 @@ bool number_of(const json& value, float& out) {
         return false;
     }
     out = value.get<float>();
-    return true;
+    // A number that is finite as a double can be outside the range of a float (1e100): the conversion gives an infinity (code
+    // review of stage 3.3b-S3, finding F8).
+    return std::isfinite(out);
 }
 
 bool whole_of(const json& value, std::uint32_t& out) {
@@ -99,10 +102,11 @@ bool read_weapon(const json& row, RangedWeapon& weapon) {
 }
 
 bool read_shot(const json& row, ShotRule& shot) {
-    return row.is_array() && row.size() == 10 && text_of(row[0], shot.profile) && text_of(row[1], shot.attack)
+    // 10 values, or 11 with the mark of a projectile spell of an ability (stage 3.3b-S2b).
+    return row.is_array() && (row.size() == 10 || row.size() == 11) && text_of(row[0], shot.profile) && text_of(row[1], shot.attack)
            && text_of(row[2], shot.row) && number_of(row[3], shot.charge) && index_of(row[4], shot.slice)
            && text_of(row[5], shot.spell) && text_of(row[6], shot.manaCost) && flag_of(row[7], shot.heavy)
-           && whole_of(row[8], shot.ammoSlot) && flag_of(row[9], shot.consume);
+           && whole_of(row[8], shot.ammoSlot) && flag_of(row[9], shot.consume) && (row.size() == 10 || flag_of(row[10], shot.ability));
 }
 
 template <typename Row, typename Read>
@@ -170,7 +174,8 @@ bool ProjectileData::set(ProjectileTables tables) {
     for (std::size_t index = 0; index < tables.attacks.size() && error.empty(); ++index) {
         const RangedAttack& attack = tables.attacks[index];
         if (attack.profile.empty() || attack.name.empty() || !size(attack.maxRange) || !size(attack.radius) || !size(attack.nearRange)
-            || !size(attack.penetration) || !size(attack.accelDelay)) {
+            || !size(attack.penetration) || !size(attack.accelDelay)
+            || !std::all_of(attack.predictedAccel.begin(), attack.predictedAccel.end(), [](float value) { return std::isfinite(value); })) {
             error = "the attack " + attack.profile + "/" + attack.name + " has a value that is not a size";
         } else if (!attacks.emplace(attack_key(attack.profile, progression_id(attack.name)), index).second) {
             error = "two attacks of the profile " + attack.profile + " have the name " + attack.name;
@@ -180,6 +185,10 @@ bool ProjectileData::set(ProjectileTables tables) {
         // A speed of 0 is in the game data (a barrel that a siege dropper drops): a shot with such a slice is refused at its launch.
         if (error.empty() && (!size(slice.speed) || !size(slice.flyingLifetime) || !size(slice.extraSpeed))) {
             error = "the projectile slice " + slice.path + " has a speed or a lifetime that is not a size";
+        }
+        // Each part of the acceleration is a finite number (finding F8: the flight must not get an infinity from a file).
+        if (error.empty() && !std::all_of(slice.accel.begin(), slice.accel.end(), [](float value) { return std::isfinite(value); })) {
+            error = "the projectile slice " + slice.path + " has an acceleration that is not a finite number";
         }
     }
     std::unordered_map<std::uint32_t, std::size_t> ammo;
@@ -202,7 +211,8 @@ bool ProjectileData::set(ProjectileTables tables) {
     }
     for (const ShotRule& shot : tables.shots) {
         if (error.empty() && (!attacks.contains(attack_key(shot.profile, progression_id(shot.attack))) || shot.row.empty()
-                              || !in_slices(shot.slice) || !std::isfinite(shot.charge) || shot.charge < 0.0F)) {
+                              || !in_slices(shot.slice) || !std::isfinite(shot.charge) || shot.charge < 0.0F
+                              || (shot.ability && (shot.slice < 0 || shot.spell.empty())))) {
             error = "the shot " + shot.profile + "/" + shot.attack + " (" + shot.row + ") has an attack, a row, or a slice that is not correct";
         }
     }
@@ -232,11 +242,22 @@ std::vector<const ShotRule*> ProjectileData::shots(std::string_view profile, std
     std::vector<const ShotRule*> found;
     const std::string wanted = lower_ascii(profile);
     for (const ShotRule& shot : m_tables.shots) {
-        if (lower_ascii(shot.profile) == wanted && progression_id(shot.attack) == attackId) {
+        // A projectile spell of an ability is not a shot of a basic attack (stage 3.3b-S2b).
+        if (!shot.ability && lower_ascii(shot.profile) == wanted && progression_id(shot.attack) == attackId) {
             found.push_back(&shot);
         }
     }
     return found;
+}
+
+const ShotRule* ProjectileData::ability_shot(std::string_view spellId) const {
+    const std::string wanted = lower_ascii(spellId);
+    for (const ShotRule& shot : m_tables.shots) {
+        if (shot.ability && lower_ascii(shot.spell) == wanted) {
+            return &shot;
+        }
+    }
+    return nullptr;
 }
 
 const AmmoRow* ProjectileData::ammo(std::uint32_t ammoId) const {

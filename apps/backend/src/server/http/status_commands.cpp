@@ -31,6 +31,8 @@ const char* source_name(world::StatusSourceKind kind) {
         return "ability";
     case world::StatusSourceKind::status:
         return "status";
+    case world::StatusSourceKind::spell:
+        return "spell";
     }
     return "unknown";
 }
@@ -142,6 +144,7 @@ json status_json(world::World& target, const std::string& character) {
         ended[world::status_end_text(static_cast<world::StatusEnd>(cause))] = counts.ended[cause];
     }
     reply["counts"] = {{"applications", applications}, {"ended", ended}, {"ticks", counts.ticks}, {"heals", counts.heals},
+                       {"pulsesWithNoHeal", counts.pulsesWithNoHeal},
                        {"dueTaken", counts.dueTaken}, {"dueWaiting", target.statuses().due_size()},
                        {"spellsNotDone", counts.spellsNotDone}};
     return reply;

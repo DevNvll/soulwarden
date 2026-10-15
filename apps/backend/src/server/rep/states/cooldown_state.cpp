@@ -17,7 +17,8 @@
 // three maps by the input numbers of the three places (CooldownTimers +0x5D4, +0x5D8, +0x5DC:
 // 402, 115, 139 in the live client), thus field N is the map of place N of the bar of each
 // weapon, and the key in the map is the ability id (live check L4). A list with a larger stamp
-// replaces the list of the client. The backend sends the world revision of the change.
+// replaces the list of the client. The backend sends the world revision of the change. An indefinite cooldown (stage 3.3b-S2b,
+// the Pylon while it lives) has the end all ones and the minimum end 0.
 //
 // View     Fields
 // owner    group 0: the three maps, with each cooldown of an ability that is on a place of a
@@ -74,8 +75,10 @@ std::vector<hub::Bytes> encode_cooldown_state(const world::Entity& entity, View 
         field.size(static_cast<std::uint32_t>(maps[place].size()));
         for (const auto& [ability, timer] : maps[place]) {
             field.u32(ability);
-            field.u64(microseconds(timer->end));
-            field.u64(microseconds(timer->minEnd));
+            // An indefinite cooldown (stage 3.3b-S2b: the Pylon while it lives): the end all ones and the minimum end 0 (the client
+            // setter at image RVA 0x6923930 with the duration -1 and MinTime 0; research abilities-magic.md Q3).
+            field.u64(timer->indefinite ? ~std::uint64_t{0} : microseconds(timer->end));
+            field.u64(timer->indefinite ? 0 : microseconds(timer->minEnd));
         }
     }
     if (!entity.itemCooldowns.empty()) {

@@ -44,6 +44,25 @@ float point_segment(const state::WorldPosition& point, const state::WorldPositio
     return distance3(point, along(a, b, part));
 }
 
+/**
+ * @return The point of the surface of a capsule nearest to a point outside it: the point of the segment of the capsule nearest to
+ *         the point, moved by the radius toward it (code review of stage 3.3b-S3, finding F6: the wall test of a contact with the
+ *         tolerance of a hit).
+ */
+state::WorldPosition surface_toward(const WorldCapsule& capsule, const state::WorldPosition& point) {
+    const Vector ab = minus(capsule.b, capsule.a);
+    const float squared = dot(ab, ab);
+    const float part = squared > 0.0F ? std::clamp(dot(minus(point, capsule.a), ab) / squared, 0.0F, 1.0F) : 0.0F;
+    const state::WorldPosition axis = along(capsule.a, capsule.b, part);
+    const Vector out = minus(point, axis);
+    const float size = length(out);
+    if (!(size > capsule.radius)) {
+        return point; // The point is in the capsule.
+    }
+    const float scale = capsule.radius / size;
+    return {axis.x + out[0] * scale, axis.y + out[1] * scale, axis.z + out[2] * scale};
+}
+
 /** @return The smallest t of `origin + t * direction` (direction a unit vector, t >= 0) on a sphere, or no value. */
 std::optional<float> ray_sphere(const state::WorldPosition& origin, const Vector& direction, const state::WorldPosition& center, float radius) {
     const Vector oc = minus(origin, center);
@@ -128,9 +147,9 @@ const char* shot_verdict_text(ShotVerdict verdict) {
 const char* projectile_end_text(ProjectileEnd end) {
     switch (end) {
     case ProjectileEnd::hit:
-        return "it hit a creature";
+        return "it hit a creature, a character, or a summon";
     case ProjectileEnd::nearHit:
-        return "it hit a creature near the muzzle";
+        return "it hit a creature, a character, or a summon near the muzzle";
     case ProjectileEnd::wall:
         return "a wall or the ground stopped it";
     case ProjectileEnd::range:
@@ -147,6 +166,13 @@ WorldCapsule capsule_of(const Entity& creature) {
     gamedata::CreatureCapsule capsule;
     capsule.radius = projectile_rules::kDefaultRadius;
     capsule.height = projectile_rules::kDefaultHeight;
+    if (creature.kind != EntityKind::creature) {
+        // A character (stage 3.3b-S2b: a target of the Beacon): the default capsule, upright at its feet.
+        const float half = capsule.height * 0.5F;
+        const float center = creature.position.z + capsule.radius + half;
+        return WorldCapsule{{creature.position.x, creature.position.y, center - half}, {creature.position.x, creature.position.y, center + half},
+                            capsule.radius};
+    }
     if (creature.creature.body != nullptr && creature.creature.body->capsule) {
         capsule = *creature.creature.body->capsule;
     }
@@ -293,7 +319,7 @@ ShotVerdict Projectiles::rule_of(const Entity& character, std::uint32_t attackId
     return ShotVerdict::accepted;
 }
 
-ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, const AttackTrack& track) {
+ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, AttackTrack& track) {
     ShotResult result;
     const auto refuse = [&](ShotVerdict verdict) {
         result.verdict = counted(verdict);
@@ -326,14 +352,32 @@ ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, const 
     if (press == nullptr) {
         return refuse(ShotVerdict::noAttack);
     }
+    // One projectile for each press while the track keeps the press (code review of stage 3.3b-S3, finding F2): also after the
+    // ledger entry of its projectile ended.
+    if (press->shot) {
+        return refuse(ShotVerdict::repeated);
+    }
+    // The press of the weapon in the hand (finding F3): a press of a different weapon, or a press after which the weapon changed,
+    // fits no shot.
+    if (press->weaponChanged || (!press->weapon.empty() && press->weapon != Combat::weapon_key(*character))) {
+        return refuse(ShotVerdict::noAttack);
+    }
     const auto steps = [](std::uint16_t from, std::uint16_t to) { return static_cast<unsigned>(static_cast<std::uint16_t>(to - from)); };
     if (press->released && steps(press->releaseInput, claim.input) > projectile_rules::kAfterRelease) {
+        return refuse(ShotVerdict::noAttack);
+    }
+    // A press that went off with no release (a magic weapon, a press of one step) fits a shot for the same steps after its end
+    // (finding F2).
+    if (!press->released && !press->on && steps(press->endInput, claim.input) > projectile_rules::kAfterRelease) {
         return refuse(ShotVerdict::noAttack);
     }
     if (launch.rule->heavy) {
         const unsigned held = press->released ? steps(press->input, press->releaseInput) : steps(press->input, claim.input);
         const unsigned needed = launch.rule->spell.empty() ? projectile_rules::kChargedSteps : projectile_rules::kMagicHeavySteps;
-        if (held < needed) {
+        // The hold on the world clock too (finding F5): the input numbers of the client alone do not give the time of a hold.
+        const WorldClock::time_point::duration heldTime = (press->released ? press->releasedAt : m_world.clock().now()) - press->started;
+        const auto neededTime = std::chrono::duration_cast<WorldClock::time_point::duration>(projectile_rules::kStep * needed) - projectile_rules::kHoldSlack;
+        if (held < needed || heldTime < neededTime) {
             return refuse(ShotVerdict::badCharge);
         }
     }
@@ -364,18 +408,42 @@ ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, const 
             return refuse(ShotVerdict::notObserved);
         }
         if (!target->creature.dead && !target->creature.immune()) {
+            // The receiver is the first creature on the line of the shot in the near range (code review of stage 3.3b-S3, finding
+            // F1): the segment of the near range in the direction of the launch touches its capsule (with the radius of the
+            // projectile and the tolerance), no other creature first, and no wall between the origin and its surface (F6).
+            const float radius = launch.attack->radius + projectile_rules::kHitTolerance;
+            const float range = launch.attack->nearRange;
+            const state::WorldPosition far{launch.origin.x + launch.direction[0] * range, launch.origin.y + launch.direction[1] * range,
+                                           launch.origin.z + launch.direction[2] * range};
             const WorldCapsule capsule = capsule_of(*target);
-            const float gap = point_segment(launch.origin, capsule.a, capsule.b) - capsule.radius;
-            const state::WorldPosition middle = along(capsule.a, capsule.b, 0.5F);
-            if (gap > launch.attack->nearRange + launch.attack->radius + projectile_rules::kHitTolerance || !valid_position(claim.nearPoint)
-                || distance3(claim.nearPoint, target->position) > projectile_rules::kNearPointRange
-                || m_world.navigation().line_stop(launch.origin, middle)) {
+            const std::optional<float> touch = sweep(launch.origin, far, capsule, radius);
+            bool first = touch.has_value();
+            if (first) {
+                m_world.for_each_near(along(launch.origin, far, 0.5F), range * 0.5F + reach() + radius, [&](Entity& other) {
+                    if (other.id == target->id || other.kind != EntityKind::creature || other.creature.dead || other.creature.immune()) {
+                        return;
+                    }
+                    ++m_counts.looked;
+                    const std::optional<float> before = sweep(launch.origin, far, capsule_of(other), radius);
+                    if (before && *before < *touch) {
+                        first = false;
+                    }
+                });
+            }
+            const state::WorldPosition contact = touch ? along(launch.origin, far, *touch) : launch.origin;
+            if (!first || !valid_position(claim.nearPoint) || distance3(claim.nearPoint, target->position) > projectile_rules::kNearPointRange
+                || m_world.navigation().line_stop(launch.origin, surface_toward(capsule, contact))) {
                 return refuse(ShotVerdict::nearTooFar);
             }
             launch.nearTarget = target->id;
         }
     }
-    return fire(*character, launch);
+    const std::uint32_t pressNumber = press->number;
+    result = fire(*character, launch);
+    if (result.verdict == ShotVerdict::accepted) {
+        track.mark_shot(pressNumber);
+    }
+    return result;
 }
 
 ShotResult Projectiles::launch_character(const std::string& characterId, const ServerShot& shot) {
@@ -408,7 +476,7 @@ ShotResult Projectiles::launch_character(const std::string& characterId, const S
     ShotVerdict verdict = ShotVerdict::badRow;
     std::vector<const gamedata::ShotRule*> rules;
     for (const gamedata::ShotRule& rule : m_data->tables().shots) {
-        if (rule.heavy == shot.heavy && gamedata::progression_id(rule.profile) == gamedata::progression_id(ranged->profile)) {
+        if (!rule.ability && rule.heavy == shot.heavy && gamedata::progression_id(rule.profile) == gamedata::progression_id(ranged->profile)) {
             rules.push_back(&rule);
         }
     }
@@ -436,6 +504,78 @@ ShotResult Projectiles::launch_character(const std::string& characterId, const S
     // A shot of the server has its own ledger number: the session 0, the sequence 0, and a new press for each shot.
     launch.press = static_cast<std::uint32_t>(m_next);
     return fire(*character, launch);
+}
+
+ShotResult Projectiles::launch_spell(const SpellShot& shot) {
+    ShotResult result;
+    const auto refuse = [&](ShotVerdict verdict) {
+        result.verdict = counted(verdict);
+        return result;
+    };
+    Entity* character = m_world.find(shot.caster);
+    if (character == nullptr || character->kind != EntityKind::player) {
+        return refuse(ShotVerdict::noEntity);
+    }
+    if (!has_data() || shot.rule == nullptr) {
+        return refuse(ShotVerdict::noData);
+    }
+    const gamedata::RangedAttack* attack = m_data->attack(shot.rule->profile, gamedata::progression_id(shot.rule->attack));
+    const gamedata::ProjectileSlice* slice = m_data->slice(shot.rule->slice);
+    const std::optional<std::uint32_t> rowIndex = m_combat->row_index(shot.rule->row);
+    if (attack == nullptr || slice == nullptr || !(slice->speed > 0.0F) || !rowIndex) {
+        return refuse(ShotVerdict::unsupported);
+    }
+    const float size = std::hypot(shot.direction[0], shot.direction[1], shot.direction[2]);
+    if (!valid_position(shot.origin) || !std::isfinite(size) || size < 1.0e-4F) {
+        return refuse(ShotVerdict::badDirection);
+    }
+    const std::size_t flying = static_cast<std::size_t>(std::count_if(
+        m_active.begin(), m_active.end(), [&](const auto& entry) { return entry.second.characterId == character->characterId; }));
+    if (flying >= projectile_rules::kCharacterMost) {
+        return refuse(ShotVerdict::busy);
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    Projectile projectile;
+    projectile.number = m_next++;
+    projectile.characterId = character->characterId;
+    projectile.caster = character->id;
+    projectile.attack = attack;
+    projectile.rule = shot.rule;
+    projectile.slice = slice;
+    projectile.rowIndex = *rowIndex;
+    projectile.weapon = shot.weapon;
+    projectile.conversion = shot.conversion;
+    projectile.start = shot.origin;
+    projectile.position = shot.origin;
+    const std::array<float, 3> direction{shot.direction[0] / size, shot.direction[1] / size, shot.direction[2] / size};
+    projectile.velocity = {direction[0] * slice->speed, direction[1] * slice->speed, direction[2] * slice->speed};
+    projectile.launched = now;
+    projectile.at = now;
+    projectile.key = std::make_tuple(character->characterId, SessionId{0}, std::uint32_t{0}, static_cast<std::uint32_t>(projectile.number));
+    projectile.source = shot.source;
+    projectile.threat = shot.threat;
+    projectile.characters = shot.characters;
+    projectile.landed = shot.landed;
+    result.verdict = counted(ShotVerdict::accepted);
+    result.projectile = projectile.number;
+    log::write("world: projectile %llu: %s launches the spell %s (%s/%s, row %s, %s) from %.2f %.2f %.2f to %.3f %.3f %.3f at %.0f m/s",
+               static_cast<unsigned long long>(projectile.number),
+               character->name.c_str(),
+               shot.rule->spell.c_str(),
+               shot.rule->profile.c_str(),
+               shot.rule->attack.c_str(),
+               shot.rule->row.c_str(),
+               slice->path.c_str(),
+               shot.origin.x,
+               shot.origin.y,
+               shot.origin.z,
+               direction[0],
+               direction[1],
+               direction[2],
+               slice->speed);
+    m_active.emplace(projectile.number, std::move(projectile));
+    m_counts.largest = std::max(m_counts.largest, m_active.size());
+    return result;
 }
 
 ShotResult Projectiles::fire(Entity& character, const Launch& launch) {
@@ -523,11 +663,19 @@ ShotResult Projectiles::fire(Entity& character, const Launch& launch) {
 HitResult Projectiles::hit(Projectile& projectile, Entity& target, const state::WorldPosition& point) {
     Entity* caster = m_world.find(projectile.caster);
     HitResult result;
-    if (caster == nullptr || caster->life.dead || projectile.weapon.row == nullptr) {
+    if (caster == nullptr || caster->life.dead || projectile.weapon.row == nullptr || target.kind != EntityKind::creature) {
+        return result; // A character that a spell hits takes no damage (the Beacon: its friend, or a character with no fight).
+    }
+    // A row with the factor 0 does no damage (the toss of the trap of the musket: Musket_Trap_Toss).
+    const gamedata::CombatTables* tables = m_world.combat().tables();
+    if (projectile.rule->ability && tables != nullptr && tables->damage_row(projectile.rowIndex).factor <= 0.0F
+        && tables->damage_row(projectile.rowIndex).added <= 0.0F) {
         return result;
     }
     const std::string what = what_of(*projectile.rule);
-    result = m_world.combat().strike(*caster, target, projectile.weapon, projectile.rowIndex, projectile.factor, what.c_str(),
+    HitWeapon weapon = projectile.weapon;
+    weapon.threat = projectile.threat;
+    result = m_world.combat().strike(*caster, target, weapon, projectile.rowIndex, projectile.factor, what.c_str(),
                                      &projectile.conversion, &point);
     if (result.verdict == HitVerdict::accepted) {
         ++m_counts.damage;
@@ -535,8 +683,12 @@ HitResult Projectiles::hit(Projectile& projectile, Entity& target, const state::
     return result;
 }
 
-void Projectiles::finish(const Projectile& projectile, ProjectileEnd end, const state::WorldPosition& at) {
+void Projectiles::finish(const Projectile& projectile, ProjectileEnd end, const state::WorldPosition& at, EntityId struck) {
     ++m_counts.ends[static_cast<std::size_t>(end)];
+    // The landing of a projectile of a spell (stage 3.3b-S2b): after the flights of this tick. Not at the leave of the caster.
+    if (projectile.landed && end != ProjectileEnd::caster) {
+        m_landings.emplace_back(projectile.landed, SpellLanding{end, at, struck});
+    }
     const Entity* caster = m_world.find(projectile.caster);
     log::write("world: projectile %llu of %s ends after %.1f m and %lld ms at %.2f %.2f %.2f: %s",
                static_cast<unsigned long long>(projectile.number),
@@ -594,6 +746,8 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
         m_world.for_each_near(middle, range, [&](Entity& entity) {
             if (entity.kind == EntityKind::creature && !entity.creature.dead && !entity.creature.immune()) {
                 candidates.push_back(entity.id);
+            } else if (projectile.characters && entity.kind == EntityKind::player && entity.id != projectile.caster && !entity.life.dead) {
+                candidates.push_back(entity.id); // A spell that hits a character (the Beacon: TargetTypes All).
             }
         });
         std::optional<float> first;
@@ -604,18 +758,25 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
             if (creature == nullptr) {
                 continue;
             }
-            const std::optional<float> touch = sweep(projectile.position, end, capsule_of(*creature), attack.radius + projectile_rules::kHitTolerance);
-            if (touch && (!first || *touch < *first)) {
-                first = touch;
-                struck = id;
+            const WorldCapsule capsule = capsule_of(*creature);
+            const std::optional<float> touch = sweep(projectile.position, end, capsule, attack.radius + projectile_rules::kHitTolerance);
+            if (!touch || (first && *touch >= *first)) {
+                continue;
             }
+            // The tolerance of a hit does not reach through a wall (code review of stage 3.3b-S3, finding F6): no wall between the
+            // point of the contact and the surface of the capsule.
+            if (m_world.navigation().line_stop(along(projectile.position, end, *touch), surface_toward(capsule, along(projectile.position, end, *touch)))) {
+                continue;
+            }
+            first = touch;
+            struck = id;
         }
         if (first && (!wall || *first <= *wall)) {
             const state::WorldPosition point = along(projectile.position, end, *first);
             if (Entity* target = m_world.find(struck)) {
                 hit(projectile, *target, point);
             }
-            finish(projectile, ProjectileEnd::hit, point);
+            finish(projectile, ProjectileEnd::hit, point, struck);
             return ProjectileEnd::hit;
         }
         if (wall) {
@@ -644,6 +805,12 @@ void Projectiles::tick() {
     const WorldClock::time_point now = m_world.clock().now();
     for (auto entry = m_active.begin(); entry != m_active.end();) {
         entry = advance(entry->second, now) ? m_active.erase(entry) : std::next(entry);
+    }
+    // The landings of the projectiles of spells (a landing makes a spell entity: not in the loop of the flights).
+    std::vector<std::pair<std::function<void(const SpellLanding&)>, SpellLanding>> landings;
+    landings.swap(m_landings);
+    for (const auto& [landed, landing] : landings) {
+        landed(landing);
     }
     for (auto entry = m_ledger.begin(); entry != m_ledger.end();) {
         entry = entry->second <= now ? m_ledger.erase(entry) : std::next(entry);

@@ -67,6 +67,18 @@ rm -rf "${data_dir}/captures"
 # process uses this data directory"), and this script removed no file of that start.
 exec 8>&-
 
+# A development run makes no sound: the master volume of each account in the settings of the
+# development prefix is 0 before the start (the game keeps one settings file for each account).
+# The game is stopped here, so it does not write the old value back. The prefix of the user is
+# not changed. SOULWARDEN_DEV_SOUND=1 keeps the volumes of the prefix.
+if [[ "${SOULWARDEN_DEV_SOUND:-0}" != "1" && "${dev_compat_dir%/}" != "${user_compat_dir}" ]]; then
+    settings_directory="${dev_compat_dir%/}/pfx/drive_c/users/steamuser/AppData/Roaming/AGS/New World/savedata"
+    for settings_file in "${settings_directory}"/usersettings_*.javsave; do
+        [[ -f "${settings_file}" ]] || continue
+        sed -i -E 's/(field="m_masterVolume" value=")[0-9]+(")/\10\2/' "${settings_file}"
+    done
+fi
+
 if ! omarchy-agent-desktop status "${desktop_id}" >/dev/null 2>&1; then
     omarchy-agent-desktop create "Soulwarden game" --id "${desktop_id}" --mode "${desktop_mode}" >/dev/null
 fi

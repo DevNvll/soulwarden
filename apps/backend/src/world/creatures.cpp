@@ -246,7 +246,7 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
     return result;
 }
 
-CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker) {
+CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, EntityId threat) {
     CreatureResult result;
     Entity* entity = find(id);
     if (entity == nullptr) {
@@ -293,8 +293,9 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker) {
         if (body.hitAction && !entity->creature.mind.attack && !entity->creature.held(m_world.clock().now())) {
             start_action(*entity, *body.hitAction, kReactionTime);
         }
-        if (attacker != 0) {
-            m_behavior.hurt_by(*entity, attacker);
+        // The creature takes the attacker as its target, or the threat of the hit (stage 3.3b-S2b: the Pylon that shot it).
+        if (threat != 0 || attacker != 0) {
+            m_behavior.hurt_by(*entity, threat != 0 ? threat : attacker);
         }
     }
     return result;

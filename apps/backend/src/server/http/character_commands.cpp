@@ -468,13 +468,32 @@ json spells_json(world::World& target) {
         char group[17];
         std::snprintf(group, sizeof(group), "%016llx", static_cast<unsigned long long>(id));
         const world::Entity* caster = target.find(entity.spell.caster);
-        spells.push_back({{"entity", group},
-                          {"spell", entity.spell.spellId},
-                          {"caster", caster != nullptr ? caster->name : std::string()},
-                          {"age", Seconds(now - entity.spell.started).count()},
-                          {"left", Seconds(entity.spell.ends - now).count()},
-                          {"record", entity.spell.slice != nullptr},
-                          {"position", {entity.position.x, entity.position.y, entity.position.z}}});
+        json item{{"entity", group},
+                  {"spell", entity.spell.spellId},
+                  {"role", world::spell_role_text(entity.spell.role)},
+                  {"caster", caster != nullptr ? caster->name : std::string()},
+                  {"age", Seconds(now - entity.spell.started).count()},
+                  {"left", Seconds(entity.spell.ends - now).count()},
+                  {"record", entity.spell.slice != nullptr},
+                  {"ending", entity.spell.ending},
+                  {"position", {entity.position.x, entity.position.y, entity.position.z}}};
+        // Stage 3.3b-S2b: the health of a summon or a trap, the entity that an aura follows, and the friends that have its statuses.
+        if (entity.spell.vitalsRow != nullptr) {
+            item["health"] = {entity.vitals.health, entity.vitals.healthMax};
+        }
+        if (entity.spell.attached != 0) {
+            const world::Entity* attached = target.find(entity.spell.attached);
+            item["attached"] = attached != nullptr ? attached->name : std::string("gone");
+        }
+        if (entity.spell.role == world::SpellRole::aura) {
+            json members = json::array();
+            for (const world::EntityId member : target.spells().members(id)) {
+                const world::Entity* friendly = target.find(member);
+                members.push_back(friendly != nullptr ? friendly->name : std::string("gone"));
+            }
+            item["members"] = members;
+        }
+        spells.push_back(item);
     }
     const world::SpellCounts& counts = target.spells().counts();
     json ended = json::object();
@@ -483,7 +502,8 @@ json spells_json(world::World& target) {
     }
     return {{"data", target.spells().has_data()}, {"spells", spells}, {"made", counts.made}, {"ended", ended},
             {"phases", counts.phases}, {"phasesCancelled", counts.phasesCancelled}, {"dueTaken", counts.dueTaken},
-            {"largest", counts.largest}};
+            {"largest", counts.largest}, {"shots", counts.shots}, {"summonHits", counts.summonHits}, {"triggers", counts.triggers},
+            {"trapHits", counts.trapHits}, {"auraGiven", counts.auraGiven}, {"auraTaken", counts.auraTaken}, {"looked", counts.looked}};
 }
 
 json abilities_json(world::World& target, const std::string& character) {
@@ -491,11 +511,13 @@ json abilities_json(world::World& target, const std::string& character) {
     const world::WorldClock::time_point now = target.clock().now();
     if (const auto* timers = target.abilities().cooldowns_of(character)) {
         for (const auto& [ability, timer] : *timers) {
-            if (timer.end > now) {
+            // A held cooldown (stage 3.3b-S2b: the Pylon while it lives) has no end: "held" and no seconds.
+            if (timer.indefinite || timer.end > now) {
                 const gamedata::ProgressionTables* tables = target.options().progressionTables;
                 const gamedata::AbilityNode* node = tables != nullptr ? tables->node(ability) : nullptr;
                 cooldowns.push_back({{"ability", node != nullptr ? node->id : std::to_string(ability)},
-                                     {"seconds", std::chrono::duration<double>(timer.end - now).count()}});
+                                     {"seconds", timer.indefinite ? 0.0 : std::chrono::duration<double>(timer.end - now).count()},
+                                     {"held", timer.indefinite}});
             }
         }
     }

@@ -112,6 +112,8 @@
 //                                                        the press of a key of the bar for a character (stage
 //                                                        3.3b-S2a: a remote test character with no client)
 //   POST /v1/dev/spells/end?character=ID                 each spell entity of the character ends
+//   POST /v1/dev/spells/hurt?entity=ID&amount=N          a summon or a trap takes damage (stage 3.3b-S2b; the health 0
+//                                                        starts its death chain)
 // The commands remove, health, and kill change each creature of the world, and they need no
 // character (the rule CreatureReach::world of character_commands.h). The admin interface has a
 // different rule for them.
@@ -577,6 +579,22 @@ service::HttpResponse remove_probe(const Services& services, const RouteContext&
     });
 }
 
+service::HttpResponse hurt_spell(const Services& services, const RouteContext& context) {
+    const service::HttpRequest& request = context.request;
+    if (!request.host.empty()) {
+        return message(403, "forbidden");
+    }
+    const auto id = entity_id_of(query_text(request, "entity"));
+    const auto amount = query_number(request, "amount");
+    if (!id || !amount || *amount < 0.0F || *amount > 1.0e6F) {
+        return message(400, "give entity=ID (16 hexadecimal digits) and amount=N");
+    }
+    return in_world(services, [id = *id, amount = *amount](world::World& target) {
+        log::write("dev: the spell %016llx takes %.1f damage (a command)", static_cast<unsigned long long>(id), static_cast<double>(amount));
+        return target.spells().hurt(id, amount) ? message(200, "done") : message(404, "the world has no summon or trap with this id");
+    });
+}
+
 service::HttpResponse raw_message(const Services& services, const RouteContext& context) {
     const service::HttpRequest& request = context.request;
     if (!request.host.empty()) {
@@ -851,6 +869,7 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));
     router.add("POST", "", "/v1/dev/abilities/cast", "dev.abilities_cast", command_route(services, commands::cast_ability));
     router.add("POST", "", "/v1/dev/spells/end", "dev.spells_end", command_route(services, commands::end_spells));
+    router.add("POST", "", "/v1/dev/spells/hurt", "dev.spells_hurt", bind(hurt_spell));
     router.add("POST", "", "/v1/dev/projectiles/shoot", "dev.projectiles_shoot", command_route(services, commands::shoot));
     // The itemization (stage 1.3b): the gear, a use of a consumable, the heart rune, and a perk roll.
     router.add("GET", "", "/v1/dev/gear", "dev.gear", [&services](const RouteContext& context) {

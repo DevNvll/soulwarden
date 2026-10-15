@@ -54,6 +54,12 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 - A TickRate with Health, HealthModifierPercent, Mana, or ManaModifierPercent: a heal and a mana change at each tick
   (times the potency and the stacks); the first tick comes at the next tick of the world after the application
   (DelayInitialTick: one TickRate later). The ticks of a character that is not in the world wait for its next entry.
+- A TickRate with HealthModifierDamageBased (a heal of a part of the damage of the source: the Beacon of the life staff,
+  stage 3.3b-S2b): a pulse at each tick with no heal (`StatusCounts::pulsesWithNoHeal`). The amount needs the heal base of
+  stage 3.3b-S6 (open). A negative HealthModifierDamageBased (a damage over time) has no rule here.
+- The source "spell" (stage 3.3b-S2b, [Spell entities](spells.md)): the area of a spell gives its statuses to a friend in it
+  and takes them back when the friend leaves the area and at its end (`Statuses::remove_source`, the end cause "its source
+  went away").
 - StopOnHitCount: the status ends at that hit that the character takes. RemoveOnDeath: it ends at the death of the
   character (the health system calls `Statuses::died`). A dead character takes no status (but a row with
   AllowAddIfDead). The gear refresh also gives a dead character no status of the gear whose row a dead character does

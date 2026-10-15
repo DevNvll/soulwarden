@@ -72,10 +72,19 @@ std::span<const StateCodec> creature_codecs() {
 
 std::span<const StateCodec> spell_codecs() {
     // The slot of the Spell state and of each delayed event is a value of the slice of the spell (game data).
-    static constexpr std::array<StateCodec, 3> codecs{{
+    // Stage 3.3b-S2b: the PositionInTheWorld state of a slice with no Spell component (the trap), and the vitals state of a summon
+    // or a trap.
+    static constexpr std::array<StateCodec, 5> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::spell, 0, kTypeSpellState, encode_spell_state, nullptr, false,
          [](const world::Entity& entity) { return entity.spell.slice != nullptr ? entity.spell.slice->spellSlot : 0U; }},
+        {world::ComponentKey::spellPlace, 0, kTypePositionInTheWorldState, encode_spell_place_state, nullptr, false,
+         [](const world::Entity& entity) { return entity.spell.slice != nullptr ? entity.spell.slice->positionSlot : 0U; }},
+        {world::ComponentKey::vitals, 0, kTypeVitalsState, nullptr, encode_spell_vitals_parts, false,
+         [](const world::Entity& entity) {
+             return entity.spell.slice != nullptr && entity.spell.slice->vitals && entity.spell.vitalsRow != nullptr ? entity.spell.slice->vitals->slot
+                                                                                                                       : 0U;
+         }},
         {world::ComponentKey::delayedEvents, 0, kTypeDelayedEventState, nullptr, nullptr, false, nullptr, encode_delayed_event_states},
     }};
     return codecs;

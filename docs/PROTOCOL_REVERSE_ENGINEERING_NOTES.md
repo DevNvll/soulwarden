@@ -5159,7 +5159,8 @@ CHARACTER PLACE [--yaw DEGREES]` (`POST /v1/dev/abilities/cast`), `tools/world s
 
 - The Ownership and the TemporaryAffiliation states of a spell (their values are not known; not sent).
 - The unit of the spawn time (field 8).
-- The beacon, the pylon, the traps (S2b), the projectiles (S3). The pull of the vortex: done in stage 3.3b-S4 (4.26).
+- The Pylon, the trap, the Beacon: done in stage 3.3b-S2b (4.28). The projectiles: stage 3.3b-S3 (4.27). The pull of the
+  vortex: done in stage 3.3b-S4 (4.26).
 
 ### 4.26 Forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte (live proof of stage 3.3b-S4; the rules are project rules with the values of the game data)
 
@@ -5286,6 +5287,80 @@ for a character, also with no client), `tools/world projectiles`, the line `proj
   bounces, the fall of the damage with the distance, a headshot (the posed hit volumes of a creature), the abilities of the
   ranged and magic weapons, an equipped ammunition (slots 12, 13).
 - The heavy fire ball of a client in a development run (the hold bit, above).
+
+### 4.28 Spell entities of three kinds: the Pylon, the trap, the Beacon (live proof of stage 3.3b-S2b; the rules are project rules with the values of the game data)
+
+Stage 3.3b-S2b. Research: `~/Games/soulwarden/work/research/abilities-magic.md` (Q3 the cost of the Pylon, Q4 the Beacon),
+`abilities-ranged.md` (Q4.10 the trap), `abilities-shared.md` (Q2). Live checks and the live proof:
+`~/Games/soulwarden/work/evidence/abilities-spells2/implement/RESULT.md` (runs `s2b-l1` with the probe entity, `s2b-l2`
+and the final run with the backend of the stage; the videos in `live/` and `proof/`). Code: `world/spells.h`
+(`SpellRole`, the summon, the trap, the aura), `world/abilities.cpp` (`SpellPlan`, `spawn_summon`, `throw_spell`,
+`spell_landed`), `world/projectiles.h` (`Projectiles::launch_spell`), `server/rep/states/spell_state.cpp` (the attachment,
+the PositionInTheWorld state, the vitals of a spell, the events of a trigger), `server/rep/states/cooldown_state.cpp` (the
+indefinite cooldown), `gamedata/spell_data.h` (format 2), `tools/gamedata/spells.py`, `tools/gamedata/projectiles.py`
+(the ability shots). Document: [Spell entities](systems/spells.md). Test cases SB1 to SB10.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| A slice with no Spell component (the trap `trap_bear.dynamicslice`, asset `9CF92A75-C4C7-5F6A-94E3-A565B2328FB2`, sub id 2) shows only with its PositionInTheWorld state (type 13) at the slot of its PositionInTheWorld component (4): one group, field 0 the position (x f32, y f32, z u16 over −100 to 2000, as field 1 of the Spell state), field 1 the rotation (`07`: the identity). With only the metadata state the client makes the entity and shows nothing. | Live check (run `s2b-l1`, the probe: no trap with the metadata, the open trap with the PositionInTheWorld state). | `0x5CEA190` (position reader), `0x87B250` (rotation) |
+| Field 6 of the Spell state (the attachment: the actor raw16 and the group u64 of an entity) makes the client move the picture of the spell with that entity (the Beacon `spell_life_staff_beacon.dynamicslice` on a character that travels 3 m: the ring moves with it). The server keeps the place of the spell for the interest and the area. | Live check (run `s2b-l1`, the probe on a remote test character); live proof (run `s2b-l2`, `l7-beacon-a`, `l7-beacon-c`: the Beacon on a character and on a wolf that runs). | — |
+| The Vitals state (type 15) of a spell with a Vitals component (slot 1 of the Pylon `ice_pylon.dynamicslice` and of the trap): the health (f32), vitalsData (the flags with bit 0 dead, two times, a count), the change flags, and in the first record the maximum health, the tick rate 0, the vitals id (the CRC-32 of the lower-case row id of the base vitals: `IceMagicPylon`), invulnerability 0, display immune 0, the maximum health (u16). The client shows the name plate "ICE PYLON" and a health bar that follows the health of the server. | Live check (run `s2b-l1`, the probe, `l2-pylon-A`); live proof (run `s2b-l2`, `l5-pylon`: the bar goes down at each bite of a wolf). | — |
+| An event of the init whose target the server triggered, sent completed, makes the client trigger that target at once: the Pylon slot 11 (the event of 45 s of the init on the entity `DestroyTrigger`) plays the death chain of the Pylon; the trap slot 11 (the event of 30 s of the entity `Lifetime` on the entity `Trigger`) plays the activation of the trap (the jaws close, the flash). An event that starts at a trigger (`m_startDelayOnTrigger`, no `m_startDelayOnInit`: the events of the owner `DestroyTrigger` of the Pylon) has no state before the trigger; from the trigger its state has the time that is left. | Live check (run `s2b-l1`, the probe: `l2-pylon-death`, `l3-trap-trigger`); live proof (run `s2b-l2`: `l5-pylon`, `l6-trap3`). | — |
+| The cooldown state (4.22) of an ability with an indefinite cooldown: the entry of the ability with the end all ones (`FFFFFFFFFFFFFFFF`) and the minimum end 0 (the setter of the client with the duration −1 and MinTime 0). The backend sends it while the Pylon lives; the cooldown of the data (10 s) after its end. The HUD shows the button of the Pylon with no countdown while the Pylon lives, and the countdown of 10 s after its end. A second press while the Pylon lives: the client plays the cast animation, and the server refuses the press (no second Pylon, no payment). | Static proof (research abilities-magic.md Q3); live proof (final run: `proof/p1-pylon-hud.png`, `proof/p1b-second-press.mp4`). | `0x6923930` |
+| The TemporaryAffiliation state (type 3563) at its slot of the Pylon slice (2): one group, field 0 the list (`00` no change entries, `00` no stamp, a count, then `type:u32 value:u32` for each entry). With no state, or with an empty list, the name plate of the Pylon has a red health bar for its caster. With one entry (type 1, value 1 or 2) the bar is blue, with or without an entry of the same type on the player (slot 17 of the player slice). The data of the slice applies no affiliation at the start (`m_affiliationsToApplyOnInstantiation` is empty): the original server set it at run time, with values that are not known. | Live check (final run, probe entities: `proof/a1` to `a5`; the game log has no read failure). | `0x405C370` (constructor), `0x406C020`, `0x4057BE0` (reader) |
+| A spell of a different character: the observer sees the body, the light, and the end chain of the Pylon, the Beacon ring on itself, and the health of a creature that the Pylon hits (no damage number). The name plate of the Pylon of a different character does not show. | Live proof (final run: `proof/p5-observer-pylon.mp4`, `proof/p6-observer-beacon.mp4`). | — |
+| The press of Ice Pylon gives no shot item and no message of the client. The press of Traps gives a shot item with the attack `traps` (the CRC-32 of the lower-case RangedAttackName) 8 input steps after the press; the press of Beacon a shot item with the attack `heavy` 4 input steps after the press. The client reports no hit of the toss or of the Beacon projectile. | Live check (run `s2b-l1`, the input of the captures: `press_to_shot.py`). | — |
+| The status `Status_Ability_Lifestaff_Beacon` on the own character (the status state, 4.22 and 3.3b-S1): the icon in the tray, the green light on the body, the text "Healing Pulse" in the damage numbers (`ShowTextInDamageNumbers`). | Live proof (run `s2b-l2`, `l7-beacon-b`). | — |
+
+**The data** (`spell-data.json` format 2, `tools/gamedata/spells.sh`): the members of format 1, and for each slice its
+position slot (`positionSlot`), for each delayed event its owner entity and its marks `m_startDelayOnInit` and
+`m_startDelayOnTrigger`, the Vitals component (`vitals`: the slot, the row of the base vitals, the target of
+`m_onDeathEvent`), the AutoSpellComponent (`autoSpell`: `m_spellName`, `m_lifetime`, `m_lifetimeOnHit`,
+`m_initialCastDelay`, the cooldown of `m_defaultRateOfFire`, the targets of `m_lifetimeExpireEvent` and `m_castEvent`,
+`m_excludeTargetNWTags`), the DetectionVolumeComponents (`volumes`: the radius of a sphere, the time of the activation of
+an entity that is not active at the start), the MomentaryOffenseComponents (`offenses`: the row, the radius), the events
+of a DetectionVolumeEventComponent (`detectionEvents`), and the destroy time of each TimelineEntry (`timelines`); the list
+`vitals` (the rows of the base vitals tables: HealthBaseMax, HealthOverridePercentSpellOwnerMaxHealth, the armor overrides,
+the gear score). The values of this stage: the Pylon (slot 4 Spell, slot 1 Vitals `IceMagicPylon`: 0.2 of the maximum
+health of the caster, armor 496; AutoSpell `IceMagic_Pylon_Projectile`, 15 s, 1 s, 2 s, `DestroyTrigger`, `FireTrigger`;
+volume `Ice_Pylon` 20 m; the destroy 1.3 s after `DestroyTrigger`), the trap (slot 4 PositionInTheWorld, slot 1 Vitals
+`Trap_Bear` 17; the volume 0.5 m from 0.1 s; the offense `Musket_Trap` 1.1 m; `Lifetime` triggers `Trigger` and `Dissolve`
+at 30 s; the timeline of `Trigger` destroys at 0.508 s), the Beacon (slot 1 Spell; no end event of its own: the Duration
+of its spell row, 10 s). The projectile data (`projectile-data.json`) has the 33 projectile spells of the abilities (the
+11th value of a shot: the Pylon shot `IceMagic/Pylon` 100 m/s 0.5 s, the toss `Musket/Traps` 20 m/s with gravity 20 for
+4 s, the Beacon `LifeStaff/Heavy` 100 m/s 0.5 s).
+
+**The rules** (project rules; the values of the data where it has a value; the source of each rule is in
+[Spell entities](systems/spells.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The Pylon | The spawn at 0.6 s, 2 m in front of the caster on the ground; the payment of 15 mana at the spawn; an indefinite cooldown from the press to its end; the health of the vitals row; the shots of its AutoSpell at the nearest creature of its volume that it sees, through the projectile path; a creature that a shot hurts takes the Pylon as its target and bites it; the death chain at the health 0 and at the end of its life (15 s), the removal 1.3 s after the trigger. |
+| The trap | The toss of the shot item (or of the server), the trap on the ground at the landing; from 0.1 s each 100 ms a look for a creature in 0.5 m; one trigger: one hit with `Musket_Trap` and the root on each creature in 1.1 m, the trigger events, the removal 0.508 s later; with no creature the end at 30.508 s. |
+| The Beacon | The projectile of the shot item (or of the server): a hit on a creature hurts it (1.46); the area on the entity that it hit (field 6) or on the ground; each 250 ms the place of the target and the friends in 3 m: the statuses of the row on a friend in it, off at its exit and at the end; the end at 10 s, at the leave of the target, at the leave of the caster. The friends: the caster (a group of one). |
+| The record | The Spell state or the PositionInTheWorld state, the Vitals state of a summon or a trap, the delayed events of the init and of the triggers; one view for each session. |
+| The cost | The due list (the shots, the steps of a trap and of an aura) and the position index near each spell (case SB8: a time limit). |
+
+**The commands** (development routes): `tools/world spells` (the role, the health, the attachment, the friends in an
+aura), `tools/world spells hurt ENTITY AMOUNT` (`POST /v1/dev/spells/hurt`; only with `--dev-commands`), `tools/world
+cast CHARACTER 0 [--yaw DEGREES]` (a remote test character: the server throws the toss and the Beacon).
+
+**Not known, not done** (stage 3.3b-S2b):
+
+- The message `Pylon_Spawn` of the server (the client starts its own hold of the Pylon at it): not sent. The HUD shows no
+  countdown while the Pylon lives, and the client plays the animation of a second press that the server refuses.
+- The values of the TemporaryAffiliation of a summon (the types and the relation rule, research factions.md U9): the
+  backend sends no affiliation state, and the own Pylon has a red bar. A made-up entry gives a blue bar (live check): a
+  decision for the user.
+- The picture of a projectile of the server for an observer and for the shots of the Pylon (a record of the projectile
+  slice with a Spell state shows nothing: live check `l2-pylonproj` of run `s2b-l1`), as for the projectiles of 4.27.
+- The Ownership and the TemporaryAffiliation states of a spell (not sent).
+- The heal amount of a pulse of the Beacon (`HealthModifierDamageBased` 0.16 each 1 s): the heal base is stage 3.3b-S6.
+- The friendly relation of two players (the groups): a decision of the user.
+- The Pylon spells of the nodes (`_Regen`, `_Refresh`, `_Ultimate`, the burst `PylonBurst`), the frost volume of the Pylon,
+  the interaction option of the trap (stage 2.5), and a creature that takes a trap as its target.
 
 ## 5. Open items
 

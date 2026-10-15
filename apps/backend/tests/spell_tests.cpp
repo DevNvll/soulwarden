@@ -41,12 +41,12 @@ gamedata::SpellSlice vortex_slice(float burst = 3.0F) {
     for (std::uint32_t slot = 4; slot <= 9; ++slot) {
         slice.slots.push_back({slot, "DelayedEvent", 3139});
     }
-    slice.events = {{4, 3.0F, gamedata::spell_event::kDeactivate, "VFX_Foe", "", false},
-                    {5, 3.0F, gamedata::spell_event::kDeactivate, "VFX_Vortex", "", false},
-                    {6, 3.1F, gamedata::spell_event::kDeactivate, "DetectionVolume", "", false},
-                    {7, burst, gamedata::spell_event::kActivate, "Burst", "GreatAxe_GravityWell_Burst", false},
-                    {8, 1.0F, gamedata::spell_event::kDeactivate, "VortexRoot", "GreatAxe_GravityWell_Vortex_Root", false},
-                    {9, 3.5F, gamedata::spell_event::kTrigger, "Destroy", "", true}};
+    slice.events = {{4, 3.0F, gamedata::spell_event::kDeactivate, "VFX_Foe", "", false, "DestroyDelay", true, true},
+                    {5, 3.0F, gamedata::spell_event::kDeactivate, "VFX_Vortex", "", false, "DestroyDelay", true, true},
+                    {6, 3.1F, gamedata::spell_event::kDeactivate, "DetectionVolume", "", false, "DestroyDelay", true, true},
+                    {7, burst, gamedata::spell_event::kActivate, "Burst", "GreatAxe_GravityWell_Burst", false, "DestroyDelay", true, true},
+                    {8, 1.0F, gamedata::spell_event::kDeactivate, "VortexRoot", "GreatAxe_GravityWell_Vortex_Root", false, "DestroyDelay", true, true},
+                    {9, 3.5F, gamedata::spell_event::kTrigger, "Destroy", "", true, "DestroyDelay", true, true}};
     return slice;
 }
 

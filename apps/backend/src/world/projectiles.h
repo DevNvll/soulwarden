@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -90,6 +91,13 @@ inline constexpr float kNearPointRange = 4.0F;
 inline constexpr std::chrono::microseconds kStep{33333};
 /** A ledger entry stays this long after the end of its projectile: a repeated shot item of its press is refused in this time. */
 inline constexpr std::chrono::seconds kLedgerTime{10};
+/**
+ * The hold of a heavy shot on the world clock (code review of stage 3.3b-S3, finding F5): the time from the step of the press to
+ * the step of the release (or of the shot), as the session got them, is not shorter than the steps of the hold (kStep each) less
+ * this time. The input numbers of a client alone do not give the hold. A decision of an agent: the reports of a client can come
+ * with a different delay (5 entries in each report, the network).
+ */
+inline constexpr std::chrono::milliseconds kHoldSlack{200};
 /** A character has this many projectiles in the air at most (a limit of the cost, a decision of an agent): one more is refused. */
 inline constexpr std::size_t kCharacterMost = 16;
 /**
@@ -236,6 +244,38 @@ struct ProjectileView {
     std::chrono::milliseconds age{0};
 };
 
+/** How a projectile of a spell ended (stage 3.3b-S2b): its end, its point, and the entity that it hit (0: none). */
+struct SpellLanding {
+    ProjectileEnd end{ProjectileEnd::range};
+    state::WorldPosition point;
+    EntityId struck{0};
+};
+
+/**
+ * A projectile of a spell that the server launches (stage 3.3b-S2b): the shot of a summon (the Pylon), the projectile of an
+ * ability whose client sent the shot item (the Beacon, the trap of the musket).
+ */
+struct SpellShot {
+    /** The character that casts it: the attacker of each hit (the credit, the damage number). */
+    EntityId caster{0};
+    /** The spell entity that shoots it (the Pylon): it is not a target. 0: the caster shoots it. */
+    EntityId source{0};
+    /** The projectile spell of an ability (gamedata::ShotRule::ability): the profile, the attack, the row, and the slice. */
+    const gamedata::ShotRule* rule{nullptr};
+    state::WorldPosition origin;
+    /** A unit vector. */
+    std::array<float, 3> direction{};
+    /** The weapon of the cast and the conversion of its gem at the press. */
+    HitWeapon weapon;
+    CastConversion conversion;
+    /** True: the projectile also hits a character (TargetTypes All of the spell row: the Beacon). Not its caster, not a dead one. */
+    bool characters{false};
+    /** A creature that a hit hurts takes this entity as its target (the Pylon: OverrideTargetForAiThreat). 0: the caster. */
+    EntityId threat{0};
+    /** Called at the end of the flight (a hit, a wall, the range, the life time), not at the leave of the caster. */
+    std::function<void(const SpellLanding&)> landed;
+};
+
 /** The capsule of a creature in the world (stage 3.3b-S3): the two ends of its segment and its radius. */
 struct WorldCapsule {
     state::WorldPosition a;
@@ -273,12 +313,20 @@ public:
      * A session gives a shot item of a new input step of its client.
      * @param track The attack inputs of the session (the press of the shot).
      */
-    ShotResult launch(SessionId session, const ShotClaim& claim, const AttackTrack& track);
+    ShotResult launch(SessionId session, const ShotClaim& claim, AttackTrack& track);
     /**
      * Development aid (tools/world shoot): a shot of the server for a character with no client (a remote test character),
      * with the weapon in its hand, from 1.5 m above its feet. The same rules, cost, flight, and hit as the shot of a client.
      */
     ShotResult launch_character(const std::string& characterId, const ServerShot& shot);
+    /**
+     * A projectile of a spell (stage 3.3b-S2b): the server launches it with the rule of the spell (the speed, the acceleration,
+     * the range, the life time, the row), from the origin in the direction. A hit on a creature goes through Combat::strike
+     * (a row with the factor 0 does no damage: the toss of the trap); a hit on a character does no damage. The landing gets the
+     * point and the entity. The limit kCharacterMost of the caster applies. No ledger entry: the cast of the abilities system
+     * has one projectile.
+     */
+    ShotResult launch_spell(const SpellShot& shot);
     /** The world calls it in each tick: each projectile in the air flies to the time of the world clock. */
     void tick();
     /** The entity of a character left the world: its projectiles end with no hit. */
@@ -328,6 +376,11 @@ private:
         WorldClock::time_point launched{};
         WorldClock::time_point at{};
         std::tuple<std::string, SessionId, std::uint32_t, std::uint32_t> key;
+        /** A projectile of a spell (stage 3.3b-S2b): its shooter, the threat of its hits, its targets, and its landing. */
+        EntityId source{0};
+        EntityId threat{0};
+        bool characters{false};
+        std::function<void(const SpellLanding&)> landed;
     };
 
     ShotVerdict counted(ShotVerdict verdict) {
@@ -342,12 +395,14 @@ private:
     std::optional<ProjectileEnd> advance(Projectile& projectile, WorldClock::time_point now);
     /** One hit of a projectile on a creature through Combat::strike. @return The values of the hit. */
     HitResult hit(Projectile& projectile, Entity& target, const state::WorldPosition& point);
-    void finish(const Projectile& projectile, ProjectileEnd end, const state::WorldPosition& at);
+    void finish(const Projectile& projectile, ProjectileEnd end, const state::WorldPosition& at, EntityId struck = 0);
 
     World& m_world;
     const gamedata::ProjectileData* m_data;
     const gamedata::CombatTables* m_combat;
     std::map<std::uint64_t, Projectile> m_active;
+    /** The landings of the projectiles of spells of this tick: called after the flights (a landing makes a spell entity). */
+    std::vector<std::pair<std::function<void(const SpellLanding&)>, SpellLanding>> m_landings;
     /** The ledger: the key of each launch (character, session, input sequence, press) to the end of its time. */
     std::map<std::tuple<std::string, SessionId, std::uint32_t, std::uint32_t>, WorldClock::time_point> m_ledger;
     std::uint64_t m_next{1};

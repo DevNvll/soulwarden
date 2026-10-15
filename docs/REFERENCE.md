@@ -172,9 +172,12 @@ stacks, potency, and source, the speed and armor parts, the counts), `status CHA
 `status CHARACTER remove STATUS|all`. For the spell entities (stage 3.3b-S2a): `cast CHARACTER
 PLACE [--yaw DEGREES]` (the press of a key of the bar for a character, also for a remote test
 character with no client: the server throws the projectile of Gravity Well in the direction
-of the yaw; from stage 3.3b-S4 the dash of Charge of such a character: 13.77 m in 1 s),
-`spells` (the spell entities of the world with their age), `spells end
-CHARACTER` (each spell entity of a character ends), and `probe CHARACTER ASSET [DX DY DZ]
+of the yaw; from stage 3.3b-S4 the dash of Charge of such a character: 13.77 m in 1 s; from
+stage 3.3b-S2b the toss of the trap and the projectile of the Beacon of such a character),
+`spells` (the spell entities of the world with their age; from stage 3.3b-S2b also the role,
+the health, the attachment, and the friends in an aura), `spells end CHARACTER` (each spell
+entity of a character ends), `spells hurt ENTITY AMOUNT` (stage 3.3b-S2b: a Pylon or a trap
+takes damage; the health 0 starts its death chain), and `probe CHARACTER ASSET [DX DY DZ]
 [--sub N] [--radius M] [--fragment SLOT:TYPE:HEX]...`, `probe fragment ENTITY SLOT TYPE HEX`,
 and `probe remove ENTITY` (an entity of a slice with the fragments of the caller, for a live
 check of a record before its code). For the forced movement (stage 3.3b-S4): `list` has the
@@ -414,7 +417,7 @@ button on "Confirm").
   the players does not have a rule column of the backend, or a status table does not have the
   absorption and damage columns of each damage type (it keeps the file that is there).
 - `tools/gamedata/projectiles.sh` makes the projectile data
-  (`~/.local/share/soulwarden/gamedata/projectile-data.json`, 65 KB, stage 3.3b-S3): the ranged
+  (`~/.local/share/soulwarden/gamedata/projectile-data.json`, 72 KB, stage 3.3b-S3): the ranged
   attack profiles of the game (the range, the radius, the near range, the acceleration delay),
   the flight values of the projectile slices (the speed, the acceleration, the life time), the
   ammunition, the profile of each weapon, and the shots of the basic attacks (protocol notes
@@ -423,16 +426,23 @@ button on "Confirm").
   the shots, and the weapons with a text. Without the file the backend starts, and a shot of a
   bow, a musket, a staff, or a gauntlet does nothing. The creature data tool (stage 3.3b-S3)
   also writes the capsule of the character of each creature slice: with an older creature file
-  a shot hits each creature with one size.
+  a shot hits each creature with one size. From stage 3.3b-S2b the file also has the projectile
+  spells of the abilities (the shot of the Ice Pylon, the toss of the musket trap, the Beacon):
+  with an older file the trap and the Beacon do nothing, and the Pylon does not shoot. The tool
+  stops (and keeps the file that is there) when a source that a shot needs is not there.
 - `tools/gamedata/spells.sh` makes the spell entity data
-  (`~/.local/share/soulwarden/gamedata/spell-data.json`, 1.1 MB, stage 3.3b-S2a): for each spell
+  (`~/.local/share/soulwarden/gamedata/spell-data.json`, 1.6 MB, stage 3.3b-S2a): for each spell
   row with a prefab slice, the slice asset, the slots of its replicated components, its
   interest radius, and its delayed events (protocol notes 4.25). It reads the data tables and
   the slices of the game copy, from the same sources as the creature data tool (it needs an
   Oodle source). `tools/gamedata/spells.sh --find TEXT` prints the spells with a text and their
   slice. Without the file the backend starts, and the vortex of Gravity Well has its damage
   but no picture. From stage 3.3b-S4 the tool stops for a delay that is not a 32-bit number,
-  and the backend refuses a file with a delayed event slot that has no event.
+  and the backend refuses a file with a delayed event slot that has no event. From stage
+  3.3b-S2b the file has the format 2 (the trap slice with its position slot, the health, the
+  shots, the detection volume, the offense, and the timelines of a slice, and the rows of the
+  base vitals tables; protocol notes 4.28): with a file of format 1 the Ice Pylon, the musket
+  trap, and the Beacon do nothing.
 - `tools/gamedata/perks.sh` makes the perk data (`~/.local/share/soulwarden/gamedata/perk-data.json`,
   6.5 MB, stage 1.3b): the perk list in the order of the client, the values of each perk, the
   perk buckets and the perk places of each item (the perk roll of a loot item), the
@@ -572,6 +582,27 @@ button on "Confirm").
   abilities of the other weapons, the passive
   nodes and the effects on your own character (fortify, grit, empower, heal), and the perks
   of an item that change an ability.
+- Spell abilities (stage 3.3b-S2b, protocol notes 4.28, `docs/systems/spells.md`). With the
+  spell data and the projectile data of this stage, the key Q uses Ice Pylon of the ice
+  gauntlet, Traps of the musket, and Beacon of the life staff when they are on the bar. The
+  Pylon comes 0.6 s after the press, 2 m in front of you; it costs 15 mana when it comes (a
+  press with less mana does nothing); a press while it lives does nothing (the button shows no
+  countdown then: the client starts its own hold at a message that the backend does not send),
+  and its cooldown of 10 s starts at its end. It has 20 percent of your maximum health (its name plate and health bar
+  show), it shoots the nearest creature in 20 m that it sees each 2 s (1 s after it comes
+  first), and a creature that it hits attacks it; it goes away 15 s after it comes, when its
+  health is 0, and when you leave the world. The trap flies from your hand, opens where it
+  lands, and the first creature in it starts it: each creature in 1.1 m takes the damage of
+  the trap and a root of 3 s, and the trap goes away; with no creature it goes away after 30
+  s. The Beacon (16 mana) flies to the first creature or player on its line: a creature takes
+  its damage (1.46 of the weapon damage). The Beacon stays on that creature or player (or on
+  the ground) for 10 s and follows it; while you stand in 3 m of it you have its buff (the icon,
+  the light, "Healing Pulse"), which ends when you go out and at its end. It ends when its
+  target or you leave the world. Each other player near them sees the same Pylon (with no name
+  plate), trap, and Beacon. The name plate of your Pylon has a red bar (the affiliation of a
+  summon is not known). Not yet: the heal amount of the Beacon (stage 3.3b-S6), the buff for another player
+  (the groups), the upgrades of the Pylon, the interaction option of the trap, and the picture
+  of the shot of the Pylon.
 - Rewards of a kill. With the loot tables of stage 3.5a (`tools/gamedata/loot.sh`; protocol
   notes 4.21), a creature that your hits killed gives your character its experience (the
   experience table of the game with the level of the creature, its type, and the level

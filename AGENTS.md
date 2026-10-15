@@ -181,7 +181,7 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | What the equipment and the effects give a character, the perks of a hit, the gem conversion | [Gear and perks](docs/systems/gear-and-perks.md) |
 | The use of a potion or a food, the effects on a character, the heart rune | [Consumables and the heart rune](docs/systems/consumables-and-heart-rune.md) |
 | The status effects of a player: the one owner, the stacks and ends, the values, the HUD icons, the name plate of an observer, the speed table | [Status effects](docs/systems/status-effects.md) |
-| The spell entities: the vortex of Gravity Well, its record, its delayed events, its cancel, the probe | [Spell entities](docs/systems/spells.md) |
+| The spell entities: the vortex of Gravity Well, the Pylon, the trap, the Beacon, their records, their delayed events, their ends, the probe | [Spell entities](docs/systems/spells.md) |
 | The pull and the push of a hit on a creature, the dash of a caster and its observers, the counter that the server starts | [Forced movement](docs/systems/forced-movement.md) |
 | The shot of a ranged or magic basic attack, its flight on the server, its hit on a creature or a wall, the hit near the muzzle | [Projectiles](docs/systems/projectiles.md) |
 | The level, the attributes, the weapon masteries, the ability bars, the trade skills | [Progression and skills](docs/systems/progression-and-skills.md) |

@@ -1281,7 +1281,10 @@ void RepSession::handle_attacks(const ClientInput& input) {
         if (step.weaponKey != 0) {
             m_world.combat().select_weapon(m_id, step.weaponKey);
         }
-        m_attack.step(step.sequence, step.attackPress, step.attackHold, step.attackRelease, now);
+        // The weapon in the hand at each step (code review of stage 3.3b-S3, finding F3): a press fits only a shot of its weapon.
+        const world::Entity* own = m_world.entity_of(m_id);
+        m_attack.step(step.sequence, step.attackPress, step.attackHold, step.attackRelease, now,
+                      own != nullptr ? world::Combat::weapon_key(*own) : std::string());
         m_projectileItems += step.projectileHits + step.shots;
         if (step.abilityKey != 0) {
             press_ability(input, step);
@@ -1349,8 +1352,9 @@ void RepSession::press_ability(const ClientInput& input, const InputStep& step) 
 }
 
 void RepSession::shoot(const InputStep& step, const InputShot& item, std::uint32_t ordinal) {
-    if (item.attack == gamedata::progression_id(world::kGravityWellAttack)) {
-        // The projectile of an ability of its character (Gravity Well, stage 3.3a): the abilities system.
+    if (m_world.abilities().takes_shot(m_id, item.attack)) {
+        // The projectile of an ability of its character (Gravity Well, stage 3.3a; the trap and the Beacon, stage 3.3b-S2b): the
+        // abilities system. The cast waits for a shot item with the attack of its projectile.
         world::AbilityShot shot;
         shot.input = step.sequence;
         shot.sequence = m_attack.sequence();

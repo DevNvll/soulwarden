@@ -119,6 +119,10 @@ void Behavior::moved_by_force(Entity& creature) {
 
 Entity* Behavior::fightable(EntityId id) {
     Entity* target = id != 0 ? m_world.find(id) : nullptr;
+    // A summon with health (stage 3.3b-S2b: the Pylon) is a target too, until its end chain.
+    if (target != nullptr && target->kind == EntityKind::spell) {
+        return target->spell.vitalsRow != nullptr && !target->spell.ending && target->vitals.health > 0.0F ? target : nullptr;
+    }
     if (target == nullptr || target->kind != EntityKind::player || target->life.dead || ignores(target->characterId)) {
         return nullptr;
     }
@@ -493,9 +497,10 @@ void Behavior::think(Entity& creature, float seconds) {
     Entity* target = fightable(mind.target);
     if (target == nullptr) {
         const Entity* gone = mind.target != 0 ? m_world.find(mind.target) : nullptr;
-        lose_target(creature, gone == nullptr          ? "the target left the world"
-                              : gone->life.dead        ? "the target is dead"
-                                                       : "the creatures ignore the target");
+        lose_target(creature, gone == nullptr                     ? "the target left the world"
+                              : gone->kind == EntityKind::spell   ? "the summon ends"
+                              : gone->life.dead                   ? "the target is dead"
+                                                                  : "the creatures ignore the target");
         return;
     }
     const gamedata::CreatureBehavior& values = *body.behavior;
@@ -1115,6 +1120,10 @@ void Behavior::contact(const PendingContact& pending) {
         return;
     }
     ++m_counts.contactsHit;
+    if (target->kind == EntityKind::spell) {
+        m_world.spells().creature_hit(*creature, data, *target); // A summon (stage 3.3b-S2b).
+        return;
+    }
     m_world.health().creature_hit(*creature, data, *target);
 }
 

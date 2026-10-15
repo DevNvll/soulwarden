@@ -68,7 +68,7 @@ bool AttackTrack::restarted(std::uint16_t input, WorldClock::time_point now) con
     return !newer(input) && now - m_lastStep >= combat_limits::kSequenceRestart;
 }
 
-void AttackTrack::step(std::uint16_t input, bool press, bool hold, bool release, WorldClock::time_point now) {
+void AttackTrack::step(std::uint16_t input, bool press, bool hold, bool release, WorldClock::time_point now, std::string_view weapon) {
     if (m_hasInput && !newer(input)) {
         // The input numbers of the client started again: an attack input of the old sequence
         // fits no contact of the new one, and an input number of the old sequence cannot be
@@ -95,6 +95,7 @@ void AttackTrack::step(std::uint16_t input, bool press, bool hold, bool release,
         attack.number = ++m_presses;
         attack.input = input;
         attack.started = now;
+        attack.weapon = std::string(weapon);
         m_current = attack;
     } else if (m_current && m_current->on) {
         // The attack input is on from the step after its start to its release.
@@ -108,8 +109,24 @@ void AttackTrack::step(std::uint16_t input, bool press, bool hold, bool release,
     if (release && m_current && !m_current->released) {
         m_current->released = true;
         m_current->releaseInput = input;
+        m_current->releasedAt = now;
+    }
+    // A different weapon in the hand after the press (code review of stage 3.3b-S3, finding F3): the press fits no shot. The
+    // change counts also after a change back: the client starts a new attack input for the new weapon.
+    for (std::optional<Press>* attack : {&m_current, &m_previous}) {
+        if (*attack && !weapon.empty() && (*attack)->weapon != weapon) {
+            (*attack)->weaponChanged = true;
+        }
     }
     m_pressed = press;
+}
+
+void AttackTrack::mark_shot(std::uint32_t number) {
+    for (std::optional<Press>* attack : {&m_current, &m_previous}) {
+        if (*attack && (*attack)->number == number) {
+            (*attack)->shot = true;
+        }
+    }
 }
 
 const AttackTrack::Press* AttackTrack::press_at(std::uint16_t input) const {
@@ -203,6 +220,12 @@ std::optional<std::uint32_t> Combat::weapon_slot_in_hand(const Entity& attacker)
         return attacker.combat.selectedWeapon;
     }
     return equipment.active_weapon();
+}
+
+std::string Combat::weapon_key(const Entity& attacker) {
+    const std::optional<std::uint32_t> slot = weapon_slot_in_hand(attacker);
+    const ItemInstance* item = slot ? attacker.equipment.item(*slot) : nullptr;
+    return item != nullptr ? std::to_string(*slot) + "/" + instance_text(item->instance) : std::string();
 }
 
 const ItemInstance* Combat::weapon_in_hand(const Entity& attacker) {
@@ -363,6 +386,13 @@ CreatureDamage Combat::creature_damage(const Entity& creature,
                                 - static_cast<std::int64_t>(std::max<std::uint32_t>(target.progression.level, 1));
         damage.levelFactor = 1.0F + m_tables->level_damage(difference);
         damage.armor = armor_of(target, contact.category);
+        // A summon (stage 3.3b-S2b: the Pylon): the armor of its base vitals row (PhysicalArmorRatingOverride,
+        // ElementalArmorRatingOverride; game data) and the level of its caster (Spells::make).
+        if (target.kind == EntityKind::spell && target.spell.vitalsRow != nullptr) {
+            damage.armor = contact.category == gamedata::DamageCategory::physical    ? target.spell.vitalsRow->physicalArmor
+                           : contact.category == gamedata::DamageCategory::elemental ? target.spell.vitalsRow->elementalArmor
+                                                                                     : 0.0F;
+        }
         // The armor parts of the perks and of the effects of the character (stage 1.3b: a dust, the status of a rune).
         const float part = contact.category == gamedata::DamageCategory::physical    ? target.gear.physicalArmor
                            : contact.category == gamedata::DamageCategory::elemental ? target.gear.elementalArmor
@@ -558,7 +588,7 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     const EntityId targetId = target.id;
     const state::WorldPosition attackerPlace = attacker.position;
     const state::WorldPosition from = source != nullptr ? *source : attackerPlace;
-    result = apply_hit(attacker, target, result.damage, itemId, row.id, what);
+    result = apply_hit(attacker, target, result.damage, itemId, row.id, what, use.threat);
     if (result.verdict != HitVerdict::accepted) {
         return result;
     }
@@ -609,14 +639,14 @@ HitResult Combat::strike_amount(Entity& attacker, Entity& target, float amount, 
 }
 
 HitResult Combat::apply_hit(Entity& attacker, Entity& target, const Damage& damage, const std::string& itemId, const std::string& row,
-                            const char* what) {
+                            const char* what, EntityId threat) {
     HitResult result;
     result.verdict = HitVerdict::dead;
     result.damage = damage;
     result.healthBefore = target.vitals.health;
     const EntityId targetId = target.id;
     const ActorId targetActor = target.actor;
-    const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt, attacker.id);
+    const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt, attacker.id, threat);
     if (hurt.error != CreatureError::none || hurt.entity == nullptr) {
         if (hurt.error == CreatureError::immune) {
             result.verdict = HitVerdict::immune;

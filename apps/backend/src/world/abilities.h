@@ -17,6 +17,8 @@
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/position_report.h"
+#include "world/projectiles.h"
+#include "world/spells.h"
 #include "world/world_clock.h"
 
 // The abilities of a player (stage 3.3a, protocol notes 4.22): the keys of the ability bar (Q, R,
@@ -137,6 +139,10 @@ enum class AbilityKind : std::uint8_t {
     pathOfDestiny,
     /** The counter of the rapier (stage 3.3b-S4): the window, and the counter action that the server starts. */
     riposte,
+    /** Stage 3.3b-S2b: Ice Pylon of the ice gauntlet (a summon), Traps of the musket (a trap), Beacon of the life staff (an aura). */
+    icePylon,
+    traps,
+    beacon,
 };
 
 /** @return The English name of an ability, for a log line ("Wrecking Ball"). */
@@ -277,6 +283,30 @@ struct CasterMotion {
     std::vector<MotionAction> actions;
 };
 
+/**
+ * The spell entity of a cast (stage 3.3b-S2b, world/spells.h): a summon that the server makes at its time (the Pylon), or a
+ * projectile of a spell whose landing makes the entity (the trap, the Beacon). The values come from the game data.
+ */
+struct SpellPlan {
+    SpellRole role{SpellRole::area};
+    /** The projectile spell (the trap: Musket_Trap_Toss; the Beacon: Spell_Ability_Lifestaff_Beacon_Projectile). Empty: a summon. */
+    std::string projectile;
+    /** The spell of the entity (the Pylon: IceMagic_Spell_Pylon; the trap: Musket_Trap_Set; the Beacon: the SecondarySpellID of its projectile). */
+    std::string spell;
+    /**
+     * The time from the press: the spawn of a summon (the Pylon: the cast at 0.6 s of its fragment, game data), or the throw of
+     * the server when no shot item of the client came (a character with no client; live checks of stage 3.3b-S2b: the shot item
+     * of the trap 8 input steps after the press, of the Beacon 4 steps).
+     */
+    std::chrono::milliseconds at{0};
+    /** A trap: the status rows of its hit (the StatusEffect of the damage row of its offense). */
+    std::vector<std::string> effects;
+    /** A summon: the cost id that the spawn pays (the Pylon: the ManaCost of IceMagic_Spell_Pylon_UI). Empty: none. */
+    std::string payment;
+    /** True: the projectile also hits a character (TargetTypes All of the projectile spell of the Beacon). */
+    bool characters{false};
+};
+
 /** The plan of a cast: the phases for the nodes of the character. */
 struct CastPlan {
     AbilityKind kind{AbilityKind::charge};
@@ -290,6 +320,8 @@ struct CastPlan {
      * counter (Rapier_Riposte_Timer: 1 s, its absorption takes the countered hit). Empty: the cast has no counter.
      */
     std::string window;
+    /** The spell entity of the cast (stage 3.3b-S2b). No value: none (or the vortex of Gravity Well, which its phases make). */
+    std::optional<SpellPlan> spell;
 };
 
 /** A phase of a cast that a contact of a client fits (Combat::claim). */
@@ -357,6 +389,12 @@ public:
     void spell_ended(std::uint64_t cast, EntityId spell);
     /** A session gives a shot of its client: the projectile of a cast of its character. */
     void shot(SessionId session, const AbilityShot& shot);
+    /**
+     * @return True when the cast of the character of a session waits for a shot item with this attack (the CRC-32 of the lower-case
+     *         ranged attack name): Gravity Well ("gravitywell"), the trap ("traps"), the Beacon ("heavy"; stage 3.3b-S2b). The
+     *         session then gives the item to `shot`, not to the projectile system of the basic attacks.
+     */
+    [[nodiscard]] bool takes_shot(SessionId session, std::uint32_t attack) const;
 
     /**
      * @return The contact phase of the cast of a character that a contact of this input number
@@ -524,6 +562,20 @@ private:
     CastVerdict press_entity(Entity& character, SessionId session, const AbilityPress& press);
     /** Gravity Well: the projectile of a cast lands. */
     void throw_projectile(Cast& cast, const state::WorldPosition& origin, const std::array<float, 3>& direction);
+    /** The trap, the Beacon (stage 3.3b-S2b): the projectile of the spell of a cast flies (Projectiles::launch_spell). */
+    void throw_spell(Cast& cast, const state::WorldPosition& origin, const std::array<float, 3>& direction);
+    /** The projectile of the spell of a cast landed: the spell entity (the trap on the ground, the Beacon on the entity that it hit). */
+    void spell_landed(std::uint64_t cast, const SpellLanding& landing);
+    /** A summon (the Pylon): its spawn at the time of the plan, with its payment. */
+    void spawn_summon(std::uint64_t cast);
+    /** @return The weapon of a cast for a hit (its item, its slot, its row, its gear score, the ability). */
+    [[nodiscard]] HitWeapon weapon_of(const Cast& cast) const;
+    /**
+     * The held cooldown of an ability ends (stage 3.3b-S2b, the Pylon). `countdown` true: the summon ended, and the cooldown of
+     * the data starts now. False: the spawn failed (no summon, no payment), and the ability is ready at once (research
+     * abilities-magic.md: a failed placement starts no summon and no fixed countdown).
+     */
+    void end_held_cooldown(const std::string& characterId, std::uint32_t ability, bool countdown);
     /**
      * One hit of an area phase, with its damage and its effects. @param center The center of the area: the source of the
      * impact of the hit (stage 3.3b-S4). @return True when the creature took the hit.

@@ -579,6 +579,21 @@ public:
     Entity& make_spell(const SpellBody& body, const state::WorldPosition& position);
     /** Removes the entity of a spell: each session that observes it sends the stop. Only the spell system calls it. */
     void remove_spell(EntityId id);
+    /**
+     * Moves the entity of a spell (stage 3.3b-S2b: an aura that follows its attachment): the position index and the interest of the
+     * sessions follow it. Only the spell system calls it. No effect for a different entity or a position that is not of the world.
+     */
+    void place_spell(Entity& entity, const state::WorldPosition& position);
+    /**
+     * @return True when two characters are friends for a friendly effect (stage 3.3b-S2b: the Beacon): the same character (a group
+     *         of one: the backend has no group; a decision for the user), or a pair of a test fixture (set_test_friends).
+     */
+    [[nodiscard]] bool friendly(const Entity& a, const Entity& b) const;
+    /**
+     * Test fixture (no route, no command): the two characters are friends (the friend relation of a two-session test of a friendly
+     * effect, before a group system exists).
+     */
+    void set_test_friends(const std::string& characterA, const std::string& characterB);
     /** @return The world revision of the last new spell entity: a session compares its interest distances at once. */
     [[nodiscard]] Revision last_spell() const {
         return m_lastSpell;
@@ -775,6 +790,8 @@ private:
     Statuses m_statuses;
     /** The spell entities (stage 3.3b-S2a). */
     Spells m_spells;
+    /** The friend pairs of a test fixture (set_test_friends), each pair in both sequences. */
+    std::set<std::pair<std::string, std::string>> m_testFriends;
     Projectiles m_projectiles;
     Revision m_lastSpell{0};
 };

@@ -190,7 +190,7 @@ below is the layout after the port.
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
-| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3 done | |
+| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
@@ -244,16 +244,19 @@ stage with a letter is a part of the system with that number.
 | 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | done |
 | 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | done |
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
-| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts. Part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte), and part S3 (the projectiles of the basic attacks of the bow and the fire staff, and the check of a ranged hit) are done; the parts S2b, S5, S6 (the other spell entities, critical hits, the heals of an ability) and the parts of the weapons come next | 1.3b | S1, S2a, S4, S3 done |
-| 12 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
-| 13 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
-| 14 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
-| 15 | 3.6 | Gathering and fishing (research file `gathering-stage.md`) | 2.5 | research |
-| 16 | 3.7 | Crafting, refining, repair, salvage (research file `crafting-stage.md`) | 3.6 | research |
-| 17 | 5.1 | Shops (research file `shops-stage.md`) | 2.5 | research |
-| 18 | 5.6 | Cosmetics and transmog (research file `cosmetics-stage.md`) | 5.1 | research |
-| 19 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" (research file `quest-engine.md`) | 5.6 | research |
-| 20 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
+| 11 | 3.3b | Abilities, the shared parts (research file `abilities-shared.md`): part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte), part S3 (the projectiles of the basic attacks of the bow and the fire staff, and the check of a ranged hit), and part S2b (the spell entities of three kinds: the Pylon of the ice gauntlet, the trap of the musket, the Beacon of the life staff) | 1.3b | S1, S2a, S4, S3, S2b done |
+| 12 | 1.1b | The DLC for each player: each account and each character owns the expansion (Rise of the Angry Earth) and the DLC packs of the client data, with no purchase and no setting: the limits of the expansion (level, gear score, trade skills), the flail tree, the content of the expansion (research file `dlc-entitlements.md`) | 3.3b | research |
+| 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | open |
+| 14 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
+| 15 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
+| 16 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
+| 17 | 3.6 | Gathering and fishing (research file `gathering-stage.md`) | 2.5 | research |
+| 18 | 3.7 | Crafting, refining, repair, salvage (research file `crafting-stage.md`) | 3.6 | research |
+| 19 | 5.1 | Shops (research file `shops-stage.md`) | 2.5 | research |
+| 20 | 5.6 | Cosmetics and transmog (research file `cosmetics-stage.md`) | 5.1 | research |
+| 21 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" (research file `quest-engine.md`) | 5.6 | research |
+| 22 | 3.3c | Abilities of the other weapons: the sword and shield, the rapier, the hatchet, the spear, the greatsword, the flail (melee parts M4 to M9b), the bow, the musket, the blunderbuss (ranged parts R1 to R7), the fire staff, the life staff, the ice gauntlet, the void gauntlet (magic runs M1 to M9); the dagger is not in it: the client cannot use its abilities (research files `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`) | 1.8 | research |
+| 23 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 3.3c | open |
 
 Decisions of the user (2026-10-14): the abilities come directly after loot and experience
 ("prioritize the abilities", "after loot and experience"), and itemization after the
@@ -268,6 +271,8 @@ this order: the chests and the loot on the ground (3.5b) come directly after 2.5
 they need it; the quest engine (1.8) comes after 5.6, because the user gave it no place
 and it uses the events of the systems before it. A research thread for each stage of the
 rows 11 to 19 started on 2026-10-15.
+
+Decisions of the user (2026-10-15, later): "i want the full game with dlc. for any player, auto unlock the dlc" (row 12), and "use your best judgement for the rest". Decisions of the orchestrator from that: the build of the user first (rows 11 and 13), then the interaction base and the rest of the order, and the other weapons after the quest engine (row 22); the critical hits and the heals of an ability use approximations from the inputs of the game data, because the formulas were only in the original server (research file `crit-heal-formulas.md`): an independent roll for each hit with the chance of the data, one additive pool of critical bonuses on the multiplier of the weapon, and a heal base that scales with Focus as damage scales with its attribute; each one is a project rule in the document of its system. The user also said: "when done with abilities stuff, pause the implementation": the implementation pauses after row 13, until the user says to continue.
 
 After stage 1.9, the sequence is the sequence of the summary table, with these changes:
 the other parts of the systems 3.1 to 3.7 come before milestone 4, and milestone 6 comes
@@ -1174,6 +1179,39 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   the blunderbuss (2719, 2570), headshots and the fall of the damage with the distance (S5). Not in this stage: the
   abilities of the ranged and magic weapons (their own parts), the critical hits (S5), the heals (S6), the attached and
   persistent spells (S2b).
+- Stage 3.3b-S2b, the spell entities of three kinds (done, protocol notes 4.28, document `docs/systems/spells.md`;
+  evidence `~/Games/soulwarden/work/evidence/abilities-spells2/implement/`). The live checks came first (run `s2b-l1` with
+  the probe entity): the trap slice has no Spell component and shows only with its PositionInTheWorld state (type 13);
+  field 6 of the Spell state (the attachment) makes the client move the Beacon with its target; the Vitals state of the
+  Pylon gives its name plate and its health bar; an event of the init whose target the server triggered, sent completed,
+  plays the death chain of the Pylon and the activation of the trap; the press of the Pylon gives no item, the trap and the
+  Beacon give a shot item 8 and 4 input steps after the press. The spell system has roles: a summon (the Pylon: the spawn
+  at 0.6 s 2 m in front of the caster, the payment of 15 mana at the spawn, an indefinite cooldown while it lives and the
+  cooldown of 10 s after it, the health of its vitals row, the shots of its AutoSpell each 2 s through the projectile path,
+  a creature that a shot hurts takes it as its target and bites it, the death chain at the health 0 and at 15 s), a trap
+  (the toss through the projectile path, the arm time 0.1 s, one trigger: one hit and the root on each creature in 1.1 m,
+  the end at the timeline or at 30.5 s), and an aura (the Beacon: the hit on a creature, the area on the entity that the
+  projectile hit, the statuses of its row on a friend in 3 m, off at the exit and at the end, the end at 10 s or at the
+  leave of its target or caster; the pulses of its status each 1 s with no heal). The spell data has the format 2 (the
+  values of the Vitals, AutoSpell, detection volume, offense, detection event, and timeline components; 1,703 spells,
+  1,058 slices), and the projectile data has the 33 projectile spells of the abilities. The stage also corrected the
+  eight findings of the review of stage 3.3b-S3 (cases RJ1 to RJ8; each case fails on the tree of stage 3.3b-S3): the
+  near hit on the line of the launch, one shot for each press, the weapon of the press, the ground after a creature on a
+  steep shot, the hold on the world clock, no hit through a wall by the tolerance, a projectile tool that keeps the old
+  file for a source that is not complete, and no number that is not a finite float. Test cases SB1 to SB10 (SB7: two
+  sessions; SB8: the load of 3,003 spells and a far crowd of 4,000 creatures, with a time limit), RJ1 to RJ8. Live: the
+  Pylon on a wolf (the shots each 2 s, the wolf bites the Pylon, the bar goes down, the end chain at 15 s), the trap on a
+  wolf (54 damage, the root of 3 s, the removal 0.508 s later) and a trap with no creature (the end at 30.5 s), the
+  Beacon on a second character that moves, on a wolf that runs, the statuses of the caster in it and their end, and the
+  Beacon of the second character seen by the first one. Open (decisions of the user): the friendly relation of two players
+  (a group of one now; a friend only in a fixture of the tests), the overload rule (a press with less mana than the cost
+  of the spawn is refused before the payment), the affiliation of a summon (the data applies none at the start; with no
+  TemporaryAffiliation state the own Pylon has a red bar, a made-up entry gives a blue bar in a live check; the values of
+  the original server are not known). Open: the heal amount of a pulse (S6), the message `Pylon_Spawn` (the HUD shows no
+  countdown while the Pylon lives, and the client plays the animation of a refused second press), the picture of a
+  projectile of the server for an observer, the Ownership state. Not in this stage:
+  the critical hits (S5), the heal base (S6), the groups, the interaction option of the trap (2.5), the Pylon spells of
+  the nodes, the other abilities of the weapons.
 
 ### 3.4 Creatures: spawn, behavior, navigation
 

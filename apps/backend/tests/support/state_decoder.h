@@ -46,6 +46,20 @@ struct Bundle {
 
 namespace detail {
 
+/** @return The size of a compressed rotation (0x87B250): a header byte whose bits 0x01, 0x02, 0x04 or 0x08, 0x10, 0x20 give x, y, z; a u16 for each other one. */
+inline int rotation_size(std::span<const std::uint8_t> rest) {
+    if (rest.empty()) {
+        return -1;
+    }
+    int size = 1;
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        if ((rest[0] & ((1U << axis) | (8U << axis))) == 0) {
+            size += 2;
+        }
+    }
+    return size;
+}
+
 /** @return The size of the value of one field, or -1 when the decoder does not know the field. */
 inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::span<const std::uint8_t> rest) {
     const auto text_size = [&](std::size_t offset) -> int {
@@ -226,19 +240,7 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         if (group != 0) {
             return -1;
         }
-        const auto rotation = [&]() -> int {
-            // Header byte (0x87B250): bits 0x01, 0x02, 0x04 or 0x08, 0x10, 0x20 give x, y, z; a u16 for each other one.
-            if (rest.empty()) {
-                return -1;
-            }
-            int size = 1;
-            for (unsigned axis = 0; axis < 3; ++axis) {
-                if ((rest[0] & ((1U << axis) | (8U << axis))) == 0) {
-                    size += 2;
-                }
-            }
-            return size;
-        };
+        const auto rotation = [&]() { return rotation_size(rest); };
         switch (field) {
         case 0:
         case 9:
@@ -262,6 +264,8 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
     }
     case 3139: // DelayedEvent (stage 3.3b-S2a): the remaining time (a half float) and the completed flag.
         return group == 0 && field == 0 ? 2 : group == 0 && field == 1 ? 1 : -1;
+    case 13: // PositionInTheWorld (stage 3.3b-S2b, the trap): the position (x, y, a u16 height) and the rotation.
+        return group == 0 && field == 0 ? 10 : group == 0 && field == 1 ? rotation_size(rest) : -1;
     default:
         return -1;
     }
@@ -283,6 +287,7 @@ inline unsigned group_count(std::uint32_t type) {
     case 5257:
     case 2912:
     case 3139:
+    case 13:
         return 1;
     case 4236:
         return 4;

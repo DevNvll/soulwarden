@@ -103,6 +103,12 @@ struct ShotRule {
     /** The ammunition slot of the clip (12 arrows, 13 cartridges; 0: no ammunition), and ConsumeAmmo of the clip. */
     std::uint32_t ammoSlot{0};
     bool consume{false};
+    /**
+     * A projectile spell of an ability (stage 3.3b-S2b: the shot of the Pylon, the Beacon, the trap of the musket; the 11th
+     * value of the file): only the abilities system launches it (Projectiles::launch_spell). A shot item of a basic attack
+     * does not fit it.
+     */
+    bool ability{false};
 };
 
 /** The data as plain values: the content of the file, and what a test sets. */
@@ -142,6 +148,8 @@ public:
     [[nodiscard]] const RangedAttack* attack(std::string_view profile, std::uint32_t attackId) const;
     /** @return The shots of a profile and an attack (the CRC-32 of the lower-case attack name). */
     [[nodiscard]] std::vector<const ShotRule*> shots(std::string_view profile, std::uint32_t attackId) const;
+    /** @return The projectile spell of an ability with this spell id (the compare ignores the case of A to Z), or null. */
+    [[nodiscard]] const ShotRule* ability_shot(std::string_view spellId) const;
     /** @return The ammunition row with the CRC-32 of its lower-case id (the shot item of the client), or null. */
     [[nodiscard]] const AmmoRow* ammo(std::uint32_t ammoId) const;
     /** @return A slice, or null for -1 or an index outside the list. */

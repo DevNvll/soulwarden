@@ -42,6 +42,14 @@ of that system.
   the harness reach the other X11 applications of the user (other games). The script prints a
   warning for the value `0`. It starts no game for a value that is not `0` or `1`, or when
   `gamescope` is not installed.
+- A development run makes no sound. Before each start, `tools/dev-run.sh` sets the master volume
+  (`m_masterVolume`) of each account to 0 in the settings files of the development prefix
+  (`pfx/drive_c/users/steamuser/AppData/Roaming/AGS/New World/savedata/usersettings_*.javsave`).
+  It does not change the prefix of the user, and it does not change the volume of a stream in the
+  sound server: the sound server keeps a volume by the application name, and the game of the user
+  has the same name ("New World"). `SOULWARDEN_DEV_SOUND=1` keeps the volumes. Trap: an account
+  that has no settings file yet (its first world entry) has the volume of the game until the next
+  start.
 - This is a development environment: data loss is not a problem. A test uses the fastest
   path to the state that it needs. The development data directory stays between runs:
   `tools/scenarios/play.sh RUN_LABEL` enters the world with a character that is there
@@ -219,6 +227,8 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   dark screen, and the character moves away by itself). Give a Z on the ground or above it, or
   a place that a run before used.
 - `'move X Y'` and `'click X Y'` do not turn the camera. Use `'look DX DY'`.
+- A `look` during a capture loop can give frames from two camera directions, one after the other (stage 3.3b-S2b, the
+  trap video). Turn the camera before the capture, take two pictures to see that the view is stable, then capture.
 - The camera does not turn by a constant angle for one large pointer movement: 900 units in
   one input event gave 69 to 120 degrees. Thus the harness sends a `look` in steps of 30
   units. The first `look` after the world entry can be 6 degrees short. Read the yaw with

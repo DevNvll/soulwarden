@@ -51,6 +51,7 @@ inline constexpr std::uint32_t kTypeStatusEffectsState = 4236;  // MB::StatusEff
 inline constexpr std::uint32_t kTypeStatMultiplierState = 1525; // MB::StatMultiplierTableReplicatedState
 inline constexpr std::uint32_t kTypeSpellState = 2912;          // MB::SpellComponentReplicatedState
 inline constexpr std::uint32_t kTypeDelayedEventState = 3139;   // MB::DelayedEventComponentReplicatedState
+inline constexpr std::uint32_t kTypePositionInTheWorldState = 13; // MB::PositionInTheWorldReplicatedState (stage 3.3b-S2b)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -259,6 +260,16 @@ struct StateCodec {
  *         of its slice, with the time that is left at the time of the record (`request.clock`) and the completed mark.
  */
 [[nodiscard]] std::vector<SlotState> encode_delayed_event_states(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The PositionInTheWorld state of a spell entity whose slice has no Spell component (states/spell_state.cpp, type 13; stage
+ *         3.3b-S2b: the trap of the musket): its place and the identity rotation.
+ */
+[[nodiscard]] hub::Bytes encode_spell_place_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The vitals state of a summon or a trap (states/spell_state.cpp, stage 3.3b-S2b): the first state with the maximum and the
+ *         vitals id of its row, a later one with the health and the dead mark.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_spell_vitals_parts(const world::Entity& entity, View view, const PartsRequest& request);
 /** @return The coin of the character for the owner. No byte for the observer view. */
 [[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The mana state of a character (states/mana_state.cpp): owner only. */

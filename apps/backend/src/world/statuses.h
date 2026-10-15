@@ -125,6 +125,12 @@ struct StatusCounts {
     std::array<std::uint64_t, kStatusEndCount> ended{};
     std::uint64_t ticks{0};
     std::uint64_t heals{0};
+    /**
+     * The ticks of a heal that is a part of the damage of the source (HealthModifierDamageBased, the pulses of the Beacon of
+     * the life staff; stage 3.3b-S2b): the tick comes at the TickRate of the row, and it gives no health. The heal base is
+     * stage 3.3b-S6.
+     */
+    std::uint64_t pulsesWithNoHeal{0};
     /** The entries of the due list that the tick took (each one an end or a tick that was due, or an old entry). */
     std::uint64_t dueTaken{0};
     /** The spells of a status that the backend does not have (CastSpell of a row with no rule here). */

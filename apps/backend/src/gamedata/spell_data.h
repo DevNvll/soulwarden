@@ -8,7 +8,8 @@
 #include <unordered_map>
 #include <vector>
 
-// The spell entity data (stage 3.3b-S2a, protocol notes 4.25): for each spell row of the game with a prefab slice, what the
+// The spell entity data (stage 3.3b-S2a, protocol notes 4.25; format 2: stage 3.3b-S2b, the Pylon, the trap, the Beacon): for each
+// spell row of the game with a prefab slice, what the
 // backend needs to make the spell as an entity of the world and to send its record: the slice (the asset id and the sub
 // id), the slot of each replicated component (the Spell state, type 2912; each DelayedEvent, type 3139), the interest
 // radius of the slice, and its delayed events (the slot, the delay, the event type, the target entity, the damage row of a
@@ -50,6 +51,79 @@ struct SpellEvent {
     std::string offense;
     /** True: the target has a DestroyGDEComponent (the end of the spell). */
     bool destroys{false};
+    /**
+     * Format 2 (stage 3.3b-S2b): the entity of the DelayedEventComponent, m_startDelayOnInit, and m_startDelayOnTrigger. An
+     * event with no start at the init runs only after its owner is triggered (the death chain of the Pylon: the events of
+     * the entity DestroyTrigger). A file of format 1 has the init start for each event.
+     */
+    std::string owner;
+    bool onInit{true};
+    bool onTrigger{false};
+};
+
+/** The Vitals component of a spell slice (format 2): its slot, its row of the base vitals tables, and the target of its death event. */
+struct SpellVitals {
+    std::uint32_t slot{0};
+    /** m_rowReference ("IceMagicPylon"). */
+    std::string row;
+    /** The entity that m_onDeathEvent triggers ("DestroyTrigger"). Empty: none. */
+    std::string deathTarget;
+};
+
+/** The AutoSpellComponent of a spell slice (format 2): the shots of a summon (the Pylon). */
+struct SpellAutoCast {
+    /** m_spellName: the spell of each shot ("IceMagic_Pylon_Projectile"). */
+    std::string spell;
+    /** m_lifetime and m_lifetimeOnHit (seconds). */
+    float lifetime{0.0F};
+    float lifetimeOnHit{0.0F};
+    /** m_initialCastDelay and m_cooldown of m_defaultRateOfFire (seconds). */
+    float initialDelay{0.0F};
+    float cooldown{0.0F};
+    /** The entities that m_lifetimeExpireEvent and m_castEvent trigger ("DestroyTrigger", "FireTrigger"). */
+    std::string expireTarget;
+    std::string castTarget;
+    /** m_excludeTargetNWTags. */
+    std::vector<std::string> exclude;
+};
+
+/** One DetectionVolumeComponent of a spell slice (format 2). */
+struct SpellVolume {
+    std::string entity;
+    /** The radius of its sphere (meters; 0: a different shape). */
+    float radius{0.0F};
+    /** The time from the start at which the volume is active (seconds; the activation of an entity that is not active at the start). -1: never. */
+    float activeAfter{0.0F};
+};
+
+/** One MomentaryOffenseComponent of a spell slice (format 2): its entity, its damage row, and the radius of its sphere. */
+struct SpellOffense {
+    std::string entity;
+    std::string row;
+    float radius{0.0F};
+};
+
+/** One event of a DetectionVolumeEventComponent (format 2): the entity that a detection triggers, and the event type. */
+struct SpellDetectionEvent {
+    std::string target;
+    std::uint32_t type{0};
+};
+
+/** One TimelineEntry of a spell slice (format 2): its owner entity, and the time of the destroy in its timeline (-1: none). */
+struct SpellTimeline {
+    std::string owner;
+    float destroyAfter{-1.0F};
+};
+
+/** A row of the base vitals tables that a spell slice names (format 2). */
+struct SpellVitalsRow {
+    std::string id;
+    float healthBaseMax{0.0F};
+    /** HealthOverridePercentSpellOwnerMaxHealth: the health is this part of the maximum health of the caster (0: HealthBaseMax). */
+    float ownerHealthPart{0.0F};
+    float physicalArmor{0.0F};
+    float elementalArmor{0.0F};
+    float gearScore{0.0F};
 };
 
 /** One replicated component of a spell slice. */
@@ -77,17 +151,41 @@ struct SpellSlice {
     std::uint64_t root{0};
     /** m_sliceSpawnRadius of the slice (meters): a session observes the spell at this distance. */
     float interestRadius{0.0F};
-    /** The slot of the Spell state (type 2912). */
+    /** The slot of the Spell state (type 2912). 0: none (format 2: a slice with a PositionInTheWorld component, the trap). */
     std::uint32_t spellSlot{0};
+    /** The slot of the PositionInTheWorld state (type 13; format 2). 0: none. */
+    std::uint32_t positionSlot{0};
     std::vector<SpellSlot> slots;
     /** The delayed events, in the sequence of their slots. */
     std::vector<SpellEvent> events;
     std::vector<SpellComponent> components;
+    /** Format 2 (stage 3.3b-S2b): the values of the components that a spell entity of the backend uses. */
+    std::optional<SpellVitals> vitals;
+    std::optional<SpellAutoCast> autoCast;
+    std::vector<SpellVolume> volumes;
+    std::vector<SpellOffense> offenses;
+    std::vector<SpellDetectionEvent> detectionEvents;
+    std::vector<SpellTimeline> timelines;
 
-    /** @return The delay of the event whose target destroys the entity group (the end of the spell). No value: none. */
+    /**
+     * @return The delay of the event that starts at the init and whose target destroys the entity group (the end of the
+     *         spell). No value: none.
+     */
     [[nodiscard]] std::optional<float> end_delay() const;
     /** @return The delay of the activation of a target with the damage row `row` (the burst). No value: none. */
     [[nodiscard]] std::optional<float> activation_delay(std::string_view row) const;
+    /**
+     * @return The time from a trigger of the entity `owner` to the destroy of the entity group (format 2): the delay of an event of
+     *         the owner that starts at a trigger and whose target destroys (the Pylon: DestroyTrigger, 1.3 s), else the destroy
+     *         time of the timeline of the owner (the trap: Trigger, 0.508 s). No value: none.
+     */
+    [[nodiscard]] std::optional<float> destroy_after_trigger(std::string_view owner) const;
+    /** @return The detection volume of an entity, or the largest one (an empty name). Null: none. */
+    [[nodiscard]] const SpellVolume* volume(std::string_view entity = {}) const;
+    /** @return The first offense of the slice, or null. */
+    [[nodiscard]] const SpellOffense* offense() const {
+        return offenses.empty() ? nullptr : &offenses.front();
+    }
 };
 
 /** The data as plain values: the content of the file, and what a test sets. */
@@ -95,6 +193,8 @@ struct SpellTables {
     std::vector<SpellSlice> slices;
     /** Each spell row with a slice: its id and the index of its slice. */
     std::vector<std::pair<std::string, std::size_t>> spells;
+    /** The rows of the base vitals tables that the slices name (format 2). */
+    std::vector<SpellVitalsRow> vitals;
 };
 
 class SpellData {
@@ -122,10 +222,13 @@ public:
     }
     /** @return The slice of a spell row (the compare ignores the case of the letters A to Z), or null. */
     [[nodiscard]] const SpellSlice* slice_of(std::string_view spellId) const;
+    /** @return A row of the base vitals tables (format 2; the compare ignores the case of A to Z), or null. */
+    [[nodiscard]] const SpellVitalsRow* vitals_row(std::string_view id) const;
 
 private:
     SpellTables m_tables;
     std::unordered_map<std::string, std::size_t> m_spells;
+    std::unordered_map<std::string, std::size_t> m_vitals;
     std::string m_error;
 };
 

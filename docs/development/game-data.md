@@ -143,7 +143,21 @@ backend. The tool of each system is also in the document of that system.
   slice with no Spell component and a spell with no slice file, with their counts, and it stops
   for a delay that is not a finite 32-bit float (F5: a delay of one byte gave 0, and the burst
   of the vortex then came at the start; `tools/gamedata/check_spell_tool.py` checks it with
-  made-up slice nodes, case RG5);
+  made-up slice nodes, case RG5); from stage 3.3b-S2b the file has the format 2: a slice with no
+  Spell component and with a PositionInTheWorld component (the trap) is in the file with its
+  position slot, each delayed event has its owner entity and its marks `m_startDelayOnInit` and
+  `m_startDelayOnTrigger`, and each slice has the values of its Vitals component (the slot, the
+  row of the base vitals tables, the target of its death event), its AutoSpell (the spell, the
+  life, the initial delay, the cooldown, the expire and cast targets), its detection volumes
+  (the radius of a sphere, the time of the activation of its entity), its momentary offenses
+  (the row, the radius), its detection events, and the destroy time of each timeline; the list
+  `vitals` has the rows of the base vitals tables that the slices name (HealthBaseMax,
+  HealthOverridePercentSpellOwnerMaxHealth, the armor overrides, the gear score); 1,703 spells,
+  1,058 slices, 50 vitals rows, 1.6 MB; the backend reads the formats 1 and 2 and refuses a
+  vitals slot that is not of type 15, a position slot that is not of type 13, a slice with
+  neither slot, and a time, a radius, or a destroy time that is not correct; with a file of
+  format 1 the Pylon, the trap, and the Beacon make no entity (test cases SB1, SB10;
+  `check_spell_tool.py` case trap-slice);
   [Spell entities](../systems/spells.md)), `projectile-data.json` (stage 3.3b-S3,
   `tools/gamedata/projectiles.sh`: the 323 attacks of the ranged attack profiles of
   `rangedattackdatabase.radb`, the flight values of 85 projectile slices, 105 ammunition rows, 261
@@ -155,7 +169,14 @@ backend. The tool of each system is also in the document of that system.
   does not have, a slice index outside its list, two attacks with one name in one profile; the tool
   stops for a number of the ranged attack data or of a slice that is not a finite 32-bit value, a
   column that it reads, and a ChargeValue that is not a number (`check_projectile_tool.py`, case
-  PJ11); [Projectiles](../systems/projectiles.md)), `travel-places.json` (the spirit shrines and the inns
+  PJ11); from stage 3.3b-S2b the file also has the 33 projectile spells of the abilities (the shot
+  of the Pylon, the toss of the trap, the projectile of the Beacon: the 11th value of a shot is
+  true; a basic shot never fits them), 91 shots and 108 slices, 72 KB; the tool stops (and keeps
+  the old file) when a SliceOverride of a clip or the prefab of a spell shot names no slice with a
+  projectile component, when a player weapon profile has no shot of its light or heavy row, when
+  the ammunition of an empty slot of a weapon whose shot takes the slice of its ammunition has no
+  slice, and when a file that it needs has no source (an animation database) (code review of
+  stage 3.3b-S3, finding F7, `check_projectile_tool.py`, case RJ7); [Projectiles](../systems/projectiles.md)), `travel-places.json` (the spirit shrines and the inns
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
@@ -179,14 +200,19 @@ tools/gamedata/combat.sh             # one time: combat tables for the backend (
 tools/gamedata/loot.sh               # one time: rewards of a kill for the backend (loot tables, experience and coin of each level, credit, gear score limits; 10 s)
 tools/gamedata/abilities.sh          # one time: ability data for the backend (cooldowns, status effects and spells with their cells, cost tables; 2 MB)
 tools/gamedata/perks.sh              # one time: perk data for the backend (perk list, affixes, buckets, item perk places, consumables, equip load, swaps; 6.5 MB)
-tools/gamedata/spells.sh             # one time: spell entity data for the backend (slices, slots, delayed events; 1.1 MB, 7 s); needs an Oodle source
-tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots; 65 KB, 10 s); needs an Oodle source
+tools/gamedata/spells.sh             # one time: spell entity data for the backend (slices, slots, delayed events, the values of format 2; 1.6 MB); needs an Oodle source
+tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots; 72 KB, 10 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
 ```
 
 ## Traps
+
+- Stage 3.3b-S2b changes `spell-data.json` (format 2) and `projectile-data.json` (the ability shots). The backend of this
+  stage reads the older files: with a spell file of format 1 the Pylon, the trap, and the Beacon make no entity (the
+  vortex works), and with an older projectile file the press of the trap and of the Beacon is refused and the Pylon does
+  not shoot. Write the two files again with `tools/gamedata/spells.sh` and `tools/gamedata/projectiles.sh`.
 
 - Stage 3.3b-S3 adds `projectile-data.json` and the member `capsule` of a slice of `creatures.json`. The backend of this
   stage reads the older creature file (each creature has the default capsule) and starts with no projectile file (each

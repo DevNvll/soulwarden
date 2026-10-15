@@ -38,6 +38,8 @@ std::vector<Case> motion_cases();
 std::vector<Case> review_spell_cases();
 std::vector<Case> review_motion_cases();
 std::vector<Case> projectile_cases();
+std::vector<Case> review_projectile_cases();
+std::vector<Case> spell_kind_cases();
 
 std::vector<Case> all_cases() {
     std::vector<Case> cases;
@@ -47,7 +49,7 @@ std::vector<Case> all_cases() {
                               world_spawn_cases(), fight_cases(), navigation_cases(), review_fight_cases(), review_path_cases(),
                               review_corrections_cases(), patrol_cases(), review_patrol_cases(), loot_cases(), ability_cases(), review_loot_cases(), review_scope_cases(), itemization_cases(),
                               review_itemization_cases(), status_cases(), review_status_cases(), spell_cases(), motion_cases(), review_spell_cases(),
-                              review_motion_cases(), projectile_cases()}) {
+                              review_motion_cases(), projectile_cases(), review_projectile_cases(), spell_kind_cases()}) {
         cases.insert(cases.end(), group.begin(), group.end());
     }
     return cases;

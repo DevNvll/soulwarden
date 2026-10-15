@@ -36,6 +36,12 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   bodies on one vertical line too). A kind with no attack that the data tool can use (859
   of the 3,848 kinds) takes no target and takes damage; it patrols or wanders with the roam
   data of its spawn point and of its slice, as each other creature (test case RP9).
+- A summon as a target (stage 3.3b-S2b, [Spell entities](spells.md)). A creature that a shot of a summon hurts takes the
+  summon as its target (the Pylon: `OverrideTargetForAiThreat` of its spell row; `Behavior::hurt_by` with the threat of the
+  hit), when it has no target. It walks to the summon and attacks it; a contact on the summon goes to the spell system
+  (`Spells::creature_hit`: the damage of the creature rule with the armor of the vitals row of the summon). A summon in its
+  end chain, with the health 0, or that left the world is not a target: the creature loses it ("the summon ends") and goes
+  back. A trap and an aura are not targets.
 - Patrol, wander, and the reset (stage 3.4e, protocol notes 4.14 and 4.17; project rules,
   each constant in `behavior_rules`). The routes of the spawn points and the wander values of
   the slices are game data (`creatures.json` of format 3: the member `routes`, value 11 of a

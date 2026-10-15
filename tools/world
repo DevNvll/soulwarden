@@ -159,6 +159,8 @@ not, as for the items):
                                                 the projectile (--yaw: the direction, degrees from north to the east)
   tools/world spells                            the spell entities of the world (stage 3.3b-S2a) with their age
   tools/world spells end CHARACTER              each spell entity of a character ends (each observer gets the stop)
+  tools/world spells hurt ENTITY AMOUNT         a summon or a trap (stage 3.3b-S2b: the Pylon) takes damage; the health 0
+                                                starts its death chain (ENTITY: the 16 hexadecimal digits of `spells`)
   tools/world shoot CHARACTER [--yaw DEGREES] [--pitch DEGREES] [--heavy]
                                                 a shot of the weapon in the hand of a character with no
                                                 client (a remote test character; stage 3.3b-S3): the rules,
@@ -516,11 +518,23 @@ def spells_text(spells: dict) -> str:
         head = "spells:"
     ended = ", ".join(f"{count} {cause}" for cause, count in spells["ended"].items() if count)
     lines = [f"{head} {len(spells['spells'])} in the world, {spells['made']} made, ended: {ended or 'none'}; {spells['phases']} phases ran, "
-             f"{spells['phasesCancelled']} cancelled, {spells['dueTaken']} due entries taken, {spells['largest']} at one time at most"]
+             f"{spells['phasesCancelled']} cancelled, {spells['dueTaken']} due entries taken, {spells['largest']} at one time at most; "
+             f"{spells.get('shots', 0)} shots of summons, {spells.get('summonHits', 0)} hits on summons, {spells.get('triggers', 0)} trap "
+             f"triggers ({spells.get('trapHits', 0)} hits), {spells.get('auraGiven', 0)} aura statuses given, {spells.get('auraTaken', 0)} "
+             f"taken back, {spells.get('looked', 0)} entities looked at"]
     for spell in spells["spells"]:
         x, y, z = spell["position"]
-        lines.append(f"  spell {spell['entity']}  {spell['spell']} of {spell['caster']}  age {spell['age']:.2f} s, {spell['left']:.2f} s left  "
-                     f"at {x:.2f} {y:.2f} {z:.2f}{'' if spell['record'] else '  (no record: no slice data)'}")
+        extra = ""
+        if "health" in spell:
+            extra += f"  health {spell['health'][0]:.1f} of {spell['health'][1]:.1f}"
+        if "attached" in spell:
+            extra += f"  attached to {spell['attached']}"
+        if "members" in spell:
+            extra += f"  friends in it: {', '.join(spell['members']) or 'none'}"
+        if spell.get("ending"):
+            extra += "  (its end chain runs)"
+        lines.append(f"  spell {spell['entity']}  {spell['spell']} ({spell.get('role', 'area')}) of {spell['caster']}  age {spell['age']:.2f} s, "
+                     f"{spell['left']:.2f} s left  at {x:.2f} {y:.2f} {z:.2f}{extra}{'' if spell['record'] else '  (no record: no slice data)'}")
     return "\n".join(lines)
 
 
@@ -875,6 +889,12 @@ def main() -> None:
         print(spells_text(document["load"]["spells"]))
     elif command == "spells" and len(arguments) == 3 and arguments[1] == "end":
         request(data_dir, "POST", f"/v1/dev/spells/end?character={character_id(data_dir, arguments[2])}")
+    elif command == "spells" and len(arguments) == 4 and arguments[1] == "hurt":
+        try:
+            amount = float(arguments[3])
+        except ValueError:
+            fail("give the damage as a number")
+        request(data_dir, "POST", f"/v1/dev/spells/hurt?entity={arguments[2]}&amount={amount}")
     elif command == "message" and len(arguments) == 4:
         try:
             type_index = int(arguments[2])
@@ -991,7 +1011,10 @@ def main() -> None:
         else:
             document = fetch(data_dir, f"/v1/dev/abilities?character={target}")
             for entry in document.get("cooldowns", []):
-                print(f"{entry['ability']:<40} {entry['seconds']:6.1f} s")
+                if entry.get("held"):
+                    print(f"{entry['ability']:<40} held while its summon lives (the cooldown of the data starts at its end)")
+                else:
+                    print(f"{entry['ability']:<40} {entry['seconds']:6.1f} s")
             if not document.get("cooldowns"):
                 print("no cooldown runs")
             print(abilities_text(document))

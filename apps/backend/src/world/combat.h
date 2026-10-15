@@ -284,6 +284,20 @@ public:
          */
         bool released{false};
         std::uint16_t releaseInput{0};
+        /** The time at which the session got the release step (the hold of a heavy shot on the world clock: finding F5 below). */
+        WorldClock::time_point releasedAt{};
+        /**
+         * The weapon in the hand at the press (Combat::weapon_key: its paperdoll slot and its instance), and true when a later step
+         * had a different weapon in the hand (code review of stage 3.3b-S3, finding F3): a shot of a different weapon, or of the same
+         * weapon after a change, does not fit the press.
+         */
+        std::string weapon;
+        bool weaponChanged{false};
+        /**
+         * True after a projectile of this press (code review of stage 3.3b-S3, finding F2): one press gives one projectile for as
+         * long as the track keeps the press, also after the ledger entry of the projectile (world/projectiles.h) ended.
+         */
+        bool shot{false};
     };
 
     /** @return True when this input number is newer than the last one of the track (or the track has none). */
@@ -301,7 +315,9 @@ public:
      * @param press The attack input came with this step (the pointer button went down).
      * @param hold The attack input stays on. @param release The attack input went off.
      */
-    void step(std::uint16_t input, bool press, bool hold, bool release, WorldClock::time_point now);
+    void step(std::uint16_t input, bool press, bool hold, bool release, WorldClock::time_point now, std::string_view weapon = {});
+    /** A projectile left for the press with this number (Projectiles::launch): the press fits no second shot. */
+    void mark_shot(std::uint32_t number);
 
     /**
      * @return The attack input that a contact of this input number can come from: the newest
@@ -405,6 +421,11 @@ struct HitWeapon {
     std::uint32_t gearScore{0};
     /** The id text of the ability of the cast ("Ability_WarHammer_WreckingBall"). Empty: an attack or a different hit. */
     std::string ability;
+    /**
+     * The entity that a creature that the hit hurts takes as its target (stage 3.3b-S2b: the Pylon, OverrideTargetForAiThreat of
+     * its spell row). 0: the attacker.
+     */
+    EntityId threat{0};
 };
 
 /**
@@ -476,6 +497,8 @@ public:
     [[nodiscard]] static const ItemInstance* weapon_in_hand(const Entity& attacker);
     /** @return The paperdoll slot of the weapon in the hand (weapon_in_hand), or no value. */
     [[nodiscard]] static std::optional<std::uint32_t> weapon_slot_in_hand(const Entity& attacker);
+    /** @return The key of the weapon in the hand: its paperdoll slot and its instance id. Empty: no weapon in the hand. */
+    [[nodiscard]] static std::string weapon_key(const Entity& attacker);
 
     /**
      * The damage rule (a rule of this project; protocol notes 4.15):
@@ -547,7 +570,7 @@ private:
     [[nodiscard]] float defense_factor(std::uint32_t type, const gamedata::DefenseRow* defense, float armor) const;
     /** Gives the damage of a hit to a creature through the creature system, with the log line and the damage number. */
     HitResult apply_hit(Entity& attacker, Entity& target, const Damage& damage, const std::string& itemId, const std::string& row,
-                        const char* what);
+                        const char* what, EntityId threat = 0);
 
     World& m_world;
     const gamedata::CombatTables* m_tables;

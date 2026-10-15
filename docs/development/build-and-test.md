@@ -67,6 +67,14 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   the check start with `ok`.
 - The motion fixture of the tests (`tests/support/motion_fixture.h`: the shop with impacts, the rapier, and the nodes of
   three weapons) is common to the cases of stage 3.3b-S4 (FM, CM, RC) and the review cases RM1 and RM2.
+- The projectile fixture (`tests/support/projectile_fixture.h`: the shop with a bow, a fire staff, made-up projectile
+  data, and the wolf with a capsule) is common to the cases PJ, RJ (the review of stage 3.3b-S3; RJ7 runs
+  `check_projectile_tool.py`), and SB (stage 3.3b-S2b: `tests/spell_kind_tests.cpp` adds the ice gauntlet, the musket, the
+  life staff, and the slices of the Pylon, the trap, and the Beacon).
+- In a test, a JSON initializer with a list of pairs (`{"spells", {{"Name", 0}}}`) is an object for `nlohmann::json`, not a
+  list of lists: write `json::array({json::array({"Name", 0})})`.
+- The state decoder of the tests (`tests/support/state_decoder.h`) must know each state type of a record: a type that it
+  does not know drops the whole record (stage 3.3b-S2b: the PositionInTheWorld state of the trap).
 - In a test, a loop over a member of a temporary (`for (x : test_progression().nodes)`) reads
   memory that is free: keep the object in a variable.
 - The backend is in the network namespace of the launcher: a request from the host does not

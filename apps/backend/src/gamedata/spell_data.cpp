@@ -13,8 +13,12 @@ namespace {
 
 using nlohmann::json;
 
+/** Format 1 (stage 3.3b-S2a) and format 2 (stage 3.3b-S2b: the values of the Pylon, the trap, and the Beacon). */
 constexpr std::uint64_t kFormat = 1;
+constexpr std::uint64_t kFormat2 = 2;
 constexpr std::uint32_t kSpellStateType = 2912;
+constexpr std::uint32_t kPositionStateType = 13;
+constexpr std::uint32_t kVitalsStateType = 15;
 constexpr std::uint32_t kDelayedEventStateType = 3139;
 /** One record has 255 fragments at most (the fragment count is one byte): the metadata, the Spell state, and the events. */
 constexpr std::size_t kMostEvents = 250;
@@ -84,7 +88,70 @@ bool asset_of(const json& value, std::array<std::uint8_t, 16>& asset) {
     return true;
 }
 
-bool read_slice(const json& entry, SpellSlice& slice) {
+bool texts_of(const json& value, std::vector<std::string>& out) {
+    if (!value.is_array()) {
+        return false;
+    }
+    for (const json& item : value) {
+        if (!text_of(item, out.emplace_back())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** The members of format 2 of a slice (stage 3.3b-S2b). */
+bool read_slice_values(const json& entry, SpellSlice& slice) {
+    if (!entry.contains("positionSlot") || !whole_of(entry["positionSlot"], slice.positionSlot) || !entry.contains("vitals")
+        || !entry.contains("autoSpell") || !entry.contains("volumes") || !entry["volumes"].is_array() || !entry.contains("offenses")
+        || !entry["offenses"].is_array() || !entry.contains("detectionEvents") || !entry["detectionEvents"].is_array()
+        || !entry.contains("timelines") || !entry["timelines"].is_array()) {
+        return false;
+    }
+    if (const json& row = entry["vitals"]; !row.is_null()) {
+        SpellVitals& vitals = slice.vitals.emplace();
+        if (!row.is_array() || row.size() != 3 || !whole_of(row[0], vitals.slot) || !text_of(row[1], vitals.row) || !text_of(row[2], vitals.deathTarget)) {
+            return false;
+        }
+    }
+    if (const json& row = entry["autoSpell"]; !row.is_null()) {
+        SpellAutoCast& cast = slice.autoCast.emplace();
+        if (!row.is_array() || row.size() != 8 || !text_of(row[0], cast.spell) || !number_of(row[1], cast.lifetime)
+            || !number_of(row[2], cast.lifetimeOnHit) || !number_of(row[3], cast.initialDelay) || !number_of(row[4], cast.cooldown)
+            || !text_of(row[5], cast.expireTarget) || !text_of(row[6], cast.castTarget) || !texts_of(row[7], cast.exclude)) {
+            return false;
+        }
+    }
+    for (const json& row : entry["volumes"]) {
+        SpellVolume& volume = slice.volumes.emplace_back();
+        if (!row.is_array() || row.size() != 3 || !text_of(row[0], volume.entity) || !number_of(row[1], volume.radius)
+            || !number_of(row[2], volume.activeAfter)) {
+            return false;
+        }
+    }
+    for (const json& row : entry["offenses"]) {
+        SpellOffense& offense = slice.offenses.emplace_back();
+        if (!row.is_array() || row.size() != 3 || !text_of(row[0], offense.entity) || !text_of(row[1], offense.row)
+            || !number_of(row[2], offense.radius)) {
+            return false;
+        }
+    }
+    for (const json& row : entry["detectionEvents"]) {
+        SpellDetectionEvent& event = slice.detectionEvents.emplace_back();
+        if (!row.is_array() || row.size() != 2 || !text_of(row[0], event.target) || !whole_of(row[1], event.type)) {
+            return false;
+        }
+    }
+    for (const json& row : entry["timelines"]) {
+        SpellTimeline& timeline = slice.timelines.emplace_back();
+        if (!row.is_array() || row.size() != 2 || !text_of(row[0], timeline.owner) || !number_of(row[1], timeline.destroyAfter)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool read_slice(const json& entry, SpellSlice& slice, bool format2) {
     if (!entry.is_object() || !entry.contains("path") || !text_of(entry["path"], slice.path) || !entry.contains("asset")
         || !asset_of(entry["asset"], slice.asset) || !entry.contains("sub") || !whole_of(entry["sub"], slice.subId)
         || !entry.contains("root") || !id_of(entry["root"], slice.root) || !entry.contains("interestRadius")
@@ -101,11 +168,19 @@ bool read_slice(const json& entry, SpellSlice& slice) {
     }
     for (const json& row : entry["events"]) {
         SpellEvent& event = slice.events.emplace_back();
-        if (!row.is_array() || row.size() != 6 || !whole_of(row[0], event.slot) || !number_of(row[1], event.delay)
+        const std::size_t size = format2 ? 9 : 6;
+        if (!row.is_array() || row.size() != size || !whole_of(row[0], event.slot) || !number_of(row[1], event.delay)
             || !whole_of(row[2], event.type) || !text_of(row[3], event.target) || !text_of(row[4], event.offense) || !row[5].is_boolean()) {
             return false;
         }
         event.destroys = row[5].get<bool>();
+        if (format2) {
+            if (!text_of(row[6], event.owner) || !row[7].is_boolean() || !row[8].is_boolean()) {
+                return false;
+            }
+            event.onInit = row[7].get<bool>();
+            event.onTrigger = row[8].get<bool>();
+        }
     }
     for (const json& row : entry["components"]) {
         SpellComponent& component = slice.components.emplace_back();
@@ -114,18 +189,52 @@ bool read_slice(const json& entry, SpellSlice& slice) {
             return false;
         }
     }
-    return true;
+    return !format2 || read_slice_values(entry, slice);
+}
+
+bool read_vitals_row(const json& row, SpellVitalsRow& vitals) {
+    return row.is_array() && row.size() == 6 && text_of(row[0], vitals.id) && number_of(row[1], vitals.healthBaseMax)
+           && number_of(row[2], vitals.ownerHealthPart) && number_of(row[3], vitals.physicalArmor) && number_of(row[4], vitals.elementalArmor)
+           && number_of(row[5], vitals.gearScore);
 }
 
 } // namespace
 
 std::optional<float> SpellSlice::end_delay() const {
     for (const SpellEvent& event : events) {
-        if (event.destroys && event.type == spell_event::kTrigger) {
+        // An event that starts at a trigger is the end of a trigger (the death chain of the Pylon), not of the life.
+        if (event.destroys && event.type == spell_event::kTrigger && event.onInit) {
             return event.delay;
         }
     }
     return std::nullopt;
+}
+
+std::optional<float> SpellSlice::destroy_after_trigger(std::string_view owner) const {
+    for (const SpellEvent& event : events) {
+        if (event.destroys && event.type == spell_event::kTrigger && event.onTrigger && lower_ascii(event.owner) == lower_ascii(owner)) {
+            return event.delay;
+        }
+    }
+    for (const SpellTimeline& timeline : timelines) {
+        if (timeline.destroyAfter >= 0.0F && lower_ascii(timeline.owner) == lower_ascii(owner)) {
+            return timeline.destroyAfter;
+        }
+    }
+    return std::nullopt;
+}
+
+const SpellVolume* SpellSlice::volume(std::string_view entity) const {
+    const SpellVolume* found = nullptr;
+    for (const SpellVolume& candidate : volumes) {
+        if (!entity.empty() ? lower_ascii(candidate.entity) == lower_ascii(entity) : (found == nullptr || candidate.radius > found->radius)) {
+            found = &candidate;
+            if (!entity.empty()) {
+                break;
+            }
+        }
+    }
+    return found;
 }
 
 std::optional<float> SpellSlice::activation_delay(std::string_view row) const {
@@ -140,6 +249,7 @@ std::optional<float> SpellSlice::activation_delay(std::string_view row) const {
 bool SpellData::load(const std::string& path) {
     m_tables = {};
     m_spells.clear();
+    m_vitals.clear();
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         m_error = "the file is not there";
@@ -147,17 +257,18 @@ bool SpellData::load(const std::string& path) {
     }
     const json document = json::parse(input, nullptr, false);
     if (!document.is_object() || !document.contains("format") || !document["format"].is_number_unsigned()
-        || document["format"].get<std::uint64_t>() != kFormat) {
-        m_error = "the file is not a JSON object of the format 1";
+        || (document["format"].get<std::uint64_t>() != kFormat && document["format"].get<std::uint64_t>() != kFormat2)) {
+        m_error = "the file is not a JSON object of the format 1 or 2";
         return false;
     }
+    const bool format2 = document["format"].get<std::uint64_t>() == kFormat2;
     if (!document.contains("slices") || !document["slices"].is_array() || !document.contains("spells") || !document["spells"].is_array()) {
         m_error = "the file does not have the lists slices and spells";
         return false;
     }
     SpellTables tables;
     for (const json& entry : document["slices"]) {
-        if (!read_slice(entry, tables.slices.emplace_back())) {
+        if (!read_slice(entry, tables.slices.emplace_back(), format2)) {
             m_error = "slice " + std::to_string(tables.slices.size() - 1) + " does not have the form of the tool";
             return false;
         }
@@ -170,6 +281,18 @@ bool SpellData::load(const std::string& path) {
             return false;
         }
         tables.spells.emplace_back(id, index);
+    }
+    if (format2) {
+        if (!document.contains("vitals") || !document["vitals"].is_array()) {
+            m_error = "the file of the format 2 has no list vitals";
+            return false;
+        }
+        for (const json& row : document["vitals"]) {
+            if (!read_vitals_row(row, tables.vitals.emplace_back())) {
+                m_error = "a vitals row does not have the form of the tool";
+                return false;
+            }
+        }
     }
     if (document.contains("counts")) {
         const json& counts = document["counts"];
@@ -187,6 +310,7 @@ bool SpellData::load(const std::string& path) {
 bool SpellData::set(SpellTables tables) {
     m_tables = {};
     m_spells.clear();
+    m_vitals.clear();
     std::string error;
     for (std::size_t index = 0; index < tables.slices.size() && error.empty(); ++index) {
         const SpellSlice& slice = tables.slices[index];
@@ -210,8 +334,35 @@ bool SpellData::set(SpellTables tables) {
             const auto found = std::find_if(slice.slots.begin(), slice.slots.end(), [&](const SpellSlot& slot) { return slot.slot == wanted; });
             return found == slice.slots.end() ? 0 : found->type;
         };
-        if (error.empty() && (slice.spellSlot == 0 || type_of(slice.spellSlot) != kSpellStateType)) {
-            error = name + " has no Spell slot of the type 2912";
+        // A Spell slot of the type 2912, or (format 2: the trap) a PositionInTheWorld slot of the type 13.
+        const bool spellSlot = slice.spellSlot != 0 && type_of(slice.spellSlot) == kSpellStateType;
+        const bool positionSlot = slice.positionSlot != 0 && type_of(slice.positionSlot) == kPositionStateType;
+        if (error.empty() && ((slice.spellSlot != 0 && !spellSlot) || (slice.positionSlot != 0 && !positionSlot) || (!spellSlot && !positionSlot))) {
+            error = name + " has no Spell slot of the type 2912 and no PositionInTheWorld slot of the type 13";
+        }
+        if (error.empty() && slice.vitals && (slice.vitals->slot == 0 || type_of(slice.vitals->slot) != kVitalsStateType)) {
+            error = name + " has a vitals row with no Vitals slot of the type 15";
+        }
+        const auto time = [](float value) { return std::isfinite(value) && value >= 0.0F; };
+        if (error.empty() && slice.autoCast
+            && (!time(slice.autoCast->lifetime) || !time(slice.autoCast->lifetimeOnHit) || !time(slice.autoCast->initialDelay)
+                || !time(slice.autoCast->cooldown) || slice.autoCast->spell.empty())) {
+            error = name + " has an AutoSpell with a time that is not a time or with no spell";
+        }
+        for (const SpellVolume& volume : slice.volumes) {
+            if (error.empty() && (!time(volume.radius) || !std::isfinite(volume.activeAfter))) {
+                error = name + " has a detection volume with a radius or a time that is not correct";
+            }
+        }
+        for (const SpellOffense& offense : slice.offenses) {
+            if (error.empty() && !time(offense.radius)) {
+                error = name + " has an offense with a radius that is not a distance";
+            }
+        }
+        for (const SpellTimeline& timeline : slice.timelines) {
+            if (error.empty() && !std::isfinite(timeline.destroyAfter)) {
+                error = name + " has a timeline with a destroy time that is not a number";
+            }
         }
         if (error.empty() && slice.events.size() > kMostEvents) {
             error = name + " has more delayed events than one record holds";
@@ -247,14 +398,31 @@ bool SpellData::set(SpellTables tables) {
             error = "two spells have the id " + id;
         }
     }
+    std::unordered_map<std::string, std::size_t> vitals;
+    for (std::size_t index = 0; index < tables.vitals.size() && error.empty(); ++index) {
+        const SpellVitalsRow& row = tables.vitals[index];
+        const auto value = [](float number) { return std::isfinite(number) && number >= 0.0F; };
+        if (row.id.empty() || !value(row.healthBaseMax) || !value(row.ownerHealthPart) || !value(row.physicalArmor)
+            || !value(row.elementalArmor) || !value(row.gearScore)) {
+            error = "the vitals row " + row.id + " has a value that is not correct";
+        } else if (!vitals.emplace(lower_ascii(row.id), index).second) {
+            error = "two vitals rows have the id " + row.id;
+        }
+    }
     if (!error.empty()) {
         m_error = error;
         return false;
     }
     m_tables = std::move(tables);
     m_spells = std::move(spells);
+    m_vitals = std::move(vitals);
     m_error.clear();
     return true;
+}
+
+const SpellVitalsRow* SpellData::vitals_row(std::string_view id) const {
+    const auto found = m_vitals.find(lower_ascii(id));
+    return found == m_vitals.end() ? nullptr : &m_tables.vitals[found->second];
 }
 
 const SpellSlice* SpellData::slice_of(std::string_view spellId) const {
