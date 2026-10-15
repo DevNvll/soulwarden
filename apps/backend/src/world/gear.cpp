@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <map>
 #include <set>
 
@@ -372,6 +373,24 @@ void Gear::refresh(Entity& character) {
     character.gear.regeneration = values.regeneration;
     character.gear.moveSpeed = status.moveSpeed;
     character.gear.sprintSpeed = status.sprintSpeed;
+    // The speed table of the character (stage 3.3b-S2a, S2a-I10): the client runs with these multipliers (live check of
+    // status-speed.md: the table of slot 43, not the status map, changes the run), in the limits of the data (StatMultiplierData:
+    // the client bounds them itself, getter 0x3FEA370). With no limits in the data: no bound.
+    const auto multiplier = [&](const char* id, float part) {
+        float value = 1.0F + part;
+        const gamedata::AbilityData* data = m_world.options().abilityData;
+        if (const gamedata::StatLimit* limit = data != nullptr ? data->stat_limit(id) : nullptr; limit != nullptr && limit->max > limit->min) {
+            value = std::clamp(value, limit->min, limit->max);
+        }
+        return std::max(value, 0.0F);
+    };
+    const float move = multiplier("MoveSpeedMod", status.moveSpeed);
+    const float sprint = multiplier("SprintSpeedMod", status.sprintSpeed);
+    if (move != character.moveMultiplier || sprint != character.sprintMultiplier) {
+        character.moveMultiplier = move;
+        character.sprintMultiplier = sprint;
+        m_world.touch(character.id, ComponentKey::statMultipliers);
+    }
     character.gear.equipLoad = values.equipLoad;
     character.gear.loadClass = static_cast<std::uint8_t>(values.load);
     if (bonusChanged) {
@@ -609,8 +628,25 @@ void Gear::on_hit(Entity& attacker, Entity& target, const HitContext& hit) {
 }
 
 void Gear::caster_effect(Entity& attacker, const gamedata::CellValues& row, const std::string& name, float potency) {
+    // SelfApplyStatusEffectDurations (code review of stage 3.3b-S1, finding F10): the time of each status of the list, in
+    // seconds: one number for each status (a list of the same sequence), or one number for all. No value or 0: the
+    // BaseDuration of the status row.
+    std::vector<float> durations;
+    if (const std::string_view text = row.text("SelfApplyStatusEffectDurations"); !text.empty()) {
+        for (const std::string_view part : parts_of(text)) {
+            char* end = nullptr;
+            const std::string digits(part);
+            const float value = std::strtof(digits.c_str(), &end);
+            durations.push_back(end == digits.c_str() + digits.size() && std::isfinite(value) ? value : 0.0F);
+        }
+    } else if (const float value = row.number("SelfApplyStatusEffectDurations"); value > 0.0F) {
+        durations.push_back(value);
+    }
+    std::size_t index = 0;
     for (const std::string_view status : parts_of(row.text("SelfApplyStatusEffect"))) {
         StatusApply how;
+        how.seconds = durations.empty() ? 0.0F : durations[std::min(index, durations.size() - 1)];
+        ++index;
         how.potency = potency;
         how.source = StatusSource{StatusSourceKind::ability, name, 0, attacker.id};
         const StatusVerdict verdict = m_world.statuses().apply(attacker, status, how);

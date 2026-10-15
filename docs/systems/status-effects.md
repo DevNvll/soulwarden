@@ -14,7 +14,8 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 | The status state of a player (slot 44, type 4236) and the wall clock pair of the Player state | Protocol notes 4.24, `server/rep/states/status_state.cpp` (`encode_player_status_state`), `states/player_state.cpp`, test cases ST6, ST7 |
 | The values of a status in the gear summary, the limits of the categories | `Statuses::values`, `Gear::refresh` ([Gear and perks](gear-and-perks.md)), test case ST4 |
 | A caster effect of a learned node or of a perk (SelfApplyStatusEffect) | `Gear::on_hit`, `Gear::caster_effect`, test case ST8 |
-| The speed of a status in the position check | `PositionTrack::judge` (`speedFactor`), `World::report_position`, test case ST9 |
+| The speed of a status: the speed table of the player (slot 43, type 1525), the position check | Protocol notes 4.24, `server/rep/states/stat_multiplier_state.cpp`, `Gear::refresh` (`Entity::moveMultiplier`, `sprintMultiplier`), `PositionTrack::set_client_speed`, `client_speed`, test cases SV1 to SV3, RS1, ST9 |
+| The corrections of the code review of stage 3.3b-S1 (F1 to F13) | `apps/backend/tests/review_status_tests.cpp`, test cases RS1 to RS13 |
 | The status categories and the caster effect rows of the game data | `tools/gamedata/abilities.sh` (format 3), `gamedata/ability_data.h` (`StatusCategory`, `AbilityRow`), test case ST1 |
 
 ## Rules
@@ -30,8 +31,9 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   0x4038E80). A new application of a row that the character has:
   - one more stack, to StackMax (a value below 1 is 1: client loader 0x44B65F5); a new status has InitialStackSize
     stacks (1 to 25);
-  - the end: RefreshDuration: now plus the duration; a DurationMax above the duration: the old end plus the duration,
-    not more than now plus DurationMax; else the later end of the two;
+  - the end: RefreshDuration: now plus the duration, but not before the old end (a shorter refresh keeps the later end:
+    code review of stage 3.3b-S1, finding F6, test case RS6); a DurationMax above the duration: the old end plus the
+    duration, not more than now plus DurationMax; else the later end of the two;
   - the larger potency stays; at StackMax with DontReplaceStack the application changes nothing.
   The meaning of RefreshDuration, DurationMax, and DontReplaceStack is a reading of the names of the columns of the
   game data (a decision of an agent): the add code of the server is not in the client (the static search found only
@@ -40,13 +42,22 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   DurationMax. A row with no duration is one application now: a heal (Health and HealthModifierPercent of the maximum
   health, times the potency and the heal factor of the equip load), a mana change (Mana, ManaModifierPercent), and its
   CastSpell. A status of the gear has no end.
-- ApplicationCooldown: one application of a row for each character in that time.
+- ApplicationCooldown: one application of a row for each character in that time. Only an application that changes the
+  character starts it: an application that DontReplaceStack refuses does not (finding F7, test case RS7).
+- A positive time of a status row (BaseDuration, TickRate, DurationMax, ApplicationCooldown) is 1 ms at least: the
+  loader refuses a file with a positive time below 1 ms, and the world counts each positive time as 1 ms at least. Thus
+  each due entry is later than the tick that makes it, and a tick of the world always returns (finding F9, test case
+  RS9).
+- Each OnEndStatusEffect and each CastSpell of a status row names a row of the data: the loader refuses a file with a
+  link that does not resolve, but for the one link of the game with no row (`AI_IceDragon_EmpoweringLink_Stack_Apply`
+  to `AI_IceDragon_EmpoweringLink_Stack`, `kMissingEndLinks`; finding F8, test case RS8).
 - A TickRate with Health, HealthModifierPercent, Mana, or ManaModifierPercent: a heal and a mana change at each tick
   (times the potency and the stacks); the first tick comes at the next tick of the world after the application
   (DelayInitialTick: one TickRate later). The ticks of a character that is not in the world wait for its next entry.
 - StopOnHitCount: the status ends at that hit that the character takes. RemoveOnDeath: it ends at the death of the
   character (the health system calls `Statuses::died`). A dead character takes no status (but a row with
-  AllowAddIfDead).
+  AllowAddIfDead). The gear refresh also gives a dead character no status of the gear whose row a dead character does
+  not take; the revival and the respawn give it again (finding F5, test case RS5).
 - The end: at its end on the world clock the status goes away, and its OnEndStatusEffect comes on the character. A
   removal before the end (a death, a newer status of the source, the leave of a rune activation, a command) gives the
   end status too, but not for a row with DontApplyOnEndEffectOnRemove.
@@ -64,7 +75,10 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 - The gear: each status that an affix of an equipped item keeps (StatusEffect of AffixStatData: a ward amulet, the
   regeneration of an earring) is a status with the source "gear", with no end and the potency of the perk. It is not on
   the wire (the client has the items). The gear refresh gives the list again; a status of an item that the character
-  took off ends (its source went away). The leave of the world ends them; the next entry gives them again.
+  took off ends (its source went away). The leave of the world ends them; the next entry gives them again. An
+  application of a different source (a command, a consumable) on a status of the gear keeps the source "gear": the
+  status ends with its item (finding F4, test case RS4). A status of a different source stays through a leave and comes
+  in the first record of the next entry (finding F2, test case RS2).
 - The caster effects (stage 3.3b-S1): a hit of a character (`Gear::on_hit`) evaluates the ability rows of the perks and
   of the learned nodes of the ability table of the weapon of the hit; a row with OnHit, a SelfApplyStatusEffect, and
   conditions that pass puts the status on the caster (source "ability"). The conditions are the conditions of a perk
@@ -72,7 +86,9 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   rule of this project: InSequenceTime is not read). The build: Safety Measures (a hit of Wrecking Ball: the fortify
   WarHammer_WreckingBall_Fortify), Greed (a light hit of the great axe: three stacks of its empower), Hammer Time (a heavy
   hit of the war hammer). A row with OnHitTaken (Power Through Pain) or a condition that the backend does not evaluate
-  (NumAroundMe: Crowded Protection) has no effect in this stage.
+  (NumAroundMe: Crowded Protection) has no effect in this stage. The time of a caster effect is the
+  SelfApplyStatusEffectDurations of its ability row (a number, or a list in the sequence of the statuses), else the
+  duration of the status row (finding F10, test case RS10).
 - The status state of a player (protocol notes 4.24). The owner gets the full map (group 1, field 0) with each status
   on the wire, an empty lightweight map, and an empty tray. An entry of the full map alone gives the HUD icon of a row
   with ShowInUITray, its countdown, its stack count (×2), its visual effect, and its values in the character sheet
@@ -81,9 +97,18 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   group 3; the compact map has the statuses with ShowInNameplates (the icon at the name plate). The end of an entry is a
   time of the synced wall clock of the client: the Player state of the owner has the wall clock pair from one sample
   (group 1, fields 6 and 7). A first record of a character with no status on the wire has no status fragment.
-- The speed: the client does not apply the MoveSpeedMod or the SprintSpeedMod of a status of the full map (live checks
-  L1 and s1-live2: a run of 2 s is 11.2 m with and with no haste of 0.4). The server applies the speed in its position
-  check: the window speed (8 m/s) times 1 plus the larger of the two speed parts of the character (`World::report_position`).
+- The speed (stage 3.3b-S2a, criterion S2a-I10; protocol notes 4.24). The client does not apply the speed values of the
+  status map (live checks L1 and s1-live2). It runs with the speed table of the player (slot 43, type 1525, owner only;
+  `server/rep/states/stat_multiplier_state.cpp`). The gear refresh computes `Entity::moveMultiplier` and
+  `sprintMultiplier`: 1 plus the MoveSpeedMod and the SprintSpeedMod part of the statuses, in the limits of
+  StatMultiplierData (0 to 1.5). The encoder sends the keys 0x34 (MoveSpeedMod) and 0x35 (SprintSpeedMod) with the
+  multipliers; both at 1 give the empty table, and a first record with both at 1 has no fragment. In the live walks the
+  key 0x35 changes the run and the sprint (for 1.4: the run x1.43, the sprint x1.31), and the key 0x34 has no effect. The
+  status rows of the game have their speed in SprintSpeedMod (the haste, the heart rune, the slow of the vortex).
+- The position check takes the multiplier that the client has: the window speed (8 m/s) times the larger multiplier of
+  the last speed table that the session sent (`PositionTrack::client_speed`), not less than 1; after a change the
+  multiplier before it counts for 1 s more (the client gets the table some time after the send). A haste that the client
+  did not get does not permit a faster run (code review of stage 3.3b-S1, finding F1, test cases RS1, SV2).
 - The statuses are not in the database: a restart of the backend ends them (a rule of this project from stage 1.3b,
   also for the cooldowns). The research lists the options for a later decision of the user (persist long statuses with
   wall ends, or not).
@@ -113,6 +138,15 @@ tools/world gear NAME                                # the gear values with the 
 - A tray entry that comes before the wall clock pair keeps a wrong time ("20737d"): the HUD computes the time of an
   entry when it applies it. The Player state (slot 9) is in the first record before the status state (slot 44).
 - A countdown at 0 does not remove an icon (the HUD shows "–"): the server sends the list again at the end.
+- `tools/hx` runs its calls one after the other: a key press in a second call during a hold of a first call comes
+  after the end of the hold. Put the key into the same call (`tools/hx 'keydown 0x57' 'wait 1000' 'key 0x47' 'wait 4000'
+  'keyup 0x57'`).
+- `tools/world status NAME STATUS` refuses a character that is not in the world. For a check of the first record,
+  apply the status before the leave: it stays through the leave.
+- The heart rune of the development character is Detonate with the status Rune_Detonate_Dominator (Haste+ArmorRend,
+  SprintSpeedMod 0.2, 3 s), not Rune_Detonate_Major.
+- A walk for a speed check needs a free street: a creature of an earlier test in the way stops the character (a walk of
+  6.9 m in place of 11 m).
 - In a live check with raw fragments (`tools/world fragment`), a full map entry of a heart rune status
   (Rune_Detonate_Major) did not go away after its omission (live check L2); in the real flow of the key G the icon goes
   away at its end (live run s1-live2). Do not test the rune with raw map entries.

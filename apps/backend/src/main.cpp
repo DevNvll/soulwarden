@@ -16,6 +16,7 @@
 #include "gamedata/appearance_tables.h"
 #include "gamedata/combat_tables.h"
 #include "gamedata/ability_data.h"
+#include "gamedata/spell_data.h"
 #include "gamedata/loot_tables.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
@@ -436,6 +437,20 @@ int main(int argc, char** argv) {
                    abilityDataPath.c_str(),
                    abilityData.error().c_str());
     }
+    // The spell entity data (stage 3.3b-S2a): the slices of the spells, for the record of a spell entity.
+    const std::string spellDataPath = (gameDataDirectory / gamedata::kSpellDataFile).string();
+    gamedata::SpellData spellData;
+    if (spellData.load(spellDataPath)) {
+        log::write("backend: spell data loaded from %s (%zu spells, %zu slices)",
+                   spellDataPath.c_str(),
+                   spellData.tables().spells.size(),
+                   spellData.tables().slices.size());
+    } else {
+        log::write("backend: no spell data at %s (%s): a spell (the vortex of Gravity Well) has its hits and no entity that a client "
+                   "sees. Make the file with tools/gamedata/spells.sh",
+                   spellDataPath.c_str(),
+                   spellData.error().c_str());
+    }
     // The perk data (stage 1.3b): the perks of an item instance and their effects.
     const std::string perkDataPath = (gameDataDirectory / gamedata::kPerkDataFile).string();
     gamedata::PerkData perkData;
@@ -484,6 +499,7 @@ int main(int argc, char** argv) {
     worldOptions.travelPlaces = &travelPlaces;
     worldOptions.lootTables = &lootTables;
     worldOptions.abilityData = &abilityData;
+    worldOptions.spellData = &spellData;
     worldOptions.perkData = &perkData;
     worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
     worldOptions.navigationData = &navigationData;

@@ -16,6 +16,14 @@ stage 1.3b.
   bucket-gap             a bucket with Perk1, an empty Perk2, and Perk3              status 0, one entry (F16)
   weight-gap             a bucket with two perks and an empty second weight          status 0, one entry (F16)
   weight-zero            a bucket with two perks and the weight 0 for the second     status 0, two entries (F16)
+  missing-RequiredLevel  a master item table has no column RequiredLevel             status 1, the file stays
+  consumable-no-item     a second consumable has no master item row                  status 0, no row for it, the count 1
+  missing-ABSSlash       the affix table has no column ABSSlash                      status 1, the file stays
+  affix-no-armor         the affix table has no PhysicalArmor (as in the game)       status 0
+
+The last four cases are the corrections of the findings F11 and F12 of the code review of stage 3.3b-S1: a missing
+column or a missing master row is not the level 0, and the damage type columns of an affix are required (the affix table
+of the game has no armor column).
 
 The values of the valid document: the format 2; the encumbrance values of the row Player; the affix and the ability
 of the perk; the two entries of the bucket with their weights; the level 55 of the consumable (RequiredLevel of its
@@ -42,7 +50,9 @@ MARK = "the file of an earlier run\n"
 # The value columns of the affix and the ability tables of the game (the same lists as the tool; written here, so that
 # the check runs also on a tool that does not have them).
 AFFIX_COLUMNS = ("MODStrength", "MODDexterity", "MODIntelligence", "MODFocus", "MODConstitution", "MaxHealthMod", "StatusEffect",
-                 "DamagePercentage", "DamageType")
+                 "DamagePercentage", "DamageType", "ABSSlash", "ABSThrust", "ABSStrike", "ABSFire", "ABSIce", "ABSNature",
+                 "ABSArcane", "ABSCorruption", "ABSLightning", "ABSStandard", "DMGSlash", "DMGThrust", "DMGStrike", "DMGFire",
+                 "DMGIce", "DMGNature", "DMGArcane", "DMGCorruption", "DMGLightning", "DMGStandard")
 ABILITY_COLUMNS = ("BaseDamage", "OnHit", "DmgPctToHealth", "CooldownTimer", "OtherApplyStatusEffect", "MaxHealth")
 
 
@@ -58,6 +68,10 @@ def sheets(case: str) -> dict:
     affix.update(StatusID="TestAffix", MODStrength=5)
     if case == "missing-StatusEffect":
         del affix["StatusEffect"]
+    if case == "missing-ABSSlash":
+        del affix["ABSSlash"]
+    if case == "affix-no-armor":
+        affix.pop("PhysicalArmor", None)
     result[tool.AFFIX_TYPE] = [FakeSheet("Affix", [affix])]
     if case == "conflicting-affix":
         result[tool.AFFIX_TYPE].append(FakeSheet("OtherAffix", [dict(affix, MODStrength=100)]))
@@ -84,10 +98,16 @@ def sheets(case: str) -> dict:
     item.update(ItemID="TestItem", ItemStatsRef="TestArmor", PerkBucket1="TestBucket", CanHavePerks=1, RequiredLevel=0)
     potion = dict.fromkeys(tool.ITEM_COLUMNS, "")
     potion.update(ItemID="TestPotion", RequiredLevel=55)
+    if case == "missing-RequiredLevel":
+        del item["RequiredLevel"]
+        del potion["RequiredLevel"]
     result[tool.ITEM_TYPE] = [FakeSheet("Items", [item, potion])]
     consume = dict.fromkeys(tool.CONSUMABLE_COLUMNS, "")
     consume.update(ConsumableID="TestPotion", CooldownId="Test", CooldownDuration=1)
-    result[tool.CONSUMABLE_TYPE] = [FakeSheet("Consumables", [consume])]
+    consumables = [consume]
+    if case == "consumable-no-item":
+        consumables.append(dict(consume, ConsumableID="TestFoodWithNoItem"))
+    result[tool.CONSUMABLE_TYPE] = [FakeSheet("Consumables", consumables)]
     encumbrance = dict(zip(tool.ENCUMBRANCE_COLUMNS.values(), [500, 26, 46, 100, 0.15, 0, -0.15, 1.3, 1, 0.7]))
     encumbrance["ContainerTypeID"] = "Player"
     if case == "missing-damageLight":
@@ -121,6 +141,13 @@ def valid_values(document: dict, case: str) -> list[str]:
             wrong.append(f"the bucket entries {entries} (the list ends at the first empty cell)")
     elif case == "weight-zero" and entries != [["PerkID_Test0", 1.0], ["PerkID_Test1", 0.0]]:
         wrong.append(f"the bucket entries {entries} (a weight 0 is an entry)")
+    elif case == "consumable-no-item":
+        if "testfoodwithnoitem" in document["consumables"] or document.get("consumablesWithNoItem") != 1 \
+                or document["consumables"]["testpotion"].get("level") != 55:
+            wrong.append(f"a consumable with no master item row: {sorted(document['consumables'])}, "
+                         f"count {document.get('consumablesWithNoItem')}")
+    elif case == "affix-no-armor" and document["affixes"] != {"TestAffix": {"MODStrength": 5.0}}:
+        wrong.append(f"the affix {document['affixes']}")
     return wrong
 
 
@@ -132,7 +159,8 @@ def main() -> int:
     work.mkdir(parents=True, exist_ok=True)
     failures = 0
     cases = ("valid", "missing-damageLight", "missing-BaseDamage", "missing-StatusEffect", "conflicting-affix",
-             "conflicting-ability", "bucket-gap", "weight-gap", "weight-zero")
+             "conflicting-ability", "bucket-gap", "weight-gap", "weight-zero", "missing-RequiredLevel", "consumable-no-item",
+             "missing-ABSSlash", "affix-no-armor")
     for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")
@@ -147,7 +175,7 @@ def main() -> int:
             except Exception as error:  # noqa: BLE001 - a crash of the tool is a failure of the case
                 status = f"exception {type(error).__name__}: {error}"
         text = target.read_text(encoding="utf-8")
-        if case in ("valid", "bucket-gap", "weight-gap", "weight-zero"):
+        if case in ("valid", "bucket-gap", "weight-gap", "weight-zero", "consumable-no-item", "affix-no-armor"):
             try:
                 wrong = valid_values(json.loads(text), case) if status == 0 and text != MARK else ["no document"]
             except (ValueError, KeyError, IndexError, TypeError) as error:

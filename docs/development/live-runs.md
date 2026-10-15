@@ -211,7 +211,13 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   state back. A pointer button on the window does: the harness sends one before a key when
   the state is lost (the left button has live proof, the extra button that the harness tries
   first has not). Read `foreground` before and after an input test.
-- The harness has one command file. Two `tools/hx` calls at the same time lose commands.
+- The harness has one command file. Two `tools/hx` calls at the same time lose commands, or
+  the second call runs after the end of the first one (stage 3.3b-S2a: the key G of a second
+  call during a hold of W of 5 s came after the hold). Put a key that must come during a hold
+  into the same call: `tools/hx 'keydown 0x57' 'wait 1000' 'key 0x47' 'wait 4000' 'keyup 0x57'`.
+- A travel to a position with a Z below the ground puts the character under the terrain (a
+  dark screen, and the character moves away by itself). Give a Z on the ground or above it, or
+  a place that a run before used.
 - `'move X Y'` and `'click X Y'` do not turn the camera. Use `'look DX DY'`.
 - The camera does not turn by a constant angle for one large pointer movement: 900 units in
   one input event gave 69 to 120 degrees. Thus the harness sends a `look` in steps of 30

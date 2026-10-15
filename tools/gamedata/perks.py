@@ -70,7 +70,7 @@ deprecated], ...],
 "buckets": {"<id>": [type, chance, [[entry, weight], ...], ignoreLabelWeights, disableBiasing], ...},
 "layouts": [[[slot1..slot5], [perk1..perk5], [bucket1..bucket5], forceRarity, canHavePerks], ...],
 "items": {"<item id in lower case>": layout, ...},
-"consumables": {"<id in lower case>": {...}, ...}, "encumbrance": {...}, "equipLoad": {"<item id in lower case>": load, ...},
+"consumables": {"<id in lower case>": {...}, ...}, "consumablesWithNoItem": N, "encumbrance": {...}, "equipLoad": {"<item id in lower case>": load, ...},
 "labels": {"<label>": [weight, {"<item class>": weight, ...}], ...}, "swaps": [[id, keyType, key, oldPerk, newPerk], ...],
 "runes": {"<weapon id of a heart rune in lower case>": [ability, ...], ...},
 "generation": {"minLevelRollPerks": N, "tiers": [[maxPerkChannel, [[perkCount, [[gsMin, gsMax], ...]], ...]], ...]}}.
@@ -142,8 +142,15 @@ ENCUMBRANCE_COLUMNS = {"equipLoadMax": "EquipLoadBaseMax", "ratioMedium": "Equip
                        "healMedium": "EquipLoadHealMultNormal", "healHeavy": "EquipLoadHealMultSlow"}
 # The value columns that the backend reads from an affix row and from an ability row (the gear system): each affix
 # table and each ability table must have them (finding F14 of the review of stage 1.3b: an absent column is not 0).
+# Code review of stage 3.3b-S1, finding F12: the damage type columns (DMG<type>, ABS<type>) that the gear values read are
+# required too. The affix table of the supported build has no PhysicalArmor, ElementalArmor, and BaseDamageReduction
+# column (AFFIX_COLUMNS_NOT_IN_GAME): an affix gives no armor; the backend reads 0 there for each affix.
 AFFIX_VALUE_COLUMNS = ("MODStrength", "MODDexterity", "MODIntelligence", "MODFocus", "MODConstitution", "MaxHealthMod",
-                       "StatusEffect", "DamagePercentage", "DamageType")
+                       "StatusEffect", "DamagePercentage", "DamageType", "ABSSlash", "ABSThrust", "ABSStrike", "ABSFire",
+                       "ABSIce", "ABSNature", "ABSArcane", "ABSCorruption", "ABSLightning", "ABSStandard", "DMGSlash",
+                       "DMGThrust", "DMGStrike", "DMGFire", "DMGIce", "DMGNature", "DMGArcane", "DMGCorruption",
+                       "DMGLightning", "DMGStandard")
+AFFIX_COLUMNS_NOT_IN_GAME = ("PhysicalArmor", "ElementalArmor", "BaseDamageReduction")
 ABILITY_VALUE_COLUMNS = ("BaseDamage", "OnHit", "DmgPctToHealth", "CooldownTimer", "OtherApplyStatusEffect", "MaxHealth")
 # The largest number of entries of a perk bucket (the loop of the parser of the client, image RVA 0x4480951).
 BUCKET_ENTRIES_MOST = 500
@@ -465,10 +472,11 @@ def build_data(sources: Sources) -> dict:
             items[identifier.lower()] = layout_index[key]
 
     # The level that a consumable needs (RequiredLevel of its master item row; finding F5 of the review of stage 1.3b).
+    # Each master item table has the column (finding F11 of the review of stage 3.3b-S1: a table with no such column is not
+    # level 0), and each consumable has a master item row. An empty cell is the level 0 (the loader of the client reads 0).
     item_levels: dict[str, float] = {}
     for sheet in sheets[ITEM_TYPE]:
-        if "RequiredLevel" not in sheet.columns:
-            continue
+        require(sheet, ("ItemID", "RequiredLevel"))
         for row in range(sheet.row_count):
             identifier = text(sheet, row, "ItemID").lower()
             if identifier and identifier not in item_levels:
@@ -476,11 +484,17 @@ def build_data(sources: Sources) -> dict:
 
     # The consumables.
     consumables: dict[str, dict] = {}
+    consumables_with_no_item: list[str] = []
     for sheet in sheets[CONSUMABLE_TYPE]:
         require(sheet, CONSUMABLE_COLUMNS)
         for row in range(sheet.row_count):
             identifier = text(sheet, row, "ConsumableID")
             if not identifier or identifier.lower() in consumables:
+                continue
+            if identifier.lower() not in item_levels:
+                # No master item row (138 consumables of the supported build): no item of the game uses this consumable, and
+                # the file has no row for it, not a row with the level 0 (finding F11).
+                consumables_with_no_item.append(identifier)
                 continue
             durations = []
             for part in split_list(text(sheet, row, "DurationOverrides")):
@@ -498,7 +512,7 @@ def build_data(sources: Sources) -> dict:
                 "removeCategories": split_list(text(sheet, row, "RemoveStatusEffectCategories")),
                 "noCombat": number(sheet, row, "DisableUseInCombat") != 0.0,
                 "shared": bool(text(sheet, row, "SharedCooldownLocString")),
-                "level": int(item_levels.get(identifier.lower(), 0.0))}
+                "level": int(item_levels[identifier.lower()])}
             if consumables[identifier.lower()]["level"] < 0:
                 raise Failure(f"the consumable {identifier} has a negative RequiredLevel")
 
@@ -569,6 +583,7 @@ def build_data(sources: Sources) -> dict:
 
     return {"format": 2, "count": len(perks) + 1, "tables": tables, "perks": perks, "affixes": affixes,
             "abilities": abilities, "buckets": buckets, "layouts": layouts, "items": items, "consumables": consumables,
+            "consumablesWithNoItem": len(consumables_with_no_item),
             "encumbrance": encumbrance, "equipLoad": equip_load, "labels": labels, "swaps": swaps, "runes": runes,
             "generation": read_generation(sources)}
 
@@ -661,7 +676,8 @@ def main() -> int:
         return 1
     print(f"{target}: {data['count']} entries of the perk list ({len(data['tables'])} tables), {len(data['affixes'])} "
           f"affixes, {len(data['abilities'])} ability rows, {len(data['buckets'])} perk buckets, {len(data['items'])} "
-          f"items with perk places ({len(data['layouts'])} layouts), {len(data['consumables'])} consumables, {len(data['equipLoad'])} armor items "
+          f"items with perk places ({len(data['layouts'])} layouts), {len(data['consumables'])} consumables ({data['consumablesWithNoItem']} with no "
+          f"master item row left out), {len(data['equipLoad'])} armor items "
           f"(source: {', '.join(f'{count} from the {name}' for name, count in sorted(sources.used.items()))})")
     return 0
 

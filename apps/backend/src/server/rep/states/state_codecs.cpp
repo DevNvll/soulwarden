@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 17> codecs{{
+    static constexpr std::array<StateCodec, 18> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -44,6 +44,8 @@ std::span<const StateCodec> player_codecs() {
         // The status effects (stage 3.3b-S1): the owner gets its maps and the tray, an observer the public maps (the
         // remote player slice has the component at the same slot).
         {world::ComponentKey::status, kStatusSlot, kTypeStatusEffectsState, nullptr, encode_player_status_state},
+        // The speed table (stage 3.3b-S2a, S2a-I10): owner only; the client runs with its multipliers.
+        {world::ComponentKey::statMultipliers, kStatMultiplierSlot, kTypeStatMultiplierState, nullptr, encode_stat_multiplier_state, true},
     }};
     return codecs;
 }
@@ -65,8 +67,37 @@ std::span<const StateCodec> creature_codecs() {
     return codecs;
 }
 
+std::span<const StateCodec> spell_codecs() {
+    // The slot of the Spell state and of each delayed event is a value of the slice of the spell (game data).
+    static constexpr std::array<StateCodec, 3> codecs{{
+        {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
+        {world::ComponentKey::spell, 0, kTypeSpellState, encode_spell_state, nullptr, false,
+         [](const world::Entity& entity) { return entity.spell.slice != nullptr ? entity.spell.slice->spellSlot : 0U; }},
+        {world::ComponentKey::delayedEvents, 0, kTypeDelayedEventState, nullptr, nullptr, false, nullptr, encode_delayed_event_states},
+    }};
+    return codecs;
+}
+
+std::span<const StateCodec> probe_codecs() {
+    // Development aid: the metadata state of the slice of the probe; its other states are the fragments of the command.
+    static constexpr std::array<StateCodec, 1> codecs{{
+        {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
+    }};
+    return codecs;
+}
+
 std::span<const StateCodec> codecs_of(const world::Entity& entity) {
-    return entity.kind == world::EntityKind::creature ? creature_codecs() : player_codecs();
+    switch (entity.kind) {
+    case world::EntityKind::creature:
+        return creature_codecs();
+    case world::EntityKind::probe:
+        return probe_codecs();
+    case world::EntityKind::spell:
+        return spell_codecs();
+    case world::EntityKind::player:
+        break;
+    }
+    return player_codecs();
 }
 
 std::uint32_t slot_of(const StateCodec& codec, const world::Entity& entity) {

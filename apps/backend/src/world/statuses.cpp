@@ -48,8 +48,20 @@ std::vector<std::string_view> parts_of(std::string_view text) {
     return parts;
 }
 
+/**
+ * @return A time of the data in milliseconds. A positive time is 1 ms at least (code review of stage 3.3b-S1, finding F9):
+ *         a TickRate or an end that rounds to 0 would not advance the due list, and the tick would not end.
+ */
 std::chrono::milliseconds milliseconds_of(float seconds) {
-    return std::chrono::milliseconds(static_cast<long long>(std::lround(std::max(seconds, 0.0F) * 1000.0F)));
+    if (!(seconds > 0.0F)) {
+        return std::chrono::milliseconds(0);
+    }
+    return std::chrono::milliseconds(std::max<long long>(static_cast<long long>(std::lround(seconds * 1000.0F)), 1));
+}
+
+/** @return True when the row refuses a dead character (no AllowAddIfDead). */
+bool refuses_dead(const gamedata::StatusRow& row) {
+    return row.cells.number("AllowAddIfDead") == 0.0F;
 }
 
 /** The value names of the five attributes in the data (MOD<name>), in the sequence of the attribute numbers. */
@@ -121,19 +133,25 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
     if (character.kind != EntityKind::player) {
         return counted(StatusVerdict::unknown);
     }
-    if (character.life.dead && row.cells.number("AllowAddIfDead") == 0.0F) {
+    if (character.life.dead && refuses_dead(row)) {
         return counted(StatusVerdict::dead);
     }
     const WorldClock::time_point now = m_world.clock().now();
     CharacterState& state = m_characters[character.characterId];
-    // ApplicationCooldown: one application of the row on the character in that time.
+    // ApplicationCooldown: one application of the row on the character in that time. The new end of the cooldown is
+    // written only for an application that changes the character (code review of stage 3.3b-S1, finding F7).
     const std::string key = lower(row.id);
-    if (const float wait = row.cells.number("ApplicationCooldown"); wait > 0.0F) {
+    const float wait = row.cells.number("ApplicationCooldown");
+    if (wait > 0.0F) {
         if (const auto found = state.applied.find(key); found != state.applied.end() && now < found->second) {
             return counted(StatusVerdict::cooldown);
         }
-        state.applied[key] = now + milliseconds_of(wait);
     }
+    const auto start_cooldown = [&] {
+        if (wait > 0.0F) {
+            state.applied[key] = now + milliseconds_of(wait);
+        }
+    };
     // The duration: of the source, else BaseDuration; not more than DurationMax.
     float seconds = how.seconds > 0.0F ? how.seconds : row.duration;
     const float most = row.cells.number("DurationMax");
@@ -142,6 +160,7 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
     }
     if (!how.permanent && seconds <= 0.0F) {
         // A row with no duration: one application now.
+        start_cooldown();
         give(character, row, how.potency);
         cast(character, row, how.source);
         return counted(StatusVerdict::instant);
@@ -154,6 +173,7 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
         if (row.cells.number("DontReplaceStack") != 0.0F && status.stacks >= stackMax) {
             return counted(StatusVerdict::full);
         }
+        start_cooldown();
         status.stacks = static_cast<std::uint8_t>(std::min<unsigned>(status.stacks + 1U, stackMax));
         status.potency = std::max(status.potency, how.potency);
         if (how.permanent) {
@@ -161,7 +181,9 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
         } else if (!status.permanent) {
             const WorldClock::time_point fresh = now + milliseconds_of(seconds);
             if (row.cells.number("RefreshDuration") != 0.0F) {
-                status.ends = fresh;
+                // RefreshDuration: the time starts again from now, and a shorter refresh keeps the later end (code review
+                // of stage 3.3b-S1, finding F6).
+                status.ends = std::max(status.ends, fresh);
             } else if (most > 0.0F && row.duration > 0.0F && most > row.duration) {
                 // DurationMax above the duration: the time adds up, to DurationMax from now.
                 status.ends = std::min(status.ends + milliseconds_of(seconds), now + milliseconds_of(most));
@@ -170,12 +192,17 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
             }
         }
         status.hitsLeft = row.stopOnHit;
-        status.source = how.source;
+        // A status of the gear keeps its source and its life (code review of stage 3.3b-S1, finding F4): the item that
+        // keeps it ends it, and an application of a different source does not make it a status of that source.
+        if (status.source.kind != StatusSourceKind::gear || how.source.kind == StatusSourceKind::gear) {
+            status.source = how.source;
+        }
         status.serial = m_nextSerial++;
         schedule(character.characterId, status);
         publish(character, state);
         return counted(StatusVerdict::renewed);
     }
+    start_cooldown();
     ActiveStatus status;
     status.status = row.id;
     status.index = row.index;
@@ -379,6 +406,11 @@ void Statuses::set_gear(Entity& character, const std::vector<GearStatus>& wanted
         }
     }
     for (const GearStatus& entry : rows) {
+        // The rules of the life state apply to the gear too (code review of stage 3.3b-S1, finding F5): a dead character
+        // gets no status that its row refuses for the dead; the revival gives it again (Health::revive refreshes the gear).
+        if (character.life.dead && refuses_dead(*entry.row)) {
+            continue;
+        }
         const auto found = std::find_if(state.statuses.begin(), state.statuses.end(),
                                         [&](const ActiveStatus& status) { return same_text(status.status, entry.row->id); });
         if (found != state.statuses.end()) {

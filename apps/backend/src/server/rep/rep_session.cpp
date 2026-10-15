@@ -271,15 +271,6 @@ std::size_t size_length(std::uint32_t value) {
     return writer.data().size();
 }
 
-/** One state fragment of a record that waits for its bundle. */
-struct PendingFragment {
-    std::uint32_t slot;
-    std::uint32_t type;
-    hub::Bytes state;
-    /** True for a fragment of a development command. */
-    bool development;
-};
-
 } // namespace
 
 RepSession::RepSession(std::uint32_t id, Send send, world::World& world, SessionOptions options)
@@ -458,6 +449,11 @@ void RepSession::check_route(std::span<const std::uint8_t> route,
         fault("the entity field is not the entity group id of the route");
         return;
     }
+    if (entity->kind == world::EntityKind::probe || entity->kind == world::EntityKind::spell) {
+        ++m_counts.unknownTargets;
+        fault("the target is a component of a spell or a probe entity (no message of the client for it is known)");
+        return;
+    }
     if (entity->kind == world::EntityKind::creature) {
         // A call for a component of a creature that the client observes: the hit of an attack,
         // an interaction. The slice of the creature (game data) names the component.
@@ -502,6 +498,9 @@ void RepSession::check_route(std::span<const std::uint8_t> route,
 void RepSession::log_message_counts() const {
     if (!m_registered) {
         return;
+    }
+    if (m_spellRecords != 0) {
+        log::write("rep: spells of the session: %llu first record(s) of a spell or a probe", static_cast<unsigned long long>(m_spellRecords));
     }
     if (m_creatureRecords != 0) {
         log::write("rep: creatures of the session: %llu first record(s), %zu in the interest table at one time at most, "
@@ -631,6 +630,8 @@ void RepSession::replicate(carrier::Clock::time_point now) {
         }
         if (entity->kind == world::EntityKind::creature) {
             add_creature_record(*entity, *m_observer.find(id), batch);
+        } else if (entity->kind == world::EntityKind::spell || entity->kind == world::EntityKind::probe) {
+            add_observer_record(*entity, *m_observer.find(id), batch);
         } else {
             send_record(*entity, *m_observer.find(id), now);
         }
@@ -695,6 +696,49 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
             fragments.push_back(PendingFragment{raw.slot, raw.type, raw.state, true});
         }
     }
+    add_records(entity, known, batch, fragments, true);
+}
+
+void RepSession::add_observer_record(const world::Entity& entity, Known& known, RecordBatch& batch) {
+    std::vector<PendingFragment> fragments;
+    const PartsRequest request{known.sent, kFragmentBudget, &m_clock};
+    for (const StateCodec& codec : codecs_of(entity)) {
+        const auto changed = entity.changed.find(codec.key);
+        if (changed == entity.changed.end() || changed->second <= known.sent) {
+            continue;
+        }
+        if (codec.slotParts != nullptr) {
+            for (SlotState& part : codec.slotParts(entity, View::observer, request)) {
+                fragments.push_back(PendingFragment{part.slot, codec.type, std::move(part.state), false});
+            }
+            continue;
+        }
+        const std::uint32_t slot = slot_of(codec, entity);
+        if (slot == 0 && codec.key != world::ComponentKey::metadata) {
+            continue; // The slice has no such component.
+        }
+        if (codec.parts != nullptr) {
+            for (hub::Bytes& state : codec.parts(entity, View::observer, request)) {
+                fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
+            }
+            continue;
+        }
+        hub::Bytes state = codec.encode(entity, View::observer, m_clock);
+        if (!state.empty()) {
+            fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
+        }
+    }
+    // Development aid: the fragments of a command (tools/world probe, tools/world probe fragment).
+    for (const world::RawFragment& raw : entity.rawFragments) {
+        if (raw.changed > known.sent) {
+            fragments.push_back(PendingFragment{raw.slot, raw.type, raw.state, true});
+        }
+    }
+    add_records(entity, known, batch, fragments, false);
+}
+
+void RepSession::add_records(const world::Entity& entity, Known& known, RecordBatch& batch, const std::vector<PendingFragment>& fragments,
+                             bool creature) {
     if (fragments.empty()) {
         return;
     }
@@ -703,6 +747,7 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
     // (the client sorts the fragments of a record by their slot). The usual fragments of a
     // creature are one record. A later record of the same creature starts a new bundle: a
     // bundle has one record of an entity at most, as for each other entity.
+    (void)entity;
     RecordWriter record(known.interest);
     std::vector<std::uint32_t> slots;
     std::size_t size = kRecordHeader;
@@ -722,7 +767,7 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
         batch.payload.insert(batch.payload.end(), payload.begin(), payload.end());
         ++batch.records;
         if (known.sent == 0 && !later) {
-            ++batch.fresh;
+            ++(creature ? batch.fresh : batch.freshOther);
         }
         later = true;
         record = RecordWriter(known.interest);
@@ -770,12 +815,15 @@ void RepSession::send_batch(RecordBatch& batch) {
         return;
     }
     send_state_bundle(batch.payload);
-    log::write("rep: state bundle %llu sent (%zu bytes): %u record(s) of creatures, %u of them the first record",
+    log::write("rep: state bundle %llu sent (%zu bytes): %u record(s) of creatures and spells, %u first record(s) of a creature, %u of a "
+               "spell or a probe",
                static_cast<unsigned long long>(m_bundleSequence),
                batch.payload.size(),
                batch.records,
-               batch.fresh);
+               batch.fresh,
+               batch.freshOther);
     m_creatureRecords += batch.fresh;
+    m_spellRecords += batch.freshOther;
     batch = RecordBatch{};
 }
 
@@ -800,12 +848,15 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     // The latest time of the wait after a travel holds also for a client that sent no camera
     // report before the travel (code review of the corrections after user test 1, finding F4).
     const bool waitEnded = m_travelAnchor && m_creaturesAfterTravel && now >= *m_creaturesAfterTravel;
+    // A new spell entity (stage 3.3b-S2a) starts a scan at once: a spell lives some seconds, and its record must come with
+    // no wait for the interval.
     const bool scan = (m_cameraSeen || waitEnded)
                       && (now - m_lastInterestScan >= kInterestInterval || m_world.last_travel() > m_interestTravel
-                          || (m_creaturesWaited && !creaturesWait));
+                          || m_world.last_spell() > m_interestSpell || (m_creaturesWaited && !creaturesWait));
     if (scan) {
         m_lastInterestScan = now;
         m_interestTravel = m_world.last_travel();
+        m_interestSpell = m_world.last_spell();
         for (const auto& [id, known] : m_observer.known()) {
             const world::Entity* entity = m_world.find(id);
             if (id == own.id || entity == nullptr) {
@@ -853,6 +904,36 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
         if (entity.kind == world::EntityKind::creature) {
             if (!creaturesWait && distance <= m_world.interest_enter(entity)) {
                 creatures.emplace_back(distance, &entity);
+            }
+            return;
+        }
+        if (entity.kind == world::EntityKind::spell) {
+            // A spell entity (stage 3.3b-S2a) at the m_sliceSpawnRadius of its slice; a spell with no slice data has no record.
+            if (entity.spell.slice != nullptr && distance <= m_world.interest_enter(entity)) {
+                const std::uint32_t interest = m_observer.add(entity.id);
+                if (interest != 0) {
+                    log::write("rep: spell %016llx (%s) comes into the interest table (interest %u, %.1f m, age %lld ms)",
+                               static_cast<unsigned long long>(entity.id),
+                               entity.spell.spellId.c_str(),
+                               interest,
+                               static_cast<double>(distance),
+                               static_cast<long long>(
+                                   std::chrono::duration_cast<std::chrono::milliseconds>(m_clock.now() - entity.spell.started).count()));
+                }
+            }
+            return;
+        }
+        if (entity.kind == world::EntityKind::probe) {
+            // Development aid (tools/world probe): an entity of a slice with the fragments of a command.
+            if (distance <= m_world.interest_enter(entity)) {
+                const std::uint32_t interest = m_observer.add(entity.id);
+                if (interest != 0) {
+                    log::write("rep: DEVELOPMENT COMMAND: probe entity %016llx comes into the interest table (interest %u, "
+                               "%.1f m)",
+                               static_cast<unsigned long long>(entity.id),
+                               interest,
+                               static_cast<double>(distance));
+                }
             }
             return;
         }
@@ -925,7 +1006,7 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
     const bool first = known.sent == 0;
     std::vector<PendingFragment> fragments;
     bool movement = false;
-    for (const StateCodec& codec : player_codecs()) {
+    for (const StateCodec& codec : codecs_of(entity)) {
         if (codec.ownerOnly && !owner) {
             continue; // The client of an observer has no facet for this state.
         }
@@ -938,9 +1019,10 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
         if (changed == entity.changed.end() || changed->second <= known.sent) {
             continue;
         }
+        const std::uint32_t slot = slot_of(codec, entity);
         if (codec.parts != nullptr) {
             for (hub::Bytes& state : codec.parts(entity, view, PartsRequest{known.sent, kFragmentBudget, &m_clock})) {
-                fragments.push_back(PendingFragment{codec.slot, codec.type, std::move(state), false});
+                fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
             }
             continue;
         }
@@ -948,7 +1030,7 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
         if (state.empty()) {
             continue; // The view has no fragment of this state.
         }
-        fragments.push_back(PendingFragment{codec.slot, codec.type, std::move(state), false});
+        fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
         movement = movement || codec.key == world::ComponentKey::movement;
     }
     // Development aid: the fragments of a command (tools/world fragment), for each view.
@@ -1034,6 +1116,12 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
     send();
     // The session has the entity at this revision only now: each bundle of the record is out.
     known.sent = m_world.revision();
+    if (owner && std::any_of(fragments.begin(), fragments.end(),
+                             [](const PendingFragment& fragment) { return fragment.slot == kStatMultiplierSlot && fragment.type == kTypeStatMultiplierState; })) {
+        // The client has this speed table now: the check of its position reports takes its multiplier (code review of
+        // stage 3.3b-S1, finding F1).
+        m_track.set_client_speed(std::max(entity.moveMultiplier, entity.sprintMultiplier), m_clock.now());
+    }
     if (owner && movement) {
         m_lastAnchor = now;
     }

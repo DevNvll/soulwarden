@@ -134,7 +134,7 @@ RuneVerdict Runes::activate_character(const std::string& characterId) {
         }
     }
     const gamedata::StatusRow* status = abilities->status(statusId);
-    if (status == nullptr) {
+    if (status == nullptr || !chain_complete(*character, *status)) {
         return counted(RuneVerdict::noData);
     }
     state.charge = 0.0F;
@@ -155,6 +155,40 @@ RuneVerdict Runes::activate_character(const std::string& characterId) {
     how.source = StatusSource{StatusSourceKind::rune, "activation " + std::to_string(activation), paperdoll::kHeartRune, character->id};
     m_world.statuses().apply(*character, *status, how);
     return counted(RuneVerdict::activated);
+}
+
+bool Runes::chain_complete(const Entity& character, const gamedata::StatusRow& status) const {
+    // The chain of the data (code review of stage 3.3b-S1, finding F8): the activation status ends, and an end status of it
+    // (OnEndStatusEffect) casts the explosion (CastSpell Rune_Detonate_AoE), whose spell, damage row, and rune weapon are in
+    // the data. An activation with a part of the chain would spend the charge and make no explosion.
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::CombatTables* tables = m_world.combat().tables();
+    const ItemInstance* rune = detonate_rune(character);
+    if (abilities == nullptr || tables == nullptr || rune == nullptr || abilities->spell(rune_rules::kDetonateSpell) == nullptr
+        || !tables->row_index(rune_rules::kDetonateRow) || tables->weapon_of(rune->itemId) == nullptr) {
+        return false;
+    }
+    const std::string_view links = status.cells.text("OnEndStatusEffect");
+    std::size_t start = 0;
+    while (start <= links.size()) {
+        std::size_t end = links.find_first_of("+,", start);
+        if (end == std::string_view::npos) {
+            end = links.size();
+        }
+        std::string_view part = links.substr(start, end - start);
+        while (!part.empty() && part.front() == ' ') {
+            part.remove_prefix(1);
+        }
+        while (!part.empty() && part.back() == ' ') {
+            part.remove_suffix(1);
+        }
+        const gamedata::StatusRow* next = part.empty() ? nullptr : abilities->status(part);
+        if (next != nullptr && same_text(next->cells.text("CastSpell"), rune_rules::kDetonateSpell)) {
+            return true;
+        }
+        start = end + 1;
+    }
+    return false;
 }
 
 void Runes::left(Entity& character) {

@@ -438,9 +438,10 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
         }
         limits.note_hit(HitLimits::Hit{target->id, now, claim.input, session, track.sequence()});
         const AbilityKind kind = m_world.abilities().kind_of(phase->cast);
+        const CastConversion conversion{phase->conversionType, phase->conversionPart};
         result = strike(*attacker, *target,
                         HitWeapon{phase->itemId, phase->slot, weapon, phase->gearScore, m_world.abilities().ability_of(phase->cast)},
-                        phase->row, 1.0F, ability_name(kind));
+                        phase->row, 1.0F, ability_name(kind), &conversion);
         if (result.verdict != HitVerdict::accepted) {
             return refuse(result.verdict);
         }
@@ -496,7 +497,8 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     return result;
 }
 
-HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use, std::uint32_t rowIndex, float factor, const char* what) {
+HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use, std::uint32_t rowIndex, float factor, const char* what,
+                         const CastConversion* cast) {
     HitResult result;
     result.verdict = HitVerdict::dead;
     if (!has_tables() || use.row == nullptr || rowIndex >= m_tables->data().damageRows.size()) {
@@ -519,7 +521,13 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     modifiers.armor = target.creature.armor_part(m_world.clock().now());
     // The gem of the weapon of the hit: the instance of the slot of the hit (finding F1 of the review of stage 1.3b), when
     // that slot still has the item of the hit.
-    if (const ItemInstance* instance = use.slot != 0 ? attacker.equipment.item(use.slot) : nullptr; instance != nullptr && instance->itemId == itemId) {
+    if (cast != nullptr) {
+        // The hit of a cast: the gem of the weapon instance of the press (finding F3 of the review of stage 3.3b-S1).
+        if (cast->part > 0.0F) {
+            modifiers.conversionType = cast->type;
+            modifiers.conversionPart = cast->part;
+        }
+    } else if (const ItemInstance* instance = use.slot != 0 ? attacker.equipment.item(use.slot) : nullptr; instance != nullptr && instance->itemId == itemId) {
         if (const std::optional<Conversion> conversion = m_world.gear().conversion(*instance, use.slot)) {
             modifiers.conversionType = conversion->type;
             modifiers.conversionPart = conversion->part;

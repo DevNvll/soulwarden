@@ -190,7 +190,7 @@ below is the layout after the port.
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
-| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1 done | |
+| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
@@ -244,7 +244,7 @@ stage with a letter is a part of the system with that number.
 | 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | done |
 | 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | done |
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
-| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts. Part S1 (the status effects of a player) is done; the parts S2 to S6 (spell entities, projectiles, the pull, critical hits, the heals of an ability, the other weapons) come next | 1.3b | S1 done |
+| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts. Part S1 (the status effects of a player) and part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status) are done; the parts S2b to S6 (the other spell entities, projectiles, the pull, critical hits, the heals of an ability, the other weapons) come next | 1.3b | S1, S2a done |
 | 12 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
 | 13 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
 | 14 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
@@ -1087,8 +1087,36 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   Measures, their expiry, the CON of a food and the armor of a dust in the sheet, and the icon
   of a public status of a remote player. Open: the client does not apply the speed of a status
   to its run (a walk of 2 s is the same with a haste of 0.2 or 0.4); the server accepts the
-  faster positions. Not in this stage: the parts S2 to S6, the statuses after a restart of the
+  faster positions (closed in stage 3.3b-S2a: the speed table). Not in this stage: the parts S2 to S6, the statuses after a restart of the
   backend (a decision of the user), and the rows with OnHitTaken or NumAroundMe.
+- Stage 3.3b-S2a, the first spell entity and the speed of a status (done, protocol notes 4.25 and
+  4.24, document `docs/systems/spells.md`; evidence
+  `~/Games/soulwarden/work/evidence/abilities-spell/implement/`). The live check L4 came first,
+  with a probe entity (a development command): the smallest record that shows the vortex is the
+  metadata of the slice and the Spell state (type 2912) with the key of the row and the start
+  position; the field masks are chained; the client runs the delayed events of the slice from
+  the init, a delayed event state (type 3139) gives a late observer the correct age, a completed
+  activation plays the burst again, and the stop removes the vortex at once (the destroy event
+  of the slice does not). A new spell system (`world/spells.h`) makes the vortex of Gravity
+  Well an entity of the world (the kind `spell`, its id from the allocator, its caster, place,
+  row, and world clock times): the vortex and the burst run at its place at the times of the
+  slice (3.0 s, the end at 3.5 s), one time each; the leave of the caster ends it; each session
+  near it (50 m) gets its record with the age, and the stop. A new tool
+  (`tools/gamedata/spells.sh`) writes `spell-data.json` (1,565 spells, 934 slices). The speed of
+  a status (criterion S2a-I10, research `status-speed.md`): the speed table of the player (slot
+  43, type 1525) is what the run of the client reads; its encoder sends the multipliers of the
+  statuses, and the position check accepts a faster run only after the session sent the table.
+  Live walks: a haste x1.43, the heart rune x1.2, the slow of the vortex x0.40, the removal and
+  the expiry, the first record of a new entry, and no table of a different character. The
+  stage also corrected the thirteen findings of the review of stage 3.3b-S1 (cases RS1 to RS13;
+  each case fails on the tree of stage 3.3b-S1). Test cases SP1 to SP9 (SP6: two sessions; SP7:
+  the load of 5,000 far spells and 10 near ones, with a time limit) and SV1 to SV3 (SV3: two
+  sessions). Live: Gravity Well on three wolves with the damage numbers, a cancel at the leave
+  of the caster, a late observer, a leave and a return. Open (decisions of the user): the data
+  has no EndOnCasterDeath for the vortex (the vortex stays and bursts after the death of its
+  caster; the brief asked for a cancel). Not in this stage: the pull (S4), the beacon, the
+  pylon, and the traps (S2b), the projectiles (S3), the Ownership and TemporaryAffiliation states
+  of a spell.
 
 ### 3.4 Creatures: spawn, behavior, navigation
 

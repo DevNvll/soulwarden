@@ -16,6 +16,8 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 | The rule of one ability: its phases, damage rows, spells, effects, and the nodes that change them | `Abilities::plan` and `ability_rules` in `world/abilities.h` and `abilities.cpp`, test case AB12 |
 | A melee hit of an ability (Charge, Maelstrom, Wrecking Ball, the swing of Gravity Well) | `Abilities::contact_phase`, `Combat::claim`, `Combat::strike` ([Combat and health](combat-and-health.md)), test case AB4 |
 | An area of an ability (Shockwave, Path of Destiny, the vortex and the burst of Gravity Well) | `Abilities::run_area`, `throw_projectile`, `World::for_each_near`, `Navigation::sees`, test cases AB5 to AB7, AB10 |
+| The vortex of Gravity Well as a spell entity: its record, its times, its cancel | [Spell entities](spells.md), `Abilities::spell_phase`, test cases SP2 to SP6 |
+| A cast for a character with no client (a remote test character) | `Abilities::press_character`, `commands::cast_ability`, test case SP9 |
 | The effects on a creature: stun, root, slow, weaken, knockdown, stagger, the icons | `Creatures::apply_effect`, `Creatures::knock`, `world/behavior.cpp`, `server/rep/states/status_state.cpp`, test cases AB8, AB9 |
 | The ability data of the game | `tools/gamedata/abilities.sh` (`abilities.py`), `gamedata/ability_data.h`, [Game data](../development/game-data.md) |
 | The cost of a cast and the mana: the one mana path, the regeneration, the mana state | `Abilities::mana_cost`, `Abilities::change_mana`, `Abilities::tick`, `server/rep/states/mana_state.cpp`, test case IZ8 |
@@ -79,7 +81,10 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   nearest first (for the whole phase, also across the circles of a path: finding F4 of the
   review of stage 3.3a; a project value, because the spell rows and the ability rows of the
   data have no column for a count of targets). A creature takes one hit of each phase. A
-  creature on its way back takes nothing. A caster that left the world or died does nothing.
+  creature on its way back takes nothing. A caster that left the world or died does nothing,
+  but for the phases of a spell entity: they run at the place of the spell while the spell is
+  in the world, also after the death of the caster (the vortex row has no `EndOnCasterDeath`;
+  [Spell entities](spells.md)).
 - The shot of Gravity Well: the origin of a shot must be near the character with no wall
   between the launch place of the server (1.5 m above the character) and it (finding F3);
   else the server throws the projectile from the character.
@@ -88,7 +93,10 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 - Each hit of an ability goes through `Combat::strike`: the damage of the row, the creature
   system with the attacker (the target, the credit, the rewards of a kill), and the damage
   number to the owner. The cast keeps the slot of its weapon: a hit uses the gem of that
-  instance (code review of stage 1.3b, finding F1), and the hit has the ability of the cast for
+  instance (code review of stage 1.3b, finding F1). The cast keeps the damage conversion of the
+  gem of the weapon at the press (`Cast::conversionType`, `conversionPart`): a different
+  weapon in the slot later does not change the hits of the cast (code review of stage 3.3b-S1,
+  finding F3, test case RS3). The hit has the ability of the cast for
   the condition InSequence of a caster effect (stage 3.3b-S1: Safety Measures puts the fortify
   WarHammer_WreckingBall_Fortify on the caster at a hit of Wrecking Ball; [Status
   effects](status-effects.md)).
@@ -103,9 +111,13 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 - The cost of the rules. A phase looks only at the entities near its center. The end of the
   effects looks only at the creatures with an effect. A cast that has no phase to come goes
   away 5 s after its end (test case AB10 has a time limit).
-- The server makes no entity of a spell: the client shows no vortex of Gravity Well. The
-  projectile of Gravity Well comes from the shot of the client (the attack "gravitywell"), or
-  the server throws it 0.83 s after the press when no shot came.
+- The vortex of Gravity Well is a spell entity (stage 3.3b-S2a, [Spell entities](spells.md)):
+  at the landing of the projectile the abilities system asks the spell system for the entity,
+  and the spell runs the vortex phase at its start and the burst at the time of the slice
+  (3.0 s). Each session near it sees the vortex and the burst. The projectile of Gravity Well
+  comes from the shot of the client (the attack "gravitywell"), or the server throws it 0.83 s
+  after the press when no shot came (also for a character with no client: `tools/world
+  cast`).
 - A new ability needs, in this sequence: a live check of its keys, its contacts, and its
   shots (protocol notes 4.22: L1, L3, L7), its rule in `Abilities::plan` with the rows and the
   spells of the data, a test case, and a live video. Do not make a message of the server for
@@ -121,12 +133,15 @@ tools/world bar NAME greataxe 0 Ability_Greataxe_Charge   # put an ability on pl
 tools/world creature effect 2c WarHammer_Shockwave_Stun 5   # give a creature a status effect of the data for 5 s
 tools/world creature effect 2c knockdown                    # a knockdown (2 s) or a stagger (1 s)
 tools/world list                     # the line "abilities": the casts, the refusals by cause, the hits, the effects
+tools/world cast NAME 2 --yaw 90     # press place 2 (F) for a character (also with no client); the yaw from the north
+tools/world spells                   # the spell entities (the vortex) with their age
 tools/gamedata/abilities.sh          # write ability-data.json to the game data folder
 ```
 
 - The routes: `GET /v1/dev/abilities?character=ID`, `POST /v1/dev/abilities/reset`, `POST
-  /v1/dev/progress/node`, `POST /v1/dev/progress/bar`, `POST /v1/dev/creatures/effect`. The
-  admin interface has `assign_node`, `set_ability_bar`, and `reset_cooldowns`.
+  /v1/dev/progress/node`, `POST /v1/dev/progress/bar`, `POST /v1/dev/creatures/effect`, `POST
+  /v1/dev/abilities/cast`. The admin interface has `assign_node`, `set_ability_bar`,
+  `reset_cooldowns`, and `cast_ability`.
 - The build of the user (`~/Games/soulwarden/work/builds/medium-bruiser-mikars.md`) on the
   development character: give the mastery levels first (`tools/world mastery NAME greataxe
   20`, the same for `warhammer`), then the 19 nodes of each tree with `tools/world node`, in
@@ -163,9 +178,10 @@ tools/gamedata/abilities.sh          # write ability-data.json to the game data 
   refuses each press (`the place of the bar is empty`).
 - The stun of Shockwave ends at the next hit (`StopOnHitCount`). To see the stun in a video,
   do not hit the creature in the 2 s.
-- The vortex of Gravity Well has no picture in the client: the root and the slow show only
-  as the icon at the name plate (the root only) and as a creature that does not move. Show it
-  with the track of the creature (`tools/world track ID SECONDS --tsv FILE`).
+- The root and the slow of the vortex show only as the icon at the name plate (the root only)
+  and as a creature that does not move. Show them with the track of the creature (`tools/world
+  track ID SECONDS --tsv FILE`). The vortex and the burst show in the client from stage
+  3.3b-S2a; with no `spell-data.json` the vortex has no picture.
 - With `tools/world ignore NAME on` no creature fights the character, also after a hit: a
   creature with a slow then does not run. Turn the ignore value off for a video of a slow or
   a root (the creature must run to the character), and put a second creature with no effect

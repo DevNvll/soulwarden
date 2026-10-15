@@ -38,6 +38,9 @@
 //          set_ability_bar     weapon, slot (0 to 2), ability (the id text of an active node
 //                              of the character, or "none")
 //          reset_cooldowns     no argument: each cooldown of the abilities of the character ends
+//          cast_ability        place (0 to 2), yaw (degrees from north to the east): the press of a key
+//                              of the bar (stage 3.3b-S2a), with the checks of a press of a client
+//          end_spells          no argument: each spell entity of the character ends (stage 3.3b-S2a)
 //          spawn_creature      kind (an id of the creature data), level, dx, dy, dz, yaw: a
 //                              creature near the character (3 m to the north with no place)
 //          remove_creature     creature (the id of a creature: 16 hexadecimal digits)
@@ -118,6 +121,8 @@ constexpr NamedCommand kCommands[] = {
     {"set_trade_skill", commands::set_trade_skill},
     {"assign_node", commands::assign_node},
     {"reset_cooldowns", commands::reset_cooldowns},
+    {"cast_ability", commands::cast_ability},
+    {"end_spells", commands::end_spells},
     {"set_ability_bar", commands::set_ability_bar},
     // The creature commands: the character of the command is the reference place.
     {"spawn_creature", nullptr, commands::spawn_creature},

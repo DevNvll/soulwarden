@@ -365,6 +365,66 @@ WorldCommand reset_cooldowns(const std::string& character, const Arguments&, ser
     };
 }
 
+WorldCommand cast_ability(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    const auto place = arguments.integer("place", 0, world::kBarSlots - 1);
+    const auto yaw = arguments.has("yaw") ? arguments.number("yaw", -360.0F, 360.0F) : std::optional<float>(0.0F);
+    if (!place || !yaw) {
+        refusal = message(400, "give place=N (0 to 2) and yaw=DEGREES (-360 to 360, from north to the east)");
+        return {};
+    }
+    return [character, place = static_cast<unsigned>(*place), yaw = *yaw](world::World& target) {
+        world::AbilityPress press;
+        press.place = place;
+        // The yaw of a press: radians from north, positive to the left (the camera of the input report).
+        press.yaw = -yaw * 3.14159265358979F / 180.0F;
+        const world::CastVerdict verdict = target.abilities().press_character(character, press);
+        log::write("world: command: character %s presses place %u of its bar: %s", character.c_str(), place, world::cast_verdict_text(verdict));
+        return json_reply(verdict == world::CastVerdict::accepted ? 200 : 409,
+                          json{{"message", world::cast_verdict_text(verdict)}, {"applied", "world"}}.dump());
+    };
+}
+
+WorldCommand end_spells(const std::string& character, const Arguments&, service::HttpResponse&) {
+    return [character](world::World& target) {
+        const world::Entity* entity = target.find_character(character);
+        if (entity == nullptr) {
+            return message(404, "the character is not in the world");
+        }
+        const std::size_t ended = target.spells().end_caster(entity->id, world::SpellEnd::command);
+        log::write("world: command: %zu spell(s) of character %s end", ended, character.c_str());
+        return json_reply(200, json{{"message", std::to_string(ended) + " spell(s) ended"}, {"applied", "world"}}.dump());
+    };
+}
+
+json spells_json(world::World& target) {
+    json spells = json::array();
+    const world::WorldClock::time_point now = target.clock().now();
+    using Seconds = std::chrono::duration<double>;
+    for (const auto& [id, entity] : target.entities()) {
+        if (entity.kind != world::EntityKind::spell) {
+            continue;
+        }
+        char group[17];
+        std::snprintf(group, sizeof(group), "%016llx", static_cast<unsigned long long>(id));
+        const world::Entity* caster = target.find(entity.spell.caster);
+        spells.push_back({{"entity", group},
+                          {"spell", entity.spell.spellId},
+                          {"caster", caster != nullptr ? caster->name : std::string()},
+                          {"age", Seconds(now - entity.spell.started).count()},
+                          {"left", Seconds(entity.spell.ends - now).count()},
+                          {"record", entity.spell.slice != nullptr},
+                          {"position", {entity.position.x, entity.position.y, entity.position.z}}});
+    }
+    const world::SpellCounts& counts = target.spells().counts();
+    json ended = json::object();
+    for (std::size_t cause = 0; cause < world::kSpellEndCount; ++cause) {
+        ended[world::spell_end_text(static_cast<world::SpellEnd>(cause))] = counts.ended[cause];
+    }
+    return {{"data", target.spells().has_data()}, {"spells", spells}, {"made", counts.made}, {"ended", ended},
+            {"phases", counts.phases}, {"phasesCancelled", counts.phasesCancelled}, {"dueTaken", counts.dueTaken},
+            {"largest", counts.largest}};
+}
+
 json abilities_json(world::World& target, const std::string& character) {
     json cooldowns = json::array();
     const world::WorldClock::time_point now = target.clock().now();

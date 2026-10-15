@@ -47,6 +47,10 @@
 //             contact (L7). The world finds the creatures of the area at the time of the phase
 //             with the position index, and a wall stops the area (Navigation::sees). One hit
 //             of a creature for each phase.
+//   Spell.    The projectile of Gravity Well makes a spell entity at its landing (stage 3.3b-S2a,
+//             world/spells.h): the vortex. The entity runs the vortex phase at its start and the
+//             burst at the time of its slice (game data), and the hits follow the entity: a
+//             cancel ends the phases that did not come.
 //   Effects.  A hit of a phase gives its effects to the creature through the creature system
 //             (Creatures::apply_effect): a stun, a root, a slow, a weaken, a knockdown.
 //
@@ -226,6 +230,9 @@ struct MeleePhase {
     std::string itemId;
     std::uint32_t slot{0};
     std::uint32_t gearScore{0};
+    /** The conversion of the gem of the weapon instance at the press (finding F3 of the review of stage 3.3b-S1). */
+    std::string conversionType;
+    float conversionPart{0.0F};
     /** True: this phase hurt this creature already. */
     bool done{false};
 };
@@ -260,6 +267,19 @@ public:
 
     /** A session gives the press of a key of the bar of its character. */
     CastVerdict press(SessionId session, const AbilityPress& press);
+    /**
+     * Development aid (tools/world cast): the press of a key of the bar for a character with no client (a remote test
+     * character). The same checks and the same cast as a press of a session; the server throws a projectile itself.
+     */
+    CastVerdict press_character(const std::string& characterId, const AbilityPress& press);
+    /**
+     * A spell entity of a cast runs one of its phases at its time (world/spells.h): the hits of the phase at the place of the
+     * spell (the vortex: its effects; the burst: its damage). The caster must be in the world; a dead caster's spell hits
+     * while the spell lives (a spell row with no EndOnCasterDeath: game data).
+     */
+    void spell_phase(std::uint64_t cast, std::uint32_t phase, const state::WorldPosition& center);
+    /** The spell entity of a cast went away (its end or a cancel): the cast waits for it no more. */
+    void spell_ended(std::uint64_t cast, EntityId spell);
     /** A session gives a shot of its client: the projectile of a cast of its character. */
     void shot(SessionId session, const AbilityShot& shot);
 
@@ -359,14 +379,21 @@ private:
         /** The paperdoll slot of the weapon of the cast (finding F1 of the review of stage 1.3b: the gem of that instance). */
         std::uint32_t slot{0};
         std::uint32_t gearScore{0};
+        /**
+         * The conversion of the gem of the weapon instance at the press (code review of stage 3.3b-S1, finding F3): a
+         * later hit of the cast keeps it, also when a different instance of the same item is in the slot then.
+         */
+        std::string conversionType;
+        float conversionPart{0.0F};
         /** The phases and the creatures that each one hurt. */
         std::set<std::pair<std::uint32_t, EntityId>> hits;
         /** Path of Destiny: the hits that took a part of the cooldown away. */
         unsigned cooldownHits{0};
         /** Gravity Well: true after the projectile (a shot of the client, or the throw of the server). */
         bool thrown{false};
-        /** The area phases (and the throw) that are not done. */
+        /** The area phases (and the throw) that are not done, and the spell entity of the cast that is in the world (0: none). */
         unsigned pending{0};
+        EntityId spell{0};
         /** The input number of a later press of the session (accepted or refused): the contact windows end there. */
         std::optional<std::uint16_t> closedAt;
     };
@@ -381,8 +408,13 @@ private:
     [[nodiscard]] std::string ability_text(std::uint32_t ability) const;
     /** Puts the cooldowns of a character into its entity and marks the cooldown state. */
     void publish(const std::string& characterId);
-    /** Runs the area phases of a cast that are due at this time (a timer of the world). */
-    void run_area(std::uint64_t cast, std::uint32_t phase, state::WorldPosition center);
+    /**
+     * Runs an area phase of a cast at its time: a timer of the world, or a phase of the spell entity of the cast
+     * (`fromSpell`: the spell counts its phases, and its hits follow the spell, also after the death of the caster).
+     */
+    void run_area(std::uint64_t cast, std::uint32_t phase, state::WorldPosition center, bool fromSpell = false);
+    /** The press for a character in the world, from a session (0: a command). */
+    CastVerdict press_entity(Entity& character, SessionId session, const AbilityPress& press);
     /** Gravity Well: the projectile of a cast lands. */
     void throw_projectile(Cast& cast, const state::WorldPosition& origin, const std::array<float, 3>& direction);
     /** One hit of an area phase, with its damage and its effects. @return True when the creature took the hit. */

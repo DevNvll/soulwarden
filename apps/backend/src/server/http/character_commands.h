@@ -126,6 +126,14 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
  *         the hits, the effects).
  */
 [[nodiscard]] nlohmann::json abilities_json(world::World& world, const std::string& character);
+// The spell commands (stage 3.3b-S2a, world/spells.h). cast_ability: `place` (0 to 2: Q, R, F) and `yaw` (degrees from
+// north to the east, the direction of the throw; default 0): the press of a key of the bar for a character, with the
+// checks and the cast of a press of a client (a remote test character with no client: the server throws a projectile
+// itself). end_spells: no argument: each spell entity of the character ends (each observer gets the stop).
+[[nodiscard]] WorldCommand cast_ability(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand end_spells(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/** @return The spell entities of the world (world thread): each one with its spell, its caster, its age, its end, and the counts. */
+[[nodiscard]] nlohmann::json spells_json(world::World& world);
 // The tree and the bar commands (stage 3.3a, world/skills.h): the same rules as the requests of
 // a client. assign_node: `weapon` (as for the mastery) and `node` (the id text of the node of the
 // game table, "Ability_WarHammer_WreckingBall"): one mastery point on the node.

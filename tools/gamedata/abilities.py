@@ -30,6 +30,8 @@ extracted).
   StatusEffectCategoryData         (stage 3.3b-S1) the ValueLimits of each status category: the largest sum
                                    (a positive limit) or the smallest sum (a negative limit) of a value over
                                    the effects of the category ("Haste": MoveSpeedMod 0.4)
+  StatMultiplierData               (stage 3.3b-S2a) Min and Max of each stat multiplier (the speed table of a
+                                   character: MoveSpeedMod and SprintSpeedMod, 0 to 1.5)
 
 The number of a status effect on the wire is the position of the CRC-32 of its lower-case id in
 the list of the CRC values of all rows of all status tables, in the unsigned order, with each
@@ -38,13 +40,14 @@ build). A duplicate id has the first position.
 
 Output: {"format": 3, "statusRows": N,
 "counts": {"cooldowns": N, "statusEffects": N, "spells": N, "manaCosts": N, "staminaCosts": N, "abilityCosts": N,
-"abilityRows": N, "statusCategories": N},
+"abilityRows": N, "statusCategories": N, "statMultipliers": N},
 "cooldowns": [[id, time, minTime], ...],
 "statusEffects": [[id, index, duration, moveSpeed, stunned, root, stopOnHit, nameplate, damage, {cells}], ...],
 "spells": [[id, radius, height, castDistance, count, spawnRate, duration, {cells}], ...],
 "manaCosts": [[id, cost], ...], "staminaCosts": [[id, cost], ...],
 "abilityCosts": [[id, [mana cost id, ...], manaCostMult, [stamina cost id, ...], staminaCostFlatMod], ...],
-"abilityRows": [[id, {cells}], ...], "statusCategories": [[id, {value name: limit, ...}], ...]}.
+"abilityRows": [[id, {cells}], ...], "statusCategories": [[id, {value name: limit, ...}], ...],
+"statMultipliers": [[id, min, max], ...]}.
 `cells` has the other cells of the row that are not empty and not 0 (a number, or a text).
 
 The tool writes no file (status 1) when a table type is not in the game copy, when a table does
@@ -70,6 +73,7 @@ import bisect
 import json
 import math
 import os
+import re
 import struct
 import sys
 import zlib
@@ -89,11 +93,42 @@ MANA_TYPE = "ManaData"
 STAMINA_TYPE = "StaminaData"
 ABILITY_TYPE = "AbilityData"
 CATEGORY_TYPE = "StatusEffectCategoryData"
-USED_TYPES = (COOLDOWN_TYPE, STATUS_TYPE, SPELL_TYPE, MANA_TYPE, STAMINA_TYPE, ABILITY_TYPE, CATEGORY_TYPE)
+STATMULT_TYPE = "StatMultiplierData"
+USED_TYPES = (COOLDOWN_TYPE, STATUS_TYPE, SPELL_TYPE, MANA_TYPE, STAMINA_TYPE, ABILITY_TYPE, CATEGORY_TYPE, STATMULT_TYPE)
+# The limits of a stat multiplier (stage 3.3b-S2a, I10): the client bounds the value of the table of slot 43 to Min and Max
+# (getter 0x3FEA370; MoveSpeedMod and SprintSpeedMod: 0 to 1.5 in the supported build).
+STATMULT_COLUMNS = ("ID", "Min", "Max")
 # The columns that the tool reads: each one must be in each source table (finding F11 of the review of stage 3.3a).
 COOLDOWN_COLUMNS = ("AbilityID", "Time", "MinTime")
 STATUS_COLUMNS = ("StatusID", "BaseDuration", "MoveSpeedMod", "Stunned", "NoNav", "StopOnHitCount", "ShowInNameplates",
                   "DMGStandard")
+# The columns of the rules of the status system of the backend (world/statuses.cpp, gear.cpp; code review of stage
+# 3.3b-S1, finding F13): each status table must have them, but the differences of the game below. An absent column
+# must not become a rule of 0 or a default stack limit.
+STATUS_RULE_COLUMNS = ("StackMax", "InitialStackSize", "RefreshDuration", "DurationMax", "DontReplaceStack",
+                       "ApplicationCooldown", "TickRate", "DelayInitialTick", "Health", "HealthModifierPercent", "Mana",
+                       "RemoveOnDeath", "AllowAddIfDead", "OnEndStatusEffect", "DontApplyOnEndEffectOnRemove", "CastSpell",
+                       "ShowInUITray", "AlwaysReplicate", "ForceReplicateToRemotes", "EffectCategories", "MaxHealthMod",
+                       "PhysicalArmor", "ElementalArmor", "SprintSpeedMod", "MODStrength", "MODDexterity", "MODIntelligence",
+                       "MODFocus", "MODConstitution", "ABSSlash", "ABSThrust", "ABSStrike", "ABSFire", "ABSIce", "ABSNature",
+                       "ABSArcane", "ABSCorruption", "ABSLightning", "DMGSlash", "DMGThrust", "DMGStrike", "DMGFire", "DMGIce",
+                       "DMGNature", "DMGArcane", "DMGCorruption", "DMGLightning")
+# The status tables of the supported build that do not have some of these columns (the creature tables of the game).
+STATUS_TABLE_DIFFERENCES = {
+    "StatusEffects_AI": frozenset({"ApplicationCooldown", "AllowAddIfDead", "ForceReplicateToRemotes"}),
+    "StatusEffects_AI_IsleOfNight": frozenset({"AllowAddIfDead", "ForceReplicateToRemotes"}),
+    "StatusEffects_Common_IsleOfNight": frozenset({"ForceReplicateToRemotes"}),
+}
+# The columns of a caster effect row that the backend reads (the event and the conditions of world/gear.cpp; finding F13):
+# each ability table of the players (a table with the cost columns) has them in the supported build.
+CASTER_COLUMNS = ("AbilityID", "SelfApplyStatusEffect", "SelfApplyStatusEffectDurations", "OnHit", "OnHitTaken", "InSequence",
+                  "AttackType", "DamageTableRow", "ActivationCooldown", "TargetHealthPercent", "TargetComparisonType",
+                  "MyHealthPercent", "MyComparisonType", "MyManaPercent", "MyManaComparisonType", "MyStaminaPercent",
+                  "MyStaminaComparisonType", "TargetVitalsCategory", "AttackerVitalsCategory", "TargetStatusEffectCategory",
+                  "TargetStatusEffectComparison", "DontHaveStatusEffect", "HasGritActive", "TargetHasGritActive")
+# The OnEndStatusEffect links of the game that name no status row (finding F8 of the review of stage 3.3b-S1): only these
+# may stay; the backend accepts the same list (gamedata/ability_data.cpp, kMissingEndLinks).
+END_LINKS_NOT_IN_GAME = frozenset({("ai_icedragon_empoweringlink_stack_apply", "ai_icedragon_empoweringlink_stack")})
 SPELL_COLUMNS = ("SpellID", "Radius", "Height", "CastDistance", "NumToSpawn", "SpawnRate", "Duration")
 COST_COLUMNS = ("ManaCostList", "ManaCostMult", "StaminaCostList", "StaminaCostFlatMod")
 # The other cells of a status row and of a spell row (stage 1.3b) have no text for a person.
@@ -236,6 +271,8 @@ def build_data(sources: Sources) -> dict:
     status_rows: list[tuple[Sheet, int, str]] = []
     for sheet in sheets[STATUS_TYPE]:
         require(sheet, STATUS_COLUMNS)
+        absent = STATUS_TABLE_DIFFERENCES.get(sheet.name, frozenset())
+        require(sheet, [column for column in STATUS_RULE_COLUMNS if column not in absent])
         for row in range(sheet.row_count):
             identifier = str(sheet.cell(row, "StatusID")).strip()
             if not identifier:
@@ -272,6 +309,18 @@ def build_data(sources: Sources) -> dict:
                      rounded(number(sheet, row, "CastDistance")), int(count), rounded(number(sheet, row, "SpawnRate")),
                      rounded(number(sheet, row, "Duration")), cells_of(sheet, row, SPELL_SKIP)]
             add_row(spells, entry, "spell tables", DUPLICATES_IN_GAME)
+
+    # The links of the status rows (code review of stage 3.3b-S1, finding F8): each status of OnEndStatusEffect and the spell
+    # of CastSpell are rows of the data, but the links of END_LINKS_NOT_IN_GAME. The backend refuses a file with another one.
+    for entry in statuses.values():
+        cells = entry[9]
+        for part in re.split(r"[+,]", str(cells.get("OnEndStatusEffect", ""))):
+            target = part.strip()
+            if target and target.lower() not in statuses and (entry[0].lower(), target.lower()) not in END_LINKS_NOT_IN_GAME:
+                raise Failure(f"the status effect {entry[0]} names the end status {target}, which the status tables do not have")
+        spell = str(cells.get("CastSpell", "")).strip()
+        if spell and spell.lower() not in spells:
+            raise Failure(f"the status effect {entry[0]} names the spell {spell} (CastSpell), which the spell tables do not have")
 
     # The costs (stage 1.3b, criterion I14): the two cost tables of the players and the cost columns of the
     # ability rows. A cost id of an ability or a spell names a row of a cost table.
@@ -328,7 +377,7 @@ def build_data(sources: Sources) -> dict:
     for sheet in sheets[ABILITY_TYPE]:
         if not any(column in sheet.columns for column in COST_COLUMNS):
             continue
-        require(sheet, ("AbilityID", "SelfApplyStatusEffect"))
+        require(sheet, CASTER_COLUMNS)
         for row in range(sheet.row_count):
             identifier = str(sheet.cell(row, "AbilityID")).strip()
             if identifier and str(sheet.source(row, "SelfApplyStatusEffect")).strip():
@@ -361,23 +410,35 @@ def build_data(sources: Sources) -> dict:
                 limits[name.strip()] = rounded(limit)
             add_row(categories, [identifier, limits], "status category tables")
 
+    # The limits of the stat multipliers (stage 3.3b-S2a): the speed table of a character (slot 43) is in them.
+    multipliers: dict[str, list] = {}
+    for sheet in sheets[STATMULT_TYPE]:
+        require(sheet, STATMULT_COLUMNS)
+        for row in range(sheet.row_count):
+            identifier = str(sheet.cell(row, "ID")).strip()
+            if identifier:
+                add_row(multipliers, [identifier, rounded(number(sheet, row, "Min")), rounded(number(sheet, row, "Max"))],
+                        "stat multiplier tables")
+
     if not cooldowns:
         raise Failure("the cooldown tables have no row")
     data = {"format": 3, "statusRows": len(all_crcs),
             "counts": {"cooldowns": len(cooldowns), "statusEffects": len(statuses), "spells": len(spells),
                        "manaCosts": len(mana_costs), "staminaCosts": len(stamina_costs), "abilityCosts": len(ability_costs),
-                       "abilityRows": len(ability_rows), "statusCategories": len(categories)},
+                       "abilityRows": len(ability_rows), "statusCategories": len(categories),
+                       "statMultipliers": len(multipliers)},
             "cooldowns": sorted(cooldowns.values()), "statusEffects": sorted(statuses.values(), key=lambda entry: entry[1]),
             "spells": sorted(spells.values()), "manaCosts": sorted(mana_costs.values()),
             "staminaCosts": sorted(stamina_costs.values()), "abilityCosts": sorted(ability_costs.values()),
-            "abilityRows": sorted(ability_rows.values()), "statusCategories": sorted(categories.values())}
+            "abilityRows": sorted(ability_rows.values()), "statusCategories": sorted(categories.values()),
+            "statMultipliers": sorted(multipliers.values())}
     return data
 
 
 def print_found(data: dict, texts: list[str]) -> None:
     wanted = [text.lower() for text in texts]
     for name in ("cooldowns", "statusEffects", "spells", "manaCosts", "staminaCosts", "abilityCosts", "abilityRows",
-                 "statusCategories"):
+                 "statusCategories", "statMultipliers"):
         for row in data[name]:
             if any(text in row[0].lower() for text in wanted):
                 print(f"{name}: {row}")

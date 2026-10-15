@@ -18,6 +18,16 @@ files is replaced: no file of the game is necessary), and it runs the builder an
   missing-SelfApply      an ability table of the players has no SelfApplyStatusEffect   status 1, the file stays
   unknown-caster-status  a caster effect row names a status that no table has     status 1, the file stays
   bad-limit              a ValueLimits part with no number                        status 1, the file stays
+  missing-StackMax       a status table has no column StackMax                    status 1, the file stays
+  missing-caster-OnHit   an ability table of the players has no column OnHit      status 1, the file stays
+  game-table-difference  a status table StatusEffects_AI with no ApplicationCooldown   status 0 (a difference of the game)
+  missing-end-link       an OnEndStatusEffect names a status that no table has    status 1, the file stays
+  game-end-link          the one OnEndStatusEffect link of the game with no row   status 0 (the named link of the game)
+  missing-cast-spell     a CastSpell names a spell that no table has              status 1, the file stays
+
+The cases from missing-StackMax on are the corrections of the findings F13 and F8 of the code review of stage
+3.3b-S1: each column of the rules of the status system and of a caster effect is in each table (with the named
+differences of the game), and each link of a status row resolves (with the named link of the game).
 
 The first six cases after valid are the corrections of the findings F11 and F12 of the code review of stage 3.3a
 (a column that is not there is not 0 or false; two rows with one id must agree). The last three are the cost data of
@@ -90,6 +100,30 @@ def sheets(case: str) -> dict:
               "StaminaCostFlatMod": 0, "SelfApplyStatusEffect": "PotionHeal", "OnHit": True, "DisplayName": "@Fortify",
               "DamageTableRow": "Test_Row"}
     category = {"StatusEffectCategoryID": "Haste", "ValueLimits": "MoveSpeedMod:0.4,SprintSpeedMod:0.4"}
+    # Each column of the rules of the status system and of a caster effect (finding F13 of the review of stage 3.3b-S1).
+    status["StackMax"] = 3
+    for row in (status, potion, sanctuary):
+        for column in tool.STATUS_RULE_COLUMNS:
+            row.setdefault(column, "")
+    for row in (ability, caster):
+        for column in tool.CASTER_COLUMNS:
+            row.setdefault(column, "")
+    if case == "missing-StackMax":
+        for row in (status, potion):
+            del row["StackMax"]
+    if case == "missing-caster-OnHit":
+        del ability["OnHit"]
+        del caster["OnHit"]
+    if case == "missing-end-link":
+        potion["OnEndStatusEffect"] = "NoSuchStatus"
+    if case == "missing-cast-spell":
+        potion["CastSpell"] = "NoSuchSpell"
+    if case == "game-end-link":
+        sanctuary["StatusID"] = "AI_IceDragon_EmpoweringLink_Stack_Apply"
+        sanctuary["OnEndStatusEffect"] = "AI_IceDragon_EmpoweringLink_Stack"
+    if case == "game-table-difference":
+        sanctuary["StatusID"] = "Test_AI_Status"
+        del sanctuary["ApplicationCooldown"]
     if case == "partial-cost-columns":
         del ability["StaminaCostList"]
         del caster["StaminaCostList"]
@@ -119,7 +153,13 @@ def sheets(case: str) -> dict:
         "AbilityData": [FakeSheet("Abilities", [ability, caster]),
                             FakeSheet("AIAbilities", [{"AbilityID": "AI_Bite"}])],
         "StatusEffectCategoryData": [FakeSheet("Categories", [category, {"StatusEffectCategoryID": "Buff", "ValueLimits": ""}])],
+        "StatMultiplierData": [FakeSheet("StatMultipliers", [{"ID": "MoveSpeedMod", "Min": 0, "Max": 1.5},
+                                                             {"ID": "SprintSpeedMod", "Min": 0, "Max": 1.5}])],
     }
+    if case == "game-table-difference":
+        tables["StatusEffectData"].append(FakeSheet("StatusEffects_AI", [sanctuary]))
+    if case == "game-end-link":
+        tables["StatusEffectData"].append(FakeSheet("Common", [sanctuary]))
     if case == "conflicting-status":
         tables["StatusEffectData"].append(FakeSheet("OtherStatus", [dict(status, Stunned=False)]))
     if case == "conflicting-spell":
@@ -140,9 +180,16 @@ def valid_values(document: dict, case: str) -> list[str]:
     if potion is None or potion[9] != {"Health": 400.0, "TickRate": 1.0, "EffectCategories": "SurvivalPotion"}:
         wrong.append(f"the other cells of a status row: {potion}")
     stun = statuses.get("WarHammer_Shockwave_Stun")
-    if stun is None or not stun[4] or "DisplayName" in stun[9]:
+    if stun is None or not stun[4] or "DisplayName" in stun[9] or stun[9].get("StackMax") != 3.0:
         wrong.append(f"the stun row {stun}")
-    if case == "game-duplicate":
+    if case == "game-end-link":
+        linked = statuses.get("AI_IceDragon_EmpoweringLink_Stack_Apply")
+        if linked is None or linked[9].get("OnEndStatusEffect") != "AI_IceDragon_EmpoweringLink_Stack" or document["statusRows"] != 3:
+            wrong.append(f"the named link of the game: {linked}")
+    elif case == "game-table-difference":
+        if "Test_AI_Status" not in statuses or document["statusRows"] != 3:
+            wrong.append(f"the status of the table with a difference of the game: {document['statusRows']} rows")
+    elif case == "game-duplicate":
         sanctuary = statuses.get("Sanctuary")
         if sanctuary is None or sanctuary[9].get("HealthModifierPercent") != 0.005 or document["statusRows"] != 4:
             wrong.append(f"the duplicate of the game: {sanctuary}, {document['statusRows']} rows")
@@ -160,6 +207,8 @@ def valid_values(document: dict, case: str) -> list[str]:
         wrong.append(f"the caster effect rows {document['abilityRows']}")
     if document["statusCategories"] != [["Buff", {}], ["Haste", {"MoveSpeedMod": 0.4, "SprintSpeedMod": 0.4}]]:
         wrong.append(f"the status categories {document['statusCategories']}")
+    if document.get("statMultipliers") != [["MoveSpeedMod", 0.0, 1.5], ["SprintSpeedMod", 0.0, 1.5]]:
+        wrong.append(f"the stat multipliers {document.get('statMultipliers')}")
     return wrong
 
 
@@ -172,7 +221,8 @@ def main() -> int:
     failures = 0
     cases = ("valid", "missing-Time", "missing-Stunned", "missing-Radius", "conflicting-status", "conflicting-spell",
              "game-duplicate", "missing-cost", "partial-cost-columns", "negative-cost", "missing-SelfApply",
-             "unknown-caster-status", "bad-limit")
+             "unknown-caster-status", "bad-limit", "missing-StackMax", "missing-caster-OnHit", "game-table-difference",
+             "missing-end-link", "game-end-link", "missing-cast-spell")
     for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")
@@ -186,7 +236,7 @@ def main() -> int:
             except Exception as error:  # noqa: BLE001 - a crash of the tool is a failure of the case
                 status = f"exception {type(error).__name__}: {error}"
         text = target.read_text(encoding="utf-8")
-        if case in ("valid", "game-duplicate"):
+        if case in ("valid", "game-duplicate", "game-table-difference", "game-end-link"):
             try:
                 wrong = valid_values(json.loads(text), case) if status == 0 and text != MARK else ["no document"]
             except (ValueError, KeyError, IndexError, TypeError) as error:

@@ -40,6 +40,10 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   number), MaxHealthMod and MaxHealth (a part of the health of the base, the level, and the
   constitution), BaseDamage, DMG<type>, ABS<type>, PhysicalArmor, ElementalArmor,
   BaseDamageReduction, and the regeneration of a status with TickRate and HealthModifierPercent.
+  The perk tool requires the ABS and DMG columns of each damage type (and Standard) in the
+  affix table: the table of the game has no PhysicalArmor, ElementalArmor, and
+  BaseDamageReduction column, so they are optional there (code review of stage 3.3b-S1, finding
+  F12, test case RS12).
   An ability row counts IsStackableMax times at most for one character (the largest potency
   first). The statuses on the character (a food, a dust, the status of the heart rune, the status
   of an affix) count through the status system.
@@ -80,7 +84,8 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   with sight), DmgPctToHealth (a heal of a part of the damage, with the heal factor),
   CooldownTimer with CDRImmediatelyOptions ActiveWeapon (a part of the cooldown of each ability
   of the bar of the weapon in the hand), and SelfApplyStatusEffect (stage 3.3b-S1: a status on
-  the caster through the status system). The learned nodes of the ability table of the weapon
+  the caster through the status system, with the time of SelfApplyStatusEffectDurations: code
+  review of stage 3.3b-S1, finding F10). The learned nodes of the ability table of the weapon
   of the hit with a caster effect row of the game data count the same (Safety Measures, Greed,
   Hammer Time: [Status effects](status-effects.md)).
 - A tick and a chain hit go through `Combat::strike_amount`: the defense of the creature for

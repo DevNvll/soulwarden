@@ -51,6 +51,14 @@
 //   GET  /v1/dev/loot/roll?kind=KIND[&level=N][&count=N][&forced=1][&character=ID]
 //                                                        roll the loot table of a kind many times
 //                                                        and count the items (nothing is given)
+//   POST /v1/dev/world/probe?near=ID&asset=HEX32&sub=N[&dx=N&dy=N&dz=N][&radius=N][&fragments=SLOT:TYPE:HEX,...]
+//                                                        a probe entity (live check L4 of stage 3.3b-S2a): an
+//                                                        entity of a slice of the game (asset id and sub id)
+//                                                        whose states are the fragments of the command; the reply
+//                                                        has its entity id and its actor id
+//   POST /v1/dev/world/probe/remove?entity=ID            remove a probe entity: each observer gets the stop
+//   POST /v1/dev/world/fragment?entity=ID&slot=N&type=N&state=HEX
+//                                                        the fragment command for a probe entity
 //   POST /v1/dev/world/message?character=ID&type=N&body=HEX
 //                                                        send the client of a character one
 //                                                        message with these bytes (a live check
@@ -100,6 +108,10 @@
 //   GET  /v1/dev/abilities?character=ID                  the cooldowns of the character and the
 //                                                        counts of the abilities
 //   POST /v1/dev/abilities/reset?character=ID            each cooldown of the character ends
+//   POST /v1/dev/abilities/cast?character=ID&place=N[&yaw=DEGREES]
+//                                                        the press of a key of the bar for a character (stage
+//                                                        3.3b-S2a: a remote test character with no client)
+//   POST /v1/dev/spells/end?character=ID                 each spell entity of the character ends
 // The commands remove, health, and kill change each creature of the world, and they need no
 // character (the rule CreatureReach::world of character_commands.h). The admin interface has a
 // different rule for them.
@@ -125,12 +137,51 @@ constexpr std::uint64_t kMaxFragmentSlot = 4095;
 constexpr std::uint64_t kMaxFragmentType = 65535;
 constexpr std::size_t kMaxFragmentState = 16384;
 
+const char* kind_text(world::EntityKind kind) {
+    switch (kind) {
+    case world::EntityKind::creature:
+        return "creature";
+    case world::EntityKind::probe:
+        return "probe";
+    case world::EntityKind::spell:
+        return "spell";
+    case world::EntityKind::player:
+        break;
+    }
+    return "player";
+}
+
+/** @return The bytes of a text of hexadecimal digits (an even count), or no value. */
+std::optional<std::vector<std::uint8_t>> hex_bytes(const std::string& text) {
+    if (text.size() % 2 != 0) {
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> bytes;
+    for (std::size_t index = 0; index < text.size(); index += 2) {
+        char* end = nullptr;
+        const std::string digits = text.substr(index, 2);
+        bytes.push_back(static_cast<std::uint8_t>(std::strtoul(digits.c_str(), &end, 16)));
+        if (end != digits.c_str() + 2) {
+            return std::nullopt;
+        }
+    }
+    return bytes;
+}
+
+/** @return The id of an entity of a query parameter (16 hexadecimal digits), or no value. */
+std::optional<world::EntityId> entity_id_of(const std::optional<std::string>& text) {
+    if (!text || text->size() != 16 || text->find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+        return std::nullopt;
+    }
+    return std::strtoull(text->c_str(), nullptr, 16);
+}
+
 json entity_json(const world::Entity& entity) {
     char group[17];
     std::snprintf(group, sizeof(group), "%016llx", static_cast<unsigned long long>(entity.id));
     return {
         {"entity", group},
-        {"kind", entity.kind == world::EntityKind::creature ? "creature" : "player"},
+        {"kind", kind_text(entity.kind)},
         {"actor", world::actor_text(entity.actor)},
         {"character", entity.characterId},
         {"name", entity.name},
@@ -217,6 +268,8 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                    {"time", meter(target.rewards().load())}}},
                                  // The abilities (stage 3.3a): the presses by cause, the hits, and the effects.
                                  {"abilities", commands::abilities_json(target, "")},
+                                 // The spell entities (stage 3.3b-S2a).
+                                 {"spells", commands::spells_json(target)},
                                  {"spawnPointsWaiting", creatures.waiting_count()},
                                  {"removedByRespawn", creatures.counts().removedByRespawn},
                                  // The navigation: the tiles of the data, the path searches, and the sight tests.
@@ -387,7 +440,8 @@ service::HttpResponse raw_fragment(const Services& services, const RouteContext&
     if (!request.host.empty()) {
         return message(403, "forbidden");
     }
-    const auto creature = query_text(request, "creature");
+    const auto probe = query_text(request, "entity");
+    const auto creature = probe ? probe : query_text(request, "creature");
     const auto character = creature ? creature : query_text(request, "character");
     const auto slot = query_integer(request, "slot", 0, kMaxFragmentSlot);
     const auto type = query_integer(request, "type", 0, kMaxFragmentType);
@@ -410,17 +464,114 @@ service::HttpResponse raw_fragment(const Services& services, const RouteContext&
             return message(400, "the state must be hexadecimal text");
         }
     }
-    return in_world(services, [character = *character, isCreature = creature.has_value(),
+    return in_world(services, [character = *character, isCreature = creature.has_value(), isProbe = probe.has_value(),
                                slot = static_cast<std::uint32_t>(*slot),
                                type = static_cast<std::uint32_t>(*type), state = std::move(state)](world::World& target) {
         const world::Entity* entity =
             isCreature ? target.creatures().find(std::strtoull(character.c_str(), nullptr, 16)) : target.find_character(character);
+        if (isProbe) {
+            entity = target.find(std::strtoull(character.c_str(), nullptr, 16));
+            entity = entity != nullptr && entity->kind == world::EntityKind::probe ? entity : nullptr;
+        }
         if (entity == nullptr) {
             return message(404, isCreature ? "the world has no creature with this id" : "the character is not in the world");
         }
         log::write("dev: fragment for character %s: slot %u, type %u, %zu bytes", character.c_str(), slot, type, state.size());
         target.set_raw_fragment(entity->id, slot, type, state);
         return message(200, "fragment set");
+    });
+}
+
+service::HttpResponse make_probe(const Services& services, const RouteContext& context) {
+    const service::HttpRequest& request = context.request;
+    if (!request.host.empty()) {
+        return message(403, "forbidden");
+    }
+    const auto nearCharacter = query_text(request, "near");
+    const auto asset = query_text(request, "asset");
+    const auto sub = query_integer(request, "sub", 0, 0xFFFFFFFFULL);
+    const auto radius = query_number(request, "radius");
+    const auto list = query_text(request, "fragments");
+    std::optional<std::vector<std::uint8_t>> assetBytes = asset ? hex_bytes(*asset) : std::nullopt;
+    if (!nearCharacter || nearCharacter->empty() || !assetBytes || assetBytes->size() != 16 || !sub) {
+        return message(400, "give near=ID (a character in the world), asset=HEX (32 digits), and sub=N");
+    }
+    if (radius && (*radius < 1.0F || *radius > 1000.0F)) {
+        return message(400, "radius must be 1 to 1000 m");
+    }
+    float offset[3] = {0.0F, 0.0F, 0.0F};
+    const char* names[3] = {"dx", "dy", "dz"};
+    for (int axis = 0; axis < 3; ++axis) {
+        if (query_text(request, names[axis])) {
+            const auto value = query_number(request, names[axis]);
+            if (!value) {
+                return message(400, "dx, dy, and dz must be finite numbers");
+            }
+            offset[axis] = *value;
+        }
+    }
+    // The fragments: SLOT:TYPE:HEX, separated by commas.
+    std::vector<world::RawFragment> fragments;
+    if (list && !list->empty()) {
+        std::size_t start = 0;
+        while (start <= list->size()) {
+            const std::size_t end = std::min(list->find(',', start), list->size());
+            const std::string part = list->substr(start, end - start);
+            const std::size_t first = part.find(':');
+            const std::size_t second = first == std::string::npos ? std::string::npos : part.find(':', first + 1);
+            if (second == std::string::npos) {
+                return message(400, "each fragment is SLOT:TYPE:HEX");
+            }
+            char* stop = nullptr;
+            const unsigned long slot = std::strtoul(part.substr(0, first).c_str(), &stop, 10);
+            const unsigned long type = std::strtoul(part.substr(first + 1, second - first - 1).c_str(), &stop, 10);
+            const auto bytes = hex_bytes(part.substr(second + 1));
+            if (!bytes || bytes->empty() || bytes->size() > kMaxFragmentState || slot > kMaxFragmentSlot || type > kMaxFragmentType) {
+                return message(400, "a fragment has a slot, a type, or a state that is not correct");
+            }
+            fragments.push_back(world::RawFragment{static_cast<std::uint32_t>(slot), static_cast<std::uint32_t>(type), *bytes, 0});
+            start = end + 1;
+        }
+    }
+    world::ProbeBody body;
+    std::copy(assetBytes->begin(), assetBytes->end(), body.asset.begin());
+    body.subId = static_cast<std::uint32_t>(*sub);
+    if (radius) {
+        body.interestRadius = *radius;
+    }
+    return in_world(services, [nearCharacter = *nearCharacter, body, offset0 = offset[0], offset1 = offset[1], offset2 = offset[2],
+                               fragments = std::move(fragments)](world::World& target) mutable {
+        const world::Entity* reference = target.find_character(nearCharacter);
+        if (reference == nullptr) {
+            return message(404, "the character of 'near' is not in the world");
+        }
+        const state::WorldPosition position{reference->position.x + offset0, reference->position.y + offset1,
+                                            reference->position.z + offset2};
+        const world::Entity* probe = target.make_probe(body, position, std::move(fragments));
+        if (probe == nullptr) {
+            return message(400, "the position is not a position of the world");
+        }
+        char group[17];
+        std::snprintf(group, sizeof(group), "%016llx", static_cast<unsigned long long>(probe->id));
+        return json_reply(200, json{{"probe", group},
+                                    {"actor", world::actor_text(probe->actor)},
+                                    {"position", {probe->position.x, probe->position.y, probe->position.z}},
+                                    {"fragments", probe->rawFragments.size()}}
+                                   .dump());
+    });
+}
+
+service::HttpResponse remove_probe(const Services& services, const RouteContext& context) {
+    const service::HttpRequest& request = context.request;
+    if (!request.host.empty()) {
+        return message(403, "forbidden");
+    }
+    const auto id = entity_id_of(query_text(request, "entity"));
+    if (!id) {
+        return message(400, "give entity=ID (16 hexadecimal digits)");
+    }
+    return in_world(services, [id = *id](world::World& target) {
+        return target.remove_probe(id) ? message(200, "removed") : message(404, "the world has no probe with this id");
     });
 }
 
@@ -648,6 +799,8 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/world/touch", "dev.world_touch", bind(touch_entity));
     router.add("POST", "", "/v1/dev/world/fragment", "dev.world_fragment", bind(raw_fragment));
     router.add("POST", "", "/v1/dev/world/message", "dev.world_message", bind(raw_message));
+    router.add("POST", "", "/v1/dev/world/probe", "dev.world_probe", bind(make_probe));
+    router.add("POST", "", "/v1/dev/world/probe/remove", "dev.world_probe_remove", bind(remove_probe));
     router.add("POST", "", "/v1/dev/world/heal", "dev.world_heal", command_route(services, commands::heal));
     router.add("POST", "", "/v1/dev/world/ignore", "dev.world_ignore", command_route(services, commands::set_creatures_ignore));
     router.add("POST", "", "/v1/dev/world/hurt", "dev.world_hurt", command_route(services, commands::hurt_character));
@@ -694,6 +847,8 @@ void register_dev_routes(Router& router, const Services& services) {
         });
     });
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));
+    router.add("POST", "", "/v1/dev/abilities/cast", "dev.abilities_cast", command_route(services, commands::cast_ability));
+    router.add("POST", "", "/v1/dev/spells/end", "dev.spells_end", command_route(services, commands::end_spells));
     // The itemization (stage 1.3b): the gear, a use of a consumable, the heart rune, and a perk roll.
     router.add("GET", "", "/v1/dev/gear", "dev.gear", [&services](const RouteContext& context) {
         service::HttpResponse refusal;

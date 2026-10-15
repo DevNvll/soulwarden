@@ -36,6 +36,8 @@ HealthResult Health::apply(Entity& target, float damage) {
     if (result.died) {
         // RemoveOnDeath (stage 3.3b-S1): the statuses of the row end at the death (no end status of a heart rune).
         m_world.statuses().died(target);
+        // The spells of the character whose row has EndOnCasterDeath end (stage 3.3b-S2a).
+        m_world.spells().caster_died(target.id);
     }
     return result;
 }
@@ -130,8 +132,10 @@ HealthResult Health::heal(const std::string& characterId) {
     result.after = target->vitals.health;
     m_world.touch(target->id, ComponentKey::vitals);
     if (result.revived) {
-        // A character that lives again at its place: the creatures near it do not take it at once.
+        // A character that lives again at its place: the creatures near it do not take it at once. The statuses of its gear
+        // that the death removed come back (code review of stage 3.3b-S1, finding F5).
         m_world.creatures().behavior().shelter(*target, false);
+        m_world.gear().refresh(*target);
     }
     const std::string mark = log::session_mark(target->owner, target->characterId);
     const log::Context context(mark);
@@ -236,6 +240,8 @@ HealthResult Health::respawn(SessionId session) {
     result.after = target->vitals.health;
     result.revived = true;
     m_world.touch(target->id, ComponentKey::vitals);
+    // The statuses of the gear that the death removed come back (finding F5).
+    m_world.gear().refresh(*target);
     {
         const std::string mark = log::session_mark(target->owner, target->characterId);
         const log::Context context(mark);

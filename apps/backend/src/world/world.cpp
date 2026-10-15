@@ -31,6 +31,14 @@ constexpr ComponentKey kAllComponents[] = {ComponentKey::metadata,    ComponentK
                                            ComponentKey::attribute,   ComponentKey::currency,  ComponentKey::container,
                                            ComponentKey::paperdoll,   ComponentKey::categorical, ComponentKey::points,
                                            ComponentKey::abilities, ComponentKey::mana, ComponentKey::cooldowns};
+/**
+ * The states that a new entity of a character also marks (code review of stage 3.3b-S1, finding F2): the statuses that the
+ * character keeps across a new session and their speed table. The first record has them; their encoders give no fragment
+ * for a character with no status. A full record again (touch_all) does not send them.
+ */
+constexpr ComponentKey kEnteredComponents[] = {ComponentKey::status, ComponentKey::statMultipliers};
+/** The component states of a spell entity (stage 3.3b-S2a). */
+constexpr ComponentKey kSpellComponents[] = {ComponentKey::metadata, ComponentKey::spell, ComponentKey::delayedEvents};
 /** The component states of a creature. */
 constexpr ComponentKey kCreatureComponents[] = {ComponentKey::metadata, ComponentKey::movement, ComponentKey::vitals,
                                                 ComponentKey::marker, ComponentKey::status};
@@ -57,7 +65,8 @@ World::World(const WorldClock& clock,
       m_gear(*this),
       m_consumables(*this),
       m_runes(*this),
-      m_statuses(*this) {
+      m_statuses(*this),
+      m_spells(*this, options.spellData) {
     m_random = options.randomSeed;
 }
 
@@ -113,6 +122,7 @@ void World::tick() {
         m_health.tick();
         m_statuses.tick();
         m_abilities.tick();
+        m_spells.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -217,6 +227,9 @@ Entity& World::make_entity(const state::Character& character) {
     for (const ComponentKey key : kAllComponents) {
         entity.changed[key] = revision;
     }
+    for (const ComponentKey key : kEnteredComponents) {
+        entity.changed[key] = revision;
+    }
     m_characters[entity.characterId] = entity.id;
     m_index.insert(entity.id, entity.position);
     log::write("world: entity %016llx (actor %s) of character %s (%s) at %.2f %.2f %.2f",
@@ -242,7 +255,13 @@ void World::remove_entity(EntityId id) {
                    static_cast<unsigned long long>(entity.id),
                    entity.creature.kind->id.c_str());
         m_creatures.entity_removed(entity);
+    } else if (entity.kind == EntityKind::probe) {
+        log::write("world: DEVELOPMENT COMMAND: probe entity %016llx removed", static_cast<unsigned long long>(entity.id));
+    } else if (entity.kind == EntityKind::spell) {
+        m_spells.entity_removed(entity);
     } else {
+        // The spells of the character end (a cancel: stage 3.3b-S2a). Their entities go away before the entity of the caster.
+        m_spells.caster_left(entity.id);
         log::write("world: entity %016llx of character %s removed",
                    static_cast<unsigned long long>(entity.id),
                    entity.characterId.c_str());
@@ -462,7 +481,80 @@ void World::remove_creature(EntityId id) {
     }
 }
 
+Entity* World::make_probe(const ProbeBody& body, const state::WorldPosition& position, std::vector<RawFragment> fragments) {
+    if (!valid_position(position)) {
+        return nullptr;
+    }
+    const ActorId actor = m_ids.next(ActorKind::otherEntity);
+    Entity& entity = m_entities[entity_group_id(actor)];
+    entity.id = entity_group_id(actor);
+    entity.actor = actor;
+    entity.kind = EntityKind::probe;
+    entity.probe = body;
+    entity.name = "probe";
+    entity.position = position;
+    const Revision revision = ++m_revision;
+    entity.positionRevision = revision;
+    entity.changed[ComponentKey::metadata] = revision;
+    for (RawFragment& fragment : fragments) {
+        fragment.changed = revision;
+    }
+    entity.rawFragments = std::move(fragments);
+    m_index.insert(entity.id, entity.position);
+    log::write("world: DEVELOPMENT COMMAND: probe entity %016llx (actor %s) at %.2f %.2f %.2f with %zu fragment(s)",
+               static_cast<unsigned long long>(entity.id),
+               actor_text(entity.actor).c_str(),
+               static_cast<double>(position.x),
+               static_cast<double>(position.y),
+               static_cast<double>(position.z),
+               entity.rawFragments.size());
+    return &entity;
+}
+
+Entity& World::make_spell(const SpellBody& body, const state::WorldPosition& position) {
+    const ActorId actor = m_ids.next(ActorKind::otherEntity);
+    Entity& entity = m_entities[entity_group_id(actor)];
+    entity.id = entity_group_id(actor);
+    entity.actor = actor;
+    entity.kind = EntityKind::spell;
+    entity.spell = body;
+    entity.name = body.spellId;
+    entity.position = position;
+    const Revision revision = ++m_revision;
+    entity.positionRevision = revision;
+    for (const ComponentKey key : kSpellComponents) {
+        entity.changed[key] = revision;
+    }
+    m_lastSpell = revision;
+    m_index.insert(entity.id, entity.position);
+    return entity;
+}
+
+void World::remove_spell(EntityId id) {
+    const Entity* entity = find(id);
+    if (entity != nullptr && entity->kind == EntityKind::spell) {
+        remove_entity(id);
+    }
+}
+
+bool World::remove_probe(EntityId id) {
+    const Entity* entity = find(id);
+    if (entity == nullptr || entity->kind != EntityKind::probe) {
+        return false;
+    }
+    remove_entity(id);
+    return true;
+}
+
 float World::interest_enter(const Entity& entity) const {
+    if (entity.kind == EntityKind::probe) {
+        return std::min(entity.probe.interestRadius, m_options.interestEnter);
+    }
+    if (entity.kind == EntityKind::spell) {
+        // m_sliceSpawnRadius of the slice of the spell (game data: 50 m for the vortex), not more than the distance of a
+        // character. With no slice data: 0 (no session observes it).
+        return entity.spell.slice != nullptr ? std::min(entity.spell.slice->interestRadius, m_options.interestEnter) : 0.0F;
+    }
     if (entity.kind != EntityKind::creature) {
         return m_options.interestEnter;
     }
@@ -471,6 +563,9 @@ float World::interest_enter(const Entity& entity) const {
 }
 
 float World::interest_leave(const Entity& entity) const {
+    if (entity.kind == EntityKind::probe || entity.kind == EntityKind::spell) {
+        return interest_enter(entity) + m_options.creatureInterestMargin;
+    }
     if (entity.kind != EntityKind::creature) {
         return m_options.interestLeave;
     }
@@ -615,8 +710,9 @@ PositionVerdict World::report_position(SessionId session, const PositionReport& 
         // A dead character stays at the place of its death: a report of its client changes nothing.
         return track.refused(PositionVerdict::dead);
     }
-    // The speed of the statuses of the character (stage 3.3b-S1): a haste makes the limit of the window larger.
-    const float speedFactor = 1.0F + std::max(entity->gear.moveSpeed, entity->gear.sprintSpeed);
+    // The speed multiplier that the client of the session has (the speed table of slot 43 that the session sent; code
+    // review of stage 3.3b-S1, finding F1): a haste makes the limit of the window larger only when the client runs faster.
+    const float speedFactor = track.client_speed(m_clock.now());
     const PositionVerdict verdict = track.judge(report, entity->position, m_clock.now(), speedFactor);
     if (verdict != PositionVerdict::accepted) {
         return verdict; // The entity, the index, and the row do not change.
@@ -664,6 +760,19 @@ void World::touch_all(EntityId id) {
     if (entity->kind == EntityKind::creature) {
         for (const ComponentKey key : kCreatureComponents) {
             entity->changed[key] = revision;
+        }
+        return;
+    }
+    if (entity->kind == EntityKind::spell) {
+        for (const ComponentKey key : kSpellComponents) {
+            entity->changed[key] = revision;
+        }
+        return;
+    }
+    if (entity->kind == EntityKind::probe) {
+        entity->changed[ComponentKey::metadata] = revision;
+        for (RawFragment& fragment : entity->rawFragments) {
+            fragment.changed = revision;
         }
         return;
     }

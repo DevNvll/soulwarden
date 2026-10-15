@@ -228,4 +228,24 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
     return counted(PositionVerdict::accepted);
 }
 
+void PositionTrack::set_client_speed(float factor, WorldClock::time_point now) {
+    if (!std::isfinite(factor) || factor <= 0.0F) {
+        factor = 1.0F;
+    }
+    if (factor == m_clientSpeed) {
+        return;
+    }
+    // The value before the change still counts for one window: the larger of the two (client_speed).
+    m_previousSpeed = std::max(m_clientSpeed, now - m_speedChanged < position_limits::kWindow ? m_previousSpeed : m_clientSpeed);
+    m_clientSpeed = factor;
+    m_speedChanged = now;
+}
+
+float PositionTrack::client_speed(WorldClock::time_point now) const {
+    if (now - m_speedChanged < position_limits::kWindow) {
+        return std::max(m_clientSpeed, m_previousSpeed);
+    }
+    return m_clientSpeed;
+}
+
 } // namespace soulwarden::backend::world

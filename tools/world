@@ -59,6 +59,19 @@ Usage:
                                                 body, which starts with the facet target and the
                                                 entity of the component)
 
+A probe entity (development aid, live check L4 of stage 3.3b-S2a): an entity of a slice of the game whose
+states are only the fragments of the command. Each session near it gets its record (the metadata state of
+the slice and the fragments), and its stop at the removal:
+  tools/world probe CHARACTER ASSET [DX DY DZ] [--sub N] [--radius METERS] [--fragment SLOT:TYPE:HEX]...
+                                                make a probe near a character (ASSET: the 32 hexadecimal
+                                                digits of the asset id of the slice, or its text form
+                                                D60BAED0-C08F-514F-9ECD-9BB5E20F7E9D; --sub: the sub id,
+                                                default 2; --radius: the interest distance, default
+                                                50 m). The reply has the entity id and the actor id
+  tools/world probe fragment ENTITY SLOT TYPE HEX
+                                                give a probe one more fragment (or a new one for a slot)
+  tools/world probe remove ENTITY               remove a probe: each observer gets the stop
+
 The items, the equipment, and the coin of a character (the character can be in the world or
 not: a command for a character that is not in the world changes its rows in the database):
   tools/world items CHARACTER                   the items of the bag, the equipment, and the coin
@@ -139,6 +152,13 @@ not, as for the items):
                                                 tree, in this sequence (NODE: the id text of the
                                                 game table, Ability_WarHammer_WreckingBall). The
                                                 rules of the tree apply, as for the client
+  tools/world cast CHARACTER PLACE [--yaw DEGREES]
+                                                press the key of place PLACE (0 Q, 1 R, 2 F) of the bar for a
+                                                character, with the checks of a press of a client: a remote test
+                                                character (tools/world spawn) casts Gravity Well; the server throws
+                                                the projectile (--yaw: the direction, degrees from north to the east)
+  tools/world spells                            the spell entities of the world (stage 3.3b-S2a) with their age
+  tools/world spells end CHARACTER              each spell entity of a character ends (each observer gets the stop)
   tools/world bar CHARACTER WEAPON SLOT ABILITY put an active ability that the character has on a
                                                 place (0 to 2) of the bar of a weapon (ABILITY: the
                                                 id text of its node, or none: an empty place)
@@ -372,6 +392,9 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             abilities = load.get("abilities")
             if abilities:
                 print(abilities_text(abilities))
+            spells = load.get("spells")
+            if spells:
+                print(spells_text(spells))
             navigation = load.get("navigation")
             if navigation and navigation["data"]:
                 def part(entry: dict) -> str:
@@ -472,6 +495,22 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         fail("the backend has no development commands (start it with tools/dev-run.sh)")
     if status != "200":
         sys.exit(1)
+
+
+def spells_text(spells: dict) -> str:
+    """@return The lines `spells` of the list (stage 3.3b-S2a): the spell entities with their age, and the counts."""
+    if not spells["data"]:
+        head = "spells: the backend has no spell data (tools/gamedata/spells.sh): a spell has its hits and no record"
+    else:
+        head = "spells:"
+    ended = ", ".join(f"{count} {cause}" for cause, count in spells["ended"].items() if count)
+    lines = [f"{head} {len(spells['spells'])} in the world, {spells['made']} made, ended: {ended or 'none'}; {spells['phases']} phases ran, "
+             f"{spells['phasesCancelled']} cancelled, {spells['dueTaken']} due entries taken, {spells['largest']} at one time at most"]
+    for spell in spells["spells"]:
+        x, y, z = spell["position"]
+        lines.append(f"  spell {spell['entity']}  {spell['spell']} of {spell['caster']}  age {spell['age']:.2f} s, {spell['left']:.2f} s left  "
+                     f"at {x:.2f} {y:.2f} {z:.2f}{'' if spell['record'] else '  (no record: no slice data)'}")
+    return "\n".join(lines)
 
 
 def abilities_text(abilities: dict) -> str:
@@ -603,7 +642,7 @@ def show(entity: dict) -> None:
     session = f"session s{entity['session']}" if entity["session"] else "no session"
     owner = entity["character"] or f"({entity.get('kind', 'entity')})"
     health = ""
-    if "health" in entity:
+    if "health" in entity and entity.get("kind") in ("player", "creature"):
         health = f"  health {entity['health']:.1f} of {entity['healthMax']:.1f}{'  DEAD' if entity.get('dead') else ''}"
     print(f"entity {entity['entity']}  actor {entity['actor']}  {entity['name']:<16} {owner}  "
           f"{session:<11} position {x:.3f} {y:.3f} {z:.3f}{health}")
@@ -730,6 +769,61 @@ def main() -> None:
         else:
             target = f"character={character_id(data_dir, arguments[1])}"
         request(data_dir, "POST", f"/v1/dev/world/fragment?{target}&slot={slot}&type={type_index}&state={state}")
+    elif command == "probe" and len(arguments) >= 3:
+        if arguments[1] == "remove" and len(arguments) == 3:
+            request(data_dir, "POST", f"/v1/dev/world/probe/remove?entity={arguments[2].lower()}")
+            return
+        if arguments[1] == "fragment" and len(arguments) == 6:
+            try:
+                slot, type_index = int(arguments[3]), int(arguments[4])
+                state = bytes.fromhex(arguments[5]).hex()
+            except ValueError:
+                fail("give the slot and the type as numbers, and the state as hexadecimal text")
+            request(data_dir, "POST", f"/v1/dev/world/fragment?entity={arguments[2].lower()}&slot={slot}"
+                                      f"&type={type_index}&state={state}")
+            return
+        target = character_id(data_dir, arguments[1])
+        asset = arguments[2].replace("-", "").lower()
+        if not re.fullmatch(r"[0-9a-f]{32}", asset):
+            fail("give the asset id of the slice: 32 hexadecimal digits")
+        rest = arguments[3:]
+        options = {"--sub": "2", "--radius": ""}
+        fragments: list[str] = []
+        offsets: list[str] = []
+        index = 0
+        while index < len(rest):
+            word = rest[index]
+            if word in options and index + 1 < len(rest):
+                options[word] = rest[index + 1]
+                index += 2
+            elif word == "--fragment" and index + 1 < len(rest):
+                part = rest[index + 1].split(":")
+                if len(part) != 3:
+                    fail("a fragment is SLOT:TYPE:HEX")
+                try:
+                    fragments.append(f"{int(part[0])}:{int(part[1])}:{bytes.fromhex(part[2]).hex()}")
+                except ValueError:
+                    fail("a fragment is SLOT:TYPE:HEX (numbers and hexadecimal text)")
+                index += 2
+            else:
+                offsets.append(word)
+                index += 1
+        dx, dy, dz = numbers(offsets, 3) if offsets else (0.0, 3.0, 0.0)
+        query = f"near={target}&asset={asset}&sub={whole(options['--sub'], 'the sub id')}&dx={dx}&dy={dy}&dz={dz}"
+        if options["--radius"]:
+            query += f"&radius={numbers([options['--radius']], 1)[0]}"
+        if fragments:
+            query += "&fragments=" + ",".join(fragments)
+        request(data_dir, "POST", f"/v1/dev/world/probe?{query}")
+    elif command == "cast" and len(arguments) in (3, 5) and (len(arguments) == 3 or arguments[3] == "--yaw"):
+        yaw = numbers(arguments[4:], 1)[0] if len(arguments) == 5 else 0.0
+        request(data_dir, "POST", f"/v1/dev/abilities/cast?character={character_id(data_dir, arguments[1])}"
+                                  f"&place={whole(arguments[2], 'the place')}&yaw={yaw}")
+    elif command == "spells" and len(arguments) == 1:
+        document = fetch(data_dir, "/v1/dev/world")
+        print(spells_text(document["load"]["spells"]))
+    elif command == "spells" and len(arguments) == 3 and arguments[1] == "end":
+        request(data_dir, "POST", f"/v1/dev/spells/end?character={character_id(data_dir, arguments[2])}")
     elif command == "message" and len(arguments) == 4:
         try:
             type_index = int(arguments[2])

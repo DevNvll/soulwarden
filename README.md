@@ -17,7 +17,8 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Level, attributes, weapon mastery trees, the ability bar, and trade skills.
 - Creatures at their real spawn points in the whole world, 32,840 points and 3,848 kinds in 25 regions.
 - Melee combat with a sword, a great axe, a hatchet, a war hammer, or a spear. A hit shows its damage number, and creatures die.
-- The abilities of the great axe (Charge, Maelstrom, Gravity Well) and of the war hammer (Wrecking Ball, Shockwave, Path of Destiny), with the upgrades of their trees. An ability does its damage, its button on the HUD shows the cooldown, and a creature takes the stun, the root, the slow, the knockdown, or the weaken of the ability, with its icon at the name plate. Put the nodes and the bar in the Weapon Mastery window (K).
+- The abilities of the great axe (Charge, Maelstrom, Gravity Well) and of the war hammer (Wrecking Ball, Shockwave, Path of Destiny), with the upgrades of their trees. An ability does its damage, its button on the HUD shows the cooldown, and a creature takes the stun, the root, the slow, the knockdown, or the weaken of the ability, with its icon at the name plate. The vortex of Gravity Well shows on the ground and bursts after 3 s with its damage numbers; another player near it sees the same vortex. Put the nodes and the bar in the Weapon Mastery window (K).
+- A haste on your character makes your run and your sprint faster for its time (the Detonate heart rune: 1.2 times for 3 s).
 - Creatures fight. A creature sees your character, runs to it with its run animation, attacks, and goes back to its place at the end of its leash. 2,989 of the 3,848 kinds attack.
 - Creatures find their way around walls and rocks, up stairs, and on the floors of buildings and ruins.
 - Creatures walk their patrol routes from the game files, or wander near their place. After a fight a creature runs back to the place where it saw you. On that way it is immune and walks the way that it came, and at that place it has its full health and patrols again.
@@ -35,8 +36,8 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures do not jump, drop from an edge, climb, swim, or fly. A creature that has no way to you waits at the place nearest to you for 12 s and then goes back.
 - Creatures do not fight in groups, call others, or flee. Only 23 of the 24,895 waypoint tasks of the patrols have an animation, so a creature stands in its idle pose at the other waypoints.
 - 859 kinds of creature have no attack yet: they do not attack you, but they patrol or wander when their data has a route. No creature has a ranged attack, magic, or an ability.
-- Only the six abilities of the great axe and the war hammer work. The abilities of the other weapons do nothing. The vortex of Gravity Well has no picture, and Maelstrom and the vortex do not pull. Most passive nodes and the effects on your own character that need grit, stamina, or a critical hit do nothing.
-- Perks that need grit, stamina, critical hits, a dodge, or another player do nothing. A speed effect (haste or slow on your character, for example the Detonate heart rune) does not change the speed of your run in the game. Only the Detonate heart rune works. No crafting, repair, salvage, or gem socket.
+- Only the six abilities of the great axe and the war hammer work. The abilities of the other weapons do nothing. Maelstrom and the vortex of Gravity Well do not pull. The vortex stays and bursts when its caster dies. Most passive nodes and the effects on your own character that need grit, stamina, or a critical hit do nothing.
+- Perks that need grit, stamina, critical hits, a dodge, or another player do nothing. Only the Detonate heart rune works. No crafting, repair, salvage, or gem socket.
 - Nothing drops on the ground. A full bag loses the items that have no slot.
 - You cannot block or dodge. The tool window heals your character.
 - Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
@@ -66,7 +67,7 @@ tools/build-soulwarden-game-hook.sh
 tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh     # the backend tests, with no game process
 
-tools/gamedata/appearance.sh         # twelve game data tools, one time each
+tools/gamedata/appearance.sh         # thirteen game data tools, one time each
 tools/gamedata/slice_ids.sh
 tools/gamedata/items.sh
 tools/gamedata/progression.sh
@@ -75,6 +76,7 @@ tools/gamedata/combat.sh
 tools/gamedata/loot.sh
 tools/gamedata/abilities.sh
 tools/gamedata/perks.sh
+tools/gamedata/spells.sh
 tools/gamedata/places.sh
 tools/gamedata/heights.sh
 tools/gamedata/navigation.sh
@@ -99,11 +101,12 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `loot.sh` | A kill gives no experience, no coin, and no loot |
 | `abilities.sh` | An ability does nothing. With a file from before the itemization stage, a perk of a hit, a consumable, and the heart rune have no status data, and the mana does not come back: run the tool again |
 | `perks.sh` | An item has no perk, a perk has no effect, and a potion, a food, and the heart rune do nothing |
+| `spells.sh` | The vortex of Gravity Well has no picture (its damage stays) |
 | `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
 | `heights.sh` | With no navigation data, creatures do not leave their place. They attack only when you are in their reach |
 | `navigation.sh` | Creatures go on a straight line on the terrain, through walls and rocks, and they see you through a wall. A creature on a floor of a building does not leave its place |
 
-Some tables of the game have Oodle compression. `creatures.sh` and `places.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute, and `heights.sh` for about two minutes (it needs no Oodle library). `navigation.sh` needs the Oodle library and a C and a C++ compiler, and it runs for about 45 minutes with 8 processes. It makes the navigation data of the whole world from the collision shapes of the game copy, and then the folder of `heights.sh` again. When it stops, run it again: it makes only the regions that are not complete. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
+Some tables of the game have Oodle compression. `creatures.sh`, `places.sh`, and `spells.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute, and `heights.sh` for about two minutes (it needs no Oodle library). `navigation.sh` needs the Oodle library and a C and a C++ compiler, and it runs for about 45 minutes with 8 processes. It makes the navigation data of the whole world from the collision shapes of the game copy, and then the folder of `heights.sh` again. When it stops, run it again: it makes only the regions that are not complete. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
 
 ## The tool window
 

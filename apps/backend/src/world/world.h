@@ -42,6 +42,7 @@
 #include "world/rewards.h"
 #include "world/runes.h"
 #include "world/skills.h"
+#include "world/spells.h"
 #include "world/statuses.h"
 #include "world/world_clock.h"
 
@@ -248,6 +249,8 @@ struct WorldOptions {
     const gamedata::AbilityData* abilityData{nullptr};
     /** The perk data (game data, stage 1.3b). Null: an item has no perk, and no perk has an effect. */
     const gamedata::PerkData* perkData{nullptr};
+    /** The spell entity data (game data, stage 3.3b-S2a). Null or not loaded: a spell entity has its hits and no record. */
+    const gamedata::SpellData* spellData{nullptr};
     /**
      * The terrain heights (game data): the ground for a creature that walks. Null: no creature
      * leaves its place. The world asks it only in the world thread.
@@ -549,6 +552,28 @@ public:
      */
     void place_creature(Entity& entity, const state::WorldPosition& position);
 
+    /**
+     * Development aid (tools/world probe, live check L4 of stage 3.3b-S2a): makes an entity of a slice whose states are
+     * the fragments of the command (Entity::rawFragments). Its actor id comes from the id allocator. Each session that
+     * is `body.interestRadius` or less from it gets its record. @return The entity, or null for a position that is not a
+     * position of the world.
+     */
+    Entity* make_probe(const ProbeBody& body, const state::WorldPosition& position, std::vector<RawFragment> fragments);
+    /** Removes a probe entity: each session that observes it sends the stop. @return False: no probe with this id. */
+    bool remove_probe(EntityId id);
+
+    /**
+     * Makes the entity of a spell (stage 3.3b-S2a). Only the spell system calls it (world/spells.h). Its actor id comes from
+     * the id allocator; the sessions near it look for it in the same tick (last_spell).
+     */
+    Entity& make_spell(const SpellBody& body, const state::WorldPosition& position);
+    /** Removes the entity of a spell: each session that observes it sends the stop. Only the spell system calls it. */
+    void remove_spell(EntityId id);
+    /** @return The world revision of the last new spell entity: a session compares its interest distances at once. */
+    [[nodiscard]] Revision last_spell() const {
+        return m_lastSpell;
+    }
+
     /** @return The distance at which a session starts to observe an entity (WorldOptions). */
     [[nodiscard]] float interest_enter(const Entity& entity) const;
     /** @return The distance above which a session stops to observe an entity. */
@@ -639,6 +664,13 @@ public:
     [[nodiscard]] Runes& runes() {
         return m_runes;
     }
+    /** @return The spell entities of the world (stage 3.3b-S2a): the vortex of Gravity Well. */
+    [[nodiscard]] Spells& spells() {
+        return m_spells;
+    }
+    [[nodiscard]] const Spells& spells() const {
+        return m_spells;
+    }
     /** @return The navigation: the ground, the next step, and the sight of a creature. */
     [[nodiscard]] Navigation& navigation() {
         return m_navigation;
@@ -724,6 +756,9 @@ private:
     Runes m_runes;
     /** The status effects of the characters (stage 3.3b-S1). */
     Statuses m_statuses;
+    /** The spell entities (stage 3.3b-S2a). */
+    Spells m_spells;
+    Revision m_lastSpell{0};
 };
 
 template <class Result>

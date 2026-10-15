@@ -121,6 +121,13 @@ struct StatusCategory {
     std::unordered_map<std::string, float> limits;
 };
 
+/** The limits of one stat multiplier (StatMultiplierData, stage 3.3b-S2a): the client bounds the value of its table to them. */
+struct StatLimit {
+    std::string id;
+    float min{0.0F};
+    float max{0.0F};
+};
+
 /** The data as plain values: the content of the file, and what a test sets. */
 struct AbilityTables {
     std::vector<CooldownRow> cooldowns;
@@ -133,6 +140,8 @@ struct AbilityTables {
     /** The caster effect rows and the status categories (stage 3.3b-S1, file format 3; empty for a file of format 1 or 2). */
     std::vector<AbilityRow> abilityRows;
     std::vector<StatusCategory> statusCategories;
+    /** The limits of the stat multipliers (stage 3.3b-S2a; empty for an older file): MoveSpeedMod and SprintSpeedMod 0 to 1.5. */
+    std::vector<StatLimit> statMultipliers;
     /**
      * The number of the rows of the status tables of the game, with each duplicate: the length of the
      * status list of the client. Each status number is below it (code review of stage 3.3a, finding F10).
@@ -176,6 +185,8 @@ public:
     [[nodiscard]] const AbilityRow* ability_row(std::string_view id) const;
     /** @return A status category with its limits (stage 3.3b-S1), or null. */
     [[nodiscard]] const StatusCategory* category(std::string_view id) const;
+    /** @return The limits of a stat multiplier (stage 3.3b-S2a), or null. */
+    [[nodiscard]] const StatLimit* stat_limit(std::string_view id) const;
 
 private:
     AbilityTables m_tables;
@@ -187,6 +198,7 @@ private:
     std::unordered_map<std::string, std::size_t> m_abilityCosts;
     std::unordered_map<std::string, std::size_t> m_abilityRows;
     std::unordered_map<std::string, std::size_t> m_categories;
+    std::unordered_map<std::string, std::size_t> m_statLimits;
     std::string m_error;
     /** The check of `set`, with `fromFile` true for a file: the file must name the number of the status rows (finding F10). */
     [[nodiscard]] bool accept(AbilityTables tables, bool fromFile);

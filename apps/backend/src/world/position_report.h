@@ -217,6 +217,17 @@ public:
                                         float speedFactor = 1.0F);
 
     /**
+     * The speed multiplier that the client of the session has: the larger value of the speed table (slot 43) that the
+     * session sent to it (stage 3.3b-S2a, criterion I10; code review of stage 3.3b-S1, finding F1). The client applies
+     * the table to its run and its sprint (live check of status-speed.md, S2a-I10); the check accepts the faster positions
+     * only with this value. A lower value counts only one window (kWindow) after its time: the client moves with the
+     * old value until the table comes, and its reports of that time come later.
+     */
+    void set_client_speed(float factor, WorldClock::time_point now);
+    /** @return The factor of the speed of the client for the check at this time (World::report_position). */
+    [[nodiscard]] float client_speed(WorldClock::time_point now) const;
+
+    /**
      * The world moved the character to a different place (World::travel). The check starts
      * again as at the start of a session: no accepted report, and the position of the entity
      * (the new place) is the reference of the next report, for the horizontal distance and for
@@ -296,6 +307,10 @@ private:
     WorldClock::time_point m_clientStart{};
     std::array<std::uint64_t, kPositionVerdictCount> m_counts{};
     Largest m_largest;
+    /** The speed multiplier of the client (set_client_speed), the value before it, and the time of the change. */
+    float m_clientSpeed{1.0F};
+    float m_previousSpeed{1.0F};
+    WorldClock::time_point m_speedChanged{};
 };
 
 } // namespace soulwarden::backend::world

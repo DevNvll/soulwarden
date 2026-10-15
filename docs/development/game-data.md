@@ -79,7 +79,15 @@ backend. The tool of each system is also in the document of that system.
   and 2 too; a file must name its number of status rows: a file with 0 rows and a status
   effect is refused (code review of stage 1.3b, finding F10); the tool stops for a caster
   effect row that names a status that the tables do not have and for a ValueLimits part that
-  is not a name and a number), `perk-data.json` (stage 1.3b, `tools/gamedata/perks.sh`: the perk list in the order of
+  is not a name and a number; from stage 3.3b-S2a, still format 3, also the member
+  `statMultipliers` (the Min and Max of each stat of StatMultiplierData: the limits of the speed
+  table; a file with no such member gives no limit); the tool stops for a column of the status
+  rules (StackMax, DurationMax, RefreshDuration, ...) or of a caster effect (OnHit,
+  SelfApplyStatusEffect, ...) that a table does not have, but for the columns that the tables of
+  the creatures do not have in the game (`STATUS_TABLE_DIFFERENCES`), and for an
+  OnEndStatusEffect or a CastSpell that does not resolve, but for the one link of the game in
+  `END_LINKS_NOT_IN_GAME`; the loader refuses a positive time below 1 ms and a link that does
+  not resolve (code review of stage 3.3b-S1, findings F8, F9, F13)), `perk-data.json` (stage 1.3b, `tools/gamedata/perks.sh`: the perk list in the order of
   the client, each perk with its affixes, abilities, labels, scaling, and channel, the cells of
   the affixes and of the ability rows that the perks name, the perk buckets, the perk places
   of each item, the consumables, the encumbrance row and the load of each armor item, the
@@ -100,7 +108,23 @@ backend. The tool of each system is also in the document of that system.
   rows or two ability rows of one id with different values (F15), and the entries of a perk
   bucket end at the first empty perk cell or empty weight cell, and at Perk500 (the parser of
   the client, F16: one bucket of the game, PerkBucket_PvPBucket1, has 5 entries, not 15);
-  `tools/gamedata/check_perk_tool.py` checks these stops with made-up tables, case RI14), `travel-places.json` (the spirit shrines and the inns
+  `tools/gamedata/check_perk_tool.py` checks these stops with made-up tables, case RI14; from
+  stage 3.3b-S2a the tool stops for a master item table with no ItemID or RequiredLevel, and a
+  consumable with no master item row has no row in the file (the count
+  `consumablesWithNoItem`: 138 of 586 in the game copy; code review of stage 3.3b-S1, finding
+  F11), and it requires the ABS and DMG columns of each damage type in the affix table, not the
+  armor columns that the table of the game does not have (F12)), `spell-data.json` (stage
+  3.3b-S2a, `tools/gamedata/spells.sh`: for each spell row with a prefab slice, the slice asset
+  and sub id, the slot of its Spell component, the slots and types of its replicated components,
+  its interest radius (`m_sliceSpawnRadius`), and its delayed events (slot, delay, event type,
+  target entity, damage row of the target, and a mark for the target with a
+  DestroyGDEComponent); 1,565 spells and 934 slices, 1.1 MB, 7 s; without it a spell has its
+  hits and no record; the backend refuses a file whose form, counts, or links are not
+  correct, as a whole: a null asset, a Spell slot that is not of type 2912, two components on
+  one slot, a delayed event on a slot that is not of type 3139, more than 250 events, a delay
+  that is not finite, a spell that names no slice of the file; the tool leaves out a slice with
+  no Spell component and a spell with no slice file, with their counts;
+  [Spell entities](../systems/spells.md)), `travel-places.json` (the spirit shrines and the inns
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
@@ -124,12 +148,18 @@ tools/gamedata/combat.sh             # one time: combat tables for the backend (
 tools/gamedata/loot.sh               # one time: rewards of a kill for the backend (loot tables, experience and coin of each level, credit, gear score limits; 10 s)
 tools/gamedata/abilities.sh          # one time: ability data for the backend (cooldowns, status effects and spells with their cells, cost tables; 2 MB)
 tools/gamedata/perks.sh              # one time: perk data for the backend (perk list, affixes, buckets, item perk places, consumables, equip load, swaps; 6.5 MB)
+tools/gamedata/spells.sh             # one time: spell entity data for the backend (slices, slots, delayed events; 1.1 MB, 7 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
 ```
 
 ## Traps
+
+- Stage 3.3b-S2a adds `spell-data.json` and changes the contents of `ability-data.json` (the member `statMultipliers`)
+  and of `perk-data.json` (the consumables with no master item row are not in it). The backend of this stage reads the
+  older files: with no `statMultipliers` the speed table has no limits, and with no `spell-data.json` the vortex has no
+  picture. Write the three files again with `tools/gamedata/abilities.sh`, `perks.sh`, and `spells.sh`.
 
 - Stage 3.3b-S1 changed the forms of `ability-data.json` (format 3) and `perk-data.json` (format 2). The backend of
   this stage refuses a perk file of format 1 (no perk data: no perk of an item, no consumable, no heart rune): write the

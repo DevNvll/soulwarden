@@ -261,13 +261,30 @@ private:
     void update_interest(carrier::Clock::time_point now, const world::Entity& own);
     void send_stops();
     void send_record(const world::Entity& entity, Known& known, carrier::Clock::time_point now);
-    /** The records of creatures that wait for one common bundle. */
+    /** The records of creatures and spells that wait for one common bundle. */
     struct RecordBatch {
         hub::Bytes payload;
         unsigned records{0};
-        /** Records of the batch that are the first record of their creature. */
+        /** Records of the batch that are the first record of their creature, and of their spell or probe. */
         unsigned fresh{0};
+        unsigned freshOther{0};
     };
+    /** One state fragment of a record that waits for its bundle. */
+    struct PendingFragment {
+        std::uint32_t slot;
+        std::uint32_t type;
+        hub::Bytes state;
+        /** True for a fragment of a development command. */
+        bool development;
+    };
+    /**
+     * Puts the record of a spell or of a probe into the batch (stage 3.3b-S2a): an entity of a slice with only the
+     * observer view, whose slots come from its slice. The rule of the records of add_creature_record applies.
+     */
+    void add_observer_record(const world::Entity& entity, Known& known, RecordBatch& batch);
+    /** Puts the fragments of an entity into records of the batch (add_creature_record, add_observer_record). */
+    void add_records(const world::Entity& entity, Known& known, RecordBatch& batch, const std::vector<PendingFragment>& fragments,
+                     bool creature);
     /**
      * Puts the record of a creature into the batch, when a component state of the creature
      * changed after the last record of this session. A batch that is full goes out first. The
@@ -441,6 +458,10 @@ private:
     carrier::Clock::time_point m_lastInterestScan{};
     /** The world revision of the last travel for which this session compared its interest distances. */
     world::Revision m_interestTravel{0};
+    /** The world revision of the last new spell entity for which this session compared its interest distances (stage 3.3b-S2a). */
+    world::Revision m_interestSpell{0};
+    /** The number of spell entities whose first record this session sent, and the largest number in its interest table. */
+    std::uint64_t m_spellRecords{0};
     /**
      * True from a travel of the character to the bundle with its new position: the message "on
      * player teleport" goes out after that bundle.

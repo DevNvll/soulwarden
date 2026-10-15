@@ -96,7 +96,14 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   rules in [Gear and perks](gear-and-perks.md)): the part of the gear of the attacker, the
   conversion of a gem, the DMG and ABS parts, the armor parts, a rend of the creature, and
   BaseDamageReduction. A hit of a fixed amount (a tick, a chain) goes through
-  `Combat::strike_amount`. The damage number has a second entry for a converted part.
+  `Combat::strike_amount`. The damage number has a second entry for a converted part. The
+  hit of an ability uses the conversion of the gem of the weapon at the press of the cast
+  (`CastConversion`, the last argument of `Combat::strike`), not the weapon in the slot at
+  the time of the hit (code review of stage 3.3b-S1, finding F3, test case RS3).
+- The death of a character ends its spell entities only when the spell row has
+  `EndOnCasterDeath` (`Spells::caster_died`; [Spell entities](spells.md)). The revival
+  (`Health::heal` of a dead character) and the respawn refresh the gear: the statuses of the
+  gear come back (finding F5, test case RS5).
 - The weapon in the hand of a character is the item of the weapon slot that its client
   selected with a weapon key (`Entity::combat.selectedWeapon`), or the first weapon slot
   with an item. The sheathe bits and the active bits of the paperdoll state do not follow

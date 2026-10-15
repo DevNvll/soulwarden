@@ -395,6 +395,15 @@ struct HitWeapon {
     std::string ability;
 };
 
+/**
+ * The conversion of the gem of the weapon instance at the press of a cast (code review of stage 3.3b-S1, finding F3): each
+ * hit of the cast has it, not the gem of the item that is in the slot at the time of the hit. A part 0: no conversion.
+ */
+struct CastConversion {
+    std::string type;
+    float part{0.0F};
+};
+
 class Combat {
 public:
     /** @param tables The combat tables (game data). Null or not loaded: each claim is refused. */
@@ -422,7 +431,8 @@ public:
      * @param what The kind of the hit for the log line ("light attack", "Shockwave").
      * @return The verdict `accepted` with the values of the hit, or `dead` (the creature took no damage).
      */
-    HitResult strike(Entity& attacker, Entity& target, const HitWeapon& weapon, std::uint32_t rowIndex, float factor, const char* what);
+    HitResult strike(Entity& attacker, Entity& target, const HitWeapon& weapon, std::uint32_t rowIndex, float factor, const char* what,
+                     const CastConversion* cast = nullptr);
 
     /**
      * One hit of a fixed amount of a damage type of a character on a creature (stage 1.3b: a tick of a damage over time

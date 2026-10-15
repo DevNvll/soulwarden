@@ -32,6 +32,23 @@ constexpr std::uint32_t kObserverSliceSubId = 2;
 
 hub::Bytes encode_metadata_state(const world::Entity& entity, View view, const world::WorldClock&) {
     StateWriter state(kGroups);
+    if (entity.kind == world::EntityKind::spell) {
+        // The slice of the spell (game data: the vortex of Gravity Well, sub id 2) and the actor id of the spell entity
+        // (live check L4 of stage 3.3b-S2a).
+        if (entity.spell.slice != nullptr) {
+            state.field(0, kAssetId).raw(entity.spell.slice->asset);
+            state.field(0, kAssetId).u32(entity.spell.slice->subId);
+        }
+        state.field(0, kGdeRef).raw(entity.actor.bytes);
+        return state.finish();
+    }
+    if (entity.kind == world::EntityKind::probe) {
+        // Development aid: the slice of a command (tools/world probe).
+        state.field(0, kAssetId).raw(entity.probe.asset);
+        state.field(0, kAssetId).u32(entity.probe.subId);
+        state.field(0, kGdeRef).raw(entity.actor.bytes);
+        return state.finish();
+    }
     if (entity.kind == world::EntityKind::creature) {
         state.field(0, kAssetId).raw(entity.creature.body->asset);
         state.field(0, kAssetId).u32(entity.creature.body->subId);

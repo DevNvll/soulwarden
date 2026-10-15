@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "gamedata/creature_data.h"
+#include "gamedata/spell_data.h"
 #include "state/creation_data.h"
 #include "state/store.h"
 #include "world/ids.h"
@@ -20,9 +21,9 @@
 // the replication layer of the game server makes the bytes for each session that observes
 // the entity (server/rep/states).
 //
-// An entity is the character of a player or a creature (EntityKind). A creature has no
-// character, no account, and no session: its key is its entity id. A function for a character
-// (World::find_character, each system with a character id) never finds a creature.
+// An entity is the character of a player, a creature, or a spell (EntityKind). A creature and a
+// spell have no character, no account, and no session: their key is their entity id. A function
+// for a character (World::find_character, each system with a character id) never finds them.
 
 namespace soulwarden::backend::world {
 
@@ -31,6 +32,18 @@ enum class EntityKind {
     player,
     /** A creature of the world: an animal, a monster. The creature system makes it (world/creatures.h). */
     creature,
+    /**
+     * A spell of the world (stage 3.3b-S2a, world/spells.h): the vortex of Gravity Well. The spell system makes it at the
+     * place of the cast, each session near it gets its record, and it goes away at its end or at a cancel. It has no
+     * character, no account, and no session.
+     */
+    spell,
+    /**
+     * Development aid (tools/world probe, stage 3.3b-S2a, live check L4): an entity of a slice of the game whose
+     * states are only the fragments of a command. Each session near it gets its record (the metadata state and the
+     * fragments) and its stop. Only a development command makes it.
+     */
+    probe,
 };
 
 /** The component states of an entity that the replication layer sends. Each system adds its keys. */
@@ -69,6 +82,15 @@ enum class ComponentKey {
     status,
     /** The heart rune charge of a character (stage 1.3b, slot 48). Only the owner gets it. */
     charge,
+    /**
+     * The speed table of a character (stage 3.3b-S2a, S2a-I10; slot 43, StatMultiplierTable): the multipliers of the run
+     * and of the sprint from its statuses. Only the owner gets it.
+     */
+    statMultipliers,
+    /** The spell state of a spell entity (stage 3.3b-S2a, world/spells.h): its row, its place, its caster. */
+    spell,
+    /** The delayed event states of a spell entity: the time that is left for each event of its slice. */
+    delayedEvents,
 };
 
 /**
@@ -696,6 +718,38 @@ struct RawFragment {
     Revision changed{0};
 };
 
+/**
+ * The values of a spell entity (stage 3.3b-S2a, world/spells.h): its spell row, its caster, and its times on the world clock.
+ * Only the spell system changes them. The record of the spell (states/spell_state.cpp) comes from them.
+ */
+struct SpellBody {
+    /** The id text of the spell row ("Spell_GreatAxe_GravityWell_Vortex") and the CRC-32 of its lower-case id (the key of the row on the wire). */
+    std::string spellId;
+    std::uint32_t key{0};
+    /** The slice of the spell (game data, spell-data.json). Null: the backend has no data of the slice, and no session observes the entity. */
+    const gamedata::SpellSlice* slice{nullptr};
+    /** The caster: its entity, its actor id (the caster reference of the Spell state), and its character. */
+    EntityId caster{0};
+    ActorId casterActor;
+    std::string casterCharacter;
+    /** The start and the end of the spell on the world clock. */
+    WorldClock::time_point started{};
+    WorldClock::time_point ends{};
+    /** EndOnCasterDeath of the spell row (game data): the death of the caster ends the spell. */
+    bool endsOnCasterDeath{false};
+    /** The cast of the abilities system whose phases the spell runs (world/abilities.h). 0: none. */
+    std::uint64_t cast{0};
+};
+
+/** Development aid: the slice of a probe entity (EntityKind::probe) and its interest distance. */
+struct ProbeBody {
+    /** The asset id of the slice (the 16 bytes of the asset catalog) and its sub id. */
+    std::array<std::uint8_t, 16> asset{};
+    std::uint32_t subId{2};
+    /** A session starts to observe the probe at this distance (meters), and it stops 20 m farther. */
+    float interestRadius{50.0F};
+};
+
 struct Entity {
     /** Entity group id: the first 8 bytes of the actor id. Key of the entity table. */
     EntityId id{0};
@@ -708,6 +762,10 @@ struct Entity {
     std::string name;
     /** Creatures: the kind, the level, the direction, and the life state. */
     Creature creature;
+    /** Spells: the spell row, the caster, and the times (stage 3.3b-S2a). */
+    SpellBody spell;
+    /** Development aid: the slice of a probe entity. */
+    ProbeBody probe;
     /** The session of the client that plays this character. 0: no session. */
     SessionId owner{0};
 
@@ -754,6 +812,12 @@ struct Entity {
     CombatState combat;
     /** The values of the equipment and the effects of the character. The gear system changes them (world/gear.h). */
     GearSummary gear;
+    /**
+     * The speed multipliers of the run and of the sprint (the keys MoveSpeedMod and SprintSpeedMod of the speed table, slot
+     * 43; stage 3.3b-S2a): 1 plus the speed parts of the gear summary, in the limits of the data. The gear system sets them.
+     */
+    float moveMultiplier{1.0F};
+    float sprintMultiplier{1.0F};
     /** The life state of the character. The health system changes it (world/health.h). */
     Life life;
     /**

@@ -14,6 +14,7 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
 | A remote player, development commands of the world | `tools/world`, protocol notes 4.9 |
 | Ids of an entity, check of the client messages | Protocol notes 4.2, `tools/gamedata/slice_ids.sh` |
 | Add a replicated state to the world | Protocol notes section 4, then `tools/st NAME_REGEX` |
+| An entity that is not a character or a creature: a spell, a probe | [Spell entities](spells.md), `World::make_spell`, `World::make_probe`, `codecs_of` in `server/rep/states/state_codecs.h` |
 
 ## Rules
 
@@ -33,6 +34,18 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   position row. A system changes an entity and marks the component state (`World::touch`).
   The world refuses a position that is not finite or that is outside its limits
   (`valid_position`), for each source.
+- The kinds of an entity (`EntityKind`): a player, a creature, a spell (stage 3.3b-S2a,
+  [Spell entities](spells.md)), and a probe (a development aid for a live check of a slice
+  record). Each kind has its own list of codecs (`codecs_of`: `player_codecs`,
+  `creature_codecs`, `spell_codecs`, `probe_codecs`). A spell and a probe have only the
+  observer view. A session observes a spell or a probe at its own distance (the
+  `m_sliceSpawnRadius` of the slice, 50 m for the vortex; not more than the distance of a
+  character) and stops it at that distance plus 20 m. A new spell makes each session look for
+  spells near its character in the same tick (`World::last_spell`), not in each tick.
+- The first record of a character has the states of the world that it has at the entry: the
+  world marks the status state and the speed table at each entry (`kEnteredComponents` in
+  `world/world.cpp`; code review of stage 3.3b-S1, finding F2, test case RS2). A status that
+  runs stays through a leave and comes in the first record of the next session.
 - A session is an observer: it has transport state, the camera estimate of its client, and
   the interest table (entity to interest number). One encoder for each component state
   (`server/rep/states`) makes the bytes for the owner view or for the observer view. No
@@ -46,7 +59,8 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   has only the slots that changed. The progression encoder has the two views too: the owner
   gets the level and the experience, and an observer gets the level (the name tag of a remote
   player shows it). The attribute state, the three skill states, the cooldown state (stage
-  3.3a), and the charge state of the heart rune (stage 1.3b, slot 48) are for the owner only.
+  3.3a), the charge state of the heart rune (stage 1.3b, slot 48), and the speed table (stage
+  3.3b-S2a, slot 43; [Status effects](status-effects.md)) are for the owner only.
   The status state of a creature (stage 3.3a) has only the observer view. The status state of
   a player (stage 3.3b-S1, slot 44) has the two views: the owner gets its maps, an observer the
   public statuses ([Status effects](status-effects.md)). The Player state of the owner has the
@@ -161,6 +175,10 @@ tools/world remove NAME              # take that entity out of the world
   the game process did not get before, or the client drops each state bundle and stays in
   `WaitingForPlayerSpawn` for 120 s (protocol notes 3.5). The backend uses the session id.
   A change of the level information or of the state bundle must keep this.
+- A leave through the Game Menu can give no carrier disconnect: in stage 3.3b-S2a the client
+  went to the main menu, and the session ended 30 s later (`cause: idle`).
+  `tools/scenarios/leave.sh` then says that the client did not leave. Until the session ends,
+  the character is in the world: a command for it changes the character in the world.
 - A game process that is stopped (`kill -STOP`) sends no datagram: its session ends after
   30 s (`cause: idle`). `kill -STOP` only the process with the name `NewWorld.exe`: a `kill`
   of the game process stops the backend too (the launcher does this).

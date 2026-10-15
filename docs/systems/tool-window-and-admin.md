@@ -76,7 +76,10 @@ protocol notes (section 6).
   button for these four. Stage 3.3b-S1: the commands `apply_status` (arguments `status`,
   `seconds`, `potency`, `count`) and `remove_status` (`status`, or `all`) are the commands of
   the status effects ([Status effects](status-effects.md)); the tool window has no button for
-  them. The perk roll of an item (`tools/world perkroll`) is a development
+  them. Stage 3.3b-S2a: the commands `cast_ability` (arguments `place`, 0 to 2, and `yaw`,
+  degrees from the north to the east) and `end_spells` (no argument) are the commands of the
+  spell entities ([Spell entities](spells.md)); the tool window has no button for them. The
+  perk roll of an item (`tools/world perkroll`) is a development
   route only. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn
   point, and an effect on a creature are development routes only (`tools/world hurt`, `roll`,

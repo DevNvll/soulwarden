@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "gamedata/ability_data.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/world_clock.h"
@@ -147,6 +148,8 @@ private:
     }
     /** @return The rune item of a character with the Detonate ability, or null. */
     [[nodiscard]] const ItemInstance* detonate_rune(const Entity& character) const;
+    /** @return True when the data has the whole chain from the activation status to the explosion (finding F8 of the review of 3.3b-S1). */
+    [[nodiscard]] bool chain_complete(const Entity& character, const gamedata::StatusRow& status) const;
     /** Puts the charge into the entity and marks the charge state. */
     void publish(Entity& character, const CharacterState& state);
     /** The explosion of an activation around the character (the spell of the end status). */

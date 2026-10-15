@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iterator>
 
 #include <nlohmann/json.hpp>
 
@@ -29,6 +30,44 @@ std::uint32_t status_crc(std::string_view text) {
         }
     }
     return ~crc;
+}
+
+/** A positive timer of a status row is not below this (seconds): the due list of the status system has milliseconds. */
+constexpr float kShortestTimer = 0.001F;
+
+/** A link of the game data to a row that the game data does not have (the retail tables have it so). */
+struct MissingLink {
+    const char* row;
+    const char* target;
+};
+/**
+ * The OnEndStatusEffect links of the game data (client build 1.400.6031.6004151) that name no row: the loader accepts
+ * only these (code review of stage 3.3b-S1, finding F8). The status of the row then gets no end status.
+ */
+constexpr MissingLink kMissingEndLinks[] = {{"AI_IceDragon_EmpoweringLink_Stack_Apply", "AI_IceDragon_EmpoweringLink_Stack"}};
+
+/** @return The parts of a list of the data ("A+B", "A,B"), with no space around them. */
+std::vector<std::string_view> list_parts(std::string_view text) {
+    std::vector<std::string_view> parts;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        std::size_t end = text.find_first_of("+,", start);
+        if (end == std::string_view::npos) {
+            end = text.size();
+        }
+        std::string_view part = text.substr(start, end - start);
+        while (!part.empty() && part.front() == ' ') {
+            part.remove_prefix(1);
+        }
+        while (!part.empty() && part.back() == ' ') {
+            part.remove_suffix(1);
+        }
+        if (!part.empty()) {
+            parts.push_back(part);
+        }
+        start = end + 1;
+    }
+    return parts;
 }
 
 bool read_cells(const json& value, CellValues& cells) {
@@ -161,6 +200,10 @@ bool read_category(const json& row, StatusCategory& category) {
     return true;
 }
 
+bool read_stat_limit(const json& row, StatLimit& limit) {
+    return row.is_array() && row.size() == 3 && text(row, 0, limit.id) && number(row, 1, limit.min) && number(row, 2, limit.max);
+}
+
 template <class Row, class Read>
 bool read_list(const json& document, const char* name, Read read, std::vector<Row>& rows, std::string& error) {
     if (!document.contains(name) || !document[name].is_array()) {
@@ -253,6 +296,12 @@ bool AbilityData::load(const std::string& path) {
             || !read_list(document, "statusCategories", read_category, tables.statusCategories, m_error))) {
         return false;
     }
+    // The limits of the stat multipliers (stage 3.3b-S2a): a member of a newer file of format 3. With no member the speed
+    // table of a character has no limit of the data (the client bounds it itself).
+    if (format >= kFormat && document.contains("statMultipliers")
+        && !read_list(document, "statMultipliers", read_stat_limit, tables.statMultipliers, m_error)) {
+        return false;
+    }
     return accept(std::move(tables), true);
 }
 
@@ -270,6 +319,7 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
     m_abilityCosts.clear();
     m_abilityRows.clear();
     m_categories.clear();
+    m_statLimits.clear();
     std::unordered_map<std::string, std::size_t> cooldowns;
     std::unordered_map<std::string, std::size_t> status;
     std::unordered_map<std::string, std::size_t> spells;
@@ -278,6 +328,7 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
     std::unordered_map<std::string, std::size_t> abilityCosts;
     std::unordered_map<std::string, std::size_t> abilityRows;
     std::unordered_map<std::string, std::size_t> categories;
+    std::unordered_map<std::string, std::size_t> statLimits;
     std::string error;
     if (tables.cooldowns.empty()) {
         error = "the data has no cooldown";
@@ -286,7 +337,8 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
                && index_rows(tables.staminaCosts, staminaCosts, "staminaCosts", error)
                && index_rows(tables.abilityCosts, abilityCosts, "abilityCosts", error)
                && index_rows(tables.abilityRows, abilityRows, "abilityRows", error)
-               && index_rows(tables.statusCategories, categories, "statusCategories", error)) {
+               && index_rows(tables.statusCategories, categories, "statusCategories", error)
+               && index_rows(tables.statMultipliers, statLimits, "statMultipliers", error)) {
         for (const CooldownRow& row : tables.cooldowns) {
             if (row.time < 0.0F || row.minTime < 0.0F) {
                 error = "the cooldown of " + row.id + " is negative";
@@ -319,6 +371,45 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
                 error = "the caster effect row " + row.id + " names the status " + std::string(name) + ", which the data does not have";
             }
             start = end + 1;
+        }
+    }
+    // The timers of a status row (code review of stage 3.3b-S1, finding F9): the world clock of the status system has
+    // milliseconds, and a positive time below 1 ms would not advance its due list. The data of the game has no such value.
+    for (const StatusRow& row : tables.statusEffects) {
+        if (!error.empty()) {
+            break;
+        }
+        for (const auto& [name, value] : {std::pair<const char*, float>{"BaseDuration", row.duration},
+                                          {"TickRate", row.cells.number("TickRate")},
+                                          {"DurationMax", row.cells.number("DurationMax")},
+                                          {"ApplicationCooldown", row.cells.number("ApplicationCooldown")}}) {
+            if (value > 0.0F && value < kShortestTimer) {
+                error = "the status effect " + row.id + " has a " + name + " above 0 and below 1 ms";
+                break;
+            }
+        }
+    }
+    // The links of a status row (finding F8): each status of OnEndStatusEffect and the spell of CastSpell are in the data.
+    // The game data has one link with no row: kMissingEndLinks names it.
+    for (const StatusRow& row : tables.statusEffects) {
+        if (!error.empty()) {
+            break;
+        }
+        for (const std::string_view next : list_parts(row.cells.text("OnEndStatusEffect"))) {
+            if (status.count(lower_ascii(next)) != 0) {
+                continue;
+            }
+            const bool named = std::any_of(std::begin(kMissingEndLinks), std::end(kMissingEndLinks), [&](const MissingLink& link) {
+                return lower_ascii(link.row) == lower_ascii(row.id) && lower_ascii(link.target) == lower_ascii(next);
+            });
+            if (!named) {
+                error = "the status effect " + row.id + " names the end status " + std::string(next) + ", which the data does not have";
+                break;
+            }
+        }
+        const std::string_view spell = row.cells.text("CastSpell");
+        if (error.empty() && !spell.empty() && spells.count(lower_ascii(spell)) == 0) {
+            error = "the status effect " + row.id + " names the spell " + std::string(spell) + " (CastSpell), which the data does not have";
         }
     }
     if (error.empty() && !tables.statusEffects.empty()) {
@@ -357,6 +448,7 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
     m_abilityCosts = std::move(abilityCosts);
     m_abilityRows = std::move(abilityRows);
     m_categories = std::move(categories);
+    m_statLimits = std::move(statLimits);
     m_error.clear();
     return true;
 }
@@ -393,6 +485,10 @@ const AbilityRow* AbilityData::ability_row(std::string_view id) const {
 
 const StatusCategory* AbilityData::category(std::string_view id) const {
     return find_row(m_tables.statusCategories, m_categories, id);
+}
+
+const StatLimit* AbilityData::stat_limit(std::string_view id) const {
+    return find_row(m_tables.statMultipliers, m_statLimits, id);
 }
 
 } // namespace soulwarden::backend::gamedata

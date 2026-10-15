@@ -208,6 +208,60 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
             return progress_wire::list_size(rest, field == 0 ? 14 : field == 1 ? 10 : 17, 1000);
         }
         return -1;
+    case 1525: // StatMultiplierTable (stage 3.3b-S2a): group 1 field 0, a full table of entries of 6 bytes.
+        if (group == 1 && field == 0) {
+            server::hub::Reader reader(rest);
+            if (reader.size() != 0) {
+                return -1; // a delta form: the backend sends none
+            }
+            if (reader.u8() != 0) {
+                (void)reader.size64();
+            }
+            const std::uint32_t count = reader.size();
+            const std::size_t total = reader.position() + static_cast<std::size_t>(count) * 6;
+            return total <= rest.size() ? static_cast<int>(total) : -1;
+        }
+        return -1;
+    case 2912: { // Spell (stage 3.3b-S2a): the key, two positions, two rotations, three references, the time, the count, the scale.
+        if (group != 0) {
+            return -1;
+        }
+        const auto rotation = [&]() -> int {
+            // Header byte (0x87B250): bits 0x01, 0x02, 0x04 or 0x08, 0x10, 0x20 give x, y, z; a u16 for each other one.
+            if (rest.empty()) {
+                return -1;
+            }
+            int size = 1;
+            for (unsigned axis = 0; axis < 3; ++axis) {
+                if ((rest[0] & ((1U << axis) | (8U << axis))) == 0) {
+                    size += 2;
+                }
+            }
+            return size;
+        };
+        switch (field) {
+        case 0:
+        case 9:
+        case 10:
+            return 4;
+        case 1:
+        case 3:
+            return 10;
+        case 2:
+        case 4:
+            return rotation();
+        case 5:
+        case 6:
+        case 7:
+            return 24;
+        case 8:
+            return 8;
+        default:
+            return -1;
+        }
+    }
+    case 3139: // DelayedEvent (stage 3.3b-S2a): the remaining time (a half float) and the completed flag.
+        return group == 0 && field == 0 ? 2 : group == 0 && field == 1 ? 1 : -1;
     default:
         return -1;
     }
@@ -227,11 +281,14 @@ inline unsigned group_count(std::uint32_t type) {
     case 185:
     case 2932:
     case 5257:
+    case 2912:
+    case 3139:
         return 1;
     case 4236:
         return 4;
     case 3935:
     case 3183:
+    case 1525:
         return 3;
     case 11:
     case 15:

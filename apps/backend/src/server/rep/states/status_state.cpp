@@ -2,6 +2,7 @@
 #include <cmath>
 
 #include "server/rep/replication.h"
+#include "server/rep/states/half_float.h"
 #include "server/rep/states/state_codecs.h"
 
 // MB::StatusEffectsComponentReplicatedState (constructor at image RVA 0x4013900, apply at 0x4028F70): the component
@@ -45,26 +46,6 @@ constexpr unsigned kLightweightMap = 1;
 constexpr unsigned kTray = 2;
 /** One stack and the potency 1. */
 constexpr std::uint8_t kPackedOneStack = 0x81;
-
-/** @return The IEEE half of a float (round to nearest), for the potency of a full entry. */
-std::uint16_t half_of(float value) {
-    const auto bits = std::bit_cast<std::uint32_t>(value);
-    const std::uint16_t sign = static_cast<std::uint16_t>((bits >> 16) & 0x8000U);
-    const int exponent = static_cast<int>((bits >> 23) & 0xFFU) - 127 + 15;
-    std::uint32_t mantissa = bits & 0x7FFFFFU;
-    if (!std::isfinite(value) || exponent >= 31) {
-        return static_cast<std::uint16_t>(sign | 0x7BFFU);
-    }
-    if (exponent <= 0) {
-        return sign;
-    }
-    mantissa += 0x1000U;
-    std::uint32_t result = (static_cast<std::uint32_t>(exponent) << 10) + (mantissa >> 13);
-    if (result >= 0x7C00U) {
-        result = 0x7BFFU;
-    }
-    return static_cast<std::uint16_t>(sign | result);
-}
 
 void stamp(hub::Writer& map, std::uint64_t sequence, std::size_t count) {
     map.size(0);

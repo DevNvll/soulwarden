@@ -48,6 +48,9 @@ inline constexpr std::uint32_t kTypeManaState = 1652;           // MB::ManaCompo
 inline constexpr std::uint32_t kTypeCooldownState = 2932;       // MB::CooldownTimersComponentReplicatedState
 inline constexpr std::uint32_t kTypeChargeState = 5257;         // MB::ChargeComponentReplicatedState
 inline constexpr std::uint32_t kTypeStatusEffectsState = 4236;  // MB::StatusEffectsComponentReplicatedState
+inline constexpr std::uint32_t kTypeStatMultiplierState = 1525; // MB::StatMultiplierTableReplicatedState
+inline constexpr std::uint32_t kTypeSpellState = 2912;          // MB::SpellComponentReplicatedState
+inline constexpr std::uint32_t kTypeDelayedEventState = 3139;   // MB::DelayedEventComponentReplicatedState
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -80,6 +83,8 @@ inline constexpr std::uint32_t kCooldownSlot = 45;
 inline constexpr std::uint32_t kChargeSlot = 48;
 /** The component StatusEffects of the player slice and of the remote player slice (stage 3.3b-S1, research abilities-shared.md Q1). */
 inline constexpr std::uint32_t kStatusSlot = 44;
+/** The component StatMultiplierTable of the player slice (stage 3.3b-S2a, S2a-I10; research status-speed.md): the speed table. */
+inline constexpr std::uint32_t kStatMultiplierSlot = 43;
 
 enum class View {
     owner,
@@ -115,6 +120,15 @@ struct PartsRequest {
  */
 using PartsEncoder = std::vector<server::hub::Bytes> (*)(const world::Entity& entity, View view, const PartsRequest& request);
 
+/** One fragment of a state for a slot of the slice of the entity (a spell has one delayed event state for each event slot). */
+struct SlotState {
+    std::uint32_t slot{0};
+    hub::Bytes state;
+};
+
+/** Encoder of a state with one fragment for each of some slots of the slice (the delayed events of a spell). */
+using SlotPartsEncoder = std::vector<SlotState> (*)(const world::Entity& entity, View view, const PartsRequest& request);
+
 struct StateCodec {
     world::ComponentKey key;
     /** Index of the component in the component list of the slice (`m_replicationIndex`). */
@@ -131,6 +145,8 @@ struct StateCodec {
      * the slot is `slot`.
      */
     std::uint32_t (*slotOf)(const world::Entity& entity){nullptr};
+    /** Encoder of a state with a fragment for each of some slots (the slot of each fragment is its own). Null: not such a state. */
+    SlotPartsEncoder slotParts{nullptr};
 };
 
 /** @return The codecs of a player entity, in the sequence of the fragments of its record. */
@@ -140,6 +156,14 @@ struct StateCodec {
  *         has only the observer view.
  */
 [[nodiscard]] std::span<const StateCodec> creature_codecs();
+/**
+ * @return The codecs of a spell entity (stage 3.3b-S2a), in the sequence of the fragments of its record: the metadata
+ *         state (the slice of the spell), the Spell state, and the delayed event states. A spell has only the observer
+ *         view, and the slots come from its slice (game data).
+ */
+[[nodiscard]] std::span<const StateCodec> spell_codecs();
+/** @return The codecs of a probe entity (development aid, tools/world probe): only the metadata state. */
+[[nodiscard]] std::span<const StateCodec> probe_codecs();
 /** @return The codecs of an entity of each kind. */
 [[nodiscard]] std::span<const StateCodec> codecs_of(const world::Entity& entity);
 /** @return The slot of the state of a codec for an entity. 0 for a state that is not the metadata state: no fragment. */
@@ -214,6 +238,22 @@ struct StateCodec {
  *         No fragment in the first record of a character with no such status. Needs `request.clock` (the wall ends).
  */
 [[nodiscard]] std::vector<hub::Bytes> encode_player_status_state(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The speed table of a character for the owner (states/stat_multiplier_state.cpp, stage 3.3b-S2a): the multipliers
+ *         of the run and of the sprint. No fragment for the observer view, and none in the first record of a character with
+ *         the multipliers 1.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_stat_multiplier_state(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The Spell state of a spell entity (states/spell_state.cpp, type 2912): the key of the spell row, the place, the
+ *         rotation, the attachments (none), the caster, the start time, the count, and the scale of the radius.
+ */
+[[nodiscard]] hub::Bytes encode_spell_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The delayed event states of a spell entity (states/spell_state.cpp, type 3139): one fragment for each delayed event
+ *         of its slice, with the time that is left at the time of the record (`request.clock`) and the completed mark.
+ */
+[[nodiscard]] std::vector<SlotState> encode_delayed_event_states(const world::Entity& entity, View view, const PartsRequest& request);
 /** @return The coin of the character for the owner. No byte for the observer view. */
 [[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The mana state of a character (states/mana_state.cpp): owner only. */

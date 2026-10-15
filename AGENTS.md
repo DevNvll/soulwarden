@@ -180,7 +180,8 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | The bag, the coin, the equipment, the perks of an item instance | [Items and equipment](docs/systems/items-and-equipment.md) |
 | What the equipment and the effects give a character, the perks of a hit, the gem conversion | [Gear and perks](docs/systems/gear-and-perks.md) |
 | The use of a potion or a food, the effects on a character, the heart rune | [Consumables and the heart rune](docs/systems/consumables-and-heart-rune.md) |
-| The status effects of a player: the one owner, the stacks and ends, the values, the HUD icons, the name plate of an observer | [Status effects](docs/systems/status-effects.md) |
+| The status effects of a player: the one owner, the stacks and ends, the values, the HUD icons, the name plate of an observer, the speed table | [Status effects](docs/systems/status-effects.md) |
+| The spell entities: the vortex of Gravity Well, its record, its delayed events, its cancel, the probe | [Spell entities](docs/systems/spells.md) |
 | The level, the attributes, the weapon masteries, the ability bars, the trade skills | [Progression and skills](docs/systems/progression-and-skills.md) |
 | Creatures: the spawn points, the record for a session, the actions, the creature data | [Creatures](docs/systems/creatures.md) |
 | The behavior of a creature: the fight, the way back, patrol and wander | [Creature behavior](docs/systems/creature-behavior.md) |

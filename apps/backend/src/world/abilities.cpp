@@ -259,6 +259,19 @@ CastVerdict Abilities::press(SessionId session, const AbilityPress& press) {
     if (character == nullptr) {
         return refuse(CastVerdict::noEntity);
     }
+    return press_entity(*character, session, press);
+}
+
+CastVerdict Abilities::press_character(const std::string& characterId, const AbilityPress& press) {
+    Entity* character = m_world.find_character(characterId);
+    if (character == nullptr) {
+        return refuse(CastVerdict::noEntity);
+    }
+    return press_entity(*character, 0, press);
+}
+
+CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const AbilityPress& press) {
+    Entity* character = &entity;
     // A later press of the session, accepted or refused, ends the contact windows of the earlier cast (code review of
     // stage 3.3a, finding F2): a contact after it is not a hit of that cast. Before each refusal (code review of stage
     // 1.3b, finding F9: a press of an empty place of the bar closed no window).
@@ -357,6 +370,10 @@ CastVerdict Abilities::press(SessionId session, const AbilityPress& press) {
     cast.itemId = item->itemId;
     cast.slot = Combat::weapon_slot_in_hand(*character).value_or(0);
     cast.gearScore = item->gearScore;
+    if (const std::optional<Conversion> conversion = m_world.gear().conversion(*item, cast.slot)) {
+        cast.conversionType = conversion->type;
+        cast.conversionPart = conversion->part;
+    }
     // The cooldown of the data starts at the press, as the cooldown of the client (live check L1).
     AbilityCooldown timer;
     timer.start = now;
@@ -515,10 +532,32 @@ void Abilities::throw_projectile(Cast& cast, const state::WorldPosition& origin,
     }
     const auto flight = std::chrono::milliseconds(static_cast<long long>(best / ability_rules::kProjectileSpeed * 1000.0F));
     const std::uint64_t number = cast.number;
-    cast.pending += 2;
+    // The vortex is a spell entity at the landing (stage 3.3b-S2a, world/spells.h): it runs the vortex phase at its start and
+    // the burst at the activation of the burst entity of its slice (game data: 3 s), and its hits follow it.
+    SpellRequest request;
+    request.spellId = vortexPlan->spell;
+    request.caster = cast.caster;
+    request.position = landing;
+    request.cast = number;
+    std::chrono::milliseconds burstAt = cast.plan.phases[burst].at;
+    if (const std::optional<std::chrono::milliseconds> data = m_world.spells().activation_time(vortexPlan->spell, cast.plan.phases[burst].row)) {
+        burstAt = *data;
+    }
+    request.phases = {SpellPhase{vortex, std::chrono::milliseconds(0)}, SpellPhase{burst, burstAt}};
+    request.fallbackEnd = burstAt;
+    ++cast.pending;
     ++m_counts.vortexes;
-    m_world.after(flight, [this, number, vortex, landing](World&) { run_area(number, vortex, landing); });
-    m_world.after(flight + cast.plan.phases[burst].at, [this, number, burst, landing](World&) { run_area(number, burst, landing); });
+    m_world.after(flight, [this, number, request](World& world) {
+        const auto found = m_casts.find(number);
+        if (found == m_casts.end()) {
+            return;
+        }
+        --found->second.pending;
+        if (const Entity* spell = world.spells().make(request)) {
+            found->second.spell = spell->id;
+            ++found->second.pending;
+        }
+    });
     log::write("world: ability: the projectile of Gravity Well lands %.1f m from its origin%s: the vortex starts at %.2f %.2f %.2f "
                "in %lld ms",
                static_cast<double>(best),
@@ -577,6 +616,8 @@ std::optional<MeleePhase> Abilities::contact_phase(const Entity& attacker, Sessi
         result.itemId = cast.itemId;
         result.slot = cast.slot;
         result.gearScore = cast.gearScore;
+        result.conversionType = cast.conversionType;
+        result.conversionPart = cast.conversionPart;
         result.done = cast.hits.count({index, target}) != 0;
         return result;
     }
@@ -601,16 +642,38 @@ void Abilities::contact_hit(std::uint64_t number, std::uint32_t phase, Entity& a
     }
 }
 
-void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::WorldPosition center) {
+void Abilities::spell_phase(std::uint64_t cast, std::uint32_t phase, const state::WorldPosition& center) {
+    const auto found = m_casts.find(cast);
+    if (found == m_casts.end() || phase >= found->second.plan.phases.size()) {
+        return;
+    }
+    run_area(cast, phase, center, true);
+}
+
+void Abilities::spell_ended(std::uint64_t number, EntityId spell) {
+    const auto found = m_casts.find(number);
+    if (found != m_casts.end() && found->second.spell == spell) {
+        found->second.spell = 0;
+        if (found->second.pending > 0) {
+            --found->second.pending;
+        }
+    }
+}
+
+void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::WorldPosition center, bool fromSpell) {
     const auto found = m_casts.find(number);
     if (found == m_casts.end()) {
         return;
     }
     Cast& cast = found->second;
-    --cast.pending;
+    if (!fromSpell) {
+        --cast.pending;
+    }
     Entity* caster = m_world.find(cast.caster);
-    // A caster that left the world or died does no damage (a rule of this project).
-    if (caster == nullptr || caster->characterId != cast.characterId || caster->life.dead || !has_data()) {
+    // A caster that left the world does no damage; a dead caster does none with a timer of the cast (a rule of this
+    // project). The phase of a spell entity hits while the spell lives: the data ends a spell at the death of its caster
+    // only with EndOnCasterDeath (world/spells.h).
+    if (caster == nullptr || caster->characterId != cast.characterId || (caster->life.dead && !fromSpell) || !has_data()) {
         return;
     }
     const PhasePlan& phase = cast.plan.phases[index];
@@ -692,9 +755,10 @@ bool Abilities::area_hit(Cast& cast, std::uint32_t index, Entity& caster, Entity
     if (!row || weapon == nullptr) {
         return false;
     }
+    const CastConversion conversion{cast.conversionType, cast.conversionPart};
     const HitResult result =
         m_world.combat().strike(caster, target, HitWeapon{cast.itemId, cast.slot, weapon, cast.gearScore, ability_text(cast.ability)}, *row,
-                                factor, ability_name(cast.plan.kind));
+                                factor, ability_name(cast.plan.kind), &conversion);
     if (result.verdict != HitVerdict::accepted) {
         return false;
     }

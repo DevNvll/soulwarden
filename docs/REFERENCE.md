@@ -52,7 +52,8 @@ listener): the state of the characters of the account of the game, an item searc
 kinds of the creatures, the travel places, and commands for the items, the coin, the level,
 the attributes, the skills, the nodes and the ability bars (`assign_node`,
 `set_ability_bar`), the cooldowns (`reset_cooldowns`), the status effects (`apply_status`,
-`remove_status`), and the health of a character, for the
+`remove_status`), the cast of an ability and the spell entities (`cast_ability`,
+`end_spells`), and the health of a character, for the
 creatures near it, and for a travel.
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
 
@@ -106,6 +107,7 @@ tools/gamedata/creatures.sh        # one time: creature data (without it the wor
 tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect; from stage 3.5a also the weapon mastery of each weapon)
 tools/gamedata/loot.sh             # one time: loot tables and kill rewards (without them a kill gives nothing); 10 s
 tools/gamedata/abilities.sh        # one time: ability data (cooldowns, status effects, spells, costs; without it an ability does nothing)
+tools/gamedata/spells.sh           # one time: spell entity data (slices, slots, delayed events; without it the vortex has no picture)
 tools/gamedata/perks.sh            # one time: perk data (perks, buckets, item perk places, consumables, equip load; without it an item has no perk)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
@@ -166,7 +168,14 @@ data on a creature, or `knockdown` or `stagger`); `list` has the line `abilities
 status effects of a character (stage 3.3b-S1): `status CHARACTER` (each status with its time,
 stacks, potency, and source, the speed and armor parts, the counts), `status CHARACTER STATUS
 [SECONDS [COUNT]]` (a status row of the ability data; 0 seconds: the duration of the row), and
-`status CHARACTER remove STATUS|all`.
+`status CHARACTER remove STATUS|all`. For the spell entities (stage 3.3b-S2a): `cast CHARACTER
+PLACE [--yaw DEGREES]` (the press of a key of the bar for a character, also for a remote test
+character with no client: the server throws the projectile of Gravity Well in the direction
+of the yaw), `spells` (the spell entities of the world with their age), `spells end
+CHARACTER` (each spell entity of a character ends), and `probe CHARACTER ASSET [DX DY DZ]
+[--sub N] [--radius M] [--fragment SLOT:TYPE:HEX]...`, `probe fragment ENTITY SLOT TYPE HEX`,
+and `probe remove ENTITY` (an entity of a slice with the fragments of the caller, for a live
+check of a record before its code).
 The backend has these commands only with the option `--dev-commands`, and it accepts that
 option and the research switch only when its process has `SOULWARDEN_HARNESS=1`.
 
@@ -386,7 +395,17 @@ button on "Confirm").
   the cells of each status effect and spell and the cost tables of the players. From stage
   3.3b-S1 the file (format 3, 2.2 MB) also has the status categories with their limits and the
   ability rows that put a status on the caster: with a file of format 2 the limits and the
-  caster effects (Safety Measures) do nothing.
+  caster effects (Safety Measures) do nothing. From stage 3.3b-S2a the file also has the
+  limits of the stat multipliers (`statMultipliers`, StatMultiplierData): with an older file
+  the speed of a haste has no upper limit.
+- `tools/gamedata/spells.sh` makes the spell entity data
+  (`~/.local/share/soulwarden/gamedata/spell-data.json`, 1.1 MB, stage 3.3b-S2a): for each spell
+  row with a prefab slice, the slice asset, the slots of its replicated components, its
+  interest radius, and its delayed events (protocol notes 4.25). It reads the data tables and
+  the slices of the game copy, from the same sources as the creature data tool (it needs an
+  Oodle source). `tools/gamedata/spells.sh --find TEXT` prints the spells with a text and their
+  slice. Without the file the backend starts, and the vortex of Gravity Well has its damage
+  but no picture.
 - `tools/gamedata/perks.sh` makes the perk data (`~/.local/share/soulwarden/gamedata/perk-data.json`,
   6.5 MB, stage 1.3b): the perk list in the order of the client, the values of each perk, the
   perk buckets and the perk places of each item (the perk roll of a loot item), the
@@ -489,8 +508,14 @@ button on "Confirm").
   Gravity, Unyielding, Crowded Well, Breathing Room, Meteoric Crater, Frailty, Seismic Waves,
   Stimulated Reduction, Aftershock). A stunned or rooted creature does not move, a slowed
   creature runs slower, and the icon of the effect shows at its name plate. A creature on its
-  way back takes no effect. An ability has no cost. Not yet: the abilities of the other
-  weapons, a picture of the vortex, the pull of Maelstrom and of the vortex, the passive
+  way back takes no effect. An ability has no cost. From stage 3.3b-S2a the vortex of Gravity
+  Well is an entity of the world (protocol notes 4.25, `docs/systems/spells.md`): you and each
+  other player near it see the vortex on the ground and its burst 3 s later, also a player that
+  comes near it later; it goes away at its end (3.5 s) and when its caster leaves the world.
+  A haste or a slow on your character changes the speed of your run and your sprint (the
+  Detonate heart rune: 1.2 times for 3 s), and the server accepts the faster positions only
+  after your client has the speed. Not yet: the abilities of the other weapons, the pull of
+  Maelstrom and of the vortex, the passive
   nodes and the effects on your own character (fortify, grit, empower, heal), and the perks
   of an item that change an ability.
 - Rewards of a kill. With the loot tables of stage 3.5a (`tools/gamedata/loot.sh`; protocol

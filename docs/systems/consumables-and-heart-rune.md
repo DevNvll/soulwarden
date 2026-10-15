@@ -71,8 +71,14 @@ values) are in [Status effects](status-effects.md).
   rule of this project); the rows have DontApplyOnEndEffectOnRemove: no explosion, also when the
   character lives again or comes back before the end (code review of stage 1.3b, finding F4). A
   key in the status or with a charge that is not full changes nothing. The client empties its
-  charge icon itself and shows no explosion: the damage numbers show. The client does not apply
-  the haste of the status to its run (live run s1-live2: [Status effects](status-effects.md)).
+  charge icon itself and shows no explosion: the damage numbers show. The haste of the status
+  goes to the client in the speed table (stage 3.3b-S2a): the run is 1.2 times faster for the 3 s
+  of the status (live walk of S2a-I10 with the key G; [Status effects](status-effects.md)).
+- The activation checks the chain of the explosion before the payment
+  (`Runes::chain_complete`): the spell Rune_Detonate_AoE, its damage row, the weapon of the
+  rune, and an end status of the variant whose CastSpell is Rune_Detonate_AoE. With a part
+  that the data does not have the key changes nothing, and the charge stays (code review of
+  stage 3.3b-S1, finding F8, test case RS8).
 - The base damage of the rune on its tooltip (2,325 at the gear score 625 and level 27) is the
   damage of the weapon of the rune with the level of the character: the damage rule of the
   backend gives the same value.
