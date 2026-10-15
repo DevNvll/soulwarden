@@ -71,8 +71,9 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   less than the number of the ranks of its table (finding F3, test case RD3).
 - The effect of a learned node (stage 3.3b-S5): the evaluator of the passive rules applies the row of each learned node of
   the tree of the weapon of a hit, and the fixed stats of the nodes of the weapon in the hand go into the gear values
-  ([Passive rules](passive-rules.md)). The skill system does not change for this: a node change gives the gear refresh,
-  as before. `tools/world passives NAME` lists each learned node with what the backend does with it.
+  ([Passive rules](passive-rules.md)). A change of the learned nodes of a character in the world (an assignment, a reset of a
+  tree) refreshes the gear values after the stored change (`Skills::change`; code review of stage 3.3b-S5, finding F5, test
+  case RV5). `tools/world passives NAME` lists each learned node with what the backend does with it.
 
 ## Commands
 

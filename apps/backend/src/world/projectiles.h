@@ -299,8 +299,9 @@ struct WorldCapsule {
 
 /**
  * @return True when a projectile that touches a creature at `point` with this direction touches its head volume (stage
- *         3.3b-S5, a decision of this project: the server has no animated bones, thus the line of the projectile from the point
- *         through the body of the creature, with the radius of the projectile, against the head volume in the bind pose).
+ *         3.3b-S5, a decision of this project: the server has no animated bones, thus the line of the projectile near the point,
+ *         with the radius of the projectile, against the head volume in the bind pose). Only the part of the line to one head
+ *         radius after the point counts: the projectile stops at the body (code review of stage 3.3b-S5, finding F7).
  */
 [[nodiscard]] bool head_contact(const Entity& creature, const state::WorldPosition& point, const std::array<float, 3>& direction, float radius);
 

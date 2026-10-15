@@ -3995,6 +3995,8 @@ vitals state of the character (slot 41, type 15; 4.5).
   `healthChangeFlags`, as before stage 3.4b (the stored bytes of test case T2 did not
   change). A session that starts to observe a dead character gets the two fields in its
   first state.
+- From stage 3.3b-S6 the owner view of the state that carries a heal also has bit 1 of
+  `healthChangeFlags`: the heal number of the owner (4.31). The observer view never has it.
 
 **The death** (behavioral proof, runs `f1` and `f6`; the times are project rules).
 
@@ -5482,8 +5484,55 @@ PS7.
 **Not known, not done** (stage 3.3b-S5): the roll of the original server (a pity rule, the setting of 5000 ms of the
 component CriticalHits), the full order of the critical multiplier, the empower, and the mitigation; the head in the pose of
 an animation (the backend uses the bind pose: a shot at the chest of a wolf that looks at the shooter can meet its head); a
-hit from behind and a headshot on a player; NoLegShots; the meaning of CanCrit of a row (true only for the rows of the rapier
-and of the heart rune; the backend does not read it).
+hit from behind and a headshot on a player; NoLegShots; the meaning of CanCrit 1 of a row (true only for the rows of the rapier
+and of the heart rune). From stage 3.3b-S6 an explicit CanCrit 0 of a row (42 rows: the burst of Gravity Well) is a row
+with no critical hit, and a blank cell can be critical (code review of stage 3.3b-S5, finding F2; `combat-tables.json`
+format 2).
+
+### 4.31 Heals: the number of the owner, the notice of the healer, the aim of a heal (live proof of stage 3.3b-S6; the rules are project rules from a decision of the user, with the values of the game data)
+
+Stage 3.3b-S6. Live checks L3 and L9 and the live proof: `~/Games/soulwarden/work/evidence/abilities-heal/implement/`
+(`live/L3.md`, `live/L9.md`, `RESULT.md`; runs `heal-l3` with the dist backend of stage 3.3b-S5 and `tools/world fragment`
+and `tools/world message`, `heal-live1` and `heal-live2` with the backend of the stage). Code: `world/health.h`
+(`Health::heal`, `heal_base`, `outgoing`, `received`), `world/statuses.cpp`, `world/abilities.cpp` (`HealPlan`, `confirm`,
+`heal_target`, `cast_heal`), `server/rep/states/vitals_state.cpp`, `server/rep/health_messages.h`,
+`server/rep/client_input.cpp`. Documents: [Combat and health](systems/combat-and-health.md),
+[Abilities](systems/abilities.md), [Status effects](systems/status-effects.md), [Spell entities](systems/spells.md). Test
+cases HE1 to HE11.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| Bit 1 of `healthChangeFlags` of the vitals state (slot 41, type 15; 4.18) in the owner view: the client shows a green "+N" at the feet of its character for about 2 s. N is the new health less the health that the client had (rounded down). The same state again gives no second number; each positive change of a state with bit 1 gives a number. Bit 0 alone changes the HUD with no number. The observer view shows no number with bit 1. | Live check L3 (run `heal-l3`, `tools/world fragment`: flags 3 gave "+53" and "+300"; flags 1 no number; the observer no number). Live proof (run `heal-live2`): "+412" for Divine Embrace, "+55" for each tick of Sacred Ground and of the Beacon. | Not looked for (behavioral proof). |
+| Message 4298 (`VitalsComponentClientFacet_OnHealedPlayer`), to the session of the healer only: `target:u64` (the vitals facet id of the healer), `G:u64` (the group id of the healer), `healedTargetId:u64` (the id of the entity Stats of the healed character: 0xE6448D4D53852704 XOR 0xDAEE4E2555650AB7 XOR its group id), `amount:f32`. The client shows a green "+N" at the feet of the healed friend for the healer. The group id, the vitals facet id of the friend, and the Stats id of the healer itself as the healed target show nothing. | Live check L3 (run `heal-l3`, `tools/world message`: "+123" only with the Stats id). Live proof (run `heal-live2`): Divine Embrace on the friend `Remote` gave "+412" at its feet; the white bar under its name grew. | The reflection name of the message (static proof); the handler was not looked for. |
+| The aim of Divine Embrace and Sacred Ground: the key (action bits 402 and 479, 4.22) starts the aim of the client ("LCTRL Target Self") and no cast. The cast bar (1.0 s for Divine Embrace) starts at the confirm: the self cast input `self_target` (action bit 430, LCTRL) or a click (`attack_primary`, action bit 555). | Live check of run `heal-live1` (the cast bar started only at LCTRL or at the click) and run `heal-live2`; the action list `playeractions_ability_lifemagic` (the actions `Ability_Life_Staff_TouchOfLife`, `_Cast`, `_SelfCast`, `Ability_Life_Staff_HealingWave`, `_Loop`, `_SelfLoop`: the key with `self_target` held casts at once on the caster). | The input table (`input-bits.json` of the research). |
+
+**The data** (game data):
+
+- The heal base: the base damage of the weapon at its gear score and the Focus scaling of the weapon (ScalingFocus: the
+  life staff 0.0095) with the ModifierValueSum of the Focus table (`combat-tables.json`; [Combat and
+  health](systems/combat-and-health.md)).
+- The heal rows: Status_Ability_Lifestaff_DivineEmbrace (HealthModifierDamageBased 1.2, one tick, UseHealScalingValue),
+  Status_Ability_Lifestaff_SacredGround and Status_Ability_Lifestaff_Beacon (0.16 each 1 s), the potency statuses
+  (EffectPotencyMods), the heal values HealScalingValueMultiplier, HealMod, ConsumableHealMod, NonConsumableHealMod,
+  DmgPctToHealthHealMod (`ability-data.json`).
+
+**The rules** (project rules; the source of each rule is in [Combat and health](systems/combat-and-health.md)):
+
+- The heal base of an ability (a decision of the user, 2026-10-15): the base damage of the weapon at its gear score times
+  1 + ScalingFocus times the damage value of Focus. Live check L9: the weapon damage of the attribute window has the same
+  base and curve, and also the level part and the other attributes (not in the heal base).
+- The amount: the base times HealthModifierDamageBased, the potency, the stacks, the potency factor, the outgoing factor
+  of the healer (1 + HealScalingValueMultiplier of its statuses and of its rules with OnHealed + the equip load part), and
+  the received factor of the target (1 + HealMod + the part of the kind), in this order (a decision of the user: multiply).
+- One heal path (`Health::heal`): the real gain after the cap, bit 1 one time for the owner, message 4298 one time for a
+  healer that is a different character. A heal of a dead, a full, or a hostile character changes nothing.
+
+**Not known, not done** (stage 3.3b-S6): the point of the click of an aim (the server heals the nearest friend in range
+and in sight, and puts Sacred Ground at the caster); the client reader of ShowUiDamageNumbersOnHeal (bit 1 of byte +0x368
+of the status row, loader 0x44B6EFF); the groups (a friend is only a test fixture); an effect after a heal (OnHealed with
+a status or a cooldown change); the level part of the heal base.
 
 ## 5. Open items
 

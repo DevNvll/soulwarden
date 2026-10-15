@@ -56,7 +56,15 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   shows 231.57 as 22.9), the class by the percents of the row Player of the encumbrance table
   (light below 26, medium below 46, heavy to 100, overburdened above), the damage part of the
   class (+0.15, 0, -0.15), and the heal factor of the class (1.3, 1.0, 0.7). The client computes
-  its own equip load, average gear score, and armor from the paperdoll items.
+  its own equip load, average gear score, and armor from the paperdoll items. From stage
+  3.3b-S6 the heal factor less 1 is a part of the outgoing heal of the character (an ability
+  heal of a light character: +0.3), and the heal factor multiplies the potions and the life
+  steal of the character ([Combat and health](combat-and-health.md)).
+- The heal values of the gear (stage 3.3b-S6; `GearSummary`): the HealScalingValueMultiplier,
+  HealMod, ConsumableHealMod, NonConsumableHealMod, and DmgPctToHealthHealMod of the statuses
+  of the gear and of the effects (`Statuses::values`), for the outgoing and the received heal
+  parts. A node change refreshes the gear values at once, also the fixed stats of the nodes
+  (code review of stage 3.3b-S5, finding F5, test case RV5).
 - The damage of a hit of a character (`Combat::damage`): raw times (1 + the part of the gear:
   the passive BaseDamage, the BaseDamage of each perk of the hit whose conditions pass, the
   equip load); a gem of the weapon of the hit (an affix with DamagePercentage and DamageType)

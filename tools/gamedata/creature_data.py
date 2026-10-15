@@ -961,6 +961,13 @@ def read_hit_facts(sources: Sources, path: str, roots: list[Element], skeletons:
         for element in walk(root):
             children = {child.name: child for child in element.children}
             if BEHIND_FIELD in children and BEHIND_CRIT_FIELD in children and "behind" not in facts:
+                # Each angle field is exactly one 32-bit float (code review of stage 3.3b-S5, finding F12): a cut field is a fault
+                # of the source, not the angle 0 (real() gives 0 for a value of a different size).
+                for field in (BEHIND_FIELD, BEHIND_CRIT_FIELD):
+                    value = children[field].value
+                    if value is None or len(value) != 4:
+                        raise Failure(f"{path}: an angle field of the DamageReceiver has {0 if value is None else len(value)} "
+                                      f"bytes, not one 32-bit float")
                 angles = [real(children[BEHIND_FIELD]), real(children[BEHIND_CRIT_FIELD])]
                 if not all(math.isfinite(angle) and 0.0 <= angle <= math.pi + 1e-4 for angle in angles):
                     raise Failure(f"{path}: an angle of the DamageReceiver is not an angle of 0 to pi")

@@ -92,6 +92,12 @@ not: a command for a character that is not in the world changes its rows in the 
                                                 put a status row of the game data on the character
                                                 (SECONDS 0: the duration of the row; COUNT: 1 to 25
                                                 applications, the stacks), with the rules of the game
+  tools/world heals CHARACTER [TARGET]          the heal values of a character (stage 3.3b-S6): the heal
+                                                base with the weapon in the hand, the outgoing factor to
+                                                TARGET (or itself), the received factors, its friends,
+                                                and the counts of the heals of the world
+  tools/world friends CHARACTER OTHER           the two characters are friends (a test fixture of a heal
+                                                of a friend; only a development run)
   tools/world status CHARACTER remove STATUS|all
                                                 end a status (not a status of the gear)
   tools/world perkroll ITEM [--gs N] [--level N] [--count N]
@@ -1197,6 +1203,14 @@ def main() -> None:
             request(data_dir, "POST", f"/v1/dev/rune/activate?character={target}", show_bag=False)
         else:
             fail("tools/world rune CHARACTER charge PERCENT|activate")
+    elif command == "heals" and len(arguments) in (2, 3):
+        query = f"character={character_id(data_dir, arguments[1])}"
+        if len(arguments) == 3:
+            query += f"&target={character_id(data_dir, arguments[2])}"
+        request(data_dir, "GET", f"/v1/dev/heals?{query}")
+    elif command == "friends" and len(arguments) == 3:
+        request(data_dir, "POST", f"/v1/dev/world/friends?character={character_id(data_dir, arguments[1])}"
+                                  f"&friend={character_id(data_dir, arguments[2])}")
     elif command == "status" and 2 <= len(arguments) <= 5:
         target = character_id(data_dir, arguments[1])
         if len(arguments) == 2:

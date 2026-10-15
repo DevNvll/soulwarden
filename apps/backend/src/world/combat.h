@@ -546,6 +546,13 @@ public:
     [[nodiscard]] static std::string weapon_key(const Entity& attacker);
 
     /**
+     * @return The base damage of a weapon at a gear score (the first factor of the damage rule, Combat::damage; client code at image
+     *         RVA 0x3691470): BaseDamage times (1 + rate) to the power of the full intervals above the lowest gear score, with the
+     *         smaller rate above the limit. The heal base of stage 3.3b-S6 uses it too (Health::heal_base). 0: no tables.
+     */
+    [[nodiscard]] float weapon_base(const gamedata::WeaponRow& weapon, std::uint32_t gearScore) const;
+
+    /**
      * The damage rule (a rule of this project; protocol notes 4.15):
      *
      *   weapon = base damage of the weapon row x gear score factor
@@ -619,12 +626,14 @@ public:
      *                a row with no NoBackstab), or a headshot (a projectile on the head volume, a row with no NoHeadshot), or else
      *                one independent roll of the generator of the world below the chance
      *   multiplier = DmgCoefCrit of the row (when it is not 0), else CritDamageMultiplier of the weapon, plus the sum of the
-     *                critical damage bonuses (HitBonus): one additive pool
+     *                critical damage bonuses (HitBonus): one additive pool; a critical hit also takes the CritDamage of the
+     *                rules with OnCrit (`bonusOnCrit`, code review of stage 3.3b-S5, finding F3)
+     *   no critical = a row with an explicit CanCrit 0 (DamageRow::noCrit, finding F2): no roll and no forced critical hit
      *
      * A weapon with no critical values (a file of the combat tool from before the stage) gives no critical hit and no roll.
      */
     [[nodiscard]] Critical critical(const gamedata::WeaponRow& weapon, const gamedata::DamageRow& row, float bonusChance, float bonusDamage,
-                                    bool behindCrit, bool head);
+                                    bool behindCrit, bool head, float bonusOnCrit = 0.0F);
     /**
      * @return The angle between the front of a creature and the direction from it to a source point (radians, 0 to pi), or a
      *         negative value when the source is at the creature (no direction).

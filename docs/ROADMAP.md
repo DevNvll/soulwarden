@@ -191,7 +191,7 @@ below is the layout after the port.
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
-| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b, 3.3b-S5 done | |
+| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b, 3.3b-S5, 3.3b-S6 done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
@@ -247,7 +247,7 @@ stage with a letter is a part of the system with that number.
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
 | 11 | 3.3b | Abilities, the shared parts (research file `abilities-shared.md`): part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte), part S3 (the projectiles of the basic attacks of the bow and the fire staff, and the check of a ranged hit), and part S2b (the spell entities of three kinds: the Pylon of the ice gauntlet, the trap of the musket, the Beacon of the life staff) | 1.3b | S1, S2a, S4, S3, S2b done |
 | 12 | 1.1b | The DLC for each player: each account and each character owns the expansion (Rise of the Angry Earth) and the DLC packs of the client data, with no purchase and no setting: the limits of the expansion (level, gear score, trade skills), the flail tree, the content of the expansion (research file `dlc-entitlements.md`) | 3.3b | done (the ownership, the limits, the flail tree, the amulet of a DLC pack; the content of the expansion keeps its own stages) |
-| 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | S5 done (the critical hits, a hit from behind, the headshot of a projectile, and one evaluator of the passive rules of the data); S6, M1, M2, M3 open |
+| 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | S5 done (the critical hits, a hit from behind, the headshot of a projectile, and one evaluator of the passive rules of the data); S6 done (one heal path, the heal base of an ability, Divine Embrace, Sacred Ground, the heal pulses of the Beacon, the outgoing and the received heal parts, the number of the owner and the notice of the healer); M1, M2, M3 open |
 | 14 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
 | 15 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
 | 16 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
@@ -273,7 +273,7 @@ they need it; the quest engine (1.8) comes after 5.6, because the user gave it n
 and it uses the events of the systems before it. A research thread for each stage of the
 rows 11 to 19 started on 2026-10-15.
 
-Decisions of the user (2026-10-15, later): "i want the full game with dlc. for any player, auto unlock the dlc" (row 12), and "use your best judgement for the rest". Decisions of the orchestrator from that: the build of the user first (rows 11 and 13), then the interaction base and the rest of the order, and the other weapons after the quest engine (row 22); the critical hits and the heals of an ability use approximations from the inputs of the game data, because the formulas were only in the original server (research file `crit-heal-formulas.md`): an independent roll for each hit with the chance of the data, one additive pool of critical bonuses on the multiplier of the weapon, and a heal base that scales with Focus as damage scales with its attribute; each one is a project rule in the document of its system. The user also said: "when done with abilities stuff, pause the implementation": the implementation pauses after row 13, until the user says to continue.
+Decisions of the user (2026-10-15, later): "i want the full game with dlc. for any player, auto unlock the dlc" (row 12), and "use your best judgement for the rest". Decisions of the orchestrator from that: the build of the user first (rows 11 and 13), then the interaction base and the rest of the order, and the other weapons after the quest engine (row 22); the critical hits and the heals of an ability use approximations from the inputs of the game data, because the formulas were only in the original server (research file `crit-heal-formulas.md`): an independent roll for each hit with the chance of the data, one additive pool of critical bonuses on the multiplier of the weapon, and a heal base that scales with Focus as damage scales with its attribute; each one is a project rule in the document of its system. The user first asked for a pause after row 13 ("when done with abilities stuff, pause the implementation") and then cancelled it ("ignore the pause command and keep working even when you finish abilities"): the work continues with row 14.
 
 After stage 1.9, the sequence is the sequence of the summary table, with these changes:
 the other parts of the systems 3.1 to 3.7 come before milestone 4, and milestone 6 comes
@@ -1280,6 +1280,42 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   Not in this stage: the heals of an ability (S6), the special rules of the other weapons (Berserk, the channels, the
   stacks of the rapier and the spear, the stances of the greatsword), grit, blocks, and the abilities of the great axe
   and the war hammer that have no plan yet (M2, M3).
+- Stage 3.3b-S6, the heals of an ability and of a friend (done, protocol notes 4.31, documents
+  `docs/systems/combat-and-health.md`, `abilities.md`, `status-effects.md`, `spells.md`, `passive-rules.md`; evidence
+  `~/Games/soulwarden/work/evidence/abilities-heal/implement/`). The live checks came first (run `heal-l3` with the backend
+  of stage 3.3b-S5, `tools/world fragment` and `tools/world message`): bit 1 of `healthChangeFlags` in the owner view
+  gives the green heal number of the owner (the new health less the health of the client), the observer view shows no
+  number, and message 4298 with the id of the entity Stats of the friend gives the number of the healer at the feet of
+  the friend (L3); the weapon damage of the attribute window has the base damage of the weapon and the Focus curve of the
+  damage rule, and a level part (L9). The rules: one heal path (`Health::heal`) for each heal (an ability, a potion, a
+  food, the gear, a life steal) with the real gain after the cap, one number for the owner, and one notice for a healer
+  that is a different character; the heal base of an ability (a decision of the user of 2026-10-15): the base damage of
+  the weapon at its gear score times the Focus scaling of the damage rule; the amount of a status of an ability: the base
+  times HealthModifierDamageBased, the potency, the stacks, and the potency factor (EffectPotencyMods), times the outgoing
+  factor of the healer (HealScalingValueMultiplier of its statuses and of its rules with OnHealed: Divine Blessing; the
+  equip load) times the received factor of the target (HealMod, and ConsumableHealMod, NonConsumableHealMod, or
+  DmgPctToHealthHealMod of its kind, with the limits of the categories), multiplied (a decision of the user). Divine
+  Embrace (a direct heal at 1.0 s, its cost with the heal, Privilege), Sacred Ground (the area of its self spell at the
+  caster, the heal each 1 s for 12 s, Holy Ground, Anointed), and the heal pulses of the Beacon. A live run showed that
+  the key of Divine Embrace and Sacred Ground starts only the aim of the client: the backend casts at the confirm of the
+  same session (the self cast input LCTRL, action bit 430, or a click), and the key with the self cast input held casts at
+  once (the action list of the data). The stage also corrected the twelve findings of the review of stage 3.3b-S5 (cases
+  RV1 to RV12; each case fails on the tree of stage 3.3b-S5): the mute of a development run uses only descriptors after
+  the first open of the prefix (F1), an explicit CanCrit 0 is a row with no critical hit (F2, `combat-tables.json` format
+  2), the CritDamage of a rule with OnCrit counts (F3), Crowded Well counts the upgraded vortex (F4), a node change
+  refreshes the gear values (F5), a rule with OnHitTaken checks its conditions (F6), a projectile that stops at the body is
+  not a headshot from behind (F7), a hit count gates the damage values (F8), a tracking spell of the shape Box is not
+  applied (F9; the great axe now 17 of 38 nodes applied), the tools and the loader require the target status of a rule
+  (F10), a Pylon with no Vitals component needs its row (F11), and the creature tool stops for a cut angle field (F12).
+  Test cases HE1 to HE11 (HE2, HE8, HE11: two sessions; HE9: the load of 100 healers in 4,000 creatures and 400 far
+  characters, with a time limit: 0.27 s), RV1 to RV12; 443 cases pass, and the stored bytes of T2 did not change. Live
+  (runs `heal-live1` and `heal-live2` with the backend of the stage): a self Divine Embrace with LCTRL ("+412"), Sacred
+  Ground ("+55" each second to the full health), the Beacon on the caster (10 pulses of "+55"), and Divine Embrace on a
+  friend of the test fixture with a click ("+412" at the feet of the friend for the healer, and the health bar under its
+  name). Open: the point of the click of an aim (the nearest friend in range and in sight; Sacred Ground at the caster),
+  the level part of the heal base (L9; a decision for the user), the client reader of ShowUiDamageNumbersOnHeal, the
+  groups (a friend only in a fixture), an effect after a heal. Not in this stage: the other abilities of the life staff,
+  the heals of the other weapons, the groups.
 
 ### 3.4 Creatures: spawn, behavior, navigation
 

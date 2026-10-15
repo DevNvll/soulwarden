@@ -103,6 +103,11 @@ struct StatusApply {
     bool permanent{false};
     float potency{1.0F};
     StatusSource source;
+    /**
+     * Stage 3.3b-S6: the source of a heal of the row (HealthModifierDamageBased with UseHealScalingValue: the healer and its heal base at
+     * the cast). A status of a row with no such heal ignores it.
+     */
+    HealSource heal;
 };
 
 /** The values of the statuses of a character, with the limits of the categories (Statuses::values). Parts: 0.2 is 20 percent. */
@@ -120,6 +125,15 @@ struct StatusValues {
     /** The critical chance and the critical damage parts (CritChanceModifier, CritDamageModifier; stage 3.3b-S5). */
     float critChance{0.0F};
     float critDamage{0.0F};
+    /**
+     * The heal parts (stage 3.3b-S6): HealMod, ConsumableHealMod, NonConsumableHealMod, DmgPctToHealthHealMod (received), and
+     * HealScalingValueMultiplier (outgoing), each with the limits of its categories (Disease: HealMod -0.5).
+     */
+    float healTaken{0.0F};
+    float healConsumable{0.0F};
+    float healNonConsumable{0.0F};
+    float healLifeSteal{0.0F};
+    float healOutgoing{0.0F};
 };
 
 /** Counts of the status system, for the log, `tools/world list`, and the tests. */
@@ -129,9 +143,14 @@ struct StatusCounts {
     std::uint64_t ticks{0};
     std::uint64_t heals{0};
     /**
-     * The ticks of a heal that is a part of the damage of the source (HealthModifierDamageBased, the pulses of the Beacon of
-     * the life staff; stage 3.3b-S2b): the tick comes at the TickRate of the row, and it gives no health. The heal base is
-     * stage 3.3b-S6.
+     * The heals of a row with HealthModifierDamageBased and UseHealScalingValue (stage 3.3b-S6: the heal base of the healer; Divine
+     * Embrace, the pulses of the Beacon and of Sacred Ground).
+     */
+    std::uint64_t abilityHeals{0};
+    /**
+     * The ticks of a heal that is a part of the damage of the source with no heal base (stage 3.3b-S2b, and from stage 3.3b-S6 only: a
+     * status with no healer, a command; a row with HealthModifierDamageBased and no UseHealScalingValue, whose base is the core damage
+     * of the source: not in this stage): the tick comes at the TickRate of the row, and it gives no health.
      */
     std::uint64_t pulsesWithNoHeal{0};
     /** The entries of the due list that the tick took (each one an end or a tick that was due, or an old entry). */
@@ -225,8 +244,13 @@ private:
     }
     /** Puts the statuses into the entity, marks the status state, and refreshes the gear values (`refresh`). */
     void publish(Entity& character, CharacterState& state, bool refresh = true);
-    /** The heal and the mana of one application or one tick of a row. */
-    void give(Entity& character, const gamedata::StatusRow& row, float amount);
+    /**
+     * The heal and the mana of one application or one tick of a row (stage 3.3b-S6: the one heal path of the health system, with the
+     * kind of the source and the heal source of the status). `tick` false: the application.
+     */
+    void give(Entity& character, const gamedata::StatusRow& row, float amount, const StatusSource& source, const HealSource& heal, bool tick);
+    /** @return The factor of the potency of a row on a character from the EffectPotencyMods of its other statuses ("SacredGroundCat=-0.1"). */
+    [[nodiscard]] float potency_factor(const Entity& character, const gamedata::StatusRow& row) const;
     /** The due entries of a status: its end and its next tick. */
     void schedule(const std::string& characterId, const ActiveStatus& status);
     /** Ends the statuses of the state that `select` selects, with the end statuses. @return The number that ended. */

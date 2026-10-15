@@ -16,6 +16,7 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 | A caster effect of a learned node or of a perk (SelfApplyStatusEffect), a status while creatures are near | [Passive rules](passive-rules.md), `Passives::after_hit`, `Passives::tick`, `Gear::caster_effect`, test cases ST8, PS3 |
 | The speed of a status: the speed table of the player (slot 43, type 1525), the position check | Protocol notes 4.24, `server/rep/states/stat_multiplier_state.cpp`, `Gear::refresh` (`Entity::moveMultiplier`, `sprintMultiplier`), `PositionTrack::set_client_speed`, `client_speed`, test cases SV1 to SV3, RS1, ST9 |
 | The corrections of the code review of stage 3.3b-S1 (F1 to F13) | `apps/backend/tests/review_status_tests.cpp`, test cases RS1 to RS13 |
+| The heal of a status: a fixed heal, a heal over time, a heal of an ability (HealthModifierDamageBased), the heal values (stage 3.3b-S6) | `Statuses::give` (`StatusApply::heal`, `ActiveStatus::heal`), `Statuses::potency_factor`, `Health::heal` ([Combat and health](combat-and-health.md)), test cases HE1, HE4, HE5, HE7 |
 | The status categories and the caster effect rows of the game data | `tools/gamedata/abilities.sh` (format 4), `gamedata/ability_data.h` (`StatusCategory`, `AbilityRow`), test case ST1 |
 
 ## Rules
@@ -40,7 +41,7 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   the loader 0x44B4430).
 - The duration: the duration of the source (DurationOverrides of a consumable), else BaseDuration; not more than
   DurationMax. A row with no duration is one application now: a heal (Health and HealthModifierPercent of the maximum
-  health, times the potency and the heal factor of the equip load), a mana change (Mana, ManaModifierPercent), and its
+  health, times the potency, through the heal path of stage 3.3b-S6 with its kind), a mana change (Mana, ManaModifierPercent), and its
   CastSpell. A status of the gear has no end.
 - ApplicationCooldown: one application of a row for each character in that time. Only an application that changes the
   character starts it: an application that DontReplaceStack refuses does not (finding F7, test case RS7).
@@ -54,9 +55,17 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 - A TickRate with Health, HealthModifierPercent, Mana, or ManaModifierPercent: a heal and a mana change at each tick
   (times the potency and the stacks); the first tick comes at the next tick of the world after the application
   (DelayInitialTick: one TickRate later). The ticks of a character that is not in the world wait for its next entry.
-- A TickRate with HealthModifierDamageBased (a heal of a part of the damage of the source: the Beacon of the life staff,
-  stage 3.3b-S2b): a pulse at each tick with no heal (`StatusCounts::pulsesWithNoHeal`). The amount needs the heal base of
-  stage 3.3b-S6 (open). A negative HealthModifierDamageBased (a damage over time) has no rule here.
+- A heal of an ability (stage 3.3b-S6): a status with HealthModifierDamageBased (Divine Embrace 1.2 with one tick, Sacred
+  Ground and the Beacon 0.16 each 1 s) heals the heal base of its source (`ActiveStatus::heal`, the `HealSource` of the
+  cast or of the area: the healer, its weapon, its gear score) times the value, the potency, the stacks, and the potency
+  factor of the character (`Statuses::potency_factor`: 1 + the EffectPotencyMods of the statuses on the character for
+  this row, for example `Status_Ability_Lifestaff_SacradGround_Beacon_Potency`). The heal path adds the outgoing part of
+  the healer and the received part of the character. A status with HealthModifierDamageBased and no heal source gives no
+  health (`StatusCounts::pulsesWithNoHeal`). A negative HealthModifierDamageBased (a damage over time) has no rule here.
+- The heal kind and the number (stage 3.3b-S6): a status of an ability heals with the kind ability and shows a number; a
+  status of a consumable shows a number at its application, and at a tick only with ShowUiDamageNumbersOnHeal of the row
+  (`MajorPotionRegen`); a status of the gear, of a rest, or of a command shows no number (a decision of an agent: the
+  client reads the column into bit 1 of byte +0x368 at 0x44B6EFF; its use is not found).
 - The source "spell" (stage 3.3b-S2b, [Spell entities](spells.md)): the area of a spell gives its statuses to a friend in it
   and takes them back when the friend leaves the area and at its end (`Statuses::remove_source`, the end cause "its source
   went away").
@@ -72,7 +81,9 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   Rune_Detonate_CastAoE comes, and its CastSpell is the explosion. A different spell is not in this stage (a count in
   `tools/world status`).
 - The values (`Statuses::values`): MOD<attribute>, MaxHealthMod, PhysicalArmor, ElementalArmor, BaseDamageReduction,
-  DMG<type> and DMGStandard, ABS<type>, MoveSpeedMod, SprintSpeedMod, and from stage 3.3b-S5 CritChanceModifier and
+  DMG<type> and DMGStandard, ABS<type>, MoveSpeedMod, SprintSpeedMod, from stage 3.3b-S6 the heal values
+  (HealScalingValueMultiplier: the outgoing part; HealMod, ConsumableHealMod, NonConsumableHealMod, DmgPctToHealthHealMod:
+  the received parts; `Disease` HealMod -0.5), and from stage 3.3b-S5 CritChanceModifier and
   CritDamageModifier (the critical parts of the gear summary: [Combat and health](combat-and-health.md)), each times the
   potency and the stacks. The
   sum of a value over the statuses of a category is not above the positive ValueLimits of the category and not below

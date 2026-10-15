@@ -78,6 +78,12 @@ constexpr unsigned kActionQuickslot[4] = {404, 117, 140, 513};
 constexpr unsigned kActionRune = 450;
 /** The aim input ("aim_draw"): bit 126 (research abilities-ranged.md Q2; live check L2 of stage 3.3b-S3). */
 constexpr unsigned kActionAim = 126;
+/**
+ * The self cast input ("self_target": bit 430 of the table of the research, combat-actions input-bits.json; LCTRL of the default
+ * profile). Live check of stage 3.3b-S6: the key LCTRL in the aim of Divine Embrace gives the bits 1, 57, 313, 455, 546, and 430 in the
+ * second entry; the client then plays the self cast (its cast bar of 1.0 s).
+ */
+constexpr unsigned kActionSelfTarget = 430;
 /** Offsets in a shot item of the second list (reader 0x2A1A590; protocol notes 4.27). */
 constexpr std::size_t kShotPoint = 36;
 constexpr std::size_t kShotReceiver = 92;
@@ -437,6 +443,7 @@ std::optional<ClientInput> read_entry(hub::Reader& reader, EntryBase& base, Inpu
         }
         step.runeKey = step.runeKey || has_action(words, index, kActionRune);
         step.aim = step.aim || has_action(words, index, kActionAim);
+        step.selfTarget = step.selfTarget || has_action(words, index, kActionSelfTarget);
     }
     for (float& axis : input.axes) {
         axis = static_cast<float>(reader.u8()) / 256.0F * 2.0F - 1.0F;

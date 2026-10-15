@@ -311,6 +311,13 @@ void World::damage_dealt(SessionId session, const DamageDealt& damage) {
     }
 }
 
+void World::healed_player(SessionId session, EntityId target, float amount) {
+    const auto sink = m_sinks.find(session);
+    if (sink != m_sinks.end() && sink->second != nullptr) {
+        sink->second->healed_player(target, amount);
+    }
+}
+
 void World::damage_taken(SessionId session, const DamageTaken& damage) {
     const auto sink = m_sinks.find(session);
     if (sink != m_sinks.end() && sink->second != nullptr) {

@@ -176,6 +176,11 @@ SkillResult Skills::change(const std::string& characterId, const char* what, Cha
             m_world.touch(entity->id, ComponentKey::cooldowns);
         }
         entity->skills = std::move(skills);
+        if (touched.points) {
+            // The fixed stats of the learned nodes are gear values (Passives::fixed, Gear::values): a change of the nodes (an
+            // assignment, a reset of a tree) refreshes them after the stored change (code review of stage 3.3b-S5, finding F5).
+            m_world.gear().refresh(*entity);
+        }
     }
     log::write("skills: %s of character %s: done (%s)",
                what,

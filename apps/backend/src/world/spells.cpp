@@ -158,10 +158,9 @@ Entity* Spells::make(const SpellRequest& request) {
     // A summon and a trap with a Vitals component take damage: they need the vitals row of their slice (code review of stage
     // 3.3b-S2b, finding F8: a Pylon with no row was paid for and took no damage).
     // A Vitals slot with no vitals metadata needs the row too (code review of stage 1.1b, finding F2): a paid summon with no
-    // damage path is no entity.
-    const bool vitalsSlot = slice != nullptr && std::any_of(slice->slots.begin(), slice->slots.end(),
-                                                            [](const gamedata::SpellSlot& slot) { return slot.type == 15; });
-    if ((request.role == SpellRole::summon || request.role == SpellRole::trap) && (slice->vitals || vitalsSlot)
+    // damage path is no entity. A summon and a trap are entities that take damage in each case: a slice with no Vitals component
+    // at all (no slot and no metadata) makes no entity either (code review of stage 3.3b-S5, finding F11).
+    if ((request.role == SpellRole::summon || request.role == SpellRole::trap)
         && (m_data == nullptr || !slice->vitals || m_data->vitals_row(slice->vitals->row) == nullptr)) {
         log::write("world: spell: %s of %s: the spell data has no vitals row %s of its slice: no entity", request.spellId.c_str(),
                    caster->name.c_str(), slice->vitals ? slice->vitals->row.c_str() : "(none)");
@@ -210,6 +209,7 @@ Entity* Spells::make(const SpellRequest& request) {
     live.role = request.role;
     live.radius = request.radius;
     live.statuses = request.statuses;
+    live.heal = request.heal;
     live.effects = request.effects;
     live.weapon = request.weapon;
     live.conversion = request.conversion;
@@ -585,6 +585,7 @@ bool Spells::give_member(const Entity& spell, const Live& live, Entity& friendly
         }
         StatusApply how;
         how.source = source;
+        how.heal = live.heal;
         const StatusVerdict verdict = m_world.statuses().apply(friendly, status, how);
         if (verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed) {
             row.auras.insert(spell.id);
@@ -654,6 +655,7 @@ void Spells::renew_members(const Entity& spell, const Live& live) {
             // friend in the aura gets the row again when it ended, one application (no new stack while it has the row).
             StatusApply how;
             how.source = source;
+            how.heal = live.heal;
             if (m_world.statuses().apply(*friendly, status, how) == StatusVerdict::applied) {
                 ++m_counts.auraRenewed;
             }

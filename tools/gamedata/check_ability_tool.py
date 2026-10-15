@@ -17,6 +17,8 @@ files is replaced: no file of the game is necessary), and it runs the builder an
   negative-cost          a mana cost -5                                           status 1, the file stays
   missing-SelfApply      an ability table of the players has no SelfApplyStatusEffect   status 1, the file stays
   unknown-caster-status  a caster effect row names a status that no table has     status 1, the file stays
+  unknown-target-status  a rule names a target status (OtherApplyStatusEffect) that   status 1, the file stays
+                         no table has (code review of stage 3.3b-S5, finding F10)
   bad-limit              a ValueLimits part with no number                        status 1, the file stays
   missing-StackMax       a status table has no column StackMax                    status 1, the file stays
   missing-caster-OnHit   an ability table of the players has no column OnHit      status 1, the file stays
@@ -152,6 +154,8 @@ def sheets(case: str) -> dict:
         del caster["SelfApplyStatusEffect"]
     if case == "unknown-caster-status":
         caster["SelfApplyStatusEffect"] = "NoSuchStatus"
+    if case == "unknown-target-status":
+        caster["OtherApplyStatusEffect"] = "NoSuchStatus"
     if case == "bad-limit":
         category["ValueLimits"] = "MoveSpeedMod:fast"
     if case == "missing-Time":
@@ -286,7 +290,7 @@ def main() -> int:
     failures = 0
     cases = ("valid", "missing-Time", "missing-Stunned", "missing-Radius", "conflicting-status", "conflicting-spell",
              "game-duplicate", "missing-cost", "partial-cost-columns", "negative-cost", "missing-SelfApply",
-             "unknown-caster-status", "bad-limit", "missing-StackMax", "missing-caster-OnHit", "game-table-difference",
+             "unknown-caster-status", "unknown-target-status", "bad-limit", "missing-StackMax", "missing-caster-OnHit", "game-table-difference",
              "missing-end-link", "game-end-link", "missing-cast-spell", "missing-ABSStandard", "missing-RemoteDamageTableRow",
              "missing-NumAroundMe", "action-or", "action-unknown-spell")
     for case in sys.argv[2:] or cases:

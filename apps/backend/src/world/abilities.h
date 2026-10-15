@@ -80,6 +80,11 @@ inline constexpr float kProjectileSpeed = 20.0F;
 inline constexpr std::chrono::milliseconds kThrowTime{533};
 /** A creature of an area is not higher or lower than this from the center of the area (meters). */
 inline constexpr float kAreaHeight = 3.0F;
+/**
+ * The aim of an aimed heal (stage 3.3b-S6) ends this long after its key with no confirm (a decision of an agent: the client keeps its aim
+ * until a confirm or a cancel that the server does not see; a click long after the key is an attack, not a confirm).
+ */
+inline constexpr std::chrono::milliseconds kAimKeep{10000};
 /** The time of a knockdown (Wrecking Ball) and of a stagger (Path of Destiny with Seismic Waves). */
 inline constexpr std::chrono::milliseconds kKnockdownTime{2000};
 inline constexpr std::chrono::milliseconds kStaggerTime{1000};
@@ -143,6 +148,9 @@ enum class AbilityKind : std::uint8_t {
     icePylon,
     traps,
     beacon,
+    /** Stage 3.3b-S6: Divine Embrace of the life staff (a direct heal), Sacred Ground of the life staff (an area that heals). */
+    divineEmbrace,
+    sacredGround,
 };
 
 /** @return The English name of an ability, for a log line ("Wrecking Ball"). */
@@ -190,6 +198,12 @@ struct AbilityPress {
     float yaw{0.0F};
     /** True: the client of the session shows the loading screen of a travel that it did not confirm. */
     bool locked{false};
+    /**
+     * Stage 3.3b-S6: the press starts the cast of an aimed ability now (the confirm of an aim, Abilities::confirm, or the key with the
+     * self cast input held); `self` true: the self cast input (the caster is the target).
+     */
+    bool confirmed{false};
+    bool self{false};
 };
 
 /** One shot of a client (an item of the second list of its input entry): the projectile of an ability. */
@@ -312,6 +326,22 @@ struct SpellPlan {
     std::vector<std::string> statuses;
 };
 
+/**
+ * A direct heal of a cast (stage 3.3b-S6: Divine Embrace). At its time the cast chooses its target (the nearest friend of the caster
+ * that the data permits, in the range of the spell and in sight, else the caster), pays the cost of its spell, and puts the statuses of
+ * the spell on the target with the heal source of the caster. A heal with no target pays nothing.
+ */
+struct HealPlan {
+    /** The spell row (Spell_LifeStaff_DivineEmbrace, or _ReducedCost with the node Privilege). */
+    std::string spell;
+    /** The time from the press (the cast at 1.0 s of the cast fragment: research abilities-magic.md, the animation data). */
+    std::chrono::milliseconds at{0};
+    /** The cost id of the spell (its ManaCost), paid with the heal. The press resolves it. */
+    std::string payment;
+    /** The status rows of the spell (StatusEffects). The press resolves them. */
+    std::vector<std::string> statuses;
+};
+
 /** The plan of a cast: the phases for the nodes of the character. */
 struct CastPlan {
     AbilityKind kind{AbilityKind::charge};
@@ -327,6 +357,14 @@ struct CastPlan {
     std::string window;
     /** The spell entity of the cast (stage 3.3b-S2b). No value: none (or the vortex of Gravity Well, which its phases make). */
     std::optional<SpellPlan> spell;
+    /** The direct heal of the cast (stage 3.3b-S6). No value: none. */
+    std::optional<HealPlan> heal;
+    /**
+     * Stage 3.3b-S6: the key starts an aim of the client (the action list: Ability_Life_Staff_TouchOfLife, _HealingWave with
+     * CastSpellTargeting), and the cast starts at the confirm of the same session (Abilities::confirm). A press of a character with
+     * no client casts at once.
+     */
+    bool aimed{false};
 };
 
 /** A phase of a cast that a contact of a client fits (Combat::claim). */
@@ -363,6 +401,17 @@ struct AbilityCounts {
     /** Counters (stage 3.3b-S4): the hits that a window countered, and the counter hits. */
     std::uint64_t counters{0};
     std::uint64_t counterHits{0};
+    /**
+     * Direct heals (stage 3.3b-S6): the heals of a friend, the heals of the caster itself, the heals with no target (no payment), and
+     * the friends that the choice of the target looked at (the load).
+     */
+    std::uint64_t healsFriend{0};
+    std::uint64_t healsSelf{0};
+    std::uint64_t healsRefused{0};
+    std::uint64_t healLooked{0};
+    /** The keys of an aimed ability that started an aim of the client, and the confirms that started its cast (stage 3.3b-S6). */
+    std::uint64_t aims{0};
+    std::uint64_t confirms{0};
 };
 
 class Abilities {
@@ -379,6 +428,14 @@ public:
 
     /** A session gives the press of a key of the bar of its character. */
     CastVerdict press(SessionId session, const AbilityPress& press);
+    /**
+     * A session gives the confirm input of its client (stage 3.3b-S6; live check: a click, `attack_primary`, or the self cast input,
+     * `self_target`): the aim of an ability of its character (Divine Embrace, Sacred Ground) starts its cast now, with all the checks of
+     * a press. An aim ends at a press of a key, a change of the weapon, its confirm, and after ability_rules::kAimKeep.
+     * @param yaw The look yaw of the confirm (the direction of the cast).
+     * @return True when an aim of the session started its cast.
+     */
+    bool confirm(SessionId session, std::uint16_t input, bool self, float yaw);
     /**
      * Development aid (tools/world cast): the press of a key of the bar for a character with no client (a remote test
      * character). The same checks and the same cast as a press of a session; the server throws a projectile itself.
@@ -560,11 +617,21 @@ private:
         std::optional<std::uint16_t> closedAt;
         /** A counter (stage 3.3b-S4): true after the hit that the window countered (one counter for each cast). */
         bool countered{false};
+        /** Stage 3.3b-S6: the self cast confirm of an aimed heal (the caster is the target). */
+        bool self{false};
     };
-    /** The values of one character: its cooldowns and its cast. */
+    /** The aim of an aimed ability (stage 3.3b-S6): the press that started it. */
+    struct Aim {
+        AbilityPress press;
+        SessionId session{0};
+        std::uint32_t ability{0};
+        WorldClock::time_point started{};
+    };
+    /** The values of one character: its cooldowns, its cast, and its aim. */
     struct CharacterState {
         std::map<std::uint32_t, AbilityCooldown> cooldowns;
         std::optional<std::uint64_t> cast;
+        std::optional<Aim> aim;
     };
 
     CastVerdict refuse(CastVerdict verdict);
@@ -587,8 +654,18 @@ private:
     void throw_spell(Cast& cast, const state::WorldPosition& origin, const std::array<float, 3>& direction);
     /** The projectile of the spell of a cast landed: the spell entity (the trap on the ground, the Beacon on the entity that it hit). */
     void spell_landed(std::uint64_t cast, const SpellLanding& landing);
-    /** A summon (the Pylon): its spawn at the time of the plan, with its payment. */
+    /** A summon (the Pylon), or an area on the ground at its caster (Sacred Ground, stage 3.3b-S6): its spawn at the time of the plan, with its payment. */
     void spawn_summon(std::uint64_t cast);
+    /** The direct heal of a cast at its time (stage 3.3b-S6, Divine Embrace): the target, the payment, the statuses. */
+    void cast_heal(std::uint64_t cast);
+    /** @return The source of the heals of a cast (stage 3.3b-S6): the caster, its heal base with the weapon of the cast, the row of the spell. */
+    [[nodiscard]] HealSource heal_source(const Cast& cast, const Entity& caster, std::string_view spell) const;
+    /**
+     * @return The target of a direct heal (stage 3.3b-S6): the nearest friend of the caster (World::friendly; not the caster) that lives,
+     *         is in the range of the spell (CastDistance) and in sight (Navigation::sees), and that the ability row permits
+     *         (TargetStatusEffect with NotEqual: not a target with that status); else the caster when the row permits it; else null.
+     */
+    [[nodiscard]] Entity* heal_target(Entity& caster, const gamedata::SpellRow& spell, std::string_view ability, bool self);
     /** @return The weapon of a cast for a hit (its item, its slot, its row, its gear score, the ability). */
     [[nodiscard]] HitWeapon weapon_of(const Cast& cast) const;
     /**

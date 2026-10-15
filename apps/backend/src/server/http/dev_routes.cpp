@@ -59,6 +59,10 @@
 //   POST /v1/dev/world/probe/remove?entity=ID            remove a probe entity: each observer gets the stop
 //   POST /v1/dev/world/fragment?entity=ID&slot=N&type=N&state=HEX
 //                                                        the fragment command for a probe entity
+//   POST /v1/dev/world/friends?character=ID&friend=ID     the two characters are friends (the test fixture of a heal of
+//                                                        a friend, stage 3.3b-S6)
+//   GET  /v1/dev/heals?character=ID[&target=ID]          the heal base, the outgoing and received factors, the friends,
+//                                                        and the counts of the heals (stage 3.3b-S6)
 //   POST /v1/dev/world/message?character=ID&type=N&body=HEX
 //                                                        send the client of a character one
 //                                                        message with these bytes (a live check
@@ -916,6 +920,33 @@ void register_dev_routes(Router& router, const Services& services) {
         });
     });
     router.add("POST", "", "/v1/dev/status", "dev.status_apply", command_route(services, commands::apply_status));
+    // The heals (stage 3.3b-S6): the heal values of a character, and the friend pair of a live test (a test fixture).
+    router.add("GET", "", "/v1/dev/heals", "dev.heals", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        const std::string other = query_text(context.request, "target").value_or("");
+        return in_world(services, [character = *character, other](world::World& target) {
+            return json_reply(200, commands::heals_json(target, character, other).dump());
+        });
+    });
+    router.add("POST", "", "/v1/dev/world/friends", "dev.world_friends", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        const std::string other = query_text(context.request, "friend").value_or("");
+        if (other.empty() || other.size() > 64) {
+            return message(400, "give friend (the id of a second character)");
+        }
+        return in_world(services, [character = *character, other](world::World& target) {
+            const json reply = commands::make_friends(target, character, other);
+            return json_reply(reply.value("friends", false) ? 200 : 404, reply.dump());
+        });
+    });
     router.add("POST", "", "/v1/dev/status/remove", "dev.status_remove", command_route(services, commands::remove_status));
     router.add("GET", "", "/v1/dev/perks/roll", "dev.perks_roll", [&services](const RouteContext& context) {
         if (!context.request.host.empty()) {

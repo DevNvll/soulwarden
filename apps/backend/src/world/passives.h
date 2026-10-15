@@ -87,6 +87,11 @@ struct HitBonus {
     float critChance{0.0F};
     /** The critical damage: CritDamage of the rules, CritDamageModifier of the statuses, HeadshotDamage of a headshot. */
     float critDamage{0.0F};
+    /**
+     * The CritDamage of the rules with OnCrit (Vicious): it counts only when the hit is critical (code review of stage 3.3b-S5,
+     * finding F3). A headshot takes the HeadshotDamage of such a row with OnHeadShot in `critDamage` instead (one cell for each row).
+     */
+    float critOnCrit{0.0F};
     /** ArmorPenetration: the part of the mitigation of the target that the hit does not meet. */
     float penetration{0.0F};
     /** The rules that the evaluator looked at (the load). */
@@ -133,8 +138,17 @@ public:
     [[nodiscard]] HitBonus before_hit(const Entity& attacker, const Entity& target, const HitContext& hit) const;
     /** A hit of a character was accepted (Combat::strike): the effects of the rules whose events and conditions pass. */
     void after_hit(Entity& attacker, Entity& target, const HitContext& hit);
-    /** A creature hit a character (Health::creature_hit, after the damage): the rules with OnHitTaken of the weapon in its hand. */
-    void hit_taken(Entity& character);
+    /**
+     * A creature hit a character (Health::creature_hit, after the damage `dealt`): the rules with OnHitTaken of the weapon in its hand
+     * and of its perks, with the conditions that a hit taken has a source for (code review of stage 3.3b-S5, finding F6).
+     */
+    void hit_taken(Entity& character, float dealt);
+    /**
+     * @return The outgoing part of a heal of a healer from its rules (stage 3.3b-S6): the sum of the HealScalingValueMultiplier of each
+     *         rule with OnHealed of the tree of the weapon of the heal (HealSource::table) and of the perks whose conditions pass for
+     *         the target (its health before the heal, the row of the spell, the categories of its statuses), times the potency.
+     */
+    [[nodiscard]] float heal_bonus(const Entity& healer, const Entity& target, const HealSource& source) const;
     /** Each world tick: the rules of the entities near a character (a status while NumAroundMe holds), each kAroundStep. */
     void tick();
     /** A character leaves the world: the statuses of its rules near it end, and its values of the evaluator go. */
@@ -179,6 +193,12 @@ private:
     [[nodiscard]] static std::vector<std::string> unknown_columns(const gamedata::CellValues& cells);
     /** @return True when the hit counts of a rule pass for this hit; `spend` true counts the hit. */
     bool counts_pass(const PassiveRule& rule, const Entity& attacker, const HitContext& hit, bool spend);
+    /** @return The result of counts_pass for this hit with nothing spent (the values before the damage; finding F8). */
+    [[nodiscard]] bool counts_peek(const PassiveRule& rule, const Entity& attacker, const HitContext& hit) const;
+    /** The rule of the hit counts on the values of one character. */
+    bool count_rule(const PassiveRule& rule, CharacterState& state, const HitContext& hit, bool spend) const;
+    /** @return True when a rule has a hit count (TrackHitCount with NumberOfTrackedHits, NumSuccessfulHits, NumConsecutiveHits). */
+    [[nodiscard]] static bool has_count_gate(const gamedata::CellValues& row);
     /** @return The number of the entities in the tracking spell of a rule near a character (or the creatures of the area of the hit). */
     [[nodiscard]] std::uint32_t around_count(const gamedata::CellValues& cells, std::string_view rule, const Entity& character,
                                              const HitContext* hit) const;

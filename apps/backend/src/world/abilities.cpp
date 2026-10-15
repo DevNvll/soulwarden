@@ -29,6 +29,8 @@ constexpr AbilityRule kRules[] = {
     {"IceMagic_IcePylon", AbilityKind::icePylon, "Ice Pylon"},
     {"Ability_Musket_Traps", AbilityKind::traps, "Traps"},
     {"Ability_Lifestaff_Beacon", AbilityKind::beacon, "Beacon"},
+    {"Ability_Lifestaff_DivineEmbrace", AbilityKind::divineEmbrace, "Divine Embrace"},
+    {"Ability_Lifestaff_SacredGround", AbilityKind::sacredGround, "Sacred Ground"},
 };
 
 /** The id text of the ranged attack of the projectile of Gravity Well (the value "attack" of its shot is its CRC-32). */
@@ -83,7 +85,8 @@ constexpr const char* kPlanNodes[] = {
     "Upgrade_Greataxe_GravityWell_ArmorInWell", "Upgrade_Greataxe_GravityWell_DmgPerFoe", "Upgrade_WarHammer_Wreck_Pushback",
     "Upgrade_WarHammer_Shockwave_SizeIncrease", "Upgrade_WarHammer_Shockwave_Weaken", "Upgrade_WarHammer_PathOfDestiny_Stagger",
     "Upgrade_WarHammer_PathOfDestiny_CDRPerHit", "Rapier_Riposte_Mod3", "Upgrade_Musket_TrapRend", "Upgrade_Lifestaff_Protection_AoeInc",
-    "Upgrade_Lifestaff_Protection_DurOnLow", "Upgrade_Lifestaff_Protection_AddHaste"};
+    "Upgrade_Lifestaff_Protection_DurOnLow", "Upgrade_Lifestaff_Protection_AddHaste", "Upgrade_Lifestaff_DivineEmbrace_ReduceCost",
+    "Upgrade_Lifestaff_SacredGround_Dmg", "Upgrade_Lifestaff_SacredGround_DmgOnEnd"};
 
 /**
  * @return The spell that an action of the data casts for the nodes of a character (stage 3.3b-S5): the first selection whose
@@ -430,6 +433,41 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         plan.spell = spell;
         break;
     }
+    case AbilityKind::divineEmbrace: {
+        // Divine Embrace of the life staff (stage 3.3b-S6; research abilities-magic.md Q4, the game data): the cast at 1.0 s of the target
+        // or self cast fragment (player_magicstaff_life.adb) puts the status of its spell (Status_Ability_Lifestaff_DivineEmbrace:
+        // HealthModifierDamageBased 1.2, UseHealScalingValue) on its target and pays its cost then (ManaCost LifeStaff_TouchOfLife: 25).
+        // The node Privilege (Upgrade_Lifestaff_DivineEmbrace_ReduceCost) selects the spell _ReducedCost (LifeStaff_TouchOfLife_Mana_Upgrade:
+        // 20; the conditions ConditionCheckDivineEmbraceReducedCost of the action list of the data). The camera target of the client is not
+        // decoded: the server chooses the nearest friend in the range, else the caster (a decision of the orchestrator for this stage).
+        plan.length = std::chrono::milliseconds(1000);
+        plan.aimed = true;
+        HealPlan heal;
+        heal.spell = has_node(skills, kLifeMagic, "Upgrade_Lifestaff_DivineEmbrace_ReduceCost") ? "Spell_LifeStaff_DivineEmbrace_ReducedCost"
+                                                                                               : "Spell_LifeStaff_DivineEmbrace";
+        heal.at = std::chrono::milliseconds(1000);
+        plan.heal = heal;
+        break;
+    }
+    case AbilityKind::sacredGround: {
+        // Sacred Ground of the life staff (stage 3.3b-S6; research abilities-magic.md Q4, the game data): the cast at 0.3333 s of its cast
+        // fragment makes the area of its spell (radius 3 m, 12 s; the statuses Status_Ability_Lifestaff_SacredGround: HealthModifierDamageBased
+        // 0.16 each 1 s, and the potency status of the Beacon) and pays its cost then (ManaCost LifeStaff_HealingWave: 15, one payment). The
+        // nodes Holy Ground (Upgrade_Lifestaff_SacredGround_Dmg) and Anointed (Upgrade_Lifestaff_SacredGround_DmgOnEnd) select the spells
+        // _Upgrade and _Upgrade2 (the conditions Condition_Lifestaff_SacredGround_* of the action list of the data). The target point of the
+        // client is not decoded: the server makes the area on the ground at the caster with the self spells (_Self, a decision of an agent).
+        const bool anointed = has_node(skills, kLifeMagic, "Upgrade_Lifestaff_SacredGround_DmgOnEnd");
+        const bool holy = has_node(skills, kLifeMagic, "Upgrade_Lifestaff_SacredGround_Dmg");
+        plan.length = std::chrono::milliseconds(600);
+        plan.aimed = true;
+        SpellPlan spell;
+        spell.role = SpellRole::aura;
+        spell.spell = anointed ? "Spell_LifeStaff_SacredGround_Self_Upgrade2" : holy ? "Spell_LifeStaff_SacredGround_Self_Upgrade"
+                                                                                    : "Spell_LifeStaff_SacredGround_Self";
+        spell.at = std::chrono::milliseconds(333);
+        plan.spell = spell;
+        break;
+    }
     }
     return plan;
 }
@@ -477,6 +515,10 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
             && !earlier->second.closedAt) {
             earlier->second.closedAt = press.input;
         }
+    }
+    // Each press ends the aim of an earlier key (stage 3.3b-S6; the confirm of an aim ends it before its press).
+    if (const auto known = m_characters.find(character->characterId); known != m_characters.end()) {
+        known->second.aim.reset();
     }
     if (!has_data()) {
         return refuse(CastVerdict::noData);
@@ -531,10 +573,34 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         log::write("world: ability: the data has no status effect %s of %s", planned->window.c_str(), rule->name);
         return refuse(CastVerdict::noRule);
     }
+    // The direct heal of the cast (stage 3.3b-S6): its spell row, the status rows of the spell, and the cost id of the spell (ManaCost).
+    if (planned->heal) {
+        HealPlan& heal = *planned->heal;
+        const gamedata::SpellRow* row = m_data->spell(heal.spell);
+        heal.statuses.clear();
+        bool statuses = row != nullptr;
+        if (row != nullptr) {
+            for (const std::string_view part : data_rules::parts_of(row->cells.text("StatusEffects"))) {
+                statuses = statuses && m_data->status(part) != nullptr;
+                heal.statuses.emplace_back(part);
+            }
+            heal.payment = std::string(row->cells.text("ManaCost"));
+        }
+        if (!statuses || heal.statuses.empty() || heal.payment.empty() || !m_data->mana_cost(heal.payment)) {
+            log::write("world: ability: the data has no spell %s, a status of it, or its cost of %s", heal.spell.c_str(), rule->name);
+            return refuse(CastVerdict::noRule);
+        }
+    }
     // The spell entity of the cast (stage 3.3b-S2b): its spell rows, the projectile spell in the projectile data, the status rows of
     // its effects. The area of the Beacon is the SecondarySpellID of its projectile (game data).
     if (planned->spell) {
         SpellPlan& spell = *planned->spell;
+        // An area on the ground with no projectile (stage 3.3b-S6: Sacred Ground) pays the cost of its spell at its spawn (ManaCost).
+        if (spell.role == SpellRole::aura && spell.projectile.empty() && spell.payment.empty()) {
+            if (const gamedata::SpellRow* area = m_data->spell(spell.spell)) {
+                spell.payment = std::string(area->cells.text("ManaCost"));
+            }
+        }
         const gamedata::SpellRow* projectileRow = spell.projectile.empty() ? nullptr : m_data->spell(spell.projectile);
         if (spell.spell.empty() && projectileRow != nullptr) {
             spell.spell = std::string(projectileRow->cells.text("SecondarySpellID"));
@@ -593,15 +659,38 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     if (cost > 0.0F && character->vitals.mana + 0.001F < cost) {
         return refuse(CastVerdict::noMana);
     }
-    // A summon pays at its spawn (stage 3.3b-S2b: the Pylon): a press with less mana than that cost makes no cast.
+    // A summon pays at its spawn (stage 3.3b-S2b: the Pylon), an area on the ground at its spawn and a direct heal with its heal (stage
+    // 3.3b-S6): a press with less mana than that cost makes no cast.
     if (planned->spell && !planned->spell->payment.empty()) {
         const float payment = mana_cost_of(*character, planned->spell->payment);
         if (payment > 0.0F && character->vitals.mana + 0.001F < payment) {
             return refuse(CastVerdict::noMana);
         }
     }
+    if (planned->heal) {
+        const float payment = mana_cost_of(*character, planned->heal->payment);
+        if (payment > 0.0F && character->vitals.mana + 0.001F < payment) {
+            return refuse(CastVerdict::noMana);
+        }
+    }
+    // An aimed ability of a client (stage 3.3b-S6: Divine Embrace, Sacred Ground): the key starts the aim of the client; the cast, its
+    // cooldown, and its cost start at the confirm of the same session (Abilities::confirm), with the checks again then. The key with
+    // the self cast input held casts at once on the caster (the actions *_SelfCast and *_SelfLoop of the data: the press is confirmed).
+    if (planned->aimed && session != 0 && !press.confirmed) {
+        Aim aim;
+        aim.press = press;
+        aim.session = session;
+        aim.ability = ability;
+        aim.started = now;
+        state.aim = aim;
+        ++m_counts.aims;
+        log::write("world: ability: %s aims %s (place %u of the bar): the cast starts at the confirm", character->name.c_str(),
+                   ability_name(planned->kind), press.place + 1);
+        return CastVerdict::accepted;
+    }
     Cast cast;
     cast.number = m_nextCast++;
+    cast.self = press.self;
     cast.plan = std::move(*planned);
     cast.ability = ability;
     cast.table = table;
@@ -682,7 +771,8 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         // The spell entity of the cast (stage 3.3b-S2b): the spawn of a summon at its time; the projectile of a trap or a Beacon
         // from the shot item of the client, or from the server when no shot came (a character with no client).
         ++stored.pending;
-        if (stored.plan.spell->role == SpellRole::summon) {
+        if (stored.plan.spell->role == SpellRole::summon || (stored.plan.spell->role == SpellRole::aura && stored.plan.spell->projectile.empty())) {
+            // A summon, and an area on the ground at the caster (stage 3.3b-S6: Sacred Ground): the spawn at the time of the plan.
             m_world.after(stored.plan.spell->at, [this, number](World&) { spawn_summon(number); });
         } else {
             m_world.after(stored.plan.spell->at + kThrowWait, [this, number](World&) {
@@ -701,6 +791,11 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
                 }
             });
         }
+    }
+    if (stored.plan.heal) {
+        // The direct heal at the time of the plan (stage 3.3b-S6): the target, the payment, and the statuses then.
+        ++stored.pending;
+        m_world.after(stored.plan.heal->at, [this, number](World&) { cast_heal(number); });
     }
     publish(stored.characterId);
     if (cost > 0.0F) {
@@ -826,6 +921,36 @@ void Abilities::throw_spell(Cast& cast, const state::WorldPosition& origin, cons
     }
 }
 
+bool Abilities::confirm(SessionId session, std::uint16_t input, bool self, float yaw) {
+    Entity* character = m_world.entity_of(session);
+    if (character == nullptr) {
+        return false;
+    }
+    const auto known = m_characters.find(character->characterId);
+    if (known == m_characters.end() || !known->second.aim || known->second.aim->session != session) {
+        return false;
+    }
+    const Aim aim = *known->second.aim;
+    known->second.aim.reset();
+    if (m_world.clock().now() - aim.started > ability_rules::kAimKeep) {
+        return false;
+    }
+    AbilityPress press = aim.press;
+    press.input = input;
+    press.confirmed = true;
+    press.self = self;
+    if (std::isfinite(yaw)) {
+        press.yaw = yaw;
+    }
+    const CastVerdict verdict = press_entity(*character, session, press);
+    if (verdict != CastVerdict::accepted) {
+        log::write("world: ability: the confirm of the aim of %s refused: %s", character->name.c_str(), cast_verdict_text(verdict));
+        return false;
+    }
+    ++m_counts.confirms;
+    return true;
+}
+
 void Abilities::spell_landed(std::uint64_t number, const SpellLanding& landing) {
     const auto found = m_casts.find(number);
     if (found == m_casts.end() || !found->second.plan.spell) {
@@ -855,6 +980,10 @@ void Abilities::spell_landed(std::uint64_t number, const SpellLanding& landing) 
         }
         // The rows that the press resolved (each one is in the status data: finding F9).
         request.statuses = plan.statuses;
+        // The heal of its pulses (stage 3.3b-S6): the caster and its heal base with the weapon of the cast.
+        if (const Entity* caster = m_world.find(cast.caster); caster != nullptr && caster->kind == EntityKind::player) {
+            request.heal = heal_source(cast, *caster, plan.spell);
+        }
     }
     if (request.attach == 0) {
         // On the ground below the point (the navigation data; with no data the point of the landing).
@@ -885,9 +1014,9 @@ void Abilities::spawn_summon(std::uint64_t number) {
         return;
     }
     // The place: CharRelPosOffsetY of the spell row in front of the caster (the direction of the press), on the ground
-    // (NoTargetSpawnFromRaycast; the navigation data gives the floor).
+    // (NoTargetSpawnFromRaycast; the navigation data gives the floor). An area of a self spell (Sacred Ground): at the caster.
     const gamedata::SpellRow* row = m_data->spell(plan.spell);
-    const float ahead = row != nullptr ? row->cells.number("CharRelPosOffsetY") : 0.0F;
+    const float ahead = row != nullptr && plan.role == SpellRole::summon ? row->cells.number("CharRelPosOffsetY") : 0.0F;
     const std::array<float, 2> front = direction_of(cast.yaw);
     state::WorldPosition place{caster->position.x + front[0] * ahead, caster->position.y + front[1] * ahead, caster->position.z};
     if (const std::optional<float> ground = m_world.navigation().ground_height(place); ground && std::fabs(*ground - caster->position.z) < 3.0F) {
@@ -909,6 +1038,13 @@ void Abilities::spawn_summon(std::uint64_t number) {
     request.position = place;
     request.weapon = weapon_of(cast);
     request.conversion = CastConversion{cast.conversionType, cast.conversionPart};
+    if (plan.role == SpellRole::aura && row != nullptr) {
+        // An area that heals (stage 3.3b-S6: Sacred Ground): the radius and the life of its spell row, its statuses, the heal source.
+        request.radius = row->radius;
+        request.life = std::chrono::milliseconds(static_cast<long long>(std::lround(std::max(row->duration, 0.0F))));
+        request.statuses = plan.statuses;
+        request.heal = heal_source(cast, *caster, plan.spell);
+    }
     const Entity* spell = m_world.spells().make(request);
     if (spell == nullptr) {
         end_held_cooldown(cast.characterId, cast.ability, false);
@@ -921,6 +1057,115 @@ void Abilities::spawn_summon(std::uint64_t number) {
     }
     cast.spell = spell->id;
     ++cast.pending;
+}
+
+HealSource Abilities::heal_source(const Cast& cast, const Entity& caster, std::string_view spell) const {
+    HealSource source;
+    source.healer = caster.id;
+    source.healerCharacter = caster.characterId;
+    source.base = m_world.health().heal_base(caster, cast.itemId, cast.gearScore);
+    source.table = cast.table;
+    if (const gamedata::SpellRow* row = has_data() ? m_data->spell(spell) : nullptr) {
+        source.row = std::string(row->cells.text("DamageTableRow"));
+    }
+    return source;
+}
+
+Entity* Abilities::heal_target(Entity& caster, const gamedata::SpellRow& spell, std::string_view ability, bool self) {
+    // The rule of the ability row (game data): TargetStatusEffect with TargetStatusEffectComparison NotEqual (Divine Embrace: not a target
+    // that has the status of its heal).
+    const gamedata::AbilityRow* row = m_data->ability_row(ability);
+    const std::string_view excluded = row != nullptr && data_rules::same_text(row->cells.text("TargetStatusEffectComparison"), "NotEqual")
+                                          ? row->cells.text("TargetStatusEffect")
+                                          : std::string_view();
+    const auto permitted = [&](const Entity& target) { return excluded.empty() || !m_world.statuses().has(target, excluded); };
+    // The self cast input (the confirm `self_target`, live check of stage 3.3b-S6): the caster, the self form of the spell.
+    if (self) {
+        return !caster.life.dead && permitted(caster) ? &caster : nullptr;
+    }
+    // The friends in the range of the spell (CastDistance 25 m), alive, in sight (from the chest of the caster to the chest of the
+    // friend), the nearest first (the position index: the load is the entities near the caster).
+    const float range = spell.castDistance > 0.0F ? spell.castDistance : 25.0F;
+    state::WorldPosition eye = caster.position;
+    eye.z += 1.5F;
+    Entity* best = nullptr;
+    float nearest = range;
+    m_world.for_each_near(caster.position, range, [&](Entity& entity) {
+        if (entity.kind != EntityKind::player || entity.id == caster.id) {
+            return;
+        }
+        ++m_counts.healLooked;
+        const float away = distance3(entity.position, caster.position);
+        if (entity.life.dead || away > nearest || !m_world.friendly(caster, entity) || !permitted(entity)) {
+            return;
+        }
+        state::WorldPosition chest = entity.position;
+        chest.z += 1.5F;
+        if (!m_world.navigation().sees(eye, chest)) {
+            return;
+        }
+        best = &entity;
+        nearest = away;
+    });
+    if (best != nullptr) {
+        return best;
+    }
+    // The self form of the spell (Spell_LifeStaff_DivineEmbrace_Self: TargetTypes Friend; a group of one).
+    return !caster.life.dead && permitted(caster) ? &caster : nullptr;
+}
+
+void Abilities::cast_heal(std::uint64_t number) {
+    const auto found = m_casts.find(number);
+    if (found == m_casts.end() || !found->second.plan.heal) {
+        return;
+    }
+    Cast& cast = found->second;
+    if (cast.pending > 0) {
+        --cast.pending;
+    }
+    const HealPlan plan = *cast.plan.heal;
+    Entity* caster = m_world.find(cast.caster);
+    const gamedata::SpellRow* spell = has_data() ? m_data->spell(plan.spell) : nullptr;
+    if (caster == nullptr || caster->kind != EntityKind::player || caster->life.dead || spell == nullptr) {
+        ++m_counts.healsRefused;
+        return;
+    }
+    const std::string ability = ability_text(cast.ability);
+    Entity* target = heal_target(*caster, *spell, ability, cast.self);
+    // The choice of the target and the cost go together (stage 3.3b-S6): no target, or less mana than the cost now: no heal, no payment.
+    const float cost = mana_cost_of(*caster, plan.payment);
+    if (target == nullptr || (cost > 0.0F && caster->vitals.mana + 0.001F < cost)) {
+        ++m_counts.healsRefused;
+        log::write("world: ability: %s of %s heals nobody (%s): no payment", ability_name(cast.plan.kind), caster->name.c_str(),
+                   target == nullptr ? "no target that the data permits" : "less mana than the cost");
+        return;
+    }
+    StatusApply how;
+    how.source = StatusSource{StatusSourceKind::ability, ability, 0, caster->id};
+    how.heal = heal_source(cast, *caster, plan.spell);
+    const std::string targetName = target->name;
+    const bool self = target->id == caster->id;
+    bool given = false;
+    for (const std::string& status : plan.statuses) {
+        Entity* own = m_world.find(target->id);
+        if (own == nullptr) {
+            break;
+        }
+        const StatusVerdict verdict = m_world.statuses().apply(*own, status, how);
+        given = given || verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed || verdict == StatusVerdict::instant;
+    }
+    if (!given) {
+        ++m_counts.healsRefused;
+        log::write("world: ability: %s of %s: the target %s takes no status of the heal: no payment", ability_name(cast.plan.kind),
+                   caster->name.c_str(), targetName.c_str());
+        return;
+    }
+    if (Entity* payer = m_world.find(cast.caster); payer != nullptr && cost > 0.0F) {
+        change_mana(*payer, -cost, ability_name(cast.plan.kind));
+    }
+    ++(self ? m_counts.healsSelf : m_counts.healsFriend);
+    log::write("world: ability: %s of %s heals %s (%s, heal base %.1f, cost %.1f)", ability_name(cast.plan.kind), caster->name.c_str(),
+               self ? "itself" : targetName.c_str(), plan.spell.c_str(), static_cast<double>(how.heal.base), static_cast<double>(cost));
 }
 
 void Abilities::end_held_cooldown(const std::string& characterId, std::uint32_t ability, bool countdown) {
@@ -1489,7 +1734,12 @@ bool Abilities::holds_cast_weapon(const Cast& cast, const Entity& character) con
 
 void Abilities::weapon_changed(Entity& character) {
     const auto state = m_characters.find(character.characterId);
-    if (state == m_characters.end() || !state->second.cast) {
+    if (state == m_characters.end()) {
+        return;
+    }
+    // A change of the weapon ends the aim of an ability (stage 3.3b-S6).
+    state->second.aim.reset();
+    if (!state->second.cast) {
         return;
     }
     const auto found = m_casts.find(*state->second.cast);

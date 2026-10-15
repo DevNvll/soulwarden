@@ -506,7 +506,8 @@ void beacon(const Options&) {
         shop.pass(2.0F);
         note("pulses of the Beacon status: " + std::to_string(first) + " at the start, " + std::to_string(pulses()) + " after 2 s");
         check(first >= 1 && pulses() - first == 2 && near(shop.character()->vitals.health, health),
-              "a pulse at the TickRate of the status (1 s) with no heal (the heal base is stage 3.3b-S6)");
+              "a pulse at the TickRate of the status (1 s) with no heal (the row of this fixture has no UseHealScalingValue: no heal base; the "
+              "heal of a pulse: stage 3.3b-S6, case HE5)");
         // The wolf runs 10 m away: the area follows it, and the caster is out of it.
         shop.host.world.place_creature(*shop.creature(wolfId), at(kPlace.x - 12.0F, kPlace.y));
         shop.walker.idle(10);

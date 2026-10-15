@@ -126,6 +126,12 @@ struct Vitals {
     std::optional<WorldClock::time_point> manaRegenFrom;
     /** The mana in one second of the regeneration (the base vitals of a player; the mana state sends it while the mana is not full). */
     float manaRegenRate{0.0F};
+    /**
+     * The world revision of the last heal of the character that shows its number on the screen of its owner (stage 3.3b-S6, live
+     * check L3): the vitals state of the owner after it has bit 1 of healthChangeFlags (the client shows the gain from its own old
+     * health). 0: none.
+     */
+    Revision healShown{0};
 };
 
 /**
@@ -643,6 +649,40 @@ enum class StatusSourceKind : std::uint8_t {
     spell,
 };
 
+/**
+ * The kind of a heal (stage 3.3b-S6, world/health.h): it selects the received modifiers of the target (the columns of the status
+ * data: HealMod for each heal, ConsumableHealMod, NonConsumableHealMod, DmgPctToHealthHealMod) and the number on the screen.
+ */
+enum class HealKind : std::uint8_t {
+    /** A heal of an ability or of a status of an ability (the heal base of the healer): NonConsumableHealMod. */
+    ability,
+    /** A potion, a food, a dust (a status of a consumable): ConsumableHealMod. */
+    consumable,
+    /** A part of the damage of a hit (DmgPctToHealth): NonConsumableHealMod and DmgPctToHealthHealMod. */
+    lifeSteal,
+    /** A status of the gear (the regeneration of an earring): NonConsumableHealMod, no number. */
+    regeneration,
+};
+
+/**
+ * The source of a heal of an ability (stage 3.3b-S6): the healer and the heal base of the healer at the cast (the weapon of the cast
+ * at its gear score and the Focus of the healer; a decision of the user, world/health.h). A status keeps it: its ticks heal with this
+ * base (the client has a cached heal scaling value for each source of a status: StatusEffectSource 0x5CB7F20, m_healScalingValue).
+ */
+struct HealSource {
+    /** The entity and the character of the healer. 0: no healer (a consumable, the gear). */
+    EntityId healer{0};
+    std::string healerCharacter;
+    /** The heal base: the base damage of the weapon at its gear score times the scaling of Focus. 0: none. */
+    float base{0.0F};
+    /** The damage row of the spell of the heal (LifeStaff_DivineEmbrace): the condition DamageTableRow of a rule with OnHealed. */
+    std::string row;
+    /** The ability table of the weapon of the heal (its progression id): the learned nodes whose OnHealed rules count. 0: none. */
+    std::uint32_t table{0};
+
+    bool operator==(const HealSource&) const = default;
+};
+
 /** The source of a status of a character. The status system removes the statuses of a source together (a gear item). */
 struct StatusSource {
     StatusSourceKind kind{StatusSourceKind::command};
@@ -689,6 +729,8 @@ struct ActiveStatus {
     bool replicated{true};
     /** ShowInNameplates: the icon of the status at the name plate (the compact map of an observer). */
     bool nameplate{false};
+    /** Stage 3.3b-S6: the source of the heal of a status with HealthModifierDamageBased (the healer and its heal base at the cast). */
+    HealSource heal;
 };
 
 /** The cooldown of one consumable item of a character (stage 1.3b): the key of the client is the item id. */
@@ -754,6 +796,17 @@ struct GearSummary {
      */
     float critChance{0.0F};
     float critDamage{0.0F};
+    /**
+     * The heal parts of the statuses (stage 3.3b-S6, with the limits of their categories): the received parts of a heal that the
+     * character takes (HealMod for each heal; ConsumableHealMod, NonConsumableHealMod, DmgPctToHealthHealMod for one kind; the game
+     * texts: "reduces healing taken", "increased healing from non-consumables and lifesteal"), and the outgoing part of a heal that the
+     * character gives (HealScalingValueMultiplier; live check L9: "outgoing healing is reduced by 3% per stack").
+     */
+    float healTaken{0.0F};
+    float healConsumable{0.0F};
+    float healNonConsumable{0.0F};
+    float healLifeSteal{0.0F};
+    float healOutgoing{0.0F};
     /** The equip load of the armor (tenths: the client shows 38.75 as 3.8) and its class: 0 light, 1 medium, 2 heavy, 3 overburdened. */
     float equipLoad{0.0F};
     std::uint8_t loadClass{0};

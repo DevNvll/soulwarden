@@ -19,6 +19,9 @@
 // has vitalsData (bit 0 of its flags: the character is dead) and healthChangeFlags (bit 0), in
 // the two views (protocol notes 4.18). The health of a character changes with a damage, and
 // the client of the owner shows the new value on its HUD from HealthAmount alone (live proof).
+// Stage 3.3b-S6: the owner view of the state that carries a heal has bit 1 of healthChangeFlags
+// too (live check L3, protocol notes 4.31): the client shows its green heal number, the new
+// health less its own health. The observer view never has bit 1.
 //
 // A creature (encode_creature_vitals_state) has only the observer view, and only fields of
 // group 0. The first state of a session has HealthAmount, vitalsData, healthChangeFlags,
@@ -74,6 +77,12 @@ constexpr std::uint8_t kVitalsDead = 0x01;
  * gain: the backend does not set it for a creature.
  */
 constexpr std::uint8_t kHealthChangeNotify = 0x01;
+/**
+ * Bit 1 of healthChangeFlags (stage 3.3b-S6, live check L3): the client of the owner shows a green number of the gain (its new
+ * health less the health that it had; client callback at image RVA 0x689FDC0). The owner view of the state that carries a heal with
+ * a number has it; an observer shows no number for it (live check L3), and its view does not have it.
+ */
+constexpr std::uint8_t kHealthGainNumber = 0x02;
 /** The field maxHealth has 16 bits. */
 constexpr float kMaxHealthField = 65535.0F;
 
@@ -127,8 +136,9 @@ namespace {
 /**
  * @param life True: the state also has the life data (the dead mark) and the mark "the health
  *        changed", for a state after the first one and for a dead character.
+ * @param gain True: the state carries a heal with a number for the owner (bit 1 of healthChangeFlags).
  */
-hub::Bytes player_vitals(const world::Entity& entity, View view, bool life) {
+hub::Bytes player_vitals(const world::Entity& entity, View view, bool life, bool gain) {
     const world::Vitals& vitals = entity.vitals;
     StateWriter state(kGroups);
     state.field(0, kHealthAmount).f32(vitals.health);
@@ -137,8 +147,8 @@ hub::Bytes player_vitals(const world::Entity& entity, View view, bool life) {
         // owner shows its death screen with it, and it closes that screen when the bit is 0
         // again (client code at image RVA 0x67A6F10). The health 0 alone is not a death.
         write_vitals_data(state.field(0, kVitalsData), entity.life.dead);
-        // The listeners of the vitals component (the name plate of a remote player) get the new health.
-        state.field(0, kHealthChangeFlags).u8(kHealthChangeNotify);
+        // The listeners of the vitals component (the name plate of a remote player) get the new health; the owner the number of a heal.
+        state.field(0, kHealthChangeFlags).u8(static_cast<std::uint8_t>(kHealthChangeNotify | (gain ? kHealthGainNumber : 0)));
     }
     state.field(0, kHealthMax).f32(vitals.healthMax);
     state.field(0, kHealthTickRate).u16(kNoTickRate);
@@ -159,14 +169,17 @@ hub::Bytes player_vitals(const world::Entity& entity, View view, bool life) {
 } // namespace
 
 hub::Bytes encode_vitals_state(const world::Entity& entity, View view, const world::WorldClock&) {
-    return player_vitals(entity, view, false);
+    return player_vitals(entity, view, false, false);
 }
 
 std::vector<hub::Bytes> encode_vitals_parts(const world::Entity& entity, View view, const PartsRequest& request) {
     // The first state of a session for a character that lives has no life data: the client has
     // the start values (alive). A character can be dead when a session starts to observe it.
     std::vector<hub::Bytes> parts;
-    parts.push_back(player_vitals(entity, view, request.since != 0 || entity.life.dead));
+    // The number of a heal (stage 3.3b-S6): only the owner, only for a heal after the last state of this session (the same health
+    // again gives no second number: live check L3). The first state of a session has none.
+    const bool gain = view == View::owner && request.since != 0 && entity.vitals.healShown > request.since;
+    parts.push_back(player_vitals(entity, view, request.since != 0 || entity.life.dead, gain));
     return parts;
 }
 

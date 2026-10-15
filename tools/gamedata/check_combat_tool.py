@@ -51,14 +51,21 @@ def sheet(name: str, kind: str, rows: list[dict]) -> bytes:
     struct.pack_into("<I", head, 8, text(name))
     struct.pack_into("<I", head, 16, text(kind))
     struct.pack_into("<II", head, 0x44, len(columns), len(rows))
-    numeric = [isinstance(rows[0][column], (int, float)) for column in columns]
+    # A column is a number column when a value of a row is a number. None is a blank cell (its source text is empty);
+    # each other number cell has its value as its source text, as the tables of the game have.
+    numeric = [any(isinstance(row.get(column), (int, float)) for row in rows) for column in columns]
     descriptors = bytearray()
     for column, is_number in zip(columns, numeric):
         descriptors.extend(struct.pack("<III", 0, text(column), 2 if is_number else 1))
     cells = bytearray()
     for row in rows:
         for column, is_number in zip(columns, numeric):
-            cells.extend(struct.pack("<If", 0, row[column]) if is_number else struct.pack("<II", text(row[column]), 0))
+            value = row[column]
+            if is_number:
+                source = "" if value is None else ("1" if value is True else "0" if value is False else str(value))
+                cells.extend(struct.pack("<If", text(source), 0.0 if value is None else float(value)))
+            else:
+                cells.extend(struct.pack("<II", text("" if value is None else value), 0))
     struct.pack_into("<I", head, 0x38, len(head) + len(descriptors) + len(cells) - 0x3C)
     return bytes(head + descriptors + cells + texts)
 
@@ -101,8 +108,11 @@ class MadeUpSources:
             light_impact["ImpactDecayRate"] = 1.5
         # The critical, head, and behind cells (stage 3.3b-S5).
         hit_cells = {"CanCrit": False, "NoHeadshot": False, "NoBackstab": False, "DmgCoefHead": 1.3, "DmgCoefCrit": 0.0}
+        # The light row has a blank CanCrit cell (an ordinary attack), the heavy row an explicit 0 (format 2: null and false;
+        # code review of stage 3.3b-S5, finding F2).
         damage = [{"DamageID": "Light", "WeaponCategory": "Sword", "AttackType": "Light", "DamageType": "Slash",
-                   "DmgCoef": 1.0, "AddDmg": 0.0, "AttackRuneCharge": 1.105, "HitRuneCharge": 0.27625, **light_impact, **hit_cells}]
+                   "DmgCoef": 1.0, "AddDmg": 0.0, "AttackRuneCharge": 1.105, "HitRuneCharge": 0.27625, **light_impact, **hit_cells,
+                   "CanCrit": None}]
         if mode == "no-impact-column":
             damage[0].pop("ImpactDecayRate_AI")
         if mode == "no-hit-column":
@@ -206,7 +216,8 @@ def main() -> int:
                        and tables["armor"]["ratingExponent"] == 1.2 and tables["levelDamage"] == [[6, 0.2]]
                        and tables["impacts"] == [["Light", 0.0, -1.5, 0.0, 0.8, 0.0, -2.0, 0.0, 0.0, True]]
                        and tables["criticals"] == [["Sword", 0.07, 1.3]]
-                       and tables["hitRules"] == [["Light", False, False, False, 1.3, 0.0], ["Heavy", False, False, False, 1.3, 0.0]])
+                       and tables["format"] == 2
+                       and tables["hitRules"] == [["Light", None, False, False, 1.3, 0.0], ["Heavy", False, False, False, 1.3, 0.0]])
         if correct and mode == "known-absent-row":
             correct = json.loads(target.read_text(encoding="utf-8"))["weapons"][0][9] == ""
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""

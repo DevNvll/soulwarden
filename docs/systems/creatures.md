@@ -163,7 +163,9 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   animation) are not in the data.
 - The hit facts of a slice (stage 3.3b-S5, protocol notes 4.30): `CreatureSlice::behind`, the two angles of the
   DamageReceiver of the slice (m_isHitFromBehindMinAngle, m_isHitByCritFromBehindMinAngle; the wolf 2.0944 and 2.3562;
-  503 slices), and `CreatureSlice::head`, the head volume (the HitVolume with m_isHeadshot) as a capsule in the frame of the
+  503 slices; the tool stops for an angle field that is not exactly one 32-bit float: a cut field is a fault of the
+  source, not the angle 0; code review of stage 3.3b-S5, finding F12, `check_hit_facts_tool.py` case cut-angle), and
+  `CreatureSlice::head`, the head volume (the HitVolume with m_isHeadshot) as a capsule in the frame of the
   creature: the bone of the volume in the bind pose of the skeleton of the character of the slice (the `.chr` file of its
   `.cdf` file: the chunk CompiledBones 0x2000), with the center, the axis, the height, and the radius of its shape (374
   slices; the wolf: the bone `bind_neck_2_jnt`, radius 0.2 m). A slice with no such data has no hit from behind and no

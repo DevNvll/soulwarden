@@ -559,6 +559,19 @@ button on "Confirm").
   work yet, and a node that needs grit, a block, or an action of the client that the server
   does not have, does nothing: `tools/world passives NAME` (and `--table greataxe`) lists each
   node with what the backend does with it.
+- Heals (stage 3.3b-S6, protocol notes 4.31, `docs/systems/combat-and-health.md`). Each heal of a
+  character (an ability, a potion, a food, the gear, a life steal) goes through one rule: the
+  real gain to the maximum health, a green number for the owner, and for a heal of a friend a
+  green number at the feet of the friend for the healer. The heal of an ability is the base
+  damage of the staff at its gear score times the Focus scaling of the staff (the same curve as
+  the damage), times the value of the effect (Divine Embrace 1.2, Sacred Ground and the Beacon
+  0.16 each second), times the outgoing part of the healer (effects, Divine Blessing, the equip
+  load) and the received part of the target (Disease halves it; Anointed adds to it). Divine
+  Embrace and Sacred Ground need a confirm after the key: LCTRL heals you, a click heals the
+  nearest friend in sight (Sacred Ground comes at your feet). There are no groups: in a
+  development run, `tools/world friends NAME OTHER` makes two characters friends for a test,
+  and `tools/world heals NAME [TARGET]` shows the heal base, the outgoing and the received
+  parts, and the counts.
 - Ranged and magic basic attacks (stage 3.3b-S3, protocol notes 4.27,
   `docs/systems/projectiles.md`). With the projectile data, a shot of the bow (a hip shot, an
   aimed shot with the right pointer button, a charged shot with a hold of 0.5 s or more) or a

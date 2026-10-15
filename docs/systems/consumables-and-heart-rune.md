@@ -12,7 +12,7 @@ values) are in [Status effects](status-effects.md).
 | The use of a consumable: the quick slot keys, the message of the bag, the checks, the cooldown, the effects | `apps/backend/src/world/consumables.h`, `server/rep/client_input.h` (`InputStep::quickKey`), `server/rep/rep_session.cpp` (`handle_use_item`), `Inventory::take_one`, `world/statuses.h`, test cases IZ7, RI5 to RI8 |
 | The countdown of a consumable on the HUD | `server/rep/states/cooldown_state.cpp` (field 3), `Entity::itemCooldowns` |
 | The heart rune: the charge, the key, the variant status, the explosion | `world/runes.h` (`Runes::status_spell`), `server/rep/states/charge_state.cpp`, `server/rep/client_input.h` (`InputStep::runeKey`), test cases IZ6, RI4 |
-| The heal and the mana of an effect | `Health::heal_amount`, `Abilities::change_mana` |
+| The heal and the mana of an effect | `Health::heal` (stage 3.3b-S6: the one heal path), `Abilities::change_mana` |
 
 ## Rules
 
@@ -32,10 +32,14 @@ values) are in [Status effects](status-effects.md).
   transaction. A use that a check refuses changes nothing.
 - The effects (AddStatusEffects, with DurationOverrides) go to the status system with its rules
   ([Status effects](status-effects.md)): a status with no duration gives one heal (Health +
-  HealthModifierPercent of the maximum, times the heal factor of the equip load) and one mana
+  HealthModifierPercent of the maximum, times the heal factor of the equip load, times the
+  received part of the kind consumable: HealMod and ConsumableHealMod; stage 3.3b-S6) with
+  the green number of the owner, and one mana
   change (Mana; the one mana path of the abilities); a status with a duration stays for its
   time: its values count one time in the gear summary (MODConstitution of a food, the armor of a
-  dust), a TickRate gives its heal and mana at each tick, and StopOnHitCount ends it after hits.
+  dust), a TickRate gives its heal and mana at each tick (a number only for a row with
+  ShowUiDamageNumbersOnHeal: the regen potions; a food tick has no number), and StopOnHitCount
+  ends it after hits.
   RemoveStatusEffects and RemoveStatusEffectCategories end the older statuses first (a new food
   ends the old one). A death ends the statuses with RemoveOnDeath. The client shows the icon
   and the countdown of each status with ShowInUITray (live run s1-live2: a food, a potion, a

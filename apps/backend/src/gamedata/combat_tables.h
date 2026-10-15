@@ -88,6 +88,11 @@ struct DamageRow {
      * tool): CanCrit (the flag CanCrit of the damage number), NoHeadshot, NoBackstab, DmgCoefHead, and DmgCoefCrit (0: blank).
      */
     bool canCrit{false};
+    /**
+     * An explicit CanCrit 0 of the data (code review of stage 3.3b-S5, finding F2; 42 rows: the burst of Gravity Well, the trap of
+     * the musket): the row is never critical. A blank cell (an ordinary attack row) is false here. A file of format 1 has none.
+     */
+    bool noCrit{false};
     bool noHeadshot{false};
     bool noBackstab{false};
     float headFactor{0.0F};

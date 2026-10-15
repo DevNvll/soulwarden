@@ -25,6 +25,7 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 | The passive rules of the nodes and the critical hits of an ability (stage 3.3b-S5): the evaluator, the spell selections of the action data | [Passive rules](passive-rules.md), `world/passives.h`, `Abilities::plan` (`selected_spell`, `data_rule`), `gamedata/ability_data.h` (`action_spells`), test cases PS1, CH7 |
 | The perks of an ability (Sundering Shockwave, Insatiable Gravity Well, Refreshing Move) | [Gear and perks](gear-and-perks.md), `Abilities::perk_burst`, `Abilities::reduce_weapon_cooldowns`, test case IZ5 |
 | The pull and the push of an ability, the dash of Charge, the counter of Riposte (stage 3.3b-S4) | [Forced movement](forced-movement.md), `CasterMotion`, `Abilities::motion_allowance`, `Abilities::countered`, test cases FM6, CM1, CM2, RC1, RC2 |
+| The heals of the life staff (stage 3.3b-S6): Divine Embrace, Sacred Ground, the aim and its confirm, the target of a heal | `Abilities::plan` (`HealPlan`), `Abilities::confirm`, `Abilities::heal_target`, `Abilities::cast_heal`, `Abilities::heal_source`, [Combat and health](combat-and-health.md) (the heal path), test cases HE1 to HE4, HE11 |
 
 ## Rules
 
@@ -179,6 +180,29 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   basic attack does; an area has its center as the source of a hit from behind (no direction for a creature at the
   center); a tick of a status does not roll. Each phase hit has its attack: the cast (`kAttackCast`), for the hit counts of
   the rules.
+- The heals of the life staff (stage 3.3b-S6; `CastPlan::heal`, `HealPlan`). Divine Embrace: a direct heal at 1.0 s of
+  its cast (the cast bar of the client, live check), its spell `Spell_LifeStaff_DivineEmbrace` (Privilege:
+  `_ReducedCost`, the selection of the action data), and the status of its spell row
+  (`Status_Ability_Lifestaff_DivineEmbrace`: HealthModifierDamageBased 1.2, one tick). The cost of the spell (ManaCost:
+  25, Privilege 20) is paid with the heal, not at the press. Sacred Ground: the area of its self spell
+  (`Spell_LifeStaff_SacredGround_Self`, Holy Ground `_Self_Upgrade`, Anointed `_Self_Upgrade2`) at the caster at
+  0.333 s, with its cost (15) at the spawn; its statuses heal each 1 s for 12 s. Source: game data (the spell rows, the
+  action list `playeractions_ability_lifemagic`); the times of the cast: live check.
+- The aim (stage 3.3b-S6; live check of the run `heal-live1`, and the action list of the data). The key of Divine
+  Embrace or Sacred Ground starts only the aim of the client ("LCTRL Target Self"): no cast, no cooldown, no cost
+  (`AbilityCounts::aims`). The confirm of the same session starts the cast with all the checks of a press
+  (`Abilities::confirm`): the self cast input `self_target` (action bit 430, LCTRL) heals the caster; a click
+  (`attack_primary`) heals the target choice. The key with `self_target` held casts at once on the caster (the actions
+  `*_SelfCast` and `*_SelfLoop` of the data). An aim ends at its confirm, at a press of a key, at a change of the weapon,
+  and after 10 s (`ability_rules::kAimKeep`, a decision of an agent). A click of a different session confirms nothing
+  (rule MP-10). A press with no session (`tools/world cast`, a character with no client) casts at once.
+- The target of a direct heal (`Abilities::heal_target`). The self cast: the caster. A click: the nearest friend
+  (`World::friendly`) that lives, in the range of the spell (CastDistance 25 m), and in sight (chest to chest); with no
+  such friend the caster (the self form of the spell). The data excludes a target that has the status of the heal
+  (TargetStatusEffect with NotEqual of the ability row). No target: no heal and no payment. The point of the click is
+  not decoded: the nearest friend, not the friend under the aim (a decision of an agent).
+- The heal source of a cast (`Abilities::heal_source`): the healer, its weapon and its gear score, the spell, and the
+  ability table. The heal path computes the amount from it ([Combat and health](combat-and-health.md)).
 - A new ability needs, in this sequence: a live check of its keys, its contacts, and its
   shots (protocol notes 4.22: L1, L3, L7), its rule in `Abilities::plan` with the rows and the
   spells of the data, a test case, and a live video. Do not make a message of the server for
@@ -251,6 +275,11 @@ tools/gamedata/abilities.sh          # write ability-data.json to the game data 
   (`tools/hx 'look DX 0'`) before the press.
 - Riposte needs the hit of a creature in its window of 1 s: press the key just after the creature starts its attack (the
   backend log line `starts the attack`; the bite of a wolf comes 0.5 s later).
+- Divine Embrace and Sacred Ground need a confirm after the key: `tools/hx 'key 0x51' 'wait 700' 'key 0xA2'` (Q, then
+  LCTRL: the self cast), or `'click X Y'` on the friend. A key alone gives only the aim: the backend log has the line
+  "aims", and no cast.
+- Sacred Ground with a click puts the area at the caster, not at the point of the aim (the backend does not decode the
+  point of the client: the spell `Spell_LifeStaff_SacredGround` with its raycast of 25 m is not used).
 - `tools/gamedata/abilities.sh` with no argument writes into the common game data folder: the
   next start of the user then has the file. For a test, give it an output path and give the
   run its folder with `SOULWARDEN_GAMEDATA_DIR`.

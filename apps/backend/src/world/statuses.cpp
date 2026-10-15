@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include "core/logging/log.h"
 #include "gamedata/progression_tables.h"
@@ -162,7 +163,7 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
     if (!how.permanent && seconds <= 0.0F) {
         // A row with no duration: one application now.
         start_cooldown();
-        give(character, row, how.potency);
+        give(character, row, how.potency, how.source, how.heal, false);
         cast(character, row, how.source);
         return counted(StatusVerdict::instant);
     }
@@ -198,6 +199,10 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
         if (status.source.kind != StatusSourceKind::gear || how.source.kind == StatusSourceKind::gear) {
             status.source = how.source;
         }
+        // The heal of the newest source (stage 3.3b-S6): its healer and its heal base at its cast.
+        if (how.heal.healer != 0 || how.heal.base > 0.0F) {
+            status.heal = how.heal;
+        }
         status.serial = m_nextSerial++;
         schedule(character.characterId, status);
         publish(character, state);
@@ -215,6 +220,7 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
     status.ends = how.permanent ? now : now + milliseconds_of(seconds);
     status.hitsLeft = row.stopOnHit;
     status.source = how.source;
+    status.heal = how.heal;
     status.serial = m_nextSerial++;
     status.tray = row.cells.number("ShowInUITray") != 0.0F;
     status.nameplate = row.nameplate;
@@ -252,23 +258,95 @@ void Statuses::schedule(const std::string& characterId, const ActiveStatus& stat
     }
 }
 
-void Statuses::give(Entity& character, const gamedata::StatusRow& row, float amount) {
+void Statuses::give(Entity& character, const gamedata::StatusRow& row, float amount, const StatusSource& source, const HealSource& heal,
+                    bool tick) {
     if (character.life.dead) {
         return;
     }
     const float health = (row.cells.number("Health") + row.cells.number("HealthModifierPercent") * character.vitals.healthMax) * amount;
+    const float damageBased = row.cells.number("HealthModifierDamageBased");
     if (health > 0.0F) {
-        m_world.health().heal_amount(character, health * m_world.gear().heal_factor(character), row.id.c_str());
+        // A fixed heal and a part of the maximum health (a potion, a food, the gear; stage 1.3b), with the heal factor of the equip load
+        // of the character (its own heal). The kind of the source selects the received modifiers and the number (stage 3.3b-S6): the
+        // application of a consumable shows the number, a tick of a consumable only with ShowUiDamageNumbersOnHeal of the row (the regen
+        // potions of the data; a decision of an agent: the reader of the cell in the client is not known), the gear shows none.
+        HealRequest request;
+        request.kind = source.kind == StatusSourceKind::gear ? HealKind::regeneration
+                       : (source.kind == StatusSourceKind::consumable || source.kind == StatusSourceKind::command) ? HealKind::consumable
+                                                                                                                   : HealKind::ability;
+        request.amount = health * m_world.gear().heal_factor(character);
+        request.number = request.kind == HealKind::regeneration ? false
+                         : request.kind == HealKind::consumable ? (!tick || row.cells.number("ShowUiDamageNumbersOnHeal") != 0.0F)
+                                                                : true;
+        request.healer = heal.healer;
+        request.what = row.id.c_str();
+        m_world.health().heal(character, request);
         ++m_counts.heals;
-    } else if (row.cells.number("HealthModifierDamageBased") != 0.0F) {
-        // A heal of a part of the damage of the source (the Beacon): the pulse comes at the time of the data, and the amount
-        // needs the heal base of stage 3.3b-S6 (not known now). No health.
+    } else if (damageBased > 0.0F && row.cells.number("UseHealScalingValue") != 0.0F && heal.base > 0.0F) {
+        // A heal of an ability (stage 3.3b-S6; Divine Embrace, the pulses of the Beacon and of Sacred Ground): the heal base of the healer
+        // at its cast times HealthModifierDamageBased, the potency and the stacks, the potency factor of the categories (the
+        // EffectPotencyMods of the other statuses: a Beacon makes Sacred Ground 10 percent weaker), and the outgoing factor of the
+        // healer (Health::outgoing; a healer that left the world: no outgoing part). The received factor of the target is in
+        // Health::heal. The order (outgoing times received) is a decision of the user (2026-10-15: multiply where nothing proves an
+        // order).
+        const Entity* healer = heal.healer != 0 ? m_world.find(heal.healer) : nullptr;
+        const float outgoing = healer != nullptr && healer->kind == EntityKind::player ? m_world.health().outgoing(*healer, character, heal) : 1.0F;
+        HealRequest request;
+        request.kind = HealKind::ability;
+        request.amount = heal.base * damageBased * amount * potency_factor(character, row) * outgoing;
+        request.number = true;
+        request.healer = heal.healer;
+        request.what = row.id.c_str();
+        m_world.health().heal(character, request);
+        ++m_counts.abilityHeals;
+    } else if (damageBased != 0.0F) {
+        // A part of the damage of a source with no heal base (no healer: a command; a row with no UseHealScalingValue, whose base is the
+        // core damage of the source: not in this stage): the pulse comes at the time of the data, with no health.
         ++m_counts.pulsesWithNoHeal;
     }
     const float mana = (row.cells.number("Mana") + row.cells.number("ManaModifierPercent") * character.vitals.manaMax) * amount;
     if (mana != 0.0F) {
         m_world.abilities().change_mana(character, mana, row.id.c_str());
     }
+}
+
+float Statuses::potency_factor(const Entity& character, const gamedata::StatusRow& row) const {
+    const gamedata::AbilityData* data = m_world.options().abilityData;
+    const std::string_view categories = row.cells.text("EffectCategories");
+    if (data == nullptr || categories.empty()) {
+        return 1.0F;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    float part = 0.0F;
+    for (const ActiveStatus& other : character.statuses) {
+        if (same_text(other.status, row.id) || (!other.permanent && now >= other.ends)) {
+            continue;
+        }
+        const gamedata::StatusRow* source = data->status(other.status);
+        if (source == nullptr) {
+            continue;
+        }
+        // EffectPotencyMods: "Category=value" parts (Status_Ability_Lifestaff_Beacon_SG_Potency: SacredGroundCat=-0.1).
+        for (const std::string_view entry : parts_of(source->cells.text("EffectPotencyMods"))) {
+            const std::size_t equal = entry.find('=');
+            if (equal == std::string_view::npos) {
+                continue;
+            }
+            const std::string_view category = entry.substr(0, equal);
+            const std::string value(entry.substr(equal + 1));
+            char* end = nullptr;
+            const float mod = std::strtof(value.c_str(), &end);
+            if (end == value.c_str() || !std::isfinite(mod)) {
+                continue;
+            }
+            for (const std::string_view own : parts_of(categories)) {
+                if (same_text(own, category)) {
+                    part += mod;
+                }
+            }
+        }
+    }
+    return std::max(1.0F + part, 0.0F);
 }
 
 void Statuses::cast(Entity& character, const gamedata::StatusRow& row, const StatusSource& source) {
@@ -585,10 +663,12 @@ void Statuses::tick() {
         }
         const float amount = status->potency * static_cast<float>(status->stacks);
         const std::uint64_t serial = status->serial;
+        const StatusSource source = status->source;
+        const HealSource heal = status->heal;
         WorldClock::time_point next = *status->nextTick;
         bool alive = true;
         while (alive && next <= now && (status->permanent || next < status->ends)) {
-            give(*character, *row, amount);
+            give(*character, *row, amount, source, heal, true);
             ++m_counts.ticks;
             next += milliseconds_of(rate);
             // The heal can change the gear values; the status stays with its number.
@@ -655,7 +735,8 @@ StatusValues Statuses::values(const Entity& character) const {
             add(*row, column, row->cells.number(column) * factor);
         }
         for (const char* column : {"MaxHealthMod", "PhysicalArmor", "ElementalArmor", "BaseDamageReduction", "SprintSpeedMod",
-                                   "CritChanceModifier", "CritDamageModifier"}) {
+                                   "CritChanceModifier", "CritDamageModifier", "HealMod", "ConsumableHealMod", "NonConsumableHealMod",
+                                   "DmgPctToHealthHealMod", "HealScalingValueMultiplier"}) {
             add(*row, column, row->cells.number(column) * factor);
         }
         add(*row, "MoveSpeedMod", row->moveSpeed * factor);
@@ -686,6 +767,12 @@ StatusValues Statuses::values(const Entity& character) const {
     // The critical parts of the statuses (stage 3.3b-S5): CritChanceModifier and CritDamageModifier.
     values.critChance = value("CritChanceModifier");
     values.critDamage = value("CritDamageModifier");
+    // The heal parts (stage 3.3b-S6), with the limits of their categories (Disease, Anointed, Shrivelled).
+    values.healTaken = value("HealMod");
+    values.healConsumable = value("ConsumableHealMod");
+    values.healNonConsumable = value("NonConsumableHealMod");
+    values.healLifeSteal = value("DmgPctToHealthHealMod");
+    values.healOutgoing = value("HealScalingValueMultiplier");
     values.moveSpeed = value("MoveSpeedMod");
     values.sprintSpeed = value("SprintSpeedMod");
     for (const std::string& name : typeNames) {

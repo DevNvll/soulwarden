@@ -387,7 +387,7 @@ void hit_facts_tool(const Options& options) {
     const auto passed = [&](const std::string& name) {
         return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) { return line.rfind("ok    " + name + ":", 0) == 0; });
     };
-    check(status == 0 && lines.size() == 8, "the check of the hit facts has status 0 and 8 cases");
+    check(status == 0 && lines.size() == 9, "the check of the hit facts has status 0 and 9 cases (the case cut-angle: code review of stage 3.3b-S5, finding F12)");
     check(passed("valid") && passed("skeleton-as-cdf"), "the angles of the DamageReceiver and the head segment in the frame of the creature");
     check(passed("no-skeleton") && passed("missing-bone") && passed("other-shape"), "no head with no skeleton, no bone, or a box: each one counted");
     check(passed("bad-angle") && passed("bad-chunk") && passed("nonfinite-bone"), "an angle above pi, a bone chunk that is not whole, a NaN: the tool stops");

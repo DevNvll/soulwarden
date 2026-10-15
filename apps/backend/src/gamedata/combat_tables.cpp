@@ -225,6 +225,13 @@ bool CombatTables::load(const std::string& path) {
             return fail(std::string("the file has no member ") + member);
         }
     }
+    // The format (code review of stage 3.3b-S5, finding F2): format 2 has the cell CanCrit of a hit rule as true, false (an
+    // explicit 0: the row cannot be critical), or null (a blank cell); format 1 (or no format) has a flag that cannot tell a
+    // blank cell from an explicit 0.
+    std::uint32_t format = 1;
+    if (document.contains("format") && (!read_whole(document["format"], format) || format < 1 || format > 2)) {
+        return fail("the format of the file is not 1 or 2");
+    }
     CombatData data;
     const json& constants = document["constants"];
     if (!constants.is_object() || !constants.contains("levelDamage") || !constants.contains("gearScoreRate")
@@ -459,7 +466,8 @@ bool CombatTables::load(const std::string& path) {
         for (const json& entry : document["hitRules"]) {
             float head = 0.0F;
             float crit = 0.0F;
-            if (!entry.is_array() || entry.size() != 6 || !entry[0].is_string() || !entry[1].is_boolean() || !entry[2].is_boolean()
+            const bool blank = format >= 2 && entry.is_array() && entry.size() == 6 && entry[1].is_null();
+            if (!entry.is_array() || entry.size() != 6 || !entry[0].is_string() || (!entry[1].is_boolean() && !blank) || !entry[2].is_boolean()
                 || !entry[3].is_boolean() || !read_float(entry[4], head) || !read_float(entry[5], crit) || head < 0.0F || crit < 0.0F) {
                 return fail("a hit rule does not have the form of the tool");
             }
@@ -469,7 +477,8 @@ bool CombatTables::load(const std::string& path) {
             }
             seen[row->second] = true;
             DamageRow& damage = data.damageRows[row->second];
-            damage.canCrit = entry[1].get<bool>();
+            damage.canCrit = !blank && entry[1].get<bool>();
+            damage.noCrit = format >= 2 && !blank && !entry[1].get<bool>();
             damage.noHeadshot = entry[2].get<bool>();
             damage.noBackstab = entry[3].get<bool>();
             damage.headFactor = head;

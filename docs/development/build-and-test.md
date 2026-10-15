@@ -87,10 +87,21 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   RD1 `tools/check_dev_mute.py`, RD2 `check_spell_tool.py`, RD3 `check_progression_tool.py`, and RD4
   `check_projectile_tool.py`. A test of a roll sets the seed of the generator of the world (`World::set_random_seed`):
   the numbers of a seed are fixed (splitmix64), and the case computes the first number itself.
-- The mute of a development run is `tools/dev_mute.py` (code review of stage 1.1b, finding F1): it opens each folder with
-  no link and each settings file one time, checks the real path of the descriptor and its device and inode, and writes
-  through the same descriptor. `python3 -B tools/check_dev_mute.py` (status 0) tests it with made-up folders, also a swap of
-  the folder at three moments and a hard link; never run it against a real prefix.
+- Stage 3.3b-S6 adds the cases HE1 to HE11 (`tests/heal_tests.cpp`: the heals) and RV1 to RV12
+  (`tests/review_crit_tests.cpp`: the corrections of the code review of stage 3.3b-S5). The heal fixture
+  (`tests/support/heal_fixture.h`, `HealShop`) has the life staff with ScalingFocus and the Focus table, Divine Embrace,
+  Sacred Ground, the Beacon, the heal statuses of the data, and two sessions. A heal press of a client needs its confirm
+  (`HealShop::cast`: the key, then the self cast input or a click). The RV cases use only the interfaces of the tree of
+  stage 3.3b-S5, so that the same file proves each finding on that tree. RV1 runs `tools/check_dev_mute.py`, RV10
+  `check_ability_tool.py`, and RV12 `check_hit_facts_tool.py`.
+- The mute of a development run is `tools/dev_mute.py` (code review of stage 1.1b, finding F1; code review of stage
+  3.3b-S5, finding F1): it opens the development prefix one time (O_DIRECTORY), compares its identity with the prefix of
+  the user and each folder above the settings files, opens each part below it from its parent descriptor with no link
+  (O_NOFOLLOW), refuses a settings file with more than one link or with the identity of a file of the user, and writes
+  through the same descriptor (`pwrite`, `ftruncate`). No path text is used after the first open.
+  `python3 -B tools/check_dev_mute.py` (status 0) tests it with made-up folders, also a swap of the folder at three
+  moments, a swap of the prefix before the open (the probe RCM1 of the reviewer), and two hard links; never run it against
+  a real prefix.
 - The state decoder of the tests knows the entitlement state (3133) and the achievement state (3210) of stage 1.1b: a case
   with expansion data has them in the first record of a character (cases DL2, DL10). The stored bytes of T2 have no
   expansion data: the change of stage 1.1b does not change them.

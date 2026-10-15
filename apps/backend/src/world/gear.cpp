@@ -297,6 +297,12 @@ void Gear::refresh(Entity& character) {
     character.gear.sprintSpeed = status.sprintSpeed;
     character.gear.critChance = status.critChance;
     character.gear.critDamage = status.critDamage;
+    // The heal parts of the statuses (stage 3.3b-S6): received (HealMod and the parts of the kinds) and outgoing.
+    character.gear.healTaken = status.healTaken;
+    character.gear.healConsumable = status.healConsumable;
+    character.gear.healNonConsumable = status.healNonConsumable;
+    character.gear.healLifeSteal = status.healLifeSteal;
+    character.gear.healOutgoing = status.healOutgoing;
     // The speed table of the character (stage 3.3b-S2a, S2a-I10): the client runs with these multipliers (live check of
     // status-speed.md: the table of slot 43, not the status map, changes the run), in the limits of the data (StatMultiplierData:
     // the client bounds them itself, getter 0x3FEA370). With no limits in the data (a file of the ability tool from before

@@ -159,6 +159,16 @@ public:
     }
 
     /**
+     * The character of this session healed a different character (stage 3.3b-S6, world/health.h): the session tells its client the
+     * gain (message 4298, VitalsComponentClientFacet_OnHealedPlayer; live check L3: a green number at the healed character). The
+     * health of the target goes out with its vitals state. A sink with no client does nothing.
+     */
+    virtual void healed_player(EntityId target, float amount) {
+        (void)target;
+        (void)amount;
+    }
+
+    /**
      * The character of this session died (world/health.h). The session tells its client, which
      * shows the death screen after `respawnSeconds`. The dead mark goes out with the vitals
      * state of the character. A sink with no client does nothing.
@@ -594,8 +604,9 @@ public:
      */
     [[nodiscard]] bool friendly(const Entity& a, const Entity& b) const;
     /**
-     * Test fixture (no route, no command): the two characters are friends (the friend relation of a two-session test of a friendly
-     * effect, before a group system exists).
+     * Test fixture: the two characters are friends (the friend relation of a two-session test of a friendly effect; stage 3.3b-S2b).
+     * Stage 3.3b-S6: also the development command `tools/world friends A B` (a development route, only with the harness gate), for a
+     * live test of a heal of a friend. A start of the user has no friend pair: a group of one.
      */
     void set_test_friends(const std::string& characterA, const std::string& characterB);
     /** @return The world revision of the last new spell entity: a session compares its interest distances at once. */
@@ -738,6 +749,11 @@ public:
      * with no session.
      */
     void damage_dealt(SessionId session, const DamageDealt& damage);
+    /**
+     * Gives the session of a healer the notice of a heal of a different character (SessionSink::healed_player; stage 3.3b-S6). Only
+     * the health system calls it. No effect for a session that the world does not know.
+     */
+    void healed_player(SessionId session, EntityId target, float amount);
     /**
      * Development aid: gives the session of a character one message for its client
      * (SessionSink::development_message).

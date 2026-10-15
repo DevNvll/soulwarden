@@ -74,7 +74,7 @@ void Health::creature_hit(Entity& creature, const gamedata::CreatureContact& con
     // A counter of an ability (stage 3.3b-S4, Riposte): the window took the hit (its absorption), and the counter starts.
     if (!result.died) {
         // The passive rules with OnHitTaken of the weapon in the hand (stage 3.3b-S5: Power Through Pain).
-        m_world.passives().hit_taken(target);
+        m_world.passives().hit_taken(target, damage.dealt);
         m_world.abilities().countered(target, creature, contact.reach + behavior_rules::kContactTolerance);
     }
     DamageTaken taken;
@@ -154,25 +154,88 @@ HealthResult Health::heal(const std::string& characterId) {
     return result;
 }
 
-float Health::heal_amount(Entity& character, float amount, const char* what) {
-    if (character.kind != EntityKind::player || character.life.dead || !std::isfinite(amount) || amount <= 0.0F) {
+HealOutcome Health::heal(Entity& target, const HealRequest& request) {
+    HealOutcome outcome;
+    outcome.before = target.vitals.health;
+    outcome.after = target.vitals.health;
+    if (target.kind != EntityKind::player || target.life.dead || !std::isfinite(request.amount) || request.amount <= 0.0F) {
+        ++m_healCounts.nothing;
+        return outcome;
+    }
+    outcome.received = received(target, request.kind);
+    const float health = std::min(target.vitals.health + request.amount * outcome.received, target.vitals.healthMax);
+    if (!(health > target.vitals.health)) {
+        // A target at its full health (or a received factor 0): no change, no number, and no notice (the client shows the change of its
+        // health; live check L3).
+        ++m_healCounts.nothing;
+        return outcome;
+    }
+    target.vitals.health = health;
+    outcome.after = health;
+    outcome.gained = outcome.after - outcome.before;
+    ++m_healCounts.heals;
+    const Revision revision = m_world.touch(target.id, ComponentKey::vitals);
+    if (request.number) {
+        // The state of the owner after this revision has bit 1 of healthChangeFlags: one number for the gain (live check L3: the same
+        // state again gives no second number).
+        target.vitals.healShown = revision;
+        ++m_healCounts.numbers;
+    }
+    const Entity* healer = request.healer != 0 && request.healer != target.id ? m_world.find(request.healer) : nullptr;
+    {
+        const std::string mark = log::session_mark(target.owner, target.characterId);
+        const log::Context context(mark);
+        log::write("world: heal: %s gets %.1f health from %s%s%s (amount %.1f, received factor %.3f), health %.1f to %.1f",
+                   target.name.c_str(),
+                   static_cast<double>(outcome.gained),
+                   request.what,
+                   healer != nullptr ? " of " : "",
+                   healer != nullptr ? healer->name.c_str() : "",
+                   static_cast<double>(request.amount),
+                   static_cast<double>(outcome.received),
+                   static_cast<double>(outcome.before),
+                   static_cast<double>(outcome.after));
+    }
+    if (healer != nullptr && healer->kind == EntityKind::player) {
+        // The notice of the healer (message 4298, live check L3): only the session of the healer.
+        m_world.healed_player(healer->owner, target.id, outcome.gained);
+        outcome.notice = true;
+        ++m_healCounts.notices;
+    }
+    return outcome;
+}
+
+float Health::heal_base(const Entity& healer, const std::string& itemId, std::uint32_t gearScore) const {
+    const gamedata::CombatTables* tables = m_world.combat().tables();
+    const gamedata::WeaponRow* weapon = tables != nullptr ? tables->weapon_of(itemId) : nullptr;
+    if (weapon == nullptr) {
         return 0.0F;
     }
-    const float before = character.vitals.health;
-    character.vitals.health = std::min(character.vitals.health + amount, character.vitals.healthMax);
-    const float healed = character.vitals.health - before;
-    if (healed > 0.0F) {
-        m_world.touch(character.id, ComponentKey::vitals);
-        const std::string mark = log::session_mark(character.owner, character.characterId);
-        const log::Context context(mark);
-        log::write("world: heal: %s gets %.1f health from %s, health %.1f to %.1f",
-                   character.name.c_str(),
-                   static_cast<double>(healed),
-                   what,
-                   static_cast<double>(before),
-                   static_cast<double>(character.vitals.health));
+    const float scaling = weapon->scaling[attribute::kFocus];
+    const float focus = scaling > 0.0F ? scaling * tables->attribute_damage(attribute::kFocus, healer.attributes.value(attribute::kFocus)) : 0.0F;
+    return m_world.combat().weapon_base(*weapon, gearScore) * (1.0F + focus);
+}
+
+float Health::outgoing(const Entity& healer, const Entity& target, const HealSource& source) const {
+    const float part = healer.gear.healOutgoing + m_world.passives().heal_bonus(healer, target, source) + (m_world.gear().heal_factor(healer) - 1.0F);
+    return std::max(1.0F + part, 0.0F);
+}
+
+float Health::received(const Entity& target, HealKind kind) const {
+    float part = target.gear.healTaken;
+    switch (kind) {
+    case HealKind::consumable:
+        part += target.gear.healConsumable;
+        break;
+    case HealKind::ability:
+    case HealKind::regeneration:
+        part += target.gear.healNonConsumable;
+        break;
+    case HealKind::lifeSteal:
+        part += target.gear.healNonConsumable + target.gear.healLifeSteal;
+        break;
     }
-    return healed;
+    return std::max(1.0F + part, 0.0F);
 }
 
 void Health::fought(Entity& character) {

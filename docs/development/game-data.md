@@ -55,8 +55,10 @@ backend. The tool of each system is also in the document of that system.
   `criticals` (CritChance and CritDamageMultiplier of each weapon, 587 rows) and `hitRules` (CanCrit, NoHeadshot,
   NoBackstab, DmgCoefHead, DmgCoefCrit of each damage row, 414 rows): with a file from before no hit is critical; the tool
   stops for a weapon table with only one of the two critical columns, a CritChance above 1, and a damage table with no
-  column of the hit rules, and the loader refuses a file with only one of the two members ([Combat and
-  health](../systems/combat-and-health.md))), `loot-tables.json` (stage 3.5a: the experience and the
+  column of the hit rules, and the loader refuses a file with only one of the two members; from stage 3.3b-S6 (code
+  review of stage 3.3b-S5, finding F2), format 2: CanCrit of a hit rule is true (the cell 1), false (an explicit 0: 42
+  rows of the game cannot be critical), or null (a blank cell); the loader takes format 1 too, and then no row is a row
+  with no critical hit ([Combat and health](../systems/combat-and-health.md))), `loot-tables.json` (stage 3.5a: the experience and the
   coin of a kill of each creature level, the reward factors of each creature type, the
   level differences, the coin chance of the kill events, the credit data of the game, the
   gear score ranges of each level and the loot ceiling of each creature level, the loot data
@@ -88,7 +90,10 @@ backend. The tool of each system is also in the document of that system.
   (F10); `tools/gamedata/check_ability_tool.py` checks these stops with made-up tables, case
   RA12; from stage 3.3b-S1, format 3, also the caster effect rows (each row of an ability
   table of the players with a SelfApplyStatusEffect, with its cells) and the status
-  categories (the ValueLimits of StatusEffectCategoryData); the loader takes the formats 1
+  categories (the ValueLimits of StatusEffectCategoryData); from stage 3.3b-S6 (code review of stage 3.3b-S5, finding
+  F10) the tool stops and the loader refuses a file when a SelfApplyStatusEffect or an OtherApplyStatusEffect of an
+  ability row names a status that the status tables do not have (`check_ability_tool.py` case unknown-target-status);
+  the loader takes the formats 1
   and 2 too; a file must name its number of status rows: a file with 0 rows and a status
   effect is refused (code review of stage 1.3b, finding F10); the tool stops for a caster
   effect row that names a status that the tables do not have and for a ValueLimits part that
@@ -232,6 +237,11 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 ```
 
 ## Traps
+
+- Stage 3.3b-S6 changes `combat-tables.json` (format 2: the CanCrit cells as true, false, or null). The backend of this
+  stage reads a file of format 1: then the 42 rows with an explicit CanCrit 0 (the burst of Gravity Well) can be critical,
+  as in stage 3.3b-S5. Write the file again with `tools/gamedata/combat.sh`. The other files of the tools of this stage
+  are equal to the files of stage 3.3b-S5.
 
 - Stage 3.3b-S5 changes `combat-tables.json` (the members `criticals` and `hitRules`), `creatures.json` (the members `behind`
   and `head` of a slice, and four counts), and `ability-data.json` (format 4). The backend of this stage reads the older

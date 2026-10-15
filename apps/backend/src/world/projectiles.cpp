@@ -222,10 +222,14 @@ bool head_contact(const Entity& creature, const state::WorldPosition& point, con
     if (!head || !(size > 1.0e-6F)) {
         return false;
     }
-    // The line through the body: from one radius of the body capsule before the point to two radii after it.
+    // The line of the projectile at the body: from one radius of the body capsule before the point to one radius of the head volume
+    // and the hit tolerance after it (the point of a flight is up to the tolerance before the surface of the body). The projectile
+    // stops at its first contact with the body: a head volume further on the line (a shot from behind, through the body) is not a
+    // contact (code review of stage 3.3b-S5, finding F7). The head volume lies in the broad capsule of the body (the wolf: the head
+    // capsule of 0.25 m in the end sphere of 0.7 m), thus this depth after the point (a decision of an agent).
     const WorldCapsule body = capsule_of(creature);
     const float back = body.radius;
-    const float ahead = 2.0F * body.radius + head->radius;
+    const float ahead = head->radius + projectile_rules::kHitTolerance;
     const std::array<float, 3> unit{direction[0] / size, direction[1] / size, direction[2] / size};
     const state::WorldPosition from{point.x - unit[0] * back, point.y - unit[1] * back, point.z - unit[2] * back};
     const state::WorldPosition to{point.x + unit[0] * ahead, point.y + unit[1] * ahead, point.z + unit[2] * ahead};

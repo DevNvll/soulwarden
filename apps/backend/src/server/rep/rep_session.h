@@ -155,6 +155,9 @@ public:
     /** The character of this session took damage: the client gets the message "on damage" (the mark with its direction). */
     void damage_taken(const world::DamageTaken& damage) override;
 
+    /** The character of this session healed a different character: the client gets the message "on healed player" (stage 3.3b-S6). */
+    void healed_player(world::EntityId target, float amount) override;
+
     /** The character of this session died: the client gets the message "on player death". */
     void died(float respawnSeconds) override;
 
@@ -503,6 +506,8 @@ private:
     std::uint32_t m_travels{0};
     /** Numbers of damage marks, of deaths, and of respawns of the character in this session, for the log line at its end. */
     std::uint64_t m_damageMarks{0};
+    /** Number of the notices of a heal of a different character (message 4298, stage 3.3b-S6), for the log line at its end. */
+    std::uint64_t m_healNotices{0};
     std::uint32_t m_deaths{0};
     std::uint32_t m_respawns{0};
     /** Numbers of the ends of a cutscene that the client sent, and of the ends of an interaction, for the log line at its end. */

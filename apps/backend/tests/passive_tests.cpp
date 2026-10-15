@@ -421,7 +421,7 @@ void events(const Options&) {
     world::Entity& own = *shop.character();
     shop.hold("TestHammer");
     shop.learn("Passive_WarHammer_Juggernaut_DmgAfterTakingDmg");
-    shop.world().passives().hit_taken(own);
+    shop.world().passives().hit_taken(own, 100.0F);
     const world::ActiveStatus* pain = shop.find("WarHammer_Pass_EmpowerOnDmgTaken");
     check(pain != nullptr && pain->source.id == "Passive_WarHammer_Juggernaut_DmgAfterTakingDmg",
           "Power Through Pain (OnHitTaken, NumSuccessfulHits 1): a hit taken with the hammer in the hand gives WarHammer_Pass_EmpowerOnDmgTaken");

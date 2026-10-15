@@ -119,6 +119,11 @@ struct SpellRequest {
     /** The weapon of the cast: the shots of a summon and the hit of a trap have its damage and its gem. */
     HitWeapon weapon;
     CastConversion conversion;
+    /**
+     * An aura (stage 3.3b-S6): the source of the heals of its statuses (the caster and its heal base at the cast). The statuses that
+     * the aura gives keep it: their ticks heal with it.
+     */
+    HealSource heal;
 };
 
 /** Why a spell ended. */
@@ -274,6 +279,8 @@ private:
         /** The weapon of the cast. */
         HitWeapon weapon;
         CastConversion conversion;
+        /** An aura: the source of the heals of its statuses (stage 3.3b-S6). */
+        HealSource heal;
         /** A summon and a trap: the end of their life on the world clock (the start of the end chain). */
         WorldClock::time_point lifeEnds{};
     };

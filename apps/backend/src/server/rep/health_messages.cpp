@@ -23,6 +23,15 @@ hub::Bytes damage_taken_body(world::EntityId character, const world::DamageTaken
     return body.data();
 }
 
+hub::Bytes healed_player_body(world::EntityId healer, world::EntityId healed, float amount) {
+    hub::Writer body;
+    body.u64(player_vitals_target(healer));
+    body.u64(healer);
+    body.u64(player_stats_entity(healed));
+    body.f32(amount);
+    return body.data();
+}
+
 hub::Bytes player_death_body(world::EntityId character, float respawnSeconds) {
     hub::Writer body;
     body.u64(character + kPlayerComponent);

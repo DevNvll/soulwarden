@@ -18,8 +18,8 @@ using data_rules::parts_of;
 using data_rules::percent_of;
 using data_rules::same_text;
 
-/** The events that the backend has a source for (stage 3.3b-S5). */
-constexpr const char* kEvents[] = {"OnHit", "OnCrit", "OnKill", "OnHitTaken", "OnHeadShot", "OnHitBehind"};
+/** The events that the backend has a source for (stage 3.3b-S5; OnHealed: stage 3.3b-S6, a heal that the character gives). */
+constexpr const char* kEvents[] = {"OnHit", "OnCrit", "OnKill", "OnHitTaken", "OnHeadShot", "OnHitBehind", "OnHealed"};
 
 /**
  * The columns of a rule that are marks of the data, not a condition or an effect (the place of a node, the stack rule of a
@@ -52,10 +52,82 @@ const std::set<std::string, std::less<>> kConditions = {
 
 /** The effects that the evaluator has (before the damage, after the hit, or a fixed stat through the gear values). */
 const std::set<std::string, std::less<>> kEffects = {
+    "HealScalingValueMultiplier",
     "BaseDamage", "CritChance", "CritDamage", "ArmorPenetration", "HeadshotDamage", "HitFromBehindDamage", "SelfApplyStatusEffect",
     "OtherApplyStatusEffect", "DmgPctToHealth", "CooldownTimer", "CDRImmediatelyOptions", "PhysicalArmor", "ElementalArmor",
     "MaxHealth", "MaxHealthMod", "BaseDamageReduction", "MODStrength", "MODDexterity", "MODIntelligence", "MODFocus",
     "MODConstitution"};
+
+/**
+ * The conditions that a hit taken has a source for (code review of stage 3.3b-S5, finding F6): the values of the character (its
+ * health after the hit, its stamina, its mana, its statuses), grit (none: such a row does not pass), the damage of the hit
+ * (RequireReaction), and the hit counts. A rule with OnHitTaken and a different condition (the attacker, the row, the target) is
+ * not applied: Passives::describe_row names the column.
+ */
+const std::set<std::string, std::less<>> kTakenConditions = {
+    "MyHealthPercent", "MyComparisonType", "MyStaminaPercent", "MyStaminaComparisonType", "MyManaPercent", "MyManaComparisonType",
+    "DontHaveStatusEffect", "HasGritActive", "RequireReaction", "TrackHitCount", "NumberOfTrackedHits", "NumberOfHitsComparisonType",
+    "NumSuccessfulHits", "NumConsecutiveHits", "MaxConsecutiveHits", "ResetConsecutiveOnSuccess"};
+
+/**
+ * The conditions that a heal has a source for (stage 3.3b-S6, a rule with OnHealed and HealScalingValueMultiplier): the health of the
+ * target before the heal (TargetHealthPercent: Divine Blessing), the values of the healer, the row of the spell of the heal
+ * (DamageTableRow), the categories of the statuses of the target, a status that the healer must not have, and grit (none).
+ */
+const std::set<std::string, std::less<>> kHealConditions = {
+    "TargetHealthPercent", "TargetComparisonType", "MyHealthPercent", "MyComparisonType", "MyStaminaPercent", "MyStaminaComparisonType",
+    "MyManaPercent", "MyManaComparisonType", "DamageTableRow", "TargetStatusEffectCategory", "TargetStatusEffectComparison",
+    "DontHaveStatusEffect", "HasGritActive"};
+
+/** @return The condition columns of a rule that a heal has no source for (stage 3.3b-S6). */
+std::vector<std::string> heal_unsourced(const gamedata::CellValues& cells) {
+    std::vector<std::string> columns;
+    const auto check = [&](const std::string& column) {
+        if (kConditions.count(column) != 0 && kHealConditions.count(column) == 0) {
+            columns.push_back(column);
+        }
+    };
+    for (const auto& [column, value] : cells.numbers) {
+        check(column);
+    }
+    for (const auto& [column, value] : cells.texts) {
+        check(column);
+    }
+    return columns;
+}
+
+/** @return The effect columns of a rule with OnHealed other than HealScalingValueMultiplier: effects after a heal (not in the backend). */
+std::vector<std::string> heal_after_effects(const gamedata::CellValues& cells) {
+    std::vector<std::string> columns;
+    for (const auto& [column, value] : cells.numbers) {
+        if (kEffects.count(column) != 0 && column != "HealScalingValueMultiplier" && value != 0.0F) {
+            columns.push_back(column);
+        }
+    }
+    for (const auto& [column, value] : cells.texts) {
+        if (kEffects.count(column) != 0 && !value.empty()) {
+            columns.push_back(column);
+        }
+    }
+    return columns;
+}
+
+/** @return The condition columns of a rule that a hit taken has no source for (finding F6). */
+std::vector<std::string> taken_unsourced(const gamedata::CellValues& cells) {
+    std::vector<std::string> columns;
+    const auto check = [&](const std::string& column) {
+        if (kConditions.count(column) != 0 && kTakenConditions.count(column) == 0) {
+            columns.push_back(column);
+        }
+    };
+    for (const auto& [column, value] : cells.numbers) {
+        check(column);
+    }
+    for (const auto& [column, value] : cells.texts) {
+        check(column);
+    }
+    return columns;
+}
 
 /** The conditions of a hit: a row with no event and one of them is a rule of that hit (Crowded Well: the row of the burst). */
 constexpr const char* kHitConditions[] = {"DamageTableRow", "AttackType", "RemoteDamageTableRow"};
@@ -85,6 +157,16 @@ bool has_condition(const gamedata::CellValues& cells) {
         }
     }
     return false;
+}
+
+/**
+ * @return True when the tracking spell of a rule is a sphere (ShapeTypes Sphere or blank). The data has three tracking spells with
+ * the shape Box and a Length (Blood Lust Ultimate_Greataxe_Reaper: 7 m long, the radius 1.25 m): the backend counts only a sphere,
+ * and such a rule is not applied (code review of stage 3.3b-S5, finding F9; the place and the facing of the box are not known).
+ */
+bool sphere_tracking(const gamedata::SpellRow& spell) {
+    const std::string_view shape = spell.cells.text("ShapeTypes");
+    return shape.empty() || same_text(shape, "Sphere");
 }
 
 std::chrono::milliseconds milliseconds_of(float seconds) {
@@ -244,7 +326,7 @@ bool Passives::conditions_pass(const PassiveRule& rule, const Entity& attacker, 
     // NumAroundMe: the entities in the tracking spell of the rule (its AbilityId), or the creatures of the area of the hit.
     if (row.has("NumAroundMe")) {
         const gamedata::AbilityData* abilities = m_world.options().abilityData;
-        if (abilities == nullptr || abilities->tracking_spell(rule.id) == nullptr) {
+        if (abilities == nullptr || abilities->tracking_spell(rule.id) == nullptr || !sphere_tracking(*abilities->tracking_spell(rule.id))) {
             return false;
         }
         const std::uint32_t count = around_count(row, rule.id, attacker, &hit);
@@ -263,9 +345,14 @@ std::uint32_t Passives::around_count(const gamedata::CellValues& cells, std::str
     if (spell == nullptr) {
         return 0;
     }
-    // A rule that the spell of the area of the hit tracks (Crowded Well: the vortex): the creatures of that area.
-    if (hit != nullptr && !hit->spell.empty() && same_text(hit->spell, spell->id)) {
-        return hit->areaCount;
+    // A rule that the spell of the area of the hit tracks (Crowded Well: the vortex): the creatures of that area. The spell of the
+    // hit is the spell row of the area itself (code review of stage 3.3b-S5, finding F4: the two vortex rows, also the upgraded
+    // one of Unyielding, have the AbilityId of the rule and TrackNumInVolume; the index keeps only the first of them).
+    if (hit != nullptr && !hit->spell.empty()) {
+        const gamedata::SpellRow* area = abilities->spell(hit->spell);
+        if (area != nullptr && same_text(area->cells.text("AbilityId"), rule) && area->cells.number("TrackNumInVolume") != 0.0F) {
+            return hit->areaCount;
+        }
     }
     if (!list_has(spell->cells.text("TargetTypes"), "Enemy")) {
         return 0; // A friend in the volume: the backend has no friend relation in a world with one player (a group of one).
@@ -283,9 +370,37 @@ std::uint32_t Passives::around_count(const gamedata::CellValues& cells, std::str
     return count;
 }
 
+bool Passives::has_count_gate(const gamedata::CellValues& row) {
+    return (row.number("TrackHitCount") != 0.0F && row.has("NumberOfTrackedHits")) || row.has("NumSuccessfulHits") || row.has("NumConsecutiveHits");
+}
+
+bool Passives::counts_peek(const PassiveRule& rule, const Entity& attacker, const HitContext& hit) const {
+    // The same rule as counts_pass on a copy of the values of this rule: nothing is spent (code review of stage 3.3b-S5, finding F8:
+    // the numeric bonuses of a rule with a hit count before the damage).
+    CharacterState scratch;
+    if (const auto found = m_characters.find(attacker.characterId); found != m_characters.end()) {
+        const CharacterState& state = found->second;
+        for (const std::string& key : {rule.id, rule.id + "/successful"}) {
+            if (const auto entry = state.attackHits.find({key, hit.attack}); entry != state.attackHits.end()) {
+                scratch.attackHits.insert(*entry);
+            }
+        }
+        if (state.fired.count({rule.id, hit.attack}) != 0) {
+            scratch.fired.insert({rule.id, hit.attack});
+        }
+        if (const auto entry = state.consecutive.find(rule.id); entry != state.consecutive.end()) {
+            scratch.consecutive.insert(*entry);
+        }
+    }
+    return count_rule(rule, scratch, hit, false);
+}
+
 bool Passives::counts_pass(const PassiveRule& rule, const Entity& attacker, const HitContext& hit, bool spend) {
+    return count_rule(rule, m_characters[attacker.characterId], hit, spend);
+}
+
+bool Passives::count_rule(const PassiveRule& rule, CharacterState& state, const HitContext& hit, bool spend) const {
     const gamedata::CellValues& row = *rule.cells;
-    CharacterState& state = m_characters[attacker.characterId];
     const WorldClock::time_point now = m_world.clock().now();
     const std::uint64_t attack = hit.attack;
     // TrackHitCount: the hits of one attack, to NumberOfTrackedHits (client text: "Max 5 reductions per attack").
@@ -378,10 +493,23 @@ HitBonus Passives::before_hit(const Entity& attacker, const Entity& target, cons
         if (!takes || !conditions_pass(rule, attacker, target, hit)) {
             continue;
         }
-        // A rule with OnCrit and CritChance changes the roll (client text of Critical Condition: "increased critical chance"):
-        // only its critical chance counts before the hit.
+        // A hit count (NumConsecutiveHits, TrackHitCount, NumSuccessfulHits) gates the values of the row too (code review of stage
+        // 3.3b-S5, finding F8: Ability_Spear_BonusHvyDmgConsec gives BaseDamage only from the second heavy attack). after_hit spends
+        // the count of the hit.
+        if (has_count_gate(row) && !counts_peek(rule, attacker, hit)) {
+            continue;
+        }
+        // A rule with OnCrit and CritChance changes the roll (client text of Critical Condition: "increased critical chance").
+        // Its damage cells count only for a critical hit, one cell for each row (code review of stage 3.3b-S5, finding F3: Vicious
+        // has OnCrit, OnHeadShot, CritDamage, and HeadshotDamage): a headshot takes HeadshotDamage when the row has OnHeadShot,
+        // each other critical hit CritDamage.
         if (event == "OnCrit") {
             bonus.critChance += row.number("CritChance") * rule.potency;
+            if (hit.head && row.number("OnHeadShot") != 0.0F) {
+                bonus.critDamage += row.number("HeadshotDamage") * rule.potency;
+            } else {
+                bonus.critOnCrit += row.number("CritDamage") * rule.potency;
+            }
             continue;
         }
         float times = 1.0F;
@@ -425,8 +553,12 @@ void Passives::after_hit(Entity& attacker, Entity& target, const HitContext& hit
         const bool takes = event == "OnHit" || (event == "OnCrit" && hit.critical) || (event == "OnKill" && hit.killed)
                            || (event == "OnHeadShot" && hit.head) || (event == "OnHitBehind" && hit.behind)
                            || (event.empty() && hit_rule(row));
+        // A rule with a hit count and only values before the damage (finding F8) spends its count here, one time for each hit.
+        const bool counted = has_count_gate(row)
+                             && std::any_of(kValues.begin(), kValues.end(), [&](const std::string& column) { return row.number(column) != 0.0F; });
         const bool effect = !row.text("OtherApplyStatusEffect").empty() || !row.text("SelfApplyStatusEffect").empty()
-                            || row.number("DmgPctToHealth") > 0.0F || (row.number("CooldownTimer") < 0.0F && !row.text("CDRImmediatelyOptions").empty());
+                            || row.number("DmgPctToHealth") > 0.0F || (row.number("CooldownTimer") < 0.0F && !row.text("CDRImmediatelyOptions").empty())
+                            || counted;
         // A rule with OnCrit and only CritChance changed the roll (before_hit): it has no effect after the hit.
         if (!takes || !effect) {
             continue;
@@ -474,10 +606,14 @@ void Passives::apply_effects(const PassiveRule& rule, Entity& attacker, Entity& 
         ++m_world.gear().m_counts.perkHits;
     }
     if (const float part = row.number("DmgPctToHealth"); part > 0.0F && hit.dealt > 0.0F) {
-        // A heal of a part of the damage of the hit (Insatiable Gravity Well, Prevailing Spirit, Critical Gains), with the heal
-        // factor of the equip load (stage 1.3b).
-        const float amount = part * rule.potency * hit.dealt * m_world.gear().heal_factor(attacker);
-        m_world.health().heal_amount(attacker, amount, rule.id.c_str());
+        // A life steal: a heal of a part of the damage of the hit (Insatiable Gravity Well, Prevailing Spirit, Critical Gains: the text
+        // "10% of damage done"), with the heal factor of the equip load of the character (stage 1.3b), through the one heal path
+        // (stage 3.3b-S6: the received factor of the kind lifeSteal, the number of the owner).
+        HealRequest request;
+        request.kind = HealKind::lifeSteal;
+        request.amount = part * rule.potency * hit.dealt * m_world.gear().heal_factor(attacker);
+        request.what = rule.id.c_str();
+        m_world.health().heal(attacker, request);
         ++m_counts.heals;
         ++m_world.gear().m_counts.perkHeals;
     }
@@ -540,7 +676,63 @@ void Passives::target_status(const PassiveRule& rule, Entity& attacker, Entity& 
     ++m_counts.targetStatuses;
 }
 
-void Passives::hit_taken(Entity& character) {
+float Passives::heal_bonus(const Entity& healer, const Entity& target, const HealSource& source) const {
+    if (healer.kind != EntityKind::player) {
+        return 0.0F;
+    }
+    float part = 0.0F;
+    for (const PassiveRule& rule : rules_of(healer, source.table)) {
+        const gamedata::CellValues& row = *rule.cells;
+        if (row.number("OnHealed") == 0.0F || row.number("HealScalingValueMultiplier") == 0.0F || !unknown_columns(row).empty()
+            || !heal_unsourced(row).empty()) {
+            continue;
+        }
+        // The conditions of a heal (stage 3.3b-S6), with the comparator of the client: the target before the heal, the healer, the
+        // row of the spell of the heal, the categories of the statuses of the target.
+        if (row.number("HasGritActive") != 0.0F) {
+            continue;
+        }
+        if (row.has("TargetHealthPercent")
+            && !compare(percent_of(target.vitals.health, target.vitals.healthMax), row.number("TargetHealthPercent"), row.text("TargetComparisonType"))) {
+            continue;
+        }
+        if (row.has("MyHealthPercent")
+            && !compare(percent_of(healer.vitals.health, healer.vitals.healthMax), row.number("MyHealthPercent"), row.text("MyComparisonType"))) {
+            continue;
+        }
+        if (row.has("MyStaminaPercent")
+            && !compare(percent_of(healer.vitals.stamina, healer.vitals.staminaMax), row.number("MyStaminaPercent"), row.text("MyStaminaComparisonType"))) {
+            continue;
+        }
+        if (row.has("MyManaPercent")
+            && !compare(percent_of(healer.vitals.mana, healer.vitals.manaMax), row.number("MyManaPercent"), row.text("MyManaComparisonType"))) {
+            continue;
+        }
+        if (const std::string_view rows = row.text("DamageTableRow"); !rows.empty() && !list_has(rows, source.row)) {
+            continue;
+        }
+        if (const std::string_view status = row.text("DontHaveStatusEffect"); !status.empty() && m_world.statuses().has(healer, status)) {
+            continue;
+        }
+        if (const std::string_view categories = row.text("TargetStatusEffectCategory"); !categories.empty()) {
+            const gamedata::AbilityData* abilities = m_world.options().abilityData;
+            bool has = false;
+            for (const ActiveStatus& status : target.statuses) {
+                const gamedata::StatusRow* data = abilities != nullptr && m_world.statuses().has(target, status.status) ? abilities->status(status.status) : nullptr;
+                for (const std::string_view category : parts_of(categories)) {
+                    has = has || (data != nullptr && list_has(data->cells.text("EffectCategories"), category));
+                }
+            }
+            if (has != (lower(row.text("TargetStatusEffectComparison")) != "notequal")) {
+                continue;
+            }
+        }
+        part += row.number("HealScalingValueMultiplier") * rule.potency;
+    }
+    return part;
+}
+
+void Passives::hit_taken(Entity& character, float dealt) {
     if (character.kind != EntityKind::player || character.life.dead) {
         return;
     }
@@ -554,8 +746,30 @@ void Passives::hit_taken(Entity& character) {
         if (event_of(row) != "OnHitTaken" || row.text("SelfApplyStatusEffect").empty() || !unknown_columns(row).empty()) {
             continue;
         }
-        // The conditions of a hit taken that the backend has: grit (none: the row does not pass) and the hit counts.
-        if (row.number("HasGritActive") != 0.0F || row.has("AttackType") || row.has("DamageTableRow")) {
+        // The conditions of a hit taken (code review of stage 3.3b-S5, finding F6), each one before a count or the activation
+        // cooldown is spent: a condition with no source in a hit taken (the row does not pass), grit (none), the values of the
+        // character after the damage of the hit (its health, stamina, and mana with the comparator of the client; a decision of an
+        // agent: the event comes after the damage), a status that it must not have, and RequireReaction (damage above 0).
+        if (!taken_unsourced(row).empty() || row.number("HasGritActive") != 0.0F) {
+            continue;
+        }
+        if (row.has("MyHealthPercent")
+            && !compare(percent_of(character.vitals.health, character.vitals.healthMax), row.number("MyHealthPercent"), row.text("MyComparisonType"))) {
+            continue;
+        }
+        if (row.has("MyStaminaPercent")
+            && !compare(percent_of(character.vitals.stamina, character.vitals.staminaMax), row.number("MyStaminaPercent"),
+                        row.text("MyStaminaComparisonType"))) {
+            continue;
+        }
+        if (row.has("MyManaPercent")
+            && !compare(percent_of(character.vitals.mana, character.vitals.manaMax), row.number("MyManaPercent"), row.text("MyManaComparisonType"))) {
+            continue;
+        }
+        if (const std::string_view status = row.text("DontHaveStatusEffect"); !status.empty() && m_world.statuses().has(character, status)) {
+            continue;
+        }
+        if (row.number("RequireReaction") != 0.0F && !(dealt > 0.0F)) {
             continue;
         }
         if (!activation_ready(character.characterId, rule, false) || !counts_pass(rule, character, hit, true)) {
@@ -594,7 +808,8 @@ void Passives::tick() {
         for (const PassiveRule& rule : rules_of(*character, table)) {
             const gamedata::CellValues& row = *rule.cells;
             if (!event_of(row).empty() || hit_rule(row) || !row.has("NumAroundMe") || row.text("SelfApplyStatusEffect").empty()
-                || !unknown_columns(row).empty() || abilities->tracking_spell(rule.id) == nullptr) {
+                || !unknown_columns(row).empty() || abilities->tracking_spell(rule.id) == nullptr
+                || !sphere_tracking(*abilities->tracking_spell(rule.id))) {
                 continue;
             }
             ++m_counts.aroundLooked;
@@ -784,14 +999,58 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
             }
         }
     }
-    if (event == "OnHitTaken" && (row.text("SelfApplyStatusEffect").empty() || row.has("AttackType") || row.has("DamageTableRow"))) {
+    if (row.number("OnHealed") != 0.0F && row.number("HealScalingValueMultiplier") != 0.0F && (event == "OnHealed" || hit_rule(row) == false)) {
+        // A rule of a heal (stage 3.3b-S6): its HealScalingValueMultiplier is a part of the outgoing heal (Passives::heal_bonus) with the
+        // conditions that a heal has a source for; the effects after a heal are not in the backend.
+        if (const std::vector<std::string> columns = heal_unsourced(row); !columns.empty()) {
+            std::string list;
+            for (const std::string& column : columns) {
+                list += (list.empty() ? "" : ", ") + column;
+            }
+            view.note = "not applied: a heal has no source for the condition " + list;
+            return view;
+        }
+        if (event == "OnHealed") {
+            if (const std::vector<std::string> columns = heal_after_effects(row); !columns.empty()) {
+                std::string list;
+                for (const std::string& column : columns) {
+                    list += (list.empty() ? "" : ", ") + column;
+                }
+                view.note = "not applied: an effect after a heal (" + list + ") is not in the backend";
+                return view;
+            }
+            view.applied = true;
+            view.note = "applied by the evaluator (OnHealed): a part of the outgoing heal of the character";
+            return view;
+        }
+    }
+    if (event == "OnHealed") {
+        view.note = "not applied: an effect after a heal is not in the backend (the backend applies HealScalingValueMultiplier of OnHealed)";
+        return view;
+    }
+    if (event == "OnHitTaken" && row.text("SelfApplyStatusEffect").empty()) {
         view.note = "not applied: a hit taken with an effect other than a status on the caster";
         return view;
+    }
+    if (event == "OnHitTaken") {
+        if (const std::vector<std::string> columns = taken_unsourced(row); !columns.empty()) {
+            std::string list;
+            for (const std::string& column : columns) {
+                list += (list.empty() ? "" : ", ") + column;
+            }
+            view.note = "not applied: a hit taken has no source for the condition " + list;
+            return view;
+        }
     }
     if (row.has("NumAroundMe")) {
         const gamedata::SpellRow* spell = abilities != nullptr ? abilities->tracking_spell(id) : nullptr;
         if (spell == nullptr) {
             view.note = "not applied: no tracking spell of the rule in the data";
+            return view;
+        }
+        if (!sphere_tracking(*spell)) {
+            view.note = "not applied: the tracking spell " + spell->id + " has the shape " + std::string(spell->cells.text("ShapeTypes"))
+                        + " (the backend counts the entities in a sphere only)";
             return view;
         }
         if (!list_has(spell->cells.text("TargetTypes"), "Enemy") && !(event.empty() && hit_rule(row))) {

@@ -13,6 +13,8 @@ file). The check gives the reader made-up slice nodes and a made-up skeleton fil
   missing-bone         the skeleton has no bone of the volume                no head, one count noSkeleton
   other-shape          the head volume has a shape with no radius (a box)    no head, one count headOtherShape
   bad-angle            an angle above pi                                    the tool stops
+  cut-angle            the critical angle field has 2 bytes, not 4 (code     the tool stops
+                       review of stage 3.3b-S5, finding F12)
   bad-chunk            the bone chunk has a size that is not a whole number  the tool stops
                        of records
   nonfinite-bone       a bone matrix with NaN                               the tool stops
@@ -72,7 +74,10 @@ def skeleton(case: str) -> bytes:
 
 
 def roots(case: str) -> list:
-    receiver = node(children=[node(cd.BEHIND_FIELD, real(2.0944)), node(cd.BEHIND_CRIT_FIELD, real(4.0 if case == "bad-angle" else 2.3562))])
+    critical = real(4.0 if case == "bad-angle" else 2.3562)
+    if case == "cut-angle":
+        critical = critical[:2]  # A cut 32-bit float: two bytes remain.
+    receiver = node(children=[node(cd.BEHIND_FIELD, real(2.0944)), node(cd.BEHIND_CRIT_FIELD, critical)])
     shape = node(cd.SHAPE_FIELD, children=[node(children=[node(cd.CAPSULE_HEIGHT_FIELD, real(0.4)),
                                                           node(cd.CAPSULE_AXIS_FIELD, struct.pack(">3f", 1.0, 0.0, 0.0))]
                                                 + ([] if case == "other-shape" else [node(cd.CAPSULE_RADIUS_FIELD, real(0.2))]))])
@@ -128,7 +133,7 @@ def main() -> int:
         passed = facts is not None and "head" not in facts and facts.get("behind") == [2.0944, 2.3562] and counts.get(count) == 1
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: {facts}, counts {counts} {error}")
         failures += 0 if passed else 1
-    for case in ("bad-angle", "bad-chunk", "nonfinite-bone"):
+    for case in ("bad-angle", "cut-angle", "bad-chunk", "nonfinite-bone"):
         facts, counts, error = run(case)
         passed = facts is None and bool(error)
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: {'the tool stops: ' + error if error else 'the tool did not stop'}")

@@ -477,10 +477,14 @@ def build_data(sources: Sources) -> dict:
             # Format 4 (stage 3.3b-S5): each row with an id, also a row with no cell (a node whose rule the action data has).
             if identifier:
                 add_row(ability_rows, [identifier, cells_of(sheet, row, ABILITY_SKIP)], "ability tables")
+    # Each status that a rule puts on its caster or on its target is a status row (code review of stage 3.3b-S5, finding F10: a
+    # rule with a target status that the data does not have would be an applied rule with no effect). The supported game has no
+    # such link of a target status; a caster status link with no row stops the tool too.
     for entry in ability_rows.values():
-        for status in [part.strip() for part in str(entry[1].get("SelfApplyStatusEffect", "")).split(",") if part.strip()]:
-            if status.lower() not in statuses:
-                raise Failure(f"the ability {entry[0]} names the status {status}, which the status tables do not have")
+        for column in ("SelfApplyStatusEffect", "OtherApplyStatusEffect"):
+            for status in [part.strip() for part in str(entry[1].get(column, "")).split(",") if part.strip()]:
+                if status.lower() not in statuses:
+                    raise Failure(f"the ability {entry[0]} names the status {status} ({column}), which the status tables do not have")
     action_spells, action_nodes, action_skipped = read_action_lists(sources, spells)
 
     # The status categories (stage 3.3b-S1): the ValueLimits of each category ("MoveSpeedMod:0.4,SprintSpeedMod:0.4").

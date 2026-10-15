@@ -43,7 +43,7 @@ extracted).
                                                   gear score, the limit above which the rate is
                                                   smaller, and the factor of the smaller rate)
 
-Output: {"format": 1,
+Output: {"format": 2,
 "constants": {"levelDamage": N, "gearScoreRate": N, "gearScoreInterval": N, "gearScoreMinimum": N,
 "gearScoreLimit": N, "gearScoreSmallerRate": N},
 "damageTypes": [[name, number, category], ...],
@@ -58,6 +58,9 @@ gearScoreRate, mastery], ...],
 "impacts": [[id, x, y, z, decay, aiX, aiY, aiZ, aiDecay, fromAttacker], ...],
 "criticals": [[weapon id, critChance, critDamageMultiplier], ...],
 "hitRules": [[damage row id, canCrit, noHeadshot, noBackstab, dmgCoefHead, dmgCoefCrit], ...]}.
+Format 2 (code review of stage 3.3b-S5, finding F2): canCrit is true for the cell 1, false for an explicit 0 (the row cannot
+be critical: 42 rows of the game, the burst of Gravity Well, the trap of the musket), and null for a blank cell (an ordinary
+attack row). Format 1 had false for a blank cell and for an explicit 0.
 `criticals` (stage 3.3b-S5) has the critical chance and the critical damage multiplier of each weapon of a weapon table with
 the columns CritChance and CritDamageMultiplier (the weapons of a table with no such column have no entry: no critical hit),
 and `hitRules` the cells of each damage row for a critical hit, a headshot, and a hit from behind (CanCrit, NoHeadshot,
@@ -159,6 +162,21 @@ def cell(sheet: Sheet, row: int, column: str):
     if column not in sheet.columns:
         raise Failure(f"the table {sheet.name} has no column {column}")
     return sheet.cell(row, column)
+
+
+def can_crit(sheet: Sheet, row: int):
+    """@return The cell CanCrit of a damage row: True (1), False (an explicit 0), or None (a blank cell). The table keeps a flag
+    cell as a flag (a blank and a 0 are both False there): the source text of the cell tells them apart (code review of stage
+    3.3b-S5, finding F2)."""
+    value = cell(sheet, row, "CanCrit")
+    if sheet.source(row, "CanCrit").strip() == "":
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text not in ("0", "1", "true", "false"):
+            raise Failure(f"the cell CanCrit of row {row} of the table {sheet.name} is the text \"{value}\", not a flag")
+        return text in ("1", "true")
+    return bool(value)
 
 
 def number(sheet: Sheet, row: int, column: str) -> float:
@@ -319,7 +337,9 @@ def build_tables(sources: Sources) -> dict:
             factors = [rounded(number(sheet, row, column)) for column in HIT_FACTOR_COLUMNS]
             if any(factor < 0.0 for factor in factors):
                 raise Failure(f"the damage row {name} has a DmgCoefHead or a DmgCoefCrit below 0")
-            hit_rules.append([name] + [bool(cell(sheet, row, column)) for column in HIT_FLAG_COLUMNS] + factors)
+            flags = [bool(cell(sheet, row, column)) for column in HIT_FLAG_COLUMNS]
+            flags[0] = can_crit(sheet, row)
+            hit_rules.append([name] + flags + factors)
     if not damage_rows:
         raise Failure(f"the game copy has no damage table with the name {DAMAGE_TABLE}")
 
@@ -466,7 +486,7 @@ def build_tables(sources: Sources) -> dict:
             if value != 0.0:
                 level_damage.append([int(difference), value])
 
-    return {"format": 1, "constants": constants, "damageTypes": damage_types, "attributes": attributes,
+    return {"format": 2, "constants": constants, "damageTypes": damage_types, "attributes": attributes,
             "damageRows": damage_rows, "weapons": weapons, "items": items, "defenses": defenses, "vitals": vitals,
             "armor": armor, "levelDamage": sorted(level_damage), "impacts": impacts, "criticals": criticals,
             "hitRules": hit_rules}

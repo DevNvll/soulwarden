@@ -79,9 +79,11 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   no hit. The damage number goes to the client of the caster; each observer of the creature gets its health and its
   reaction (the common hit path).
 - The head of a creature (stage 3.3b-S5, `head_contact`, protocol notes 4.30). A hit of a projectile is a headshot when the
-  line of the projectile through the body meets the head volume of the creature: the line from one radius of the body
-  capsule before the point of the hit to two radii of the body and one radius of the head after it, with the radius of the
-  projectile. The head volume is the capsule of the slice (`creatures.json`: the HitVolume with m_isHeadshot on its bone
+  line of the projectile at the body meets the head volume of the creature: the line from one radius of the body capsule
+  before the point of the hit to one radius of the head volume and the hit tolerance (`projectile_rules::kHitTolerance`,
+  0.25 m) after it, with the radius of the projectile. The projectile stops at its first contact with the body: a head
+  volume further on the line (a shot from behind, through the body) is not a headshot (code review of stage 3.3b-S5,
+  finding F7, test case RV7; before, the line went two radii of the body further). The head volume is the capsule of the slice (`creatures.json`: the HitVolume with m_isHeadshot on its bone
   in the bind pose of the skeleton), turned with the yaw of the creature (`head_of`). A slice with no head volume (no
   skeleton in the game copy, or a shape with no radius) has no headshot. The hit near the muzzle (the receiver of the
   item) uses the line of the launch. A headshot is a critical hit with the flags Ranged, CanCrit, Crit, and Headshot

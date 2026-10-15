@@ -50,18 +50,21 @@ of that system.
   has the same name ("New World"). `SOULWARDEN_DEV_SOUND=1` keeps the volumes. Trap: an account
   that has no settings file yet (its first world entry) has the volume of the game until the next
   start. The script `tools/dev-mute.sh` makes the change with `tools/dev_mute.py`. A check of a path
-  and a later write by that path is never safe: a folder can move and a link can take its place
-  between the two (code review of stage 1.1b, finding F1). Thus the helper opens the development
-  prefix and each part of its savedata folder one time (no follow of a link in a part), opens each
-  settings file one time from the folder descriptor (no follow of a link), and checks the open
-  descriptor: its real path is in the resolved development prefix and not in the resolved prefix of
-  the user, it is a regular file with one link, and its device and inode are not those of a settings
-  file of the user. It then reads and writes through the same descriptor. When a check fails (the
-  prefix of the user, a path in it, a link, a path that ends in `/.`, a hard link), it writes no
-  file and prints a message `dev-mute: ...`, and the run has the volume of the game.
-  `tools/check_dev_mute.py` checks this with folders of a test (case RK1; also the move of the
-  savedata folder at the write, after the checks, and after the folder open), never with the
-  prefix of the user.
+  and a later use of a path is never safe: a folder can move and a link can take its place
+  between the two (code reviews of stages 1.1b and 3.3b-S5, finding F1 of each). Thus the helper uses
+  no path text after its first open: it opens the development prefix one time and compares the
+  device and inode of that descriptor with the prefix of the user and each folder from it to the
+  savedata folder of the user; it opens each next folder from the descriptor before it (no follow of
+  a link), and each settings file from the descriptor of the savedata folder (no follow of a link);
+  it refuses a file with more than one link or with the device and inode of a settings file of the
+  user; it then reads and writes through the descriptor of the file. When a check fails (the prefix
+  of the user, a folder of the user, a link, a path that ends in `/.`, a hard link), it writes no
+  file and prints a message `dev-mute: ...`, and the run has the volume of the game. The check
+  protects against a path or a link that leads to the prefix of the user by mistake; a process of
+  the same user could change the files of the user anyway. `tools/check_dev_mute.py` checks this
+  with folders of a test (case RK1; also the move of the savedata folder at the write, after the
+  checks, and after the folder open, a hard link, and the move of the prefix of the user to the
+  development path before the first open, case RCM1), never with the prefix of the user.
 - This is a development environment: data loss is not a problem. A test uses the fastest
   path to the state that it needs. The development data directory stays between runs:
   `tools/scenarios/play.sh RUN_LABEL` enters the world with a character that is there
@@ -293,3 +296,11 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
 - The client has a day and a night with no world time of the server: the videos of stage 3.3b-S4 had the night and
   are dark. Put the creatures near a lamp of the street at the default spawn ([Creatures](../systems/creatures.md),
   Traps), and crop the frames near the creatures.
+- A test of a heal (stage 3.3b-S6): Divine Embrace and Sacred Ground need a confirm after the key (`tools/hx 'key 0x51'
+  'wait 700' 'key 0xA2'`: Q, then LCTRL). The rest rule heals 3 percent each second after 6 s with no fight, also a
+  character with no session: hurt the character (`tools/world hurt`) just before the cast, or the rest heal hides the heal
+  of the test. A heal of a friend needs the test fixture (`tools/world spawn OTHER --near NAME`, `tools/world friends
+  NAME OTHER`); the number of the healer shows at the feet of the friend, and the white bar under the name of the friend
+  is its health.
+- `tools/build-soulwarden-backend.sh` has no option: each call builds and installs into `apps/backend/dist`. For a test
+  build, run `cmake --build` in a build folder and copy the program to a folder of the run.

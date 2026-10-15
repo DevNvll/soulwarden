@@ -155,6 +155,11 @@ struct InputStep {
      * the musket aim. For the log only.
      */
     bool aim{false};
+    /**
+     * The self cast input came ("self_target", bit 430; stage 3.3b-S6): the confirm of the aim of a heal of an ability on the caster
+     * (live check of stage 3.3b-S6: LCTRL in the aim of Divine Embrace). A click (attackPress) is the confirm on the target.
+     */
+    bool selfTarget{false};
     std::vector<InputContact> contacts;
 };
 

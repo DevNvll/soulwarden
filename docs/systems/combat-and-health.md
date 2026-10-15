@@ -1,8 +1,8 @@
 # Combat and health
 
 Read this document before a change of a melee attack of a player, the damage rules, the health and
-the death of a character, or the mana, and before a live test of a hit. The wire contracts are in the
-protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
+the death of a character, the heals, or the mana, and before a live test of a hit or a heal. The wire
+contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, and 4.31).
 
 ## Start here
 
@@ -12,6 +12,7 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
 | A hit of an ability: the contact of an ability phase, the hit of an area, the weaken of a creature | Protocol notes 4.22, [Abilities](abilities.md), `world/combat.h` (`Combat::claim`, `Combat::strike`), `world/abilities.h` (`Abilities::contact_phase`), test cases AB4, AB5 |
 | A hit of a projectile of a ranged or magic basic attack (the bow, the fire staff) | Protocol notes 4.27, [Projectiles](projectiles.md), `world/projectiles.h`, test cases PJ3, PJ8 |
 | A critical hit, a hit from behind, a headshot, the flags of the damage number | Protocol notes 4.30, `world/combat.h` (`Combat::critical`, `Combat::source_angle`, `damage_flags`), `world/projectiles.cpp` (`head_contact`), [Passive rules](passive-rules.md), test cases CH1 to CH10 |
+| A heal: the one heal path, the heal base, the outgoing and the received modifiers, the number of the owner, the notice of the healer (stage 3.3b-S6) | Protocol notes 4.31, `world/health.h` (`Health::heal`, `heal_base`, `outgoing`, `received`), `world/statuses.cpp` (`Statuses::give`), `server/rep/states/vitals_state.cpp` (bit 1), `server/rep/health_messages.h` (message 4298), `server/http/heal_commands.cpp`, test cases HE1 to HE11 |
 | The mana of a character and the mana meter of the HUD (the blue bar below the crosshair) | Protocol notes 4.5, `apps/backend/src/server/rep/states/mana_state.cpp`, test case UT4 |
 | The health and the death of a character: the damage of a creature, the damage mark, the death screen, the respawn | Protocol notes 4.18, `apps/backend/src/world/health.h`, `world/combat.h` (`Combat::creature_damage`), `server/rep/health_messages.h`, `server/rep/states/vitals_state.cpp`, `server/http/health_commands.cpp`, `tools/world heal` |
 
@@ -45,11 +46,59 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   4.5. Stage 1.3b: each change of the mana goes through one path (`Abilities::change_mana`:
   a cost, a potion), and the regeneration of the data runs after a spend
   ([Abilities](abilities.md)).
-- The heal of a potion, a food, or a perk goes through one function (`Health::heal_amount`,
-  stage 1.3b): a character that lives gets the health to its maximum, and the vitals state
-  changes. The rest rule (3 percent of the maximum each second after 6 s with no fight) and
-  the regeneration of the gear (an earring, a food: a part of the maximum each second, also in
-  a fight) run in `Health::tick`.
+- The heals (stage 3.3b-S6; before: `Health::heal_amount` of stage 1.3b). Each heal of a character goes through one function
+  (`Health::heal`): an ability (a status with HealthModifierDamageBased: Divine Embrace, the pulses of the Beacon and of Sacred
+  Ground), a potion, a food, a dust, a status of the gear, and a life steal (DmgPctToHealth). A heal has a kind
+  (`HealKind`: ability, consumable, lifeSteal, regeneration), an amount, a healer, and a number mark. The function: a character
+  that lives gets the amount times its received factor, to its maximum; the vitals state changes for the owner and for each
+  observer (the health of a friend is public); the owner sees the number of the real gain (after the cap) one time; a healer
+  that is a different character gets the notice (message 4298), only its session. A heal of a dead character, of a full
+  character, or of an amount that is not above 0 changes nothing (no number, no notice). The rest rule (3 percent of the
+  maximum each second after 6 s with no fight) and the regeneration of the gear values (`Entity::gear.regeneration`) run in
+  `Health::tick`, with no number and no modifier (rules of this project).
+- The base of a heal of an ability (`Health::heal_base`; a decision of the user of 2026-10-15, through the orchestrator): the
+  base damage of the weapon of the cast at its gear score (the first factor of the damage rule, `Combat::weapon_base`) times
+  the scaling of Focus with the curve and the table of a damage attribute: 1 + the ScalingFocus of the weapon (LifeStaff 0.0095,
+  game data) times the damage value of the Focus of the healer (the column ModifierValueSum of the Focus table, game data). A
+  weapon with no ScalingFocus has no Focus part. The base is a value of the source of the heal at the cast (`HealSource`: the
+  healer, the base, the row of the spell, the ability table of the weapon): a status keeps it, and its ticks heal with it (the
+  client has a cached heal scaling value for each source of a status: StatusEffectSource 0x5CB7F20; the snapshot is a decision
+  of an agent). The amount of a status of an ability: the base times HealthModifierDamageBased of the row (Divine Embrace 1.2,
+  the Beacon and Sacred Ground 0.16) times the potency and the stacks, times the potency factor of its categories (the
+  EffectPotencyMods of the other statuses of the target: the Beacon makes Sacred Ground 0.9 times; a decision of an agent:
+  the factor of the heal of the status), times the outgoing factor of the healer, times the received factor of the target.
+  A row with HealthModifierDamageBased and no UseHealScalingValue (its base is the core damage of the source) gives no heal
+  in this stage (`StatusCounts::pulsesWithNoHeal`). Live check L9: the weapon damage that the client shows in the attribute
+  window (`GetCoreDamage`) has the same base and Focus curve, and also the level part (0.025 for each level above 1) and the
+  other attributes of the weapon (the Intelligence of the life staff, 0.004): the heal base of the decision has neither (a
+  decision for the user, see the result of stage 3.3b-S6).
+- The outgoing factor of a heal of an ability (`Health::outgoing`): 1 plus one additive pool (a decision of an agent, as the
+  damage parts and the critical pool) of the HealScalingValueMultiplier of the statuses of the healer (live check L9: the
+  tooltip "outgoing healing is reduced by 3% per stack"), of the rules with OnHealed of the healer whose conditions pass for
+  the target (`Passives::heal_bonus`: Divine Blessing +0.3 at 50 percent health or less), and the heal factor of the equip
+  load of the healer less 1 (live check L9: the tooltip "Light: Outgoing Healing +30%", "Heavy: -30%"). 0 or more. A healer
+  that left the world: no outgoing part. The name of the column (a multiplier of the heal scaling value) gives it only to
+  the heals with UseHealScalingValue.
+- The received factor of a heal (`Health::received`): 1 plus the HealMod of the statuses of the target (each kind; live
+  check L9: "incoming healing is reduced by 6%"; game texts "reduces healing taken"), plus ConsumableHealMod (a consumable),
+  NonConsumableHealMod (an ability, the gear, a life steal), and DmgPctToHealthHealMod (a life steal; game text of Anointed:
+  "healing from non-consumables and lifesteal"), each with the limits of its categories (Disease -0.5), in one additive pool
+  (a decision of an agent). 0 or more.
+- The order: the outgoing factor times the received factor (a decision of the user of 2026-10-15: multiply where the data and
+  the client prove no order).
+- The heals of a consumable and of a life steal keep their proved rules (crit-heal-formulas.md): a potion is Health +
+  HealthModifierPercent times the maximum health (game texts), a life steal is DmgPctToHealth times the damage of the hit
+  (Critical Gains: "10% of damage done"), each times the heal factor of the equip load of the character (stage 1.3b) and the
+  received factor of its kind.
+- The number of the owner (live check L3; protocol notes 4.31): the vitals state of the owner that carries a heal has bit 1
+  of healthChangeFlags (`Vitals::healShown`: the world revision of the heal); the client shows a green "+N", N the change of
+  its own health. The observer view never has bit 1 (live check L3: an observer shows no number). The kinds with a number:
+  a heal of an ability, a life steal, the application of a consumable (a potion), and a tick of a consumable with
+  ShowUiDamageNumbersOnHeal (the regen potions of the data); no number for a tick of a food, a status of the gear, the rest
+  rule, and the command (a decision of an agent from the column of the data; the reader of the column in the client was not
+  found in a bounded search: bit 1 of byte +0x368 of the status row, loader 0x44B6EFF).
+- The notice of the healer (message 4298, live check L3): the session of the healer gets the id of the entity Stats of the
+  healed character and the gain; the client shows a green "+N" at the friend. A self heal sends none.
 - A melee attack of a player (protocol notes 4.15). The client finds each melee contact
   itself and reports it in the third list of its input entry (the contact report). The
   report is on in each start: the backend answers one remote configuration request of the
@@ -122,6 +171,10 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   - The roll: each hit with a chance above 0 takes one independent number of the generator of the world
     (`World::random_unit`, `World::set_random_seed` in a test). The hit is critical when the number is below the chance.
     Source: a decision of the user. A hit of a fixed amount (`Combat::strike_amount`: a tick, a chain) takes no number.
+  - A row with an explicit CanCrit 0 in the data (`DamageRow::noCrit`: the burst of Gravity Well,
+    `GreatAxe_GravityWell_Burst`) is never critical: no roll, no hit from behind, no headshot. A blank CanCrit cell can be
+    critical. The combat file of format 2 keeps the difference (a blank cell is null). Source: game data (code review of
+    stage 3.3b-S5, finding F2, test case RV2).
   - The multiplier: the DmgCoefCrit of the row when it has one (11 rows: Path of Destiny 1.2), or else the
     CritDamageMultiplier of the weapon; plus one additive pool of the bonuses (the CritDamage of the rules, the
     CritDamageModifier of the statuses, HeadshotDamage for a headshot). Source: a decision of the user (one additive

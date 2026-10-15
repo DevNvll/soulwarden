@@ -81,6 +81,45 @@ struct HealthResult {
     bool travelled{false};
 };
 
+/**
+ * One heal of a character (stage 3.3b-S6). The caller gives the amount before the received modifiers of the target: for a heal of an
+ * ability the heal base of the healer times the coefficient of the data, the potency, and the outgoing modifiers of the healer
+ * (Health::outgoing); for a potion its fixed amount and its part of the maximum health; for a life steal its part of the damage.
+ */
+struct HealRequest {
+    float amount{0.0F};
+    HealKind kind{HealKind::ability};
+    /** True: the owner of the target sees the number of the gain (bit 1 of healthChangeFlags of its vitals state; live check L3). */
+    bool number{true};
+    /** The entity of the healer. A healer that is a different character gets the notice of the gain (message 4298). 0: none. */
+    EntityId healer{0};
+    /** The source for the log line ("Status_Ability_Lifestaff_Beacon"). */
+    const char* what{""};
+};
+
+/** What one heal did. */
+struct HealOutcome {
+    /** The health that the target got: the amount times the received factor, to its maximum. 0: no heal. */
+    float gained{0.0F};
+    /** The received factor of the target (1 + its HealMod and the part of the kind, 0 or more). */
+    float received{1.0F};
+    float before{0.0F};
+    float after{0.0F};
+    /** True: the healer got the notice (a different character). */
+    bool notice{false};
+};
+
+/** Counts of the heals (stage 3.3b-S6), for the log, tools/world, and the tests. */
+struct HealCounts {
+    std::uint64_t heals{0};
+    /** Heals with a gain that showed the number to the owner of the target. */
+    std::uint64_t numbers{0};
+    /** Notices of a healer (message 4298). */
+    std::uint64_t notices{0};
+    /** Heals that changed nothing: a dead target, a target that is not a player, an amount that is not above 0, a full target. */
+    std::uint64_t nothing{0};
+};
+
 /** The place at which a character lives again. */
 struct RespawnPlace {
     state::WorldPosition position;
@@ -130,12 +169,40 @@ public:
     void fought(Entity& character);
 
     /**
-     * A character that lives gets health (stage 1.3b: a potion, a food, a perk), to its maximum. The vitals state of
-     * the owner and of each observer changes.
-     * @param what The source for the log line ("PotionHealT5").
-     * @return The health that the character got.
+     * The one heal of a character (stage 3.3b-S6; before: Health::heal_amount of stage 1.3b): a character that lives gets the amount
+     * times its received factor (Health::received), to its maximum. The vitals state of the owner and of each observer changes; the
+     * owner sees the number of the gain when the request has it (bit 1 of healthChangeFlags, owner view only); a healer that is a
+     * different character gets the notice of the gain (message 4298, only its session).
      */
-    float heal_amount(Entity& character, float amount, const char* what);
+    HealOutcome heal(Entity& target, const HealRequest& request);
+
+    /**
+     * @return The heal base of a healer with a weapon (stage 3.3b-S6, a decision of the user of 2026-10-15): the base damage of the
+     *         weapon at its gear score (the value of the damage rule, Combat::weapon_base) times the scaling of Focus with the curve and
+     *         the table of a damage attribute (1 + the ScalingFocus of the weapon times the damage value of the Focus of the healer:
+     *         the column ModifierValueSum of the Focus table). 0: no weapon row, or no combat tables.
+     */
+    [[nodiscard]] float heal_base(const Entity& healer, const std::string& itemId, std::uint32_t gearScore) const;
+
+    /**
+     * @return The outgoing factor of a heal of an ability of a healer (stage 3.3b-S6): 1 plus one additive pool of the outgoing parts
+     *         (a decision of an agent, as the damage parts and the critical pool): the HealScalingValueMultiplier of its statuses (live
+     *         check L9: "outgoing healing is reduced by 3% per stack"), of its rules with OnHealed whose conditions pass for the target
+     *         (Passives::heal_bonus), and the heal factor of its equip load less 1 (live check L9: "Outgoing Healing +30%"). 0 or more.
+     */
+    [[nodiscard]] float outgoing(const Entity& healer, const Entity& target, const HealSource& source) const;
+
+    /**
+     * @return The received factor of a heal of a kind (stage 3.3b-S6): 1 plus the HealMod of the statuses of the target (each heal;
+     *         live check L9: "incoming healing is reduced by 6%"), plus ConsumableHealMod (a consumable), NonConsumableHealMod (an
+     *         ability, the gear, a life steal), and DmgPctToHealthHealMod (a life steal) (game texts: "reduces healing taken", Anointed
+     *         "healing from non-consumables and lifesteal"). One additive pool (a decision of an agent), 0 or more.
+     */
+    [[nodiscard]] float received(const Entity& target, HealKind kind) const;
+
+    [[nodiscard]] const HealCounts& heal_counts() const {
+        return m_healCounts;
+    }
 
     /** The world calls it in each tick: the health of the characters that are not in a fight comes back. */
     void tick();
@@ -159,6 +226,7 @@ private:
     World& m_world;
     std::optional<WorldClock::time_point> m_lastRest;
     std::uint64_t m_rests{0};
+    HealCounts m_healCounts;
 };
 
 } // namespace soulwarden::backend::world

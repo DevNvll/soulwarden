@@ -51,6 +51,11 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   direction (`Entity::facing`), and the action of layer 0; its encoder gives the owner no fragment (the client of the
   owner moves its character itself). The abilities system marks it in the dash of a cast; a character with no client
   gets its place from the server (`World::move_character`), a character with a client from its accepted reports.
+- A heal (stage 3.3b-S6, [Combat and health](combat-and-health.md)): the health system changes the vitals of the character
+  and marks its vitals state one time; each observer gets the new health (the health of a friend is public), and only the
+  owner view has the number bit, for the state that carries the heal (`Vitals::healShown`, a world revision: a later
+  state, a new observer, or a re-entry gets no second number). The notice of the healer (message 4298) goes through
+  `SessionSink::healed_player` to the session of the healer only. A heal that changes no health sends nothing.
 - A session is an observer: it has transport state, the camera estimate of its client, and
   the interest table (entity to interest number). One encoder for each component state
   (`server/rep/states`) makes the bytes for the owner view or for the observer view. No

@@ -119,8 +119,9 @@ and the stop are in [World and sessions](world-and-sessions.md).
   Goth elephant).
 - A Vitals component with no row (code review of stage 1.1b, finding F2, test case RD2): the spell tool stops when a
   Vitals component of a slice names no row. The loader refuses a file of format 2 with a slice that has a slot of the
-  Vitals state (type 15) and no vitals values. The spell system makes a summon or a trap with a Vitals state slot or with
-  vitals values only when its vitals row is resolved: else no spell, and no payment.
+  Vitals state (type 15) and no vitals values. The spell system makes a summon or a trap only when its vitals row is
+  resolved, also when the slice has no Vitals component at all (code review of stage 3.3b-S5, finding F11, test case
+  RV11): else no spell, and no payment.
 - The life (game data): `m_lifetime` of its AutoSpell (15 s). Then the expire event triggers the entity of the event
   (`DestroyTrigger`), and the entity goes away at the destroy event of that entity (1.3 s later).
 - The shots (game data): from `m_initialCastDelay` (1 s), then each `m_cooldown` (2 s), the Pylon shoots the spell of
@@ -193,17 +194,38 @@ and the stop are in [World and sessions](world-and-sessions.md).
   statuses of each Beacon before its entity goes away (`Spells::member_left`; the status of a character stays with its
   character id; RK6).
 - The friends (a decision of an agent; the decision of the user is open): the backend has no group. The friends of a
-  character are the character itself (a group of one). A test fixture can add a pair (`World::set_test_friends`). The
-  second character of a live run is not a friend: it gets no status.
+  character are the character itself (a group of one). A test fixture can add a pair (`World::set_test_friends`; in a
+  development run `tools/world friends A B`, stage 3.3b-S6). The second character of a live run is not a friend when no
+  fixture made the pair: it gets no status.
 - The pulses (game data): the status `Status_Ability_Lifestaff_Beacon` has `TickRate` 1 s and `HealthModifierDamageBased`
-  0.16: the status system makes a pulse each second (`StatusCounts::pulsesWithNoHeal`). The heal amount needs the heal
-  base of stage 3.3b-S6: a pulse gives no health now (open).
+  0.16: each second the status heals its character through the heal path (stage 3.3b-S6): 0.16 times the heal base of
+  the caster (its weapon at its gear score with the Focus scaling), the potency of the statuses with EffectPotencyMods,
+  the outgoing part of the caster, and the received part of the friend ([Combat and health](combat-and-health.md); test
+  case HE5; live run `heal-live2`: 10 pulses of 55.1 with the heal base 344.1). The area keeps its heal source
+  (`SpellRequest::heal`), and gives it to each friend that comes in. A pulse with no heal source gives no health
+  (`StatusCounts::pulsesWithNoHeal`).
 - The ends: its life (10 s), the leave of its target (`SpellEnd::targetLeft`), the death of its target
   (`SpellEnd::targetDied`: the death of a creature or of a character ends each Beacon on it; code review of stage
   3.3b-S2b, finding F3; case RK3), and the leave of the caster. A projectile whose impact killed its target makes no
   Beacon.
 - The record (finding F7; case RK7): a session observes a Beacon that follows an entity only while it observes that entity
   (field 6 of the Spell state names its actor); the Beacon goes out of the interest with it.
+
+### Sacred Ground of the life staff (aura on the ground, stage 3.3b-S6)
+
+- The spell (game data): the self spell `Spell_LifeStaff_SacredGround_Self` (Holy Ground: `_Self_Upgrade`, Anointed:
+  `_Self_Upgrade2`, the conditions of the action list) at the caster, on the ground, at 0.333 s of the cast. Its radius
+  (3 m) and its life (12 s) are the Radius and the Duration of the row. The cost (ManaCost `LifeStaff_HealingWave`: 15) is
+  paid at the spawn, through the one mana path (`Abilities::spawn_summon`, the aura branch). Less mana at the spawn: no
+  area and no payment.
+- The statuses (game data): the StatusEffects of the spell row (`Status_Ability_Lifestaff_SacredGround`:
+  HealthModifierDamageBased 0.16 each 1 s; `Status_Ability_Lifestaff_SacradGround_Beacon_Potency`; Anointed adds
+  NonConsumableHealMod 0.5). The area gives them to its friends as the Beacon does (the same aura rules, `ClearOnExit`,
+  `ClearOnEnd`), with its heal source.
+- The place: the caster, also for a confirm with a click. The client casts `Spell_LifeStaff_SacredGround` at the point of
+  its raycast then; the backend does not decode that point (open; a decision of an agent).
+- Live run `heal-live2`: the area at the feet of the caster, a number "+55" each second, the health to its maximum
+  (`videos/live2-b-sacred-ground.mp4` in the evidence of the stage).
 
 ## Commands
 

@@ -579,11 +579,13 @@ void RepSession::log_message_counts() const {
                    m_cutsceneEnds,
                    m_interactionEnds);
     }
-    if (m_damageMarks != 0 || m_deaths != 0 || m_respawns != 0) {
-        log::write("rep: health of the character in the session: %llu damage mark(s) sent, %u death(s), %u respawn(s)",
+    if (m_damageMarks != 0 || m_deaths != 0 || m_respawns != 0 || m_healNotices != 0) {
+        log::write("rep: health of the character in the session: %llu damage mark(s) sent, %u death(s), %u respawn(s), %llu notice(s) of a "
+                   "heal of a different character",
                    static_cast<unsigned long long>(m_damageMarks),
                    m_deaths,
-                   m_respawns);
+                   m_respawns,
+                   static_cast<unsigned long long>(m_healNotices));
     }
     log::write("rep: position reports of the session: %llu accepted, %llu refused (%llu too fast, %llu not finite, %llu "
                "at a height limit, %llu outside the world), %llu not in sequence, %u new input sequence(s); largest "
@@ -1305,6 +1307,14 @@ void RepSession::handle_attacks(const ClientInput& input) {
         if (step.abilityKey != 0) {
             press_ability(input, step);
         }
+        // The confirm of the aim of a heal of an ability (stage 3.3b-S6): a click (on the target) or the self cast input. The world
+        // starts the cast only for an aim of this session; each other click is an attack as before.
+        if (step.attackPress || step.selfTarget) {
+            if (m_world.abilities().confirm(m_id, step.sequence, step.selfTarget, input.hasLook ? input.lookYaw : m_input.lookYaw)) {
+                log::write("rep: the aim of the ability is confirmed (%s, input %u)", step.selfTarget ? "self cast" : "click",
+                           static_cast<unsigned>(step.sequence));
+            }
+        }
         // A quick slot key and the heart rune key (stage 1.3b): the world finds the character from the session.
         if (step.quickKey != 0) {
             const world::UseVerdict verdict = m_world.consumables().use_quick(m_id, step.quickKey);
@@ -1355,6 +1365,9 @@ void RepSession::press_ability(const ClientInput& input, const InputStep& step) 
     press.yaw = input.hasLook ? input.lookYaw : m_input.lookYaw;
     // The lock of the input: the client did not confirm the place of a travel (its loading screen).
     press.locked = m_travelAnchor.has_value();
+    // The key with the self cast input held (stage 3.3b-S6): an aimed heal casts at once on the caster, with no aim.
+    press.self = step.selfTarget;
+    press.confirmed = step.selfTarget;
     const world::CastVerdict verdict = m_world.abilities().press(m_id, press);
     ++m_abilityPresses;
     const auto cause = static_cast<std::size_t>(verdict);
@@ -1543,6 +1556,16 @@ void RepSession::damage_taken(const world::DamageTaken& damage) {
     // owner and each observer of the character get its new health with the vitals state.
     send_message(kTypeDamageTaken, damage_taken_body(m_observer.own(), damage));
     ++m_damageMarks;
+}
+
+void RepSession::healed_player(world::EntityId target, float amount) {
+    // The call comes from the world, in its tick (a heal of an ability or of a status of the character of this session).
+    if (!m_inWorld || m_closing) {
+        return;
+    }
+    // The green number at the healed character, for the client of the healer only (live check L3).
+    send_message(kTypeHealedPlayer, healed_player_body(m_observer.own(), target, amount));
+    ++m_healNotices;
 }
 
 void RepSession::died(float respawnSeconds) {

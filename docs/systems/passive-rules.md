@@ -22,7 +22,8 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
 - One evaluator (`world/passives.h`, `world::Passives`, world thread only). The combat system asks it before the damage of
   each hit of a character on a creature (`before_hit`: the damage part, the critical parts, the penetration) and gives it
   the result after the hit (`after_hit`: the statuses, the heals, the cooldown changes). The health system gives it each
-  hit that a character takes (`hit_taken`). The world tick runs the rules of the entities near a character (`tick`). No
+  hit that a character takes (`hit_taken`), and asks it for the outgoing part of each heal of a character (`heal_bonus`,
+  stage 3.3b-S6). The world tick runs the rules of the entities near a character (`tick`). No
   other code reads a cell of a rule: the gear system has no condition check of its own now (stage 3.3b-S5), and it takes
   the fixed stats of the nodes from the evaluator (`Passives::fixed`).
 - The rules of a hit (`Passives::rules_of`): the learned nodes (level above 0) of the ability table of the weapon of the hit
@@ -30,13 +31,16 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   rows have the rules of their own hits); and the ability rows of the perks of the equipped items, with the potency of the
   perk. A character has no rule of a different weapon tree in a hit. Source: game data (the ability tables of the players,
   `ability-data.json` format 4: 2,025 rows).
-- The events that the backend has a source for: OnHit, OnCrit, OnKill, OnHitTaken, OnHeadShot, OnHitBehind. A row with no
+- The events that the backend has a source for: OnHit, OnCrit, OnKill, OnHitTaken, OnHeadShot, OnHitBehind, OnHealed (only
+  its HealScalingValueMultiplier, stage 3.3b-S6). A row with no
   event and a condition of a hit (DamageTableRow, AttackType, RemoteDamageTableRow) is a rule of that hit (Crowded Well:
   `Upgrade_Greataxe_GravityWell_DmgPerFoe` on the burst of the vortex). A row with no event, no condition, and a value is a
   fixed stat. A row with no event, NumAroundMe, and SelfApplyStatusEffect is a status while the condition holds. A row
   with OnBlockedHit and OnHit applies its OnHit part (the backend has no block).
 - A row with a column that is not a condition, an effect, or a mark of the evaluator, or with an event that the backend does
-  not have (a block, a heal, a weapon swap, a dodge), has no effect. The list names it with the column (rule "no silent
+  not have (a block, a weapon swap, a dodge), has no effect. A row with OnHealed and an effect after the heal (a status, a
+  cooldown change, a heal of the healer: `Passive_Lifestaff_Healing_CDROnLow`) has no effect: the backend applies only the
+  outgoing heal part. The list names it with the column (rule "no silent
   rule").
 - The conditions and the source of each rule:
   - AttackType, DamageTableRow, RemoteDamageTableRow: lists of the data ("Light,Heavy"), no case.
@@ -56,6 +60,10 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   - DontHaveStatusEffect: the attacker does not have the status.
   - TrackHitCount with NumberOfTrackedHits: the hits of one attack, compared with the limit (game text of Quick
     Recovery: "Max 5 reductions per attack").
+  - A hit count (TrackHitCount, NumSuccessfulHits, NumConsecutiveHits) is a condition of the values before the damage too
+    (`Passives::has_count_gate`, `counts_peek`: the same count on a copy, nothing spent). `Ability_Spear_BonusHvyDmgConsec`
+    gives its BaseDamage only from the second heavy attack (code review of stage 3.3b-S5, finding F8; test case RV8).
+    `after_hit` spends the count of the hit.
   - NumSuccessfulHits: the attack hit this number of targets; the rule fires one time for each attack (game text of
     Executioner's Speed: "Hitting at least 2 targets").
   - NumConsecutiveHits (with MaxConsecutiveHits, ResetConsecutiveOnSuccess): the hits of this number of attacks one after
@@ -65,20 +73,25 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   - NumAroundMe (with NumAroundComparisonType): the creatures in the tracking spell of the rule (the spell row whose
     AbilityId is the rule and that has TrackNumInVolume: its radius, and its height or 3 m), only living creatures that are
     not on their way back. For a hit of an area whose spell is the tracking spell, the count is the creatures of that area
-    (Crowded Well: the creatures in the vortex). A tracking spell for friends counts nothing: the backend has no friend
-    relation (a group of one). Game texts: Center of Attention 4 m (`Passive_Greataxe_Mauler_DmgWhenFoesNear`), Outnumbered
-    3 m.
+    (Crowded Well: the creatures in the vortex). Each spell row with the AbilityId of the rule and TrackNumInVolume is a
+    tracking spell of that area: also the upgraded vortex of Unyielding (finding F4; test case RV4). A tracking spell for
+    friends counts nothing: the backend has no friend relation in the world (a group of one). Game texts: Center of
+    Attention 4 m (`Passive_Greataxe_Mauler_DmgWhenFoesNear`), Outnumbered 3 m.
+  - A tracking spell of the shape Box (with a Length: Blood Lust, `Ultimate_Greataxe_Reaper`, 7 m long) is not applied:
+    the backend counts the entities of a sphere only, and the list names the shape (finding F9; test case RV9).
 - The effects:
   - Before the damage: BaseDamage (for each entity in the volume to MaxNumAroundMe, when the row has it), CritChance,
     CritDamage, ArmorPenetration, HeadshotDamage (a headshot), HitFromBehindDamage (a hit from behind). The potency of a perk
     multiplies each value.
   - A row with OnCrit and CritChance changes the roll of the hit (game text of Critical Condition: "+15% crit chance below
-    30%"): its chance counts before the hit, and it has no effect after the hit. The other OnCrit rows act after a critical
-    hit (`Passive_Greataxe_Reaper_OnCritHeal`).
+    30%"): its chance counts before the hit, and it has no effect after the hit. The CritDamage of a row with OnCrit joins
+    the additive part of a critical hit only when the hit is critical (`HitBonus::critOnCrit`); with OnHeadShot, a headshot
+    takes its HeadshotDamage instead (Vicious, `Global_Weapon_DmgCrit`; finding F3, test case RV3). The other OnCrit rows
+    act after a critical hit (`Passive_Greataxe_Reaper_OnCritHeal`).
   - After the hit: SelfApplyStatusEffect (the status system, through `Gear::caster_effect`), OtherApplyStatusEffect (a rend,
     a damage over time, or a chain through the perk rules of the gear; each other status through the creature system with
-    OtherApplyStatusEffectDurations), DmgPctToHealth (a heal of the part of the damage of the hit, times the heal factor of
-    the equip load, through `Health::heal_amount`), CooldownTimer with CDRImmediatelyOptions (ActiveWeapon: each ability of
+    OtherApplyStatusEffectDurations), DmgPctToHealth (a life steal: the part of the damage of the hit, through `Health::heal` with the kind
+    lifeSteal, thus with the outgoing and the received heal parts; [Combat and health](combat-and-health.md)), CooldownTimer with CDRImmediatelyOptions (ActiveWeapon: each ability of
     the bar of the weapon in the hand; AbilitySpecific: the ability of CooldownId; AllExcept: each other ability of the bar).
   - ActivationCooldown: the rule acts one time in that time, for each character (the key: the character id and the rule).
   - A fixed stat: its CritChance and CritDamage count at each hit; its other values (PhysicalArmor, MaxHealth, the
@@ -88,7 +101,15 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   condition holds, with the rule as its source, and it ends when the condition does not hold and when the character leaves
   the world (`Passives::left`). Only the characters with such a rule of the weapon in the hand look at the position index.
 - A hit taken (`Passives::hit_taken`, after the damage of a creature): the rows with OnHitTaken and SelfApplyStatusEffect of
-  the tree of the weapon in the hand, with the hit counts (`Passive_WarHammer_Juggernaut_DmgAfterTakingDmg`).
+  the tree of the weapon in the hand and of the perks, with the hit counts (`Passive_WarHammer_Juggernaut_DmgAfterTakingDmg`).
+  Its conditions: the health of the character after the hit, its stamina, its mana, DontHaveStatusEffect, RequireReaction
+  (the damage above 0), and grit (none). A row with a different condition is not applied, with the column in the list
+  (finding F6: `Global_Amulet_FortifyOnLow` gives its fortify only below 50 percent health; test case RV6).
+- A heal (`Passives::heal_bonus`, stage 3.3b-S6): the rows with OnHealed and HealScalingValueMultiplier of the healer (the
+  tree of the weapon of the heal and the perks) add their value to the outgoing heal part. Its conditions: TargetHealthPercent
+  (the health of the target before the heal), the health, stamina, and mana of the healer, DamageTableRow (the row of the
+  spell of the heal), TargetStatusEffectCategory, DontHaveStatusEffect, and grit (none). Divine Blessing
+  (`Ultimate_Lifestaff_Healing`): +30 percent for a target at 50 percent health or less (test cases HE4, HE10).
 - A rule of an action: a node with no cell of a rule whose node the action data tests (IfAbilityActive). The plan of the
   ability applies it when the backend has the ability ([Abilities](abilities.md): the spell selections of the action data).
   An active ability with no plan in this backend, and each node of such an ability, is "not applied yet": its weapon part
@@ -105,7 +126,8 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
 ### The rules of the great axe and the war hammer (stage 3.3b-S5)
 
 The list of the backend (`tools/world passives --table greataxe`, `--table warhammer`) names each node with what the
-backend does with it. The great axe: 18 of 38 nodes applied. The war hammer: 22 of 38 nodes applied. The nodes that are not
+backend does with it. The great axe: 17 of 38 nodes applied (Blood Lust is not applied since the correction F9). The war
+hammer: 22 of 38 nodes applied. The nodes that are not
 applied, and the cause:
 
 | Node | Cause |
@@ -118,6 +140,23 @@ applied, and the cause:
 | `Passive_Greataxe_Reaper_DmgWhenBlocked`, `Passive_Greataxe_Mauler_DmgOnBlock`, `Passive_WarHammer_CrowdCrusher_LessStaminaOnBlock`, `Upgrade_WarHammer_Gavel_StaminaDmg` | No rule in the backend for a block (OnBlockedHit, OnBlockedHitTaken, BlockDamage, BlockDamageReduction). |
 | `Upgrade_WarHammer_ClearOut_FortifyAOE` | No rule in the backend for DisableCastSpellDurability and CastSpell. |
 | `Passive_Greataxe_Mauler_HeavyAddGrit`, `Passive_WarHammer_Juggernaut_HeavyGrit` | The backend has no grit. |
+| `Ultimate_Greataxe_Reaper` | Its tracking spell has the shape Box: the backend counts a sphere only (finding F9). |
+
+### The rules of the life staff (stage 3.3b-S6)
+
+`tools/world passives --table lifemagic`: 11 of 38 nodes applied. Applied: Divine Embrace, Sacred Ground, and the Beacon
+(their plans), Privilege (`Upgrade_Lifestaff_DivineEmbrace_ReduceCost`), Holy Ground and Anointed (the spell selections of
+Sacred Ground), the two Beacon upgrades with a spell selection, Divine Blessing (OnHealed), and the two OnHit rules
+`Passive_Lifestaff_Healing_HealingBuffonBasic` and `Passive_Lifestaff_Protection_FortifyOnBasic`. Not applied, and the cause:
+
+| Node | Cause |
+| --- | --- |
+| `Ability_Lifestaff_SplashofLight`, `Ability_Lifestaff_OrbofProtection`, `Ability_Lifestaff_LightsEmbrace`, and the upgrades of these abilities | Not applied yet: the active ability has no plan in this backend. |
+| `Upgrade_Lifestaff_DivineEmbrace_ChainOnLow`, `Upgrade_Lifestaff_DivineEmbrace_ChainOnLow2`, `Passive_Lifestaff_Healing_CDROnLow` | An effect after a heal (OnHealed with a status or a cooldown change). |
+| `Passive_Lifestaff_Healing_NoManaOnBasic`, `Passive_Lifestaff_Healing_RemoveOnHeavy`, `Passive_Lifestaff_Healing_HealOnLight` | No rule in the backend for OnProjPassedThrough (a projectile that passes through a friend), Mana, or the removal of a status. |
+| `Passive_Lifestaff_Healing_AoeHealWhenHit`, `Passive_Lifestaff_Protection_HasteWhenLow` | The action data applies it in an action of the client that this backend does not have. |
+| `Passive_Lifestaff_Healing_GroupHealing`, `Passive_Lifestaff_Protection_GroupMana` | No rule in the backend for DisableCastSpellDurability and CastSpell. |
+| The other passives of the Protection tree | No rule in the backend for their columns (Duration, AfterAction, StatusEffectCategories, the status durations, OnBlockedHitTaken, PerStatusEffectOnTarget). |
 
 The special rules of the other weapons (Berserk, the channels, the stacks of the rapier and the spear, the stances of
 the greatsword) are not in this stage: their rows show in the list with the cause.

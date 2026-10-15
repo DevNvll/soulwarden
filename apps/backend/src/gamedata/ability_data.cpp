@@ -370,26 +370,29 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
     if (error.empty() && fromFile && !tables.statusEffects.empty() && tables.statusRows == 0) {
         error = "the file declares no status rows, but it has status effects";
     }
-    // Each status that a caster effect row names is in the data (stage 3.3b-S1).
+    // Each status that a caster effect row names is in the data (stage 3.3b-S1), and each status that a rule puts on its target
+    // (code review of stage 3.3b-S5, finding F10: OtherApplyStatusEffect).
     for (const AbilityRow& row : tables.abilityRows) {
-        const std::string_view names = row.cells.text("SelfApplyStatusEffect");
-        std::size_t start = 0;
-        while (error.empty() && start <= names.size()) {
-            std::size_t end = names.find(',', start);
-            if (end == std::string_view::npos) {
-                end = names.size();
+        for (const char* column : {"SelfApplyStatusEffect", "OtherApplyStatusEffect"}) {
+            const std::string_view names = row.cells.text(column);
+            std::size_t start = 0;
+            while (error.empty() && start <= names.size()) {
+                std::size_t end = names.find(',', start);
+                if (end == std::string_view::npos) {
+                    end = names.size();
+                }
+                std::string_view name = names.substr(start, end - start);
+                while (!name.empty() && name.front() == ' ') {
+                    name.remove_prefix(1);
+                }
+                while (!name.empty() && name.back() == ' ') {
+                    name.remove_suffix(1);
+                }
+                if (!name.empty() && status.count(lower_ascii(name)) == 0) {
+                    error = "the rule " + row.id + " names the status " + std::string(name) + " (" + column + "), which the data does not have";
+                }
+                start = end + 1;
             }
-            std::string_view name = names.substr(start, end - start);
-            while (!name.empty() && name.front() == ' ') {
-                name.remove_prefix(1);
-            }
-            while (!name.empty() && name.back() == ' ') {
-                name.remove_suffix(1);
-            }
-            if (!name.empty() && status.count(lower_ascii(name)) == 0) {
-                error = "the caster effect row " + row.id + " names the status " + std::string(name) + ", which the data does not have";
-            }
-            start = end + 1;
         }
     }
     // The timers of a status row (code review of stage 3.3b-S1, finding F9): the world clock of the status system has

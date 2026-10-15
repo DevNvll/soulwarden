@@ -274,6 +274,21 @@ float Combat::defense_factor(std::uint32_t typeIndex, const gamedata::DefenseRow
            * std::max(1.0F + weakness, 0.0F) * std::max(1.0F - absorption, 0.0F);
 }
 
+float Combat::weapon_base(const gamedata::WeaponRow& weapon, std::uint32_t gearScore) const {
+    if (m_tables == nullptr) {
+        return 0.0F;
+    }
+    const gamedata::CombatConstants& constants = m_tables->constants();
+    // The gear score: one factor for each full interval above the lowest gear score, and a
+    // smaller one for each full interval above the limit (client code at image RVA 0x3691470).
+    const float rate = weapon.gearScoreRate > 0.0F ? weapon.gearScoreRate : constants.gearScoreRate;
+    const std::uint32_t lower = std::min(gearScore, constants.gearScoreLimit);
+    const std::uint32_t first = lower > constants.gearScoreMinimum ? (lower - constants.gearScoreMinimum) / constants.gearScoreInterval : 0;
+    const std::uint32_t second = gearScore > constants.gearScoreLimit ? (gearScore - constants.gearScoreLimit) / constants.gearScoreInterval : 0;
+    return weapon.baseDamage * std::pow(1.0F + rate, static_cast<float>(first))
+           * std::pow(1.0F + rate * constants.gearScoreSmallerRate, static_cast<float>(second));
+}
+
 Damage Combat::damage(const Entity& attacker,
                       const gamedata::WeaponRow& weapon,
                       std::uint32_t gearScore,
@@ -284,14 +299,7 @@ Damage Combat::damage(const Entity& attacker,
     const gamedata::DamageType& type = m_tables->damage_type(row.type);
     Damage damage;
     damage.type = type.wire;
-    // The gear score: one factor for each full interval above the lowest gear score, and a
-    // smaller one for each full interval above the limit (client code at image RVA 0x3691470).
-    const float rate = weapon.gearScoreRate > 0.0F ? weapon.gearScoreRate : constants.gearScoreRate;
-    const std::uint32_t lower = std::min(gearScore, constants.gearScoreLimit);
-    const std::uint32_t first = lower > constants.gearScoreMinimum ? (lower - constants.gearScoreMinimum) / constants.gearScoreInterval : 0;
-    const std::uint32_t second = gearScore > constants.gearScoreLimit ? (gearScore - constants.gearScoreLimit) / constants.gearScoreInterval : 0;
-    damage.weapon = weapon.baseDamage * std::pow(1.0F + rate, static_cast<float>(first))
-                    * std::pow(1.0F + rate * constants.gearScoreSmallerRate, static_cast<float>(second));
+    damage.weapon = weapon_base(weapon, gearScore);
     // The attributes and the level of the attacker (client code at image RVA 0x5BFB530).
     float bonus = 0.0F;
     for (std::size_t attribute = 0; attribute < weapon.scaling.size(); ++attribute) {
@@ -614,7 +622,7 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
         result.damage.converted *= std::max(factor, 0.0F);
     }
     // The critical rule (Combat::critical): the bonus multiplies the damage that the target takes (both parts of a conversion).
-    const Critical critical = this->critical(weapon, row, bonus.critChance, bonus.critDamage, behindCrit, hit.head);
+    const Critical critical = this->critical(weapon, row, bonus.critChance, bonus.critDamage, behindCrit, hit.head, bonus.critOnCrit);
     if (critical.critical) {
         result.damage.dealt *= critical.multiplier;
         result.damage.converted *= critical.multiplier;
@@ -674,10 +682,15 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
 }
 
 Critical Combat::critical(const gamedata::WeaponRow& weapon, const gamedata::DamageRow& row, float bonusChance, float bonusDamage,
-                          bool behindCrit, bool head) {
+                          bool behindCrit, bool head, float bonusOnCrit) {
     Critical result;
     if (!weapon.critical) {
         return result; // No critical values (a combat file of a tool from before stage 3.3b-S5): no critical hit.
+    }
+    if (row.noCrit) {
+        // An explicit CanCrit 0 of the row (code review of stage 3.3b-S5, finding F2): no roll, and no critical hit from behind or
+        // of a headshot (a decision of an agent: the cell is a prohibition of the row; the facts of the hit stay).
+        return result;
     }
     result.chance = std::clamp(weapon.critChance + bonusChance, 0.0F, 1.0F);
     // DmgCoefCrit of the row in the place of the multiplier of the weapon (a decision of an agent: the data has it on 11 rows, the
@@ -695,6 +708,11 @@ Critical Combat::critical(const gamedata::WeaponRow& weapon, const gamedata::Dam
         result.roll = m_world.random_unit();
         result.critical = result.roll < result.chance;
         result.cause = "roll";
+    }
+    // The damage cells of the rules with OnCrit (code review of stage 3.3b-S5, finding F3: Vicious, CritDamage 0.015): only a critical
+    // hit takes them, in the same additive pool.
+    if (result.critical) {
+        result.multiplier = std::max(result.multiplier + bonusOnCrit, 0.0F);
     }
     return result;
 }

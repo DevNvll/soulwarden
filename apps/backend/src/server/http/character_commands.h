@@ -214,6 +214,19 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 /** @return Each node of a weapon tree (the id text of its ability table: "GreatAxeAbilityTable") with what the backend does with it. */
 [[nodiscard]] nlohmann::json passives_table_json(world::World& world, const std::string& table);
 
+/**
+ * @return The heal values of a character (stage 3.3b-S6, heal_commands.cpp): the heal base with the weapon in its hand (its gear score,
+ *         its ScalingFocus, the Focus of the character), the outgoing factor to a target (the character itself when `target` is empty),
+ *         the received factors of the character for each kind, the friends of the test fixture, and the counts of the heals of the world.
+ */
+[[nodiscard]] nlohmann::json heals_json(world::World& world, const std::string& character, const std::string& target);
+
+/**
+ * Development aid (stage 3.3b-S6): makes two characters in the world friends (the test fixture of World::set_test_friends) for a live
+ * test of a heal of a friend. @return The reply: "friends", or the cause of a refusal.
+ */
+[[nodiscard]] nlohmann::json make_friends(world::World& world, const std::string& character, const std::string& other);
+
 // The loot commands (world/rewards.h, server/http/loot_commands.cpp).
 // set_force_loot: `force` (1 or 0). A development switch of a character (the debug message
 // DebugSetForceDropAILoot of the client): the outer loot chance and the coin chance of its kills
