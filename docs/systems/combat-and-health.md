@@ -10,6 +10,7 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
 | --- | --- |
 | A melee attack of a player on a creature: the contact report of the client, the hit check, the damage rule, the damage number | Protocol notes 2.3, 4.7, and 4.15, `apps/backend/src/world/combat.h`, `gamedata/combat_tables.h`, `server/rep/client_input.h`, `server/rep/combat_messages.h`, `server/http/aws_routes.cpp`, `tools/gamedata/combat.sh`, `tools/research/input_packet.py --contacts` |
 | A hit of an ability: the contact of an ability phase, the hit of an area, the weaken of a creature | Protocol notes 4.22, [Abilities](abilities.md), `world/combat.h` (`Combat::claim`, `Combat::strike`), `world/abilities.h` (`Abilities::contact_phase`), test cases AB4, AB5 |
+| A hit of a projectile of a ranged or magic basic attack (the bow, the fire staff) | Protocol notes 4.27, [Projectiles](projectiles.md), `world/projectiles.h`, test cases PJ3, PJ8 |
 | The mana of a character and the mana meter of the HUD (the blue bar below the crosshair) | Protocol notes 4.5, `apps/backend/src/server/rep/states/mana_state.cpp`, test case UT4 |
 | The health and the death of a character: the damage of a creature, the damage mark, the death screen, the respawn | Protocol notes 4.18, `apps/backend/src/world/health.h`, `world/combat.h` (`Combat::creature_damage`), `server/rep/health_messages.h`, `server/rep/states/vitals_state.cpp`, `server/http/health_commands.cpp`, `tools/world heal` |
 
@@ -89,6 +90,11 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   3.3a): `Combat::damage` with the row, `Creatures::hurt` with the attacker (the target, the
   credit, the rewards of a kill), the damage number, and the log line. A melee attack, the
   contact of an ability, and the hit of an area of an ability use it; a new hit uses it too.
+  The hit of a projectile (stage 3.3b-S3, [Projectiles](projectiles.md)) uses it with the row of
+  its shot, the weapon and the gem of its launch, the damage modifier of its ammunition (1.2 for
+  each arrow and shot of the game data) as the factor, and its point as the source. A melee
+  contact of a ranged weapon is refused (`no melee weapon`): the bow and the musket hit only
+  with their projectiles.
   From stage 3.3b-S4 a creature that lives after the hit moves by the impact of the row (the pull or
   the push of the game data, from the source of the hit: the last argument of `Combat::strike`, the
   attacker when it is not given; [Forced movement](forced-movement.md)).

@@ -157,6 +157,10 @@ struct NavigationCounts {
     /** Sight tests, and the ones that a solid stopped. */
     std::uint64_t sightTests{0};
     std::uint64_t sightStopped{0};
+    /** Line tests of a projectile (stage 3.3b-S3), the cells that they looked at, and the lines that a solid stopped. */
+    std::uint64_t lineTests{0};
+    std::uint64_t lineCells{0};
+    std::uint64_t lineStopped{0};
 };
 
 /** One corner of a path, for a development command. */
@@ -246,6 +250,14 @@ public:
      *         on the line, nothing stops the sight.
      */
     [[nodiscard]] bool sees(const state::WorldPosition& eye, const state::WorldPosition& target) const;
+    /**
+     * The line of a projectile (stage 3.3b-S3): the straight segment between two points in the air (the exact heights, no
+     * eye height), cell by cell, with the same free intervals of the floors as `sees`. A part of the line below the
+     * lowest floor of a cell is in the ground.
+     * @return The part of the segment (0 to 1) at which it enters the first cell where a solid or the ground stops it. No
+     *         value: nothing stops it (also with no tile of the navigation data on the line, and with no data).
+     */
+    [[nodiscard]] std::optional<float> line_stop(const state::WorldPosition& from, const state::WorldPosition& to) const;
 
     /** The world calls it in each tick: the tiles that are ready, the tiles that the world needs, and the path searches. */
     void tick();

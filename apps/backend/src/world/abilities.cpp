@@ -28,7 +28,6 @@ constexpr AbilityRule kRules[] = {
 };
 
 /** The id text of the ranged attack of the projectile of Gravity Well (the value "attack" of its shot is its CRC-32). */
-constexpr const char* kGravityWellAttack = "GravityWell";
 /** A cast leaves the table this long after its start when no phase waits (the longest contact window is 3 s). */
 constexpr std::chrono::milliseconds kCastKeep{5000};
 /** Gravity Well: the server throws the projectile itself this long after the press when the client sent no shot. */
@@ -950,22 +949,24 @@ float Abilities::mana_cost(const Entity& character, const CastPlan& plan) const 
     if (!has_data()) {
         return 0.0F;
     }
-    std::optional<float> base;
-    std::string id;
     for (const PhasePlan& phase : plan.phases) {
         const gamedata::SpellRow* spell = phase.spell.empty() ? nullptr : m_data->spell(phase.spell);
         if (spell == nullptr) {
             continue;
         }
         const std::string_view costId = spell->cells.text("ManaCost");
-        if (!costId.empty()) {
-            if (const std::optional<float> cost = m_data->mana_cost(costId)) {
-                base = cost;
-                id = std::string(costId);
-                break;
-            }
+        if (!costId.empty() && m_data->mana_cost(costId)) {
+            return mana_cost_of(character, costId);
         }
     }
+    return 0.0F;
+}
+
+float Abilities::mana_cost_of(const Entity& character, std::string_view costId) const {
+    if (!has_data() || costId.empty()) {
+        return 0.0F;
+    }
+    const std::optional<float> base = m_data->mana_cost(costId);
     if (!base || *base <= 0.0F) {
         return 0.0F;
     }
@@ -980,7 +981,7 @@ float Abilities::mana_cost(const Entity& character, const CastPlan& plan) const 
                 continue;
             }
             // The client compares the CRC-32 of the lower-case texts (0x9F761B8: the CRC of "all").
-            const std::uint32_t wanted = gamedata::progression_id(id);
+            const std::uint32_t wanted = gamedata::progression_id(costId);
             const std::uint32_t all = gamedata::progression_id("All");
             if (std::any_of(cost->mana.begin(), cost->mana.end(), [&](const std::string& entry) {
                     const std::uint32_t crc = gamedata::progression_id(entry);
@@ -1034,6 +1035,26 @@ void Abilities::change_mana(Entity& character, float amount, const char* what) {
                static_cast<double>(character.vitals.mana));
 }
 
+bool Abilities::holds_cast_weapon(const Cast& cast, const Entity& character) const {
+    const ItemInstance* item = Combat::weapon_in_hand(character);
+    return item != nullptr && item->itemId == cast.itemId && Combat::weapon_slot_in_hand(character).value_or(0) == cast.slot;
+}
+
+void Abilities::weapon_changed(Entity& character) {
+    const auto state = m_characters.find(character.characterId);
+    if (state == m_characters.end() || !state->second.cast) {
+        return;
+    }
+    const auto found = m_casts.find(*state->second.cast);
+    if (found == m_casts.end() || found->second.plan.window.empty() || found->second.countered || holds_cast_weapon(found->second, character)) {
+        return;
+    }
+    // The window of a counter ends with the weapon of its cast (finding F2 of the review of stage 3.3b-S4).
+    const std::string& window = found->second.plan.window;
+    m_world.statuses().remove(character, [&](const ActiveStatus& status) { return status.status == window; }, StatusEnd::replaced);
+    log::write("world: ability: %s changes the weapon: the window of %s ends", character.name.c_str(), ability_name(found->second.plan.kind));
+}
+
 bool Abilities::countered(Entity& character, Entity& attacker, float reach) {
     const auto state = m_characters.find(character.characterId);
     if (state == m_characters.end() || !state->second.cast || character.life.dead) {
@@ -1044,8 +1065,15 @@ bool Abilities::countered(Entity& character, Entity& attacker, float reach) {
         return false;
     }
     Cast& cast = found->second;
-    // The window is the status of the data on the character: the hit is a counter only while it is there.
     const std::string& window = cast.plan.window;
+    // The counter needs the weapon of the cast in the hand (the condition Riposte_Attack of the action data: the mannequin tag
+    // Rapier and the timer; code review of stage 3.3b-S4, finding F2). A different weapon ends the window.
+    if (!holds_cast_weapon(cast, character)) {
+        m_world.statuses().remove(
+            character, [&](const ActiveStatus& status) { return status.status == window; }, StatusEnd::replaced);
+        return false;
+    }
+    // The window is the status of the data on the character: the hit is a counter only while it is there.
     const bool open = std::any_of(character.statuses.begin(), character.statuses.end(), [&](const ActiveStatus& status) {
         return status.status == window && (status.permanent || m_world.clock().now() < status.ends);
     });
@@ -1087,6 +1115,11 @@ void Abilities::counter_hit(std::uint64_t number, std::uint32_t index, EntityId 
         || cast.hits.count({index, attacker}) != 0 || !has_data()) {
         return;
     }
+    // The counter action ends with a change of the weapon (finding F2 of the review of stage 3.3b-S4).
+    if (!holds_cast_weapon(cast, *caster)) {
+        log::write("world: ability: the counter of %s has no hit: the weapon of the cast is not in the hand", caster->name.c_str());
+        return;
+    }
     // The capsule of the counter action is in front of the caster: the attacker must still be in the reach of its hit, with
     // no wall between them.
     if (distance3(caster->position, target->position) > reach || !m_world.navigation().sees(caster->position, target->position)) {
@@ -1125,11 +1158,18 @@ MotionAllowance Abilities::motion_allowance(const Entity& character, WorldClock:
     }
     const CasterMotion& motion = *found->second.plan.motion;
     // The envelope runs for the length of the movement, and for one window of the check after it: the window of a report
-    // after the dash still has the places of the dash.
-    if (now < found->second.started || now > found->second.started + motion.length + position_limits::kWindow) {
+    // after the dash still has the places of the dash. A fast step only in the movement, and the extra distance one time
+    // for the cast: the budget from the place of the press (code review of stage 3.3b-S4, finding F1).
+    const Cast& cast = found->second;
+    if (now < cast.started || now > cast.started + motion.length + position_limits::kWindow) {
         return {};
     }
-    return MotionAllowance{motion.distance, motion.peak};
+    MotionAllowance allowance;
+    allowance.distance = motion.distance;
+    allowance.peak = now <= cast.started + motion.length ? motion.peak : 0.0F;
+    allowance.from = cast.place;
+    allowance.since = std::chrono::duration<float>(now - cast.started).count();
+    return allowance;
 }
 
 void Abilities::mark_motion(Entity& character) {

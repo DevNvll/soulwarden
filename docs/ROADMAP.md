@@ -190,7 +190,7 @@ below is the layout after the port.
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
-| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4 done | |
+| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3 done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
@@ -244,7 +244,7 @@ stage with a letter is a part of the system with that number.
 | 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | done |
 | 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | done |
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
-| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts. Part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), and part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte) are done; the parts S2b, S3, S5, S6 (the other spell entities, projectiles, critical hits, the heals of an ability, the other weapons) come next | 1.3b | S1, S2a, S4 done |
+| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts. Part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte), and part S3 (the projectiles of the basic attacks of the bow and the fire staff, and the check of a ranged hit) are done; the parts S2b, S5, S6 (the other spell entities, critical hits, the heals of an ability) and the parts of the weapons come next | 1.3b | S1, S2a, S4, S3 done |
 | 12 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
 | 13 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
 | 14 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
@@ -1147,6 +1147,33 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   part), the action Pushable and the PushBackScale of an elite, the part Z of an impact, the push of a character. Not in
   this stage: the critical hits and passive events (S5), the heals (S6), the projectiles (S3), the attached and
   persistent spells (S2b), the other abilities of the rapier and the other weapons.
+- Stage 3.3b-S3, the projectiles of a player and the check of a ranged hit (done, protocol notes 4.27, document
+  `docs/systems/projectiles.md`; evidence `~/Games/soulwarden/work/evidence/abilities-projectiles/implement/`). The live
+  checks came first (L1, L2, L5 with the backend of stage 3.3b-S4). A basic shot of the bow or the fire staff is one item
+  of the second list of the input entry: the origin, the direction, the charge (0, or 100 for the charged arrow at a hold
+  of 15 steps), the ammunition key (DefaultArrow: the ammunition-free setting of the client is on), the attack (`basic`,
+  `basic_heavy`), and the row (0 for a magic shot). The client reports no later hit (46 bow shots, 6 fire balls: no item and
+  no message after a hit on a wolf, a wall, or nothing), and the item has no number of its own; a creature in the first 2 m
+  is the receiver of the item itself (the hit near the muzzle). Thus the server follows each projectile: a new world system
+  (`world/projectiles.h`) accepts a shot with the rules of the data (the profile of the weapon, the attack, the row and the
+  charge of a shot rule, the hold of a heavy shot, the ammunition, the origin, the direction), keeps one ledger entry for
+  each press (the key: the character, the session, the input sequence, the press), flies the projectile on the world clock
+  with the speed, the acceleration (after its delay distance), the range, and the life time of the data, and gives the
+  first creature whose capsule (the capsule of its character, a new member of the creature data) the segment touches one
+  hit through `Combat::strike` (the damage modifier 1.2 of the ammunition); a wall or the ground (`Navigation::line_stop`)
+  stops it with no hit. The new tool `tools/gamedata/projectiles.sh` writes `projectile-data.json` (323 attacks, 85 slices,
+  105 ammunition rows, 261 weapons, 58 shots of basic attacks). The stage also corrected the two findings of the review of
+  stage 3.3b-S4 (cases RM1, RM2; each case fails on the tree of stage 3.3b-S4): one Charge gives its extra distance one
+  time (a budget from the place of the press), and the counter of Riposte needs the rapier in the hand. Test cases PJ1 to
+  PJ11 (PJ9: two sessions; PJ10: the load of 100 shots in 4,040 creatures, with a time limit), RM1, RM2. Live: a bow shot on
+  a wolf (the hit 128 ms after the launch, 270.6 damage), a charged shot (406.0), two fast shots (two hits), a miss, a shot
+  into the sky (its range), a shot that the yard wall stops (the wolf behind it keeps its health), light fire balls
+  (135.8), and the shots of a second character seen by the first one (the health bar, no number). Open: the observers see
+  no projectile (no projectile entity, type 16, and no message 327), the use of `m_extraSpeed`, the precedence of the
+  predicted acceleration of a profile, the heavy fire ball of a client of the harness (the hold bit), the grouped spread of
+  the blunderbuss (2719, 2570), headshots and the fall of the damage with the distance (S5). Not in this stage: the
+  abilities of the ranged and magic weapons (their own parts), the critical hits (S5), the heals (S6), the attached and
+  persistent spells (S2b).
 
 ### 3.4 Creatures: spawn, behavior, navigation
 

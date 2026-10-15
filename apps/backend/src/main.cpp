@@ -17,6 +17,7 @@
 #include "gamedata/appearance_tables.h"
 #include "gamedata/combat_tables.h"
 #include "gamedata/ability_data.h"
+#include "gamedata/projectile_data.h"
 #include "gamedata/spell_data.h"
 #include "gamedata/loot_tables.h"
 #include "gamedata/creature_data.h"
@@ -288,11 +289,16 @@ int main(int argc, char** argv) {
     const std::string creatureDataPath = (gameDataDirectory / gamedata::kCreatureDataFile).string();
     gamedata::CreatureData creatureData;
     if (creatureData.load(creatureDataPath)) {
-        log::write("backend: creature data loaded from %s (%zu spawn points, %zu kinds, %zu slices)",
+        const auto capsules = std::count_if(creatureData.slices().begin(), creatureData.slices().end(),
+                                            [](const gamedata::CreatureSlice& slice) { return slice.capsule.has_value(); });
+        log::write("backend: creature data loaded from %s (%zu spawn points, %zu kinds, %zu slices, %zu with the capsule of their "
+                   "character%s)",
                    creatureDataPath.c_str(),
                    creatureData.spawn_points().size(),
                    creatureData.kinds().size(),
-                   creatureData.slices().size());
+                   creatureData.slices().size(),
+                   static_cast<std::size_t>(capsules),
+                   capsules == 0 ? ": a file of a tool from before stage 3.3b-S3; a projectile uses the default capsule" : "");
     } else {
         log::write("backend: no creature data at %s (%s): the world has no creature. Make the file with "
                    "tools/gamedata/creatures.sh",
@@ -461,6 +467,23 @@ int main(int argc, char** argv) {
                    spellDataPath.c_str(),
                    spellData.error().c_str());
     }
+    // The projectile data (stage 3.3b-S3): the ranged attack profiles, the projectile slices, and the shots of the basic attacks.
+    const std::string projectileDataPath = (gameDataDirectory / gamedata::kProjectileDataFile).string();
+    gamedata::ProjectileData projectileData;
+    if (projectileData.load(projectileDataPath)) {
+        log::write("backend: projectile data loaded from %s (%zu ranged attacks, %zu projectile slices, %zu weapons with a profile, %zu "
+                   "shots of basic attacks)",
+                   projectileDataPath.c_str(),
+                   projectileData.tables().attacks.size(),
+                   projectileData.tables().slices.size(),
+                   projectileData.tables().weapons.size(),
+                   projectileData.tables().shots.size());
+    } else {
+        log::write("backend: no projectile data at %s (%s): each shot of a bow, a musket, or a magic weapon is refused. Make the "
+                   "file with tools/gamedata/projectiles.sh",
+                   projectileDataPath.c_str(),
+                   projectileData.error().c_str());
+    }
     // The perk data (stage 1.3b): the perks of an item instance and their effects.
     const std::string perkDataPath = (gameDataDirectory / gamedata::kPerkDataFile).string();
     gamedata::PerkData perkData;
@@ -510,6 +533,7 @@ int main(int argc, char** argv) {
     worldOptions.lootTables = &lootTables;
     worldOptions.abilityData = &abilityData;
     worldOptions.spellData = &spellData;
+    worldOptions.projectileData = &projectileData;
     worldOptions.perkData = &perkData;
     worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
     worldOptions.navigationData = &navigationData;

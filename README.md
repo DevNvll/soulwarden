@@ -2,7 +2,7 @@
 
 Soulwarden runs the last retail New World: Aeternum client against a server on your own computer. No public service is involved. The game talks to a local backend and to nothing else.
 
-It is early. You can create a character, walk and travel in the whole world, put on armor, and fight the creatures of the world with melee attacks and with the abilities of the great axe and the war hammer: the creatures patrol, see you, attack, and go back to their place.
+It is early. You can create a character, walk and travel in the whole world, put on armor, and fight the creatures of the world with melee attacks, with the basic attacks of the bow, the musket, and the magic staffs and gauntlets, and with the abilities of the great axe and the war hammer: the creatures patrol, see you, attack, and go back to their place.
 
 It supports one client build, `NewWorld.exe` 1.400.6031.6004151 from Steam app 1063730, on Linux with Proton. The SHA-256 of that file is `8654f01d324636d9f74f1c793b0cc4a417c3c5fa9847d9913c358ca29e0fdc8e`.
 
@@ -19,6 +19,7 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Melee combat with a sword, a great axe, a hatchet, a war hammer, or a spear. A hit shows its damage number, and creatures die.
 - The abilities of the great axe (Charge, Maelstrom, Gravity Well) and of the war hammer (Wrecking Ball, Shockwave, Path of Destiny), with the upgrades of their trees. An ability does its damage, its button on the HUD shows the cooldown, and a creature takes the stun, the root, the slow, the knockdown, or the weaken of the ability, with its icon at the name plate. The vortex of Gravity Well shows on the ground and bursts after 3 s with its damage numbers; another player near it sees the same vortex. Put the nodes and the bar in the Weapon Mastery window (K).
 - Pulls and pushes. Maelstrom pulls the creatures around you to you, the vortex of Gravity Well pulls the creatures in it to its center and its burst pushes them out, and Path of Destiny, Shockwave, Charge, and the light and heavy attacks of the melee weapons push a creature back, with the distances of the game data. A wall, a rock, or an edge stops a creature that a hit moves. The dash of Charge goes up to 14.7 m, and another player sees your character run in the dash.
+- Bows, muskets, staffs, and gauntlets. The basic attacks of the bow (a hip shot, an aimed shot, a charged shot) and of the fire staff fly on the server with the speed, the gravity, and the range of the game data, and do their damage when they hit a creature, about 0.1 s for 10 m. The musket, the life staff, the ice gauntlet, and the void gauntlet use the same rules with their data (not yet tested in the game). A wall or the ground stops a shot: the creature behind it takes nothing. A shot that misses does nothing. No arrows are necessary (the game does not ask for them).
 - Riposte of the rapier: a creature that hits you in the 1 s after the press takes the counter of the server (its damage, a stun of 2 s, and a push of 1.5 m), one time for each press.
 - A haste on your character makes your run and your sprint faster for its time (the Detonate heart rune: 1.2 times for 3 s).
 - Creatures fight. A creature sees your character, runs to it with its run animation, attacks, and goes back to its place at the end of its leash. 2,989 of the 3,848 kinds attack.
@@ -38,7 +39,7 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures do not jump, drop from an edge, climb, swim, or fly. A creature that has no way to you waits at the place nearest to you for 12 s and then goes back.
 - Creatures do not fight in groups, call others, or flee. Only 23 of the 24,895 waypoint tasks of the patrols have an animation, so a creature stands in its idle pose at the other waypoints.
 - 859 kinds of creature have no attack yet: they do not attack you, but they patrol or wander when their data has a route. No creature has a ranged attack, magic, or an ability.
-- Only the six abilities of the great axe and the war hammer, and the counter of Riposte, work. The other abilities of the rapier and the abilities of the other weapons do nothing. Your character does not play the counter animation of Riposte (it plays its block pose and then stands). An elite creature is pushed as far as a normal creature. A hit does not push your character. The vortex stays and bursts when its caster dies. Most passive nodes and the effects on your own character that need grit, stamina, or a critical hit do nothing.
+- Only the six abilities of the great axe and the war hammer, and the counter of Riposte, work. The other abilities of the rapier and the abilities of the other weapons do nothing. The blunderbuss does nothing (its spread is not done). Other players do not see the arrow or the fire ball of your shot, only its hit. A heavy attack of a staff in a development run of the harness is a light attack (the input of the harness). Headshots, critical hits, and the fall of the damage with the distance are not done. Your character does not play the counter animation of Riposte (it plays its block pose and then stands). An elite creature is pushed as far as a normal creature. A hit does not push your character. The vortex stays and bursts when its caster dies. Most passive nodes and the effects on your own character that need grit, stamina, or a critical hit do nothing.
 - Perks that need grit, stamina, critical hits, a dodge, or another player do nothing. Only the Detonate heart rune works. No crafting, repair, salvage, or gem socket.
 - Nothing drops on the ground. A full bag loses the items that have no slot.
 - You cannot block or dodge. The tool window heals your character.
@@ -69,7 +70,7 @@ tools/build-soulwarden-game-hook.sh
 tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh     # the backend tests, with no game process
 
-tools/gamedata/appearance.sh         # thirteen game data tools, one time each
+tools/gamedata/appearance.sh         # fourteen game data tools, one time each
 tools/gamedata/slice_ids.sh
 tools/gamedata/items.sh
 tools/gamedata/progression.sh
@@ -79,6 +80,7 @@ tools/gamedata/loot.sh
 tools/gamedata/abilities.sh
 tools/gamedata/perks.sh
 tools/gamedata/spells.sh
+tools/gamedata/projectiles.sh
 tools/gamedata/places.sh
 tools/gamedata/heights.sh
 tools/gamedata/navigation.sh
@@ -98,17 +100,18 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `slice_ids.sh` | The server does not check the target of a client message |
 | `items.sh` | No items, and a new character has no clothing |
 | `progression.sh` | No levels and no skill points |
-| `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still; with a file from before the ability stage, a knockdown shows the small hit reaction: run the tool again |
+| `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still; with a file from before the ability stage, a knockdown shows the small hit reaction; with a file from before the projectile stage, a shot hits each creature with one size: run the tool again |
 | `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature; with a file from before the loot stage, a kill gives no weapon mastery experience; with a file from before the stage of the pulls and pushes, a hit moves no creature: run the tool again |
 | `loot.sh` | A kill gives no experience, no coin, and no loot |
 | `abilities.sh` | An ability does nothing. With a file from before the itemization stage, a perk of a hit, a consumable, and the heart rune have no status data, and the mana does not come back: run the tool again |
 | `perks.sh` | An item has no perk, a perk has no effect, and a potion, a food, and the heart rune do nothing |
 | `spells.sh` | The vortex of Gravity Well has no picture (its damage stays) |
+| `projectiles.sh` | A shot of a bow, a musket, a staff, or a gauntlet does nothing |
 | `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
 | `heights.sh` | With no navigation data, creatures do not leave their place. They attack only when you are in their reach |
 | `navigation.sh` | Creatures go on a straight line on the terrain, through walls and rocks, and they see you through a wall. A creature on a floor of a building does not leave its place |
 
-Some tables of the game have Oodle compression. `creatures.sh`, `places.sh`, and `spells.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute, and `heights.sh` for about two minutes (it needs no Oodle library). `navigation.sh` needs the Oodle library and a C and a C++ compiler, and it runs for about 45 minutes with 8 processes. It makes the navigation data of the whole world from the collision shapes of the game copy, and then the folder of `heights.sh` again. When it stops, run it again: it makes only the regions that are not complete. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
+Some tables of the game have Oodle compression. `creatures.sh`, `places.sh`, `spells.sh`, and `projectiles.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute, and `heights.sh` for about two minutes (it needs no Oodle library). `navigation.sh` needs the Oodle library and a C and a C++ compiler, and it runs for about 45 minutes with 8 processes. It makes the navigation data of the whole world from the collision shapes of the game copy, and then the folder of `heights.sh` again. When it stops, run it again: it makes only the regions that are not complete. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
 
 ## The tool window
 

@@ -104,7 +104,21 @@ void AttackTrack::step(std::uint16_t input, bool press, bool hold, bool release,
             end(*m_current);
         }
     }
+    // The release bit of the newest attack input (stage 3.3b-S3): also in the step of its start (a press of one step).
+    if (release && m_current && !m_current->released) {
+        m_current->released = true;
+        m_current->releaseInput = input;
+    }
     m_pressed = press;
+}
+
+const AttackTrack::Press* AttackTrack::press_at(std::uint16_t input) const {
+    for (const std::optional<Press>* attack : {&m_current, &m_previous}) {
+        if (*attack && steps_between((*attack)->input, input) <= combat_limits::kNewerRange) {
+            return &**attack;
+        }
+    }
+    return nullptr;
 }
 
 const AttackTrack::Press* AttackTrack::press_for(std::uint16_t input) const {
@@ -212,6 +226,8 @@ void Combat::select_weapon(SessionId session, unsigned key) {
         entity->combat.selectedWeapon = slot;
         // The perks of a weapon with OnActive count only while it is in the hand (stage 1.3b).
         m_world.gear().refresh(*entity);
+        // The window of a counter ends with the weapon of its cast (finding F2 of the review of stage 3.3b-S4).
+        m_world.abilities().weapon_changed(*entity);
     }
 }
 

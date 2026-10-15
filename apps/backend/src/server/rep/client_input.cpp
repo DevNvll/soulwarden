@@ -76,9 +76,12 @@ constexpr unsigned kActionAbility[3] = {402, 115, 139};
  */
 constexpr unsigned kActionQuickslot[4] = {404, 117, 140, 513};
 constexpr unsigned kActionRune = 450;
-/** Offsets in a shot item of the second list: the start, the direction, and the attack (reader 0x2A1A590). */
-constexpr std::size_t kShotDirection = 12;
-constexpr std::size_t kShotAttack = 180;
+/** The aim input ("aim_draw"): bit 126 (research abilities-ranged.md Q2; live check L2 of stage 3.3b-S3). */
+constexpr unsigned kActionAim = 126;
+/** Offsets in a shot item of the second list (reader 0x2A1A590; protocol notes 4.27). */
+constexpr std::size_t kShotPoint = 36;
+constexpr std::size_t kShotReceiver = 92;
+constexpr std::size_t kShotCharge = 172;
 
 /** The values of an entry that the next entry of the message has when it does not send them. */
 struct EntryBase {
@@ -303,8 +306,23 @@ void read_tail(hub::Reader& reader, std::uint32_t mask, EntryBase& base, ClientI
         InputShot shot;
         shot.origin = read_vector(fields);
         shot.direction = read_vector(fields);
-        fields.raw(kShotAttack - 2 * kShotDirection);
+        read_vector(fields); // The offset of the aim (wire 24).
+        shot.point = read_vector(fields);
+        fields.raw(kShotReceiver - kShotPoint - 12);
+        const auto actor = fields.raw(shot.receiverActor.size());
+        shot.receiver = fields.u64();
+        shot.facet = fields.u64();
+        fields.raw(kShotCharge - kShotReceiver - 32);
+        shot.charge = fields.f32();
+        shot.ammo = fields.u32();
         shot.attack = fields.u32();
+        shot.row = fields.u32();
+        if (!fields.ok()) {
+            break;
+        }
+        std::copy(actor.begin(), actor.end(), shot.receiverActor.begin());
+        // A receiver with no actor id is no receiver (a miss of the query near the muzzle: the actor id 0, G 0xFFFFFFFF).
+        shot.hasReceiver = std::any_of(shot.receiverActor.begin(), shot.receiverActor.end(), [](std::uint8_t byte) { return byte != 0; });
         step.shotItems.push_back(shot);
     }
     if (!read_count(reader, kContactSize, contacts)) {
@@ -418,6 +436,7 @@ std::optional<ClientInput> read_entry(hub::Reader& reader, EntryBase& base, Inpu
             }
         }
         step.runeKey = step.runeKey || has_action(words, index, kActionRune);
+        step.aim = step.aim || has_action(words, index, kActionAim);
     }
     for (float& axis : input.axes) {
         axis = static_cast<float>(reader.u8()) / 256.0F * 2.0F - 1.0F;

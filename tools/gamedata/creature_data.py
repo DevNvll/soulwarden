@@ -213,6 +213,15 @@ FACET_FIELDS = (field_id("m_clientFacetPtr"), field_id("m_serverFacetPtr"))
 SPAWN_RADIUS_FIELD = field_id("m_sliceSpawnRadius")
 GRID_FIELD = field_id("m_actionGridNew")
 SPAWN_ACTION_FIELD = field_id("m_spawnAction")
+# The capsule of the character of a slice (stage 3.3b-S3): the CharacterComponent and the QueryShapeCapsule of its m_shape
+# (the class ids of the supported build), with m_Radius, m_Height, m_axis, and the m_shapeOffset of the component.
+CHARACTER_CLASS = uuid.UUID("15407caa-4970-4d06-8b5c-612fba11bb45")
+CAPSULE_CLASS = uuid.UUID("7495c65c-9193-4193-bbb2-de3343b9eb03")
+SHAPE_FIELD = field_id("m_shape")
+SHAPE_OFFSET_FIELD = field_id("m_shapeOffset")
+CAPSULE_RADIUS_FIELD = field_id("m_Radius")
+CAPSULE_HEIGHT_FIELD = field_id("m_Height")
+CAPSULE_AXIS_FIELD = field_id("m_axis")
 CONTROLLER_FIELD = field_id("m_controllerDefinition")
 ASSET_PATH_FIELD = field_id("AssetPath")
 # An asset field has the id (16 bytes), the sub id and 12 zero bytes, the type id (16 bytes), the
@@ -851,6 +860,42 @@ def read_action_table(sources: Sources, roots: list[Element]) -> list[list] | No
     return actions
 
 
+def vector_of(element: Element | None, what: str) -> list[float]:
+    """@return The three floats of an AZ::Vector3 field (12 bytes, big-endian)."""
+    if element is None or element.value is None or len(element.value) not in (12, 16):
+        raise Failure(f"{what} is not a vector of three floats")
+    values = struct.unpack(">3f", element.value[:12])
+    if not all(math.isfinite(value) for value in values):
+        raise Failure(f"{what} has a number that is not finite")
+    return [round(value, 6) for value in values]
+
+
+def read_capsule(path: str, roots: list[Element]) -> list | None:
+    """@return The capsule of the CharacterComponent of a slice (stage 3.3b-S3): [radius, height, [axis], [offset]], or
+    nothing when the slice has none. A radius or a height that is not a finite 32-bit float stops the tool. An axis of 0
+    (some slices of the game have it) makes the capsule a sphere of its radius."""
+    for root in roots:
+        for element in walk(root):
+            if element.type_id != CHARACTER_CLASS:
+                continue
+            shape = find_field(element, SHAPE_FIELD)
+            capsule = next((node for node in walk(shape) if node.type_id == CAPSULE_CLASS), None) if shape is not None else None
+            if capsule is None:
+                return None
+            values = []
+            for field, label in ((CAPSULE_RADIUS_FIELD, "m_Radius"), (CAPSULE_HEIGHT_FIELD, "m_Height")):
+                node = find_field(capsule, field)
+                if node is None or node.value is None or len(node.value) != 4 or not math.isfinite(struct.unpack(">f", node.value)[0]):
+                    raise Failure(f"{path}: the {label} of the capsule of the character is not a finite 32-bit float")
+                values.append(round(struct.unpack(">f", node.value)[0], 6))
+            if values[0] <= 0.0 or values[1] < 0.0:
+                raise Failure(f"{path}: the capsule of the character has a radius or a height that is not a size")
+            offset = find_field(element, SHAPE_OFFSET_FIELD)
+            return [values[0], values[1], vector_of(find_field(capsule, CAPSULE_AXIS_FIELD), f"{path}: the axis of the capsule"),
+                    vector_of(offset, f"{path}: the offset of the capsule") if offset is not None else [0.0, 0.0, 0.0]]
+    return None
+
+
 def read_creature_slice(path: str, asset: tuple[bytes, int], roots: list[Element]) -> dict:
     """@return The data of one creature slice: its root entity, and each component with a replicated state or a facet."""
     entities: list[tuple[int, int | None]] = []
@@ -901,10 +946,14 @@ def read_creature_slice(path: str, asset: tuple[bytes, int], roots: list[Element
     if len(set(numbers)) != len(numbers):
         raise Failure(f"{path}: two components of the slice have the same slot")
     by_name = {slot[1]: slot[0] for slot in reversed(slots)}
-    return {"path": path, "asset": str(uuid.UUID(bytes=asset[0])).upper(), "sub": asset[1],
-            "root": f"{slice_roots[-1]:016X}", "interestRadius": round(radius, 3),
-            "movement": by_name.get(MOVEMENT, 0), "vitals": by_name.get(VITALS, 0), "marker": by_name.get(MARKER, 0),
-            "slots": slots, "components": components, "gameSpawnAction": spawn_action}
+    entry = {"path": path, "asset": str(uuid.UUID(bytes=asset[0])).upper(), "sub": asset[1],
+             "root": f"{slice_roots[-1]:016X}", "interestRadius": round(radius, 3),
+             "movement": by_name.get(MOVEMENT, 0), "vitals": by_name.get(VITALS, 0), "marker": by_name.get(MARKER, 0),
+             "slots": slots, "components": components, "gameSpawnAction": spawn_action}
+    capsule = read_capsule(path, roots)
+    if capsule is not None:
+        entry["capsule"] = capsule
+    return entry
 
 
 def yaw_of(rotation: dict) -> float:
@@ -942,6 +991,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                  "behavior": {"sight": [angle, distance], "combatSight": [angle, distance],
                               "leash": [at rest, in a fight], "speed": [walk, run]},
                  "tags": HEX,                          the tag state of its animation fragments (12 bytes)
+                 "capsule": [radius, height, [x, y, z] axis, [x, y, z] offset],   the capsule of the
+                                                       CharacterComponent of the slice (stage 3.3b-S3); only
+                                                       for a slice that has one
                  "attacks": [[action, time, [[contact time, reach, damage factor, added damage,
                                               damage type, type number, type category, damage row], ...]], ...]},
                 ...]

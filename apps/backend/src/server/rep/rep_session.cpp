@@ -8,6 +8,7 @@
 #include <string>
 
 #include "core/logging/log.h"
+#include "gamedata/progression_tables.h"
 #include "middleware/steam/local_ticket.h"
 #include "server/hub/wire.h"
 #include "server/rep/combat_messages.h"
@@ -542,6 +543,19 @@ void RepSession::log_message_counts() const {
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::noTables)),
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::immune)),
                    static_cast<unsigned long long>(m_projectileItems));
+    }
+    if (std::any_of(m_shots.begin(), m_shots.end(), [](std::uint64_t count) { return count != 0; })) {
+        std::string causes;
+        for (std::size_t verdict = 1; verdict < m_shots.size(); ++verdict) {
+            if (m_shots[verdict] != 0) {
+                causes += (causes.empty() ? "" : ", ") + std::to_string(m_shots[verdict]) + " "
+                          + world::shot_verdict_text(static_cast<world::ShotVerdict>(verdict));
+            }
+        }
+        log::write("rep: shots of the session (stage 3.3b-S3): %llu accepted%s%s",
+                   static_cast<unsigned long long>(m_shots[0]),
+                   causes.empty() ? "" : ", refused: ",
+                   causes.c_str());
     }
     if (m_abilityPresses != 0) {
         log::write("rep: ability presses of the session: %llu (the casts and the refusals are in the line abilities of tools/world list)",
@@ -1284,15 +1298,9 @@ void RepSession::handle_attacks(const ClientInput& input) {
             const world::RuneVerdict verdict = m_world.runes().activate(m_id);
             log::write("rep: heart rune key (input %u): %s", static_cast<unsigned>(step.sequence), world::rune_verdict_text(verdict));
         }
-        // A shot of the client: the projectile of an ability of its character (Gravity Well).
-        for (const InputShot& item : step.shotItems) {
-            world::AbilityShot shot;
-            shot.input = step.sequence;
-            shot.sequence = m_attack.sequence();
-            shot.attack = item.attack;
-            shot.origin = state::WorldPosition{item.origin[0], item.origin[1], item.origin[2]};
-            shot.direction = item.direction;
-            m_world.abilities().shot(m_id, shot);
+        // A shot of the client: the projectile of a ranged or magic attack (stage 3.3b-S3), or of Gravity Well.
+        for (std::uint32_t ordinal = 0; ordinal < step.shotItems.size(); ++ordinal) {
+            shoot(step, step.shotItems[ordinal], ordinal);
         }
         for (const InputContact& contact : step.contacts) {
             claim_hit(step, contact);
@@ -1337,6 +1345,54 @@ void RepSession::press_ability(const ClientInput& input, const InputStep& step) 
                    world::cast_verdict_text(verdict),
                    static_cast<unsigned>(step.abilityKey),
                    static_cast<unsigned>(step.sequence));
+    }
+}
+
+void RepSession::shoot(const InputStep& step, const InputShot& item, std::uint32_t ordinal) {
+    if (item.attack == gamedata::progression_id(world::kGravityWellAttack)) {
+        // The projectile of an ability of its character (Gravity Well, stage 3.3a): the abilities system.
+        world::AbilityShot shot;
+        shot.input = step.sequence;
+        shot.sequence = m_attack.sequence();
+        shot.attack = item.attack;
+        shot.origin = state::WorldPosition{item.origin[0], item.origin[1], item.origin[2]};
+        shot.direction = item.direction;
+        m_world.abilities().shot(m_id, shot);
+        return;
+    }
+    // The world finds the character from the session, checks the shot, and follows its projectile (world/projectiles.h). A
+    // shot that it refuses changes nothing and gets no message.
+    world::ShotClaim claim;
+    claim.input = step.sequence;
+    claim.sequence = m_attack.sequence();
+    claim.ordinal = ordinal;
+    claim.origin = state::WorldPosition{item.origin[0], item.origin[1], item.origin[2]};
+    claim.direction = item.direction;
+    claim.charge = item.charge;
+    claim.ammo = item.ammo;
+    claim.attack = item.attack;
+    claim.row = item.row;
+    claim.hasReceiver = item.hasReceiver;
+    claim.nearActor.bytes = item.receiverActor;
+    claim.nearId = item.receiver;
+    claim.nearFacet = item.facet;
+    claim.nearPoint = state::WorldPosition{item.point[0], item.point[1], item.point[2]};
+    claim.observed = item.hasReceiver && item.receiver != m_observer.own() && m_observer.find(item.receiver) != nullptr;
+    claim.locked = m_travelAnchor.has_value();
+    const world::ShotResult result = m_world.projectiles().launch(m_id, claim, m_attack);
+    const auto cause = static_cast<std::size_t>(result.verdict);
+    ++m_shots[cause];
+    if (result.verdict != world::ShotVerdict::accepted && !m_shotVerdictLogged[cause]) {
+        m_shotVerdictLogged[cause] = true;
+        log::write("rep: shot refused (%s): input %u, attack %08x, row %08x, charge %.0f, ammunition %08x%s (the first shot of the "
+                   "session with this cause)",
+                   world::shot_verdict_text(result.verdict),
+                   static_cast<unsigned>(step.sequence),
+                   item.attack,
+                   item.row,
+                   item.charge,
+                   item.ammo,
+                   item.hasReceiver ? ", with a receiver near the muzzle" : "");
     }
 }
 

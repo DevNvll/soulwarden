@@ -63,6 +63,9 @@ namespace soulwarden::backend::world {
 
 class World;
 
+/** The ranged attack name of the projectile of Gravity Well (live check L7 of stage 3.3a: the shot item has its CRC-32). */
+inline constexpr const char* kGravityWellAttack = "GravityWell";
+
 /** The constants of the abilities that the game data does not give (rules of this project). */
 namespace ability_rules {
 /** Input steps of the client in one second. */
@@ -392,6 +395,11 @@ public:
      */
     [[nodiscard]] float mana_cost(const Entity& character, const CastPlan& plan) const;
     /**
+     * @return The mana cost of a cost id of the mana table of the players for a character (the rule of `mana_cost`): its
+     *         ManaCost times the node multipliers. 0: no such id (stage 3.3b-S3: the cost of a magic shot).
+     */
+    [[nodiscard]] float mana_cost_of(const Entity& character, std::string_view costId) const;
+    /**
      * The one path of a change of the mana of a character (stage 1.3b, I14): a cost (a negative amount) and a gain (a
      * potion). The mana stays between 0 and its maximum. A spend starts the regeneration after the delay of the data
      * (ManaRegenDelay, or ManaRegenDelayOnEmpty at 0). The vitals state and the mana state of the owner change.
@@ -421,6 +429,11 @@ public:
      * @return True when the hit started a counter.
      */
     bool countered(Entity& character, Entity& attacker, float reach);
+    /**
+     * The weapon in the hand of a character changed (Combat::select_weapon): the window of a counter of its cast ends when the
+     * weapon of the cast is not in the hand (code review of stage 3.3b-S4, finding F2).
+     */
+    void weapon_changed(Entity& character);
     /** The world calls it in each tick: the mana regeneration of the characters whose mana is not full, and the dashes of the server. */
     void tick();
     /**
@@ -496,6 +509,8 @@ private:
     };
 
     CastVerdict refuse(CastVerdict verdict);
+    /** @return True when the weapon of the cast (its item in its slot) is the weapon in the hand of the character. */
+    [[nodiscard]] bool holds_cast_weapon(const Cast& cast, const Entity& character) const;
     /** @return The id text of an ability (the node of the progression tables), or an empty text. */
     [[nodiscard]] std::string ability_text(std::uint32_t ability) const;
     /** Puts the cooldowns of a character into its entity and marks the cooldown state. */

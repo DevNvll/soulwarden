@@ -263,6 +263,8 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   call (stage 3.3b-S4: `action_sampler.py` of the evidence folder).
 - The dash of Charge and the projectile of Gravity Well go in the direction of the camera of the client, not of the
   body: turn the camera to the target before the press (a dash of a test went into a wall after 5.8 m).
+- A test of a bow or a staff: read the traps of [Projectiles](../systems/projectiles.md) first (the aim and the
+  crosshair, the camera of a staff, the heavy attack of a staff with the harness, the capture folder).
 - The client has a day and a night with no world time of the server: the videos of stage 3.3b-S4 had the night and
   are dark. Put the creatures near a lamp of the street at the default spawn ([Creatures](../systems/creatures.md),
   Traps), and crop the frames near the creatures.

@@ -172,6 +172,20 @@ struct CreatureAttack {
     bool heavy{false};
 };
 
+/**
+ * The capsule of the character of a creature slice (stage 3.3b-S3): the QueryShapeCapsule of the CharacterComponent of the
+ * slice (game data). The segment of the capsule has the length `height` on `axis` (a direction in the frame of the
+ * creature: x to its right, y to its front, z up); `radius` is around it, and `offset` moves it in the same frame. An axis
+ * of 0 makes it a sphere. The projectile system (world/projectiles.h) puts the lowest point of the capsule at the feet of
+ * the creature (a decision of this project: the game files do not say where the capsule is).
+ */
+struct CreatureCapsule {
+    float radius{0.0F};
+    float height{0.0F};
+    std::array<float, 3> axis{0.0F, 0.0F, 1.0F};
+    std::array<float, 3> offset{};
+};
+
 /** One slice of a creature. */
 struct CreatureSlice {
     /** One component of the slice that has a facet: a target of a client message (protocol notes 4.2). */
@@ -288,6 +302,8 @@ struct CreatureSlice {
     FragmentTags tags{};
     /** The behavior values of the slice. No value: a creature with this slice stands. */
     std::optional<CreatureBehavior> behavior;
+    /** The capsule of the character of the slice (stage 3.3b-S3). No value: the slice has none, or a file of an older tool. */
+    std::optional<CreatureCapsule> capsule;
     /** The attacks of the slice. Empty: a creature with this slice does not attack. */
     std::vector<CreatureAttack> attacks;
     /** The indexes of its attacks that are not heavy, and of its heavy attacks, in the sequence of the data. */

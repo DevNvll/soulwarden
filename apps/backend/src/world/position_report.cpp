@@ -152,6 +152,11 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
         if (distance > windowSpeed * windowSeconds + kWindowMargin + extra) {
             return counted(PositionVerdict::tooFast);
         }
+        // The budget of the dash: one cast gives its extra distance one time (finding F1 of the review of stage 3.3b-S4).
+        if (allowance.from && std::isfinite(allowance.since)
+            && horizontal_distance(position, *allowance.from) > windowSpeed * std::max(allowance.since, 0.0F) + kWindowMargin + extra) {
+            return counted(PositionVerdict::tooFast);
+        }
         // The height over more than one report. The rises of the accepted reports have one
         // budget of time, and the falls have a second one: an accepted report takes the time of
         // its rise at the rise speed from the first one, and the time of its fall at the fall

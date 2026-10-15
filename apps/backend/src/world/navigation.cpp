@@ -813,6 +813,61 @@ bool Navigation::sees(const state::WorldPosition& eye, const state::WorldPositio
     return true;
 }
 
+std::optional<float> Navigation::line_stop(const state::WorldPosition& from, const state::WorldPosition& to) const {
+    ++m_counts.lineTests;
+    if (!has_data() || !usable(from) || !usable(to)) {
+        return std::nullopt;
+    }
+    const float cell = m_agent.cell;
+    const float dx = to.x - from.x;
+    const float dy = to.y - from.y;
+    const auto firstX = static_cast<std::int32_t>(std::floor(from.x / cell));
+    const auto firstY = static_cast<std::int32_t>(std::floor(from.y / cell));
+    const auto lastX = static_cast<std::int32_t>(std::floor(to.x / cell));
+    const auto lastY = static_cast<std::int32_t>(std::floor(to.y / cell));
+    // Each cell of the line, from cell to cell, with the heights of the line at the two edges of its part in the cell (the
+    // walk of `sees`). Each cell is a cell of the line: the first one too (a point of the line in a solid is in a solid).
+    const std::int32_t stepX = dx > 0.0F ? 1 : (dx < 0.0F ? -1 : 0);
+    const std::int32_t stepY = dy > 0.0F ? 1 : (dy < 0.0F ? -1 : 0);
+    constexpr float kNever = std::numeric_limits<float>::infinity();
+    float nextX = stepX > 0 ? ((static_cast<float>(firstX) + 1.0F) * cell - from.x) / dx
+                : stepX < 0 ? (static_cast<float>(firstX) * cell - from.x) / dx
+                            : kNever;
+    float nextY = stepY > 0 ? ((static_cast<float>(firstY) + 1.0F) * cell - from.y) / dy
+                : stepY < 0 ? (static_cast<float>(firstY) * cell - from.y) / dy
+                            : kNever;
+    const float deltaX = stepX != 0 ? cell / std::fabs(dx) : kNever;
+    const float deltaY = stepY != 0 ? cell / std::fabs(dy) : kNever;
+    const auto height_at = [&](float part) { return from.z + (to.z - from.z) * std::clamp(part, 0.0F, 1.0F); };
+    std::int32_t cellX = firstX;
+    std::int32_t cellY = firstY;
+    float entry = 0.0F;
+    const std::int32_t cells = std::abs(lastX - firstX) + std::abs(lastY - firstY) + 2;
+    for (std::int32_t visited = 0; visited < cells; ++visited) {
+        ++m_counts.lineCells;
+        const float exit = std::min({nextX, nextY, 1.0F});
+        const float a = height_at(entry);
+        const float b = height_at(exit);
+        if (!line_free(cellX, cellY, std::min(a, b), std::max(a, b))) {
+            ++m_counts.lineStopped;
+            return std::clamp(entry, 0.0F, 1.0F);
+        }
+        if ((cellX == lastX && cellY == lastY) || exit >= 1.0F) {
+            break;
+        }
+        if (nextX <= nextY) {
+            cellX += stepX;
+            entry = nextX;
+            nextX += deltaX;
+        } else {
+            cellY += stepY;
+            entry = nextY;
+            nextY += deltaY;
+        }
+    }
+    return std::nullopt;
+}
+
 bool Navigation::line_free(std::int32_t cellX, std::int32_t cellY, float low, float high) const {
     NavSpot found[NavTile::kMaxFloors];
     const int count = spots(cellX, cellY, found);

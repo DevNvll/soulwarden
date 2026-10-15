@@ -384,6 +384,67 @@ WorldCommand cast_ability(const std::string& character, const Arguments& argumen
     };
 }
 
+WorldCommand shoot(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    const auto yaw = arguments.has("yaw") ? arguments.number("yaw", -360.0F, 360.0F) : std::optional<float>(0.0F);
+    const auto pitch = arguments.has("pitch") ? arguments.number("pitch", -89.0F, 89.0F) : std::optional<float>(0.0F);
+    const auto heavy = arguments.has("heavy") ? arguments.integer("heavy", 0, 1) : std::optional<std::uint64_t>(0);
+    if (!yaw || !pitch || !heavy) {
+        refusal = message(400, "give yaw=DEGREES (-360 to 360, from north to the east), pitch=DEGREES (-89 to 89, up) and heavy=0 or 1");
+        return {};
+    }
+    return [character, shot = world::ServerShot{*yaw, *pitch, *heavy == 1}](world::World& target) {
+        const world::ShotResult result = target.projectiles().launch_character(character, shot);
+        log::write("world: command: character %s shoots (yaw %.0f, pitch %.0f, %s): %s",
+                   character.c_str(),
+                   shot.yaw,
+                   shot.pitch,
+                   shot.heavy ? "heavy" : "light",
+                   world::shot_verdict_text(result.verdict));
+        return json_reply(result.verdict == world::ShotVerdict::accepted ? 200 : 409,
+                          json{{"message", world::shot_verdict_text(result.verdict)}, {"projectile", result.projectile}, {"applied", "world"}}.dump());
+    };
+}
+
+json projectiles_json(world::World& target) {
+    json flying = json::array();
+    for (const world::ProjectileView& view : target.projectiles().active()) {
+        const world::Entity* caster = target.find_character(view.characterId);
+        flying.push_back({{"number", view.number},
+                          {"caster", caster != nullptr ? caster->name : view.characterId},
+                          {"attack", view.attack},
+                          {"row", view.row},
+                          {"travelled", view.travelled},
+                          {"age", view.age.count() / 1000.0},
+                          {"position", {view.position.x, view.position.y, view.position.z}}});
+    }
+    const world::ProjectileCounts& counts = target.projectiles().counts();
+    json shots = json::object();
+    for (std::size_t verdict = 0; verdict < world::kShotVerdictCount; ++verdict) {
+        if (counts.shots[verdict] != 0) {
+            shots[world::shot_verdict_text(static_cast<world::ShotVerdict>(verdict))] = counts.shots[verdict];
+        }
+    }
+    json ends = json::object();
+    for (std::size_t end = 0; end < world::kProjectileEndCount; ++end) {
+        if (counts.ends[end] != 0) {
+            ends[world::projectile_end_text(static_cast<world::ProjectileEnd>(end))] = counts.ends[end];
+        }
+    }
+    const world::NavigationCounts& navigation = target.navigation().counts();
+    return json{{"data", target.projectiles().has_data()},
+                {"flying", flying},
+                {"shots", shots},
+                {"ends", ends},
+                {"damage", counts.damage},
+                {"steps", counts.steps},
+                {"looked", counts.looked},
+                {"largest", counts.largest},
+                {"ledger", target.projectiles().ledger_size()},
+                {"lineTests", navigation.lineTests},
+                {"lineCells", navigation.lineCells},
+                {"lineStopped", navigation.lineStopped}};
+}
+
 WorldCommand end_spells(const std::string& character, const Arguments&, service::HttpResponse&) {
     return [character](world::World& target) {
         const world::Entity* entity = target.find_character(character);

@@ -42,6 +42,7 @@
 #include "world/rewards.h"
 #include "world/runes.h"
 #include "world/skills.h"
+#include "world/projectiles.h"
 #include "world/spells.h"
 #include "world/statuses.h"
 #include "world/world_clock.h"
@@ -251,6 +252,8 @@ struct WorldOptions {
     const gamedata::PerkData* perkData{nullptr};
     /** The spell entity data (game data, stage 3.3b-S2a). Null or not loaded: a spell entity has its hits and no record. */
     const gamedata::SpellData* spellData{nullptr};
+    /** The projectile data (game data, stage 3.3b-S3). Null or not loaded: each shot of a ranged or magic basic attack is refused. */
+    const gamedata::ProjectileData* projectileData{nullptr};
     /**
      * The terrain heights (game data): the ground for a creature that walks. Null: no creature
      * leaves its place. The world asks it only in the world thread.
@@ -678,6 +681,13 @@ public:
     [[nodiscard]] const Spells& spells() const {
         return m_spells;
     }
+    /** @return The projectiles of the players (stage 3.3b-S3): the shots, the flights, and the hits. */
+    [[nodiscard]] Projectiles& projectiles() {
+        return m_projectiles;
+    }
+    [[nodiscard]] const Projectiles& projectiles() const {
+        return m_projectiles;
+    }
     /** @return The navigation: the ground, the next step, and the sight of a creature. */
     [[nodiscard]] Navigation& navigation() {
         return m_navigation;
@@ -765,6 +775,7 @@ private:
     Statuses m_statuses;
     /** The spell entities (stage 3.3b-S2a). */
     Spells m_spells;
+    Projectiles m_projectiles;
     Revision m_lastSpell{0};
 };
 

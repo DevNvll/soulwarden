@@ -78,7 +78,9 @@ protocol notes (section 6).
   the status effects ([Status effects](status-effects.md)); the tool window has no button for
   them. Stage 3.3b-S2a: the commands `cast_ability` (arguments `place`, 0 to 2, and `yaw`,
   degrees from the north to the east) and `end_spells` (no argument) are the commands of the
-  spell entities ([Spell entities](spells.md)); the tool window has no button for them. The
+  spell entities ([Spell entities](spells.md)); the tool window has no button for them. Stage 3.3b-S3: the command
+  `shoot` (arguments `yaw`, degrees from the north to the east, `pitch`, degrees up, and `heavy`, 0 or 1) is the shot of
+  the weapon in the hand ([Projectiles](projectiles.md)); the tool window has no button for it. The
   perk roll of an item (`tools/world perkroll`) is a development
   route only. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn

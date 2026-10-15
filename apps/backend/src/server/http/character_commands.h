@@ -134,6 +134,13 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand end_spells(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /** @return The spell entities of the world (world thread): each one with its spell, its caster, its age, its end, and the counts. */
 [[nodiscard]] nlohmann::json spells_json(world::World& world);
+// The projectile commands (stage 3.3b-S3, world/projectiles.h). shoot: `yaw` (degrees from north to the east; default 0),
+// `pitch` (degrees, positive up, -89 to 89; default 0), and `heavy` (0 or 1; default 0): a shot of the server for a character
+// with no client (a remote test character), with the weapon in its hand, the rules, the cost, the flight, and the hit of a
+// shot of a client.
+[[nodiscard]] WorldCommand shoot(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/** @return The projectiles in the air (world thread), the counts of the shots by verdict, of the ends by cause, and of the work. */
+[[nodiscard]] nlohmann::json projectiles_json(world::World& world);
 // The tree and the bar commands (stage 3.3a, world/skills.h): the same rules as the requests of
 // a client. assign_node: `weapon` (as for the mastery) and `node` (the id text of the node of the
 // game table, "Ability_WarHammer_WreckingBall"): one mastery point on the node.

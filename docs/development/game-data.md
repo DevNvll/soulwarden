@@ -21,7 +21,10 @@ backend. The tool of each system is also in the document of that system.
   speed and the wander values of each slice: with a file of format 2 no creature roams; from
   stage 3.3a also the member `reactions` of a slice, the fragments of the reactions of the
   five powers: with a file from before a knockdown plays the fragment of the hit reaction; from
-  stage 1.3b also the HitRuneCharge of each contact, the 9th value), the folder
+  stage 1.3b also the HitRuneCharge of each contact, the 9th value; from stage 3.3b-S3 also the
+  member `capsule` of a slice: the capsule of its CharacterComponent, radius, length, axis, and
+  offset, for 501 of 503 slices; with a file from before a projectile uses the default capsule,
+  [Projectiles](../systems/projectiles.md)), the folder
   `heights` (the terrain heights, one file for each region, from stage 3.4d after the
   cookies of the placements), the folder `navigation` (stage 3.4d: one file for each region
   with the floors, the water, and the sight of each cell of 0.25 m, and `navigation.json`;
@@ -141,7 +144,18 @@ backend. The tool of each system is also in the document of that system.
   for a delay that is not a finite 32-bit float (F5: a delay of one byte gave 0, and the burst
   of the vortex then came at the start; `tools/gamedata/check_spell_tool.py` checks it with
   made-up slice nodes, case RG5);
-  [Spell entities](../systems/spells.md)), `travel-places.json` (the spirit shrines and the inns
+  [Spell entities](../systems/spells.md)), `projectile-data.json` (stage 3.3b-S3,
+  `tools/gamedata/projectiles.sh`: the 323 attacks of the ranged attack profiles of
+  `rangedattackdatabase.radb`, the flight values of 85 projectile slices, 105 ammunition rows, 261
+  weapons with a profile, and 58 shots of basic attacks: the CAGE-RangedAttack clips of the
+  animation databases with a light or heavy row of the weapon category, and the projectile spells of
+  the magic weapons with the light or heavy row of the weapon; 65 KB, 10 s; without it each shot of a
+  ranged or magic basic attack is refused; the backend refuses a file whose form or counts are not
+  correct, as a whole: a number that is not a finite size, a shot of an attack that its profile
+  does not have, a slice index outside its list, two attacks with one name in one profile; the tool
+  stops for a number of the ranged attack data or of a slice that is not a finite 32-bit value, a
+  column that it reads, and a ChargeValue that is not a number (`check_projectile_tool.py`, case
+  PJ11); [Projectiles](../systems/projectiles.md)), `travel-places.json` (the spirit shrines and the inns
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
@@ -166,12 +180,18 @@ tools/gamedata/loot.sh               # one time: rewards of a kill for the backe
 tools/gamedata/abilities.sh          # one time: ability data for the backend (cooldowns, status effects and spells with their cells, cost tables; 2 MB)
 tools/gamedata/perks.sh              # one time: perk data for the backend (perk list, affixes, buckets, item perk places, consumables, equip load, swaps; 6.5 MB)
 tools/gamedata/spells.sh             # one time: spell entity data for the backend (slices, slots, delayed events; 1.1 MB, 7 s); needs an Oodle source
+tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots; 65 KB, 10 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
 ```
 
 ## Traps
+
+- Stage 3.3b-S3 adds `projectile-data.json` and the member `capsule` of a slice of `creatures.json`. The backend of this
+  stage reads the older creature file (each creature has the default capsule) and starts with no projectile file (each
+  shot is refused). Write the two files again with `tools/gamedata/creatures.sh` and `tools/gamedata/projectiles.sh`. The
+  other members of `creatures.json` are equal to the file of stage 3.3b-S4.
 
 - Stage 3.3b-S4 adds the member `impacts` to `combat-tables.json`. The backend of this stage reads the older file: then
   no hit pulls or pushes a creature. Write the file again with `tools/gamedata/combat.sh`. The other files of the tools

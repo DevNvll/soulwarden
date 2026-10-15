@@ -159,6 +159,14 @@ not, as for the items):
                                                 the projectile (--yaw: the direction, degrees from north to the east)
   tools/world spells                            the spell entities of the world (stage 3.3b-S2a) with their age
   tools/world spells end CHARACTER              each spell entity of a character ends (each observer gets the stop)
+  tools/world shoot CHARACTER [--yaw DEGREES] [--pitch DEGREES] [--heavy]
+                                                a shot of the weapon in the hand of a character with no
+                                                client (a remote test character; stage 3.3b-S3): the rules,
+                                                the flight, and the hit of a shot of a client (--yaw: degrees
+                                                from north to the east; --pitch: degrees up; --heavy: the
+                                                heavy shot, a charged arrow or a charged fire ball)
+  tools/world projectiles                       the projectiles in the air (stage 3.3b-S3), the shots by
+                                                verdict, and the ends by cause
   tools/world bar CHARACTER WEAPON SLOT ABILITY put an active ability that the character has on a
                                                 place (0 to 2) of the bar of a weapon (ABILITY: the
                                                 id text of its node, or none: an empty place)
@@ -395,6 +403,9 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             spells = load.get("spells")
             if spells:
                 print(spells_text(spells))
+            projectiles = load.get("projectiles")
+            if projectiles:
+                print(projectiles_text(projectiles))
             navigation = load.get("navigation")
             if navigation and navigation["data"]:
                 def part(entry: dict) -> str:
@@ -510,6 +521,23 @@ def spells_text(spells: dict) -> str:
         x, y, z = spell["position"]
         lines.append(f"  spell {spell['entity']}  {spell['spell']} of {spell['caster']}  age {spell['age']:.2f} s, {spell['left']:.2f} s left  "
                      f"at {x:.2f} {y:.2f} {z:.2f}{'' if spell['record'] else '  (no record: no slice data)'}")
+    return "\n".join(lines)
+
+
+def projectiles_text(projectiles: dict) -> str:
+    """@return The lines `projectiles` of the list (stage 3.3b-S3): the projectiles in the air, the shots, and the ends."""
+    if not projectiles["data"]:
+        return "projectiles: the backend has no projectile data (tools/gamedata/projectiles.sh) or no combat tables: each shot is refused"
+    shots = ", ".join(f"{count} {verdict}" for verdict, count in projectiles["shots"].items()) or "none"
+    ends = ", ".join(f"{count} {cause}" for cause, count in projectiles["ends"].items()) or "none"
+    lines = [f"projectiles: {len(projectiles['flying'])} in the air, shots: {shots}; ends: {ends}; {projectiles['damage']} hits with damage, "
+             f"{projectiles['steps']} flight steps, {projectiles['looked']} creatures looked at, {projectiles['lineCells']} cells of "
+             f"{projectiles['lineTests']} line tests ({projectiles['lineStopped']} stopped), {projectiles['largest']} in the air at one "
+             f"time at most, {projectiles['ledger']} ledger entries"]
+    for flying in projectiles["flying"]:
+        x, y, z = flying["position"]
+        lines.append(f"  projectile {flying['number']}  {flying['attack']} ({flying['row']}) of {flying['caster']}  age {flying['age']:.2f} s, "
+                     f"{flying['travelled']:.1f} m  at {x:.2f} {y:.2f} {z:.2f}")
     return "\n".join(lines)
 
 
@@ -826,6 +854,22 @@ def main() -> None:
         yaw = numbers(arguments[4:], 1)[0] if len(arguments) == 5 else 0.0
         request(data_dir, "POST", f"/v1/dev/abilities/cast?character={character_id(data_dir, arguments[1])}"
                                   f"&place={whole(arguments[2], 'the place')}&yaw={yaw}")
+    elif command == "shoot" and len(arguments) >= 2:
+        options = arguments[2:]
+        query = f"character={character_id(data_dir, arguments[1])}"
+        while options:
+            if options[0] in ("--yaw", "--pitch") and len(options) >= 2:
+                query += f"&{options[0][2:]}={numbers(options[1:2], 1)[0]}"
+                options = options[2:]
+            elif options[0] == "--heavy":
+                query += "&heavy=1"
+                options = options[1:]
+            else:
+                fail(f"unknown option {options[0]}: give --yaw DEGREES, --pitch DEGREES, --heavy")
+        request(data_dir, "POST", f"/v1/dev/projectiles/shoot?{query}")
+    elif command == "projectiles" and len(arguments) == 1:
+        document = fetch(data_dir, "/v1/dev/world")
+        print(projectiles_text(document["load"]["projectiles"]))
     elif command == "spells" and len(arguments) == 1:
         document = fetch(data_dir, "/v1/dev/world")
         print(spells_text(document["load"]["spells"]))

@@ -224,6 +224,21 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
     if (entry.contains("spawnAction")) {
         slice.spawnActionName = entry["spawnAction"].get<std::string>();
     }
+    // The capsule of the character (stage 3.3b-S3): a member of a slice that has one. A member with a wrong form is a fault.
+    if (entry.contains("capsule")) {
+        const json& values = entry["capsule"];
+        CreatureCapsule capsule;
+        const auto vector = [](const json& value, std::array<float, 3>& out) {
+            return value.is_array() && value.size() == 3 && read_real(value[0], out[0]) && read_real(value[1], out[1])
+                   && read_real(value[2], out[2]);
+        };
+        if (!values.is_array() || values.size() != 4 || !read_real(values[0], capsule.radius) || !read_real(values[1], capsule.height)
+            || !vector(values[2], capsule.axis) || !vector(values[3], capsule.offset) || !(capsule.radius > 0.0F)
+            || !(capsule.height >= 0.0F)) {
+            return false;
+        }
+        slice.capsule = capsule;
+    }
     // The members of the behavior (format 2). Each one is a member of a slice that has it: a
     // member with a wrong form is a fault of the file.
     if (entry.contains("tags")) {

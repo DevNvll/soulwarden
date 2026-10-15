@@ -16,6 +16,7 @@
 #include "gamedata/height_maps.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/perk_data.h"
+#include "gamedata/projectile_data.h"
 #include "gamedata/spell_data.h"
 #include "gamedata/loot_tables.h"
 #include "gamedata/progression_tables.h"
@@ -72,8 +73,11 @@ struct ServerHost {
     gamedata::PerkData perks;
     /** The spell entity data (stage 3.3b-S2a). It is empty until a case sets it: a spell then has its hits and no record. */
     gamedata::SpellData spells;
+    /** The projectile data (stage 3.3b-S3). It is empty until a case sets it: each shot is then refused. */
+    gamedata::ProjectileData projectiles;
     world::World world{clock, store, tables,
-                       with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities, perks, spells)};
+                       with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities, perks, spells,
+                                      projectiles)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -191,6 +195,23 @@ struct ServerHost {
         world::WorldOptions options =
             with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities, perks);
         options.spellData = &spells;
+        return options;
+    }
+    static world::WorldOptions with_game_data(const gamedata::ItemCatalog& catalog,
+                                              const gamedata::ProgressionTables& progression,
+                                              const gamedata::CreatureData& creatures,
+                                              const gamedata::CombatTables& combat,
+                                              const gamedata::TravelPlaces& places,
+                                              gamedata::Terrain& terrain,
+                                              const gamedata::NavigationData& navigation,
+                                              const gamedata::LootTables& loot,
+                                              const gamedata::AbilityData& abilities,
+                                              const gamedata::PerkData& perks,
+                                              const gamedata::SpellData& spells,
+                                              const gamedata::ProjectileData& projectiles) {
+        world::WorldOptions options =
+            with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities, perks, spells);
+        options.projectileData = &projectiles;
         return options;
     }
 

@@ -66,7 +66,8 @@ World::World(const WorldClock& clock,
       m_consumables(*this),
       m_runes(*this),
       m_statuses(*this),
-      m_spells(*this, options.spellData) {
+      m_spells(*this, options.spellData),
+      m_projectiles(*this, options.projectileData, options.combatTables) {
     m_random = options.randomSeed;
 }
 
@@ -123,6 +124,7 @@ void World::tick() {
         m_statuses.tick();
         m_abilities.tick();
         m_spells.tick();
+        m_projectiles.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -262,6 +264,8 @@ void World::remove_entity(EntityId id) {
     } else {
         // The spells of the character end (a cancel: stage 3.3b-S2a). Their entities go away before the entity of the caster.
         m_spells.caster_left(entity.id);
+        // The projectiles of the character end with no hit (stage 3.3b-S3).
+        m_projectiles.caster_left(entity.id);
         log::write("world: entity %016llx of character %s removed",
                    static_cast<unsigned long long>(entity.id),
                    entity.characterId.c_str());

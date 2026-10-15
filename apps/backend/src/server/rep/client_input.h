@@ -94,15 +94,32 @@ struct InputContact {
 };
 
 /**
- * One shot of an input entry (an item of the second list, 192 bytes; client readers 0x2A1A0D0,
- * 0x2A1A590): the projectile of a ranged attack or of an ability. The backend reads the start,
- * the direction, and the attack (the CRC-32 of the lower-case name of the ranged attack: the
- * projectile of Gravity Well has "gravitywell", live check L7 of stage 3.3a).
+ * One shot of an input entry (an item of the second list, 192 bytes; client readers 0x2A1A0D0, 0x2A1A590; protocol notes
+ * 4.27): the projectile of a ranged attack, of a magic attack, or of an ability.
+ *
+ *   0 origin:v3  12 direction:v3  24 offset:v3  36 point:v3 (the hit near the muzzle)  48 identifier:16 bytes  64 u32
+ *   68 owner := actor id:16 bytes G:u64   92 receiver := actor id:16 bytes G:u64 facet target:u64 (the hit near the muzzle)
+ *   124 group := actor id:16 bytes G:u64  148 token:u64  156 u64  164 f32  168 f32  172 charge:f32  176 ammunition:u32
+ *   180 attack:u32  184 row:u32  188 u8 u8  190 category:u8  191 u8
+ *
+ * The attack is the CRC-32 of the lower-case ranged attack name ("basic", "basic_heavy"; the projectile of Gravity Well has
+ * "gravitywell": live check L7 of stage 3.3a), the row the CRC-32 of the lower-case damage row (0 for a magic shot), and the
+ * ammunition the CRC-32 of the lower-case ammunition id (DefaultArrow for a bow with no equipped arrow; 0 for a magic shot).
+ * The item has no number of its own: two shots differ only in their values (live check L2: 46 shots).
  */
 struct InputShot {
     std::array<float, 3> origin{};
     std::array<float, 3> direction{};
+    /** The point of the hit near the muzzle (wire 36), and its receiver (wire 92): `hasReceiver` is false for a receiver with no actor id. */
+    std::array<float, 3> point{};
+    bool hasReceiver{false};
+    std::array<std::uint8_t, 16> receiverActor{};
+    std::uint64_t receiver{0};
+    std::uint64_t facet{0};
+    float charge{0.0F};
+    std::uint32_t ammo{0};
     std::uint32_t attack{0};
+    std::uint32_t row{0};
 };
 
 /** What the backend reads of each entry of a report for the attacks of the character. */
@@ -131,8 +148,13 @@ struct InputStep {
     /** Number of items of the two projectile lists. */
     std::uint32_t projectileHits{0};
     std::uint32_t shots{0};
-    /** The shots of the second list (the projectile of an ability). */
+    /** The shots of the second list: the projectile of a ranged or magic attack, or of an ability. */
     std::vector<InputShot> shotItems;
+    /**
+     * The aim input of the client is on ("aim_draw", bit 126; the right pointer button of the default profile): the bow and
+     * the musket aim. For the log only.
+     */
+    bool aim{false};
     std::vector<InputContact> contacts;
 };
 

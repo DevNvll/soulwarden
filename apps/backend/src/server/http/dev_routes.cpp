@@ -270,6 +270,8 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                  {"abilities", commands::abilities_json(target, "")},
                                  // The spell entities (stage 3.3b-S2a).
                                  {"spells", commands::spells_json(target)},
+                                 // The projectiles of the players (stage 3.3b-S3).
+                                 {"projectiles", commands::projectiles_json(target)},
                                  {"spawnPointsWaiting", creatures.waiting_count()},
                                  {"removedByRespawn", creatures.counts().removedByRespawn},
                                  // The navigation: the tiles of the data, the path searches, and the sight tests.
@@ -849,6 +851,7 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));
     router.add("POST", "", "/v1/dev/abilities/cast", "dev.abilities_cast", command_route(services, commands::cast_ability));
     router.add("POST", "", "/v1/dev/spells/end", "dev.spells_end", command_route(services, commands::end_spells));
+    router.add("POST", "", "/v1/dev/projectiles/shoot", "dev.projectiles_shoot", command_route(services, commands::shoot));
     // The itemization (stage 1.3b): the gear, a use of a consumable, the heart rune, and a perk roll.
     router.add("GET", "", "/v1/dev/gear", "dev.gear", [&services](const RouteContext& context) {
         service::HttpResponse refusal;

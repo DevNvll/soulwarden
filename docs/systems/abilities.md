@@ -118,7 +118,8 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   (3.0 s). Each session near it sees the vortex and the burst. The projectile of Gravity Well
   comes from the shot of the client (the attack "gravitywell"), or the server throws it 0.83 s
   after the press when no shot came (also for a character with no client: `tools/world
-  cast`).
+  cast`). Each other shot item goes to the projectile system (stage 3.3b-S3,
+  [Projectiles](projectiles.md)): the basic attacks of the ranged and magic weapons.
 - The impact of a hit (stage 3.3b-S4, [Forced movement](forced-movement.md)): each hit of an ability goes through
   `Combat::strike` with its source (the center of an area or of a spell; the caster for a melee phase), and a creature
   that lives after it moves by the impact of the row. The start of the vortex gives the impact of its pull row
@@ -132,7 +133,10 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 - The counter (stage 3.3b-S4, `CastPlan::window`, `PhaseKind::counter`): Riposte of the rapier puts its window
   (Rapier_Riposte_Timer, 1 s) on the caster through the status system; a creature hit in the window starts the counter one
   time, which hits the attacker at 0.433 s with its row and its stun (`Abilities::countered`). The client does not play the
-  counter action (open: its action numbers are not known).
+  counter action (open: its action numbers are not known). The counter needs the weapon of the cast in the hand (the
+  condition Riposte_Attack of the action data: the mannequin tag Rapier and the timer; code review of stage 3.3b-S4,
+  finding F2, test case RM2): a change of the weapon ends the window (`Abilities::weapon_changed`), a hit with a different
+  weapon in the hand starts no counter, and the counter hit needs the weapon too.
 - A new ability needs, in this sequence: a live check of its keys, its contacts, and its
   shots (protocol notes 4.22: L1, L3, L7), its rule in `Abilities::plan` with the rows and the
   spells of the data, a test case, and a live video. Do not make a message of the server for

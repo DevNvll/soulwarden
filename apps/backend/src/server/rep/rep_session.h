@@ -381,6 +381,8 @@ private:
     void press_ability(const ClientInput& input, const InputStep& step);
     /** Gives one melee contact to the world, and writes the result to the log. */
     void claim_hit(const InputStep& step, const InputContact& contact);
+    /** A shot item of a new input step (stage 3.3b-S3): the projectile of a ranged or magic attack, or of Gravity Well. */
+    void shoot(const InputStep& step, const InputShot& item, std::uint32_t ordinal);
     /**
      * For an input report with a camera and with no position of the character.
      * @return True when the camera estimate gives the position: the client sends no position
@@ -547,6 +549,9 @@ private:
     /** Number of melee contacts and of items of the two projectile lists that the client sent. */
     std::uint64_t m_contacts{0};
     std::uint64_t m_projectileItems{0};
+    /** The shots of the session by the verdict of the projectile system (stage 3.3b-S3), and the first refusal of each cause in the log. */
+    std::array<std::uint64_t, world::kShotVerdictCount> m_shots{};
+    std::array<bool, world::kShotVerdictCount> m_shotVerdictLogged{};
     carrier::Clock::time_point m_lastRefusalLog{};
     /** True while the character moves: the position then follows the camera. */
     bool m_followCamera{false};

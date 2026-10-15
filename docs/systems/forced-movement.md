@@ -28,7 +28,8 @@ of a movement in [Navigation](navigation.md), and the position check in [Positio
 - The values for a creature: the "_AI" distances of the row when the row has one that is not 0, and the "_AI" decay rate
   when it is above 0; else the normal values (client code 0x683D910 takes such a value when the row has one; game data:
   26 of 414 rows have an "_AI" distance).
-- The direction: from the source of the hit to the creature, in the plane. The source is the attacker for a melee hit and
+- The direction: from the source of the hit to the creature, in the plane (the point of the hit for a projectile, stage
+  3.3b-S3, [Projectiles](projectiles.md)). The source is the attacker for a melee hit and
   for a burst around the caster, the center for an area or a spell (`Combat::strike`, parameter `source`), and the
   attacker for a row with UseAttackerPosForReaction (Path of Destiny). The displacement is direction * Y + side * X, side
   = direction x up (client code 0x48A0690). A creature at the source (nearer than 0.05 m) has the direction north (the
@@ -65,8 +66,10 @@ of a movement in [Navigation](navigation.md), and the position check in [Positio
   in 1/30 s at most). The server gives no second displacement: the owner gets no movement state with a position. The
   position check accepts the dash in the envelope of the accepted cast (`Abilities::motion_allowance`): the window gets
   14.73 m x 1.3 more and a step can have 18.07 m/s x 1.3 (1.3: the largest MotionMultiplier of the action
-  GreatAxe_Engage, game data), from the press for 1.6 s and one window (1 s) after it. Without it the check refused 7
-  reports of one dash (L7-C). A refused press gives no envelope.
+  GreatAxe_Engage, game data), from the press for 1.6 s and one window (1 s) after it; the fast step only for the 1.6 s.
+  Without it the check refused 7 reports of one dash (L7-C). A refused press gives no envelope. One cast gives its extra
+  distance one time: in the envelope the distance from the place at the press is not more than the normal travel of the
+  time since the press and the extra distance (code review of stage 3.3b-S4, finding F1, test case RM1).
 - The observers of a dash get the state `motion` (`ComponentKey::motion`, the observer view of the movement state: the
   place, the direction of the dash, and the actions of layer 0 of the client: the state 7 with the sequence 59 for the
   dash, 2312 for the swing, then 30/1080 at rest; live check L7-D). The world marks it at an accepted report of the client
@@ -80,6 +83,8 @@ of a movement in [Navigation](navigation.md), and the position check in [Positio
   row 1H_Rapier_Riposte_Stun (its StatusEffect Rapier_Riposte_Stun: 2 s; the _Enhanced row and stun with the node
   Rapier_Riposte_Mod3), when the attacker is still in the reach of its hit plus 0.3 m with no wall. The row pushes it 1.5
   m. A hit after the window, or with no window (a press in the cooldown), is not a counter.
+- The counter needs the weapon of its cast in the hand (code review of stage 3.3b-S4, finding F2, test case RM2): a change
+  of the weapon ends the window, and a hit with a different weapon starts no counter ([Abilities](abilities.md)).
 - The client action of the counter is not started (open, the rapier part): Ability_Rapier_Riposte_Out has ServerStarted
   and the activation `Not True`; the client starts such an action only from the action layers of a movement state of the
   server (client code 0x2A66E50), and the sequence number of that action is not known (live check L8). The client plays

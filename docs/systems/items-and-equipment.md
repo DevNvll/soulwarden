@@ -167,7 +167,10 @@ tools/world equipment NAME           # the equipment of a character
   test case RI12). A fragment of `tools/world fragment NAME 62 3183` whose three lists do not
   have the same length has no effect and gives no log line.
 - The bag window does not show an ammunition item (`ArrowT1`): do not use one for a test of
-  the bag. The equipment slots for ammunition (12, 13) take no item in the backend.
+  the bag. The equipment slots for ammunition (12, 13) take no item in the backend. A bow and a musket shoot with no
+  ammunition: the ammunition-free setting of the client is on, and the shot names the ammunition of an empty slot
+  (DefaultArrow, DefaultShot; live check L1 of stage 3.3b-S3). The server takes no item for a shot
+  ([Projectiles](projectiles.md)).
 - A character from before stage 1.4, and a seeded character, have no items of an archetype:
   only the create route gives them, at the creation. Give such a character its gear with
   `tools/world give` and `tools/world equip`.

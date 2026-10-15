@@ -41,6 +41,9 @@
 //          cast_ability        place (0 to 2), yaw (degrees from north to the east): the press of a key
 //                              of the bar (stage 3.3b-S2a), with the checks of a press of a client
 //          end_spells          no argument: each spell entity of the character ends (stage 3.3b-S2a)
+//          shoot               yaw (degrees from north to the east), pitch (degrees, up), heavy (0 or 1): a shot of the
+//                              weapon in the hand (stage 3.3b-S3), with the rules, the flight, and the hit of a shot
+//                              of a client
 //          spawn_creature      kind (an id of the creature data), level, dx, dy, dz, yaw: a
 //                              creature near the character (3 m to the north with no place)
 //          remove_creature     creature (the id of a creature: 16 hexadecimal digits)
@@ -123,6 +126,7 @@ constexpr NamedCommand kCommands[] = {
     {"reset_cooldowns", commands::reset_cooldowns},
     {"cast_ability", commands::cast_ability},
     {"end_spells", commands::end_spells},
+    {"shoot", commands::shoot},
     {"set_ability_bar", commands::set_ability_bar},
     // The creature commands: the character of the command is the reference place.
     {"spawn_creature", nullptr, commands::spawn_creature},

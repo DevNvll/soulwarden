@@ -156,6 +156,11 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   position of a creature is exact: the client does not move a creature to the
   ground, and the height of a spawn point can be a floor above the terrain. A creature that
   walks gets the height of each step from the navigation of the world.
+- The capsule of a creature (stage 3.3b-S3): the creature data has the capsule of the CharacterComponent of its slice
+  (`CreatureSlice::capsule`: the radius, the length of the segment, the axis in the frame of the creature, the offset;
+  the wolf: 0.7 m, 0.9 m, the axis of its body). The projectile system turns it by the direction of the creature and puts
+  its lowest point at the feet ([Projectiles](projectiles.md)). The posed hit volumes of the slice (the bones, the head)
+  are not in the data.
 
 ## Commands
 

@@ -277,6 +277,13 @@ public:
         /** Input number at which the attack input went off, and the time at which the session got it. */
         std::uint16_t endInput{0};
         WorldClock::time_point ended{};
+        /**
+         * The first input step with the release bit of the attack input ("attack_primary_release") after the start (stage
+         * 3.3b-S3): a ranged weapon keeps no hold bit (the client sends "aim_shoot_hold"), thus `on` and `holdSteps` do not
+         * measure its hold; the release does.
+         */
+        bool released{false};
+        std::uint16_t releaseInput{0};
     };
 
     /** @return True when this input number is newer than the last one of the track (or the track has none). */
@@ -302,6 +309,11 @@ public:
      *         that is the input before the newest one. Null: no such input.
      */
     [[nodiscard]] const Press* press_for(std::uint16_t input) const;
+    /**
+     * @return The attack input of a shot of this input number (stage 3.3b-S3): the newest one that started at this step or
+     *         before it. Null: no such input.
+     */
+    [[nodiscard]] const Press* press_at(std::uint16_t input) const;
     /** @return The newest attack input, or null before the first one. */
     [[nodiscard]] const Press* newest() const {
         return m_current ? &*m_current : nullptr;

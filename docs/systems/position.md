@@ -43,8 +43,11 @@ contracts are in the protocol notes (sections 4.6 and 4.7).
   not marked).
 - The envelope of a dash (stage 3.3b-S4, [Forced movement](forced-movement.md)): in an accepted cast with a movement of
   the caster (Charge), the check takes `MotionAllowance` from the abilities system: the window accepts the distance of
-  the envelope more (14.73 m x 1.3), and one step the speed of the envelope (18.07 m/s x 1.3), from the press for the
-  length of the movement and one window. The speed multiplier of a speed table (stage 3.3b-S2a) counts one window after
+  the envelope more (14.73 m x 1.3), and one step the speed of the envelope (18.07 m/s x 1.3): the fast step only in the
+  length of the movement, the distance for the length and one window. One cast gives its distance one time (code review
+  of stage 3.3b-S4, finding F1, test case RM1): in the envelope the distance from the place of the character at the
+  press is not more than the window speed times the time since the press, the window margin, and the distance of the
+  envelope (`MotionAllowance::from`, `since`). Before the correction one Charge moved a client 55 m in 2.5 s. The speed multiplier of a speed table (stage 3.3b-S2a) counts one window after
   its change, and a later lower table does not move that end (code review of stage 3.3b-S2a, finding F1, test case RG1).
 - The heartbeat state of the movement component (each 200 ms, owner view) has the time anchor
   and the id of the rule (`movement_state_id`, protocol notes 4.6): 0x8000 or 0x0000,

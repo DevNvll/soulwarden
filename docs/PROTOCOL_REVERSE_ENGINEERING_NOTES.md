@@ -1279,9 +1279,10 @@ object := present:u8 [16 bytes u64 u64 | u8 u8 u64 u32 | text u32 u32 | f32 flag
           a text is size and that number of bytes; a flag is one byte, 0 or 1
 hit     := 3 f32 (origin) 3 f32 (point) reference(facet) reference(group) u64 u32 u32 u32 u32
            104 bytes                                              (readers 0x2A1A310, 0x2A195D0)
-shot    := 4 x 3 f32, 16 bytes, u32, reference(group), reference(facet), reference(group),
-           u64, u64, f32, f32, f32, u32, u32, u32, flag, flag, u8, flag
-           192 bytes                                              (readers 0x2A1A0D0, 0x2A1A590)
+shot    := origin:3 f32 direction:3 f32 offset:3 f32 point:3 f32 (the hit near the muzzle), 16 bytes,
+           u32, reference(group) (the shooter), reference(facet) (the receiver near the muzzle),
+           reference(group), token:u64, u64, f32, f32, charge:f32, ammunition:u32, attack:u32, row:u32,
+           flag, flag, category:u8, flag      192 bytes          (readers 0x2A1A0D0, 0x2A1A590; 4.27)
 contact := provider:u32 reference(group) reference(facet) point:3 f32 normal:3 f32
            direction:3 f32          96 bytes                      (readers 0x2A19E60, 0x2A18490)
 reference(group) := actor id:16 bytes G:u64            reference(facet) := the same and target:u64
@@ -4921,8 +4922,8 @@ list` has the line `abilities`.
 - The abilities of the other weapons (26 tables). Each one needs its live check of L1 and L3
   (which phases send a contact, their windows), its rule in `Abilities::plan` (its phases,
   rows, spells, and effects), and for a spell or a projectile its area rule (L7): the bow, the
-  musket, the blunderbuss, the staffs, and the gauntlets send projectiles (the second list),
-  whose hit rule the backend does not have.
+  musket, the blunderbuss, the staffs, and the gauntlets send projectiles (the second list):
+  the basic shots have their rule from stage 3.3b-S3 (4.27); the abilities of these weapons do not.
 - An entity of a spell (the vortex of Gravity Well, the effects of Path of Destiny and
   Shockwave): the client shows only what it plays itself.
 - The pull of Maelstrom and of the vortex (`ImpactDistanceY`): done in stage 3.3b-S4 (4.26).
@@ -5221,6 +5222,71 @@ DEGREES]` (a remote test character: the dash of the server).
 - The length of the fragment of a reaction: the backend uses the length of a reaction (1.5 s).
 - The pull or the push of a character (a hit with an impact on a player).
 
+### 4.27 Projectiles: the shot item of a client, the flight and the hit of the server (live proof of stage 3.3b-S3; the rules are project rules with the values of the game data)
+
+Stage 3.3b-S3. Research: `~/Games/soulwarden/work/research/abilities-shared.md` (Q3, the part "3.3b-S3", L5),
+`abilities-ranged.md` (Q2, Q3, L1, L2), `abilities-magic.md` (Q2). Live checks and the live proof:
+`~/Games/soulwarden/work/evidence/abilities-projectiles/implement/live/LIVE-CHECKS.md` (runs `l5-shots` with the
+backend of stage 3.3b-S4, `s3-proof` and `s3-staff` with the backend of this stage). Code: `world/projectiles.h`
+(`world::Projectiles`, `capsule_of`, `sweep`), `gamedata/projectile_data.h`, `gamedata/creature_data.h`
+(`CreatureCapsule`), `server/rep/client_input.h` (`InputShot`), `server/rep/rep_session.cpp` (`shoot`),
+`Navigation::line_stop`. Document: [Projectiles](systems/projectiles.md). Test cases PJ1 to PJ11.
+
+**The wire contracts and the client rules**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| A shot of a basic attack of a bow, a musket, a staff, or a gauntlet is one item of the second list of the input entry (192 bytes, 4.7). The bow sends it in the entry with the release bit (`attack_primary_release` 567): 1 to 9 steps after the press for a light shot, 16 steps or more for a charged one; the hip shot 10 steps after the release. The fire staff sends it 5 or 6 steps after the press, also while the button stays down. | Live L2, L5 (`live/L2-H-shot-inputs.txt`, `L5-B-firestaff-shot-inputs.txt`). | `0x256C980` (the ranged clip), `0x679DBB0` (the magic producer), writer `0x2A284D0` |
+| The values of an item: the origin (wire 0, 1.0 m from the character and 1.46 m above its feet), a unit direction (12), the charge (172: 0 for a light shot, 100 for the charged arrow), the ammunition key (176: the CRC-32 of `defaultarrow` for a bow with an empty arrow slot; 0 for a magic shot), the attack (180: the CRC-32 of the lower-case RangedAttackName: `basic`, `basic_heavy`), and the row (184: the CRC-32 of the lower-case damage row: `bowattack1`, `bowattack2`, `bowattack_hipshot`; 0 for a magic shot). | Live L1, L2, L5. | `0x2A1A590` |
+| The bow switches to the charged shot at a hold of 15 steps (0.5 s): 14 steps gave `basic` and `bowattack1` with the charge 0, 16 steps `basic_heavy`, `bowattack2`, and the charge 100. The game data has the marker `SetChargedAim` at 0.5 s of `Bow_Charge_UpperBody`. | Live L2 (5 holds of 450 to 750 ms). | — |
+| The ammunition-free setting is on in the client of the supported build: the bow shoots with no arrow in its slot, and the item names DefaultArrow (the native fallback). | Live L1 (each of 46 bow shots). | `0x6171BAC` (the default), `0x256DD7B` (the fallback) |
+| No report of a later hit. After a shot that hits a creature, a wall, or nothing, the client sends no item of the three lists and no other message (46 bow shots and 6 fire balls; the 2 s after each shot). The item has no number of its own: of the 46 shots only the geometry and the values of a hit near the muzzle differ (no byte that counts to 32: the local pool of the client is not in the item). | Live L2, L5 (`live/L2-G-35-shots.txt`). | Local tick `0x6896620`, stop `0x67A3BC0` |
+| The hit near the muzzle: a creature in the first `m_projectileHitScanRange` meters of the line (2 m for the bow) is the receiver of the item itself: the reference of its hit volume at wire 92 (the actor, the entity group, the facet target), the point at wire 36, a token at 148, and the category 0 at 190 (255 with no receiver). A shot with no such creature has the receiver with the actor id 0 and G 0xFFFFFFFF. | Live L2 (a wolf 1.8 m in front). | `0x2577610` |
+| The heavy attack of the fire staff needs the hold bit `attack_primary_hold` (191) in each step to 0.1667 s after the press (the condition `Attack_Heavy_NotHeld` of the fragment `Attack_Start_Charge` selects the light cast; `CanAttack_Heavy_Magic` at 0.1667 s needs the mana of `FireStaff_Heavy`). The client of a development run sends the bit only in the steps 1 and 3 after a press of the harness (with each graphics quality), and plays the light fire ball. | Live L5 (open: no heavy fire ball of the client in a development run). | — |
+| The motion of a projectile of the client: the velocity and the acceleration of the projectile component, steps of `p += (v + a dt / 2) dt`, `v += a dt`; the acceleration starts when the projectile is the distance of a value of its ranged attack data from its start (`m_projectileAccelDelayDist`). The registration of the component: `m_baseSpeed` +0x100, `m_extraSpeed` +0x104, `m_timeForMaxSpeed` +0x108. The use of the two last values was not found. | Static proof. | `0x695CCC0` (motion), `0x68F2BA0` (registration) |
+
+**The data** (`projectile-data.json`, `tools/gamedata/projectiles.sh`; `creatures.json`, `tools/gamedata/creatures.sh`):
+the ranged attack profiles of `rangedattackdatabase.radb` (323 attacks: the range, the radius, the near range, the
+penetration depth, the acceleration delay, the fall values, the bounces, the predicted acceleration, the directions of a
+spread), the flight values of 85 projectile slices, 105 ammunition rows (DamageModifier 1.2 for each arrow and shot), 261
+weapons with a profile (WeaponID, RangedAttackProfile, AmmoType), and 58 shots of basic attacks (the CAGE-RangedAttack
+clips of the animation databases with a light or heavy row of the weapon category of the weapon; the projectile spells of
+the magic weapons with the light or heavy row of the weapon). The values of this build: Bow/Basic range 100 m, radius
+0.15 m, near range 2 m, acceleration after 5 m; `basic_arrow` 100 m/s, (0, 0, −9.8), 10 s; FireBall/Basic range 50 m,
+radius 0.15 m, no near range; `spell_proj_fire` 100 m/s, no acceleration, 0.5 s; FireBall/Charged radius 0.33 m. The
+creature data has the capsule of the CharacterComponent of 501 of 503 creature slices (the wolf: radius 0.7 m, a segment of
+0.9 m on the axis of its body, the offset 0.1 m to the front).
+
+**The rules** (project rules; the values of the data where it has a value; the source of each rule is in
+[Projectiles](systems/projectiles.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The launch | The weapon in the hand gives the profile; the attack of the item must be an attack of the profile with no hit scan and no spread; a shot rule of the data must have the attack, the row, and the charge of the item (a magic shot: the row 0, and the row of its spell). The ammunition key must be the fallback of the ammunition type of the weapon (no equipped ammunition in the backend); a magic shot has none. The origin is 5 m or less from the character with no wall from 1.5 m above its feet; the direction is a unit vector (±0.01). A refused shot changes nothing. |
+| The press | The newest press of the attack input at or before the item; a released press 30 steps or less before it; a heavy shot needs 14 steps of hold (bow) or 4 steps (magic). |
+| The ledger | One projectile for each press: the key (character, session, input sequence, press). The entry stays 10 s after the life time. 16 projectiles of a character in the air at most. |
+| The flight | On the world clock, in steps of 1/30 s: the speed (`m_baseSpeed`) and the acceleration (`m_accel`, after `m_projectileAccelDelayDist`) of the slice; the end at the range of the profile or at the life time of the slice. |
+| The hit | The first creature (alive, not on its way back) near the segment (the position index) whose capsule the segment touches with the radius of the projectile and 0.25 m: one hit through `Combat::strike` with the row of the shot, the weapon and the gem of the launch, the damage modifier of the ammunition, and the point as the source; the projectile ends. A wall or the ground first (`Navigation::line_stop`): the projectile ends with no hit. |
+| The near hit | A receiver of the item: a creature of the world with the reference of its slice, observed by the session, in the near range (with the radius and 0.25 m) of the origin, with no wall: the hit at the launch, no flight. A dead creature or one on its way back: the flight. |
+| The cost | The ManaCost of the spell of a magic shot through `Abilities::change_mana` (0 for the basic attacks of the fire staff: the spells name no cost id; FireStaff_Primary and FireStaff_Heavy are 0). |
+| The load | The flight looks only at the creatures near its segment and at the cells of its segment (case PJ10: 4,000 far creatures add no look). |
+
+**The commands** (development routes): `tools/world shoot CHARACTER [--yaw D] [--pitch D] [--heavy]` (a shot of the server
+for a character, also with no client), `tools/world projectiles`, the line `projectiles` of `tools/world list`.
+
+**Not known, not done** (stage 3.3b-S3):
+
+- The observers see no projectile: the server sends no projectile entity (type 16, `ProjectileReplicatedState`) and no
+  message 327 (the bind of the visual of the owner). The owner sees its own visual; each observer sees the hit (the
+  health, the reaction).
+- The use of `m_extraSpeed` and `m_timeForMaxSpeed`: the server flies at `m_baseSpeed`.
+- The precedence of `m_predictedProjectileAccel` of the profile (−9.8 for the fire ball) and `m_accel` of the slice (0): the
+  server uses the slice.
+- The grouped spread of the blunderbuss (2719, 2570), a hit scan (list 1), the penetration depth (0.2 for the bow), the
+  bounces, the fall of the damage with the distance, a headshot (the posed hit volumes of a creature), the abilities of the
+  ranged and magic weapons, an equipped ammunition (slots 12, 13).
+- The heavy fire ball of a client in a development run (the hold bit, above).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are
@@ -5235,6 +5301,12 @@ DEGREES]` (a remote test character: the dash of the server).
   known: the interpolation and the extrapolation of a remote creature (0x48709A0, 0x2A29860,
   `g_actionStateExtrapolationLimitMS` 200 ms, research `navigation.md` Q5) work only with the
   states that the backend sends; an animation level of detail was not looked for.
+- The projectiles (4.27, stage 3.3b-S3): the observers see no projectile of a player (no projectile entity, type 16, and
+  no message 327 to bind the visual of the owner); the use of `m_extraSpeed` and `m_timeForMaxSpeed` of a projectile
+  slice is not known (the server flies at `m_baseSpeed`); the server uses `m_accel` of the slice, not the predicted
+  acceleration of the profile (the fire ball: 0 and −9.8); the heavy fire ball of a client of the harness does not come
+  (the hold bit 191); the grouped spread (2719, 2570), a hit scan, the penetration depth, the bounces, the fall of the
+  damage, and the headshots are not done.
 - The speed of a status of a player (4.24, stage 3.3b-S1): the client does not apply the
   MoveSpeedMod or the SprintSpeedMod of a status of the owner map to its run (a haste of 0.2
   and of 0.4, a slow of −0.6: the distance of a walk of 2 s does not change). The server

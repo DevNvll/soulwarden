@@ -163,11 +163,22 @@ inline constexpr unsigned kActionAbility1Virtual = 479;
 inline constexpr unsigned kActionAbility1Hold = 39;
 inline constexpr unsigned kActionAbility1Release = 211;
 
-/** One shot of an input entry: an item of its second list (192 bytes; the start, the direction, and the attack at byte 180). */
+/**
+ * One shot of an input entry: an item of its second list (192 bytes, protocol notes 4.27): the origin (0), the direction
+ * (12), the point of a hit near the muzzle (36), its receiver (92: an actor id, an entity group id, a facet target), the
+ * charge (172), the ammunition (176), the attack (180), and the row (184). The other bytes are 0.
+ */
 struct InputShotItem {
     std::array<float, 3> origin{};
     std::array<float, 3> direction{-1.0F, 0.0F, 0.0F};
     std::uint32_t attack{0};
+    std::array<float, 3> point{};
+    std::array<std::uint8_t, 16> receiverActor{};
+    std::uint64_t receiver{0xFFFFFFFFULL};
+    std::uint64_t facet{0};
+    float charge{0.0F};
+    std::uint32_t ammo{0};
+    std::uint32_t row{0};
 };
 
 /** One melee contact of an input entry: an item of its third list (96 bytes). */
@@ -374,14 +385,21 @@ inline void write_input_entry(server::hub::Writer& w, const InputEntry& entry, c
     fields.size(entry.shots + static_cast<std::uint32_t>(entry.shotItems.size()));
     fields.zeros(entry.shots * 192);
     for (const InputShotItem& shot : entry.shotItems) {
-        for (const auto& vector : {shot.origin, shot.direction}) {
+        for (const auto& vector : {shot.origin, shot.direction, std::array<float, 3>{}, shot.point}) {
             for (const float value : vector) {
                 fields.f32(value);
             }
         }
-        fields.zeros(180 - 24);
+        fields.zeros(16 + 4 + 24); // The identifier, its u32, and the owner reference.
+        fields.raw(shot.receiverActor);
+        fields.u64(shot.receiver);
+        fields.u64(shot.facet);
+        fields.zeros(24 + 8 + 8 + 4 + 4); // The group, the token, a u64, and two floats.
+        fields.f32(shot.charge);
+        fields.u32(shot.ammo);
         fields.u32(shot.attack);
-        fields.zeros(8);
+        fields.u32(shot.row);
+        fields.zeros(4);
     }
     fields.size(entry.contactCount >= 0 ? static_cast<std::uint32_t>(entry.contactCount)
                                         : static_cast<std::uint32_t>(entry.contacts.size()));

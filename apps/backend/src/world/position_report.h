@@ -188,6 +188,14 @@ inline constexpr std::chrono::milliseconds kSequenceRestart{2000};
 struct MotionAllowance {
     float distance{0.0F};
     float peak{0.0F};
+    /**
+     * The budget of one dash (code review of stage 3.3b-S4, finding F1): in the envelope the distance from the place of the
+     * character at the accepted press is not more than the normal travel of the time since the press (the window speed times
+     * that time, and the window margin) and `distance` one time. Without it the window gives the extra distance again in each
+     * window: one Charge moved a client 55 m in 2.5 s. No value: no budget (no envelope).
+     */
+    std::optional<state::WorldPosition> from;
+    float since{0.0F};
 };
 
 /**

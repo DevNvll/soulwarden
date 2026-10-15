@@ -25,7 +25,11 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
   compute a place of a creature in a different function. The one other function is
   `slide(from, to)` (stage 3.3b-S4, [Forced movement](forced-movement.md)): the straight line of a pull or a push on the
   free floors, cell by cell with the rule of a step, to the last place before a wall, a drop, or a cell with no free
-  floor; it keeps no path. With navigation data the path is
+  floor; it keeps no path. The line test of a projectile is `line_stop(from, to)` (stage 3.3b-S3,
+  [Projectiles](projectiles.md)): the segment between two points in the air, cell by cell with the exact heights of the
+  segment (no eye height), each cell with the free interval of its floor (as `sees`; a part below the lowest floor is in
+  the ground); it gives the part of the segment at the first cell that stops it. With no tile on the line nothing stops
+  it. It is not a place of a creature. With navigation data the path is
   a path of the data; with no data of a place (no folder, a folder that is not correct, a
   region with no file, a tile that is not correct) the two functions have the rule of stage
   3.4b for that place (the straight line on the terrain of the folder `heights`, and

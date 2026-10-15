@@ -53,7 +53,7 @@ kinds of the creatures, the travel places, and commands for the items, the coin,
 the attributes, the skills, the nodes and the ability bars (`assign_node`,
 `set_ability_bar`), the cooldowns (`reset_cooldowns`), the status effects (`apply_status`,
 `remove_status`), the cast of an ability and the spell entities (`cast_ability`,
-`end_spells`), and the health of a character, for the
+`end_spells`), a shot of the weapon in the hand (`shoot`), and the health of a character, for the
 creatures near it, and for a travel.
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
 
@@ -108,6 +108,7 @@ tools/gamedata/combat.sh           # one time: combat tables (without them an at
 tools/gamedata/loot.sh             # one time: loot tables and kill rewards (without them a kill gives nothing); 10 s
 tools/gamedata/abilities.sh        # one time: ability data (cooldowns, status effects, spells, costs; without it an ability does nothing)
 tools/gamedata/spells.sh           # one time: spell entity data (slices, slots, delayed events; without it the vortex has no picture)
+tools/gamedata/projectiles.sh      # one time: projectile data (profiles, slices, ammunition, weapons, shots; without it a shot does nothing); needs an Oodle library
 tools/gamedata/perks.sh            # one time: perk data (perks, buckets, item perk places, consumables, equip load; without it an item has no perk)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
@@ -179,7 +180,11 @@ and `probe remove ENTITY` (an entity of a slice with the fragments of the caller
 check of a record before its code). For the forced movement (stage 3.3b-S4): `list` has the
 line `force` (the creatures that a hit moves now, the movements, the steps, the stops at a
 wall or a drop) and the counters of Riposte in the line `abilities`, and `creatures` marks a
-creature that a hit moves now with `MOVED BY A HIT (ROW)`.
+creature that a hit moves now with `MOVED BY A HIT (ROW)`. For the projectiles (stage
+3.3b-S3): `shoot CHARACTER [--yaw DEGREES] [--pitch DEGREES] [--heavy]` (a shot of the server
+with the weapon in the hand of a character, also with no client), `projectiles` (the
+projectiles in the air, the shots by verdict, the ends by cause), and the line `projectiles`
+of `list`.
 The backend has these commands only with the option `--dev-commands`, and it accepts that
 option and the research switch only when its process has `SOULWARDEN_HARNESS=1`.
 
@@ -408,6 +413,17 @@ button on "Confirm").
   the speed had no upper limit). From stage 3.3b-S4 the tool stops when an ability table of
   the players does not have a rule column of the backend, or a status table does not have the
   absorption and damage columns of each damage type (it keeps the file that is there).
+- `tools/gamedata/projectiles.sh` makes the projectile data
+  (`~/.local/share/soulwarden/gamedata/projectile-data.json`, 65 KB, stage 3.3b-S3): the ranged
+  attack profiles of the game (the range, the radius, the near range, the acceleration delay),
+  the flight values of the projectile slices (the speed, the acceleration, the life time), the
+  ammunition, the profile of each weapon, and the shots of the basic attacks (protocol notes
+  4.27). It reads the data tables, the ranged attack data, the slices, and the animation
+  databases of the game copy (it needs an Oodle library). `--find TEXT` prints the attacks,
+  the shots, and the weapons with a text. Without the file the backend starts, and a shot of a
+  bow, a musket, a staff, or a gauntlet does nothing. The creature data tool (stage 3.3b-S3)
+  also writes the capsule of the character of each creature slice: with an older creature file
+  a shot hits each creature with one size.
 - `tools/gamedata/spells.sh` makes the spell entity data
   (`~/.local/share/soulwarden/gamedata/spell-data.json`, 1.1 MB, stage 3.3b-S2a): for each spell
   row with a prefab slice, the slice asset, the slots of its replicated components, its
@@ -505,8 +521,23 @@ button on "Confirm").
   attack, the attributes and the level of the character, and the defense values of the
   creature. The client finds each contact itself and reports it, and the backend checks each
   report (the creature, the distance, the weapon, the time of the attack): the rules are
-  rules of this project (protocol notes 4.15). Not yet: ranged weapons and magic, critical
-  hits, and blocks.
+  rules of this project (protocol notes 4.15). Not yet: critical hits and blocks.
+- Ranged and magic basic attacks (stage 3.3b-S3, protocol notes 4.27,
+  `docs/systems/projectiles.md`). With the projectile data, a shot of the bow (a hip shot, an
+  aimed shot with the right pointer button, a charged shot with a hold of 0.5 s or more) or a
+  light attack of the fire staff flies on the server with the speed, the gravity, and the range
+  of the game data (the arrow: 100 m/s, the fall after 5 m, 100 m; the fire ball: 100 m/s, 50
+  m). The first creature that the projectile touches (the capsule of its body in the game
+  data) takes the damage of the row of the shot (the light arrow 1.0, the charged arrow 1.5,
+  times the damage modifier 1.2 of the ammunition), and the damage number shows at it; a wall
+  or the ground stops the projectile, and a creature behind it takes nothing. A creature 2 m
+  or less in front of you takes the hit at once (the client reports it). One shot hits one
+  time. No arrows are necessary. The musket, the life staff, the ice gauntlet, and the void
+  gauntlet use the same rules with their data (no live test yet). Not yet: the blunderbuss
+  (its spread), the projectile for other players (they see only the hit), headshots, the fall
+  of the damage with the distance, the heavy attack of a staff in a development run of the
+  harness (the server rule works: `tools/world shoot NAME --heavy`), and the abilities of these
+  weapons.
 - Abilities (stage 3.3a, protocol notes 4.22, `docs/systems/abilities.md`). With the ability
   data, the keys Q, R, and F use the three abilities of the bar of the weapon in your hand:
   Charge, Maelstrom, and Gravity Well of the great axe, and Wrecking Ball, Shockwave, and Path
