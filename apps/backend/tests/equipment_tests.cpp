@@ -1463,11 +1463,16 @@ void large_paperdoll(const Options&) {
     }
     note("the owner got " + std::to_string(first.fragments.size()) + " paperdoll fragments in " + std::to_string(first.bundles)
          + " bundles; the largest state bundle frame of the two sessions has " + std::to_string(largest) + " bytes");
-    check(first.fragments.size() >= 2 && first.bundles == first.fragments.size() && own.items.size() == slots.size() && !own.fault && own.local
+    // Each list group of a first record stays whole in one fragment (code review of stage 1.3b, finding F12: a later
+    // fragment with the same group replaces the items of the group in the client). The group of the slots that do not show
+    // on the body is larger than one carrier message: its bundle goes in chunks of the carrier.
+    check(first.fragments.size() == 2 && first.bundles == first.fragments.size() && own.items.size() == slots.size() && !own.fault && own.local
               && first.complete,
-          "the first record of the owner has the paperdoll in more than one fragment, each one in a bundle of its own, "
-          "and the client has each of the 28 items after them");
-    check(largest <= kCarrierMessage, "each state bundle is one carrier message (1,024 bytes at most)");
+          "the first record of the owner has the paperdoll in two fragments, one for each list group, each one in a bundle of its "
+          "own, and the client has each of the 28 items after them");
+    check(largest > kCarrierMessage && largest <= 256000,
+          "the bundle of the large group is above one carrier message (the carrier sends it in chunks) and below the limit of the "
+          "client (256,000 bytes)");
     bool allSlots = true;
     for (const auto& [itemClass, slot] : slots) {
         allSlots = allSlots && own.items.count(slot) == 1 && own.items.at(slot).gearScore == 700 && own.items.at(slot).durability == 3000;

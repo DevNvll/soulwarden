@@ -101,6 +101,26 @@ struct AbilityCostRow {
     float staminaFlat{0.0F};
 };
 
+/**
+ * One row of an ability table of the players that puts a status on its caster (stage 3.3b-S1, file format 3): its
+ * cells (SelfApplyStatusEffect, the event OnHit or OnHitTaken, the conditions AttackType, DamageTableRow, InSequence,
+ * ...). The rule that evaluates the cells is in the world (world/gear.h, the caster effects of the learned nodes).
+ */
+struct AbilityRow {
+    std::string id;
+    CellValues cells;
+};
+
+/**
+ * One status category (StatusEffectCategoryData, stage 3.3b-S1, file format 3): the ValueLimits of the category. The
+ * sum of a value (MoveSpeedMod, PhysicalArmor, ABSSlash, ...) over the effects of the category is not above a positive
+ * limit and not below a negative limit (client code 0x40242C0 sums the speed values of the effects by category).
+ */
+struct StatusCategory {
+    std::string id;
+    std::unordered_map<std::string, float> limits;
+};
+
 /** The data as plain values: the content of the file, and what a test sets. */
 struct AbilityTables {
     std::vector<CooldownRow> cooldowns;
@@ -110,10 +130,14 @@ struct AbilityTables {
     std::vector<CostRow> manaCosts;
     std::vector<CostRow> staminaCosts;
     std::vector<AbilityCostRow> abilityCosts;
+    /** The caster effect rows and the status categories (stage 3.3b-S1, file format 3; empty for a file of format 1 or 2). */
+    std::vector<AbilityRow> abilityRows;
+    std::vector<StatusCategory> statusCategories;
     /**
      * The number of the rows of the status tables of the game, with each duplicate: the length of the
      * status list of the client. Each status number is below it (code review of stage 3.3a, finding F10).
-     * 0: not known (a test), and only the sequence of the numbers is checked.
+     * 0: not known (a test with no file), and only the sequence of the numbers is checked. A file must have the
+     * number, and each status number of the file is below it (code review of stage 1.3b, finding F10).
      */
     std::uint32_t statusRows{0};
 };
@@ -148,6 +172,10 @@ public:
     [[nodiscard]] std::optional<float> stamina_cost(std::string_view id) const;
     /** @return The cost columns of an ability row, or null for a row with none. */
     [[nodiscard]] const AbilityCostRow* ability_cost(std::string_view id) const;
+    /** @return The caster effect row of an ability (stage 3.3b-S1), or null. */
+    [[nodiscard]] const AbilityRow* ability_row(std::string_view id) const;
+    /** @return A status category with its limits (stage 3.3b-S1), or null. */
+    [[nodiscard]] const StatusCategory* category(std::string_view id) const;
 
 private:
     AbilityTables m_tables;
@@ -157,7 +185,11 @@ private:
     std::unordered_map<std::string, std::size_t> m_manaCosts;
     std::unordered_map<std::string, std::size_t> m_staminaCosts;
     std::unordered_map<std::string, std::size_t> m_abilityCosts;
+    std::unordered_map<std::string, std::size_t> m_abilityRows;
+    std::unordered_map<std::string, std::size_t> m_categories;
     std::string m_error;
+    /** The check of `set`, with `fromFile` true for a file: the file must name the number of the status rows (finding F10). */
+    [[nodiscard]] bool accept(AbilityTables tables, bool fromFile);
 };
 
 } // namespace soulwarden::backend::gamedata

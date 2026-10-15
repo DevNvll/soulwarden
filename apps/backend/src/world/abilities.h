@@ -222,8 +222,9 @@ struct MeleePhase {
     std::uint32_t phase{0};
     /** The damage row (an index of the combat tables). */
     std::uint32_t row{0};
-    /** The weapon of the cast: its item id and its gear score. */
+    /** The weapon of the cast: its item id, its paperdoll slot (finding F1 of the review of stage 1.3b), and its gear score. */
     std::string itemId;
+    std::uint32_t slot{0};
     std::uint32_t gearScore{0};
     /** True: this phase hurt this creature already. */
     bool done{false};
@@ -275,6 +276,8 @@ public:
                                                           std::optional<std::uint16_t> attack = std::nullopt);
     /** @return The ability of a cast (a cast that the table has; Wrecking Ball for one that it does not have). */
     [[nodiscard]] AbilityKind kind_of(std::uint64_t cast) const;
+    /** @return The id text of the ability of a cast ("Ability_WarHammer_WreckingBall"), or an empty text. */
+    [[nodiscard]] std::string ability_of(std::uint64_t cast) const;
     /** A contact phase hurt a creature (Combat::claim): the phase does not hurt it again, and the creature gets the effects. */
     void contact_hit(std::uint64_t cast, std::uint32_t phase, Entity& attacker, Entity& target);
 
@@ -353,6 +356,8 @@ private:
         state::WorldPosition place;
         float yaw{0.0F};
         std::string itemId;
+        /** The paperdoll slot of the weapon of the cast (finding F1 of the review of stage 1.3b: the gem of that instance). */
+        std::uint32_t slot{0};
         std::uint32_t gearScore{0};
         /** The phases and the creatures that each one hurt. */
         std::set<std::pair<std::uint32_t, EntityId>> hits;
@@ -372,6 +377,8 @@ private:
     };
 
     CastVerdict refuse(CastVerdict verdict);
+    /** @return The id text of an ability (the node of the progression tables), or an empty text. */
+    [[nodiscard]] std::string ability_text(std::uint32_t ability) const;
     /** Puts the cooldowns of a character into its entity and marks the cooldown state. */
     void publish(const std::string& characterId);
     /** Runs the area phases of a cast that are due at this time (a timer of the world). */

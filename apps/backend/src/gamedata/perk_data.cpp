@@ -12,7 +12,8 @@ namespace {
 using nlohmann::json;
 
 /** The form of the file that this code reads (tools/gamedata/perks.py). */
-constexpr std::uint64_t kFormat = 1;
+/** The form of the file of the tool (tools/gamedata/perks.py): 2 from stage 3.3b-S1, with the RequiredLevel of each consumable. */
+constexpr std::uint64_t kFormat = 2;
 /** The text before the id of a bucket in an entry of a bucket. */
 constexpr std::string_view kBucketPrefix = "[PBID]";
 
@@ -150,9 +151,11 @@ bool read_consumable(const json& row, ConsumableRow& consumable) {
         || !finite_number(row["cooldownTime"], consumable.cooldownTime) || consumable.cooldownTime < 0.0F
         || !row.contains("removeEffects") || !texts_of(row["removeEffects"], consumable.removeEffects)
         || !row.contains("removeCategories") || !texts_of(row["removeCategories"], consumable.removeCategories)
-        || !row.contains("noCombat") || !row["noCombat"].is_boolean() || !row.contains("shared") || !row["shared"].is_boolean()) {
+        || !row.contains("noCombat") || !row["noCombat"].is_boolean() || !row.contains("shared") || !row["shared"].is_boolean()
+        || !row.contains("level") || !row["level"].is_number_unsigned() || row["level"].get<std::uint64_t>() > 1000) {
         return false;
     }
+    consumable.level = static_cast<std::uint32_t>(row["level"].get<std::uint64_t>());
     consumable.id = row["id"].get<std::string>();
     consumable.shared = row["shared"].get<bool>();
     consumable.cooldown = row["cooldown"].get<std::string>();
@@ -225,7 +228,7 @@ bool PerkData::load(const std::string& path) {
         return false;
     }
     if (!document.contains("format") || !document["format"].is_number_unsigned() || document["format"].get<std::uint64_t>() != kFormat) {
-        m_error = "the file does not have the format 1";
+        m_error = "the file does not have the format 2";
         return false;
     }
     const auto fail = [&](std::string cause) {
@@ -379,12 +382,43 @@ bool PerkData::set(PerkTables tables) {
             }
         }
     }
+    // The links of the data (code review of stage 1.3b, finding F13): a fixed place names a perk, a bucket place a bucket,
+    // and a slot place one of the two; each affix and each ability of a perk, the new perk of each swap, and each ability
+    // of a heart rune is in the data. The tool removes the links that the game itself does not resolve.
     for (const PerkLayout& layout : tables.layouts) {
         for (std::size_t place = 0; error.empty() && place < kPerkPlaces; ++place) {
-            for (const std::string* name : {&layout.slots[place], &layout.fixed[place], &layout.buckets[place]}) {
-                if (error.empty() && !name->empty() && !known(*name, false) && !known(*name, true)) {
-                    error = "an item names the perk or the bucket " + *name + ", which the data does not have";
-                }
+            if (!layout.slots[place].empty() && !known(layout.slots[place], false) && !known(layout.slots[place], true)) {
+                error = "an item names the perk or the bucket " + layout.slots[place] + ", which the data does not have";
+            } else if (!layout.fixed[place].empty() && !known(layout.fixed[place], false)) {
+                error = "a fixed place of an item names " + layout.fixed[place] + ", which is not a perk of the data";
+            } else if (!layout.buckets[place].empty() && !known(layout.buckets[place], true)) {
+                error = "a bucket place of an item names " + layout.buckets[place] + ", which is not a bucket of the data";
+            }
+        }
+    }
+    for (const PerkRow& perk : tables.perks) {
+        for (const std::string& affix : perk.affixes) {
+            if (error.empty() && tables.affixes.count(key_of(affix)) == 0) {
+                error = "the perk " + perk.id + " names the affix " + affix + ", which the data does not have";
+            }
+        }
+        for (const std::string& ability : perk.abilities) {
+            if (error.empty() && tables.abilities.count(key_of(ability)) == 0) {
+                error = "the perk " + perk.id + " names the ability " + ability + ", which the data does not have";
+            }
+        }
+    }
+    for (const PerkSwap& swap : tables.swaps) {
+        // The old perk of a swap can be a perk that the game copy does not have (the swap then never applies); the new
+        // perk is the perk that the client shows: it must be in the data.
+        if (error.empty() && !swap.newPerk.empty() && !known(swap.newPerk, false)) {
+            error = "the perk swap " + std::to_string(swap.id) + " names the new perk " + swap.newPerk + ", which the data does not have";
+        }
+    }
+    for (const auto& [rune, abilities] : tables.runes) {
+        for (const std::string& ability : abilities) {
+            if (error.empty() && tables.abilities.count(key_of(ability)) == 0) {
+                error = "the heart rune " + rune + " names the ability " + ability + ", which the data does not have";
             }
         }
     }
@@ -542,6 +576,11 @@ unsigned PerkData::apply_swaps(std::array<std::string, kPerkPlaces>& perks, std:
                 continue;
             }
             list[place] = next->id;
+            // The new perk of this place is a perk of the item from now on (code review of stage 1.3b, finding F3): a
+            // later place of the same pass that swaps to the same perk goes away, as a place whose perk the item had.
+            if (next->type != "Gem" && next->type != "OffensiveCharm" && next->type != "DefensiveCharm" && next->type != "SkillCharm") {
+                kept.push_back(next);
+            }
             ++place;
         }
         changes += changed;

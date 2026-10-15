@@ -61,8 +61,10 @@ float PositionTrack::seconds_from(const Sample& sample, std::uint16_t input, Wor
 
 PositionVerdict PositionTrack::judge(const PositionReport& report,
                                      const state::WorldPosition& known,
-                                     WorldClock::time_point now) {
+                                     WorldClock::time_point now,
+                                     float speedFactor) {
     using namespace position_limits;
+    const float windowSpeed = kWindowSpeed * std::max(speedFactor, 1.0F);
     // 1. Sequence.
     if (m_hasInput) {
         const auto ahead = static_cast<std::uint16_t>(report.input - m_lastInput);
@@ -103,7 +105,7 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
             m_firstReport = now;
         }
         const float waited = seconds(now - *m_firstReport);
-        const float allowed = std::max(kSpawnRange, kWindowSpeed * waited + kWindowMargin);
+        const float allowed = std::max(kSpawnRange, windowSpeed * waited + kWindowMargin);
         // After a travel, a report that is far is a report from the place before it.
         const PositionVerdict far = m_traveled ? PositionVerdict::beforeTravel : PositionVerdict::tooFast;
         if (horizontal_distance(position, known) > allowed) {
@@ -143,7 +145,7 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
         }
         const float distance = horizontal_distance(position, start->position);
         const float windowSeconds = seconds_from(*start, report.input, now);
-        if (distance > kWindowSpeed * windowSeconds + kWindowMargin) {
+        if (distance > windowSpeed * windowSeconds + kWindowMargin) {
             return counted(PositionVerdict::tooFast);
         }
         // The height over more than one report. The rises of the accepted reports have one

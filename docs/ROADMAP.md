@@ -190,7 +190,7 @@ below is the layout after the port.
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
-| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a done | |
+| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1 done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
@@ -244,7 +244,7 @@ stage with a letter is a part of the system with that number.
 | 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | done |
 | 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | done |
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
-| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts | 1.3b | research |
+| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts. Part S1 (the status effects of a player) is done; the parts S2 to S6 (spell entities, projectiles, the pull, critical hits, the heals of an ability, the other weapons) come next | 1.3b | S1 done |
 | 12 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
 | 13 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
 | 14 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
@@ -1059,6 +1059,36 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   crafting, repair, salvage, the socket action, the status state of a player (no icon of a
   food), the perks that need grit, stamina, a critical hit, a dodge, or a player target, the
   other heart runes, and the perk biasing of a roll.
+- Stage 3.3b-S1, the status effects of a player (done, protocol notes 4.24, document
+  `docs/systems/status-effects.md`; evidence `~/Games/soulwarden/work/evidence/abilities-status/implement/`).
+  The live checks L1 and L2 came first: an entry of the full map of the status state of the
+  owner (slot 44, type 4236) alone gives the HUD icon, the countdown, the stacks, the visual
+  effect, and the armor of the character sheet; a tray entry gives a second icon; the end of
+  an entry is a time of the synced wall clock of the client, which needs the wall clock pair of
+  the Player state (group 1, fields 6 and 7); an observer sees the icon at the name plate from
+  the compact map. A new status system (`world/statuses.h`) is the one owner of the statuses of
+  a character: a food, a potion, a dust, the status of the heart rune, the status of an affix of
+  the gear, and the caster effects of the ability rows (Safety Measures, Greed, Hammer Time) come
+  through it, with the rules of the data (stacks, the end rules, ApplicationCooldown, ticks,
+  StopOnHitCount, RemoveOnDeath, OnEndStatusEffect, the limits of the status categories). Each
+  value counts one time in the gear summary. The explosion of the heart rune comes from the
+  chain of the data (the end status Rune_Detonate_CastAoE). The owner gets the full map and the
+  clock pair; each observer gets the public statuses. The ability data tool writes format 3
+  (the status categories and 497 caster rows). The stage also corrected the sixteen findings of
+  the review of stage 1.3b (cases RI1 to RI14: the gem of the weapon instance, a fixed perk
+  after its swap, a swap duplicate, the rune at a death or a leave, the level of a consumable,
+  the entity of message 2917, the own cooldown of an item, the countdown of a new item, an
+  early refusal, a file with no status row, the end of the client cooldown, a large paperdoll
+  group, the links of the perk data, and the checks of the perk tool) and the blank comparator
+  of AbilityData (case RI15: LessThanOrEqual, the static proof of the parser; Executioner, its
+  critical node, and Leaping Strike). Test cases ST1 to ST11 (ST7: two sessions; ST11: the load
+  of 200 characters with 1,000 statuses in a world of 4,000 creatures, with a time limit). Live:
+  the icons and the countdowns of a food, a potion, a dust, the rune, and a fortify of Safety
+  Measures, their expiry, the CON of a food and the armor of a dust in the sheet, and the icon
+  of a public status of a remote player. Open: the client does not apply the speed of a status
+  to its run (a walk of 2 s is the same with a haste of 0.2 or 0.4); the server accepts the
+  faster positions. Not in this stage: the parts S2 to S6, the statuses after a restart of the
+  backend (a decision of the user), and the rows with OnHitTaken or NumAroundMe.
 
 ### 3.4 Creatures: spawn, behavior, navigation
 

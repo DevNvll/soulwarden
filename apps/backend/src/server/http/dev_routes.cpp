@@ -709,6 +709,19 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/items/perks", "dev.items_perks", command_route(services, commands::set_item_perks));
     router.add("POST", "", "/v1/dev/rune/charge", "dev.rune_charge", command_route(services, commands::set_rune_charge));
     router.add("POST", "", "/v1/dev/rune/activate", "dev.rune_activate", command_route(services, commands::activate_rune));
+    // The status effects of a character (stage 3.3b-S1).
+    router.add("GET", "", "/v1/dev/status", "dev.status", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        return in_world(services, [character = *character](world::World& target) {
+            return json_reply(200, commands::status_json(target, character).dump());
+        });
+    });
+    router.add("POST", "", "/v1/dev/status", "dev.status_apply", command_route(services, commands::apply_status));
+    router.add("POST", "", "/v1/dev/status/remove", "dev.status_remove", command_route(services, commands::remove_status));
     router.add("GET", "", "/v1/dev/perks/roll", "dev.perks_roll", [&services](const RouteContext& context) {
         if (!context.request.host.empty()) {
             return message(403, "forbidden");

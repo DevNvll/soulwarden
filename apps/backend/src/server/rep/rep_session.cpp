@@ -1725,12 +1725,22 @@ void RepSession::send_equip_fail(const ComponentCall& call) {
 void RepSession::handle_use_item(std::span<const std::uint8_t> body) {
     // ContainerComponentServerFacet_ServerUseItem (type 2917, stage 1.3b): the target, the entity, and the bag slot (u32;
     // live check I7: 20 bytes from the entry "Use" of the action menu of an item in the bag).
+    const world::Entity* own = m_world.find(m_observer.own());
+    const auto call = read_component_call(body);
     hub::Reader reader(body);
     reader.u64();
     reader.u64();
     const std::uint32_t slot = reader.u32();
-    if (!reader.ok()) {
+    if (!reader.ok() || !call) {
         log::write("rep: use item request (type %u, %zu bytes) does not have the form of the request: no change", kTypeUseItem, body.size());
+        return;
+    }
+    // The character of a request is the character of the session (code review of stage 1.3b, finding F6): a request that
+    // names a different entity changes nothing, as the other item requests.
+    if (own == nullptr || call->entity != own->id) {
+        log::write("rep: use item request (type %u) names the entity %016llx, which is not the entity of the session: no change",
+                   kTypeUseItem,
+                   static_cast<unsigned long long>(call->entity));
         return;
     }
     const world::UseVerdict verdict = m_world.consumables().use_bag(m_id, slot);

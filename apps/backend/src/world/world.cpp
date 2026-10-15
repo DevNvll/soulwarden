@@ -56,7 +56,8 @@ World::World(const WorldClock& clock,
       m_abilities(*this, options.abilityData, options.combatTables),
       m_gear(*this),
       m_consumables(*this),
-      m_runes(*this) {
+      m_runes(*this),
+      m_statuses(*this) {
     m_random = options.randomSeed;
 }
 
@@ -110,7 +111,7 @@ void World::tick() {
         m_navigation.tick();
         m_creatures.tick();
         m_health.tick();
-        m_consumables.tick();
+        m_statuses.tick();
         m_abilities.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
@@ -205,7 +206,9 @@ Entity& World::make_entity(const state::Character& character) {
     m_progress.load(entity);
     m_skills.load(entity);
     m_abilities.entered(entity);
-    // The effects, the charge, and the values of the equipment (stage 1.3b): the gear values need the effects.
+    // The statuses, the item cooldowns, the charge, and the values of the equipment (stages 1.3b and 3.3b-S1): the gear
+    // values need the statuses, and the gear refresh gives the statuses of the items again.
+    m_statuses.entered(entity);
     m_consumables.entered(entity);
     m_runes.entered(entity);
     m_gear.refresh(entity);
@@ -243,6 +246,10 @@ void World::remove_entity(EntityId id) {
         log::write("world: entity %016llx of character %s removed",
                    static_cast<unsigned long long>(entity.id),
                    entity.characterId.c_str());
+        // The activation of a heart rune ends with no explosion (finding F4 of the review of stage 1.3b), and the statuses
+        // of the gear end (the next entry gives them again from the items). The other statuses stay with the character.
+        m_runes.left(found->second);
+        m_statuses.left(found->second);
         m_characters.erase(entity.characterId);
     }
     m_dirtyPositions.erase(id);
@@ -608,7 +615,9 @@ PositionVerdict World::report_position(SessionId session, const PositionReport& 
         // A dead character stays at the place of its death: a report of its client changes nothing.
         return track.refused(PositionVerdict::dead);
     }
-    const PositionVerdict verdict = track.judge(report, entity->position, m_clock.now());
+    // The speed of the statuses of the character (stage 3.3b-S1): a haste makes the limit of the window larger.
+    const float speedFactor = 1.0F + std::max(entity->gear.moveSpeed, entity->gear.sprintSpeed);
+    const PositionVerdict verdict = track.judge(report, entity->position, m_clock.now(), speedFactor);
     if (verdict != PositionVerdict::accepted) {
         return verdict; // The entity, the index, and the row do not change.
     }

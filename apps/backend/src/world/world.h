@@ -42,6 +42,7 @@
 #include "world/rewards.h"
 #include "world/runes.h"
 #include "world/skills.h"
+#include "world/statuses.h"
 #include "world/world_clock.h"
 
 // The world object. It has the clock of the world, the task queue, the timers, and the entity
@@ -629,6 +630,12 @@ public:
         return m_consumables;
     }
     /** @return The heart rune system: the charge and the activation of the heart rune of a character (stage 1.3b). */
+    [[nodiscard]] Statuses& statuses() {
+        return m_statuses;
+    }
+    [[nodiscard]] const Statuses& statuses() const {
+        return m_statuses;
+    }
     [[nodiscard]] Runes& runes() {
         return m_runes;
     }
@@ -715,6 +722,8 @@ private:
     Gear m_gear;
     Consumables m_consumables;
     Runes m_runes;
+    /** The status effects of the characters (stage 3.3b-S1). */
+    Statuses m_statuses;
 };
 
 template <class Result>

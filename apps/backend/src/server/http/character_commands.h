@@ -172,6 +172,17 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand set_rune_charge(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand activate_rune(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand roll_item_perks(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+// The status commands (stage 3.3b-S1, server/http/status_commands.cpp; world/statuses.h).
+// apply_status: `status` (the id of a status row), and when necessary `seconds` (0: the duration of the row), `potency`,
+// `count` (1 to 25 applications: the stacks): the status on the character, with the rules of the status system.
+// remove_status: `status` (the id of a status row, or "all"): the status ends (not a status of the gear).
+[[nodiscard]] WorldCommand apply_status(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand remove_status(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * @return The statuses of a character (world thread): each status (index, seconds, stacks, potency, source, tray, public,
+ *         wire), the speed and armor parts, the attribute bonus, and the counts of the status system.
+ */
+[[nodiscard]] nlohmann::json status_json(world::World& world, const std::string& character);
 /**
  * @return The gear of a character (world thread): the perks with an effect (slot, item, perk, the
  *         perk before the swap, potency), the attribute bonus, the parts of the health, the

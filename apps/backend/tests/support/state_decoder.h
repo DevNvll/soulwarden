@@ -59,7 +59,11 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
     switch (type) {
     case 10: // GdeMetadata: asset id (16 bytes and sub id), actor id (16 bytes).
         return group == 0 && field == 0 ? 20 : group == 0 && field == 1 ? 16 : -1;
-    case 3935: // PlayerComponent, group 2: character id (flags, text), name (text), connected (flag).
+    case 3935: // PlayerComponent, group 1 (stage 3.3b-S1): the wall clock pair (fields 6 and 7, u64 each); group 2: character
+               // id (flags, text), name (text), connected (flag).
+        if (group == 1) {
+            return field == 6 || field == 7 ? 8 : -1;
+        }
         if (group != 2) {
             return -1;
         }
@@ -195,8 +199,15 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         return group == 0 && field < 4 ? progress_wire::list_size(rest, 20, 1000) : -1;
     case 5257: // Charge (stage 1.3b): the percent of the heart rune charge, one byte.
         return group == 0 && field == 0 ? 1 : -1;
-    case 4236: // StatusEffects of a creature (stage 3.3a): group 3, the full map (14 bytes) and the compact map (3 bytes).
-        return group == 3 && field < 2 ? progress_wire::list_size(rest, field == 0 ? 14 : 3, 1000) : -1;
+    case 4236: // StatusEffects (stages 3.3a and 3.3b-S1): group 3, the full map (14 bytes) and the compact map (3 bytes);
+               // group 1, the full map (14), the lightweight map (10), and the tray (17).
+        if (group == 3 && field < 2) {
+            return progress_wire::list_size(rest, field == 0 ? 14 : 3, 1000);
+        }
+        if (group == 1 && field < 3) {
+            return progress_wire::list_size(rest, field == 0 ? 14 : field == 1 ? 10 : 17, 1000);
+        }
+        return -1;
     default:
         return -1;
     }

@@ -191,6 +191,15 @@ std::vector<hub::Bytes> encode_paperdoll_state(const world::Entity& entity, View
     const auto entry_size = [](const Entry& entry) { return entry.element.size() + 8; }; // The slot number and the durability.
     const auto otherCount = static_cast<std::size_t>(std::count_if(
         entries.begin(), entries.end(), [](const Entry& entry) { return !world::paperdoll::visible_slot(entry.slot); }));
+    // A first record (or each slot again): each group of lists stays whole in one part, also when it is larger than the
+    // budget (code review of stage 1.3b, finding F12: a group of 31 items in three parts lost the items of the first two
+    // parts). Such a part goes in a bundle above one carrier message, which the carrier sends in chunks; the largest
+    // group (each slot of the paperdoll) is far below the limit of a bundle of the client.
+    const bool wholeGroups = first || again;
+    std::size_t groupSize = kStateOverhead;
+    for (const Entry& entry : entries) {
+        groupSize += entry_size(entry);
+    }
     std::size_t next = 0;
     bool head = true;
     while (head || next < entries.size()) {
@@ -199,7 +208,19 @@ std::vector<hub::Bytes> encode_paperdoll_state(const world::Entity& entity, View
         std::vector<Entry> visible;
         std::vector<Entry> other;
         std::size_t size = kStateOverhead;
-        while (next < entries.size()) {
+        if (wholeGroups) {
+            // One part with the two groups when they fit the budget together; else one part for each group.
+            const bool together = groupSize <= budget;
+            while (next < entries.size()) {
+                const bool isVisible = world::paperdoll::visible_slot(entries[next].slot);
+                if (!together && isVisible && !other.empty()) {
+                    break;
+                }
+                (isVisible ? visible : other).push_back(entries[next]);
+                ++next;
+            }
+        }
+        while (!wholeGroups && next < entries.size()) {
             const Entry& entry = entries[next];
             const std::size_t entrySize = entry_size(entry);
             const bool isVisible = world::paperdoll::visible_slot(entry.slot);

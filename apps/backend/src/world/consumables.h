@@ -27,26 +27,27 @@
 // One use (Consumables::use), with the cells of the game data (perk-data.json: the consumable
 // rows; ability-data.json: the status rows):
 //   1. The item of the slot is a consumable of the data. The item class has no tag
-//      SiegeWarOnly (an item of a siege war). A row with DisableUseInCombat: the character is not
-//      in a fight. The cooldown of its CooldownId does not run for this item.
+//      SiegeWarOnly (an item of a siege war). The level of the character is not below the
+//      RequiredLevel of the item (code review of stage 1.3b, F5). A row with DisableUseInCombat:
+//      the character is not in a fight. The cooldown of its CooldownId does not run for this item.
 //   2. The inventory takes one item in one transaction (Inventory::take_one). A use that a
 //      check refuses, or whose row the database does not take, changes nothing.
-//   3. The effects (AddStatusEffects, with DurationOverrides): an effect with no duration and no
-//      TickRate is one heal (Health + HealthModifierPercent of the maximum, times the heal factor
-//      of the equip load) and one mana change (Mana; through the cost path of the abilities). An
-//      effect with a duration stays on the character: its values count in the gear system (a
-//      food: MODConstitution), a TickRate gives the heal and the mana at each tick, and
-//      StopOnHitCount ends it after hits. RemoveStatusEffects and RemoveStatusEffectCategories
-//      end the older effects first (a new food ends the old food).
+//   3. The effects (AddStatusEffects, with DurationOverrides) go to the status system of the
+//      character (world/statuses.h, stage 3.3b-S1), with the source "consumable": a status with no
+//      duration is one heal and one mana change, a status with a duration stays (its values, its
+//      ticks, StopOnHitCount). RemoveStatusEffects and RemoveStatusEffectCategories end the older
+//      statuses first (a new food ends the old food).
 //   4. The cooldown: CooldownDuration for the item, times 1 + the CooldownTimer of each perk of
 //      the character with OnUsedConsumable (an earring). With a SharedCooldownLocString, the
 //      other items of the same CooldownId get `kSharedPart` of the time; with none, the same time.
 //      The cooldown state of the owner (field 3, the item map) shows the countdown on each
 //      quick slot and in the bag: the key is the CRC-32 of the lower-case item id (live check I7).
+//      Each item keeps its own end, and a shared end does not make an end earlier (finding F7). A
+//      change of the bag or of the quick slots gives the map again: an item that comes into the
+//      bag during a cooldown of its id gets the countdown (finding F8).
 //
-// The effects and the cooldowns are values of the character (the character id is the key), not
-// of a session: a new session of the character gets them. The tick looks only at the characters
-// with an effect (m_active).
+// The cooldowns are values of the character (the character id is the key), not of a session: a new
+// session of the character gets them.
 
 namespace soulwarden::backend::world {
 
@@ -81,8 +82,10 @@ enum class UseVerdict : std::uint8_t {
     inCombat,
     /** The database did not take the change. */
     storage,
+    /** The level of the character is below the RequiredLevel of the item (finding F5). */
+    level,
 };
-inline constexpr std::size_t kUseVerdictCount = 10;
+inline constexpr std::size_t kUseVerdictCount = 11;
 
 /** @return A short text for a log line, for example "the cooldown runs". */
 [[nodiscard]] const char* use_verdict_text(UseVerdict verdict);
@@ -90,10 +93,6 @@ inline constexpr std::size_t kUseVerdictCount = 10;
 /** Counts of the consumable system, for the log and for the tests. */
 struct ConsumableCounts {
     std::array<std::uint64_t, kUseVerdictCount> uses{};
-    /** Ticks of the effects, heals, and effects that ended (by time, by hits, by a newer effect, or by death). */
-    std::uint64_t ticks{0};
-    std::uint64_t heals{0};
-    std::uint64_t ended{0};
 };
 
 class Consumables {
@@ -107,21 +106,13 @@ public:
     /** The use of the item of a slot of the bag or of the paperdoll by a character in the world (also a command). */
     UseVerdict use(const std::string& characterId, bool paperdoll, std::uint32_t slot);
 
-    /** The world made the entity of a character: it gets the effects and the item cooldowns of the character. */
+    /** The world made the entity of a character: it gets the item cooldowns of the character. */
     void entered(Entity& character);
-    /** The world calls it in each tick: the ticks and the ends of the effects. */
-    void tick();
-    /** A character took a hit of a creature: an effect with StopOnHitCount counts it. */
-    void hit_taken(Entity& character);
     /**
-     * Gives a character an effect of a status row for a time (a consumable, the status of a heart rune): the effect
-     * counts in the gear system, and a TickRate gives its heal and mana. The same status again has the new times.
-     * @param seconds The time; 0 or less: one application now (no effect stays).
+     * The bag or the quick slots of a character changed (world/inventory.h): the item map of the cooldown state gets the
+     * items of a cooldown that runs (finding F8).
      */
-    void add_effect(Entity& character, const gamedata::StatusRow& status, float seconds, float potency = 1.0F);
-
-    /** @return The effects of a character (the tests and the development route). */
-    [[nodiscard]] const std::vector<PlayerEffect>* effects_of(const std::string& characterId) const;
+    void items_changed(Entity& character);
     [[nodiscard]] const ConsumableCounts& counts() const {
         return m_counts;
     }
@@ -129,33 +120,29 @@ public:
 private:
     /** The cooldown of one cooldown id of a character. */
     struct Group {
-        /** The item of the last use, and the end of its cooldown. */
-        std::string itemId;
-        WorldClock::time_point end{};
-        /** The end for the other items of the id. */
+        /** The end of the own cooldown of each item that was used (the lower-case item id; finding F7). */
+        std::map<std::string, WorldClock::time_point> ends;
+        /** The end for each item of the id: the latest shared end. */
         WorldClock::time_point sharedEnd{};
+        /** @return The end of the cooldown of one item of the id. */
+        [[nodiscard]] WorldClock::time_point end_of(const std::string& item) const {
+            const auto found = ends.find(item);
+            return found == ends.end() ? sharedEnd : std::max(found->second, sharedEnd);
+        }
     };
     struct CharacterState {
         std::map<std::string, Group> groups;
-        std::vector<PlayerEffect> effects;
     };
 
     UseVerdict counted(UseVerdict verdict) {
         ++m_counts.uses[static_cast<std::size_t>(verdict)];
         return verdict;
     }
-    /** Puts the effects and the item cooldowns into the entity, marks the cooldown state, and refreshes the gear values. */
-    void publish(Entity& character, CharacterState& state, bool effectsChanged);
-    /** The heal and the mana of one application or tick of an effect. */
-    void give(Entity& character, const gamedata::StatusRow& row, float potency);
-    /** Ends the effects of a character that `end(effect)` selects. @return The number of effects that ended. */
-    template <class Select>
-    unsigned end_effects(CharacterState& state, Select&& end);
+    /** Puts the item cooldowns into the entity and marks the cooldown state. */
+    void publish(Entity& character, const CharacterState& state);
 
     World& m_world;
     std::unordered_map<std::string, CharacterState> m_characters;
-    /** The characters with an effect: the tick looks only at these. */
-    std::set<std::string> m_active;
     ConsumableCounts m_counts;
 };
 

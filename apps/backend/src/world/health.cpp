@@ -33,6 +33,10 @@ HealthResult Health::apply(Entity& target, float damage) {
         result.died = true;
     }
     m_world.touch(target.id, ComponentKey::vitals);
+    if (result.died) {
+        // RemoveOnDeath (stage 3.3b-S1): the statuses of the row end at the death (no end status of a heart rune).
+        m_world.statuses().died(target);
+    }
     return result;
 }
 

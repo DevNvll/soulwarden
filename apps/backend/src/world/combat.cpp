@@ -183,6 +183,14 @@ HitLimits& Combat::limits_of(const std::string& characterId) {
     return m_limits[characterId];
 }
 
+std::optional<std::uint32_t> Combat::weapon_slot_in_hand(const Entity& attacker) {
+    const Equipment& equipment = attacker.equipment;
+    if (attacker.combat.selectedWeapon != 0 && equipment.item(attacker.combat.selectedWeapon) != nullptr) {
+        return attacker.combat.selectedWeapon;
+    }
+    return equipment.active_weapon();
+}
+
 const ItemInstance* Combat::weapon_in_hand(const Entity& attacker) {
     const Equipment& equipment = attacker.equipment;
     if (attacker.combat.selectedWeapon != 0) {
@@ -430,7 +438,9 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
         }
         limits.note_hit(HitLimits::Hit{target->id, now, claim.input, session, track.sequence()});
         const AbilityKind kind = m_world.abilities().kind_of(phase->cast);
-        result = strike(*attacker, *target, phase->itemId, *weapon, phase->gearScore, phase->row, 1.0F, ability_name(kind));
+        result = strike(*attacker, *target,
+                        HitWeapon{phase->itemId, phase->slot, weapon, phase->gearScore, m_world.abilities().ability_of(phase->cast)},
+                        phase->row, 1.0F, ability_name(kind));
         if (result.verdict != HitVerdict::accepted) {
             return refuse(result.verdict);
         }
@@ -476,8 +486,8 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     }
     limits.note_hit(HitLimits::Hit{target->id, now, claim.input, session, track.sequence()});
     const AttackKind kind = result.kind;
-    result = strike(*attacker, *target, item->itemId, *weapon, item->gearScore, *rowIndex, 1.0F,
-                    kind == AttackKind::heavy ? "heavy attack" : "light attack");
+    result = strike(*attacker, *target, HitWeapon{item->itemId, weapon_slot_in_hand(*attacker).value_or(0), weapon, item->gearScore, {}},
+                    *rowIndex, 1.0F, kind == AttackKind::heavy ? "heavy attack" : "light attack");
     result.kind = kind;
     if (result.verdict != HitVerdict::accepted) {
         return refuse(result.verdict);
@@ -486,37 +496,33 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     return result;
 }
 
-HitResult Combat::strike(Entity& attacker,
-                         Entity& target,
-                         const std::string& itemId,
-                         const gamedata::WeaponRow& weapon,
-                         std::uint32_t gearScore,
-                         std::uint32_t rowIndex,
-                         float factor,
-                         const char* what) {
+HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use, std::uint32_t rowIndex, float factor, const char* what) {
     HitResult result;
     result.verdict = HitVerdict::dead;
-    if (!has_tables() || rowIndex >= m_tables->data().damageRows.size()) {
+    if (!has_tables() || use.row == nullptr || rowIndex >= m_tables->data().damageRows.size()) {
         result.verdict = HitVerdict::noTables;
         return result;
     }
     const gamedata::DamageRow& row = m_tables->damage_row(rowIndex);
     // The gear of the attacker and the effects on the target (stage 1.3b, world/gear.h).
+    const gamedata::WeaponRow& weapon = *use.row;
+    const std::string& itemId = use.itemId;
+    const std::uint32_t gearScore = use.gearScore;
     HitContext hit;
     hit.row = row.id;
     hit.attackType = row.attackType;
+    hit.ability = use.ability;
+    hit.table = weapon.mastery.empty() ? 0 : gamedata::progression_id(weapon.mastery);
     HitModifiers modifiers;
     modifiers.part = m_world.gear().hit_damage(attacker, target, hit);
     modifiers.typeParts = &attacker.gear.damage;
     modifiers.armor = target.creature.armor_part(m_world.clock().now());
-    // The gem of the weapon of the hit: the weapon in the hand, or the item of a different slot (the heart rune).
-    for (const auto& [slot, place] : attacker.equipment.slots) {
-        if (place.item && place.item->itemId == itemId && (paperdoll::weapon_slot(slot) || slot == paperdoll::kHeartRune)) {
-            if (const std::optional<Conversion> conversion = m_world.gear().conversion(*place.item, slot)) {
-                modifiers.conversionType = conversion->type;
-                modifiers.conversionPart = conversion->part;
-            }
-            break;
+    // The gem of the weapon of the hit: the instance of the slot of the hit (finding F1 of the review of stage 1.3b), when
+    // that slot still has the item of the hit.
+    if (const ItemInstance* instance = use.slot != 0 ? attacker.equipment.item(use.slot) : nullptr; instance != nullptr && instance->itemId == itemId) {
+        if (const std::optional<Conversion> conversion = m_world.gear().conversion(*instance, use.slot)) {
+            modifiers.conversionType = conversion->type;
+            modifiers.conversionPart = conversion->part;
         }
     }
     result.damage = damage(attacker, weapon, gearScore, row, m_tables->defense_of(target.creature.kind->vitals), &modifiers);

@@ -21,10 +21,6 @@ std::string lower(std::string_view text) {
     return result;
 }
 
-bool same_text(std::string_view left, std::string_view right) {
-    return lower(left) == lower(right);
-}
-
 std::chrono::milliseconds milliseconds_of(float seconds) {
     return std::chrono::milliseconds(static_cast<long long>(std::lround(std::max(seconds, 0.0F) * 1000.0F)));
 }
@@ -53,6 +49,8 @@ const char* use_verdict_text(UseVerdict verdict) {
         return "the character is in a fight";
     case UseVerdict::storage:
         return "the database did not take the change";
+    case UseVerdict::level:
+        return "the level of the character is below the RequiredLevel of the item";
     }
     return "unknown";
 }
@@ -96,6 +94,7 @@ UseVerdict Consumables::use(const std::string& characterId, bool paperdoll, std:
     UseVerdict verdict = UseVerdict::used;
     const gamedata::ConsumableRow* row = nullptr;
     std::string itemId;
+    const std::uint32_t level = character->progression.level;
     const auto check = [&](const ItemInstance& item) {
         row = perks->consumable(item.itemId);
         itemId = item.itemId;
@@ -104,10 +103,13 @@ UseVerdict Consumables::use(const std::string& characterId, bool paperdoll, std:
             verdict = UseVerdict::notConsumable;
         } else if (definition != nullptr && gamedata::class_has_any(definition->itemClass, "SiegeWarOnly")) {
             verdict = UseVerdict::notAllowed;
+        } else if (level < row->level) {
+            // RequiredLevel of the item (finding F5): the client sends no key for it, and the server refuses a request.
+            verdict = UseVerdict::level;
         } else if (row->noCombat && character->life.foughtAt && now - *character->life.foughtAt < Health::kRestTime) {
             verdict = UseVerdict::inCombat;
-        } else if (const auto group = state.groups.find(lower(row->cooldown)); !row->cooldown.empty() && group != state.groups.end()
-                   && now < (same_text(group->second.itemId, item.itemId) ? group->second.end : group->second.sharedEnd)) {
+        } else if (const auto group = state.groups.find(lower(row->cooldown));
+                   !row->cooldown.empty() && group != state.groups.end() && now < group->second.end_of(lower(item.itemId))) {
             verdict = UseVerdict::cooldown;
         }
         return verdict == UseVerdict::used ? ItemError::none : ItemError::notUsable;
@@ -125,26 +127,6 @@ UseVerdict Consumables::use(const std::string& characterId, bool paperdoll, std:
     if (character == nullptr || row == nullptr) {
         return counted(UseVerdict::noEntity);
     }
-    // The older effects that the item ends (a new food ends the old food).
-    end_effects(state, [&](const PlayerEffect& effect) {
-        if (std::any_of(row->removeEffects.begin(), row->removeEffects.end(), [&](const std::string& name) { return same_text(name, effect.status); })) {
-            return true;
-        }
-        const gamedata::StatusRow* status = abilities->status(effect.status);
-        if (status == nullptr) {
-            return false;
-        }
-        const std::string_view categories = status->cells.text("EffectCategories");
-        return std::any_of(row->removeCategories.begin(), row->removeCategories.end(),
-                           [&](const std::string& category) { return gamedata::class_has_any(categories, category); });
-    });
-    for (std::size_t index = 0; index < row->effects.size(); ++index) {
-        const gamedata::StatusRow* status = abilities->status(row->effects[index]);
-        if (status != nullptr) {
-            const float duration = index < row->durations.size() && row->durations[index] > 0.0F ? row->durations[index] : status->duration;
-            add_effect(*character, *status, duration);
-        }
-    }
     // The cooldown, with the perks of the character that shorten it (OnUsedConsumable: an earring).
     if (!row->cooldown.empty() && row->cooldownTime > 0.0F) {
         float factor = 1.0F;
@@ -158,9 +140,10 @@ UseVerdict Consumables::use(const std::string& characterId, bool paperdoll, std:
         }
         const float seconds = row->cooldownTime * std::max(factor, 0.0F);
         Group& group = state.groups[lower(row->cooldown)];
-        group.itemId = itemId;
-        group.end = now + milliseconds_of(seconds);
-        group.sharedEnd = now + milliseconds_of(seconds * (row->shared ? consumable_rules::kSharedPart : 1.0F));
+        // Each item keeps its own end, and no use makes an end earlier (finding F7).
+        WorldClock::time_point& own = group.ends[lower(itemId)];
+        own = std::max(own, now + milliseconds_of(seconds));
+        group.sharedEnd = std::max(group.sharedEnd, now + milliseconds_of(seconds * (row->shared ? consumable_rules::kSharedPart : 1.0F)));
     }
     {
         const std::string mark = log::session_mark(character->owner, characterId);
@@ -174,58 +157,25 @@ UseVerdict Consumables::use(const std::string& characterId, bool paperdoll, std:
                    row->cooldown.empty() ? "none" : row->cooldown.c_str(),
                    static_cast<double>(row->cooldownTime));
     }
-    publish(*character, state, true);
+    publish(*character, state);
+    // The older statuses that the item ends (a new food ends the old food), then the statuses of the item: the status
+    // system of the character (stage 3.3b-S1).
+    m_world.statuses().remove_rows(*character, row->removeEffects, row->removeCategories, StatusEnd::replaced);
+    for (std::size_t index = 0; index < row->effects.size(); ++index) {
+        Entity* own = m_world.find_character(characterId);
+        const gamedata::StatusRow* status = abilities->status(row->effects[index]);
+        if (own == nullptr || status == nullptr) {
+            continue;
+        }
+        StatusApply how;
+        how.seconds = index < row->durations.size() && row->durations[index] > 0.0F ? row->durations[index] : 0.0F;
+        how.source = StatusSource{StatusSourceKind::consumable, itemId, paperdoll ? slot : 0, own->id};
+        m_world.statuses().apply(*own, *status, how);
+    }
     return counted(UseVerdict::used);
 }
 
-void Consumables::add_effect(Entity& character, const gamedata::StatusRow& status, float seconds, float potency) {
-    if (seconds <= 0.0F) {
-        // An effect with no duration: one application now.
-        give(character, status, potency);
-        return;
-    }
-    const WorldClock::time_point now = m_world.clock().now();
-    CharacterState& state = m_characters[character.characterId];
-    PlayerEffect effect;
-    effect.status = status.id;
-    effect.potency = potency;
-    effect.started = now;
-    effect.ends = now + milliseconds_of(seconds);
-    effect.hitsLeft = status.stopOnHit;
-    const float tick = status.cells.number("TickRate");
-    if (tick > 0.0F
-        && (status.cells.number("Health") != 0.0F || status.cells.number("HealthModifierPercent") != 0.0F || status.cells.number("Mana") != 0.0F)) {
-        effect.nextTick = status.cells.number("DelayInitialTick") != 0.0F ? now + milliseconds_of(tick) : now;
-    }
-    // StackMax 1: the same effect again has the new times.
-    end_effects(state, [&](const PlayerEffect& other) { return same_text(other.status, effect.status); });
-    state.effects.push_back(std::move(effect));
-    m_active.insert(character.characterId);
-    publish(character, state, true);
-}
-
-void Consumables::give(Entity& character, const gamedata::StatusRow& row, float potency) {
-    const float health = (row.cells.number("Health") + row.cells.number("HealthModifierPercent") * character.vitals.healthMax) * potency;
-    if (health > 0.0F && !character.life.dead) {
-        m_world.health().heal_amount(character, health * m_world.gear().heal_factor(character), row.id.c_str());
-        ++m_counts.heals;
-    }
-    const float mana = (row.cells.number("Mana") + row.cells.number("ManaModifierPercent") * character.vitals.manaMax) * potency;
-    if (mana != 0.0F && !character.life.dead) {
-        m_world.abilities().change_mana(character, mana, row.id.c_str());
-    }
-}
-
-template <class Select>
-unsigned Consumables::end_effects(CharacterState& state, Select&& end) {
-    const std::size_t before = state.effects.size();
-    std::erase_if(state.effects, end);
-    const auto ended = static_cast<unsigned>(before - state.effects.size());
-    m_counts.ended += ended;
-    return ended;
-}
-
-void Consumables::publish(Entity& character, CharacterState& state, bool effectsChanged) {
+void Consumables::publish(Entity& character, const CharacterState& state) {
     const WorldClock::time_point now = m_world.clock().now();
     // The countdown of each item of a cooldown id in the quick slots and in the bag (the key of the client is the item id).
     std::vector<ItemCooldown> cooldowns;
@@ -239,7 +189,7 @@ void Consumables::publish(Entity& character, CharacterState& state, bool effects
         if (group == state.groups.end()) {
             return;
         }
-        const WorldClock::time_point end = same_text(group->second.itemId, item.itemId) ? group->second.end : group->second.sharedEnd;
+        const WorldClock::time_point end = group->second.end_of(lower(item.itemId));
         const std::uint32_t key = gamedata::item_id_crc(lower(item.itemId));
         if (end > now && std::none_of(cooldowns.begin(), cooldowns.end(), [&](const ItemCooldown& other) { return other.item == key; })) {
             cooldowns.push_back(ItemCooldown{key, end});
@@ -265,95 +215,20 @@ void Consumables::publish(Entity& character, CharacterState& state, bool effects
         character.itemCooldowns = std::move(cooldowns);
         m_world.touch(character.id, ComponentKey::cooldowns);
     }
-    if (effectsChanged) {
-        character.effects = state.effects;
-        m_world.gear().refresh(character);
-    }
 }
 
 void Consumables::entered(Entity& character) {
     const auto found = m_characters.find(character.characterId);
-    if (found == m_characters.end()) {
-        return;
+    if (found != m_characters.end()) {
+        publish(character, found->second);
     }
-    const WorldClock::time_point now = m_world.clock().now();
-    std::erase_if(found->second.effects, [&](const PlayerEffect& effect) { return effect.ends <= now; });
-    if (!found->second.effects.empty()) {
-        m_active.insert(character.characterId);
-    }
-    publish(character, found->second, true);
 }
 
-void Consumables::hit_taken(Entity& character) {
+void Consumables::items_changed(Entity& character) {
     const auto found = m_characters.find(character.characterId);
-    if (found == m_characters.end() || found->second.effects.empty()) {
-        return;
+    if (found != m_characters.end()) {
+        publish(character, found->second);
     }
-    bool ended = false;
-    for (PlayerEffect& effect : found->second.effects) {
-        if (effect.hitsLeft > 0) {
-            --effect.hitsLeft;
-            ended = ended || effect.hitsLeft == 0;
-        }
-    }
-    if (ended) {
-        // StopOnHitCount: the effect ends at the hit that the count reaches (a dust).
-        end_effects(found->second, [&](const PlayerEffect& effect) {
-            const gamedata::StatusRow* status =
-                m_world.options().abilityData != nullptr ? m_world.options().abilityData->status(effect.status) : nullptr;
-            return status != nullptr && status->stopOnHit > 0 && effect.hitsLeft == 0;
-        });
-        publish(character, found->second, true);
-    }
-}
-
-void Consumables::tick() {
-    if (m_active.empty()) {
-        return;
-    }
-    const WorldClock::time_point now = m_world.clock().now();
-    const gamedata::AbilityData* abilities = m_world.options().abilityData;
-    std::vector<std::string> idle;
-    for (const std::string& characterId : m_active) {
-        CharacterState& state = m_characters[characterId];
-        Entity* character = m_world.find_character(characterId);
-        if (character == nullptr) {
-            // The character left the world: its effects stay, and the time runs (the next entry removes the old ones).
-            idle.push_back(characterId);
-            continue;
-        }
-        for (PlayerEffect& effect : state.effects) {
-            const gamedata::StatusRow* status = abilities != nullptr ? abilities->status(effect.status) : nullptr;
-            const float tick = status != nullptr ? status->cells.number("TickRate") : 0.0F;
-            while (status != nullptr && effect.nextTick && *effect.nextTick <= now && *effect.nextTick < effect.ends && tick > 0.0F) {
-                give(*character, *status, effect.potency);
-                ++m_counts.ticks;
-                effect.nextTick = *effect.nextTick + milliseconds_of(tick);
-            }
-        }
-        // RemoveOnDeath: a dead character loses the effect.
-        const unsigned ended = end_effects(state, [&](const PlayerEffect& effect) {
-            if (effect.ends <= now) {
-                return true;
-            }
-            const gamedata::StatusRow* status = abilities != nullptr ? abilities->status(effect.status) : nullptr;
-            return character->life.dead && status != nullptr && status->cells.number("RemoveOnDeath") != 0.0F;
-        });
-        if (ended != 0) {
-            publish(*character, state, true);
-        }
-        if (state.effects.empty()) {
-            idle.push_back(characterId);
-        }
-    }
-    for (const std::string& characterId : idle) {
-        m_active.erase(characterId);
-    }
-}
-
-const std::vector<PlayerEffect>* Consumables::effects_of(const std::string& characterId) const {
-    const auto found = m_characters.find(characterId);
-    return found == m_characters.end() ? nullptr : &found->second.effects;
 }
 
 } // namespace soulwarden::backend::world

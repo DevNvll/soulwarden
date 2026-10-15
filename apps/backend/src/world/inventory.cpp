@@ -442,6 +442,11 @@ ItemResult Inventory::change(const std::string& characterId, const char* what, C
         if (!touched.equipment.empty()) {
             m_world.gear().refresh(*entity);
         }
+        // The countdown of each item of a consumable cooldown that runs, also for a new item (finding F8 of the review of
+        // stage 1.3b).
+        if (!touched.bag.empty() || !touched.equipment.empty()) {
+            m_world.consumables().items_changed(*entity);
+        }
     }
     result.slots.assign(touched.bag.begin(), touched.bag.end());
     result.equipmentSlots.assign(touched.equipment.begin(), touched.equipment.end());

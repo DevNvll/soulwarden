@@ -19,25 +19,30 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
 
 ## Rules
 
-- The gear system (`world/gear.h`, `world::Gear`) computes what the equipment and the effects
+- The gear system (`world/gear.h`, `world::Gear`) computes what the equipment and the statuses
   give a character. It changes only the gear values of the entity (`Entity::gear`, the
   attribute bonus) through `Gear::refresh`, and the maximum health through the progress system.
   The inventory system calls the refresh after a change of the equipment, the combat system
-  after a weapon change, the consumable system after a change of the effects, and the world at
-  the entry.
+  after a weapon change, the status system after a change of the statuses, and the world at
+  the entry. The refresh gives the statuses of the affixes to the status system first
+  (`Gear::gear_statuses`, stage 3.3b-S1), then it adds the values of the statuses with the
+  limits of their categories (`Statuses::values`, [Status effects](status-effects.md)): each
+  value counts one time. The gear summary has the speed parts of the statuses too.
 - The perks of a character: the perks of the instance and the fixed perks of the definition of
   each item in the armor slots (0 to 4), the jewelry slots (5 to 7), the weapon slots (24 to 29),
   and the heart rune (45), after the swap of the game, with the potency of the gear score of the
-  item. A perk with the condition OnActive or OnUnsheathed counts only for the weapon in the hand
+  item. Each effective perk counts one time for an item (code review of stage 1.3b, finding F2:
+  the instance has the swapped id of a fixed perk, and the definition the old id). A perk with the condition OnActive or OnUnsheathed counts only for the weapon in the hand
   (and its off hand item). A perk that the item cannot have counts nothing.
-- The passive values (the cells of the affixes, the status row that an affix keeps, and the
-  ability rows with no event), each one times the potency: MOD<attribute> (the bonus, a whole
+- The passive values (the cells of the affixes and the ability rows with no event; the status row
+  that an affix keeps is a status of the status system with the source "gear"), each one times
+  the potency: MOD<attribute> (the bonus, a whole
   number), MaxHealthMod and MaxHealth (a part of the health of the base, the level, and the
   constitution), BaseDamage, DMG<type>, ABS<type>, PhysicalArmor, ElementalArmor,
   BaseDamageReduction, and the regeneration of a status with TickRate and HealthModifierPercent.
   An ability row counts IsStackableMax times at most for one character (the largest potency
-  first). The effects on the character (a food, a dust, the status of the heart rune) count the
-  same, with no potency.
+  first). The statuses on the character (a food, a dust, the status of the heart rune, the status
+  of an affix) count through the status system.
 - The default of the stage (not a decision of the user): the ordinary attribute perks of an
   item (Soldier, Sentry, ...) give 0. The cells MOD<attribute> of their affixes are 0 in the
   game data (the 411 level points of a character are the source of its attributes); the client
@@ -61,14 +66,23 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   effect, when its conditions pass and its ActivationCooldown (a value of the character) ended.
   The conditions that the backend evaluates: AttackType, DamageTableRow, RemoteDamageTableRow,
   TargetStatusEffectCategory with its comparison, the health, stamina, and mana percents, grit
-  (no grit in the backend: a row that needs it does not pass), the vitals category, and
-  DontHaveStatusEffect. A row with a different column that is not a value has no effect (a
+  (no grit in the backend: a row that needs it does not pass), the vitals category,
+  DontHaveStatusEffect (a status of the status system), and InSequence (stage 3.3b-S1: the hit
+  is a hit of the cast of an ability of the list). A blank TargetComparisonType,
+  MyComparisonType, MyStaminaComparisonType, or MyManaComparisonType is LessThanOrEqual: the
+  AbilityData parser of the client (image RVA 0x43B6390) gives enum 4 for each text that it does
+  not know, also an empty text (research abilities-shared.md K15; before stage 3.3b-S1 the
+  backend used Equal: Executioner 50 percent, its critical node 30 percent, and Leaping Strike 30
+  percent need it). A row with a different column that is not a value has no effect (a
   rule of this project). The effects: OtherApplyStatusEffect (a rend of the armor of the
   creature; a damage over time of HealthModifierDamageBased of the raw damage of the hit, with
   its ticks; CastSpell: a chain to the next creatures near the target, MaxChainNum, 8 at most,
-  with sight), DmgPctToHealth (a heal of a part of the damage, with the heal factor), and
+  with sight), DmgPctToHealth (a heal of a part of the damage, with the heal factor),
   CooldownTimer with CDRImmediatelyOptions ActiveWeapon (a part of the cooldown of each ability
-  of the bar of the weapon in the hand).
+  of the bar of the weapon in the hand), and SelfApplyStatusEffect (stage 3.3b-S1: a status on
+  the caster through the status system). The learned nodes of the ability table of the weapon
+  of the hit with a caster effect row of the game data count the same (Safety Measures, Greed,
+  Hammer Time: [Status effects](status-effects.md)).
 - A tick and a chain hit go through `Combat::strike_amount`: the defense of the creature for
   the type, the creature system, the damage number. No perk of the attacker counts for them.
   A caster that left the world or died does no damage. A tick or a chain hit with a change of
@@ -109,9 +123,10 @@ tools/gamedata/perks.sh --find Gravity   # the perks, buckets, and items with a 
 - The client does its own perk swap: a give of the Soldier perk on a weapon shows "Acutely
   Empowered". The backend stores the perk after the swap (`tools/world items` prints it). Look
   for the swapped perk in a test.
-- The client shows the armor, the attribute values, and the equip load of its own
-  computation: the backend sends no status effect of a player, thus a dust or the status of
-  the heart rune does not change the armor of the character sheet (the backend counts it).
+- The client computes the armor of the character sheet from its items and the statuses of the
+  status state (stage 3.3b-S1: a dust shows its armor after a new open of the inventory), and
+  the attribute values from the attribute state (the bonus map): the status state alone does
+  not change an attribute of the sheet.
 - A perk of the weapon that is not in the hand does nothing: select the weapon (key 1 or 2)
   before a test of an OnActive perk.
 - The potency of a perk scales with the gear score of its item: a test item with no `--gs`

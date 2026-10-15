@@ -58,6 +58,9 @@
 //                              (stage 1.3b), with the rule of a request of a client
 //          set_rune_charge     percent (0 to 100): the heart rune charge (stage 1.3b)
 //          activate_rune       no argument: the key of the heart rune (stage 1.3b)
+//          apply_status        status, and when necessary seconds, potency, count: a status
+//                              effect on the character (stage 3.3b-S1, world/statuses.h)
+//          remove_status       status (an id, or all): the status ends (stage 3.3b-S1)
 //        remove_creature, set_creature_health, and kill_creature change only a creature of
 //        the list of the character (150 m or less from it), and the character must be in the
 //        world: a different creature gives the reply 404, and nothing changes.
@@ -130,6 +133,8 @@ constexpr NamedCommand kCommands[] = {
     {"use_item", commands::use_item},
     {"set_rune_charge", commands::set_rune_charge},
     {"activate_rune", commands::activate_rune},
+    {"apply_status", commands::apply_status},
+    {"remove_status", commands::remove_status},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */

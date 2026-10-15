@@ -210,13 +210,15 @@ json gear_json(world::World& target, const std::string& character) {
     for (const auto& [type, part] : entity->gear.absorption) {
         absorption[type] = part;
     }
+    // The statuses of the character (stage 3.3b-S1: the status system; `tools/world status` has each detail).
     json effects = json::array();
-    for (const world::PlayerEffect& effect : entity->effects) {
-        if (effect.ends > now) {
-            effects.push_back({{"status", effect.status},
-                               {"seconds", std::chrono::duration<double>(effect.ends - now).count()},
-                               {"potency", effect.potency},
-                               {"hitsLeft", effect.hitsLeft}});
+    for (const world::ActiveStatus& status : entity->statuses) {
+        if (status.permanent || status.ends > now) {
+            effects.push_back({{"status", status.status},
+                               {"seconds", status.permanent ? -1.0 : std::chrono::duration<double>(status.ends - now).count()},
+                               {"potency", status.potency},
+                               {"stacks", status.stacks},
+                               {"hitsLeft", status.hitsLeft}});
         }
     }
     json cooldowns = json::array();
@@ -251,8 +253,10 @@ json gear_json(world::World& target, const std::string& character) {
     reply["counts"] = {{"perkHits", gear.perkHits}, {"perkEffects", gear.perkEffects}, {"perkHeals", gear.perkHeals},
                        {"cooldownReductions", gear.cooldownReductions}, {"chainHits", gear.chainHits}, {"tickHits", gear.tickHits},
                        {"runeGains", runes.gains}, {"explosions", runes.explosions}, {"explosionHits", runes.explosionHits},
-                       {"explosionsCancelled", runes.cancelled}, {"consumableTicks", target.consumables().counts().ticks},
-                       {"consumableHeals", target.consumables().counts().heals}};
+                       {"explosionsCancelled", runes.cancelled}, {"statusTicks", target.statuses().counts().ticks},
+                       {"statusHeals", target.statuses().counts().heals}, {"casterEffects", gear.casterEffects}};
+    reply["moveSpeedPart"] = entity->gear.moveSpeed;
+    reply["sprintSpeedPart"] = entity->gear.sprintSpeed;
     return reply;
 }
 

@@ -72,6 +72,15 @@ not: a command for a character that is not in the world changes its rows in the 
                                                 14 to 19 with --paperdoll), with the rule of a client
   tools/world rune CHARACTER charge PERCENT|activate
                                                 set the heart rune charge, or press the rune key
+  tools/world status CHARACTER                  the status effects of a character (stage 3.3b-S1): each
+                                                status with its seconds, stacks, potency, and source,
+                                                the speed and armor parts, the counts
+  tools/world status CHARACTER STATUS [SECONDS [COUNT]]
+                                                put a status row of the game data on the character
+                                                (SECONDS 0: the duration of the row; COUNT: 1 to 25
+                                                applications, the stacks), with the rules of the game
+  tools/world status CHARACTER remove STATUS|all
+                                                end a status (not a status of the gear)
   tools/world perkroll ITEM [--gs N] [--level N] [--count N]
                                                 roll the perks of a loot item N times (no item given)
   tools/world give CHARACTER ITEM [QUANTITY] [--action N] [--gs N] [--perks P1,P2,P3,P4,P5]
@@ -966,6 +975,24 @@ def main() -> None:
             request(data_dir, "POST", f"/v1/dev/rune/activate?character={target}", show_bag=False)
         else:
             fail("tools/world rune CHARACTER charge PERCENT|activate")
+    elif command == "status" and 2 <= len(arguments) <= 5:
+        target = character_id(data_dir, arguments[1])
+        if len(arguments) == 2:
+            document = fetch(data_dir, f"/v1/dev/status?character={target}")
+            print(json.dumps(document, indent=1, sort_keys=True))
+        elif arguments[2] == "remove" and len(arguments) == 4:
+            if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[3]):
+                fail("tools/world status CHARACTER remove STATUS|all")
+            request(data_dir, "POST", f"/v1/dev/status/remove?character={target}&status={arguments[3]}", show_bag=False)
+        elif re.fullmatch(r"[A-Za-z0-9_]+", arguments[2]):
+            query = f"character={target}&status={arguments[2]}"
+            if len(arguments) >= 4:
+                query += f"&seconds={numbers(arguments[3:4], 1)[0]}"
+            if len(arguments) == 5:
+                query += f"&count={whole(arguments[4], 'the count')}"
+            request(data_dir, "POST", f"/v1/dev/status?{query}", show_bag=False)
+        else:
+            fail("tools/world status CHARACTER [STATUS [SECONDS [COUNT]]] | tools/world status CHARACTER remove STATUS|all")
     elif command == "perkroll" and len(arguments) >= 2:
         if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[1]):
             fail("the item must be an ItemID of the item catalog")

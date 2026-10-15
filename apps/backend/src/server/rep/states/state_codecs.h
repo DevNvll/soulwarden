@@ -78,6 +78,8 @@ inline constexpr std::uint32_t kAbilitySlot = 46;
 inline constexpr std::uint32_t kCooldownSlot = 45;
 /** The component ChargeComponent of the player slice: the heart rune charge (stage 1.3b). */
 inline constexpr std::uint32_t kChargeSlot = 48;
+/** The component StatusEffects of the player slice and of the remote player slice (stage 3.3b-S1, research abilities-shared.md Q1). */
+inline constexpr std::uint32_t kStatusSlot = 44;
 
 enum class View {
     owner,
@@ -206,6 +208,12 @@ struct StateCodec {
  *         creature with no such effect.
  */
 [[nodiscard]] std::vector<hub::Bytes> encode_creature_status_state(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The status effects of a character (states/status_state.cpp, stage 3.3b-S1): for the owner the full map, an
+ *         empty lightweight map, and the tray; for an observer the full map and the compact map of the public statuses.
+ *         No fragment in the first record of a character with no such status. Needs `request.clock` (the wall ends).
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_player_status_state(const world::Entity& entity, View view, const PartsRequest& request);
 /** @return The coin of the character for the owner. No byte for the observer view. */
 [[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The mana state of a character (states/mana_state.cpp): owner only. */

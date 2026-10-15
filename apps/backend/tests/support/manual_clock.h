@@ -23,6 +23,14 @@ public:
         m_nanoseconds += duration.count();
     }
 
+    /** The made-up Unix time of the time 0 of this clock (the wall times of the tests): 2026-09-21. */
+    static constexpr std::int64_t kWallOffset = 1'790'000'000'000'000'000;
+
+protected:
+    [[nodiscard]] std::int64_t wall_offset_ns() const override {
+        return kWallOffset;
+    }
+
 private:
     std::atomic<std::int64_t> m_nanoseconds;
 };

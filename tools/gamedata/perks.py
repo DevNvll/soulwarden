@@ -39,7 +39,9 @@ Input: the game copy, from the same sources as the creature data tool (creature_
                                       PerkBucket1..5, ForceRarity, CanHavePerks
   ConsumableItemDefinitions           each consumable: AddStatusEffects, DurationOverrides,
                                       CooldownId, CooldownDuration, RemoveStatusEffects,
-                                      RemoveStatusEffectCategories, DisableUseInCombat
+                                      RemoveStatusEffectCategories, DisableUseInCombat; and the
+                                      RequiredLevel of its row of MasterItemDefinitions (format 2,
+                                      code review of stage 1.3b, finding F5)
   EncumbranceData                     the row Player: the equip load limits and their effects
   ArmorItemDefinitions                the equip load of each armor item (WeightOverride of its row)
   PerkExclusiveLabelData              the weight of each exclusive label, with its item class overrides
@@ -52,9 +54,16 @@ The tool writes no file (status 1) when the game copy does not have the seven pe
 TABLE_ORDER, when a perk id is empty or is in two rows, when a perk names an affix or an ability
 row that the tables do not have (but the references of REFERENCES_NOT_IN_GAME, which the game
 itself does not resolve), when a bucket or an item names a perk or a bucket that the tables do
-not have, when a column that the tool reads is not in its table, and when a number is not finite.
+not have, when a column that the tool reads is not in its table (also each value column of the
+encumbrance row and of the affix and ability tables: code review of stage 1.3b, finding F14), when
+two affix rows or two ability rows have one id and different values (finding F15), and when a
+number is not finite.
 
-Output: {"format": 1, "count": N, "tables": [{"name", "file", "rows", "buckets", "first", "last"}, ...],
+The entries of a perk bucket end at the first empty perk cell or empty weight cell, and at Perk500
+(the parser of the client, image RVA 0x4480767, 0x448077B, 0x4480951: finding F16). A weight 0 is
+an entry with the weight 0; an empty weight cell ends the list.
+
+Output: {"format": 2, "count": N, "tables": [{"name", "file", "rows", "buckets", "first", "last"}, ...],
 "perks": [[id, type, condition, itemClass, excludeItemClass, labels, scaling, [affix, ...], [ability, ...], channel,
 deprecated], ...],
 "affixes": {"<id>": {"<column>": value, ...}, ...}, "abilities": {"<id>": {"<column>": value, ...}, ...},
@@ -131,6 +140,13 @@ ENCUMBRANCE_COLUMNS = {"equipLoadMax": "EquipLoadBaseMax", "ratioMedium": "Equip
                        "damageLight": "EquipLoadDamageMultFast", "damageMedium": "EquipLoadDamageMultNormal",
                        "damageHeavy": "EquipLoadDamageMultSlow", "healLight": "EquipLoadHealMultFast",
                        "healMedium": "EquipLoadHealMultNormal", "healHeavy": "EquipLoadHealMultSlow"}
+# The value columns that the backend reads from an affix row and from an ability row (the gear system): each affix
+# table and each ability table must have them (finding F14 of the review of stage 1.3b: an absent column is not 0).
+AFFIX_VALUE_COLUMNS = ("MODStrength", "MODDexterity", "MODIntelligence", "MODFocus", "MODConstitution", "MaxHealthMod",
+                       "StatusEffect", "DamagePercentage", "DamageType")
+ABILITY_VALUE_COLUMNS = ("BaseDamage", "OnHit", "DmgPctToHealth", "CooldownTimer", "OtherApplyStatusEffect", "MaxHealth")
+# The largest number of entries of a perk bucket (the loop of the parser of the client, image RVA 0x4480951).
+BUCKET_ENTRIES_MOST = 500
 # The ability columns that are text for a person, not a value of a rule.
 ABILITY_TEXT_COLUMNS = {"DisplayName", "Description", "UICategory", "Icon", "StatusEffectIcon", "Sound", "Notes"}
 # References that the game itself does not resolve (research itemization.md Q3, "Missing links"):
@@ -305,20 +321,28 @@ def build_data(sources: Sources) -> dict:
     perk_ids = {perk[0].lower() for perk in perks}
 
     # The affixes and the ability rows that the perks name (and the ability of each heart rune).
+    def add_cells(rows: dict[str, dict], identifier: str, cells: dict, what: str) -> None:
+        # Two rows of one id must have the same values (finding F15 of the review of stage 1.3b): the gear values
+        # must not depend on the sequence of the source tables.
+        key = identifier.lower()
+        if key in rows and rows[key] != cells:
+            raise Failure(f"two rows of the {what} have the id {identifier} with different values")
+        rows.setdefault(key, cells)
+
     affix_rows: dict[str, dict] = {}
     for sheet in sheets[AFFIX_TYPE]:
-        require(sheet, ("StatusID",))
+        require(sheet, ("StatusID",) + AFFIX_VALUE_COLUMNS)
         for row in range(sheet.row_count):
             identifier = text(sheet, row, "StatusID")
             if identifier:
-                affix_rows.setdefault(identifier.lower(), cells_of(sheet, row, {"StatusID"}))
+                add_cells(affix_rows, identifier, cells_of(sheet, row, {"StatusID"}), "affix tables")
     ability_rows: dict[str, dict] = {}
     for sheet in sheets[ABILITY_TYPE]:
-        require(sheet, ("AbilityID",))
+        require(sheet, ("AbilityID",) + ABILITY_VALUE_COLUMNS)
         for row in range(sheet.row_count):
             identifier = text(sheet, row, "AbilityID")
             if identifier:
-                ability_rows.setdefault(identifier.lower(), cells_of(sheet, row, ABILITY_TEXT_COLUMNS | {"AbilityID"}))
+                add_cells(ability_rows, identifier, cells_of(sheet, row, ABILITY_TEXT_COLUMNS | {"AbilityID"}), "ability tables")
     wanted_abilities: set[str] = set()
     affixes: dict[str, dict] = {}
     for perk in perks:
@@ -368,14 +392,21 @@ def build_data(sources: Sources) -> dict:
             continue
         entries = []
         weights = raw_buckets.get(key + "_weights")
-        for column in range(1, 1000):
+        # The parser of the client (finding F16): the list ends at the first empty perk cell or empty weight cell, and
+        # at Perk500. An empty weight cell is not the weight 0.
+        for column in range(1, BUCKET_ENTRIES_MOST + 1):
             name = f"Perk{column}"
             if name not in sheet.columns:
                 break
             entry = text(sheet, row, name)
             if not entry:
-                continue
-            weight = number(weights[0], weights[1], name) if weights else 1.0
+                break
+            if weights:
+                if name not in weights[0].columns or text(weights[0], weights[1], name) == "":
+                    break
+                weight = number(weights[0], weights[1], name)
+            else:
+                weight = 1.0
             if weight < 0.0:
                 raise Failure(f"the perk bucket {identifier} has a negative weight for {entry}")
             entries.append([entry, rounded(weight)])
@@ -433,6 +464,16 @@ def build_data(sources: Sources) -> dict:
                 layouts.append(layout)
             items[identifier.lower()] = layout_index[key]
 
+    # The level that a consumable needs (RequiredLevel of its master item row; finding F5 of the review of stage 1.3b).
+    item_levels: dict[str, float] = {}
+    for sheet in sheets[ITEM_TYPE]:
+        if "RequiredLevel" not in sheet.columns:
+            continue
+        for row in range(sheet.row_count):
+            identifier = text(sheet, row, "ItemID").lower()
+            if identifier and identifier not in item_levels:
+                item_levels[identifier] = number(sheet, row, "RequiredLevel")
+
     # The consumables.
     consumables: dict[str, dict] = {}
     for sheet in sheets[CONSUMABLE_TYPE]:
@@ -456,7 +497,10 @@ def build_data(sources: Sources) -> dict:
                 "removeEffects": split_list(text(sheet, row, "RemoveStatusEffects")),
                 "removeCategories": split_list(text(sheet, row, "RemoveStatusEffectCategories")),
                 "noCombat": number(sheet, row, "DisableUseInCombat") != 0.0,
-                "shared": bool(text(sheet, row, "SharedCooldownLocString"))}
+                "shared": bool(text(sheet, row, "SharedCooldownLocString")),
+                "level": int(item_levels.get(identifier.lower(), 0.0))}
+            if consumables[identifier.lower()]["level"] < 0:
+                raise Failure(f"the consumable {identifier} has a negative RequiredLevel")
 
     # The equip load: the row Player of the encumbrance table, and the load of each armor item.
     encumbrance = None
@@ -464,8 +508,9 @@ def build_data(sources: Sources) -> dict:
         require(sheet, ("ContainerTypeID",))
         for row in range(sheet.row_count):
             if text(sheet, row, "ContainerTypeID") == "Player":
-                encumbrance = {member: rounded(number(sheet, row, column)) if column in sheet.columns else 0.0
-                               for member, column in ENCUMBRANCE_COLUMNS.items()}
+                # Each value of the row Player is a column of its table (finding F14): an absent column is not 0.
+                require(sheet, ENCUMBRANCE_COLUMNS.values())
+                encumbrance = {member: rounded(number(sheet, row, column)) for member, column in ENCUMBRANCE_COLUMNS.items()}
     if encumbrance is None:
         raise Failure("the encumbrance table has no row Player")
     for member in ("equipLoadMax", "ratioMedium", "ratioHeavy"):
@@ -522,7 +567,7 @@ def build_data(sources: Sources) -> dict:
             swaps.append(entry)
     swaps.sort()
 
-    return {"format": 1, "count": len(perks) + 1, "tables": tables, "perks": perks, "affixes": affixes,
+    return {"format": 2, "count": len(perks) + 1, "tables": tables, "perks": perks, "affixes": affixes,
             "abilities": abilities, "buckets": buckets, "layouts": layouts, "items": items, "consumables": consumables,
             "encumbrance": encumbrance, "equipLoad": equip_load, "labels": labels, "swaps": swaps, "runes": runes,
             "generation": read_generation(sources)}

@@ -25,19 +25,26 @@ extracted).
   ManaData, StaminaData            (stage 1.3b, I14) the mana cost and the stamina cost of each cost id
   AbilityData (each table)         (stage 1.3b, I14) the cost columns of each ability row that has one:
                                    ManaCostList, ManaCostMult, StaminaCostList, StaminaCostFlatMod
+  AbilityData (tables of players)  (stage 3.3b-S1) each row with a SelfApplyStatusEffect (a status on the
+                                   caster: Safety Measures, Greed, Hammer Time): its cells that are not empty
+  StatusEffectCategoryData         (stage 3.3b-S1) the ValueLimits of each status category: the largest sum
+                                   (a positive limit) or the smallest sum (a negative limit) of a value over
+                                   the effects of the category ("Haste": MoveSpeedMod 0.4)
 
 The number of a status effect on the wire is the position of the CRC-32 of its lower-case id in
 the list of the CRC values of all rows of all status tables, in the unsigned order, with each
 duplicate (the list of the client: live check L5 of stage 3.3a, 4,517 rows of the supported
 build). A duplicate id has the first position.
 
-Output: {"format": 2, "statusRows": N,
-"counts": {"cooldowns": N, "statusEffects": N, "spells": N, "manaCosts": N, "staminaCosts": N, "abilityCosts": N},
+Output: {"format": 3, "statusRows": N,
+"counts": {"cooldowns": N, "statusEffects": N, "spells": N, "manaCosts": N, "staminaCosts": N, "abilityCosts": N,
+"abilityRows": N, "statusCategories": N},
 "cooldowns": [[id, time, minTime], ...],
 "statusEffects": [[id, index, duration, moveSpeed, stunned, root, stopOnHit, nameplate, damage, {cells}], ...],
 "spells": [[id, radius, height, castDistance, count, spawnRate, duration, {cells}], ...],
 "manaCosts": [[id, cost], ...], "staminaCosts": [[id, cost], ...],
-"abilityCosts": [[id, [mana cost id, ...], manaCostMult, [stamina cost id, ...], staminaCostFlatMod], ...]}.
+"abilityCosts": [[id, [mana cost id, ...], manaCostMult, [stamina cost id, ...], staminaCostFlatMod], ...],
+"abilityRows": [[id, {cells}], ...], "statusCategories": [[id, {value name: limit, ...}], ...]}.
 `cells` has the other cells of the row that are not empty and not 0 (a number, or a text).
 
 The tool writes no file (status 1) when a table type is not in the game copy, when a table does
@@ -81,7 +88,8 @@ SPELL_TYPE = "SpellData"
 MANA_TYPE = "ManaData"
 STAMINA_TYPE = "StaminaData"
 ABILITY_TYPE = "AbilityData"
-USED_TYPES = (COOLDOWN_TYPE, STATUS_TYPE, SPELL_TYPE, MANA_TYPE, STAMINA_TYPE, ABILITY_TYPE)
+CATEGORY_TYPE = "StatusEffectCategoryData"
+USED_TYPES = (COOLDOWN_TYPE, STATUS_TYPE, SPELL_TYPE, MANA_TYPE, STAMINA_TYPE, ABILITY_TYPE, CATEGORY_TYPE)
 # The columns that the tool reads: each one must be in each source table (finding F11 of the review of stage 3.3a).
 COOLDOWN_COLUMNS = ("AbilityID", "Time", "MinTime")
 STATUS_COLUMNS = ("StatusID", "BaseDuration", "MoveSpeedMod", "Stunned", "NoNav", "StopOnHitCount", "ShowInNameplates",
@@ -92,6 +100,10 @@ COST_COLUMNS = ("ManaCostList", "ManaCostMult", "StaminaCostList", "StaminaCostF
 STATUS_SKIP = {"StatusID", "DisplayName", "Description", "Notes", "PlaceholderIcon", "FxScriptOn", "FxScriptOff", "WindowHeader",
                "LocTextTagForDeathRecap", "ExpansionForDeathRecap", "ObjectiveLocTextTagForDeathRecap", "XPIncreasesTooltip",
                "EffectDurationMods_Tooltip", "DMGVitalsCategory_Tooltip", "ModDmgBasedMultValue_ForTooltip"} | set(STATUS_COLUMNS)
+# The cells of an ability row with no rule: the texts for a person and the place in the tree.
+ABILITY_SKIP = {"AbilityID", "DisplayName", "Description", "Icon", "UICategory", "Notes", "TreeId", "TreeRowPosition",
+                "TreeColumnPosition", "IsActiveAbility"}
+CATEGORY_COLUMNS = ("StatusEffectCategoryID", "ValueLimits")
 SPELL_SKIP = {"SpellID", "SpellPrefabPath", "SecondaryPrefabPath", "TertiaryPrefabPath", "BeamEffect", "IndicatorVFX",
               "FireJointName"} | set(SPELL_COLUMNS)
 # Ids with two rows of different values in the game (the first row in the byte order of the paths stays): the status
@@ -310,20 +322,62 @@ def build_data(sources: Sources) -> dict:
             if cost.lower() not in stamina_costs and cost.lower() not in COSTS_NOT_IN_GAME:
                 raise Failure(f"{entry[0]} names the stamina cost {cost}, which the stamina cost tables do not have")
 
+    # The caster effects (stage 3.3b-S1): each row of an ability table of the players (a table with the cost
+    # columns) that puts a status on its caster, with its cells (the event and the conditions of the row).
+    ability_rows: dict[str, list] = {}
+    for sheet in sheets[ABILITY_TYPE]:
+        if not any(column in sheet.columns for column in COST_COLUMNS):
+            continue
+        require(sheet, ("AbilityID", "SelfApplyStatusEffect"))
+        for row in range(sheet.row_count):
+            identifier = str(sheet.cell(row, "AbilityID")).strip()
+            if identifier and str(sheet.source(row, "SelfApplyStatusEffect")).strip():
+                add_row(ability_rows, [identifier, cells_of(sheet, row, ABILITY_SKIP)], "ability tables")
+    for entry in ability_rows.values():
+        for status in [part.strip() for part in entry[1]["SelfApplyStatusEffect"].split(",") if part.strip()]:
+            if status.lower() not in statuses:
+                raise Failure(f"the ability {entry[0]} names the status {status}, which the status tables do not have")
+
+    # The status categories (stage 3.3b-S1): the ValueLimits of each category ("MoveSpeedMod:0.4,SprintSpeedMod:0.4").
+    categories: dict[str, list] = {}
+    for sheet in sheets[CATEGORY_TYPE]:
+        require(sheet, CATEGORY_COLUMNS)
+        for row in range(sheet.row_count):
+            identifier = str(sheet.cell(row, "StatusEffectCategoryID")).strip()
+            if not identifier:
+                continue
+            limits: dict[str, float] = {}
+            for part in str(sheet.source(row, "ValueLimits")).split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                name, separator, value = part.partition(":")
+                try:
+                    limit = float(value)
+                except ValueError as error:
+                    raise Failure(f"the category {identifier} has a limit that is not a number: {part!r}") from error
+                if not separator or not name.strip() or not math.isfinite(limit):
+                    raise Failure(f"the category {identifier} has a limit that is not a name and a number: {part!r}")
+                limits[name.strip()] = rounded(limit)
+            add_row(categories, [identifier, limits], "status category tables")
+
     if not cooldowns:
         raise Failure("the cooldown tables have no row")
-    data = {"format": 2, "statusRows": len(all_crcs),
+    data = {"format": 3, "statusRows": len(all_crcs),
             "counts": {"cooldowns": len(cooldowns), "statusEffects": len(statuses), "spells": len(spells),
-                       "manaCosts": len(mana_costs), "staminaCosts": len(stamina_costs), "abilityCosts": len(ability_costs)},
+                       "manaCosts": len(mana_costs), "staminaCosts": len(stamina_costs), "abilityCosts": len(ability_costs),
+                       "abilityRows": len(ability_rows), "statusCategories": len(categories)},
             "cooldowns": sorted(cooldowns.values()), "statusEffects": sorted(statuses.values(), key=lambda entry: entry[1]),
             "spells": sorted(spells.values()), "manaCosts": sorted(mana_costs.values()),
-            "staminaCosts": sorted(stamina_costs.values()), "abilityCosts": sorted(ability_costs.values())}
+            "staminaCosts": sorted(stamina_costs.values()), "abilityCosts": sorted(ability_costs.values()),
+            "abilityRows": sorted(ability_rows.values()), "statusCategories": sorted(categories.values())}
     return data
 
 
 def print_found(data: dict, texts: list[str]) -> None:
     wanted = [text.lower() for text in texts]
-    for name in ("cooldowns", "statusEffects", "spells", "manaCosts", "staminaCosts", "abilityCosts"):
+    for name in ("cooldowns", "statusEffects", "spells", "manaCosts", "staminaCosts", "abilityCosts", "abilityRows",
+                 "statusCategories"):
         for row in data[name]:
             if any(text in row[0].lower() for text in wanted):
                 print(f"{name}: {row}")
@@ -357,7 +411,8 @@ def main() -> int:
     counts = data["counts"]
     print(f"{target}: {counts['cooldowns']} cooldowns, {counts['statusEffects']} status effects (numbers of "
           f"{data['statusRows']} rows), {counts['spells']} spells, {counts['manaCosts']} mana costs, "
-          f"{counts['staminaCosts']} stamina costs, {counts['abilityCosts']} ability rows with a cost "
+          f"{counts['staminaCosts']} stamina costs, {counts['abilityCosts']} ability rows with a cost, "
+          f"{counts['abilityRows']} ability rows with a caster effect, {counts['statusCategories']} status categories "
           f"(source: {', '.join(f'{count} from the {name}' for name, count in sorted(sources.used.items()))})")
     return 0
 

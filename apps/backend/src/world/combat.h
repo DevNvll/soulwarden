@@ -381,6 +381,20 @@ struct HitLimits {
     [[nodiscard]] bool idle(WorldClock::time_point now) const;
 };
 
+/**
+ * The weapon of one hit of a character (Combat::strike). The slot names the instance: a hit uses the gem of the item of
+ * that slot, not of the first item with the same id (code review of stage 1.3b, finding F1).
+ */
+struct HitWeapon {
+    std::string itemId;
+    /** The paperdoll slot of the item (a weapon slot, or the heart rune). 0: no instance (no gem). */
+    std::uint32_t slot{0};
+    const gamedata::WeaponRow* row{nullptr};
+    std::uint32_t gearScore{0};
+    /** The id text of the ability of the cast ("Ability_WarHammer_WreckingBall"). Empty: an attack or a different hit. */
+    std::string ability;
+};
+
 class Combat {
 public:
     /** @param tables The combat tables (game data). Null or not loaded: each claim is refused. */
@@ -404,17 +418,11 @@ public:
      * times `factor`, goes to the creature through the creature system (Creatures::hurt with
      * the attacker: the credit and the rewards of a kill), and the session of the attacker
      * gets the damage number (SessionSink::damage_dealt).
+     * @param weapon The weapon of the hit: its item id, its slot, its weapon row (not null), its gear score, and the ability of a cast.
      * @param what The kind of the hit for the log line ("light attack", "Shockwave").
      * @return The verdict `accepted` with the values of the hit, or `dead` (the creature took no damage).
      */
-    HitResult strike(Entity& attacker,
-                     Entity& target,
-                     const std::string& itemId,
-                     const gamedata::WeaponRow& weapon,
-                     std::uint32_t gearScore,
-                     std::uint32_t rowIndex,
-                     float factor,
-                     const char* what);
+    HitResult strike(Entity& attacker, Entity& target, const HitWeapon& weapon, std::uint32_t rowIndex, float factor, const char* what);
 
     /**
      * One hit of a fixed amount of a damage type of a character on a creature (stage 1.3b: a tick of a damage over time
@@ -441,6 +449,8 @@ public:
      *         its client selected, or of the first weapon slot with an item. Null: no weapon.
      */
     [[nodiscard]] static const ItemInstance* weapon_in_hand(const Entity& attacker);
+    /** @return The paperdoll slot of the weapon in the hand (weapon_in_hand), or no value. */
+    [[nodiscard]] static std::optional<std::uint32_t> weapon_slot_in_hand(const Entity& attacker);
 
     /**
      * The damage rule (a rule of this project; protocol notes 4.15):

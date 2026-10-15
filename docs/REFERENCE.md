@@ -51,7 +51,8 @@ The backend has an admin interface for the tool window (routes `/admin/v1` on it
 listener): the state of the characters of the account of the game, an item search, the
 kinds of the creatures, the travel places, and commands for the items, the coin, the level,
 the attributes, the skills, the nodes and the ability bars (`assign_node`,
-`set_ability_bar`), the cooldowns (`reset_cooldowns`), and the health of a character, for the
+`set_ability_bar`), the cooldowns (`reset_cooldowns`), the status effects (`apply_status`,
+`remove_status`), and the health of a character, for the
 creatures near it, and for a travel.
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
 
@@ -161,7 +162,11 @@ abilities (stage 3.3a): `node CHARACTER WEAPON NODE...` (assign nodes of a weapo
 mastery point each), `bar CHARACTER WEAPON SLOT ABILITY` (an ability on the place 0, 1, or 2
 of the bar of a weapon), `cooldowns CHARACTER [reset]` (the cooldowns that run; reset: each
 one ends), and `creature effect CREATURE STATUS [SECONDS]` (a status effect of the ability
-data on a creature, or `knockdown` or `stagger`); `list` has the line `abilities`.
+data on a creature, or `knockdown` or `stagger`); `list` has the line `abilities`. For the
+status effects of a character (stage 3.3b-S1): `status CHARACTER` (each status with its time,
+stacks, potency, and source, the speed and armor parts, the counts), `status CHARACTER STATUS
+[SECONDS [COUNT]]` (a status row of the ability data; 0 seconds: the duration of the row), and
+`status CHARACTER remove STATUS|all`.
 The backend has these commands only with the option `--dev-commands`, and it accepts that
 option and the research switch only when its process has `SOULWARDEN_HARNESS=1`.
 
@@ -378,15 +383,20 @@ button on "Confirm").
   backend starts, and an ability does nothing. The creature data tool (stage 3.3a) also
   writes the reaction fragments of each creature model: with a file from before, a
   knockdown shows the small hit reaction. From stage 1.3b the file (format 2, 2 MB) also has
-  the cells of each status effect and spell and the cost tables of the players.
+  the cells of each status effect and spell and the cost tables of the players. From stage
+  3.3b-S1 the file (format 3, 2.2 MB) also has the status categories with their limits and the
+  ability rows that put a status on the caster: with a file of format 2 the limits and the
+  caster effects (Safety Measures) do nothing.
 - `tools/gamedata/perks.sh` makes the perk data (`~/.local/share/soulwarden/gamedata/perk-data.json`,
   6.5 MB, stage 1.3b): the perk list in the order of the client, the values of each perk, the
   perk buckets and the perk places of each item (the perk roll of a loot item), the
-  consumables, the equip load of each armor item, the perk swap table, and the heart runes
+  consumables with their level, the equip load of each armor item, the perk swap table, and the heart runes
   (protocol notes 4.23). It reads the data tables and the base attributes file of the game
   copy, from the same sources as the creature data tool. `tools/gamedata/perks.sh --find TEXT`
   prints the perks, the buckets, and the items with a text. Without the file the backend
-  starts, an item has no perk, and a consumable and the heart rune do nothing. Make the
+  starts, an item has no perk, and a consumable and the heart rune do nothing. From stage
+  3.3b-S1 the backend reads only format 2 (with the level of each consumable): with a file of
+  format 1 it has no perk data, and the log has the cause. Make the
   combat tables, the creature data, and the progression tables of stage 1.3b with it (the rune
   charge of a hit, the mana regeneration).
 - Creatures. With the creature data, the creatures of each region of the world stand at

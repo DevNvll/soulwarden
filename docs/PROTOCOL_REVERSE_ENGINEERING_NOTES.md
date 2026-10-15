@@ -1670,7 +1670,7 @@ session that plays the character) and an observer (each other session).
 | State (slot, type) | Owner view | Observer view | Evidence for the observer view |
 | --- | --- | --- | --- |
 | Metadata (0, 10) | `AssetId` of the player slice with sub id 2, `GdeRef` | The same. The client changes the asset to the remote player slice (sub id 100) itself. | Behavioral: entity group +0x100 is 100 for the entity of a different player and 2 for the own player (memory read, 3 runs) |
-| Player (9, 3935) | Group 2: `characterId`, `characterName`, `playerConnected`. Group 1 (22 fields of the account and the session: `loginMatchId`, `accountIsLocked`, `sessionStartTimePoint`, ...) is for the owner only; the backend sends none of it now. | Group 2: the same three fields | Behavioral: player facet +0x318 is 2 (remote) for a character id that is not the character id of the login, and 1 for the own player; the name tag shows `characterName` |
+| Player (9, 3935) | Group 2: `characterId`, `characterName`, `playerConnected`. Group 1 (22 fields of the account and the session: `loginMatchId`, `accountIsLocked`, `sessionStartTimePoint`, ...) is for the owner only; the backend sends only field 6 `sessionStartWallClockTimePoint` and field 7 `sessionStartTimePoint` (stage 3.3b-S1, the wall clock pair: 4.24). | Group 2: the same three fields | Behavioral: player facet +0x318 is 2 (remote) for a character id that is not the character id of the login, and 1 for the own player; the name tag shows `characterName` |
 | Movement (16, 11) | `worldPosAbs`, `rotation`, `lookDir`, `teleportAndMigrationId`, `timeAnchor`, `dataBits`, `moreDataBits`; then `timeAnchor`, `idRel`, and `idAbs` each 200 ms (the heartbeat state, 4.6) | `worldPosAbs`, `rotation`, `lookDir`, `teleportAndMigrationId`, `timeAnchor`, and the action of layer 0: `slayerStateId` (13), `slayerStateIdStarted` (14), `slayerSequenceId` (15), `slayerScriptLayers` (47). No `dataBits` and `moreDataBits` (the movement permissions for the input of the owner). One state, no later time anchor. | Behavioral (below) |
 | Vitals (41, 15) | Group 0 (health, stamina, `vitalsId`, `maxHealth`) and group 1 (mana) | Group 0 only: the remote player slice has no mana component | Static (slice data); the record is accepted by the client |
 | Appearance (12, 1195) | The 12 fields | The same | Behavioral: the body of the remote player has the appearance |
@@ -4922,8 +4922,9 @@ list` has the line `abilities`.
   Shockwave): the client shows only what it plays itself.
 - The pull of Maelstrom and of the vortex (`ImpactDistanceY`): the creature does not move to
   the caster.
-- The effects on the caster and the passive nodes: Safety Measures (fortify), Unyielding,
-  Enduring Strike and Hardened Steel (grit), the empower nodes, Critical Gains, Keen Edge,
+- The effects on the caster and the passive nodes (stage 3.3b-S1 did Safety Measures, Greed,
+  and Hammer Time: the caster effects of 4.24): Unyielding,
+  Enduring Strike and Hardened Steel (grit), the other empower nodes, Critical Gains, Keen Edge,
   Critical Condition, Mauler's Resolve, Crowded Protection, Center of Attention, Outnumbered,
   Guarded Sprint, Concussive Impact, Prevailing Spirit, Epitome of Bonk, Exhaustive Attacks
   (no stamina of a creature), Death's Embrace, Greed, Mauler's Fury, Power Through Pain, and
@@ -4931,7 +4932,7 @@ list` has the line `abilities`.
 - The counts of the activities of the ability state (slot 46, fields 3 and 4) and a refusal or
   a correction for a press that the backend refuses.
 - The full status map of an observer (its wall clock) and the status state of the owner (the
-  tray of a player).
+  tray of a player): done in stage 3.3b-S1 (4.24), but the owner tray stays empty.
 
 ### 4.23 Itemization: the perks of an item, the gear values, the heart rune, the consumables, the cost of an ability (live proof of stage 1.3b; the rules are project rules with the values of the game data)
 
@@ -4974,11 +4975,13 @@ affixes, abilities, channel, deprecated); the cells of the affixes (AffixStatDat
 ability rows that the perks name; the perk buckets with their weights; the perk places of each
 item (Perk1..5, PerkBucket1..5, PerkSlot1..5, ForceRarity, CanHavePerks); the consumables
 (AddStatusEffects, DurationOverrides, CooldownId, CooldownDuration, SharedCooldownLocString,
-RemoveStatusEffects, RemoveStatusEffectCategories, DisableUseInCombat); the encumbrance row
+RemoveStatusEffects, RemoveStatusEffectCategories, DisableUseInCombat; format 2: the RequiredLevel
+`level`); the encumbrance row
 Player and the load of each armor item; the exclusive labels; the swap table; the EquipAbility
 rows of the heart runes; the perk generation data (the largest perk count of a tier for each
 gear score, the largest channel, MinLevelRollPerks). `ability-data.json` (format 2) has the
-cells of each status row and spell row, and the cost tables (4.22). `combat-tables.json` has
+cells of each status row and spell row, and the cost tables (4.22); format 3 (stage 3.3b-S1)
+adds the status categories and the caster rows (4.24). `combat-tables.json` has
 AttackRuneCharge and HitRuneCharge of each damage row; `creatures.json` the HitRuneCharge of
 each contact; `progression-tables.json` the mana regeneration of the row Player of the base
 vitals.
@@ -4989,15 +4992,15 @@ vitals.
 | --- | --- |
 | The perks of an instance | Five places with the PerkID text (the database: the columns `perk1` to `perk5`, schema 7; the wire: the index of the perk data at each load). A give and a perk command check each perk (in the data, one place, one gem at most, a perk for the item class, not deprecated) and apply the swap table of the game; the stored perks are the perks that the client shows and uses, so that its passes change nothing. A stack takes only an item with the same perks. |
 | The perk roll of a loot item | The procedure of the client (`world/perk_roll.h`; perk-roll/RESULT.md): no rolled perk below level 7; the fixed perks; the largest perk count of the tier at the gear score; one count roll from the last bucket; a bucket roll with the channel, label, class, and deprecated filters, a label roll by weight, and a weighted pick; one Inherent perk at most. No perk biasing. Each instance of a drop gets its own roll. |
-| The gear values | The perks of the equipped items (armor, jewelry, the weapon in the hand for OnActive and OnUnsheathed, the heart rune) with the swap and the potency: MOD&lt;attribute&gt; (the attribute bonus, a whole number), MaxHealthMod and MaxHealth (a part of the health of the base, the level, and the constitution), BaseDamage (a part of the damage), DMG&lt;type&gt;, ABS&lt;type&gt;, PhysicalArmor and ElementalArmor, BaseDamageReduction, the regeneration of a status with TickRate; an ability row counts IsStackableMax times at most. The effects on the character (a food, a dust, the status of the heart rune) count the same. |
-| A gem conversion | DamagePercentage of an affix of the weapon of the hit: that part of the raw damage has the DamageType of the affix, with the defense of the target for that type; the damage number has two entries. |
-| The perks of a hit | The ability rows with OnHit of the perks of the attacker, with the conditions that the backend evaluates (AttackType, DamageTableRow, RemoteDamageTableRow, TargetStatusEffectCategory, the health, stamina, and mana percents, grit, the vitals category, DontHaveStatusEffect) and ActivationCooldown: BaseDamage, OtherApplyStatusEffect (a rend of the armor of the creature, a damage over time based on the damage of the hit, a chain of a spell), DmgPctToHealth (a heal), CooldownTimer with CDRImmediatelyOptions ActiveWeapon (a shorter cooldown of the bar of the weapon in the hand). A row with a different condition has no effect. The burst of Insatiable Gravity Well: the spell InsatiableGravityWell around the character (the client text of the perk). |
+| The gear values | The perks of the equipped items (armor, jewelry, the weapon in the hand for OnActive and OnUnsheathed, the heart rune) with the swap and the potency: MOD&lt;attribute&gt; (the attribute bonus, a whole number), MaxHealthMod and MaxHealth (a part of the health of the base, the level, and the constitution), BaseDamage (a part of the damage), DMG&lt;type&gt;, ABS&lt;type&gt;, PhysicalArmor and ElementalArmor, BaseDamageReduction, the regeneration of a status with TickRate; an ability row counts IsStackableMax times at most. Each effective perk of an item counts one time (finding F2). The statuses on the character (a food, a dust, the status of the heart rune, the status of an affix) count through the status system with the limits of their categories (stage 3.3b-S1, 4.24). |
+| A gem conversion | DamagePercentage of an affix of the instance of the weapon of the hit (the slot of the hit or of the cast: finding F1): that part of the raw damage has the DamageType of the affix, with the defense of the target for that type; the damage number has two entries. |
+| The perks of a hit | The ability rows with OnHit of the perks of the attacker, with the conditions that the backend evaluates (AttackType, DamageTableRow, RemoteDamageTableRow, TargetStatusEffectCategory, the health, stamina, and mana percents, grit, the vitals category, DontHaveStatusEffect, InSequence; a blank comparison is LessThanOrEqual: 4.24) and ActivationCooldown: BaseDamage, OtherApplyStatusEffect (a rend of the armor of the creature, a damage over time based on the damage of the hit, a chain of a spell), DmgPctToHealth (a heal), CooldownTimer with CDRImmediatelyOptions ActiveWeapon (a shorter cooldown of the bar of the weapon in the hand). A row with a different condition has no effect. The burst of Insatiable Gravity Well: the spell InsatiableGravityWell around the character (the client text of the perk). |
 | The equip load | The load of the armor items in whole tenths; the class by the percents of the row Player (light below 26, medium below 46, heavy to 100); the damage part (+0.15, 0, -0.15) and the heal factor of the class. |
-| The heart rune | The charge of the character (60 at most; 6 at most for one gain): AttackRuneCharge of an accepted hit, HitRuneCharge of a hit taken, SourceRuneChargeOnApply and OnTick of a status of a perk with a change of the health. The key at a full charge: the charge goes to 0, the character gets the first variant status of the action that a perk of the rune has (Dominator, Greater, Major; one status), and 3 s later one explosion: each creature in Radius 5 and Height 5 of the spell Rune_Detonate_AoE that the character sees, the row Rune_Detonate_AoE with the weapon of the rune. A death before the end: no explosion. |
-| The consumables | A quick slot key or the message 2917 uses the item of the slot: a consumable of the data, not SiegeWarOnly, not in a fight for DisableUseInCombat, not in its cooldown. One item goes in one transaction; the effects: one heal and one mana change for an effect with no duration, or an effect for its time (ticks with TickRate, StopOnHitCount); the cooldown of the item, shorter by the perks with OnUsedConsumable; the other items of the cooldown id get 80 percent of it (the client text of SharedCooldownLocString) or all of it. The effects and the cooldowns are values of the character. |
+| The heart rune | The charge of the character (60 at most; 6 at most for one gain): AttackRuneCharge of an accepted hit, HitRuneCharge of a hit taken, SourceRuneChargeOnApply and OnTick of a status of a perk with a change of the health. The key at a full charge: the charge goes to 0, the character gets the first variant status of the action that a perk of the rune has (Dominator, Greater, Major; one status), and 3 s later one explosion: each creature in Radius 5 and Height 5 of the spell Rune_Detonate_AoE that the character sees, the row Rune_Detonate_AoE with the weapon of the rune. A death before the end: no explosion. Stage 3.3b-S1: the status is a status of the status system, its end status Rune_Detonate_CastAoE casts the explosion, and a death or a leave removes it (finding F4). |
+| The consumables | A quick slot key or the message 2917 (its entity must be the entity of the session: finding F6) uses the item of the slot: a consumable of the data, not SiegeWarOnly, not above the level of the character (RequiredLevel: finding F5), not in a fight for DisableUseInCombat, not in its cooldown. One item goes in one transaction; the effects: one heal and one mana change for an effect with no duration, or an effect for its time (ticks with TickRate, StopOnHitCount); the cooldown of the item, shorter by the perks with OnUsedConsumable; the other items of the cooldown id get 80 percent of it (the client text of SharedCooldownLocString) or all of it; a shared end does not make the end of an item earlier (finding F7); a change of the bag or the quick slots gives the item map again (finding F8). The effects are statuses of the status system (4.24); the cooldowns are values of the character. |
 | The mana | One path for each change (`Abilities::change_mana`): a cost, a potion. A spend starts the regeneration after ManaRegenDelay (0), or ManaRegenDelayOnEmpty (2 s) at 0; the rate is ManaBaseRegenRate (2 in each second); the mana state has the delay and the rate while the mana is not full. |
 | The owner and the observers | The charge state, the item map, the attribute bonus, and the mana state go to the owner only; each observer of a creature gets its health, its status icons (a rend), and its death (case IZ10). |
-| The cost of the rules | A hit looks at the perks of one character and at the creatures near its target (a chain); the consumable tick looks only at the characters with an effect; an explosion looks at the position index near one character (case IZ11: 50 characters, 2,000 hits, 4,400 creatures). |
+| The cost of the rules | A hit looks at the perks of one character and at the creatures near its target (a chain); the status tick looks only at its due list (4.24); an explosion looks at the position index near one character (case IZ11: 50 characters, 2,000 hits, 4,400 creatures). |
 
 **The commands** (development routes; the admin interface has `give_item` with `perks`,
 `set_item_perks`, `use_item`, `set_rune_charge`, `activate_rune`; the tool window gives an item
@@ -5010,20 +5013,90 @@ P1,...]`, `tools/world perks CHARACTER SLOT P1,... [--paperdoll]` (`POST /v1/dev
 
 **Not known, not done** (stage 1.3b):
 
-- The status state of a player (the tray and the client armor of a food, a dust, the status of
-  the heart rune): the backend sends no status effect of a player, thus the client does not
-  show the icon, and its character sheet shows no armor of a dust.
+- The status state of a player: done in stage 3.3b-S1 (4.24); the speed of a status is not
+  applied by the client.
 - The action menu of an item in the bag with the harness (I12): the message 2917 is proved
   (I7), and the world path of the use is the path of a quick slot key.
-- A food with a level requirement above 60 (FoodCONT5: level 65): the client sends no use.
+- A food with a level requirement above 60 (FoodCONT5: level 65): the client sends no use, and
+  the server refuses a use (finding F5).
 - The perks with a system that the backend does not have: grit (Thwarting Strikes), stamina
   (Abyssal Gambit, Gambled Energy, Stamina Recovery), critical hits (Resilient on armor),
   dodge (Shirking Fortification), crowd control on a player (Freedom), the removal of a
-  debuff (Purifying Toast), a player target (the PvP ring perk), and the speed of the status of
-  the heart rune.
+  debuff (Purifying Toast), and a player target (the PvP ring perk). The speed of the status of
+  the heart rune: the server applies it, the client does not (4.24).
 - The other heart runes (nine abilities), the crafting, the repair, the salvage, the socket
   action, and the perk biasing of a roll.
-- A paperdoll group of lists larger than one part (more than about 15 items of one group).
+- A paperdoll group of lists larger than one part: one part of its own, in chunks of the
+  carrier (finding F12, case RI12); not checked live.
+
+### 4.24 The status effects of a player: the status state, the wall clock pair, the values of a status (live proof of stage 3.3b-S1; the rules are project rules with the values of the game data)
+
+Stage 3.3b-S1. Research: `~/Games/soulwarden/work/research/abilities-effects.md` (sections 4, 5,
+7) and `abilities-shared.md` (K15, the comparator). Live checks and the live proof:
+`~/Games/soulwarden/work/evidence/abilities-status/implement/live/` (`LIVE-CHECKS.md`: L1, L2,
+runs s1-live and s1-live2). Code: `world/statuses.h` (the one owner of the statuses of a
+character), `server/rep/states/status_state.cpp` (`encode_player_status_state`),
+`server/rep/states/player_state.cpp` (the clock pair), `world/gear.h` (the values, the caster
+effects, the comparator), `world/position_report.h` (the speed in the position check),
+`gamedata/ability_data.h` (format 3). Document: [Status effects](systems/status-effects.md). Test
+cases ST1 to ST11, RI1 to RI15.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The status state of a player: component `StatusEffects`, slot 44, type 4236 (the type of a creature, 4.22). Group 1 is the owner: field 0 the full map (`statusIndex:u16 wallEnd:u64 potency:f16 stacks:u8 flags:u8`, 14 bytes), field 1 the lightweight map (`statusIndex:u16 wallEnd:u64`), field 2 the tray (`trayKey:u32 wallEnd:u64 stacks:u8 potency:f32`, 17 bytes; the key the CRC-32 of the lower-case status id). Group 3 is an observer: field 0 the full map, field 1 the compact map (4.22). Each list in the full form `00 01 sequence count entries`: a larger sequence replaces the list, a smaller one changes nothing, an empty list removes each entry. | Live proof L1, L2, s1-live2. | `0x4013900` (constructor), `0x4038E80` (the reconcile of the owner map), `0x4039600` (removal), `0x4028F70` (apply), `0x403E430` (HUD refresh) |
+| A full map entry of the owner alone gives the HUD icon of a row with `ShowInUITray`, its countdown, its stack count (×2), its visual effect on the character, and its armor in the character sheet (after a new open of the inventory). A tray entry of the same status gives a second icon (Rune_Detonate_Major, a food); the dust merged the two. The backend sends an empty tray. | Live proof L1 (L1-09 to L1-14), L2 (L2-11 to L2-14), s1-live (two icons), s1-live2 (one icon). | — |
+| The attributes of a food (MODConstitution) in the character sheet come from the attribute state (4.23, the bonus map), not from the status map: CON stays 7 with the food in the map alone. | Live proof L1-11; s1-live2: CON 7 to 37 with the bonus of the server. | — |
+| The end of a map or tray entry is a time of the synced wall clock of the client in ns. The Player state (slot 9, type 3935) of the owner, group 1, field 6 `sessionStartWallClockTimePoint` (Unix time in ns) and field 7 `sessionStartTimePoint` (the server time in ns), from one sample, give it: synced wall = field 6 + (server now − field 7). With no pair the synced wall clock is near 0 (a tray end in Unix time showed "20737d"). The HUD computes the time left of an entry when it applies it: the pair must come before the first status (the first record has slot 9 before slot 44). Bytes of the two fields: `02 C0 wall:u64 01 server:u64`. | Live proof L1-01 to L1-04; static proof (getter). | `0x6830A40` (getter) |
+| A countdown at 0 does not remove an icon (the HUD shows "–"): the server sends the list again at the end of a status. | Live proof L1-05; s1-live2 (potion, rune, observer expiry). | — |
+| An observer of a player: the compact map gives the icon at the name plate of a remote player (as for a creature); the full map alone shows no icon. A status that is not public does not show. | Live proof L2-01 to L2-03; s1-live2 (S1-11, S1-observer-icon-expiry.mp4). | `0x4044030` (compact reader) |
+| The client does not apply the MoveSpeedMod or the SprintSpeedMod of a status of the full map of the owner to its run: a walk of 2 s is 11.2 m with no status, with the haste of the rune (+0.2), and with UncategorizedHaste_40pct (+0.4); a sprint 12.6 m; a slow of −0.6 changes nothing. The code that should read it: the reconcile and the removal call the stat refresh `0x4044B00` for an effect with a speed value; `0x40242C0` sums the MoveSpeedMod (+0x6C of the status definition) and the SprintSpeedMod (+0x70) of the applied effects with the limits of the categories; the activity ApplyMoveSpeedMultiplier of the run actions (install `0x2A91270`, tick `0x2A91860`) reads the stat. The flag `0x9EFCE74` that `0x40242C0` reads is the setting `javelin.disable-armor-status-effect-category-limits`. Why the live client does not change its speed is not known (open). | Live proof L1 (walk-*), s1-live2 (S1-rune-walk-*.mp4, S1-haste40-*.mp4). | `0x4044B00`, `0x40242C0`, `0x2A91270`, `0x2A91860` |
+| In a live check with raw fragments, a full map entry of a status of the heart rune did not go away after its omission (also after its end): the removal `0x4039600` keeps an instance with a mark of 1 s or less at component +0x148 (a local prediction of an action of the client, Rune_Detonate). In the real flow of the key G the icon goes away at its end. | Live L2 (L2-04, L2-11 to L2-14); s1-live2 (S1-09). | `0x4039600` |
+| The parser of a comparison text of AbilityData (TargetStatusEffectComparison, MyComparisonType, MyStaminaComparisonType, MyManaComparisonType, TargetComparisonType) gives enum 4 (LessThanOrEqual) for a text that it does not know, also for an empty text. | Static proof (research abilities-shared.md K15). | `0x43B6390` |
+| StackMax below 1 is 1 in the loader of the status rows. | Static proof. | `0x44B65F5` (in the loader `0x44B4430`) |
+
+**The data** (`ability-data.json` format 3, `tools/gamedata/abilities.sh`): the status rows and
+the spell rows (format 2, 4.22), and two more lists: `statusCategories` (each row of
+StatusEffectCategoryData with its ValueLimits: Haste MoveSpeedMod and SprintSpeedMod 0.4, Slow
+−0.5, ArmorFortify PhysicalArmor and ElementalArmor 2.0, Fortify ABS 0.5, and 53 more) and
+`abilityRows` (the rows of the ability tables of the players with a SelfApplyStatusEffect, with
+their cells; each status must be a status row: 497 rows). The backend reads formats 1, 2, and 3;
+a file with status effects and no status row is refused (finding F10). `perk-data.json` format 2:
+the RequiredLevel of each consumable (`level`), the value columns of the affixes and of the
+ability rows are required, a conflict of two rows of one id stops the tool, and a bucket stops
+at the first empty perk (findings F5, F14 to F16; [Game data](development/game-data.md)).
+
+**The rules** (project rules; the values of the data where it has a value; the source of each
+rule is in [Status effects](systems/status-effects.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The one owner | `world::Statuses`: the statuses of a character with the character id as their key; a food, a potion, a dust, the status of a heart rune, the status of an affix of an equipped item, a caster effect of an ability row, and an end status come through it. Only it changes them. |
+| The application | One status of a row for each character; a new application: one more stack to StackMax, the end by RefreshDuration and DurationMax, the larger potency; DontReplaceStack at StackMax changes nothing; ApplicationCooldown; a dead character takes no status (but AllowAddIfDead). The duration of the source, else BaseDuration, not more than DurationMax. A row with no duration is one application (a heal, a mana change, its CastSpell). |
+| The end | At its end on the world clock (the due list), at a death (RemoveOnDeath), after StopOnHitCount hits, by a newer status of the source (RemoveStatusEffects, RemoveStatusEffectCategories), at the leave of the world (the gear, the rune activation), by a command. The OnEndStatusEffect comes, but not for a removal of a row with DontApplyOnEndEffectOnRemove. |
+| The ticks | TickRate with Health, HealthModifierPercent, Mana, ManaModifierPercent: a heal (times the heal factor of the equip load) and a mana change at each tick, through the one heal path and the one mana path. |
+| The values | MOD&lt;attribute&gt;, MaxHealthMod, PhysicalArmor, ElementalArmor, BaseDamageReduction, DMG&lt;type&gt;, ABS&lt;type&gt;, MoveSpeedMod, SprintSpeedMod, times the potency and the stacks, with the ValueLimits of the categories; the gear summary has them one time. |
+| The heart rune | The status of an activation (source "rune"): its end status Rune_Detonate_CastAoE casts Rune_Detonate_AoE, the explosion of the rune system. A death or a leave removes it with no explosion (finding F4). |
+| The caster effects | A hit evaluates the ability rows of the perks and of the learned nodes of the ability table of its weapon: OnHit, SelfApplyStatusEffect, the conditions of a perk row and InSequence, ActivationCooldown. A blank comparison is LessThanOrEqual. |
+| The speed | The position check of the server accepts a window speed times 1 plus the larger speed part of the character. The client does not apply it (open). |
+| The views | The owner: the full map of each status that is not of the gear, an empty lightweight map, an empty tray; the Player state of the owner has the clock pair. An observer: the full map and the compact map of the public statuses (ShowInNameplates, AlwaysReplicate, ForceReplicateToRemotes; the compact map ShowInNameplates only). A first record with no status has no status fragment. |
+| The restart | The statuses are not in the database: a restart of the backend ends them (rule of stage 1.3b; a decision of the user is open). |
+| The cost | The expiry and the ticks look only at the due list (case ST11: a time limit). |
+
+**The commands** (development routes; the admin interface has `apply_status` and
+`remove_status`): `tools/world status CHARACTER` (`GET /v1/dev/status?character=ID`),
+`tools/world status CHARACTER STATUS [SECONDS [COUNT]]` (`POST /v1/dev/status`), `tools/world
+status CHARACTER remove STATUS|all` (`POST /v1/dev/status/remove`).
+
+**Not known, not done** (stage 3.3b-S1):
+
+- The speed of a status in the client (above).
+- The tray of the owner: the backend sends it empty (two icons with the map).
+- The other CastSpell of a status row (only the rune explosion), the effects of a status on a
+  creature from a player status (OtherApplyStatusEffect stays as in 4.23), the rows with
+  OnHitTaken, NumAroundMe, a grit, a stamina, or a critical hit condition.
+- The statuses after a restart of the backend.
 
 ## 5. Open items
 
@@ -5039,6 +5112,11 @@ P1,...]`, `tools/world perks CHARACTER SLOT P1,... [--paperdoll]` (`POST /v1/dev
   known: the interpolation and the extrapolation of a remote creature (0x48709A0, 0x2A29860,
   `g_actionStateExtrapolationLimitMS` 200 ms, research `navigation.md` Q5) work only with the
   states that the backend sends; an animation level of detail was not looked for.
+- The speed of a status of a player (4.24, stage 3.3b-S1): the client does not apply the
+  MoveSpeedMod or the SprintSpeedMod of a status of the owner map to its run (a haste of 0.2
+  and of 0.4, a slow of −0.6: the distance of a walk of 2 s does not change). The server
+  accepts the faster positions. Not tried: the stat container of the status component, a
+  status of the first record before the world entry of the client.
 - A conversation with a person, the content of a lore page, an interaction with an object
   (4.20): the backend answers only the end of the cutscene and of the interaction. The person
   speaks the text of its default state (no quest), and no reward or quest state changes.

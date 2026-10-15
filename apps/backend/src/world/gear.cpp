@@ -78,34 +78,43 @@ const std::set<std::string, std::less<>> kBenignColumns = {
     "ActivationCooldown", "CooldownId", "BaseDamage", "OtherApplyStatusEffect", "SelfApplyStatusEffect", "DmgPctToHealth",
     "CooldownTimer", "CDRImmediatelyOptions", "StatusEffectDamageTableIdForRowOverride", "StatusEffectDamageTableRowOverride",
     "DoNotUnequipSelfAppliedSE", "IgnoreDisabledAttackTypes", "OtherApplyStatusEffectDurations", "SelfApplyStatusEffectDurations",
-    "UnlockDefault", "CanBeUnapplied"};
+    "UnlockDefault", "CanBeUnapplied",
+    // The place of a learned node in its tree and its weapon (stage 3.3b-S1): no condition of a hit. InSequenceTime goes
+    // with InSequence (the condition below): the backend takes the hit of the cast as the sequence.
+    "WeaponTag", "RequiredAbilityId", "InSequenceTime"};
 
 /** The conditions of an OnHit row that the backend evaluates (Gear::conditions_pass). */
 const std::set<std::string, std::less<>> kKnownConditions = {
     "AttackType", "DamageTableRow", "RemoteDamageTableRow", "TargetStatusEffectCategory", "TargetStatusEffectComparison",
     "TargetHealthPercent", "TargetComparisonType", "MyHealthPercent", "MyComparisonType", "MyStaminaPercent",
     "MyStaminaComparisonType", "MyManaPercent", "MyManaComparisonType", "HasGritActive", "TargetHasGritActive",
-    "AttackerVitalsCategory", "TargetVitalsCategory", "DontHaveStatusEffect"};
+    "AttackerVitalsCategory", "TargetVitalsCategory", "DontHaveStatusEffect", "InSequence"};
 
-/** @return The result of a compare of the data ("LessThan", "GreaterThan", "Equal", "NotEqual", ...). Empty: Equal. */
+/**
+ * @return The result of a compare of the data, with the parser of the AbilityData columns of the client (image RVA
+ *         0x43B6390, for TargetComparisonType, MyComparisonType, MyStaminaComparisonType, MyManaComparisonType): "Equal"
+ *         or "=", "NotEqual" or "!=", "LessThan" or "<", "GreaterThan" or ">", "GreaterThanOrEqual" or ">=". Each other
+ *         text, also the empty text, is LessThanOrEqual (enum 4: research abilities-shared.md K15; the fault of the
+ *         blank comparator of stage 1.3b, which used Equal).
+ */
 bool compare(float value, float limit, std::string_view kind) {
     const std::string text = lower(kind);
-    if (text == "lessthan") {
-        return value < limit;
+    if (text == "equal" || text == "=") {
+        return std::fabs(value - limit) <= 0.001F;
     }
-    if (text == "lessthanorequal") {
-        return value <= limit;
-    }
-    if (text == "greaterthan") {
-        return value > limit;
-    }
-    if (text == "greaterthanorequal") {
-        return value >= limit;
-    }
-    if (text == "notequal") {
+    if (text == "notequal" || text == "!=") {
         return std::fabs(value - limit) > 0.001F;
     }
-    return std::fabs(value - limit) <= 0.001F;
+    if (text == "lessthan" || text == "<") {
+        return value < limit;
+    }
+    if (text == "greaterthan" || text == ">") {
+        return value > limit;
+    }
+    if (text == "greaterthanorequal" || text == ">=") {
+        return value >= limit;
+    }
+    return value <= limit;
 }
 
 float percent_of(float value, float maximum) {
@@ -164,12 +173,19 @@ std::vector<GearPerk> Gear::item_perks(const ItemInstance& item, std::uint32_t s
     }
     const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
     const gamedata::ItemDefinition* definition = catalog != nullptr ? catalog->find(item.itemId) : nullptr;
+    // Each perk counts one time for an item after the swap (code review of stage 1.3b, finding F2): the instance has the
+    // swapped id of a fixed perk, and the definition has the old id; the two are one effective perk.
+    std::vector<const gamedata::PerkRow*> seen;
     for (const std::string& name : names) {
         const gamedata::PerkRow* perk = data->find(name);
         if (perk == nullptr) {
             continue;
         }
         const gamedata::PerkRow* effective = swapped(*perk, item);
+        if (std::find(seen.begin(), seen.end(), effective) != seen.end()) {
+            continue;
+        }
+        seen.push_back(effective);
         // The client removes a perk that the item cannot have (client code at image RVA 0x5CF5750): it has no effect.
         if (definition == nullptr || effective->deprecated || !gamedata::PerkData::allowed(*effective, definition->itemClass)) {
             continue;
@@ -257,14 +273,9 @@ GearValues Gear::values(const Entity& character) const {
                 if (affix == nullptr) {
                     continue;
                 }
+                // The status that the affix keeps on its character (Status_Perk_Ward_Amulet_DefSlash) is a status of the
+                // status system (Gear::gear_statuses, stage 3.3b-S1): its values come from there.
                 add_cells(*affix, perk.potency, false);
-                // The status that the affix keeps on its character (Status_Perk_Ward_Amulet_DefSlash).
-                const std::string_view status = affix->text("StatusEffect");
-                if (!status.empty() && abilities != nullptr) {
-                    if (const gamedata::StatusRow* row = abilities->status(status)) {
-                        add_cells(row->cells, perk.potency, false);
-                    }
-                }
             }
             for (const std::string& name : perk.perk->abilities) {
                 const gamedata::CellValues* row = data->ability(name);
@@ -296,22 +307,29 @@ GearValues Gear::values(const Entity& character) const {
                       : percent <= load.ratioOverburdened ? LoadClass::heavy
                                                          : LoadClass::overburdened;
     }
-    // The effects on the character (a food, a dust, the status of a heart rune).
-    if (abilities != nullptr) {
-        const WorldClock::time_point now = m_world.clock().now();
-        for (const PlayerEffect& effect : character.effects) {
-            if (now >= effect.ends) {
-                continue;
-            }
-            if (const gamedata::StatusRow* row = abilities->status(effect.status)) {
-                gamedata::CellValues cells = row->cells;
-                // The heal of an effect with a tick is not a passive regeneration: the consumable system gives it.
-                cells.numbers.erase("TickRate");
-                add_cells(cells, effect.potency, false);
+    // The statuses of the character (a food, a dust, the status of a heart rune, the status of an affix) are not here:
+    // the status system gives their values (Statuses::values), and Gear::refresh adds them one time.
+    (void)abilities;
+    return values;
+}
+
+std::vector<Statuses::GearStatus> Gear::gear_statuses(const Entity& character) const {
+    std::vector<Statuses::GearStatus> statuses;
+    const gamedata::PerkData* data = m_world.perk_data();
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    if (data == nullptr || abilities == nullptr) {
+        return statuses;
+    }
+    for (const GearPerk& perk : perks_of(character)) {
+        for (const std::string& name : perk.perk->affixes) {
+            const gamedata::CellValues* affix = data->affix(name);
+            const std::string_view status = affix != nullptr ? affix->text("StatusEffect") : std::string_view{};
+            if (const gamedata::StatusRow* row = status.empty() ? nullptr : abilities->status(status)) {
+                statuses.push_back(Statuses::GearStatus{row, perk.potency, StatusSource{StatusSourceKind::gear, perk.perk->id, perk.slot, character.id}});
             }
         }
     }
-    return values;
+    return statuses;
 }
 
 void Gear::refresh(Entity& character) {
@@ -319,7 +337,24 @@ void Gear::refresh(Entity& character) {
         return;
     }
     ++m_counts.refreshes;
-    const GearValues values = this->values(character);
+    // The statuses of the gear (the affixes of the items) are statuses of the status system: they come or go first.
+    m_world.statuses().set_gear(character, gear_statuses(character));
+    GearValues values = this->values(character);
+    // The values of the statuses (stage 3.3b-S1), with the limits of their categories: each value counts one time.
+    const StatusValues status = m_world.statuses().values(character);
+    for (unsigned type = 0; type < attribute::kCount; ++type) {
+        values.attributes[type] += status.attributes[type];
+    }
+    values.maxHealth += status.maxHealth;
+    values.physicalArmor += status.physicalArmor;
+    values.elementalArmor += status.elementalArmor;
+    values.damageReduction += status.damageReduction;
+    for (const auto& [type, part] : status.damage) {
+        values.damage[type] += part;
+    }
+    for (const auto& [type, part] : status.absorption) {
+        values.absorption[type] += part;
+    }
     std::array<std::uint32_t, attribute::kCount> bonus{};
     for (unsigned type = 0; type < attribute::kCount; ++type) {
         // The attribute values are whole numbers (the client shows a whole number).
@@ -335,6 +370,8 @@ void Gear::refresh(Entity& character) {
     character.gear.absorption = values.absorption;
     character.gear.damageReduction = values.damageReduction;
     character.gear.regeneration = values.regeneration;
+    character.gear.moveSpeed = status.moveSpeed;
+    character.gear.sprintSpeed = status.sprintSpeed;
     character.gear.equipLoad = values.equipLoad;
     character.gear.loadClass = static_cast<std::uint8_t>(values.load);
     if (bonusChanged) {
@@ -431,13 +468,13 @@ bool Gear::conditions_pass(const gamedata::CellValues& row, const Entity& attack
     if (const std::string_view category = row.text("AttackerVitalsCategory"); !category.empty() && !same_text(category, "Player")) {
         return false;
     }
-    if (const std::string_view status = row.text("DontHaveStatusEffect"); !status.empty()) {
-        const WorldClock::time_point now = m_world.clock().now();
-        for (const PlayerEffect& effect : attacker.effects) {
-            if (now < effect.ends && same_text(effect.status, status)) {
-                return false;
-            }
-        }
+    if (const std::string_view status = row.text("DontHaveStatusEffect"); !status.empty() && m_world.statuses().has(attacker, status)) {
+        return false;
+    }
+    // InSequence (stage 3.3b-S1): the hit is a hit of the cast of an ability of the list (Safety Measures: a hit of
+    // Wrecking Ball). A hit with no cast (an attack) does not pass.
+    if (const std::string_view sequence = row.text("InSequence"); !sequence.empty() && (hit.ability.empty() || !list_has(sequence, hit.ability))) {
+        return false;
     }
     return true;
 }
@@ -485,7 +522,8 @@ void Gear::on_hit(Entity& attacker, Entity& target, const HitContext& hit) {
             if (row == nullptr || !has_event(*row)) {
                 continue;
             }
-            const bool effect = !row->text("OtherApplyStatusEffect").empty() || row->number("DmgPctToHealth") > 0.0F
+            const bool effect = !row->text("OtherApplyStatusEffect").empty() || !row->text("SelfApplyStatusEffect").empty()
+                                || row->number("DmgPctToHealth") > 0.0F
                                 || (row->number("CooldownTimer") < 0.0F && same_text(row->text("CDRImmediatelyOptions"), "ActiveWeapon"));
             Entity* own = m_world.find(attackerId);
             Entity* hurt = m_world.creatures().find(targetId);
@@ -515,6 +553,9 @@ void Gear::on_hit(Entity& attacker, Entity& target, const HitContext& hit) {
             if (const std::string_view status = row->text("OtherApplyStatusEffect"); !status.empty()) {
                 perk_status(*own, *hurt, status, perk.potency, hit);
             }
+            if (Entity* again = m_world.find(attackerId); again != nullptr && !row->text("SelfApplyStatusEffect").empty()) {
+                caster_effect(*again, *row, name, perk.potency);
+            }
             for (const auto& [ability, spell] : gear_rules::kPerkBursts) {
                 if (name == ability) {
                     // The burst of the perk around the character, in the next tick (its hits are hits of a different row).
@@ -527,6 +568,54 @@ void Gear::on_hit(Entity& attacker, Entity& target, const HitContext& hit) {
                     });
                 }
             }
+        }
+    }
+    // The caster effects of the learned nodes of the ability table of the weapon of the hit (stage 3.3b-S1): an ability
+    // row with OnHit and a SelfApplyStatusEffect (Safety Measures, Greed, Hammer Time), with the conditions of a perk row.
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::ProgressionTables* progression = m_world.options().progressionTables;
+    Entity* own = m_world.find(attackerId);
+    Entity* hurt = m_world.creatures().find(targetId);
+    if (abilities == nullptr || progression == nullptr || own == nullptr || hurt == nullptr || hit.table == 0) {
+        return;
+    }
+    const auto pool = own->skills.pools.find(hit.table);
+    if (pool == own->skills.pools.end()) {
+        return;
+    }
+    std::vector<std::string> learned;
+    for (const auto& [node, state] : pool->second) {
+        const gamedata::AbilityNode* row = state.level > 0 ? progression->node(node) : nullptr;
+        if (row != nullptr && abilities->ability_row(row->id) != nullptr) {
+            learned.push_back(row->id);
+        }
+    }
+    for (const std::string& name : learned) {
+        const gamedata::AbilityRow* row = abilities->ability_row(name);
+        Entity* caster = m_world.find(attackerId);
+        Entity* target_ = m_world.creatures().find(targetId);
+        if (row == nullptr || caster == nullptr || target_ == nullptr || !conditions_pass(row->cells, *caster, *target_, hit)) {
+            continue;
+        }
+        const std::string key = caster->characterId + "/" + name;
+        if (const auto found = m_activations.find(key); found != m_activations.end() && now < found->second) {
+            continue;
+        }
+        if (const float wait = row->cells.number("ActivationCooldown"); wait > 0.0F) {
+            m_activations[key] = now + std::chrono::milliseconds(static_cast<long long>(std::lround(wait * 1000.0F)));
+        }
+        caster_effect(*caster, row->cells, name, 1.0F);
+    }
+}
+
+void Gear::caster_effect(Entity& attacker, const gamedata::CellValues& row, const std::string& name, float potency) {
+    for (const std::string_view status : parts_of(row.text("SelfApplyStatusEffect"))) {
+        StatusApply how;
+        how.potency = potency;
+        how.source = StatusSource{StatusSourceKind::ability, name, 0, attacker.id};
+        const StatusVerdict verdict = m_world.statuses().apply(attacker, status, how);
+        if (verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed) {
+            ++m_counts.casterEffects;
         }
     }
 }
@@ -648,7 +737,7 @@ void Gear::perk_damage(EntityId attackerId, EntityId targetId, float amount, con
 }
 
 void Gear::on_hit_taken(Entity& character, const gamedata::CreatureContact& contact) {
-    m_world.consumables().hit_taken(character);
+    m_world.statuses().hit_taken(character);
     if (contact.hitCharge > 0.0F) {
         m_world.runes().gain(character, contact.hitCharge);
     }

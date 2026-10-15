@@ -238,6 +238,17 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
     return plan;
 }
 
+std::string Abilities::ability_of(std::uint64_t cast) const {
+    const auto found = m_casts.find(cast);
+    return found == m_casts.end() ? std::string() : ability_text(found->second.ability);
+}
+
+std::string Abilities::ability_text(std::uint32_t ability) const {
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const gamedata::AbilityNode* node = tables != nullptr ? tables->node(ability) : nullptr;
+    return node != nullptr ? node->id : std::string();
+}
+
 CastVerdict Abilities::refuse(CastVerdict verdict) {
     ++m_counts.presses[static_cast<std::size_t>(verdict)];
     return verdict;
@@ -247,6 +258,16 @@ CastVerdict Abilities::press(SessionId session, const AbilityPress& press) {
     Entity* character = m_world.entity_of(session);
     if (character == nullptr) {
         return refuse(CastVerdict::noEntity);
+    }
+    // A later press of the session, accepted or refused, ends the contact windows of the earlier cast (code review of
+    // stage 3.3a, finding F2): a contact after it is not a hit of that cast. Before each refusal (code review of stage
+    // 1.3b, finding F9: a press of an empty place of the bar closed no window).
+    if (const auto known = m_characters.find(character->characterId); known != m_characters.end() && known->second.cast) {
+        const auto earlier = m_casts.find(*known->second.cast);
+        if (earlier != m_casts.end() && earlier->second.session == session && earlier->second.sequence == press.sequence
+            && !earlier->second.closedAt) {
+            earlier->second.closedAt = press.input;
+        }
     }
     if (!has_data()) {
         return refuse(CastVerdict::noData);
@@ -297,15 +318,6 @@ CastVerdict Abilities::press(SessionId session, const AbilityPress& press) {
     }
     const WorldClock::time_point now = m_world.clock().now();
     CharacterState& state = m_characters[character->characterId];
-    // A later press of the session, accepted or refused, ends the contact windows of the earlier cast (code review of
-    // stage 3.3a, finding F2): a contact after it is not a hit of that cast.
-    if (state.cast) {
-        const auto earlier = m_casts.find(*state.cast);
-        if (earlier != m_casts.end() && earlier->second.session == session && earlier->second.sequence == press.sequence
-            && !earlier->second.closedAt) {
-            earlier->second.closedAt = press.input;
-        }
-    }
     // The cooldown of the server, and the cooldown of the client: the client does not play a press in its own cooldown,
     // also when the cooldown of the server ended before (a reset command; stage 1.3b, I8, live check I8-05).
     const auto running = state.cooldowns.find(ability);
@@ -343,6 +355,7 @@ CastVerdict Abilities::press(SessionId session, const AbilityPress& press) {
     cast.place = character->position;
     cast.yaw = std::isfinite(press.yaw) ? press.yaw : 0.0F;
     cast.itemId = item->itemId;
+    cast.slot = Combat::weapon_slot_in_hand(*character).value_or(0);
     cast.gearScore = item->gearScore;
     // The cooldown of the data starts at the press, as the cooldown of the client (live check L1).
     AbilityCooldown timer;
@@ -562,6 +575,7 @@ std::optional<MeleePhase> Abilities::contact_phase(const Entity& attacker, Sessi
         result.phase = index;
         result.row = *m_combat->row_index(phase.row);
         result.itemId = cast.itemId;
+        result.slot = cast.slot;
         result.gearScore = cast.gearScore;
         result.done = cast.hits.count({index, target}) != 0;
         return result;
@@ -679,7 +693,8 @@ bool Abilities::area_hit(Cast& cast, std::uint32_t index, Entity& caster, Entity
         return false;
     }
     const HitResult result =
-        m_world.combat().strike(caster, target, cast.itemId, *weapon, cast.gearScore, *row, factor, ability_name(cast.plan.kind));
+        m_world.combat().strike(caster, target, HitWeapon{cast.itemId, cast.slot, weapon, cast.gearScore, ability_text(cast.ability)}, *row,
+                                factor, ability_name(cast.plan.kind));
     if (result.verdict != HitVerdict::accepted) {
         return false;
     }
@@ -753,12 +768,19 @@ void Abilities::publish(const std::string& characterId) {
     if (entity == nullptr || state == m_characters.end()) {
         return;
     }
-    // The cooldowns that ended leave the state: the client keeps an entry until a new map comes.
+    // A cooldown leaves the state when its end and the end of the client cooldown passed (code review of stage 1.3b,
+    // finding F11: a cast of a different ability erased the end of the client). The map of the owner has only the
+    // cooldowns of the server that run: the client keeps an entry until a new map comes.
     const WorldClock::time_point now = m_world.clock().now();
     for (auto timer = state->second.cooldowns.begin(); timer != state->second.cooldowns.end();) {
-        timer = timer->second.end <= now ? state->second.cooldowns.erase(timer) : std::next(timer);
+        timer = std::max(timer->second.end, timer->second.clientEnd) <= now ? state->second.cooldowns.erase(timer) : std::next(timer);
     }
-    entity->cooldowns = state->second.cooldowns;
+    entity->cooldowns.clear();
+    for (const auto& [ability, timer] : state->second.cooldowns) {
+        if (timer.end > now) {
+            entity->cooldowns.emplace(ability, timer);
+        }
+    }
     m_world.touch(entity->id, ComponentKey::cooldowns);
 }
 
@@ -767,13 +789,18 @@ void Abilities::entered(Entity& character) {
     if (state == m_characters.end()) {
         return;
     }
-    // A new entity of the character: no cast plays, and the cooldowns stay.
+    // A new entity of the character: no cast plays, and the cooldowns stay (with the end of the client: finding F11).
     state->second.cast.reset();
     const WorldClock::time_point now = m_world.clock().now();
     for (auto timer = state->second.cooldowns.begin(); timer != state->second.cooldowns.end();) {
-        timer = timer->second.end <= now ? state->second.cooldowns.erase(timer) : std::next(timer);
+        timer = std::max(timer->second.end, timer->second.clientEnd) <= now ? state->second.cooldowns.erase(timer) : std::next(timer);
     }
-    character.cooldowns = state->second.cooldowns;
+    character.cooldowns.clear();
+    for (const auto& [ability, timer] : state->second.cooldowns) {
+        if (timer.end > now) {
+            character.cooldowns.emplace(ability, timer);
+        }
+    }
 }
 
 bool Abilities::reset_cooldowns(const std::string& characterId, bool client) {
@@ -942,6 +969,7 @@ void Abilities::perk_burst(Entity& caster, std::string_view spellId) {
     std::sort(found_.begin(), found_.end());
     const std::string itemId = item->itemId;
     const std::uint32_t gearScore = item->gearScore;
+    const std::uint32_t slot = Combat::weapon_slot_in_hand(caster).value_or(0);
     const EntityId casterId = caster.id;
     unsigned hits = 0;
     for (const auto& [away, id] : found_) {
@@ -953,7 +981,8 @@ void Abilities::perk_burst(Entity& caster, std::string_view spellId) {
         if (target == nullptr || target->creature.dead || target->creature.immune() || !m_world.navigation().sees(center, target->position)) {
             continue;
         }
-        if (m_world.combat().strike(*own, *target, itemId, *weapon, gearScore, *row, 1.0F, "a burst of a perk").verdict == HitVerdict::accepted) {
+        if (m_world.combat().strike(*own, *target, HitWeapon{itemId, slot, weapon, gearScore, {}}, *row, 1.0F, "a burst of a perk").verdict
+            == HitVerdict::accepted) {
             ++hits;
             ++m_counts.areaHits;
         }

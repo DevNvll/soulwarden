@@ -73,7 +73,13 @@ backend. The tool of each system is also in the document of that system.
   resolve other than the ids of `COSTS_NOT_IN_GAME` (the client gives them no cost: protocol
   notes 4.23); the loader refuses status numbers that do not fit the CRC order of the rows
   (F10); `tools/gamedata/check_ability_tool.py` checks these stops with made-up tables, case
-  RA12), `perk-data.json` (stage 1.3b, `tools/gamedata/perks.sh`: the perk list in the order of
+  RA12; from stage 3.3b-S1, format 3, also the caster effect rows (each row of an ability
+  table of the players with a SelfApplyStatusEffect, with its cells) and the status
+  categories (the ValueLimits of StatusEffectCategoryData); the loader takes the formats 1
+  and 2 too; a file must name its number of status rows: a file with 0 rows and a status
+  effect is refused (code review of stage 1.3b, finding F10); the tool stops for a caster
+  effect row that names a status that the tables do not have and for a ValueLimits part that
+  is not a name and a number), `perk-data.json` (stage 1.3b, `tools/gamedata/perks.sh`: the perk list in the order of
   the client, each perk with its affixes, abilities, labels, scaling, and channel, the cells of
   the affixes and of the ability rows that the perks name, the perk buckets, the perk places
   of each item, the consumables, the encumbrance row and the load of each armor item, the
@@ -84,7 +90,17 @@ backend. The tool of each system is also in the document of that system.
   as a whole; the tool writes no file when a reference does not resolve, other than the names
   of the lists `REFERENCES_NOT_IN_GAME`, `ITEM_REFERENCES_NOT_IN_GAME`, and
   `SWAP_PERKS_NOT_IN_GAME`; `tools/research/perk_index.py` compares the list with the list of
-  a live client: live check I1 found the two equal), `travel-places.json` (the spirit shrines and the inns
+  a live client: live check I1 found the two equal; from stage 3.3b-S1, format 2, also the
+  RequiredLevel of each consumable (member `level`, from its master item row; code review of
+  stage 1.3b, finding F5); the loader takes only format 2, and it refuses a file whose links
+  do not resolve: an affix or an ability of a perk, the new perk of a swap, a fixed place that
+  is not a perk, a bucket place that is not a bucket, an ability of a heart rune (F13; the
+  old perk of a swap can be a perk that the game copy does not have); the tool stops for a
+  value column that an encumbrance, affix, or ability table does not have (F14), for two affix
+  rows or two ability rows of one id with different values (F15), and the entries of a perk
+  bucket end at the first empty perk cell or empty weight cell, and at Perk500 (the parser of
+  the client, F16: one bucket of the game, PerkBucket_PvPBucket1, has 5 entries, not 15);
+  `tools/gamedata/check_perk_tool.py` checks these stops with made-up tables, case RI14), `travel-places.json` (the spirit shrines and the inns
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
@@ -115,6 +131,9 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage 3.3b-S1 changed the forms of `ability-data.json` (format 3) and `perk-data.json` (format 2). The backend of
+  this stage refuses a perk file of format 1 (no perk data: no perk of an item, no consumable, no heart rune): write the
+  two files again with `tools/gamedata/abilities.sh` and `tools/gamedata/perks.sh`.
 - Stage 1.3b changed the forms of `ability-data.json`, `combat-tables.json`, `creatures.json`, and
   `progression-tables.json`, and added `perk-data.json`: the backend of the stage reads the old
   forms, but an older backend refuses some new forms. Put the backend and the five files into

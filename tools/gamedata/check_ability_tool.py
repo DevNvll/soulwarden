@@ -15,10 +15,14 @@ files is replaced: no file of the game is necessary), and it runs the builder an
   missing-cost           an ability names a mana cost id that no row has          status 1, the file stays
   partial-cost-columns   an ability table with only ManaCostList                  status 1, the file stays
   negative-cost          a mana cost -5                                           status 1, the file stays
+  missing-SelfApply      an ability table of the players has no SelfApplyStatusEffect   status 1, the file stays
+  unknown-caster-status  a caster effect row names a status that no table has     status 1, the file stays
+  bad-limit              a ValueLimits part with no number                        status 1, the file stays
 
 The first six cases after valid are the corrections of the findings F11 and F12 of the code review of stage 3.3a
 (a column that is not there is not 0 or false; two rows with one id must agree). The last three are the cost data of
-stage 1.3b (criterion I14). The values of the valid document: the format 2; the status row with its number among
+stage 1.3b (criterion I14). The last three are the caster effect rows and the status categories of stage 3.3b-S1
+(format 3). The values of the valid document: the format 3; the status row with its number among
 the CRC values of all rows; its other cells (Health 400, TickRate 1, EffectCategories); the spell with its cost id
 "SpecialAttack" (an id that the game itself does not resolve: no cost); the mana cost 25 of a cost id; the cost
 columns of an ability row.
@@ -81,7 +85,21 @@ def sheets(case: str) -> dict:
     spell = {"SpellID": "WarHammer_Spell_Shockwave", "Radius": 3, "Height": 0, "CastDistance": 0, "NumToSpawn": 0,
              "SpawnRate": 0, "Duration": 6000, "ManaCost": "SpecialAttack"}
     ability = {"AbilityID": "Passive_Test_ManaCost", "ManaCostList": "LifeStaff_TouchOfLife", "ManaCostMult": -0.25,
-               "StaminaCostList": "", "StaminaCostFlatMod": 0}
+               "StaminaCostList": "", "StaminaCostFlatMod": 0, "SelfApplyStatusEffect": ""}
+    caster = {"AbilityID": "Upgrade_Test_Fortify", "ManaCostList": "", "ManaCostMult": 0, "StaminaCostList": "",
+              "StaminaCostFlatMod": 0, "SelfApplyStatusEffect": "PotionHeal", "OnHit": True, "DisplayName": "@Fortify",
+              "DamageTableRow": "Test_Row"}
+    category = {"StatusEffectCategoryID": "Haste", "ValueLimits": "MoveSpeedMod:0.4,SprintSpeedMod:0.4"}
+    if case == "partial-cost-columns":
+        del ability["StaminaCostList"]
+        del caster["StaminaCostList"]
+    if case == "missing-SelfApply":
+        del ability["SelfApplyStatusEffect"]
+        del caster["SelfApplyStatusEffect"]
+    if case == "unknown-caster-status":
+        caster["SelfApplyStatusEffect"] = "NoSuchStatus"
+    if case == "bad-limit":
+        category["ValueLimits"] = "MoveSpeedMod:fast"
     if case == "missing-Time":
         del cooldown["Time"]
     if case == "missing-Stunned":
@@ -91,8 +109,6 @@ def sheets(case: str) -> dict:
         del spell["Radius"]
     if case == "missing-cost":
         ability["ManaCostList"] = "NoSuchCost"
-    if case == "partial-cost-columns":
-        del ability["StaminaCostList"]
     tables = {
         "CooldownData": [FakeSheet("Cooldowns", [cooldown])],
         "StatusEffectData": [FakeSheet("Status", [status, potion])],
@@ -100,8 +116,9 @@ def sheets(case: str) -> dict:
         "ManaData": [FakeSheet("ManaCosts", [{"CostID": "LifeStaff_TouchOfLife", "ManaCost": -5 if case == "negative-cost" else 25},
                                                  {"CostID": "Zero_Mana", "ManaCost": ""}])],
         "StaminaData": [FakeSheet("StaminaCosts", [{"CostID": "Attack_Warhammer_Special_1", "StaminaCost": 0}])],
-        "AbilityData": [FakeSheet("Abilities", [ability]),
+        "AbilityData": [FakeSheet("Abilities", [ability, caster]),
                             FakeSheet("AIAbilities", [{"AbilityID": "AI_Bite"}])],
+        "StatusEffectCategoryData": [FakeSheet("Categories", [category, {"StatusEffectCategoryID": "Buff", "ValueLimits": ""}])],
     }
     if case == "conflicting-status":
         tables["StatusEffectData"].append(FakeSheet("OtherStatus", [dict(status, Stunned=False)]))
@@ -117,7 +134,7 @@ def valid_values(document: dict, case: str) -> list[str]:
     """@return The values of the valid document that are not correct."""
     wrong = []
     statuses = {row[0]: row for row in document["statusEffects"]}
-    if document["format"] != 2:
+    if document["format"] != 3:
         wrong.append(f"the format {document['format']}")
     potion = statuses.get("PotionHeal")
     if potion is None or potion[9] != {"Health": 400.0, "TickRate": 1.0, "EffectCategories": "SurvivalPotion"}:
@@ -138,6 +155,11 @@ def valid_values(document: dict, case: str) -> list[str]:
         wrong.append(f"the mana costs {document['manaCosts']}")
     if document["abilityCosts"] != [["Passive_Test_ManaCost", ["LifeStaff_TouchOfLife"], -0.25, [], 0.0]]:
         wrong.append(f"the ability costs {document['abilityCosts']}")
+    if document["abilityRows"] != [["Upgrade_Test_Fortify", {"SelfApplyStatusEffect": "PotionHeal", "OnHit": 1.0,
+                                                             "DamageTableRow": "Test_Row"}]]:
+        wrong.append(f"the caster effect rows {document['abilityRows']}")
+    if document["statusCategories"] != [["Buff", {}], ["Haste", {"MoveSpeedMod": 0.4, "SprintSpeedMod": 0.4}]]:
+        wrong.append(f"the status categories {document['statusCategories']}")
     return wrong
 
 
@@ -149,7 +171,8 @@ def main() -> int:
     work.mkdir(parents=True, exist_ok=True)
     failures = 0
     cases = ("valid", "missing-Time", "missing-Stunned", "missing-Radius", "conflicting-status", "conflicting-spell",
-             "game-duplicate", "missing-cost", "partial-cost-columns", "negative-cost")
+             "game-duplicate", "missing-cost", "partial-cost-columns", "negative-cost", "missing-SelfApply",
+             "unknown-caster-status", "bad-limit")
     for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")
@@ -167,7 +190,7 @@ def main() -> int:
             try:
                 wrong = valid_values(json.loads(text), case) if status == 0 and text != MARK else ["no document"]
             except (ValueError, KeyError, IndexError, TypeError) as error:
-                wrong = [f"the document does not have the form of format 2 ({type(error).__name__})"]
+                wrong = [f"the document does not have the form of format 3 ({type(error).__name__})"]
             passed = status == 0 and not wrong
             detail = f"status {status}" + (f", not correct: {'; '.join(wrong)}" if wrong else ", each value is correct")
         else:

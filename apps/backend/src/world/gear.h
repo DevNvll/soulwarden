@@ -14,6 +14,7 @@
 #include "gamedata/creature_data.h"
 #include "gamedata/perk_data.h"
 #include "world/entity.h"
+#include "world/statuses.h"
 #include "world/world_clock.h"
 
 // The gear system (stage 1.3b, itemization): what the equipment and the effects of a character give it. World thread only.
@@ -122,6 +123,12 @@ struct HitContext {
     /** The damage row of the hit ("GreatAxe_PrimaryAttack", "Rune_Detonate_AoE"), and its attack type ("Light", "Heavy", "Ability", "Heartgem"). */
     std::string row;
     std::string attackType;
+    /**
+     * The ability of the cast of the hit ("Ability_WarHammer_WreckingBall"; the condition InSequence of an ability row),
+     * and the ability table of the weapon of the hit (its learned nodes give the caster effects; stage 3.3b-S1).
+     */
+    std::string ability;
+    std::uint32_t table{0};
     /** The damage that the creature took, and the damage before its defense. */
     float dealt{0.0F};
     float raw{0.0F};
@@ -138,6 +145,8 @@ struct GearCounts {
     std::uint64_t cooldownReductions{0};
     std::uint64_t chainHits{0};
     std::uint64_t tickHits{0};
+    /** The caster effects of a hit (SelfApplyStatusEffect of a perk or of a learned node; stage 3.3b-S1). */
+    std::uint64_t casterEffects{0};
 };
 
 class Gear {
@@ -150,12 +159,16 @@ public:
     [[nodiscard]] std::vector<GearPerk> item_perks(const ItemInstance& item, std::uint32_t slot) const;
     /** @return The perk that the game shows for a perk on an item: the swap table of the game, in the sequence of its ID. */
     [[nodiscard]] const gamedata::PerkRow* swapped(const gamedata::PerkRow& perk, const ItemInstance& item) const;
-    /** @return The passive values of the equipment and the effects of a character now. */
+    /** @return The passive values of the equipment of a character now (with no status: the status system gives those). */
     [[nodiscard]] GearValues values(const Entity& character) const;
+    /** @return The statuses that the affixes of the equipped items keep (StatusEffect of an affix), with their potency. */
+    [[nodiscard]] std::vector<Statuses::GearStatus> gear_statuses(const Entity& character) const;
     /**
-     * The equipment, the weapon in the hand, or an effect of a character changed: the attribute bonus, the part of the
-     * maximum health, and the equip load of the entity again (Entity::attributes.bonus, Entity::gear), the maximum
-     * health through the progress system, and the attribute state when the bonus changed.
+     * The equipment, the weapon in the hand, or a status of a character changed: the statuses of the gear (the status
+     * system), then the attribute bonus, the part of the maximum health, the armor, the damage and absorption parts, the
+     * speed parts, and the equip load of the entity again (Entity::attributes.bonus, Entity::gear) from the values of
+     * the gear and of the statuses (each value counts one time), the maximum health through the progress system, and
+     * the attribute state when the bonus changed.
      */
     void refresh(Entity& character);
 
@@ -185,6 +198,8 @@ private:
     /** @return True when the conditions of an OnHit ability row pass for this hit. */
     [[nodiscard]] bool conditions_pass(const gamedata::CellValues& row, const Entity& attacker, const Entity& target,
                                        const HitContext& hit) const;
+    /** The caster effect of an ability row that passed its conditions: its SelfApplyStatusEffect on the character. */
+    void caster_effect(Entity& attacker, const gamedata::CellValues& row, const std::string& name, float potency);
     /** Gives the creature the damage over time or the chain of a status of a perk, with the damage of the hit. */
     void perk_status(Entity& attacker, Entity& target, std::string_view status, float potency, const HitContext& hit);
     /** One hit of a perk with a fixed amount (a tick, a chain): through Combat::strike_amount. */

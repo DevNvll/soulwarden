@@ -11,9 +11,11 @@ namespace {
 
 using nlohmann::json;
 
-/** The forms of the file that this code reads (tools/gamedata/abilities.py): 2 from stage 1.3b, with the other cells
- * of each status row and spell row and the costs; 1 has none of them. */
-constexpr std::uint64_t kFormat = 2;
+/** The forms of the file that this code reads (tools/gamedata/abilities.py): 3 from stage 3.3b-S1, with the caster
+ * effect rows and the status categories; 2 from stage 1.3b, with the other cells of each status row and spell row and
+ * the costs; 1 has none of them. */
+constexpr std::uint64_t kFormat = 3;
+constexpr std::uint64_t kCostFormat = 2;
 constexpr std::uint64_t kOldFormat = 1;
 
 /** @return The CRC-32 of a text as the client computes it: only the letters A to Z go to lower case. */
@@ -142,6 +144,23 @@ bool read_ability_cost(const json& row, AbilityCostRow& cost) {
            && number(row, 2, cost.manaMultiplier) && read_texts(row[3], cost.stamina) && number(row, 4, cost.staminaFlat);
 }
 
+bool read_ability_row(const json& row, AbilityRow& ability) {
+    return row.is_array() && row.size() == 2 && text(row, 0, ability.id) && read_cells(row[1], ability.cells);
+}
+
+bool read_category(const json& row, StatusCategory& category) {
+    if (!row.is_array() || row.size() != 2 || !text(row, 0, category.id) || !row[1].is_object()) {
+        return false;
+    }
+    for (const auto& [name, limit] : row[1].items()) {
+        if (name.empty() || !limit.is_number() || !std::isfinite(limit.get<float>())) {
+            return false;
+        }
+        category.limits.emplace(name, limit.get<float>());
+    }
+    return true;
+}
+
 template <class Row, class Read>
 bool read_list(const json& document, const char* name, Read read, std::vector<Row>& rows, std::string& error) {
     if (!document.contains(name) || !document[name].is_array()) {
@@ -193,6 +212,8 @@ bool AbilityData::load(const std::string& path) {
     m_manaCosts.clear();
     m_staminaCosts.clear();
     m_abilityCosts.clear();
+    m_abilityRows.clear();
+    m_categories.clear();
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         m_error = "the file is not there";
@@ -205,8 +226,8 @@ bool AbilityData::load(const std::string& path) {
     }
     const std::uint64_t format =
         document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kFormat && format != kOldFormat) {
-        m_error = "the file does not have the format 1 or 2";
+    if (format != kFormat && format != kCostFormat && format != kOldFormat) {
+        m_error = "the file does not have the format 1, 2, or 3";
         return false;
     }
     AbilityTables tables;
@@ -221,16 +242,25 @@ bool AbilityData::load(const std::string& path) {
         || !read_list(document, "spells", read_spell, tables.spells, m_error)) {
         return false;
     }
-    if (format == kFormat
+    if (format >= kCostFormat
         && (!read_list(document, "manaCosts", read_cost, tables.manaCosts, m_error)
             || !read_list(document, "staminaCosts", read_cost, tables.staminaCosts, m_error)
             || !read_list(document, "abilityCosts", read_ability_cost, tables.abilityCosts, m_error))) {
         return false;
     }
-    return set(std::move(tables));
+    if (format >= kFormat
+        && (!read_list(document, "abilityRows", read_ability_row, tables.abilityRows, m_error)
+            || !read_list(document, "statusCategories", read_category, tables.statusCategories, m_error))) {
+        return false;
+    }
+    return accept(std::move(tables), true);
 }
 
 bool AbilityData::set(AbilityTables tables) {
+    return accept(std::move(tables), false);
+}
+
+bool AbilityData::accept(AbilityTables tables, bool fromFile) {
     m_tables = {};
     m_cooldowns.clear();
     m_status.clear();
@@ -238,24 +268,57 @@ bool AbilityData::set(AbilityTables tables) {
     m_manaCosts.clear();
     m_staminaCosts.clear();
     m_abilityCosts.clear();
+    m_abilityRows.clear();
+    m_categories.clear();
     std::unordered_map<std::string, std::size_t> cooldowns;
     std::unordered_map<std::string, std::size_t> status;
     std::unordered_map<std::string, std::size_t> spells;
     std::unordered_map<std::string, std::size_t> manaCosts;
     std::unordered_map<std::string, std::size_t> staminaCosts;
     std::unordered_map<std::string, std::size_t> abilityCosts;
+    std::unordered_map<std::string, std::size_t> abilityRows;
+    std::unordered_map<std::string, std::size_t> categories;
     std::string error;
     if (tables.cooldowns.empty()) {
         error = "the data has no cooldown";
     } else if (index_rows(tables.cooldowns, cooldowns, "cooldowns", error) && index_rows(tables.statusEffects, status, "statusEffects", error)
                && index_rows(tables.spells, spells, "spells", error) && index_rows(tables.manaCosts, manaCosts, "manaCosts", error)
                && index_rows(tables.staminaCosts, staminaCosts, "staminaCosts", error)
-               && index_rows(tables.abilityCosts, abilityCosts, "abilityCosts", error)) {
+               && index_rows(tables.abilityCosts, abilityCosts, "abilityCosts", error)
+               && index_rows(tables.abilityRows, abilityRows, "abilityRows", error)
+               && index_rows(tables.statusCategories, categories, "statusCategories", error)) {
         for (const CooldownRow& row : tables.cooldowns) {
             if (row.time < 0.0F || row.minTime < 0.0F) {
                 error = "the cooldown of " + row.id + " is negative";
                 break;
             }
+        }
+    }
+    // A file must name the number of the status rows of the game (code review of stage 1.3b, finding F10): a file that
+    // declares 0 rows cannot give any status number to the wire. Only a test with no file uses 0 (not known).
+    if (error.empty() && fromFile && !tables.statusEffects.empty() && tables.statusRows == 0) {
+        error = "the file declares no status rows, but it has status effects";
+    }
+    // Each status that a caster effect row names is in the data (stage 3.3b-S1).
+    for (const AbilityRow& row : tables.abilityRows) {
+        const std::string_view names = row.cells.text("SelfApplyStatusEffect");
+        std::size_t start = 0;
+        while (error.empty() && start <= names.size()) {
+            std::size_t end = names.find(',', start);
+            if (end == std::string_view::npos) {
+                end = names.size();
+            }
+            std::string_view name = names.substr(start, end - start);
+            while (!name.empty() && name.front() == ' ') {
+                name.remove_prefix(1);
+            }
+            while (!name.empty() && name.back() == ' ') {
+                name.remove_suffix(1);
+            }
+            if (!name.empty() && status.count(lower_ascii(name)) == 0) {
+                error = "the caster effect row " + row.id + " names the status " + std::string(name) + ", which the data does not have";
+            }
+            start = end + 1;
         }
     }
     if (error.empty() && !tables.statusEffects.empty()) {
@@ -292,6 +355,8 @@ bool AbilityData::set(AbilityTables tables) {
     m_manaCosts = std::move(manaCosts);
     m_staminaCosts = std::move(staminaCosts);
     m_abilityCosts = std::move(abilityCosts);
+    m_abilityRows = std::move(abilityRows);
+    m_categories = std::move(categories);
     m_error.clear();
     return true;
 }
@@ -320,6 +385,14 @@ std::optional<float> AbilityData::stamina_cost(std::string_view id) const {
 
 const AbilityCostRow* AbilityData::ability_cost(std::string_view id) const {
     return find_row(m_tables.abilityCosts, m_abilityCosts, id);
+}
+
+const AbilityRow* AbilityData::ability_row(std::string_view id) const {
+    return find_row(m_tables.abilityRows, m_abilityRows, id);
+}
+
+const StatusCategory* AbilityData::category(std::string_view id) const {
+    return find_row(m_tables.statusCategories, m_categories, id);
 }
 
 } // namespace soulwarden::backend::gamedata

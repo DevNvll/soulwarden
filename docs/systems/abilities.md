@@ -70,7 +70,9 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   Code review of stage 3.3a: a contact that comes more than 250 ms before the first time of
   the phase on the world clock is not a hit (finding F1, `ability_rules::kPhaseEarly`); a
   later press of the session, accepted or refused, ends the windows of the earlier cast, and
-  a contact of an attack input that started after the press is a hit of the attack (F2).
+  a contact of an attack input that started after the press is a hit of the attack (F2). The
+  close comes before each refusal, also for an empty place of the bar (code review of stage
+  1.3b, finding F9).
 - An area phase runs at its time on the world clock. It takes the creatures of its circle
   from the position index, not more than 3 m higher or lower (or the `Height` of the spell),
   with no wall between the center and the creature (`Navigation::sees`), 32 at most, the
@@ -85,7 +87,11 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   part of its data is refused (`noRule`; finding F9).
 - Each hit of an ability goes through `Combat::strike`: the damage of the row, the creature
   system with the attacker (the target, the credit, the rewards of a kill), and the damage
-  number to the owner.
+  number to the owner. The cast keeps the slot of its weapon: a hit uses the gem of that
+  instance (code review of stage 1.3b, finding F1), and the hit has the ability of the cast for
+  the condition InSequence of a caster effect (stage 3.3b-S1: Safety Measures puts the fortify
+  WarHammer_WreckingBall_Fortify on the caster at a hit of Wrecking Ball; [Status
+  effects](status-effects.md)).
 - The effects on a creature go only through the creature system (`Creatures::apply_effect`
   for a status row, `Creatures::knock` for a knockdown or a stagger). The values come from
   the status row of the data (the time, the stun, the root, the slow, the weaken, the end at
@@ -140,6 +146,9 @@ tools/gamedata/abilities.sh          # write ability-data.json to the game data 
   its own cooldown. Thus the client and the server agree in a normal game. A cooldown that
   only the server has (a command, or a different client) shows a countdown, but the client
   plays a press in it: the server then refuses it, and the animation plays with no damage.
+- A cooldown stays in the state of the character until its end and the end of the client
+  cooldown passed (code review of stage 1.3b, finding F11: a cast of a different ability erased
+  the end of the client); the map of the owner has only the cooldowns of the server that run.
 - A press in the local cooldown of the client sends the key bits, and the client does not
   play it (stage 1.3b, I8: this is the cause of the "first press after a weapon change" of
   stage 3.3a, whose tries reset the cooldowns of the server between presses). The backend

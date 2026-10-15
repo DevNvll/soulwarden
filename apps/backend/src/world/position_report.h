@@ -206,10 +206,15 @@ public:
     /**
      * Checks one report. An accepted report goes into the time window.
      * @param known The position that the entity has now: the reference of the first report.
+     * @param speedFactor The factor of the speed of the character from its statuses (stage 3.3b-S1: 1 plus the larger
+     *        part of MoveSpeedMod and SprintSpeedMod, with the limits of their categories). A factor above 1 makes the
+     *        window speed (kWindowSpeed) larger: a haste of a heart rune moves the client faster. A slow does not
+     *        make the limit smaller (the limit is a largest speed).
      */
     [[nodiscard]] PositionVerdict judge(const PositionReport& report,
                                         const state::WorldPosition& known,
-                                        WorldClock::time_point now);
+                                        WorldClock::time_point now,
+                                        float speedFactor = 1.0F);
 
     /**
      * The world moved the character to a different place (World::travel). The check starts

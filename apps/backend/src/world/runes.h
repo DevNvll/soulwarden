@@ -35,9 +35,16 @@
 // creature in the shape of the spell (Radius 5, Height 5) around the character that the
 // character sees (CheckObstructions), with the damage row Rune_Detonate_AoE and the weapon of the
 // rune (SlotToFillWeaponDamageInfo HEART_GEM_SLOT), through Combat::strike: the perks of the hit
-// (Dominator: +20 percent) count there. A character that died or left the world before the end
-// makes no explosion. A second press while a status runs, or with a charge that is not full,
-// changes nothing.
+// (Dominator: +20 percent) count there. A second press while a status runs, or with a charge that
+// is not full, changes nothing.
+//
+// Stage 3.3b-S1: the status of the activation is a status of the status system (world/statuses.h),
+// with the source "rune". The chain of the data makes the explosion: at the end of the status its
+// OnEndStatusEffect Rune_Detonate_CastAoE comes on the character, and the CastSpell of that row
+// (Rune_Detonate_AoE) comes here (Runes::status_spell). A death removes the status (RemoveOnDeath),
+// and the leave of the world removes it (a rule of this project: the client of the character is
+// not there to show it): the rows have DontApplyOnEndEffectOnRemove, thus no explosion comes, also
+// when the character lives again or comes back before the end (code review of stage 1.3b, F4).
 //
 // The cost: an activation looks at the position index around one character (32 creatures at most).
 
@@ -111,6 +118,17 @@ public:
     bool set_charge(const std::string& characterId, float percent);
     /** The world made the entity of a character: it gets the charge of the character. */
     void entered(Entity& character);
+    /** The character leaves the world: the status of an activation ends with no explosion (finding F4). */
+    void left(Entity& character);
+    /** The status system ended the status of an activation before its time (a death, a leave): no explosion comes. */
+    void activation_cancelled() {
+        ++m_counts.cancelled;
+    }
+    /**
+     * The CastSpell of a status of a character (world/statuses.h): the spell of the explosion (Rune_Detonate_AoE) is
+     * the explosion around the character. @return False for a spell that this system does not have.
+     */
+    bool status_spell(Entity& character, std::string_view spell, const StatusSource& source);
     /** @return The charge of a character in percent (0 to 100). */
     [[nodiscard]] float percent_of(const std::string& characterId) const;
 
@@ -121,9 +139,6 @@ public:
 private:
     struct CharacterState {
         float charge{0.0F};
-        /** The number of the activation whose status runs, and its end. No value: none. */
-        std::optional<std::uint64_t> activation;
-        WorldClock::time_point ends{};
     };
 
     RuneVerdict counted(RuneVerdict verdict) {
@@ -134,8 +149,8 @@ private:
     [[nodiscard]] const ItemInstance* detonate_rune(const Entity& character) const;
     /** Puts the charge into the entity and marks the charge state. */
     void publish(Entity& character, const CharacterState& state);
-    /** The end of the status of an activation: the explosion. */
-    void explode(const std::string& characterId, std::uint64_t activation);
+    /** The explosion of an activation around the character (the spell of the end status). */
+    void explode(Entity& character);
 
     World& m_world;
     std::unordered_map<std::string, CharacterState> m_characters;

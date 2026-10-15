@@ -111,8 +111,9 @@ RuneVerdict Runes::activate_character(const std::string& characterId) {
         return counted(RuneVerdict::noRune);
     }
     CharacterState& state = m_characters[characterId];
-    const WorldClock::time_point now = m_world.clock().now();
-    if (state.activation && now < state.ends) {
+    // A status of an activation runs (the status system has it, with the source "rune").
+    if (std::any_of(character->statuses.begin(), character->statuses.end(),
+                    [](const ActiveStatus& status) { return status.source.kind == StatusSourceKind::rune; })) {
         return counted(RuneVerdict::active);
     }
     // The action needs a full charge (a part of a point below the maximum counts as full: the state has whole percents).
@@ -138,12 +139,8 @@ RuneVerdict Runes::activate_character(const std::string& characterId) {
     }
     state.charge = 0.0F;
     const std::uint64_t activation = m_nextActivation++;
-    state.activation = activation;
     const float seconds = std::max(status->duration, 0.0F);
-    const auto time = std::chrono::milliseconds(static_cast<long long>(std::lround(seconds * 1000.0F)));
-    state.ends = now + time;
     publish(*character, state);
-    m_world.consumables().add_effect(*character, *status, seconds);
     {
         const std::string mark = log::session_mark(character->owner, characterId);
         const log::Context context(mark);
@@ -152,22 +149,36 @@ RuneVerdict Runes::activate_character(const std::string& characterId) {
                    status->id.c_str(),
                    static_cast<double>(seconds));
     }
-    m_world.after(time, [this, characterId, activation](World&) { explode(characterId, activation); });
+    // The status of the activation (the status system): its end status casts the explosion (Runes::status_spell).
+    StatusApply how;
+    how.seconds = seconds;
+    how.source = StatusSource{StatusSourceKind::rune, "activation " + std::to_string(activation), paperdoll::kHeartRune, character->id};
+    m_world.statuses().apply(*character, *status, how);
     return counted(RuneVerdict::activated);
 }
 
-void Runes::explode(const std::string& characterId, std::uint64_t activation) {
-    const auto found = m_characters.find(characterId);
-    if (found == m_characters.end() || found->second.activation != activation) {
-        return;
+void Runes::left(Entity& character) {
+    // The count of the cancel comes from the status system (activation_cancelled).
+    (void)m_world.statuses().remove(
+        character, [](const ActiveStatus& status) { return status.source.kind == StatusSourceKind::rune; }, StatusEnd::leave);
+}
+
+bool Runes::status_spell(Entity& character, std::string_view spell, const StatusSource& source) {
+    if (!same_text(spell, rune_rules::kDetonateSpell)) {
+        return false;
     }
-    found->second.activation.reset();
-    Entity* character = m_world.find_character(characterId);
+    (void)source;
+    explode(character);
+    return true;
+}
+
+void Runes::explode(Entity& start) {
+    const std::string characterId = start.characterId;
+    Entity* character = &start;
     const gamedata::AbilityData* abilities = m_world.options().abilityData;
     const gamedata::CombatTables* tables = m_world.combat().tables();
-    const ItemInstance* rune = character != nullptr ? detonate_rune(*character) : nullptr;
-    // RemoveOnDeath and DontApplyOnEndEffectOnRemove: a character that died or left the world makes no explosion.
-    if (character == nullptr || character->life.dead || rune == nullptr || abilities == nullptr || tables == nullptr) {
+    const ItemInstance* rune = detonate_rune(*character);
+    if (character->life.dead || rune == nullptr || abilities == nullptr || tables == nullptr) {
         ++m_counts.cancelled;
         return;
     }
@@ -205,7 +216,8 @@ void Runes::explode(const std::string& characterId, std::uint64_t activation) {
         if (!m_world.navigation().sees(center, target->position)) {
             continue;
         }
-        const HitResult result = m_world.combat().strike(*caster, *target, itemId, *weapon, gearScore, *row, 1.0F, "Detonate");
+        const HitResult result =
+            m_world.combat().strike(*caster, *target, HitWeapon{itemId, paperdoll::kHeartRune, weapon, gearScore, {}}, *row, 1.0F, "Detonate");
         if (result.verdict == HitVerdict::accepted) {
             ++hits;
             ++m_counts.explosionHits;

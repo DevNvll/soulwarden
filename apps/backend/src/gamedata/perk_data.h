@@ -142,6 +142,8 @@ struct ConsumableRow {
     bool noCombat{false};
     /** True when the row has a SharedCooldownLocString: the client tells that a use puts the other items of the cooldown id on a part of the cooldown. */
     bool shared{false};
+    /** RequiredLevel of the master item row of the consumable (file format 2; code review of stage 1.3b, finding F5). 0: none. */
+    std::uint32_t level{0};
 };
 
 /** The equip load data of a player (the row Player of the encumbrance table). */

@@ -73,7 +73,10 @@ protocol notes (section 6).
   (`slot`, `container`), `set_rune_charge` (`percent`), and `activate_rune` (no argument) are
   the commands of the itemization ([Items and equipment](items-and-equipment.md),
   [Consumables and the heart rune](consumables-and-heart-rune.md)); the tool window has no
-  button for these four. The perk roll of an item (`tools/world perkroll`) is a development
+  button for these four. Stage 3.3b-S1: the commands `apply_status` (arguments `status`,
+  `seconds`, `potency`, `count`) and `remove_status` (`status`, or `all`) are the commands of
+  the status effects ([Status effects](status-effects.md)); the tool window has no button for
+  them. The perk roll of an item (`tools/world perkroll`) is a development
   route only. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn
   point, and an effect on a creature are development routes only (`tools/world hurt`, `roll`,

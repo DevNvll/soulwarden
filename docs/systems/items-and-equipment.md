@@ -55,7 +55,8 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   game changes a perk as the client does (an ItemId row first, else the first class row whose
   classes the item has; two or three passes): the row has the perk that the client shows and
   uses. A swap can take a perk out (the item has its new perk already): the other perks move
-  forward. A stack takes only an item with the same perks; the gear score does not stop it.
+  forward. Two perks that swap to one perk keep it in one place (code review of stage 1.3b,
+  finding F3). A stack takes only an item with the same perks; the gear score does not stop it.
 - The client shows the fixed perks of an item definition also when the instance does not
   have them (the heart rune, the opal jewelry): the backend does not write them into the
   instance of a give, and the gear system counts them.
@@ -161,7 +162,9 @@ tools/world equipment NAME           # the equipment of a character
   1.3b): a later part with entries of the same list group (the slots that do not show on the
   body: jewelry, quick slots, bags, tools, the heart rune) took the items of that group of the
   earlier part out. The encoder keeps each group whole in one part. 15 items with perks need
-  two parts; a group that does not fit one part (about 15 items) is not checked. A fragment of `tools/world fragment NAME 62 3183` whose three lists do not
+  two parts. A group that does not fit one part is one part of its own, larger than the budget
+  of a part: the carrier sends its bundle in chunks (code review of stage 1.3b, finding F12;
+  test case RI12). A fragment of `tools/world fragment NAME 62 3183` whose three lists do not
   have the same length has no effect and gives no log line.
 - The bag window does not show an ammunition item (`ArrowT1`): do not use one for a test of
   the bag. The equipment slots for ammunition (12, 13) take no item in the backend.

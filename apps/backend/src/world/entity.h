@@ -62,7 +62,10 @@ enum class ComponentKey {
     mana,
     /** The cooldowns of the abilities of a character (stage 3.3a). Only the owner gets them. */
     cooldowns,
-    /** The status effects of a creature (stage 3.3a): the icons at its name plate. */
+    /**
+     * The status effects of an entity: of a creature (stage 3.3a: the icons at its name plate), of a character (stage
+     * 3.3b-S1: the maps and the tray of the owner, the public maps of an observer; world/statuses.h).
+     */
     status,
     /** The heart rune charge of a character (stage 1.3b, slot 48). Only the owner gets it. */
     charge,
@@ -541,23 +544,68 @@ struct AbilityCooldown {
     WorldClock::time_point clientEnd{};
 };
 
+/** What gave a character a status (stage 3.3b-S1, world/statuses.h). */
+enum class StatusSourceKind : std::uint8_t {
+    /** A development command or an admin command. */
+    command,
+    /** A potion, a food, a dust (world/consumables.h). */
+    consumable,
+    /** The activation of a heart rune (world/runes.h). */
+    rune,
+    /** A perk of an equipped item: the status that an affix keeps (world/gear.h). Not on the wire: the client has the items. */
+    gear,
+    /** The caster effect of an ability row (SelfApplyStatusEffect of a learned node or of a perk). */
+    ability,
+    /** The end status of a status (OnEndStatusEffect). */
+    status,
+};
+
+/** The source of a status of a character. The status system removes the statuses of a source together (a gear item). */
+struct StatusSource {
+    StatusSourceKind kind{StatusSourceKind::command};
+    /** The item id, the perk, the ability row, or the status of the source. */
+    std::string id;
+    /** The paperdoll slot of an item of the gear. 0: none. */
+    std::uint32_t slot{0};
+    /** The entity of the character that gave the status (the caster). 0: none. */
+    EntityId entity{0};
+
+    bool operator==(const StatusSource&) const = default;
+};
+
 /**
- * One effect of a status row on a character (stage 1.3b): a potion, a food, a dust, or the status of a heart rune. The
- * consumable system and the rune system keep the effects of a character with the character id as their key and put a
- * copy into its entity (world/consumables.h).
+ * One status effect of a status row on a character (stage 3.3b-S1): a food, a potion, a dust, the status of a heart
+ * rune, the status of a perk of the gear, a caster effect of an ability. The status system (world/statuses.h) keeps the
+ * statuses of a character with the character id as their key, and it puts a copy into its entity for the encoders and
+ * the rules of the other systems. A character has one status of a status row at most (the maps of the client have one
+ * entry for each status number); a new application of the same row changes its stacks and its end.
  */
-struct PlayerEffect {
-    /** The id text of the status row ("PotionHealT5", "FoodCONT5"). */
+struct ActiveStatus {
+    /** The id text of the status row ("FoodCONT5", "WarHammer_WreckingBall_Fortify"). */
     std::string status;
-    /** The potency of the effect (1, or the potency of a perk). */
+    /** The number of the status on the wire (gamedata::StatusRow::index), and the key of the tray: the CRC-32 of the lower-case id. */
+    std::uint16_t index{0};
+    std::uint32_t trayKey{0};
+    /** The potency (1, or the potency of a perk) and the stack count (StackMax). */
     float potency{1.0F};
-    /** The start and the end of the effect on the world clock. */
+    std::uint8_t stacks{1};
+    /** The start and the end on the world clock. A permanent status (the gear) has no end. */
     WorldClock::time_point started{};
     WorldClock::time_point ends{};
-    /** The time of the next tick of an effect with a TickRate. No value: no tick. */
+    bool permanent{false};
+    /** The time of the next tick of a status with a TickRate and a heal or a mana value. No value: no tick. */
     std::optional<WorldClock::time_point> nextTick;
-    /** StopOnHitCount: the hits that the character can take before the effect ends. 0: no such limit. */
+    /** StopOnHitCount: the hits that the character can take before the status ends. 0: no such limit. */
     std::uint32_t hitsLeft{0};
+    StatusSource source;
+    /** A number of the status system: a new application or a new end has a new number (the due list). */
+    std::uint64_t serial{0};
+    /** The marks of the data for the wire: ShowInUITray (the tray of the owner), a public status (ShowInNameplates, AlwaysReplicate, ForceReplicateToRemotes: the observers get it), and false for a status of the gear (not on the wire). */
+    bool tray{false};
+    bool observed{false};
+    bool replicated{true};
+    /** ShowInNameplates: the icon of the status at the name plate (the compact map of an observer). */
+    bool nameplate{false};
 };
 
 /** The cooldown of one consumable item of a character (stage 1.3b): the key of the client is the item id. */
@@ -609,8 +657,14 @@ struct GearSummary {
     std::unordered_map<std::string, float> absorption;
     /** The part of the damage that the character takes less (BaseDamageReduction). */
     float damageReduction{0.0F};
-    /** The part of the maximum health that comes back in each second (a regeneration perk, a food). */
+    /** The part of the maximum health that comes back in each second (a regeneration perk of an ability row). */
     float regeneration{0.0F};
+    /**
+     * The parts of the speed of a walk and of a sprint that the statuses add (MoveSpeedMod, SprintSpeedMod, with the
+     * limits of their categories: Haste +0.4, Slow -0.5; stage 3.3b-S1). The check of the position reports uses them.
+     */
+    float moveSpeed{0.0F};
+    float sprintSpeed{0.0F};
     /** The equip load of the armor (tenths: the client shows 38.75 as 3.8) and its class: 0 light, 1 medium, 2 heavy, 3 overburdened. */
     float equipLoad{0.0F};
     std::uint8_t loadClass{0};
@@ -713,8 +767,8 @@ struct Entity {
      * consumable system keeps them with the character id as their key and puts a copy here.
      */
     std::vector<ItemCooldown> itemCooldowns;
-    /** The effects on the character (stage 1.3b), a copy of the values of the consumable and the rune systems. */
-    std::vector<PlayerEffect> effects;
+    /** The status effects of the character (stage 3.3b-S1): a copy of the values of the status system (world/statuses.h). */
+    std::vector<ActiveStatus> statuses;
     /** The heart rune charge of the character (stage 1.3b), 0 to 100 percent; a copy of the value of the rune system. */
     float runeCharge{0.0F};
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */

@@ -47,9 +47,15 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   gets the level and the experience, and an observer gets the level (the name tag of a remote
   player shows it). The attribute state, the three skill states, the cooldown state (stage
   3.3a), and the charge state of the heart rune (stage 1.3b, slot 48) are for the owner only.
-  The status state of a creature (stage 3.3a) has only the observer view. The first record of
+  The status state of a creature (stage 3.3a) has only the observer view. The status state of
+  a player (stage 3.3b-S1, slot 44) has the two views: the owner gets its maps, an observer the
+  public statuses ([Status effects](status-effects.md)). The Player state of the owner has the
+  wall clock pair (group 1, fields 6 and 7, from one sample of the world clock); an observer gets
+  no field of group 1. The first record of
   a large paperdoll has more than one part: each list group stays whole in one part (stage
-  1.3b, [Items and equipment](items-and-equipment.md)).
+  1.3b, [Items and equipment](items-and-equipment.md)), also a group that is larger than one
+  carrier message (code review of stage 1.3b, finding F12: its bundle goes in chunks of the
+  carrier).
 - A change of more than one system is one change of the store (review of stage 3.5a, finding
   F1): the caller opens a batch (`state::Store::Batch`, one transaction), the write of each
   system is a save point in it (`Store::begin_write`, `end_write`), and the batch commits at

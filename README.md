@@ -24,8 +24,9 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Health and death. Your character loses health and dies, and it comes back at the nearest spirit shrine or inn.
 - Rewards of a kill. A creature that you kill gives experience and weapon mastery experience, sometimes coin, and sometimes loot from the loot tables of the game, with the notices of the HUD. A loot item gets its perks with the perk roll of the game. A creature of a spawn point comes back after its respawn time, 6 minutes for most of them.
 - Item perks and gems. An item has up to five perks; the tooltip shows them, the gem, the gear score, and the rarity. The perks of your gear give their values: health, armor, absorption, damage, the gem conversion, the regeneration, and the perks of a hit (Sundering Shockwave, Insatiable Gravity Well, Refreshing Move, the void perks). The equip load changes your damage.
-- Potions, food, and dust. The quick slot keys (3 to 6) use the item of the slot: it heals, gives its effect, and starts its cooldown, with the countdown on the slot. The other potions of the same kind get 80 percent of the cooldown.
-- The heart rune. Hits fill the charge of the heart rune (key G). At a full charge, G starts Detonate: 3 seconds later it hurts each creature within 5 m.
+- Potions, food, and dust. The quick slot keys (3 to 6) use the item of the slot: it heals, gives its effect, and starts its cooldown, with the countdown on the slot. The other potions of the same kind get 80 percent of the cooldown. An item above the level of your character does nothing. The HUD shows the icon of the effect with its countdown, and the character sheet shows the attributes of a food and the armor of a dust.
+- The heart rune. Hits fill the charge of the heart rune (key G). At a full charge, G starts Detonate: its icon and its effect show on your character, and 3 seconds later it hurts each creature within 5 m.
+- Effects on your own character from the nodes of a weapon tree: Safety Measures (fortify after a hit of Wrecking Ball), Greed, and Hammer Time. Another player sees the icons of your public effects at your name plate.
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.
 
@@ -34,8 +35,8 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures do not jump, drop from an edge, climb, swim, or fly. A creature that has no way to you waits at the place nearest to you for 12 s and then goes back.
 - Creatures do not fight in groups, call others, or flee. Only 23 of the 24,895 waypoint tasks of the patrols have an animation, so a creature stands in its idle pose at the other waypoints.
 - 859 kinds of creature have no attack yet: they do not attack you, but they patrol or wander when their data has a route. No creature has a ranged attack, magic, or an ability.
-- Only the six abilities of the great axe and the war hammer work. The abilities of the other weapons do nothing. The vortex of Gravity Well has no picture, and Maelstrom and the vortex do not pull. The passive nodes and the effects on your own character (fortify, grit, empower) do nothing.
-- Perks that need grit, stamina, critical hits, a dodge, or another player do nothing. Your character shows no icon for a food or a potion effect, and the character sheet does not show the attributes of a food (the game counts them). Only the Detonate heart rune works. No crafting, repair, salvage, or gem socket.
+- Only the six abilities of the great axe and the war hammer work. The abilities of the other weapons do nothing. The vortex of Gravity Well has no picture, and Maelstrom and the vortex do not pull. Most passive nodes and the effects on your own character that need grit, stamina, or a critical hit do nothing.
+- Perks that need grit, stamina, critical hits, a dodge, or another player do nothing. A speed effect (haste or slow on your character, for example the Detonate heart rune) does not change the speed of your run in the game. Only the Detonate heart rune works. No crafting, repair, salvage, or gem socket.
 - Nothing drops on the ground. A full bag loses the items that have no slot.
 - You cannot block or dodge. The tool window heals your character.
 - Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
