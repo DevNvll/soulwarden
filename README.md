@@ -117,7 +117,9 @@ The game log, the captures, and the database have your full Steam id. Keep them 
 - [Reference](docs/REFERENCE.md) has each variable, the development tools, and the details of each feature.
 - [Protocol notes](docs/PROTOCOL_REVERSE_ENGINEERING_NOTES.md) have each wire contract with its evidence and its client code address.
 - [Roadmap](docs/ROADMAP.md) has the systems and the order of the work.
-- [Agent instructions](AGENTS.md) have the development loop, written for coding agents.
+- [Agent instructions](AGENTS.md) have the project rules and the common workflows, written for coding agents.
+  The rules, commands, and traps of each system are in [docs/systems](docs/systems) and
+  [docs/development](docs/development).
 
 ## Dependencies and license
 

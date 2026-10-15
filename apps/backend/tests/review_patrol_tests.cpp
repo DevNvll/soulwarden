@@ -255,7 +255,7 @@ void documents_of_creatures_with_no_attack(const Options& options) {
     };
     // The sentences of stage 3.4e that say that a creature with no attack does not move.
     const Wrong wrong[] = {{"README.md", "have no attack yet and stand still"},
-                           {"AGENTS.md", "stands and takes damage (859 of the 3,848 kinds)"},
+                           {"docs/systems/creature-behavior.md", "stands and takes damage (859 of the 3,848 kinds)"},
                            {"docs/REFERENCE.md", "have no attack that the tool can use: they stand."},
                            {"docs/PROTOCOL_REVERSE_ENGINEERING_NOTES.md", "The 859 kinds with no attack stand."}};
     bool all = true;

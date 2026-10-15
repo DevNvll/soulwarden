@@ -492,8 +492,8 @@ void stale_spawn_timing_contract(const Options&) {
     for (unsigned index = 0; index < 4; ++index) ticks |= static_cast<std::uint32_t>(first.fields.at({0, fields[index]})[0]) << (index * 8);
     note("wire spawn time=" + std::to_string(ticks) + "; time from creation=2400");
     // The review (finding F9) found the old description (the time from the creation) in
-    // AGENTS.md and entity.h: the two now say the time 0 of the wire, which this case checks.
-    check(ticks == 0, "the spawn action of a first record has the time 0 on the wire, as AGENTS.md and entity.h say");
+    // docs/systems/creatures.md and entity.h: the two now say the time 0 of the wire, which this case checks.
+    check(ticks == 0, "the spawn action of a first record has the time 0 on the wire, as docs/systems/creatures.md and entity.h say");
 }
 
 } // namespace
