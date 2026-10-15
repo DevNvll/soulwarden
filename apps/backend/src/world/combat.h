@@ -429,10 +429,13 @@ public:
      * gets the damage number (SessionSink::damage_dealt).
      * @param weapon The weapon of the hit: its item id, its slot, its weapon row (not null), its gear score, and the ability of a cast.
      * @param what The kind of the hit for the log line ("light attack", "Shockwave").
+     * @param source The source of the hit for its impact (stage 3.3b-S4: the center of an area or of a spell). Null: the
+     *        place of the attacker (a melee hit). A hit that the creature takes and lives moves it by the impact of the
+     *        row (gamedata::DamageImpact, Creatures::impact).
      * @return The verdict `accepted` with the values of the hit, or `dead` (the creature took no damage).
      */
     HitResult strike(Entity& attacker, Entity& target, const HitWeapon& weapon, std::uint32_t rowIndex, float factor, const char* what,
-                     const CastConversion* cast = nullptr);
+                     const CastConversion* cast = nullptr, const state::WorldPosition* source = nullptr);
 
     /**
      * One hit of a fixed amount of a damage type of a character on a creature (stage 1.3b: a tick of a damage over time

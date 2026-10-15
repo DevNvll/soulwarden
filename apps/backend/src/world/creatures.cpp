@@ -54,7 +54,7 @@ void SpawnGrid::build(const std::vector<gamedata::SpawnPoint>& points) {
 }
 
 Creatures::Creatures(World& world, const gamedata::CreatureData* data)
-    : m_world(world), m_data(data), m_behavior(world, *this) {
+    : m_world(world), m_data(data), m_behavior(world, *this), m_forced(world, *this) {
     load_points();
 }
 
@@ -219,6 +219,7 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
                    entity->creature.kind->id.c_str());
         // A dead creature has no target, and the attack that it plays does no damage.
         m_behavior.died(*entity);
+        m_forced.stop(*entity);
         // The death action of the slice: the body falls and stays on the ground. The client
         // starts this action only when the server starts it.
         const gamedata::CreatureSlice& body = *entity->creature.body;
@@ -617,6 +618,7 @@ void Creatures::entity_removed(const Entity& entity) {
     m_acting.erase(entity.id);
     m_affected.erase(entity.id);
     m_behavior.removed(entity);
+    m_forced.removed(entity.id);
     if (entity.creature.spawnPoint && m_points[*entity.creature.spawnPoint].entity == entity.id) {
         m_points[*entity.creature.spawnPoint].entity = 0;
     }
@@ -629,6 +631,9 @@ void Creatures::tick() {
     load_points();
     // The end of the effects of abilities first: a creature whose stun ended moves in this tick.
     end_effects();
+    // The forced movements (stage 3.3b-S4) before the behavior: a creature whose movement ended takes its next step in
+    // this tick.
+    m_forced.tick();
     // The behavior first: a contact of an attack is due at the latest at the end of its action.
     m_behavior.tick();
     end_actions();

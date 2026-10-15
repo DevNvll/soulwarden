@@ -41,6 +41,11 @@ contracts are in the protocol notes (sections 4.6 and 4.7).
   the field for 1 s. The log of a session names its source, and each change of it. A position
   of the client never goes back to its own client as a new position (the movement state is
   not marked).
+- The envelope of a dash (stage 3.3b-S4, [Forced movement](forced-movement.md)): in an accepted cast with a movement of
+  the caster (Charge), the check takes `MotionAllowance` from the abilities system: the window accepts the distance of
+  the envelope more (14.73 m x 1.3), and one step the speed of the envelope (18.07 m/s x 1.3), from the press for the
+  length of the movement and one window. The speed multiplier of a speed table (stage 3.3b-S2a) counts one window after
+  its change, and a later lower table does not move that end (code review of stage 3.3b-S2a, finding F1, test case RG1).
 - The heartbeat state of the movement component (each 200 ms, owner view) has the time anchor
   and the id of the rule (`movement_state_id`, protocol notes 4.6): 0x8000 or 0x0000,
   0x4000 or more from the newest input number of the client of the session. Never send a

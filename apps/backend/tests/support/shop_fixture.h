@@ -215,7 +215,9 @@ inline gamedata::CombatData shop_combat() {
                        {"GreatAxe_GravityWell", "Ability", 1, 0.25F, 0.0F, 0.0F, 0.0F},
                        {"GreatAxe_GravityWell_Burst", "Ability", 2, 1.0F, 0.0F, 0.0F, 0.0F},
                        {"GreatAxe_GravityWell_Burst_Perk", "Ability", 3, 0.5F, 0.0F, 0.0F, 0.0F},
-                       {"Rune_Detonate_AoE", "Heartgem", 4, 1.0F, 0.0F, 0.0F, 0.0F}};
+                       {"Rune_Detonate_AoE", "Heartgem", 4, 1.0F, 0.0F, 0.0F, 0.0F},
+                       // The pull row of the vortex (stage 3.3b-S4): no damage, and no impact in this fixture.
+                       {"GreatAxe_GravityWell_Vortex", "Ability", 2, 0.0F, 0.0F, 0.0F, 0.0F}};
     gamedata::WeaponRow axe;
     axe.id = "TestAxeRow";
     axe.melee = true;

@@ -75,6 +75,13 @@ inline constexpr unsigned kChainMost = 8;
  * radius 4 and the row GreatAxe_GravityWell_Burst_Perk). A rule of this project.
  */
 inline constexpr std::array<std::array<const char*, 2>, 1> kPerkBursts = {{{"GlobalPerk_Ability_GreatAxe_GravityWell", "InsatiableGravityWell"}}};
+/**
+ * The limits of the speed multipliers MoveSpeedMod and SprintSpeedMod in the supported build (StatMultiplierData: Min 0, Max
+ * 1.5; the client bounds the value at image RVA 0x3FEA55F to 0x3FEA583): the limits for an ability file with no
+ * `statMultipliers` (code review of stage 3.3b-S2a, finding F2).
+ */
+inline constexpr float kClientSpeedMin = 0.0F;
+inline constexpr float kClientSpeedMax = 1.5F;
 } // namespace gear_rules
 
 /** One perk of an equipped item that has an effect for its character now. */

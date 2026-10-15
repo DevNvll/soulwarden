@@ -1661,7 +1661,8 @@ data; its meaning is a guess); the 120 m are a decision of this project. The sca
 the first input report with a camera: the client then has its local player entity, which it
 needs before the record of a different player (static proof 0x1747C60). With the option off,
 a client gets only its own character. The option stays off for a normal start: the movement
-of a remote player for an observer is not in the backend.
+of a remote player for an observer is not in the backend. Only the dash of an ability goes to
+the observers (stage 3.3b-S4: the state `motion`, 4.26).
 
 **Owner view and observer view (rule MP-3).** One encoder for each component state
 (`apps/backend/src/server/rep/states/`) makes the bytes for one of two views: the owner (the
@@ -1749,7 +1750,10 @@ More facts of the live runs:
   at rest (memory read of the predicted state of the movement facet: `30/1/1080`; layer 1
   has the state 44 and no sequence). The backend sends them as constants for each character
   (`world::ActionState`) until the action system (system 3.1) gives each character its
-  action. A remote character thus stands in its idle animation at all times.
+  action. A remote character thus stands in its idle animation at all times, but in the dash
+  of an ability: from stage 3.3b-S4 the dash of Charge gives the state 7 with the sequence 59,
+  then 2312 (the swing), the rotation of the body in the direction of the dash, and the place
+  at each accepted report of the client, at most each 50 ms (live L7-D, proof P5b; 4.26).
 - Wire form of the action fields (static proof `combat-actions.md`, behavioral proof for the
   four fields above): `slayerStateId` and `slayerSequenceId` are numbers in the `size` code
   with the value plus 1 (0 is "none"), `slayerStateIdStarted` is `u16`, `slayerScriptLayers`
@@ -4892,7 +4896,8 @@ refuses each press (`no data`).
 | Melee phases | A contact of the session of the caster in the window of a phase (input steps from the press, and the same time on the world clock plus 0.5 s) is a hit of that phase (`Combat::claim`), with its damage row; one hit of a creature for each phase. The hit check of a melee attack stays (the target, the observer, the immune mark, the weapon, the distance, the point, the rate). The damage goes through `Combat::strike`, the one function of each hit: `Combat::damage` with the row, `Creatures::hurt` with the attacker (the credit and the rewards of a kill), the damage number to the owner. |
 | Area phases | At the time of a phase (a timer of the world clock), the creatures of its circle from the position index (`World::for_each_near`: no scan of the world), not more than 3 m higher or lower (or the `Height` of the spell), with no wall between the center and the creature (`Navigation::sees`), 32 at most (the nearest first); each one gets the damage and the effects one time for each phase. A creature on its way back takes nothing. A caster that left the world or died does nothing. |
 | The effects | A status effect has the values of its row: a stun (`Stunned`: no movement, no attack; its attack that plays stops, and it plays its action `Stun`), a root (`NoNav`: no movement; it turns and attacks in its reach), a slow (`MoveSpeedMod`: the speed of each step times 1 + the value; the strongest slow of the effects), a weaken (`DMGStandard`: the damage of the creature times 1 + the value, `Combat::creature_damage`), the end at the next hit (`StopOnHitCount`). The same effect again gets the later end. A knockdown (power 4) or a stagger (power 2): the action `Reaction` with the reaction fragment of the power, and no movement and no attack for 2 s or 1 s. The world ends each effect at its time (only the creatures with an effect). A creature on its way back takes no effect, and a creature with a root or a stun on its way back waits (it is not at its anchor). |
-| Charge | One phase: steps 3 to 90, row `GreatAxe_Engage1` (the build has no upgrade of Charge). Cast time 0.5 s. |
+| Charge | One phase: steps 3 to 90, row `GreatAxe_Engage1` (the build has no upgrade of Charge). Cast time 0.5 s. From stage 3.3b-S4 the dash of the client in the envelope of the position check, and the dash for the observers (4.26). |
+| Riposte | Stage 3.3b-S4 (4.26): the window `Rapier_Riposte_Timer` (1 s) on the caster at the press; a creature hit in the window starts the counter of the server: at 0.433 s the row `1H_Rapier_Riposte_Stun` (`_Enhanced` with the node Rapier_Riposte_Mod3) on the attacker, one time, with the stun of its StatusEffect. Cast time 1 s. Cooldown 18 s (data). |
 | Maelstrom | Phase 1: steps 3 to 20 (to 45 with no No Reprieve), row `GreatAxe_Maelstrom` with `_Reach` (Storm's Reach) and `_RP2` (Gravity); phase 2 with No Reprieve: steps 21 to 45, row `GreatAxe_Maelstrom_NoReprieve` (`_RP2`). Gravity: the root `Status_Passive_GreatAxe_Gravity_Root_Hold` (0.4 s) 0.33 s after a hit. Cast time 0.9 s. |
 | Gravity Well | The swing: steps 3 to 30, row `GreatAxe_GravityWell` (0.25). The projectile: the first shot of the session with the attack "gravitywell" (for an origin more than 5 m from the character, the origin is the character, 1.5 m higher), or with no shot the server throws it from the character in the direction of the press 0.83 s after it. It flies in the plane to the first creature that is 1 m or less from its line, to a wall, or to `CastDistance` of `Spell_GreatAxe_GravityWell_Projectile` (10 m), at 20 m/s; the vortex starts there (the radius of `Spell_GreatAxe_GravityWell_Vortex`, `_Upgrade` with Unyielding: 4 m): the root `GreatAxe_Vortex_Root` (1 s) and the slow `GreatAxe_Vortex` (60 percent, 3 s). 3 s later the burst: row `GreatAxe_GravityWell_Burst` (Corruption), with Crowded Well 10 percent more for each creature in the vortex, 5 at most. Cast time 0.6 s. |
 | Wrecking Ball | One phase: steps 3 to 45, row `Warhammer_Damage_WreckingBall` (`_Push` with Breathing Room), a knockdown, and Aftershock. Cast time 0.8 s. |
@@ -4920,8 +4925,7 @@ list` has the line `abilities`.
   whose hit rule the backend does not have.
 - An entity of a spell (the vortex of Gravity Well, the effects of Path of Destiny and
   Shockwave): the client shows only what it plays itself.
-- The pull of Maelstrom and of the vortex (`ImpactDistanceY`): the creature does not move to
-  the caster.
+- The pull of Maelstrom and of the vortex (`ImpactDistanceY`): done in stage 3.3b-S4 (4.26).
 - The effects on the caster and the passive nodes (stage 3.3b-S1 did Safety Measures, Greed,
   and Hammer Time: the caster effects of 4.24): Unyielding,
   Enduring Strike and Hardened Steel (grit), the other empower nodes, Critical Gains, Keen Edge,
@@ -5080,7 +5084,7 @@ rule is in [Status effects](systems/status-effects.md)):
 | The values | MOD&lt;attribute&gt;, MaxHealthMod, PhysicalArmor, ElementalArmor, BaseDamageReduction, DMG&lt;type&gt;, ABS&lt;type&gt;, MoveSpeedMod, SprintSpeedMod, times the potency and the stacks, with the ValueLimits of the categories; the gear summary has them one time. |
 | The heart rune | The status of an activation (source "rune"): its end status Rune_Detonate_CastAoE casts Rune_Detonate_AoE, the explosion of the rune system. A death or a leave removes it with no explosion (finding F4). |
 | The caster effects | A hit evaluates the ability rows of the perks and of the learned nodes of the ability table of its weapon: OnHit, SelfApplyStatusEffect, the conditions of a perk row and InSequence, ActivationCooldown. A blank comparison is LessThanOrEqual. |
-| The speed | From stage 3.3b-S2a: the gear refresh computes the move and sprint multipliers (1 plus the speed parts, in the limits of StatMultiplierData), the owner gets the speed table (slot 43; both at 1: the empty table, and no fragment in a first record). The position check accepts a window speed times the larger multiplier of the last table that the session sent (not less than 1; the value before a change counts for 1 s more). A haste that the client did not get does not widen the check (finding F1 of the review of stage 3.3b-S1). |
+| The speed | From stage 3.3b-S2a: the gear refresh computes the move and sprint multipliers (1 plus the speed parts, in the limits of StatMultiplierData), the owner gets the speed table (slot 43; both at 1: the empty table, and no fragment in a first record). The position check accepts a window speed times the larger multiplier of the last table that the session sent (not less than 1; the value before a change counts for 1 s more). A haste that the client did not get does not widen the check (finding F1 of the review of stage 3.3b-S1). From stage 3.3b-S4: each older value counts for 1 s after its own change, not longer (a later change does not keep it), and a file with no limits gives the limits of the client, 0 to 1.5 (findings F1 and F2 of the review of stage 3.3b-S2a; cases RG1, RG2). |
 | The views | The owner: the full map of each status that is not of the gear, an empty lightweight map, an empty tray; the Player state of the owner has the clock pair. An observer: the full map and the compact map of the public statuses (ShowInNameplates, AlwaysReplicate, ForceReplicateToRemotes; the compact map ShowInNameplates only). A first record with no status has no status fragment. |
 | The restart | The statuses are not in the database: a restart of the backend ends them (rule of stage 1.3b; a decision of the user is open). |
 | The cost | The expiry and the ticks look only at the due list (case ST11: a time limit). |
@@ -5128,7 +5132,9 @@ Spell component, the slots and the types of its replicated components (Spell 291
 TemporaryAffiliation 3563, DelayedEvent 3139, DetectionVolumeEvent), and its delayed events (slot, delay, type, the
 target entity, the MomentaryOffense row of the target, and a mark for a target with a DestroyGDEComponent). 1,565
 spells and 934 slices; 16 spell rows have no slice file and 143 slices have no Spell component (left out, with their
-counts). With no file the backend starts, and a spell has its hits and no record.
+counts). With no file the backend starts, and a spell has its hits and no record. From stage 3.3b-S4 the loader
+refuses a slot of type 3139 with no event row, and the tool stops for a delay that is not a finite 32-bit float
+(findings F3 and F5 of the review of stage 3.3b-S2a; cases RG3, RG5).
 
 **The rules** (project rules; the values of the data where it has a value; the source of each rule is in
 [Spell entities](systems/spells.md)):
@@ -5152,7 +5158,68 @@ CHARACTER PLACE [--yaw DEGREES]` (`POST /v1/dev/abilities/cast`), `tools/world s
 
 - The Ownership and the TemporaryAffiliation states of a spell (their values are not known; not sent).
 - The unit of the spawn time (field 8).
-- The pull of the vortex (stage S4), the beacon, the pylon, the traps (S2b), the projectiles (S3).
+- The beacon, the pylon, the traps (S2b), the projectiles (S3). The pull of the vortex: done in stage 3.3b-S4 (4.26).
+
+### 4.26 Forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte (live proof of stage 3.3b-S4; the rules are project rules with the values of the game data)
+
+Stage 3.3b-S4. Research: `~/Games/soulwarden/work/research/abilities-shared.md` (Q4 and the part "3.3b-S4"). Live checks
+and the live proof: `~/Games/soulwarden/work/evidence/abilities-motion/implement/live/LIVE-CHECKS.md` (L7-A to L7-D,
+L8-A, L8-B; runs `l7-motion` and `l8-riposte` with the backend of stage 3.3b-S2a) and the proof videos of run
+`s4-proof` in `../proof/`. Code: `world/forced_motion.h` (the forced movement of the creature system),
+`Creatures::impact`, `Combat::strike` (the parameter `source`), `Navigation::slide`, `world/abilities.h`
+(`CasterMotion`, `Abilities::motion_allowance`, `Abilities::countered`), `world/position_report.h`
+(`MotionAllowance`), `server/rep/states/movement_state.cpp` (`encode_observed_motion_state`),
+`gamedata/combat_tables.h` (`DamageImpact`). Document: [Forced movement](systems/forced-movement.md). Test cases FM1
+to FM8, CM1, CM2, RC1, RC2.
+
+**The wire contracts and the client rules**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The client does not move a creature of the server by the impact of a hit. It plays the reaction of the creature (the action `Reaction`, 4.14): the body bends in the animation, and the place of the entity (the name plate) stays. The server must move the creature with the movement state of the creature (type 11, 4.14), with the action of the reaction. With the movement of the server the client shows the slide of the creature. | Live proof L7-A (backend with no movement: the wolves stay); proof P1 to P4 (the backend moves them). | — |
+| The pull and the push of the client (`ReactionMotion`, the activity in the action `Reaction` of the creature action lists, `Default Scale 1.0`, `PromotedElite PushBackScale 0.15`; `Pushable`: `UsePushNoDecay`, 0.4 s). The loader of the damage rows reads ImpactDistanceX, Y, Z and ImpactDecayRate. The reaction context takes the "_AI" value of a row for an AI target when the row has one (FLT_MIN is "no value"). The displacement D = (dir * Y + side * X + up * Z) * Scale, dir the damage direction in the plane, side = dir x up; PushBackScale when D goes away from the source. Decay rate above 0 (mode 0): the travel at the time t of the action is \|D\| * (1 - r^(30 t)) to the end of the fragment; r = 1 or r near 0: all of D at once. Decay rate 0 or less (mode 1): to the point of the damage (away from it for a positive Y) at \|Y\| m/s, to 0.1 m from the point. The default direction is north (0, 1, 0). | Static proof (client code and the action lists of the creatures). | `0x677CEC0` (`CacheDamageDataTable`), `0x683D910` (apply of ReactionTracking, type 1927), `0x48A0690` (`ReactionMotionEnter`), `0x48A0D30` (`ReactionMotion::OnUpdate`), `0x488B8F0` (mode 1) |
+| The client moves its own character in a dash with the root motion of the action (Charge: `AnimationDrivenMotion` of `GreatAxe_Engage`, MotionMultiplier 1.0, 1.3 with the conditionals `Attack_Translation*`): 13.77 m in 1.0 s with no creature in front, 14.73 m in 1.6 s with the swing, 6.68 m to a wolf 8 m in front; a step of 0.602 m at most in 1/30 s (18.07 m/s). It gets no position from the server. The position check of a run (8 m/s + 2 m in 1 s, 20 m/s for a step) refused 7 reports of one dash. | Live proof L7-B, L7-C; proof P5a (no refused report in the envelope). | — |
+| The action layer 0 of the own character (memory read of the predicted state of the movement facet: 16 bytes for each layer, state, start count, sequence): at rest 30/N/1080 with the great axe, 30/N/4066 with the rapier; Charge 7/N/59 (the dash, 0.7 s), then 7/N/2312 (the swing); the Riposte loop 7/N/3324, then 7/N/21. An observer gets these numbers in the fields 13 to 15 of the movement state (4.9). With 7/59 and 7/2312, the rotation of the dash, and the places of the dash, the remote character of an observer runs in the direction of the dash. | Live proof L7-D, L8-A; proof P5b. | `0x6769980` (the player function) |
+| The numbers of the layers are not indexes of the fragment list of the player (1037 fragments; Ability_GreatAxe_Engage 447, Ability_Rapier_Riposte_Out 455) and not indexes of its action table (530 actions; 451 Ability_Rapier_Riposte_Out). Their table is not known. | Static proof (L8-B). | — |
+| An action with the mark ServerStarted (+0x17E) and without the mark +0x182 does not start by its condition (Ability_Rapier_Riposte_Out: ServerStarted, the activation `Not True`). Only the action layers of a movement state of the server start it. | Static proof; live L8-A (the client plays the loop, then its idle pose). | `0x2A66E50` |
+
+**The data** (`combat-tables.json`, `tools/gamedata/combat.sh`): the member `impacts`, one entry for each damage row
+with an impact distance (234 rows): `[row, X, Y, Z, decay, X_AI, Y_AI, Z_AI, decay_AI, UseAttackerPosForReaction]`.
+The values of the abilities of this build: Maelstrom Y −1.5, decay 0.8 (`_Reach`: −2.0), `_NoReprieve` none; the
+vortex pull `GreatAxe_GravityWell_Vortex` Y −7, decay 0 (the child entity VortexPull of the slice, sphere 4 m); the
+burst Y +0.5, decay 0.3; Path of Destiny Y +2, decay 0.9, from the attacker; Shockwave +0.25, 0.8; Charge
+`GreatAxe_Engage1` +0.25, 0.85; the swing of Gravity Well +0.5, 0.85; `1H_Rapier_Riposte_Stun` +1.5, 0.85; Wrecking Ball
+none. A file from before has no member: a hit then moves no creature.
+
+**The rules** (project rules; the values of the data where it has a value; the source of each rule is in
+[Forced movement](systems/forced-movement.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The one owner | `world::ForcedMotion`, a part of the creature system, moves a creature that a hit moves. `Combat::strike` gives it the impact of the row of an accepted hit on a creature that lives after it. |
+| The values | The "_AI" distances when one is not 0, the "_AI" decay when it is above 0; else the normal values. |
+| The direction | From the source (the attacker, the center of an area or a spell; the attacker for UseAttackerPosForReaction) to the creature, in the plane; D = dir * Y + side * X; north for a creature at the source. Z is not used. |
+| The travel | Decay above 0: \|D\| * (1 − decay^(30 t)). Decay 0 or less: \|Y\| m/s to the source point (Y < 0), away from it (Y > 0); a pull stops 0.1 m from the point. At most the length of a reaction (1.5 s). |
+| The steps | A new place at most each 50 ms of the world clock, on the line of the navigation (`Navigation::slide`): a wall, a drop, or a cell with no floor stops the movement at the last place (proof P4: 0.85 m of 2 m at a pillar). |
+| No movement | A creature on its way back (immune), a dead creature; a death ends the movement; a new impact replaces it. A root or a stun does not stop it. The behavior does not move the creature and starts no attack while it moves; after it, the path is new. |
+| The dash of the caster | No second displacement of the server. The position check accepts the dash in the envelope of the accepted cast: 14.73 m × 1.3 more in the window, a step of 18.07 m/s × 1.3, from the press for 1.6 s and 1 s after. A refused press gives no envelope. |
+| The observers of a dash | The state `motion` (the observer view of the movement state): the place, the rotation of the dash, the actions 7/59, 7/2312, then 30/1080 at rest; at each accepted report, at most each 50 ms. The owner gets nothing. A character with no client gets the dash from the server (13.77 m in 1 s, to 1 m in front of a creature). |
+| The counter | The window `Rapier_Riposte_Timer` at an accepted press. A creature hit in the window: the window ends, and at 0.433 s the row `1H_Rapier_Riposte_Stun` hits the attacker one time (in the reach of its hit + 0.3 m, in sight), with the stun and the push of the row. No window, no counter. |
+| The cost | The step looks only at the creatures that move now (case FM8: 200 movements in 4,200 creatures). |
+
+**The commands** (development routes): `tools/world list` (the line `force` and the counters of the line
+`abilities`), `tools/world creatures` (the mark `MOVED BY A HIT (ROW)`), `tools/world cast CHARACTER PLACE [--yaw
+DEGREES]` (a remote test character: the dash of the server).
+
+**Not known, not done** (stage 3.3b-S4):
+
+- The start of the client action Ability_Rapier_Riposte_Out: the numbers of its layer are not known (L8-B). The owner
+  sees its loop and its idle pose; the hit, the stun, and the push of the counter show.
+- The action `Pushable` (a push of 0.4 s with no decay for a hit with no reaction) and the PushBackScale of a promoted
+  elite (0.15 and 0.0): each creature has the scale 1.0.
+- The part Z of an impact, and the part X in mode 1. No row of the abilities of this stage has them.
+- The length of the fragment of a reaction: the backend uses the length of a reaction (1.5 s).
+- The pull or the push of a character (a hit with an impact on a player).
 
 ## 5. Open items
 

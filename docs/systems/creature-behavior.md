@@ -75,6 +75,10 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   strongest slow) lowers the speed of each step: the way to a target, the way back, the
   trail, and a roam. A creature with a root or a stun on its way back waits at its place: it
   is not at its anchor. A creature on its way back takes no new effect.
+- A forced movement (stage 3.3b-S4, [Forced movement](forced-movement.md)): while the pull or the push of a hit moves a
+  creature (`Creature::forced`), the behavior does not move it and starts no attack, also on its way back and on a roam.
+  At its end the path of the creature is forgotten (the next step searches from the new place) and a creature in a fight
+  keeps the new place in its trail (`Behavior::moved_by_force`).
 - A knockdown and a stagger (code review of stage 3.3a). A slice with no reaction fragment for
   the power still gets the hold of the knockdown: no movement and no attack for its time (finding
   F5). A shorter or weaker knock does not end an earlier one: the later end and the stronger

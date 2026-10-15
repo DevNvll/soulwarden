@@ -258,3 +258,11 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   closes its connection. A run with the switch is not a test of the product.
 - The hook log (`SOULWARDEN_DATA_DIR/client/logs/hook.log`) was made again at the stop of one
   run, with no trace line. Read the trace lines of a run before `tools/dev-stop.sh`.
+- Two calls of `tools/hx` at one time (a key in one call, a memory read in another) give a conflict of the harness. For
+  a read of the client state during a key (an action layer in the dash of Charge), put the key and the reads into one
+  call (stage 3.3b-S4: `action_sampler.py` of the evidence folder).
+- The dash of Charge and the projectile of Gravity Well go in the direction of the camera of the client, not of the
+  body: turn the camera to the target before the press (a dash of a test went into a wall after 5.8 m).
+- The client has a day and a night with no world time of the server: the videos of stage 3.3b-S4 had the night and
+  are dark. Put the creatures near a lamp of the street at the default spawn ([Creatures](../systems/creatures.md),
+  Traps), and crop the frames near the creatures.

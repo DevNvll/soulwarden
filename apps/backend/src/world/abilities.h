@@ -16,6 +16,7 @@
 #include "gamedata/combat_tables.h"
 #include "world/entity.h"
 #include "world/ids.h"
+#include "world/position_report.h"
 #include "world/world_clock.h"
 
 // The abilities of a player (stage 3.3a, protocol notes 4.22): the keys of the ability bar (Q, R,
@@ -98,6 +99,29 @@ inline constexpr std::size_t kAreaMost = 32;
  * contact that come in reports with a different delay.
  */
 inline constexpr std::chrono::milliseconds kPhaseEarly{250};
+/**
+ * The dash of Charge (stage 3.3b-S4, live check L7-C): with no creature in front the client moved its character 13.77 m
+ * in 1.0 s (the root motion of the fragment Ability_GreatAxe_Engage, AnimationDrivenMotion with MotionMultiplier 1.0),
+ * then 0.3 m slower and 0.67 m with the swing: 14.73 m in 1.6 s; its largest step was 0.602 m in 1/30 s (18.07 m/s).
+ */
+inline constexpr float kChargeDash = 13.77F;
+inline constexpr std::chrono::milliseconds kChargeDashTime{1000};
+inline constexpr float kChargeTravel = 14.73F;
+inline constexpr float kChargePeak = 18.07F;
+inline constexpr std::chrono::milliseconds kChargeLength{1600};
+/**
+ * The largest MotionMultiplier of the action GreatAxe_Engage (game data: 1.0, and 1.3 with the conditionals
+ * Attack_Translation): the envelope of the position check takes the measured travel times this factor.
+ */
+inline constexpr float kChargeMultiplier = 1.3F;
+/** The numbers of the actions of layer 0 of Charge in the client (live check L7-D): the state 7, the dash 59, the swing 2312. */
+inline constexpr std::int32_t kChargeState = 7;
+inline constexpr std::int32_t kChargeDashSequence = 59;
+inline constexpr std::int32_t kChargeSwingSequence = 2312;
+/** The dash of the server for a character with no client stops this far in front of the first creature on its line (meters). */
+inline constexpr float kDashStop = 1.0F;
+/** The observers of a character in the movement of a cast get a new movement state at most each this time. */
+inline constexpr std::chrono::milliseconds kMotionMark{50};
 } // namespace ability_rules
 
 /** The abilities that this backend has (the build of stage 3.3a): the great axe and the war hammer. */
@@ -108,6 +132,8 @@ enum class AbilityKind : std::uint8_t {
     wreckingBall,
     shockwave,
     pathOfDestiny,
+    /** The counter of the rapier (stage 3.3b-S4): the window, and the counter action that the server starts. */
+    riposte,
 };
 
 /** @return The English name of an ability, for a log line ("Wrecking Ball"). */
@@ -179,6 +205,11 @@ enum class PhaseKind : std::uint8_t {
     /** The creatures in the vortex of a projectile when the vortex starts (no damage), and at its burst. */
     vortex,
     burst,
+    /**
+     * The hit of a counter (stage 3.3b-S4: Ability_Rapier_Riposte_Out, ServerStarted): at an accepted counter the server
+     * starts the counter action, and at `at` of that action it hits the attacker of the countered hit one time.
+     */
+    counter,
 };
 
 /** One effect that a hit of a phase gives to a creature. */
@@ -210,6 +241,37 @@ struct PhasePlan {
     bool cooldownPerHit{false};
     /** Gravity Well with Crowded Well: the burst does more for each creature in the vortex. */
     bool crowded{false};
+    /**
+     * A damage row whose impact (and no damage) the phase gives to each creature of its area (stage 3.3b-S4): the pull of
+     * the vortex of Gravity Well (the child entity VortexPull of its slice: the row GreatAxe_GravityWell_Vortex, damage
+     * factor 0). Empty: none.
+     */
+    std::string pull;
+};
+
+/** One action of layer 0 of a character for its observers in the movement of a cast (the numbers of the client: L7-D). */
+struct MotionAction {
+    /** The time from the press. */
+    std::chrono::milliseconds at{0};
+    std::int32_t state{0};
+    std::int32_t sequence{0};
+};
+
+/**
+ * The movement of the caster in a cast (stage 3.3b-S4): a dash or a leap that the client of the caster makes itself with
+ * the root motion of its action (Charge). The server gives no second displacement: it accepts the positions of the client
+ * in the envelope, and it moves only a character that no client plays (a remote test character).
+ */
+struct CasterMotion {
+    /** The envelope of the position check: the distance (meters) and the speed of a step (m/s) more, for `length` from the press. */
+    float distance{0.0F};
+    float peak{0.0F};
+    std::chrono::milliseconds length{0};
+    /** The dash that the server makes for a character with no client: its distance on the line of the press and its time. */
+    float dash{0.0F};
+    std::chrono::milliseconds dashTime{0};
+    /** The actions of layer 0 that the observers get, from the press; at `length` the character is at rest again. */
+    std::vector<MotionAction> actions;
 };
 
 /** The plan of a cast: the phases for the nodes of the character. */
@@ -218,6 +280,13 @@ struct CastPlan {
     /** The time in which no other cast of the character starts. */
     std::chrono::milliseconds length{0};
     std::vector<PhasePlan> phases;
+    /** The movement of the caster (stage 3.3b-S4). No value: the cast does not move its caster. */
+    std::optional<CasterMotion> motion;
+    /**
+     * A counter (stage 3.3b-S4, Riposte): the status row that the cast puts on its caster and that is the window of the
+     * counter (Rapier_Riposte_Timer: 1 s, its absorption takes the countered hit). Empty: the cast has no counter.
+     */
+    std::string window;
 };
 
 /** A phase of a cast that a contact of a client fits (Combat::claim). */
@@ -251,6 +320,9 @@ struct AbilityCounts {
     std::uint64_t effectsRefused{0};
     /** Hits that a wall stopped. */
     std::uint64_t blocked{0};
+    /** Counters (stage 3.3b-S4): the hits that a window countered, and the counter hits. */
+    std::uint64_t counters{0};
+    std::uint64_t counterHits{0};
 };
 
 class Abilities {
@@ -331,7 +403,25 @@ public:
      * below now. The end of the client cooldown changes the same.
      */
     void reduce_weapon_cooldowns(Entity& character, float part);
-    /** The world calls it in each tick: the mana regeneration of the characters whose mana is not full. */
+    /**
+     * @return The envelope of the movement of the cast of a character at a time (stage 3.3b-S4): the distance and the speed
+     *         that the position check accepts in addition for its dash (World::report_position). Zero: no such cast, or its
+     *         envelope ended (its length and one window of the check after it).
+     */
+    [[nodiscard]] MotionAllowance motion_allowance(const Entity& character, WorldClock::time_point now) const;
+    /**
+     * The world accepted a position of the client of a character (World::report_position): in the movement of a cast its
+     * observers get the movement state `motion` (at most each ability_rules::kMotionMark). The owner gets nothing.
+     */
+    void caster_moved(Entity& character);
+    /**
+     * A creature hit a character (Health::creature_hit, after the damage): in the window of a counter of its cast (Riposte,
+     * stage 3.3b-S4) the counter is accepted one time: the window ends, the server starts the counter action, and the
+     * counter phase hits the attacker at its time when it is still in `reach` of the character. No window: nothing.
+     * @return True when the hit started a counter.
+     */
+    bool countered(Entity& character, Entity& attacker, float reach);
+    /** The world calls it in each tick: the mana regeneration of the characters whose mana is not full, and the dashes of the server. */
     void tick();
     /**
      * The burst of a perk around a character (stage 1.3b, gear_rules::kPerkBursts): each creature in the shape of the
@@ -396,6 +486,8 @@ private:
         EntityId spell{0};
         /** The input number of a later press of the session (accepted or refused): the contact windows end there. */
         std::optional<std::uint16_t> closedAt;
+        /** A counter (stage 3.3b-S4): true after the hit that the window countered (one counter for each cast). */
+        bool countered{false};
     };
     /** The values of one character: its cooldowns and its cast. */
     struct CharacterState {
@@ -417,10 +509,21 @@ private:
     CastVerdict press_entity(Entity& character, SessionId session, const AbilityPress& press);
     /** Gravity Well: the projectile of a cast lands. */
     void throw_projectile(Cast& cast, const state::WorldPosition& origin, const std::array<float, 3>& direction);
-    /** One hit of an area phase, with its damage and its effects. @return True when the creature took the hit. */
-    bool area_hit(Cast& cast, std::uint32_t phase, Entity& caster, Entity& target, float factor);
+    /**
+     * One hit of an area phase, with its damage and its effects. @param center The center of the area: the source of the
+     * impact of the hit (stage 3.3b-S4). @return True when the creature took the hit.
+     */
+    bool area_hit(Cast& cast, std::uint32_t phase, Entity& caster, Entity& target, float factor, const state::WorldPosition& center);
     /** Gives the effects of a phase to a creature that a hit of the phase hurt. */
     void give_effects(Cast& cast, const PhasePlan& phase, Entity& target);
+    /** The movement of the caster of an accepted cast starts (stage 3.3b-S4): the actions for the observers, and the dash of the server. */
+    void start_motion(Cast& cast, Entity& character);
+    /** One step of each dash of the server (a character with no client). */
+    void step_dashes();
+    /** Marks the state `motion` of a character for its observers. */
+    void mark_motion(Entity& character);
+    /** The hit of the counter phase of a cast on the attacker of the countered hit (stage 3.3b-S4). */
+    void counter_hit(std::uint64_t cast, std::uint32_t phase, EntityId attacker, float reach);
 
     World& m_world;
     const gamedata::AbilityData* m_data;
@@ -431,6 +534,20 @@ private:
     AbilityCounts m_counts;
     /** The characters whose mana comes back, with the time of the last step of the regeneration. */
     std::map<std::string, WorldClock::time_point> m_regenerating;
+    /** A dash of the server: the cast, the character, the start, the direction (east, north), its distance and its time. */
+    struct Dash {
+        EntityId caster{0};
+        std::string characterId;
+        state::WorldPosition start;
+        std::array<float, 2> direction{};
+        float distance{0.0F};
+        WorldClock::time_point started{};
+        std::chrono::milliseconds time{0};
+        float travelled{0.0F};
+    };
+    std::map<std::uint64_t, Dash> m_dashes;
+    /** The characters in the movement of a cast, with the time of the last mark of the state `motion`. */
+    std::map<std::string, WorldClock::time_point> m_motionMarks;
 };
 
 } // namespace soulwarden::backend::world

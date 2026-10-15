@@ -54,6 +54,11 @@ records, and the stop are in [World and sessions](world-and-sessions.md).
   completed (the client applies it at once); the activation of the burst is not completed and waits until 1 s after
   the end of the spell (a completed activation plays the burst again: live check L4). A spell has only the observer
   view: the session of the caster observes its own spell as each other session does.
+- The pull of the vortex (stage 3.3b-S4, [Forced movement](forced-movement.md)): its start gives each creature of its
+  sphere the impact of the row of the child entity VortexPull (GreatAxe_GravityWell_Vortex: 7 m/s to the center), and the
+  burst pushes 0.5 m. The loader refuses a slice with a DelayedEvent slot that has no event row (code review of stage
+  3.3b-S2a, finding F3, test case RG3), and the spell tool refuses a delay that is not a finite 32-bit float (finding
+  F5, test case RG5, `tools/gamedata/check_spell_tool.py`).
 - No Ownership state (slot 2) and no TemporaryAffiliation state (slot 3): the record shows the vortex with no such
   state (live check L4), and their values are not known. Do not make them up.
 - The stop. At its end, at a cancel, and at a command, the world removes the entity (`World::remove_spell`), and each

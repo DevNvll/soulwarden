@@ -375,12 +375,16 @@ void Gear::refresh(Entity& character) {
     character.gear.sprintSpeed = status.sprintSpeed;
     // The speed table of the character (stage 3.3b-S2a, S2a-I10): the client runs with these multipliers (live check of
     // status-speed.md: the table of slot 43, not the status map, changes the run), in the limits of the data (StatMultiplierData:
-    // the client bounds them itself, getter 0x3FEA370). With no limits in the data: no bound.
+    // the client bounds them itself, getter 0x3FEA370). With no limits in the data (a file of the ability tool from before
+    // stage 3.3b-S2a): the limits of the supported build (code review of stage 3.3b-S2a, finding F2): the client bounds the
+    // value with them in each case, and the position check must not accept a faster run.
     const auto multiplier = [&](const char* id, float part) {
         float value = 1.0F + part;
         const gamedata::AbilityData* data = m_world.options().abilityData;
         if (const gamedata::StatLimit* limit = data != nullptr ? data->stat_limit(id) : nullptr; limit != nullptr && limit->max > limit->min) {
             value = std::clamp(value, limit->min, limit->max);
+        } else {
+            value = std::clamp(value, gear_rules::kClientSpeedMin, gear_rules::kClientSpeedMax);
         }
         return std::max(value, 0.0F);
     };

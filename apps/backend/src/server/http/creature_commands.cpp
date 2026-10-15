@@ -190,6 +190,10 @@ json creatures_view(world::World& target, const std::string& character, std::opt
             row["waypoints"] = route->points.size();
         }
         row["immune"] = entity->creature.immune();
+        // A forced movement that runs (stage 3.3b-S4): the damage row of its hit.
+        if (entity->creature.forced) {
+            row["forced"] = entity->creature.forced->row;
+        }
         row["holds"] = mind.holdUntil.has_value();
         row["retracing"] = mind.retracing;
         row["anchor"] = {mind.anchor.x, mind.anchor.y, mind.anchor.z};

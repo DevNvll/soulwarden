@@ -43,7 +43,12 @@ backend. The tool of each system is also in the document of that system.
   weapon names a damage row or a vitals row names a base row that the tables do not have,
   when a column that it reads is not there, and when a cell is not a finite number: the
   names that the game itself does not have are in the two lists `ROWS_NOT_IN_GAME` and
-  `BASES_NOT_IN_GAME` of the tool), `loot-tables.json` (stage 3.5a: the experience and the
+  `BASES_NOT_IN_GAME` of the tool; from stage 3.3b-S4 also the member `impacts`: the impact
+  of each damage row with an impact distance, 234 rows (ImpactDistanceX, Y, Z, ImpactDecayRate,
+  the same four columns with "_AI", and UseAttackerPosForReaction; the pull and the push of a
+  hit, [Forced movement](../systems/forced-movement.md)); with a file from before, a hit moves
+  no creature; the tool stops for a decay rate above 1, and the loader refuses a value that is
+  not finite, a value above 100, and an impact of a row that the file does not have), `loot-tables.json` (stage 3.5a: the experience and the
   coin of a kill of each creature level, the reward factors of each creature type, the
   level differences, the coin chance of the kill events, the credit data of the game, the
   gear score ranges of each level and the loot ceiling of each creature level, the loot data
@@ -81,13 +86,21 @@ backend. The tool of each system is also in the document of that system.
   effect row that names a status that the tables do not have and for a ValueLimits part that
   is not a name and a number; from stage 3.3b-S2a, still format 3, also the member
   `statMultipliers` (the Min and Max of each stat of StatMultiplierData: the limits of the speed
-  table; a file with no such member gives no limit); the tool stops for a column of the status
+  table; a file with no such member gives the limits of the client, 0 to 1.5: code review of
+  stage 3.3b-S2a, finding F2); the tool stops for a column of the status
   rules (StackMax, DurationMax, RefreshDuration, ...) or of a caster effect (OnHit,
   SelfApplyStatusEffect, ...) that a table does not have, but for the columns that the tables of
   the creatures do not have in the game (`STATUS_TABLE_DIFFERENCES`), and for an
   OnEndStatusEffect or a CastSpell that does not resolve, but for the one link of the game in
   `END_LINKS_NOT_IN_GAME`; the loader refuses a positive time below 1 ms and a link that does
-  not resolve (code review of stage 3.3b-S1, findings F8, F9, F13)), `perk-data.json` (stage 1.3b, `tools/gamedata/perks.sh`: the perk list in the order of
+  not resolve (code review of stage 3.3b-S1, findings F8, F9, F13); from stage 3.3b-S4 the tool
+  also stops for a rule column of a caster row that an ability table of the players does not
+  have (`CASTER_RULE_COLUMNS`: the 247 columns that each of the 27 tables has, as NumAroundMe and
+  RemoteDamageTableRow; the backend copies each cell, and a value in a column whose rule it does
+  not evaluate disables the row) and for a status table with no ABSStandard, ABSSiege, ABSAcid,
+  DMGSiege, or DMGAcid, but for the two tables of the creatures with no ABSAcid in
+  `STATUS_TABLE_DIFFERENCES` (code review of stage 3.3b-S2a, finding F4; cases RG4 of
+  `check_ability_tool.py`)), `perk-data.json` (stage 1.3b, `tools/gamedata/perks.sh`: the perk list in the order of
   the client, each perk with its affixes, abilities, labels, scaling, and channel, the cells of
   the affixes and of the ability rows that the perks name, the perk buckets, the perk places
   of each item, the consumables, the encumbrance row and the load of each armor item, the
@@ -122,8 +135,12 @@ backend. The tool of each system is also in the document of that system.
   hits and no record; the backend refuses a file whose form, counts, or links are not
   correct, as a whole: a null asset, a Spell slot that is not of type 2912, two components on
   one slot, a delayed event on a slot that is not of type 3139, more than 250 events, a delay
-  that is not finite, a spell that names no slice of the file; the tool leaves out a slice with
-  no Spell component and a spell with no slice file, with their counts;
+  that is not finite, a spell that names no slice of the file, and, from stage 3.3b-S4, a slot of
+  type 3139 with no event row (code review of stage 3.3b-S2a, finding F3); the tool leaves out a
+  slice with no Spell component and a spell with no slice file, with their counts, and it stops
+  for a delay that is not a finite 32-bit float (F5: a delay of one byte gave 0, and the burst
+  of the vortex then came at the start; `tools/gamedata/check_spell_tool.py` checks it with
+  made-up slice nodes, case RG5);
   [Spell entities](../systems/spells.md)), `travel-places.json` (the spirit shrines and the inns
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
@@ -155,6 +172,10 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 ```
 
 ## Traps
+
+- Stage 3.3b-S4 adds the member `impacts` to `combat-tables.json`. The backend of this stage reads the older file: then
+  no hit pulls or pushes a creature. Write the file again with `tools/gamedata/combat.sh`. The other files of the tools
+  of this stage are equal to the files of stage 3.3b-S2a.
 
 - Stage 3.3b-S2a adds `spell-data.json` and changes the contents of `ability-data.json` (the member `statMultipliers`)
   and of `perk-data.json` (the consumables with no master item row are not in it). The backend of this stage reads the

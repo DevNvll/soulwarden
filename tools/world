@@ -522,7 +522,12 @@ def abilities_text(abilities: dict) -> str:
     return (f"abilities: {presses['accepted']} casts, refused presses: {refused or 'none'}; {abilities['contactHits']} hits of a "
             f"contact, {abilities['areaHits']} hits of an area ({abilities['areaLooked']} entities looked at), "
             f"{abilities['shots']} shots, {abilities['vortexes']} vortexes, {abilities['effects']} effects given, "
-            f"{abilities['effectsRefused']} not taken, {abilities['blocked']} stopped by a wall")
+            f"{abilities['effectsRefused']} not taken, {abilities['blocked']} stopped by a wall"
+            + (f"; {abilities['counters']} counters, {abilities['counterHits']} counter hits" if "counters" in abilities else "")
+            + (f"\nforce: {abilities['forced']['moving']} creatures move by a pull or a push now, {abilities['forced']['started']} "
+               f"movements started ({abilities['forced']['replaced']} replaced, {abilities['forced']['refused']} not taken), "
+               f"{abilities['forced']['steps']} steps, {abilities['forced']['blocked']} stopped by a wall or a drop, the largest "
+               f"number at one time {abilities['forced']['largest']}" if "forced" in abilities else ""))
 
 
 def fetch(data_dir: Path, path: str) -> dict:
@@ -562,6 +567,8 @@ def creature_text(creature: dict) -> str:
         mode += "  WAITS (no way to its target)"
     if creature.get("retracing"):
         mode += "  ON ITS TRAIL"
+    if creature.get("forced"):
+        mode += f"  MOVED BY A HIT ({creature['forced']})"
     # The roam (stage 3.4e): a patrol with its waypoint, or a wander, and if the creature roams now (a character is near).
     roam = creature.get("roam", "none")
     stands = ""

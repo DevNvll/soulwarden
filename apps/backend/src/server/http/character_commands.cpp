@@ -453,7 +453,18 @@ json abilities_json(world::World& target, const std::string& character) {
             {"vortexes", counts.vortexes},
             {"effects", counts.effects},
             {"effectsRefused", counts.effectsRefused},
-            {"blocked", counts.blocked}};
+            {"blocked", counts.blocked},
+            // Stage 3.3b-S4: the counters, and the forced movements of the creatures (the pulls and the pushes).
+            {"counters", counts.counters},
+            {"counterHits", counts.counterHits},
+            {"forced",
+             {{"moving", target.creatures().forced().moving_count()},
+              {"started", target.creatures().forced().counts().started},
+              {"replaced", target.creatures().forced().counts().replaced},
+              {"refused", target.creatures().forced().counts().refused},
+              {"steps", target.creatures().forced().counts().steps},
+              {"blocked", target.creatures().forced().counts().blocked},
+              {"largest", target.creatures().forced().counts().largest}}}};
 }
 
 WorldCommand assign_node(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {

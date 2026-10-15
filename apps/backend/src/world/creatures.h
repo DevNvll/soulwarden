@@ -5,6 +5,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "gamedata/creature_data.h"
 #include "world/behavior.h"
 #include "world/entity.h"
+#include "world/forced_motion.h"
 #include "world/ids.h"
 #include "world/load_meter.h"
 #include "world/position_index.h"
@@ -273,6 +275,21 @@ public:
      * @return False: the creature took none.
      */
     bool knock(Entity& entity, unsigned power, std::chrono::milliseconds time);
+    /**
+     * A hit with an impact (the damage row of the game data, stage 3.3b-S4) moves a creature: a pull or a push on the world
+     * clock, through the navigation (world/forced_motion.h). A dead creature and a creature on its way back do not move.
+     * @param source The source of the hit (the attacker of a melee hit, the center of an area or of a spell).
+     * @param attacker The place of the attacker.
+     * @return True when the creature moves.
+     */
+    bool impact(Entity& entity, const gamedata::DamageImpact& impact, const state::WorldPosition& source,
+                const state::WorldPosition& attacker, std::string_view row) {
+        return m_forced.impact(entity, impact, source, attacker, row);
+    }
+    /** @return The forced movement of the creatures (the pulls and the pushes that run). */
+    [[nodiscard]] const ForcedMotion& forced() const {
+        return m_forced;
+    }
 
     /**
      * Starts an action of the action table of the slice of a creature, by its name (a
@@ -438,6 +455,8 @@ private:
     std::uint32_t m_commandSpawns{0};
     /** The behavior of the creatures: a part of this system. */
     Behavior m_behavior;
+    /** The forced movement of the creatures (stage 3.3b-S4): a part of this system. */
+    ForcedMotion m_forced;
 };
 
 } // namespace soulwarden::backend::world

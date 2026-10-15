@@ -273,6 +273,11 @@ public:
      * @return False when the creature has no target.
      */
     bool move_anchor(Entity& creature, const state::WorldPosition& anchor);
+    /**
+     * A forced movement of the creature ended (stage 3.3b-S4, world/forced_motion.h): its path is of no use from its new
+     * place (the next step searches again), and a creature in a fight keeps the new place in its trail.
+     */
+    void moved_by_force(Entity& creature);
     /** A hit of a character did not hurt a creature on its way back (the combat system): for the counts. */
     void immune_hit() {
         ++m_counts.immuneHits;

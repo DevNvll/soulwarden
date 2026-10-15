@@ -46,6 +46,11 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   world marks the status state and the speed table at each entry (`kEnteredComponents` in
   `world/world.cpp`; code review of stage 3.3b-S1, finding F2, test case RS2). A status that
   runs stays through a leave and comes in the first record of the next session.
+- The movement of a character for its observers (stage 3.3b-S4, [Forced movement](forced-movement.md)): the state
+  `motion` (`ComponentKey::motion`, slot 16, type 11) is the observer view of the movement state with the place, the
+  direction (`Entity::facing`), and the action of layer 0; its encoder gives the owner no fragment (the client of the
+  owner moves its character itself). The abilities system marks it in the dash of a cast; a character with no client
+  gets its place from the server (`World::move_character`), a character with a client from its accepted reports.
 - A session is an observer: it has transport state, the camera estimate of its client, and
   the interest table (entity to interest number). One encoder for each component state
   (`server/rep/states`) makes the bytes for the owner view or for the observer view. No

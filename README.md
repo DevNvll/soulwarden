@@ -18,6 +18,8 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures at their real spawn points in the whole world, 32,840 points and 3,848 kinds in 25 regions.
 - Melee combat with a sword, a great axe, a hatchet, a war hammer, or a spear. A hit shows its damage number, and creatures die.
 - The abilities of the great axe (Charge, Maelstrom, Gravity Well) and of the war hammer (Wrecking Ball, Shockwave, Path of Destiny), with the upgrades of their trees. An ability does its damage, its button on the HUD shows the cooldown, and a creature takes the stun, the root, the slow, the knockdown, or the weaken of the ability, with its icon at the name plate. The vortex of Gravity Well shows on the ground and bursts after 3 s with its damage numbers; another player near it sees the same vortex. Put the nodes and the bar in the Weapon Mastery window (K).
+- Pulls and pushes. Maelstrom pulls the creatures around you to you, the vortex of Gravity Well pulls the creatures in it to its center and its burst pushes them out, and Path of Destiny, Shockwave, Charge, and the light and heavy attacks of the melee weapons push a creature back, with the distances of the game data. A wall, a rock, or an edge stops a creature that a hit moves. The dash of Charge goes up to 14.7 m, and another player sees your character run in the dash.
+- Riposte of the rapier: a creature that hits you in the 1 s after the press takes the counter of the server (its damage, a stun of 2 s, and a push of 1.5 m), one time for each press.
 - A haste on your character makes your run and your sprint faster for its time (the Detonate heart rune: 1.2 times for 3 s).
 - Creatures fight. A creature sees your character, runs to it with its run animation, attacks, and goes back to its place at the end of its leash. 2,989 of the 3,848 kinds attack.
 - Creatures find their way around walls and rocks, up stairs, and on the floors of buildings and ruins.
@@ -36,7 +38,7 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures do not jump, drop from an edge, climb, swim, or fly. A creature that has no way to you waits at the place nearest to you for 12 s and then goes back.
 - Creatures do not fight in groups, call others, or flee. Only 23 of the 24,895 waypoint tasks of the patrols have an animation, so a creature stands in its idle pose at the other waypoints.
 - 859 kinds of creature have no attack yet: they do not attack you, but they patrol or wander when their data has a route. No creature has a ranged attack, magic, or an ability.
-- Only the six abilities of the great axe and the war hammer work. The abilities of the other weapons do nothing. Maelstrom and the vortex of Gravity Well do not pull. The vortex stays and bursts when its caster dies. Most passive nodes and the effects on your own character that need grit, stamina, or a critical hit do nothing.
+- Only the six abilities of the great axe and the war hammer, and the counter of Riposte, work. The other abilities of the rapier and the abilities of the other weapons do nothing. Your character does not play the counter animation of Riposte (it plays its block pose and then stands). An elite creature is pushed as far as a normal creature. A hit does not push your character. The vortex stays and bursts when its caster dies. Most passive nodes and the effects on your own character that need grit, stamina, or a critical hit do nothing.
 - Perks that need grit, stamina, critical hits, a dodge, or another player do nothing. Only the Detonate heart rune works. No crafting, repair, salvage, or gem socket.
 - Nothing drops on the ground. A full bag loses the items that have no slot.
 - You cannot block or dodge. The tool window heals your character.
@@ -97,7 +99,7 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `items.sh` | No items, and a new character has no clothing |
 | `progression.sh` | No levels and no skill points |
 | `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still; with a file from before the ability stage, a knockdown shows the small hit reaction: run the tool again |
-| `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature; with a file from before the loot stage, a kill gives no weapon mastery experience: run the tool again |
+| `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature; with a file from before the loot stage, a kill gives no weapon mastery experience; with a file from before the stage of the pulls and pushes, a hit moves no creature: run the tool again |
 | `loot.sh` | A kill gives no experience, no coin, and no loot |
 | `abilities.sh` | An ability does nothing. With a file from before the itemization stage, a perk of a hit, a consumable, and the heart rune have no status data, and the mana does not come back: run the tool again |
 | `perks.sh` | An item has no perk, a perk has no effect, and a potion, a food, and the heart rune do nothing |

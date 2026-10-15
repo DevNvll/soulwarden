@@ -104,7 +104,7 @@ tools/gamedata/slice_ids.sh        # one time: ids of the player slice (optional
 tools/gamedata/items.sh            # one time: item catalog (without it the backend gives no item, and a new character has no clothing)
 tools/gamedata/progression.sh      # one time: progression tables (without them the backend gives no level and no skill point)
 tools/gamedata/creatures.sh        # one time: creature data (without it the world has no creature); needs an Oodle library (see below)
-tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect; from stage 3.5a also the weapon mastery of each weapon)
+tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect; from stage 3.5a also the weapon mastery of each weapon; from stage 3.3b-S4 the pull and the push of each damage row)
 tools/gamedata/loot.sh             # one time: loot tables and kill rewards (without them a kill gives nothing); 10 s
 tools/gamedata/abilities.sh        # one time: ability data (cooldowns, status effects, spells, costs; without it an ability does nothing)
 tools/gamedata/spells.sh           # one time: spell entity data (slices, slots, delayed events; without it the vortex has no picture)
@@ -171,11 +171,15 @@ stacks, potency, and source, the speed and armor parts, the counts), `status CHA
 `status CHARACTER remove STATUS|all`. For the spell entities (stage 3.3b-S2a): `cast CHARACTER
 PLACE [--yaw DEGREES]` (the press of a key of the bar for a character, also for a remote test
 character with no client: the server throws the projectile of Gravity Well in the direction
-of the yaw), `spells` (the spell entities of the world with their age), `spells end
+of the yaw; from stage 3.3b-S4 the dash of Charge of such a character: 13.77 m in 1 s),
+`spells` (the spell entities of the world with their age), `spells end
 CHARACTER` (each spell entity of a character ends), and `probe CHARACTER ASSET [DX DY DZ]
 [--sub N] [--radius M] [--fragment SLOT:TYPE:HEX]...`, `probe fragment ENTITY SLOT TYPE HEX`,
 and `probe remove ENTITY` (an entity of a slice with the fragments of the caller, for a live
-check of a record before its code).
+check of a record before its code). For the forced movement (stage 3.3b-S4): `list` has the
+line `force` (the creatures that a hit moves now, the movements, the steps, the stops at a
+wall or a drop) and the counters of Riposte in the line `abilities`, and `creatures` marks a
+creature that a hit moves now with `MOVED BY A HIT (ROW)`.
 The backend has these commands only with the option `--dev-commands`, and it accepts that
 option and the research switch only when its process has `SOULWARDEN_HARNESS=1`.
 
@@ -366,7 +370,10 @@ button on "Confirm").
   each armor item and the damage values of the level differences (protocol notes 4.18:
   with a file from before, your armor does not lower the damage of a creature), and, from
   stage 3.5a, the weapon mastery of each weapon (with a file from before, a kill gives no
-  mastery experience: run the tool again). It reads the data tables and the base
+  mastery experience: run the tool again), and, from stage 3.3b-S4, the impact of each damage
+  row with an impact distance (the member `impacts`, 234 rows: the pull and the push of a hit,
+  protocol notes 4.26; with a file from before, a hit moves no creature: run the tool again).
+  It reads the data tables and the base
   attributes file of the game copy, from the same sources as the creature data tool.
   `tools/gamedata/combat.sh --find TEXT` prints the weapons and the creatures with a text.
   Without the file the backend starts, and an attack has no effect.
@@ -397,7 +404,10 @@ button on "Confirm").
   ability rows that put a status on the caster: with a file of format 2 the limits and the
   caster effects (Safety Measures) do nothing. From stage 3.3b-S2a the file also has the
   limits of the stat multipliers (`statMultipliers`, StatMultiplierData): with an older file
-  the speed of a haste has no upper limit.
+  the speed of a haste has the limit of the client, 1.5 times (from stage 3.3b-S4; before it
+  the speed had no upper limit). From stage 3.3b-S4 the tool stops when an ability table of
+  the players does not have a rule column of the backend, or a status table does not have the
+  absorption and damage columns of each damage type (it keeps the file that is there).
 - `tools/gamedata/spells.sh` makes the spell entity data
   (`~/.local/share/soulwarden/gamedata/spell-data.json`, 1.1 MB, stage 3.3b-S2a): for each spell
   row with a prefab slice, the slice asset, the slots of its replicated components, its
@@ -405,7 +415,8 @@ button on "Confirm").
   the slices of the game copy, from the same sources as the creature data tool (it needs an
   Oodle source). `tools/gamedata/spells.sh --find TEXT` prints the spells with a text and their
   slice. Without the file the backend starts, and the vortex of Gravity Well has its damage
-  but no picture.
+  but no picture. From stage 3.3b-S4 the tool stops for a delay that is not a 32-bit number,
+  and the backend refuses a file with a delayed event slot that has no event.
 - `tools/gamedata/perks.sh` makes the perk data (`~/.local/share/soulwarden/gamedata/perk-data.json`,
   6.5 MB, stage 1.3b): the perk list in the order of the client, the values of each perk, the
   perk buckets and the perk places of each item (the perk roll of a loot item), the
@@ -514,8 +525,20 @@ button on "Confirm").
   comes near it later; it goes away at its end (3.5 s) and when its caster leaves the world.
   A haste or a slow on your character changes the speed of your run and your sprint (the
   Detonate heart rune: 1.2 times for 3 s), and the server accepts the faster positions only
-  after your client has the speed. Not yet: the abilities of the other weapons, the pull of
-  Maelstrom and of the vortex, the passive
+  after your client has the speed. From stage 3.3b-S4 (protocol notes 4.26,
+  `docs/systems/forced-movement.md`) a hit moves a creature by the impact of its damage row:
+  Maelstrom pulls the creatures 1.5 m to you (2 m with Storm's Reach), the start of the vortex
+  pulls the creatures in its 4 m to its center at 7 m/s, the burst pushes them 0.5 m, Path of
+  Destiny pushes 2 m away from you, Shockwave and Charge push 0.25 m, and the light and heavy
+  attacks of the melee weapons push too (the light attack of the great axe 1 m). The server moves the creature in steps of 50 ms, and each player near
+  it sees the slide; a wall, a drop, or a rock stops it. A creature on its way back does not
+  move. The dash of Charge (14.7 m with the swing) is accepted by the position check of the
+  server, and another player sees your character run in the dash. Riposte of the rapier (key
+  of its place on the rapier bar): a creature that hits you in the 1 s window of the press
+  does no damage, and 0.43 s later the counter of the server hits it one time (the damage of
+  the row, the stun of 2 s, a push of 1.5 m), when it is still in the reach of its hit. Not
+  yet: the counter animation of your character, the other abilities of the rapier, the
+  abilities of the other weapons, the passive
   nodes and the effects on your own character (fortify, grit, empower, heal), and the perks
   of an item that change an ability.
 - Rewards of a kill. With the loot tables of stage 3.5a (`tools/gamedata/loot.sh`; protocol

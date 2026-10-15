@@ -62,7 +62,9 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
 - Case HT11 runs `tools/gamedata/check_combat_tool.py` with `python3` (`SOULWARDEN_PYTHON`
   selects a different one): with no Python 3 the case fails. The check makes its tables in
   memory: no file of the game. The same for case TV9 and
-  `tools/gamedata/check_places_tool.py`.
+  `tools/gamedata/check_places_tool.py`, and for the cases RG4 (`check_ability_tool.py`) and RG5
+  (`check_spell_tool.py`): the case passes when the lines of the named cases of the check start
+  with `ok`.
 - In a test, a loop over a member of a temporary (`for (x : test_progression().nodes)`) reads
   memory that is free: keep the object in a variable.
 - The backend is in the network namespace of the launcher: a request from the host does not

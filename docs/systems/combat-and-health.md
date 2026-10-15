@@ -89,6 +89,9 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   3.3a): `Combat::damage` with the row, `Creatures::hurt` with the attacker (the target, the
   credit, the rewards of a kill), the damage number, and the log line. A melee attack, the
   contact of an ability, and the hit of an area of an ability use it; a new hit uses it too.
+  From stage 3.3b-S4 a creature that lives after the hit moves by the impact of the row (the pull or
+  the push of the game data, from the source of the hit: the last argument of `Combat::strike`, the
+  attacker when it is not given; [Forced movement](forced-movement.md)).
   The damage of a creature to a character (`Combat::creature_damage`) is multiplied by the
   weaken of the creature (`Creature::damage_factor`: 1 plus the `DMGStandard` of each of its
   effects, not below 0).
@@ -100,6 +103,9 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   hit of an ability uses the conversion of the gem of the weapon at the press of the cast
   (`CastConversion`, the last argument of `Combat::strike`), not the weapon in the slot at
   the time of the hit (code review of stage 3.3b-S1, finding F3, test case RS3).
+- A creature hit on a character in the window of a counter (Riposte, stage 3.3b-S4): the absorption of the status of the
+  window takes the damage, and `Health::creature_hit` gives the hit to `Abilities::countered` after the damage: the
+  counter starts one time and hits the attacker ([Forced movement](forced-movement.md)).
 - The death of a character ends its spell entities only when the spell row has
   `EndOnCasterDeath` (`Spells::caster_died`; [Spell entities](spells.md)). The revival
   (`Health::heal` of a dead character) and the respawn refresh the gear: the statuses of the

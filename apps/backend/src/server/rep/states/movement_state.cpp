@@ -178,7 +178,12 @@ hub::Bytes encode_movement_state(const world::Entity& entity, View view, const w
     // of the client does not start.
     StateWriter state(kGroups, FieldMask::wide);
     write_world_position(state.field(0, kWorldPosition), world::spawn_position(entity));
-    state.field(0, kRotation).u8(kRotationIdentity);
+    if (view == View::observer && entity.facing) {
+        // The direction of a dash for an observer (stage 3.3b-S4). The owner keeps the direction of its own client.
+        write_yaw_rotation(state.field(0, kRotation), *entity.facing);
+    } else {
+        state.field(0, kRotation).u8(kRotationIdentity);
+    }
     state.field(0, kLookDirection).u8(kLookDirectionNorth);
     // The low 4 bits of the teleport field are the teleport number of the entity. The high 4
     // bits are the migration number of the client, which stays 0. The client of the owner
@@ -203,6 +208,16 @@ hub::Bytes encode_movement_state(const world::Entity& entity, View view, const w
     }
     write_time_anchor(state, clock);
     return state.finish();
+}
+
+hub::Bytes encode_observed_motion_state(const world::Entity& entity, View view, const world::WorldClock& clock) {
+    // The movement of a character for its observers (stage 3.3b-S4: the dash of an ability): the observer view of the
+    // movement state with the new position, the direction, and the action of layer 0. The owner gets no fragment: its
+    // client moves its character itself, and a position of the server would be a second displacement.
+    if (view == View::owner) {
+        return {};
+    }
+    return encode_movement_state(entity, View::observer, clock);
 }
 
 CreatureScope creature_scope(const world::Creature& creature, bool first) {

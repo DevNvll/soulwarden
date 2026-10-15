@@ -498,7 +498,7 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
 }
 
 HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use, std::uint32_t rowIndex, float factor, const char* what,
-                         const CastConversion* cast) {
+                         const CastConversion* cast, const state::WorldPosition* source) {
     HitResult result;
     result.verdict = HitVerdict::dead;
     if (!has_tables() || use.row == nullptr || rowIndex >= m_tables->data().damageRows.size()) {
@@ -540,6 +540,8 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     }
     const EntityId attackerId = attacker.id;
     const EntityId targetId = target.id;
+    const state::WorldPosition attackerPlace = attacker.position;
+    const state::WorldPosition from = source != nullptr ? *source : attackerPlace;
     result = apply_hit(attacker, target, result.damage, itemId, row.id, what);
     if (result.verdict != HitVerdict::accepted) {
         return result;
@@ -548,6 +550,10 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     Entity* hurt = m_world.creatures().find(targetId);
     if (own == nullptr || hurt == nullptr) {
         return result;
+    }
+    // The impact of the row (stage 3.3b-S4): a creature that lives after the hit moves by it (a pull, a push).
+    if (row.impact && !hurt->creature.dead) {
+        m_world.creatures().impact(*hurt, *row.impact, from, attackerPlace, row.id);
     }
     // The heart rune charge of the hit (AttackRuneCharge of the row), and the perks of a hit (stage 1.3b).
     if (row.attackCharge > 0.0F) {

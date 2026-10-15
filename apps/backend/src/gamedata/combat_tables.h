@@ -44,6 +44,27 @@ struct DamageType {
     DamageCategory category{DamageCategory::direct};
 };
 
+/**
+ * The impact of a hit of a damage row (stage 3.3b-S4, protocol notes 4.26): how far the hit moves its target. The
+ * columns ImpactDistanceX, Y, Z and ImpactDecayRate of the row, and the same columns with "_AI" for a target that is a
+ * creature (the client takes the "_AI" value when the row has one: client code at image RVA 0x683D910).
+ */
+struct DamageImpact {
+    /** X to the side, Y away from the source of the hit (a negative Y pulls to it), Z up; meters. */
+    std::array<float, 3> distance{};
+    /**
+     * The decay rate of the travel (client code at image RVA 0x48A0D30): the travel at the time t of the reaction is
+     * |distance| * (1 - decay^(30 t)). 0 or less: a constant speed of |distance| meters in each second to the source
+     * point (or away from it), not past it (client code at image RVA 0x488B8F0).
+     */
+    float decay{0.0F};
+    /** The same values for a target that is a creature. All distances 0: the row has none (the values above count). */
+    std::array<float, 3> creatureDistance{};
+    float creatureDecay{0.0F};
+    /** UseAttackerPosForReaction: the direction comes from the place of the attacker, not from the source of the damage. */
+    bool fromAttacker{false};
+};
+
 /** One row of the damage table of the weapons of a player: one attack. */
 struct DamageRow {
     std::string id;
@@ -60,6 +81,8 @@ struct DamageRow {
      */
     float attackCharge{0.0F};
     float hitCharge{0.0F};
+    /** The impact of a hit (stage 3.3b-S4). No value: the hit moves no target (also a file of a tool from before the stage). */
+    std::optional<DamageImpact> impact{};
 };
 
 /** One row of the weapon table. */

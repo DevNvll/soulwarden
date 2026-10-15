@@ -24,7 +24,12 @@ extracted).
                                                   WeaponMasteryCategoryId, stage 3.5a)
   DamageTable (DamageData)                        for each damage row: the weapon category, the
                                                   attack type, the damage type, the damage
-                                                  factor, the damage that the row adds
+                                                  factor, the damage that the row adds; and the
+                                                  impact of a hit (stage 3.3b-S4): the columns
+                                                  ImpactDistanceX, Y, Z, ImpactDecayRate, the
+                                                  same four with "_AI" (the values for a target
+                                                  that is a creature), and
+                                                  UseAttackerPosForReaction
   DamageTypes (DamageTypeData)                    for each damage type: its number on the wire
                                                   and its category (physical, elemental, true)
   Strength, Dexterity, Intelligence, Focus        for each value of the attribute: the sum of
@@ -49,7 +54,13 @@ gearScoreRate, mastery], ...],
 "items": {"<item id in lower case>": weapon, ...},
 "defenses": [[physicalMitigation, elementalMitigation, {"<damage type>": weakness, ...},
 {"<damage type>": absorption, ...}], ...],
-"vitals": {"<vitals row id in lower case>": defense, ...}}.
+"vitals": {"<vitals row id in lower case>": defense, ...},
+"impacts": [[id, x, y, z, decay, aiX, aiY, aiZ, aiDecay, fromAttacker], ...]}.
+`impacts` has the damage rows whose hit moves its target (a distance that is not 0, in the normal or in the "_AI"
+columns): x to the side, y away from the source of the hit (a negative y pulls), z up, in meters; the decay rate of
+the travel (client code at image RVA 0x48A0D30: the travel at the time t is distance * (1 - decay^(30 t)); 0 or less:
+a constant speed of `distance` meters in each second to the source point); `fromAttacker` is the column
+UseAttackerPosForReaction (the direction from the attacker, not from the source of the damage).
 Entry K of an attribute list is the value `minimum` + K of the attribute. `weapon` is an index
 into `weapons`, and `defense` an index into `defenses`. A damage type of a defense entry that is
 not there has the value 0.
@@ -124,6 +135,11 @@ BASES_NOT_IN_GAME = frozenset({"werewolf_rabid_20328", "upyr_10221a_named", "upy
 # The columns of the tool that a table of its type can have or not: each other column must be there.
 OWN_RATE_COLUMN = "WeaponBaseDamageCompoundIncrease"
 MASTERY_COLUMN = "WeaponMasteryCategoryId"
+# The impact of a hit of a damage row (stage 3.3b-S4): the normal columns, the columns for a target that is a creature,
+# and the direction rule. Each one is required: a table with no such column stops the tool.
+IMPACT_COLUMNS = ("ImpactDistanceX", "ImpactDistanceY", "ImpactDistanceZ", "ImpactDecayRate")
+IMPACT_AI_COLUMNS = tuple(column + "_AI" for column in IMPACT_COLUMNS)
+IMPACT_SOURCE_COLUMN = "UseAttackerPosForReaction"
 
 
 def cell(sheet: Sheet, row: int, column: str):
@@ -254,6 +270,7 @@ def build_tables(sources: Sources) -> dict:
             raise Failure(f"the game copy has no attribute table for {member}")
 
     damage_rows = []
+    impacts = []
     row_ids: set[str] = set()
     # The rows of the damage table that have no damage type: a weapon can name one, and it then has no damage row.
     typeless: set[str] = set()
@@ -279,6 +296,13 @@ def build_tables(sources: Sources) -> dict:
                 raise Failure(f"the damage row {name} has a negative rune charge")
             damage_rows.append([name, str(cell(sheet, row, "WeaponCategory")), str(cell(sheet, row, "AttackType")), kind,
                                 rounded(number(sheet, row, "DmgCoef")), rounded(number(sheet, row, "AddDmg"))] + charges)
+            # The impact of a hit (stage 3.3b-S4). A row whose distances are all 0 moves no target: it is not in the list.
+            normal = [rounded(number(sheet, row, column)) for column in IMPACT_COLUMNS]
+            creature = [rounded(number(sheet, row, column)) for column in IMPACT_AI_COLUMNS]
+            if normal[3] > 1.0 or creature[3] > 1.0:
+                raise Failure(f"the damage row {name} has a decay rate above 1")
+            if any(value != 0.0 for value in normal[:3] + creature[:3]):
+                impacts.append([name] + normal + creature + [bool(cell(sheet, row, IMPACT_SOURCE_COLUMN))])
     if not damage_rows:
         raise Failure(f"the game copy has no damage table with the name {DAMAGE_TABLE}")
 
@@ -416,7 +440,7 @@ def build_tables(sources: Sources) -> dict:
 
     return {"format": 1, "constants": constants, "damageTypes": damage_types, "attributes": attributes,
             "damageRows": damage_rows, "weapons": weapons, "items": items, "defenses": defenses, "vitals": vitals,
-            "armor": armor, "levelDamage": sorted(level_damage)}
+            "armor": armor, "levelDamage": sorted(level_damage), "impacts": impacts}
 
 
 def print_found(tables: dict, texts: list[str]) -> None:
@@ -469,7 +493,8 @@ def main() -> int:
     constants = tables["constants"]
     print(f"{target}: {len(tables['items'])} items with a weapon, {len(tables['weapons'])} weapons ({melee} melee "
           f"weapons with a damage row), {len(tables['damageRows'])} damage rows, {len(tables['damageTypes'])} damage "
-          f"types, {len(tables['vitals'])} vitals rows with {len(tables['defenses'])} different defense entries "
+          f"types, {len(tables['impacts'])} damage rows with an impact, {len(tables['vitals'])} vitals rows with "
+          f"{len(tables['defenses'])} different defense entries "
           f"(source: {', '.join(f'{count} from the {name}' for name, count in sorted(sources.used.items()))})")
     print(f"  one level adds {constants['levelDamage']} of the base damage; the gear score: {constants['gearScoreRate']} "
           f"for each {constants['gearScoreInterval']} above {constants['gearScoreMinimum']}, and above "

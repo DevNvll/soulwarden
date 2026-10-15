@@ -87,12 +87,24 @@ class MadeUpSources:
         if mode == "text-cell":
             weapon["BaseDamage"] = "sixty-four"
         add("Weapons", tool.WEAPON_TYPE, [weapon])
+        # The impact columns (stage 3.3b-S4): the light row pulls 1.5 m (a creature: its "_AI" value 2 m), the heavy
+        # row moves nothing.
+        light_impact = {"ImpactDistanceX": 0.0, "ImpactDistanceY": -1.5, "ImpactDistanceZ": 0.0, "ImpactDecayRate": 0.8,
+                        "ImpactDistanceX_AI": 0.0, "ImpactDistanceY_AI": -2.0, "ImpactDistanceZ_AI": 0.0,
+                        "ImpactDecayRate_AI": 0.0, "UseAttackerPosForReaction": 1.0}
+        heavy_impact = {column: 0.0 for column in light_impact}
+        if mode == "decay-above-one":
+            light_impact["ImpactDecayRate"] = 1.5
         damage = [{"DamageID": "Light", "WeaponCategory": "Sword", "AttackType": "Light", "DamageType": "Slash",
-                   "DmgCoef": 1.0, "AddDmg": 0.0, "AttackRuneCharge": 1.105, "HitRuneCharge": 0.27625}]
+                   "DmgCoef": 1.0, "AddDmg": 0.0, "AttackRuneCharge": 1.105, "HitRuneCharge": 0.27625, **light_impact}]
+        if mode == "no-impact-column":
+            damage[0].pop("ImpactDecayRate_AI")
         if mode != "missing-row":
             damage.append({"DamageID": "Heavy", "WeaponCategory": "Sword", "AttackType": "Heavy",
                            "DamageType": "Slsh" if mode == "unknown-type" else "Slash", "DmgCoef": 1.2, "AddDmg": 0.0,
-                           "AttackRuneCharge": 1.604, "HitRuneCharge": 0.401})
+                           "AttackRuneCharge": 1.604, "HitRuneCharge": 0.401, **heavy_impact})
+            if mode == "no-impact-column":
+                damage[1].pop("ImpactDecayRate_AI")
         add(tool.DAMAGE_TABLE, tool.DAMAGE_TYPE, damage)
         add("DamageTypes", tool.DAMAGE_TYPE_TYPE, [{"TypeID": "Slash", "IntID": 4, "Category": "Physical"}])
         for attribute in tool.ATTRIBUTE_TABLES:
@@ -153,6 +165,8 @@ CASES = [
     ("no-armor-column", False, "an armor table with no column ElementalArmorSetScaleFactor"),
     ("no-armor-constant", False, "a base attributes file with no exponent of the armor rule"),
     ("part-level", False, "a level difference that is not a whole number"),
+    ("no-impact-column", False, "a damage table with no column ImpactDecayRate_AI (stage 3.3b-S4)"),
+    ("decay-above-one", False, "a decay rate of an impact above 1 (stage 3.3b-S4)"),
 ]
 
 
@@ -176,7 +190,8 @@ def main() -> int:
             correct = (tables["weapons"][0][3] == 64.0 and tables["weapons"][0][9] == "Heavy"
                        and sorted(tables["vitals"]) == ["basewolf", "testwolf"] and tables["defenses"][0][2] == {"Slash": 0.2}
                        and tables["armor"]["items"] == {"testchest": [0.25, 0.25, 0.3]}
-                       and tables["armor"]["ratingExponent"] == 1.2 and tables["levelDamage"] == [[6, 0.2]])
+                       and tables["armor"]["ratingExponent"] == 1.2 and tables["levelDamage"] == [[6, 0.2]]
+                       and tables["impacts"] == [["Light", 0.0, -1.5, 0.0, 0.8, 0.0, -2.0, 0.0, 0.0, True]])
         if correct and mode == "known-absent-row":
             correct = json.loads(target.read_text(encoding="utf-8"))["weapons"][0][9] == ""
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""

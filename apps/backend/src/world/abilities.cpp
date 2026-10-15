@@ -24,6 +24,7 @@ constexpr AbilityRule kRules[] = {
     {"Ability_WarHammer_WreckingBall", AbilityKind::wreckingBall, "Wrecking Ball"},
     {"Ability_WarHammer_Shockwave", AbilityKind::shockwave, "Shockwave"},
     {"Ability_WarHammer_PathOfDestiny", AbilityKind::pathOfDestiny, "Path of Destiny"},
+    {"Ability_Rapier_Riposte", AbilityKind::riposte, "Riposte"},
 };
 
 /** The id text of the ranged attack of the projectile of Gravity Well (the value "attack" of its shot is its CRC-32). */
@@ -56,6 +57,7 @@ bool has_node(const SkillSet& skills, const char* table, const char* node) {
 
 constexpr const char* kGreatAxe = "GreatAxeAbilityTable";
 constexpr const char* kWarHammer = "WarHammerAbilityTable";
+constexpr const char* kRapier = "RapierAbilityTable";
 
 std::chrono::milliseconds milliseconds(float seconds) {
     return std::chrono::milliseconds(static_cast<long long>(std::lround(seconds * 1000.0F)));
@@ -133,11 +135,23 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
     const bool aftershock = has_node(skills, kWarHammer, "Ult_Passive_WarHammer_SlowOnCC");
     const EffectPlan slowOnHit{"WarHammer_Ult_SlowOnCC", {}, 0, {}};
     switch (rule->kind) {
-    case AbilityKind::charge:
+    case AbilityKind::charge: {
         // One contact of the run (live check L3: 14 input steps after the press for a creature 6 m away).
         plan.length = std::chrono::milliseconds(500);
         plan.phases.push_back(contact("GreatAxe_Engage1", 3, 90));
+        // The dash (stage 3.3b-S4, live checks L7-C and L7-D): the client moves the caster itself; the envelope is the
+        // measured travel and step times the largest MotionMultiplier of the action.
+        CasterMotion motion;
+        motion.distance = ability_rules::kChargeTravel * ability_rules::kChargeMultiplier;
+        motion.peak = ability_rules::kChargePeak * ability_rules::kChargeMultiplier;
+        motion.length = ability_rules::kChargeLength;
+        motion.dash = ability_rules::kChargeDash;
+        motion.dashTime = ability_rules::kChargeDashTime;
+        motion.actions = {MotionAction{std::chrono::milliseconds(0), ability_rules::kChargeState, ability_rules::kChargeDashSequence},
+                          MotionAction{ability_rules::kChargeDashTime, ability_rules::kChargeState, ability_rules::kChargeSwingSequence}};
+        plan.motion = motion;
         break;
+    }
     case AbilityKind::maelstrom: {
         // Two spins with No Reprieve (live check L3: contacts 14 and 26 steps after the press).
         // Storm's Reach and Gravity select the rows of the reach and of the root (RP2).
@@ -169,6 +183,9 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         PhasePlan vortex;
         vortex.kind = PhaseKind::vortex;
         vortex.spell = vortexSpell;
+        // The pull of the vortex (stage 3.3b-S4): the child entity VortexPull of the slice hits each creature of its sphere
+        // (4 m, checkObstructions) at the start with the row GreatAxe_GravityWell_Vortex (Y -7, no decay rate, no damage).
+        vortex.pull = "GreatAxe_GravityWell_Vortex";
         vortex.effects = {EffectPlan{"GreatAxe_Vortex_Root", {}, 0, {}}, EffectPlan{"GreatAxe_Vortex", {}, 0, {}}};
         plan.phases.push_back(vortex);
         PhasePlan burst;
@@ -232,6 +249,23 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
             phase.effects.push_back(slowOnHit);
         }
         plan.phases.push_back(phase);
+        break;
+    }
+    case AbilityKind::riposte: {
+        // The counter of the rapier (stage 3.3b-S4; game data: playeractions_ability_rapier.actionlist, the attachment ADB).
+        // The loop puts Rapier_Riposte_Timer (1 s, its absorption takes the countered hit) on the caster; a damaging hit in
+        // it starts Ability_Rapier_Riposte_Out (ServerStarted), whose capsule hits at 0.433 s with 1H_Rapier_Riposte_Stun
+        // (its StatusEffect Rapier_Riposte_Stun, 2 s), or with the _Enhanced row and stun (2.5 s) when the node
+        // Rapier_Riposte_Mod3 is learned (the conditions Rapier_Mod3 and Rapier_Mod3_Not of the two clips).
+        const bool enhanced = has_node(skills, kRapier, "Rapier_Riposte_Mod3");
+        plan.length = std::chrono::milliseconds(1000);
+        plan.window = "Rapier_Riposte_Timer";
+        PhasePlan out;
+        out.kind = PhaseKind::counter;
+        out.at = std::chrono::milliseconds(433);
+        out.row = enhanced ? "1H_Rapier_Riposte_Stun_Enhanced" : "1H_Rapier_Riposte_Stun";
+        out.effects.push_back(EffectPlan{enhanced ? "Rapier_Riposte_Stun_Enhanced" : "Rapier_Riposte_Stun", {}, 0, {}});
+        plan.phases.push_back(out);
         break;
     }
     }
@@ -317,17 +351,23 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     // Each row and each spell of the plan must be in the data: an ability with a part of its
     // data does nothing.
     for (const PhasePlan& phase : planned->phases) {
-        if ((!phase.row.empty() && !m_combat->row_index(phase.row)) || (!phase.spell.empty() && m_data->spell(phase.spell) == nullptr)) {
+        if ((!phase.row.empty() && !m_combat->row_index(phase.row)) || (!phase.pull.empty() && !m_combat->row_index(phase.pull))
+            || (!phase.spell.empty() && m_data->spell(phase.spell) == nullptr)) {
             log::write("world: ability: the data has no row %s or no spell %s of %s", phase.row.c_str(), phase.spell.c_str(), rule->name);
             return refuse(CastVerdict::noRule);
         }
-        // Each status row of an effect of the plan, also of a delayed effect (code review of stage 3.3a, finding F9).
+        // Each status row of an effect of the plan, also of a delayed effect (code review of stage 3.3a, finding F9), and
+        // the status of the window of a counter.
         for (const EffectPlan& effect : phase.effects) {
             if (!effect.status.empty() && m_data->status(effect.status) == nullptr) {
                 log::write("world: ability: the data has no status effect %s of %s", effect.status.c_str(), rule->name);
                 return refuse(CastVerdict::noRule);
             }
         }
+    }
+    if (!planned->window.empty() && m_data->status(planned->window) == nullptr) {
+        log::write("world: ability: the data has no status effect %s of %s", planned->window.c_str(), rule->name);
+        return refuse(CastVerdict::noRule);
     }
     const WorldClock::time_point now = m_world.clock().now();
     CharacterState& state = m_characters[character->characterId];
@@ -427,6 +467,15 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     publish(stored.characterId);
     if (cost > 0.0F) {
         change_mana(*character, -cost, ability_name(stored.plan.kind));
+    }
+    if (stored.plan.motion) {
+        start_motion(stored, *character);
+    }
+    if (!stored.plan.window.empty()) {
+        // The window of the counter: the status of the data on the caster, through the status system (stage 3.3b-S4).
+        StatusApply how;
+        how.source = StatusSource{StatusSourceKind::ability, ability_text(stored.ability), 0, character->id};
+        m_world.statuses().apply(*character, stored.plan.window, how);
     }
     ++m_counts.presses[static_cast<std::size_t>(CastVerdict::accepted)];
     log::write("world: ability: %s casts %s (place %u of the bar): cooldown %.1f s, %zu phase(s)",
@@ -726,7 +775,7 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
             ++m_counts.blocked;
             continue;
         }
-        if (area_hit(cast, index, *caster, *target, factor)) {
+        if (area_hit(cast, index, *caster, *target, factor, center)) {
             ++hits;
             ++phaseHits;
         }
@@ -742,12 +791,20 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
                hits);
 }
 
-bool Abilities::area_hit(Cast& cast, std::uint32_t index, Entity& caster, Entity& target, float factor) {
+bool Abilities::area_hit(Cast& cast, std::uint32_t index, Entity& caster, Entity& target, float factor, const state::WorldPosition& center) {
     const PhasePlan& phase = cast.plan.phases[index];
     if (phase.row.empty()) {
-        // A phase with no damage (the start of the vortex): only its effects.
+        // A phase with no damage (the start of the vortex): only its effects, and the impact of its pull row (stage 3.3b-S4).
         cast.hits.insert({index, target.id});
         give_effects(cast, phase, target);
+        if (!phase.pull.empty()) {
+            const std::optional<std::uint32_t> pull = m_combat->row_index(phase.pull);
+            const gamedata::DamageRow* row = pull ? &m_combat->damage_row(*pull) : nullptr;
+            Entity* pulled = m_world.creatures().find(target.id);
+            if (row != nullptr && row->impact && pulled != nullptr) {
+                m_world.creatures().impact(*pulled, *row->impact, center, caster.position, row->id);
+            }
+        }
         return true;
     }
     const std::optional<std::uint32_t> row = m_combat->row_index(phase.row);
@@ -758,7 +815,7 @@ bool Abilities::area_hit(Cast& cast, std::uint32_t index, Entity& caster, Entity
     const CastConversion conversion{cast.conversionType, cast.conversionPart};
     const HitResult result =
         m_world.combat().strike(caster, target, HitWeapon{cast.itemId, cast.slot, weapon, cast.gearScore, ability_text(cast.ability)}, *row,
-                                factor, ability_name(cast.plan.kind), &conversion);
+                                factor, ability_name(cast.plan.kind), &conversion, &center);
     if (result.verdict != HitVerdict::accepted) {
         return false;
     }
@@ -977,7 +1034,246 @@ void Abilities::change_mana(Entity& character, float amount, const char* what) {
                static_cast<double>(character.vitals.mana));
 }
 
+bool Abilities::countered(Entity& character, Entity& attacker, float reach) {
+    const auto state = m_characters.find(character.characterId);
+    if (state == m_characters.end() || !state->second.cast || character.life.dead) {
+        return false;
+    }
+    const auto found = m_casts.find(*state->second.cast);
+    if (found == m_casts.end() || found->second.plan.window.empty() || found->second.countered || found->second.caster != character.id) {
+        return false;
+    }
+    Cast& cast = found->second;
+    // The window is the status of the data on the character: the hit is a counter only while it is there.
+    const std::string& window = cast.plan.window;
+    const bool open = std::any_of(character.statuses.begin(), character.statuses.end(), [&](const ActiveStatus& status) {
+        return status.status == window && (status.permanent || m_world.clock().now() < status.ends);
+    });
+    if (!open) {
+        return false;
+    }
+    cast.countered = true;
+    ++m_counts.counters;
+    // The counter action ends the window (the action Out removes the timer), and its capsule hits at its time.
+    m_world.statuses().remove(
+        character, [&](const ActiveStatus& status) { return status.status == window; }, StatusEnd::replaced);
+    const std::uint64_t number = cast.number;
+    const EntityId target = attacker.id;
+    for (std::uint32_t index = 0; index < cast.plan.phases.size(); ++index) {
+        const PhasePlan& phase = cast.plan.phases[index];
+        if (phase.kind != PhaseKind::counter) {
+            continue;
+        }
+        ++cast.pending;
+        m_world.after(phase.at, [this, number, index, target, reach](World&) { counter_hit(number, index, target, reach); });
+    }
+    log::write("world: ability: %s counters the hit of creature %016llx (%s): the counter action starts on the server",
+               character.name.c_str(),
+               static_cast<unsigned long long>(attacker.id),
+               attacker.kind == EntityKind::creature ? attacker.creature.kind->id.c_str() : attacker.name.c_str());
+    return true;
+}
+
+void Abilities::counter_hit(std::uint64_t number, std::uint32_t index, EntityId attacker, float reach) {
+    const auto found = m_casts.find(number);
+    if (found == m_casts.end()) {
+        return;
+    }
+    Cast& cast = found->second;
+    --cast.pending;
+    Entity* caster = m_world.find(cast.caster);
+    Entity* target = m_world.creatures().find(attacker);
+    if (caster == nullptr || caster->characterId != cast.characterId || caster->life.dead || target == nullptr || target->creature.dead
+        || cast.hits.count({index, attacker}) != 0 || !has_data()) {
+        return;
+    }
+    // The capsule of the counter action is in front of the caster: the attacker must still be in the reach of its hit, with
+    // no wall between them.
+    if (distance3(caster->position, target->position) > reach || !m_world.navigation().sees(caster->position, target->position)) {
+        log::write("world: ability: the counter of %s does not reach creature %016llx", caster->name.c_str(),
+                   static_cast<unsigned long long>(attacker));
+        return;
+    }
+    const PhasePlan& phase = cast.plan.phases[index];
+    const std::optional<std::uint32_t> row = m_combat->row_index(phase.row);
+    const gamedata::WeaponRow* weapon = m_combat->weapon_of(cast.itemId);
+    if (!row || weapon == nullptr) {
+        return;
+    }
+    const CastConversion conversion{cast.conversionType, cast.conversionPart};
+    const HitResult result = m_world.combat().strike(*caster, *target, HitWeapon{cast.itemId, cast.slot, weapon, cast.gearScore,
+                                                                               ability_text(cast.ability)},
+                                                     *row, 1.0F, ability_name(cast.plan.kind), &conversion);
+    if (result.verdict != HitVerdict::accepted) {
+        return;
+    }
+    cast.hits.insert({index, attacker});
+    ++m_counts.counterHits;
+    if (Entity* hurt = m_world.creatures().find(attacker); hurt != nullptr && !hurt->creature.dead) {
+        give_effects(cast, phase, *hurt);
+    }
+}
+
+MotionAllowance Abilities::motion_allowance(const Entity& character, WorldClock::time_point now) const {
+    const auto state = m_characters.find(character.characterId);
+    if (state == m_characters.end() || !state->second.cast) {
+        return {};
+    }
+    const auto found = m_casts.find(*state->second.cast);
+    if (found == m_casts.end() || !found->second.plan.motion || found->second.caster != character.id) {
+        return {};
+    }
+    const CasterMotion& motion = *found->second.plan.motion;
+    // The envelope runs for the length of the movement, and for one window of the check after it: the window of a report
+    // after the dash still has the places of the dash.
+    if (now < found->second.started || now > found->second.started + motion.length + position_limits::kWindow) {
+        return {};
+    }
+    return MotionAllowance{motion.distance, motion.peak};
+}
+
+void Abilities::mark_motion(Entity& character) {
+    m_motionMarks[character.characterId] = m_world.clock().now();
+    m_world.touch(character.id, ComponentKey::motion);
+}
+
+void Abilities::caster_moved(Entity& character) {
+    const auto mark = m_motionMarks.find(character.characterId);
+    if (mark == m_motionMarks.end() || m_world.clock().now() - mark->second < ability_rules::kMotionMark) {
+        return;
+    }
+    mark_motion(character);
+}
+
+void Abilities::start_motion(Cast& cast, Entity& character) {
+    const CasterMotion& motion = *cast.plan.motion;
+    const std::uint64_t number = cast.number;
+    const EntityId caster = character.id;
+    const std::string characterId = character.characterId;
+    // The direction of the body for the observers: the direction of the press (degrees from north, to the west).
+    character.facing = cast.yaw * 180.0F / 3.14159265358979F;
+    // The actions of layer 0 for the observers at their times, and the action at rest at the end of the movement. A later
+    // cast of the character replaces them (the check of the cast number).
+    const auto set_action = [this, number, caster, characterId](std::int32_t actionState, std::int32_t sequence) {
+        Entity* entity = m_world.find(caster);
+        const auto state = m_characters.find(characterId);
+        if (entity == nullptr || state == m_characters.end() || state->second.cast != number) {
+            return;
+        }
+        entity->action.state = actionState;
+        entity->action.sequence = sequence;
+        ++entity->action.started;
+        mark_motion(*entity);
+    };
+    for (const MotionAction& action : motion.actions) {
+        if (action.at.count() <= 0) {
+            set_action(action.state, action.sequence);
+        } else {
+            m_world.after(action.at, [set_action, action](World&) { set_action(action.state, action.sequence); });
+        }
+    }
+    std::vector<std::int32_t> sequences;
+    for (const MotionAction& action : motion.actions) {
+        sequences.push_back(action.sequence);
+    }
+    m_world.after(motion.length, [this, caster, characterId, number, sequences](World&) {
+        // The character is at rest again, also when a later cast of it came in the movement: an action of this movement
+        // must not stay on an observer.
+        Entity* entity = m_world.find(caster);
+        if (entity != nullptr && entity->characterId == characterId
+            && std::find(sequences.begin(), sequences.end(), entity->action.sequence) != sequences.end()) {
+            const ActionState rest;
+            entity->action.state = rest.state;
+            entity->action.sequence = rest.sequence;
+            ++entity->action.started;
+            mark_motion(*entity);
+        }
+        const auto state = m_characters.find(characterId);
+        if (state != m_characters.end() && state->second.cast == number) {
+            m_motionMarks.erase(characterId);
+        }
+    });
+    m_motionMarks[characterId] = m_world.clock().now();
+    if (cast.session != 0 || character.owner != 0 || motion.dash <= 0.0F) {
+        return; // The client of the caster makes the movement: the server accepts it in the envelope.
+    }
+    // The dash of the server for a character with no client (a remote test character): on the line of the press, to the
+    // dash distance, or to the first creature on the line (it stops kDashStop in front of it), through the navigation.
+    const std::array<float, 2> ahead = direction_of(cast.yaw);
+    float distance = motion.dash;
+    m_world.for_each_near(character.position, motion.dash + ability_rules::kProjectileWidth, [&](Entity& entity) {
+        if (entity.kind != EntityKind::creature || entity.creature.dead) {
+            return;
+        }
+        const float ex = entity.position.x - character.position.x;
+        const float ey = entity.position.y - character.position.y;
+        const float along = ex * ahead[0] + ey * ahead[1];
+        const float side = std::fabs(ex * ahead[1] - ey * ahead[0]);
+        if (along > 0.0F && side <= ability_rules::kProjectileWidth && std::fabs(entity.position.z - character.position.z) <= ability_rules::kAreaHeight) {
+            distance = std::min(distance, std::max(along - ability_rules::kDashStop, 0.0F));
+        }
+    });
+    Dash dash;
+    dash.caster = caster;
+    dash.characterId = characterId;
+    dash.start = character.position;
+    dash.direction = ahead;
+    dash.distance = distance;
+    dash.started = m_world.clock().now();
+    dash.time = motion.dashTime;
+    m_dashes[number] = dash;
+    log::write("world: ability: %s makes the dash of %s on the server (no client): %.2f m in %.2f s",
+               character.name.c_str(),
+               ability_name(cast.plan.kind),
+               static_cast<double>(distance),
+               std::chrono::duration<double>(motion.dashTime).count());
+}
+
+void Abilities::step_dashes() {
+    if (m_dashes.empty()) {
+        return;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    for (auto entry = m_dashes.begin(); entry != m_dashes.end();) {
+        Dash& dash = entry->second;
+        Entity* character = m_world.find(dash.caster);
+        if (character == nullptr || character->characterId != dash.characterId || character->life.dead || character->owner != 0) {
+            entry = m_dashes.erase(entry);
+            continue;
+        }
+        const auto mark = m_motionMarks.find(dash.characterId);
+        if (mark != m_motionMarks.end() && now - mark->second < ability_rules::kMotionMark && now < dash.started + dash.time) {
+            ++entry;
+            continue;
+        }
+        const float part = std::min(std::chrono::duration<float>(now - dash.started) / std::chrono::duration<float>(dash.time), 1.0F);
+        const float more = dash.distance * part - dash.travelled;
+        const state::WorldPosition goal{character->position.x + dash.direction[0] * more, character->position.y + dash.direction[1] * more,
+                                        character->position.z};
+        const Slide slide = m_world.navigation().slide(character->position, goal);
+        bool done = part >= 1.0F || slide.blocked;
+        if (!slide.waiting) {
+            dash.travelled += horizontal_distance(character->position, slide.position);
+            if (m_world.move_character(*character, slide.position)) {
+                mark_motion(*character);
+            } else {
+                done = true;
+            }
+        }
+        if (done) {
+            log::write("world: ability: the dash of %s on the server ends after %.2f m%s",
+                       character->name.c_str(),
+                       static_cast<double>(dash.travelled),
+                       slide.blocked ? " (a wall or a drop stopped it)" : "");
+            entry = m_dashes.erase(entry);
+            continue;
+        }
+        ++entry;
+    }
+}
+
 void Abilities::tick() {
+    step_dashes();
     if (m_regenerating.empty()) {
         return;
     }

@@ -172,6 +172,11 @@ struct StateCodec {
 [[nodiscard]] hub::Bytes encode_metadata_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_player_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_movement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The movement state of a character for an observer (stage 3.3b-S4, ComponentKey::motion: a dash): the observer view
+ *         of encode_movement_state. The owner gets no fragment (its client moves its character itself).
+ */
+[[nodiscard]] hub::Bytes encode_observed_motion_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_vitals_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /**
  * @return The vitals state of a character (states/vitals_state.cpp), in one fragment. The first

@@ -22,6 +22,7 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 | The ability data of the game | `tools/gamedata/abilities.sh` (`abilities.py`), `gamedata/ability_data.h`, [Game data](../development/game-data.md) |
 | The cost of a cast and the mana: the one mana path, the regeneration, the mana state | `Abilities::mana_cost`, `Abilities::change_mana`, `Abilities::tick`, `server/rep/states/mana_state.cpp`, test case IZ8 |
 | The perks of an ability (Sundering Shockwave, Insatiable Gravity Well, Refreshing Move) | [Gear and perks](gear-and-perks.md), `Abilities::perk_burst`, `Abilities::reduce_weapon_cooldowns`, test case IZ5 |
+| The pull and the push of an ability, the dash of Charge, the counter of Riposte (stage 3.3b-S4) | [Forced movement](forced-movement.md), `CasterMotion`, `Abilities::motion_allowance`, `Abilities::countered`, test cases FM6, CM1, CM2, RC1, RC2 |
 
 ## Rules
 
@@ -118,6 +119,20 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   comes from the shot of the client (the attack "gravitywell"), or the server throws it 0.83 s
   after the press when no shot came (also for a character with no client: `tools/world
   cast`).
+- The impact of a hit (stage 3.3b-S4, [Forced movement](forced-movement.md)): each hit of an ability goes through
+  `Combat::strike` with its source (the center of an area or of a spell; the caster for a melee phase), and a creature
+  that lives after it moves by the impact of the row. The start of the vortex gives the impact of its pull row
+  (`PhasePlan::pull`: GreatAxe_GravityWell_Vortex, the child entity VortexPull of the slice) with no damage. The pull row
+  must be in the data, as each row of a plan.
+- The movement of the caster (stage 3.3b-S4, `CastPlan::motion`): Charge has a dash that its client makes (the root
+  motion of GreatAxe_Engage). The position check accepts it in the envelope of the accepted cast
+  (`Abilities::motion_allowance`); the owner gets no position of the server; each observer gets the state `motion` with
+  the place and the actions 7/59 (the dash) and 7/2312 (the swing), then the action at rest. For a character with no
+  client the server makes the dash (13.77 m in 1 s, or to 1 m in front of a creature on the line).
+- The counter (stage 3.3b-S4, `CastPlan::window`, `PhaseKind::counter`): Riposte of the rapier puts its window
+  (Rapier_Riposte_Timer, 1 s) on the caster through the status system; a creature hit in the window starts the counter one
+  time, which hits the attacker at 0.433 s with its row and its stun (`Abilities::countered`). The client does not play the
+  counter action (open: its action numbers are not known).
 - A new ability needs, in this sequence: a live check of its keys, its contacts, and its
   shots (protocol notes 4.22: L1, L3, L7), its rule in `Abilities::plan` with the rows and the
   spells of the data, a test case, and a live video. Do not make a message of the server for
@@ -186,6 +201,10 @@ tools/gamedata/abilities.sh          # write ability-data.json to the game data 
   creature with a slow then does not run. Turn the ignore value off for a video of a slow or
   a root (the creature must run to the character), and put a second creature with no effect
   beside it for the comparison.
+- Charge and the shot of Gravity Well go in the direction of the camera of the client, not of the body: turn the camera
+  (`tools/hx 'look DX 0'`) before the press.
+- Riposte needs the hit of a creature in its window of 1 s: press the key just after the creature starts its attack (the
+  backend log line `starts the attack`; the bite of a wolf comes 0.5 s later).
 - `tools/gamedata/abilities.sh` with no argument writes into the common game data folder: the
   next start of the user then has the file. For a test, give it an output path and give the
   run its folder with `SOULWARDEN_GAMEDATA_DIR`.

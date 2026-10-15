@@ -101,14 +101,18 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   status map (live checks L1 and s1-live2). It runs with the speed table of the player (slot 43, type 1525, owner only;
   `server/rep/states/stat_multiplier_state.cpp`). The gear refresh computes `Entity::moveMultiplier` and
   `sprintMultiplier`: 1 plus the MoveSpeedMod and the SprintSpeedMod part of the statuses, in the limits of
-  StatMultiplierData (0 to 1.5). The encoder sends the keys 0x34 (MoveSpeedMod) and 0x35 (SprintSpeedMod) with the
+  StatMultiplierData (0 to 1.5). An ability file with no limits (a tool from before stage 3.3b-S2a) gets the limits of
+  the supported client, 0 to 1.5 (`gear_rules::kClientSpeedMin`, `kClientSpeedMax`; code review of stage 3.3b-S2a, finding
+  F2, test case RG2): the client bounds the value with them in each case. The encoder sends the keys 0x34 (MoveSpeedMod) and 0x35 (SprintSpeedMod) with the
   multipliers; both at 1 give the empty table, and a first record with both at 1 has no fragment. In the live walks the
   key 0x35 changes the run and the sprint (for 1.4: the run x1.43, the sprint x1.31), and the key 0x34 has no effect. The
   status rows of the game have their speed in SprintSpeedMod (the haste, the heart rune, the slow of the vortex).
 - The position check takes the multiplier that the client has: the window speed (8 m/s) times the larger multiplier of
   the last speed table that the session sent (`PositionTrack::client_speed`), not less than 1; after a change the
-  multiplier before it counts for 1 s more (the client gets the table some time after the send). A haste that the client
-  did not get does not permit a faster run (code review of stage 3.3b-S1, finding F1, test cases RS1, SV2).
+  multiplier before it counts for 1 s more (the client gets the table some time after the send). Each older value keeps
+  its own end: a later lower table does not move it (code review of stage 3.3b-S2a, finding F1, test case RG1). A haste
+  that the client did not get does not permit a faster run (code review of stage 3.3b-S1, finding F1, test cases RS1,
+  SV2).
 - The statuses are not in the database: a restart of the backend ends them (a rule of this project from stage 1.3b,
   also for the cooldowns). The research lists the options for a later decision of the user (persist long statuses with
   wall ends, or not).

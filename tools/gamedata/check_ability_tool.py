@@ -106,8 +106,21 @@ def sheets(case: str) -> dict:
         for column in tool.STATUS_RULE_COLUMNS:
             row.setdefault(column, "")
     for row in (ability, caster):
-        for column in tool.CASTER_COLUMNS:
+        for column in tool.CASTER_COLUMNS + getattr(tool, "CASTER_RULE_COLUMNS", ()):
             row.setdefault(column, "")
+    # Code review of stage 3.3b-S2a, finding F4: a column of a status value and columns of a caster condition.
+    for row in (status, potion, sanctuary):
+        row.setdefault("ABSStandard", "")
+    for row in (ability, caster):
+        row.setdefault("RemoteDamageTableRow", "")
+        row.setdefault("NumAroundMe", "")
+    if case == "missing-ABSStandard":
+        for row in (status, potion, sanctuary):
+            row.pop("ABSStandard", None)
+    if case in ("missing-RemoteDamageTableRow", "missing-NumAroundMe"):
+        column = case.removeprefix("missing-")
+        ability.pop(column, None)
+        caster.pop(column, None)
     if case == "missing-StackMax":
         for row in (status, potion):
             del row["StackMax"]
@@ -222,7 +235,8 @@ def main() -> int:
     cases = ("valid", "missing-Time", "missing-Stunned", "missing-Radius", "conflicting-status", "conflicting-spell",
              "game-duplicate", "missing-cost", "partial-cost-columns", "negative-cost", "missing-SelfApply",
              "unknown-caster-status", "bad-limit", "missing-StackMax", "missing-caster-OnHit", "game-table-difference",
-             "missing-end-link", "game-end-link", "missing-cast-spell")
+             "missing-end-link", "game-end-link", "missing-cast-spell", "missing-ABSStandard", "missing-RemoteDamageTableRow",
+             "missing-NumAroundMe")
     for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")

@@ -112,11 +112,14 @@ STATUS_RULE_COLUMNS = ("StackMax", "InitialStackSize", "RefreshDuration", "Durat
                        "PhysicalArmor", "ElementalArmor", "SprintSpeedMod", "MODStrength", "MODDexterity", "MODIntelligence",
                        "MODFocus", "MODConstitution", "ABSSlash", "ABSThrust", "ABSStrike", "ABSFire", "ABSIce", "ABSNature",
                        "ABSArcane", "ABSCorruption", "ABSLightning", "DMGSlash", "DMGThrust", "DMGStrike", "DMGFire", "DMGIce",
-                       "DMGNature", "DMGArcane", "DMGCorruption", "DMGLightning")
+                       "DMGNature", "DMGArcane", "DMGCorruption", "DMGLightning",
+                       # The values of the damage types that the status values read too (world/statuses.cpp: ABS and DMG of
+                       # each damage type of the combat tables; code review of stage 3.3b-S2a, finding F4).
+                       "ABSStandard", "ABSSiege", "ABSAcid", "DMGSiege", "DMGAcid")
 # The status tables of the supported build that do not have some of these columns (the creature tables of the game).
 STATUS_TABLE_DIFFERENCES = {
-    "StatusEffects_AI": frozenset({"ApplicationCooldown", "AllowAddIfDead", "ForceReplicateToRemotes"}),
-    "StatusEffects_AI_IsleOfNight": frozenset({"AllowAddIfDead", "ForceReplicateToRemotes"}),
+    "StatusEffects_AI": frozenset({"ApplicationCooldown", "AllowAddIfDead", "ForceReplicateToRemotes", "ABSAcid"}),
+    "StatusEffects_AI_IsleOfNight": frozenset({"AllowAddIfDead", "ForceReplicateToRemotes", "ABSAcid"}),
     "StatusEffects_Common_IsleOfNight": frozenset({"ForceReplicateToRemotes"}),
 }
 # The columns of a caster effect row that the backend reads (the event and the conditions of world/gear.cpp; finding F13):
@@ -126,6 +129,83 @@ CASTER_COLUMNS = ("AbilityID", "SelfApplyStatusEffect", "SelfApplyStatusEffectDu
                   "MyHealthPercent", "MyComparisonType", "MyManaPercent", "MyManaComparisonType", "MyStaminaPercent",
                   "MyStaminaComparisonType", "TargetVitalsCategory", "AttackerVitalsCategory", "TargetStatusEffectCategory",
                   "TargetStatusEffectComparison", "DontHaveStatusEffect", "HasGritActive", "TargetHasGritActive")
+# The other columns of the ability tables of the players in the supported build (each of the 27 tables has them; code
+# review of stage 3.3b-S2a, finding F4). The backend copies each cell of a caster row, and a value in a column whose rule it
+# does not evaluate disables the row (world/gear.cpp, Gear::conditions_pass): an absent column would give a row with a
+# condition (NumAroundMe, RemoteDamageTableRow) no condition. Each one must be in the source. The columns that only some
+# tables of the game have (AbilityTableTagsToTriggerOn, DamageTableTagsToTriggerOn, OnNotLegShot,
+# PostHitSlayerScriptCondition, Tags) are not required.
+CASTER_RULE_COLUMNS = ("AbilitiesOnCooldown", "AbilityCooldownComparisonType", "AbilityIdToCheckForTrackedHits",
+                       "AbilityList", "AbilityOnCooldownOptions", "AbilityTrigger", "AdjustPointsAccumulatorSelf",
+                       "AfterAction", "AfterSequence", "AllowSelfDamageForHitEvents", "ArmorPenetration",
+                       "AttachedTargetSpellIds", "Azoth", "BaseDamage", "BaseDamageReduction", "BlockDamage",
+                       "BlockDamageReduction", "CDRImmediatelyOptions", "CanBeUnapplied", "CanBlockRangedOverride",
+                       "CastSpell", "CheckOwnedStatusEffects", "CheckStatusEffectsOnTargetOwned",
+                       "ConsumableCooldownForReset", "ConsumableHealMod", "ConsumeTargetStatusEffectMult",
+                       "CooldownId", "CooldownTimer", "CritArmorPenetration", "CritChance", "CritDamage",
+                       "CritDamageReduction", "DamageCategory", "DamageIsMelee", "DamageIsRanged",
+                       "DamageTableRowOverride", "DamageTableStatusEffectOverride", "DamageTypes",
+                       "DisableApplyPerStatusEffectStack", "DisableCastSpellDurability", "DisableConsecutivePotency",
+                       "DisableScalePerTargetSEStack", "DismountReasons", "DistComparisonType", "DistFromDefender",
+                       "DmgPctToHealth", "DoNotUnequipSelfAppliedSE", "Duration", "ElementalArmor", "EnableCrit",
+                       "EnableHoldConditionIfTrackedSpellExistsOfType", "EnableTaunt", "EquipLoadCategory",
+                       "EquipWhenUnsheathed", "ExcludeFromGameModes", "FastTravelAzothCostMod",
+                       "FastTravelInnCooldownMod", "ForceShowNameTag", "ForceStatusEffectDamageTableRow",
+                       "ForceTakeStaminaDamage", "GatheringTradeskill", "GiveAzothPercentChance",
+                       "HeadshotArmorPenetration", "HeadshotDamage", "HealScalingValueMultiplier", "Health",
+                       "HealthDamageMitigation", "HealthDamageMitigation_Endvalue", "HealthPenaltyPerStackRemoved",
+                       "HitFromBehindArmorPenetration", "HitFromBehindDamage", "HitRateDmg", "HitRateDmgReduction",
+                       "HoldConditionButtonIcon", "IgnoreDisabledAttackTypes", "IgnoreResetConsecutiveOnDeath",
+                       "InAction", "InActionTime", "InSequenceTime", "IsConsumableIds", "IsGlobalAbility",
+                       "IsInCombatState", "IsNonCombatAbility", "IsNotConsumableIds", "IsNotInCombatState",
+                       "IsStackableAbility", "IsStackableDiminishingModifier", "IsStackableMax", "Knockback",
+                       "KnockbackReduction", "LimitOnHealedToFirstCast", "LinearlyScaleToDistance",
+                       "LoadedAmmoCount", "LoadedAmmoCountComparisonType", "Mana", "ManaRate", "MaxConsecutiveHits",
+                       "MaxHealth", "MaxHitCountMultiplier", "MaxMana", "MaxNumAroundMe", "MaxTrackedHitCounts",
+                       "ModifySelfApplyStatusEffectDuration", "MultiplyRemovedByPotency",
+                       "MyAfflictionComparisonType", "MyAfflictionPercent", "MyAfflictionType", "MyMarker",
+                       "MySequenceMarker", "NumAroundComparisonType", "NumAroundMe", "NumConsecutiveHits",
+                       "NumFreeCooldownsPerUse", "NumStatusEffectStacksToRemove", "NumStatusEffectsToRemove",
+                       "NumStatusEffectsToTransfer", "NumSuccessfulHits", "NumTargetStatusEffectsToRemove",
+                       "NumberOfHitsComparisonType", "NumberOfTrackedHits", "OnAfflictionsUpdated",
+                       "OnAttachedSpellTargetDied", "OnBlockBreak", "OnBlockedHit", "OnBlockedHitTaken",
+                       "OnContributedKill", "OnCrit", "OnCritTaken", "OnDeath", "OnDeathsDoor", "OnDismount",
+                       "OnEquipStatusEffect", "OnEventConditionalActivationChance", "OnEventPassiveConditionsPass",
+                       "OnExecuted", "OnFatalDamageTaken", "OnGatheringComplete", "OnHasDied", "OnHeadShot",
+                       "OnHealed", "OnHealthChanged", "OnHitBehind", "OnHitTakenWhileInvulnerable",
+                       "OnInActionLongEnough", "OnKill", "OnLegShot", "OnManaChanged", "OnProjPassedThrough",
+                       "OnSelfDamage", "OnStatusEffectApplied", "OnStatusEffectRemoved", "OnTargetBlockBreak",
+                       "OnTargetSet", "OnTargetStatusEffectRemoved", "OnUsedConsumable", "OnWeaponSwap",
+                       "OnlyChangeOwnedStatusEffects", "OtherApplyStatusEffect", "OtherApplyStatusEffectDurations",
+                       "PerStatusEffectOnSelf", "PerStatusEffectOnSelfMax", "PerStatusEffectOnTarget",
+                       "PerStatusEffectOnTargetMax", "PerStatusEffectStackOnSelf", "PerStatusEffectStackOnSelfMax",
+                       "PhysicalArmor", "PhysicalArmorMaxHealthMod", "PowerLevelOverride", "RangedAttackName",
+                       "RangedAttackNameOverride", "RefundAmmoPercentChance", "RefundConsumablePercentChance",
+                       "RemoteDamageTableRow", "RemoveStatusEffects", "RemoveTargetStatusEffectCats",
+                       "RemoveTargetStatusEffectsList", "RemoveTargetStatusEffectsNumStacks", "RepairDustYieldMod",
+                       "RequireReaction", "RequiredAbilityId", "RequiredEquipment", "RequiredEquippedAbilityId",
+                       "ResetConsecutiveOnSuccess", "ResetConsumableCooldowns", "ResetCooldownTimers",
+                       "ResetTrackedOnSuccess", "ScalingConstitution", "ScalingDexterity", "ScalingIntelligence",
+                       "ScalingSpirit", "ScalingStrength", "SetHealthOnFatalDamageTaken", "SetMannequinTag",
+                       "SetMannequinTagStatus", "SetPotencyAsCount", "SlayerScriptCondition", "Sound",
+                       "StaggerDamage", "StaggerDamageReduction", "Stamina", "StatusEffect",
+                       "StatusEffectBeingApplied", "StatusEffectBeingRemoved", "StatusEffectCategories",
+                       "StatusEffectCategoriesList", "StatusEffectCategoryBeingRemoved",
+                       "StatusEffectCategoryToTransfer", "StatusEffectComparison",
+                       "StatusEffectDamageTableIdForRowOverride", "StatusEffectDamageTableRowOverride",
+                       "StatusEffectDurationCats", "StatusEffectDurationMod", "StatusEffectDurationMult",
+                       "StatusEffectDurationReduction", "StatusEffectIcon", "StatusEffectStackSize",
+                       "StatusEffectsList", "SupportsSmartcast", "TargetCollisionFilters",
+                       "TargetCooldownsExtensionModifier", "TargetCooldownsExtensionMultiplier", "TargetMarker",
+                       "TargetSequenceMarker", "TargetStatusEffect", "TargetStatusEffectDurationCats",
+                       "TargetStatusEffectDurationList", "TargetStatusEffectDurationMod",
+                       "TargetStatusEffectDurationMult", "TargetStatusEffectPotency",
+                       "TargetStatusEffectPotencyCats", "TargetStatusEffectPotencyComparison",
+                       "TargetStatusEffectPotencyList", "TargetStatusEffectPotencyMod",
+                       "TargetStatusEffectPotencyMult", "TargetStatusEffectStackSize", "TelegraphCountOffset",
+                       "TelegraphStatusEffect", "ThreatDamage", "ToolDurabilityLossMod", "TrackHitCount",
+                       "UISpellForManaCheck", "UnlockDefault", "UseDefenderWeaponOnApplyOtherSE",
+                       "UseMinAttackInfoForSelfAppliedSE", "UseQuickslotItem", "WeaponAccuracy", "WeaponTag")
 # The OnEndStatusEffect links of the game that name no status row (finding F8 of the review of stage 3.3b-S1): only these
 # may stay; the backend accepts the same list (gamedata/ability_data.cpp, kMissingEndLinks).
 END_LINKS_NOT_IN_GAME = frozenset({("ai_icedragon_empoweringlink_stack_apply", "ai_icedragon_empoweringlink_stack")})
@@ -377,7 +457,7 @@ def build_data(sources: Sources) -> dict:
     for sheet in sheets[ABILITY_TYPE]:
         if not any(column in sheet.columns for column in COST_COLUMNS):
             continue
-        require(sheet, CASTER_COLUMNS)
+        require(sheet, CASTER_COLUMNS + CASTER_RULE_COLUMNS)
         for row in range(sheet.row_count):
             identifier = str(sheet.cell(row, "AbilityID")).strip()
             if identifier and str(sheet.source(row, "SelfApplyStatusEffect")).strip():

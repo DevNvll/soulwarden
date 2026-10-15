@@ -69,6 +69,10 @@ void Health::creature_hit(Entity& creature, const gamedata::CreatureContact& con
                result.died ? ": dead" : "");
     // The effects that end after hits, and the heart rune charge of the hit (stage 1.3b).
     m_world.gear().on_hit_taken(target, contact);
+    // A counter of an ability (stage 3.3b-S4, Riposte): the window took the hit (its absorption), and the counter starts.
+    if (!result.died) {
+        m_world.abilities().countered(target, creature, contact.reach + behavior_rules::kContactTolerance);
+    }
     DamageTaken taken;
     taken.source = creature.id;
     taken.from = creature.position;

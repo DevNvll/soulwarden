@@ -62,9 +62,13 @@ float PositionTrack::seconds_from(const Sample& sample, std::uint16_t input, Wor
 PositionVerdict PositionTrack::judge(const PositionReport& report,
                                      const state::WorldPosition& known,
                                      WorldClock::time_point now,
-                                     float speedFactor) {
+                                     float speedFactor,
+                                     MotionAllowance allowance) {
     using namespace position_limits;
     const float windowSpeed = kWindowSpeed * std::max(speedFactor, 1.0F);
+    // The envelope of a dash of an accepted cast (stage 3.3b-S4): more distance in the window, and a faster step.
+    const float extra = std::isfinite(allowance.distance) ? std::max(allowance.distance, 0.0F) : 0.0F;
+    const float peakSpeed = std::isfinite(allowance.peak) ? std::max(kPeakSpeed, allowance.peak) : kPeakSpeed;
     // 1. Sequence.
     if (m_hasInput) {
         const auto ahead = static_cast<std::uint16_t>(report.input - m_lastInput);
@@ -127,7 +131,7 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
         const Sample& last = m_window.back();
         const float step = horizontal_distance(position, last.position);
         const float stepSeconds = seconds_from(last, report.input, now);
-        if (step > kPeakSpeed * stepSeconds) {
+        if (step > peakSpeed * stepSeconds) {
             return counted(PositionVerdict::tooFast);
         }
         const float rise = position.z - last.position.z;
@@ -145,7 +149,7 @@ PositionVerdict PositionTrack::judge(const PositionReport& report,
         }
         const float distance = horizontal_distance(position, start->position);
         const float windowSeconds = seconds_from(*start, report.input, now);
-        if (distance > windowSpeed * windowSeconds + kWindowMargin) {
+        if (distance > windowSpeed * windowSeconds + kWindowMargin + extra) {
             return counted(PositionVerdict::tooFast);
         }
         // The height over more than one report. The rises of the accepted reports have one
@@ -235,17 +239,28 @@ void PositionTrack::set_client_speed(float factor, WorldClock::time_point now) {
     if (factor == m_clientSpeed) {
         return;
     }
-    // The value before the change still counts for one window: the larger of the two (client_speed).
-    m_previousSpeed = std::max(m_clientSpeed, now - m_speedChanged < position_limits::kWindow ? m_previousSpeed : m_clientSpeed);
+    // The value before the change still counts for one window from this change, and for no longer: each older value keeps
+    // its own end (code review of stage 3.3b-S2a, finding F1: a sequence of lower tables kept an old haste for all time).
+    while (!m_previousSpeeds.empty() && m_previousSpeeds.front().second <= now) {
+        m_previousSpeeds.pop_front();
+    }
+    const WorldClock::time_point ends = now + position_limits::kWindow;
+    // An older value that is not larger than this one ends before it: it adds nothing to the limit.
+    while (!m_previousSpeeds.empty() && m_previousSpeeds.back().first <= m_clientSpeed) {
+        m_previousSpeeds.pop_back();
+    }
+    m_previousSpeeds.emplace_back(m_clientSpeed, ends);
     m_clientSpeed = factor;
-    m_speedChanged = now;
 }
 
 float PositionTrack::client_speed(WorldClock::time_point now) const {
-    if (now - m_speedChanged < position_limits::kWindow) {
-        return std::max(m_clientSpeed, m_previousSpeed);
+    float factor = m_clientSpeed;
+    for (const auto& [value, ends] : m_previousSpeeds) {
+        if (now < ends) {
+            factor = std::max(factor, value);
+        }
     }
-    return m_clientSpeed;
+    return factor;
 }
 
 } // namespace soulwarden::backend::world

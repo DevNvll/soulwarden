@@ -522,6 +522,13 @@ public:
      *         position: a client, a system, and a development command.
      */
     bool set_position(EntityId id, const state::WorldPosition& position, bool moving);
+    /**
+     * A system moves a character that no client plays (stage 3.3b-S4: the dash of an ability of a remote test character):
+     * the exact position, the position index, and the save rule. A character that a client plays is not moved here: its
+     * position is the position that its client reports. Its observers get the position only from the state `motion`.
+     * @return False for a character with a session, a dead character, or a position that is not a position of the world.
+     */
+    bool move_character(Entity& entity, const state::WorldPosition& position);
 
     /**
      * Marks a component state of an entity as changed: each observer gets the state again.

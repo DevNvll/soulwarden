@@ -227,6 +227,14 @@ bool SpellData::set(SpellTables tables) {
                 error = name + " has a delayed event whose delay is not a number";
             }
         }
+        // Each DelayedEvent slot has its event row (code review of stage 3.3b-S2a, finding F3): with no row the record has
+        // no delayed event state for the slot, a late observer then starts the full delay of the slice at its entry, and
+        // the end of the slice could be lost.
+        for (const SpellSlot& slot : slice.slots) {
+            if (error.empty() && slot.type == kDelayedEventStateType && eventSlots.count(slot.slot) == 0) {
+                error = name + " has a DelayedEvent slot with no delayed event";
+            }
+        }
     }
     std::unordered_map<std::string, std::size_t> spells;
     for (const auto& [id, index] : tables.spells) {

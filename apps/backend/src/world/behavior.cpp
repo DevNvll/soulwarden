@@ -110,6 +110,13 @@ bool Behavior::move_anchor(Entity& creature, const state::WorldPosition& anchor)
     return true;
 }
 
+void Behavior::moved_by_force(Entity& creature) {
+    m_world.navigation().forget(creature.id);
+    if (creature.creature.mind.mode == CreatureMode::fight) {
+        record_trail(creature);
+    }
+}
+
 Entity* Behavior::fightable(EntityId id) {
     Entity* target = id != 0 ? m_world.find(id) : nullptr;
     if (target == nullptr || target->kind != EntityKind::player || target->life.dead || ignores(target->characterId)) {
@@ -469,8 +476,9 @@ void Behavior::think(Entity& creature, float seconds) {
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const WorldClock::time_point now = m_world.clock().now();
     // A stun or a knockdown of an ability holds the creature: no movement and no attack (stage
-    // 3.3a). It keeps its target.
-    if (creature.creature.held(now)) {
+    // 3.3a). It keeps its target. A forced movement (a pull, a push; stage 3.3b-S4) moves it: the
+    // behavior waits for its end.
+    if (creature.creature.held(now) || creature.creature.forced) {
         return;
     }
     if (mind.attack) {
@@ -644,6 +652,9 @@ void Behavior::go_home(Entity& creature, float seconds) {
             return; // The attack that plays ends first.
         }
         mind.attack.reset();
+    }
+    if (creature.creature.forced) {
+        return; // A forced movement that started before the way back ends first (the movement system ends it).
     }
     // At the anchor: near it in the plane and on its floor. A creature below or above its anchor
     // on a different floor goes there on its way, and it does not jump while a session observes
@@ -866,7 +877,7 @@ void Behavior::roam(Entity& creature, float seconds) {
     CreatureMind& mind = creature.creature.mind;
     const WorldClock::time_point now = m_world.clock().now();
     // An effect of an ability that holds the creature or keeps it at its place stops its walk too.
-    if (now < mind.roamWaitUntil || creature.creature.held(now) || creature.creature.rooted(now)) {
+    if (now < mind.roamWaitUntil || creature.creature.held(now) || creature.creature.rooted(now) || creature.creature.forced) {
         return;
     }
     if (!mind.roamGoal && !next_roam_goal(creature)) {

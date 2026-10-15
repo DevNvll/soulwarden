@@ -190,7 +190,7 @@ below is the layout after the port.
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
-| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a done | |
+| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4 done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
@@ -244,7 +244,7 @@ stage with a letter is a part of the system with that number.
 | 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | done |
 | 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | done |
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
-| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts. Part S1 (the status effects of a player) and part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status) are done; the parts S2b to S6 (the other spell entities, projectiles, the pull, critical hits, the heals of an ability, the other weapons) come next | 1.3b | S1, S2a done |
+| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts. Part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), and part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte) are done; the parts S2b, S3, S5, S6 (the other spell entities, projectiles, critical hits, the heals of an ability, the other weapons) come next | 1.3b | S1, S2a, S4 done |
 | 12 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
 | 13 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
 | 14 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
@@ -1117,6 +1117,36 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   caster; the brief asked for a cancel). Not in this stage: the pull (S4), the beacon, the
   pylon, and the traps (S2b), the projectiles (S3), the Ownership and TemporaryAffiliation states
   of a spell.
+- Stage 3.3b-S4, the forced movement (done, protocol notes 4.26, document
+  `docs/systems/forced-movement.md`; evidence `~/Games/soulwarden/work/evidence/abilities-motion/implement/`). The
+  live checks came first. L7-A: the client does not move a creature of the server by the impact of a hit (it plays the
+  reaction, and the name plate stays). L7-B and L7-C: the client moves its own character in the dash of Charge (13.77 m
+  in 1 s, 14.73 m with the swing, a step of 0.602 m at most), and the position check of a run refused 7 reports of one
+  dash. L7-D and L8: the numbers of the action layer of the client (rest 30/1080, the dash 7/59, the swing 7/2312, the
+  Riposte loop 7/3324); the counter action Ability_Rapier_Riposte_Out has the mark ServerStarted (client code
+  0x2A66E50), and its numbers are not known. The pull and the push of the client (`ReactionMotion`, client code
+  0x48A0D30 and 0x488B8F0: a travel with a decay, or a constant speed to or from the point of the damage) are the rule
+  of the server: a new part of the creature system (`world/forced_motion.h`) moves a creature by the impact of the
+  damage row of a hit (the new member `impacts` of `combat-tables.json`, 234 rows) in steps of 50 ms on the line of the
+  navigation (`Navigation::slide`: a wall or a drop stops it), not a creature on its way back; the behavior waits and
+  then searches its path from the new place. The pull of Maelstrom (1.5 m, 2 m), the pull of the vortex (7 m/s to the
+  center, the child entity VortexPull of the slice), its burst, Path of Destiny, Shockwave, Charge, and the basic
+  attacks push or pull with the values of the data. The dash of the caster: the server gives no second displacement,
+  and the position check accepts the dash in the envelope of the accepted cast (14.73 m x 1.3, 18.07 m/s x 1.3); the
+  observers get the state `motion` with the place, the rotation, and the actions of the dash. Riposte: the window
+  Rapier_Riposte_Timer at the press; a creature hit in the window starts the counter of the server (one hit of
+  1H_Rapier_Riposte_Stun at 0.433 s, its stun, its push). The stage also corrected the five findings of the review of
+  stage 3.3b-S2a (cases RG1 to RG5; each case fails on the tree of stage 3.3b-S2a): an old haste allowance ends one
+  window after its change, a file with no speed limits gives the limits of the client (1.5), the spell loader refuses
+  a delayed slot with no event, the ability tool requires the rule columns of a caster row and the ABS columns of each
+  damage type, and the spell tool refuses a delay that is not a 32-bit float. Test cases FM1 to FM8 (FM7: two
+  sessions; FM8: the load of 200 movements in 4,200 creatures, with a time limit), CM1 and CM2 (CM2: the observer of a
+  dash of the server), RC1 and RC2 (RC2: two sessions), RG1 to RG5. Live: Maelstrom on two wolves, Gravity Well on a group (the pull, then the burst), the push of
+  Path of Destiny, a pull that a pillar stops, the dash of Charge (own and observed), and the counter of Riposte. Open:
+  the client animation of the counter (the numbers of the action Ability_Rapier_Riposte_Out are not known; the rapier
+  part), the action Pushable and the PushBackScale of an elite, the part Z of an impact, the push of a character. Not in
+  this stage: the critical hits and passive events (S5), the heals (S6), the projectiles (S3), the attached and
+  persistent spells (S2b), the other abilities of the rapier and the other weapons.
 
 ### 3.4 Creatures: spawn, behavior, navigation
 

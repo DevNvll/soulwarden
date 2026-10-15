@@ -22,7 +22,10 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
   `NavStep::partial`: only for a fight). `footing(position)` says if a creature walks, and
   `sees(from, to)` if a solid is between two places (cell by cell on the line, with the
   exact heights of the line in each cell). Do not
-  compute a place of a creature in a different function. With navigation data the path is
+  compute a place of a creature in a different function. The one other function is
+  `slide(from, to)` (stage 3.3b-S4, [Forced movement](forced-movement.md)): the straight line of a pull or a push on the
+  free floors, cell by cell with the rule of a step, to the last place before a wall, a drop, or a cell with no free
+  floor; it keeps no path. With navigation data the path is
   a path of the data; with no data of a place (no folder, a folder that is not correct, a
   region with no file, a tile that is not correct) the two functions have the rule of stage
   3.4b for that place (the straight line on the terrain of the folder `heights`, and

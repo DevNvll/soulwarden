@@ -180,6 +180,17 @@ inline constexpr std::chrono::milliseconds kSequenceRestart{2000};
 } // namespace position_limits
 
 /**
+ * The envelope of a dash or a leap of an accepted cast (stage 3.3b-S4, world/abilities.h: CasterMotion): the client moves
+ * its character itself with the root motion of the action, faster than a run. While the envelope runs, the window check
+ * accepts `distance` meters more, and the check of one step accepts the speed `peak` (meters in a second) when it is larger
+ * than kPeakSpeed. Zero: no envelope.
+ */
+struct MotionAllowance {
+    float distance{0.0F};
+    float peak{0.0F};
+};
+
+/**
  * The values of one client for the check of its position reports. A session owns one, and it
  * gives it to the world with each report.
  */
@@ -210,11 +221,14 @@ public:
      *        part of MoveSpeedMod and SprintSpeedMod, with the limits of their categories). A factor above 1 makes the
      *        window speed (kWindowSpeed) larger: a haste of a heart rune moves the client faster. A slow does not
      *        make the limit smaller (the limit is a largest speed).
+     * @param allowance The envelope of the movement of an accepted cast (stage 3.3b-S4): one time more distance in the
+     *        window, and a larger speed of a step.
      */
     [[nodiscard]] PositionVerdict judge(const PositionReport& report,
                                         const state::WorldPosition& known,
                                         WorldClock::time_point now,
-                                        float speedFactor = 1.0F);
+                                        float speedFactor = 1.0F,
+                                        MotionAllowance allowance = {});
 
     /**
      * The speed multiplier that the client of the session has: the larger value of the speed table (slot 43) that the
@@ -307,10 +321,14 @@ private:
     WorldClock::time_point m_clientStart{};
     std::array<std::uint64_t, kPositionVerdictCount> m_counts{};
     Largest m_largest;
-    /** The speed multiplier of the client (set_client_speed), the value before it, and the time of the change. */
+    /** The speed multiplier of the client (set_client_speed). */
     float m_clientSpeed{1.0F};
-    float m_previousSpeed{1.0F};
-    WorldClock::time_point m_speedChanged{};
+    /**
+     * The values before it, each with its own end (its change plus kWindow; code review of stage 3.3b-S2a, finding F1): a
+     * later change does not move the end of an older value. A value is here only while it is larger than each newer one
+     * that ends later.
+     */
+    std::deque<std::pair<float, WorldClock::time_point>> m_previousSpeeds;
 };
 
 } // namespace soulwarden::backend::world

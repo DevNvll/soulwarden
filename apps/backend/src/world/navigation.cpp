@@ -858,6 +858,82 @@ bool Navigation::end_cell_free(std::int32_t cellX, std::int32_t cellY, float eye
            && (below->sightHigh == NavFloor::kSky || high <= base + static_cast<float>(below->sightHigh) / 4.0F + 0.25F);
 }
 
+Slide Navigation::slide(const state::WorldPosition& from, const state::WorldPosition& to) {
+    Slide result;
+    result.position = from;
+    if (!usable(from) || !usable(to)) {
+        result.blocked = true;
+        return result;
+    }
+    const float way = horizontal_distance(from, to);
+    if (!(way >= 1.0e-4F)) {
+        return result;
+    }
+    const float cell = m_agent.cell;
+    const std::int32_t tileX = floor_div(static_cast<std::int32_t>(std::floor(from.x / cell)), NavTile::kCells);
+    const std::int32_t tileY = floor_div(static_cast<std::int32_t>(std::floor(from.y / cell)), NavTile::kCells);
+    const auto on_terrain = [&]() {
+        const std::optional<float> ground = m_terrain != nullptr ? m_terrain->height(to.x, to.y) : std::nullopt;
+        if (!ground) {
+            result.blocked = true;
+            return result;
+        }
+        result.position = {to.x, to.y, *ground};
+        return result;
+    };
+    if (!has_data() || !m_data->has_region(tileX, tileY)) {
+        return on_terrain();
+    }
+    if (!tiles_ready(from, to, 0.0F)) {
+        ++m_counts.waits;
+        result.waiting = true;
+        return result;
+    }
+    const auto held = m_tiles.find(tile_key(tileX, tileY));
+    if (held != m_tiles.end() && held->second.state == TileState::missing) {
+        return on_terrain(); // A tile that is not correct: the rule of the terrain.
+    }
+    const std::optional<Place> start = snap(from, navigation_rules::kFootingReach, navigation_rules::kSnapHeight);
+    if (!start) {
+        result.blocked = true; // No free floor at the place of the creature: it does not move.
+        return result;
+    }
+    // Samples of half a cell on the line: each new cell is a step from the cell before it.
+    Place at = *start;
+    float reached = 0.0F;
+    const auto samples = static_cast<std::int32_t>(std::ceil(way / (cell * 0.5F)));
+    for (std::int32_t index = 1; index <= samples; ++index) {
+        const float part = std::min(static_cast<float>(index) * cell * 0.5F / way, 1.0F);
+        const float x = from.x + (to.x - from.x) * part;
+        const float y = from.y + (to.y - from.y) * part;
+        const auto cellX = static_cast<std::int32_t>(std::floor(x / cell));
+        const auto cellY = static_cast<std::int32_t>(std::floor(y / cell));
+        if (cellX == at.x && cellY == at.y) {
+            reached = part;
+            continue;
+        }
+        Place next;
+        if (cellX != at.x && cellY != at.y) {
+            // A diagonal step: the two cells beside it must have a floor too (no cut of the corner of a wall).
+            Place side;
+            if (!step_to(cellX, at.y, at.height, side) || !step_to(at.x, cellY, at.height, side)) {
+                result.blocked = true;
+                break;
+            }
+        }
+        if (!step_to(cellX, cellY, at.height, next)) {
+            result.blocked = true; // A wall (no floor of the cell), or a drop (a floor more than a step lower).
+            break;
+        }
+        at = next;
+        reached = part;
+    }
+    const float x = from.x + (to.x - from.x) * reached;
+    const float y = from.y + (to.y - from.y) * reached;
+    result.position = {x, y, floor_at(x, y, at.height, true).value_or(at.height)};
+    return result;
+}
+
 // ---- the steps of a creature -----------------------------------------------------------------
 
 NavStep Navigation::terrain_step(const state::WorldPosition& from, const state::WorldPosition& goal, float distance) const {

@@ -614,6 +614,14 @@ bool World::set_position(EntityId id, const state::WorldPosition& position, bool
     return true;
 }
 
+bool World::move_character(Entity& entity, const state::WorldPosition& position) {
+    if (entity.kind != EntityKind::player || entity.owner != 0 || entity.life.dead || !valid_position(position)) {
+        return false;
+    }
+    place(entity, position, false, true);
+    return true;
+}
+
 TravelResult World::travel(const std::string& characterId, const state::WorldPosition& position, TravelScreen screen) {
     TravelResult result;
     Entity* entity = find_character(characterId);
@@ -713,7 +721,10 @@ PositionVerdict World::report_position(SessionId session, const PositionReport& 
     // The speed multiplier that the client of the session has (the speed table of slot 43 that the session sent; code
     // review of stage 3.3b-S1, finding F1): a haste makes the limit of the window larger only when the client runs faster.
     const float speedFactor = track.client_speed(m_clock.now());
-    const PositionVerdict verdict = track.judge(report, entity->position, m_clock.now(), speedFactor);
+    // The envelope of a dash of an accepted cast (stage 3.3b-S4): the client moves its character with the root motion of
+    // the action, one time, and the check accepts it in that envelope.
+    const MotionAllowance allowance = m_abilities.motion_allowance(*entity, m_clock.now());
+    const PositionVerdict verdict = track.judge(report, entity->position, m_clock.now(), speedFactor, allowance);
     if (verdict != PositionVerdict::accepted) {
         return verdict; // The entity, the index, and the row do not change.
     }
@@ -729,6 +740,8 @@ PositionVerdict World::report_position(SessionId session, const PositionReport& 
         return verdict;
     }
     place(*entity, position, false, moved >= kReportMoveDistance);
+    // In the movement of a cast (a dash), the observers of the character get its position (stage 3.3b-S4).
+    m_abilities.caster_moved(*entity);
     return verdict;
 }
 

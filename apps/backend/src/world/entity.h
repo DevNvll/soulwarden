@@ -91,6 +91,11 @@ enum class ComponentKey {
     spell,
     /** The delayed event states of a spell entity: the time that is left for each event of its slice. */
     delayedEvents,
+    /**
+     * The movement of a character for its observers (stage 3.3b-S4): its position, its direction, and its action while it
+     * makes the dash of an ability (Charge). The owner does not get it: its client moves its character itself.
+     */
+    motion,
 };
 
 /**
@@ -424,6 +429,40 @@ struct CreatureEffect {
 };
 
 /**
+ * The forced movement of a creature by the impact of a hit (stage 3.3b-S4, world/forced_motion.h): a pull or a push
+ * with the values of the damage row (gamedata::DamageImpact), on the world clock. The creature system (its part
+ * ForcedMotion) starts it, moves the creature at each step, and ends it.
+ */
+struct ForcedMove {
+    /** The damage row of the hit (for the log and the tools). */
+    std::string row;
+    /** The start of the movement and its end at the latest (the length of the reaction), on the world clock. */
+    WorldClock::time_point started{};
+    WorldClock::time_point ends{};
+    /** The time of the last step. */
+    WorldClock::time_point stepped{};
+    /** The place of the creature at the start. */
+    state::WorldPosition start;
+    /**
+     * Mode of a decay rate above 0 (client code at image RVA 0x48A0D30): the travel at the time t is
+     * `distance` * (1 - decay^(30 t)) in the unit direction `direction` (east, north) from `start`.
+     */
+    std::array<float, 2> direction{};
+    float distance{0.0F};
+    float decay{0.0F};
+    /**
+     * Mode of a decay rate of 0 or less (client code at image RVA 0x488B8F0): `speed` meters in each second to the point
+     * (`toPoint`, a pull) or away from it (a push); a pull stops 0.1 m from the point.
+     */
+    bool constantSpeed{false};
+    state::WorldPosition point;
+    float speed{0.0F};
+    bool away{false};
+    /** The travel that the movement made so far (meters, on the line of the data: a wall can make it shorter). */
+    float travelled{0.0F};
+};
+
+/**
  * The values of a creature. The creature system sets them (world/creatures.h). The health of a
  * creature is in Entity::vitals, and its position in Entity::position.
  */
@@ -495,6 +534,11 @@ struct Creature {
      * creature does not move and does not attack. No value: none.
      */
     std::optional<WorldClock::time_point> knockedUntil;
+    /**
+     * The forced movement of the creature (stage 3.3b-S4): a pull or a push of a hit. While it runs, the behavior does not
+     * move the creature and starts no attack. No value: none.
+     */
+    std::optional<ForcedMove> forced;
 
     /** @return True while an effect holds the creature: no movement and no attack (a stun, a knockdown). */
     [[nodiscard]] bool held(WorldClock::time_point now) const {
@@ -801,6 +845,11 @@ struct Entity {
     Vitals vitals;
     MovementPermissions movement;
     ActionState action;
+    /**
+     * The direction of the body of a character for its observers (degrees from north, to the west; stage 3.3b-S4: the
+     * direction of a dash). No value: the observer view has the direction north (the rotation of the record of stage 0.6b).
+     */
+    std::optional<float> facing;
     Progression progression;
     Attributes attributes;
     SkillSet skills;

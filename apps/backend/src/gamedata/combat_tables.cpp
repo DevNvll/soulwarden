@@ -114,6 +114,19 @@ bool CombatTables::check(const CombatData& data, std::string& error) {
             || !std::isfinite(row.hitCharge) || row.hitCharge < 0.0F) {
             return fail("a damage row is not valid");
         }
+        if (row.impact) {
+            // An impact distance of more than 100 m, or a decay rate above 1 (a travel that grows), is not a value of the game.
+            const DamageImpact& impact = *row.impact;
+            for (const float value : {impact.distance[0], impact.distance[1], impact.distance[2], impact.creatureDistance[0],
+                                      impact.creatureDistance[1], impact.creatureDistance[2]}) {
+                if (!std::isfinite(value) || std::fabs(value) > 100.0F) {
+                    return fail(("the impact of the damage row " + row.id + " is not valid").c_str());
+                }
+            }
+            if (!std::isfinite(impact.decay) || impact.decay > 1.0F || !std::isfinite(impact.creatureDecay) || impact.creatureDecay > 1.0F) {
+                return fail(("the decay rate of the impact of the damage row " + row.id + " is not valid").c_str());
+            }
+        }
     }
     for (const WeaponRow& weapon : data.weapons) {
         if (!std::isfinite(weapon.baseDamage) || weapon.baseDamage < 0.0F || !std::isfinite(weapon.gearScoreRate)
@@ -385,6 +398,32 @@ bool CombatTables::load(const std::string& path) {
                 return fail("the armor values of the item " + item + " do not have the form of the tool");
             }
             data.armor.emplace(lower(item), row);
+        }
+    }
+    // The impacts of the damage rows (stage 3.3b-S4): [[id, x, y, z, decay, aiX, aiY, aiZ, aiDecay, fromAttacker], ...]. A
+    // file of a tool from before the stage has none: a hit then moves no target.
+    if (document.contains("impacts")) {
+        if (!document["impacts"].is_array()) {
+            return fail("the impacts are not a list");
+        }
+        for (const json& entry : document["impacts"]) {
+            DamageImpact impact;
+            if (!entry.is_array() || entry.size() != 10 || !entry[0].is_string() || !entry[9].is_boolean()
+                || !read_float(entry[1], impact.distance[0]) || !read_float(entry[2], impact.distance[1])
+                || !read_float(entry[3], impact.distance[2]) || !read_float(entry[4], impact.decay)
+                || !read_float(entry[5], impact.creatureDistance[0]) || !read_float(entry[6], impact.creatureDistance[1])
+                || !read_float(entry[7], impact.creatureDistance[2]) || !read_float(entry[8], impact.creatureDecay)) {
+                return fail("an impact does not have the form of the tool");
+            }
+            impact.fromAttacker = entry[9].get<bool>();
+            const auto row = rowIndex.find(lower(entry[0].get<std::string>()));
+            if (row == rowIndex.end()) {
+                return fail("the impact of " + entry[0].get<std::string>() + " names a damage row that the file does not have");
+            }
+            if (data.damageRows[row->second].impact) {
+                return fail("the damage row " + entry[0].get<std::string>() + " has two impacts");
+            }
+            data.damageRows[row->second].impact = impact;
         }
     }
     // The damage of a level difference: [[difference, part of the damage], ...].

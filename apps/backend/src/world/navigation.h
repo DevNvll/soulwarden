@@ -111,6 +111,16 @@ struct NavStep {
     bool partial{false};
 };
 
+/** What a forced movement of a creature gave (Navigation::slide, stage 3.3b-S4). */
+struct Slide {
+    /** The place of the creature after the movement: the goal, or the last place of the line before a wall or a drop. */
+    state::WorldPosition position;
+    /** True: a wall, a drop, or a place with no floor stopped the movement before its goal. */
+    bool blocked{false};
+    /** True: the navigation data of the line is not there yet; the creature does not move in this step. */
+    bool waiting{false};
+};
+
 /** If a creature at a place can walk. */
 enum class Footing {
     /** The data of the place is not there yet. */
@@ -216,6 +226,16 @@ public:
      */
     void take_back(EntityId mover);
 
+    /**
+     * A forced movement of a creature (stage 3.3b-S4: the pull or the push of a hit, world/forced_motion.h): the creature
+     * goes on the straight line from `from` to `to` on the free floors of the data, cell by cell, with the rule of a step
+     * of a path (the next floor is not more than one step higher or lower, and no corner of a wall is cut). A wall, a
+     * drop, or a cell with no free floor stops it at the last place of the line that it stands on. The creature keeps
+     * no path: this is not a step of a way. With no navigation data for the place: the line on the terrain heights, and
+     * nothing stops it (the rule of stage 3.4b). The world asks for the tiles of a line that it does not have
+     * (`Slide::waiting`).
+     */
+    [[nodiscard]] Slide slide(const state::WorldPosition& from, const state::WorldPosition& to);
     /** @return If a creature at a place can walk: it stands on a free floor of the data (or, with no data, on the terrain). */
     [[nodiscard]] Footing footing(const state::WorldPosition& position) const;
 

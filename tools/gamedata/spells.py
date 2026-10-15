@@ -52,6 +52,7 @@ Environment: SOULWARDEN_GAME_DIR (default ~/Games/soulwarden/game),
 from __future__ import annotations
 
 import json
+import math
 import os
 import struct
 import sys
@@ -114,6 +115,19 @@ def real_of(element) -> float:
     return struct.unpack(">f", element.value)[0]
 
 
+def required_real(element, what: str) -> float:
+    """@return The 32-bit float of a field that the tool needs (the delay of an event). A field with a different size, or
+    a value that is not finite, stops the tool (code review of stage 3.3b-S2a, finding F5): a delay of 0 would move the
+    burst of a spell to its start."""
+    if element is None or element.value is None or len(element.value) != 4:
+        size = "no value" if element is None or element.value is None else f"{len(element.value)} bytes"
+        raise Failure(f"{what} is not a 32-bit float ({size})")
+    value = struct.unpack(">f", element.value)[0]
+    if not math.isfinite(value):
+        raise Failure(f"{what} is not a finite number")
+    return value
+
+
 def deep(element, wanted: int):
     """@return The first element below `element` (not itself) with this field name."""
     for child in walk(element):
@@ -169,7 +183,8 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list) -> dict:
                         target = next((id_value(child) for child in walk(reference) if child is not reference and id_value(child) is not None), None)
                     if delay is None or event is None or target is None:
                         raise Failure(f"{path}: a delayed event of slot {slot} has no delay or no target")
-                    events.append([slot, round(real_of(delay), 4), number_of(deep(event, EVENT_TYPE_FIELD)), target])
+                    seconds = required_real(delay, f"{path}: the delay of the delayed event of slot {slot}")
+                    events.append([slot, round(seconds, 4), number_of(deep(event, EVENT_TYPE_FIELD)), target])
             entities[entity_id] = entry
     roots_found = [identifier for identifier, entry in entities.items() if entry["parent"] == NO_ENTITY]
     if not roots_found:

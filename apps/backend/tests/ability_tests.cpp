@@ -206,6 +206,8 @@ gamedata::CombatData ability_combat() {
     }
     row("GreatAxe_GravityWell", 1, 0.25F);
     row("GreatAxe_GravityWell_Burst", 3, 1.0F);
+    // The pull row of the vortex (stage 3.3b-S4): no damage. With no impact here, the cases of stage 3.3a move no creature.
+    row("GreatAxe_GravityWell_Vortex", 3, 0.0F);
     row("Warhammer_Damage_WreckingBall", 2, 0.9F);
     row("Warhammer_Damage_WreckingBall_Push", 2, 0.9F);
     row("Warhammer_Damage_Shockwave", 2, 0.6F);

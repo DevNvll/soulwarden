@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -389,6 +390,15 @@ int main(int argc, char** argv) {
             log::write("backend: armor values of %zu items, and %zu level differences with a damage value",
                        combatTables.data().armor.size(),
                        combatTables.data().levelDamage.size());
+        }
+        const std::size_t impacts = static_cast<std::size_t>(
+            std::count_if(combatTables.data().damageRows.begin(), combatTables.data().damageRows.end(),
+                          [](const gamedata::DamageRow& row) { return row.impact.has_value(); }));
+        if (impacts == 0) {
+            log::write("backend: the combat tables have no impacts (a file of a tool from before stage 3.3b-S4): a hit "
+                       "moves no creature. Make the file again with tools/gamedata/combat.sh");
+        } else {
+            log::write("backend: %zu damage rows with an impact (the pull and the push of a hit)", impacts);
         }
     } else {
         log::write("backend: no combat tables at %s (%s): an attack of a player on a creature has no effect. Make the "
