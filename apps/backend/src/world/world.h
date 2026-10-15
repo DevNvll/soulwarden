@@ -36,6 +36,7 @@
 #include "world/inventory.h"
 #include "world/load_meter.h"
 #include "world/navigation.h"
+#include "world/ownership.h"
 #include "world/position_index.h"
 #include "world/position_report.h"
 #include "world/progress.h"
@@ -461,6 +462,8 @@ public:
     [[nodiscard]] Entity* find(EntityId id);
     /** @return The entity of a character, or null. It never gives a creature. */
     [[nodiscard]] Entity* find_character(const std::string& characterId);
+    /** @return The entities of the characters of an account that are in the world (stage 1.1b: a grant of the account). */
+    [[nodiscard]] std::vector<Entity*> characters_of_account(const std::string& personaId);
     /** @return The entity that the session owns, or null. */
     [[nodiscard]] Entity* entity_of(SessionId session);
     [[nodiscard]] const std::map<EntityId, Entity>& entities() const {
@@ -648,6 +651,10 @@ public:
     [[nodiscard]] Skills& skills() {
         return m_skills;
     }
+    /** @return The ownership system (stage 1.1b): the entitlements of each account and the achievements of each character. */
+    [[nodiscard]] Ownership& ownership() {
+        return m_ownership;
+    }
     /** @return The creature system: the creatures of the world and the spawn points. */
     [[nodiscard]] Creatures& creatures() {
         return m_creatures;
@@ -777,6 +784,7 @@ private:
     Inventory m_inventory;
     Progress m_progress;
     Skills m_skills;
+    Ownership m_ownership;
     Navigation m_navigation;
     Creatures m_creatures;
     Combat m_combat;

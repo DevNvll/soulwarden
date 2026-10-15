@@ -1,0 +1,96 @@
+#pragma once
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "gamedata/progression_tables.h"
+#include "state/store.h"
+#include "world/entity.h"
+
+// The ownership system (stage 1.1b): the entitlements of each account and the achievements of each character that the
+// DLC gives.
+//
+// Decision of the user (2026-10-15): "i want the full game with dlc. for any player, auto unlock the dlc". The grant
+// policy of this backend, with no purchase and no setting:
+// - Each account owns each entitlement of the list of the game data (ProgressionTables::entitlements): the expansion
+//   Rise of the Angry Earth (Ent_Xpack_RiseOfTheAngryEarth_Owner) and the DLC packs of Steam with the entitlements that
+//   they give (research dlc-entitlements.md, Q1).
+// - Each character owns the achievement of each entitlement of its account that names one (the column AchievementId of
+//   the entitlement table: Expansion_2023_Unlock). The expansion check of the client reads this achievement, not the
+//   entitlement of the account (image RVA 0x684B340, live check L1 of stage 1.1b).
+// - The reward of an entitlement of the type InventoryItem (the amulet of a DLC pack) comes one time to each character,
+//   through the inventory system: the row of `entitlement_rewards` and the item rows are one transaction.
+// The system writes the rows of the grant at the login of an account (the token route), at the entitlement sync of
+// the client, and before the first record of a character (its entity). A grant again changes nothing. The bits of a
+// grant are in the entity also when the database did not accept the rows (the policy has no condition).
+// The level, the experience, the points, and the skills of a character do not change: the expansion changes only the
+// limits (ProgressionTables::level_cap, rank_cap).
+//
+// Each function names an account or a character by its id (roadmap, rule MP-9). World thread only: a route gives the
+// world a task (World::call).
+
+namespace soulwarden::backend::world {
+
+class World;
+
+/** The ownership of a character, for a reader (a command). */
+struct OwnershipView {
+    /** The entitlement aliases of the account of the character (the rows, and the policy). */
+    std::vector<std::string> entitlements;
+    /** The achievement ids of the character. */
+    std::vector<std::string> achievements;
+    /** The entitlements whose reward the character got. */
+    std::vector<std::string> rewards;
+    /** The expansion that the character owns, or null (no expansion data). */
+    const gamedata::ExpansionRow* expansion{nullptr};
+    /** True: the values of the entity of the character. False: of the rows. */
+    bool inWorld{false};
+};
+
+class Ownership {
+public:
+    /** @param tables The progression tables (format 2 has the expansions and the entitlements), or null. */
+    Ownership(World& world, state::Store& store, const gamedata::ProgressionTables* tables);
+
+    /**
+     * Gives an account each entitlement of the policy that it does not have (rows of the store) and gives each entity of
+     * the account in the world the new bits.
+     * @param source A text for the rows ("login", "sync", "entry").
+     * @return False when the database did not accept the rows (the grant comes again at the next login or entry).
+     */
+    bool grant_account(const std::string& personaId, const char* source);
+
+    /**
+     * The entity of a character comes into the world: the grant of its account and of the character, the reward items
+     * that the character did not get, and the bits of the entity. Before its first record.
+     */
+    void entered(Entity& entity);
+
+    /** @return The entitlement aliases of an account: its rows and the entitlements of the policy. */
+    [[nodiscard]] std::vector<std::string> account_entitlements(const std::string& personaId);
+
+    /** @return The ownership of a character, or no value when the store does not have the character. */
+    [[nodiscard]] std::optional<OwnershipView> view(const std::string& characterId);
+
+private:
+    /** @return The entitlement aliases of the policy (each one of the game data), or none with no tables. */
+    [[nodiscard]] std::vector<std::string> policy_aliases() const;
+    /** @return The achievements that these entitlements give. */
+    [[nodiscard]] std::vector<std::string> achievements_of(const std::vector<std::string>& aliases) const;
+    /** Sets the bits of an entity from the aliases and the achievement ids; marks a state that changed. */
+    void set_bits(Entity& entity, const std::vector<std::string>& aliases, const std::vector<std::string>& achievements);
+    /** Gives a character the reward items of its entitlements that it did not get (one time each). */
+    void give_rewards(const Entity& entity, const std::vector<std::string>& aliases);
+
+    [[nodiscard]] const gamedata::ProgressionTables* tables() const {
+        return m_source != nullptr && m_source->loaded() ? m_source : nullptr;
+    }
+
+    World& m_world;
+    state::Store& m_store;
+    const gamedata::ProgressionTables* m_source;
+};
+
+} // namespace soulwarden::backend::world

@@ -80,7 +80,10 @@ protocol notes (section 6).
   degrees from the north to the east) and `end_spells` (no argument) are the commands of the
   spell entities ([Spell entities](spells.md)); the tool window has no button for them. Stage 3.3b-S3: the command
   `shoot` (arguments `yaw`, degrees from the north to the east, `pitch`, degrees up, and `heavy`, 0 or 1) is the shot of
-  the weapon in the hand ([Projectiles](projectiles.md)); the tool window has no button for it. The
+  the weapon in the hand ([Projectiles](projectiles.md)); the tool window has no button for it. Stage 1.1b: the state of a
+  character has the member `ownership` (the owned expansion with its limits, the entitlements of the account, the
+  achievements, the rewards; [DLC and entitlements](dlc-and-entitlements.md)); there is no command that gives or takes an
+  entitlement, and the tool window does not show the member yet. The
   perk roll of an item (`tools/world perkroll`) is a development
   route only. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn

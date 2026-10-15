@@ -107,9 +107,10 @@ tools/hx 'key 0x47'                     # the key of the heart rune (G)
   drink with no heal is a use that the server refused (the log line has the cause).
 - The client uses no item with a level requirement above the level of the character: it sends
   no bit (a level 27 character and a potion of level 55). FoodCONT5 needs the level 65.
-- A food of level 65 (FoodCONT5) is refused for the development character of level 60 (finding
-  F5). Use FoodCONT4 (level 35) for a test: `tools/world give NAME FoodCONT4 1`, then `tools/world
-  use NAME SLOT`.
+- A food of level 65 (FoodCONT5) is refused for a character below level 65 (finding F5). With the
+  expansion of stage 1.1b the level 65 is a level of a player: `tools/world level NAME 65`, then the
+  quick slot key (live proof of stage 1.1b). FoodCONT4 (level 35) is a food for a test at a lower
+  level: `tools/world give NAME FoodCONT4 1`, then `tools/world use NAME SLOT`.
 - The action menu of an item of the bag did not open with `tools/hx 'rclick'` in the live check
   I12; the use of the bag is proved at the message (I7) and in test case IZ7.
 - A rune explosion through a wall: CheckObstructions; a creature behind a wall takes nothing.

@@ -101,6 +101,10 @@ enum class ComponentKey {
      * makes the dash of an ability (Charge). The owner does not get it: its client moves its character itself.
      */
     motion,
+    /** The entitlements of the account of a character (stage 1.1b, world/ownership.h): the bit vector. Only the owner gets it. */
+    entitlements,
+    /** The achievements of a character (stage 1.1b): the bit vector. Only the owner gets it. */
+    achievements,
 };
 
 /**
@@ -926,6 +930,12 @@ struct Entity {
     std::vector<ActiveStatus> statuses;
     /** The heart rune charge of the character (stage 1.3b), 0 to 100 percent; a copy of the value of the rune system. */
     float runeCharge{0.0F};
+    /**
+     * The entitlements of the account of the character and the achievements of the character (stage 1.1b): the bit index
+     * of each one in the vector of its state, in ascending order. The ownership system sets them (world/ownership.h).
+     */
+    std::vector<std::uint32_t> entitlements;
+    std::vector<std::uint32_t> achievements;
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */
     std::vector<RawFragment> rawFragments;
 

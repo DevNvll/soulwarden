@@ -229,6 +229,8 @@ const char* item_error_text(ItemError error) {
         return "a perk is not in the perk data, is in two places, is a second gem, or is not a perk for the item";
     case ItemError::notUsable:
         return "the item cannot be used now";
+    case ItemError::gearScoreAboveLimit:
+        return "the gear score of the item is above the largest gear score of an equipped item (the limit of the expansion)";
     }
     return "unknown error";
 }
@@ -878,6 +880,13 @@ ItemResult Inventory::equip(const std::string& characterId,
         }
         if (!paperdoll::slot_accepts(*slot, definition->itemClass)) {
             return ItemError::slotRefusesItem;
+        }
+        // The largest gear score of an equipped item: MaxEquipGS of the owned expansion (stage 1.1b; the rule of the client,
+        // equipmentcommon ShowCannotEquipNotification: an item above it is not equipped). No expansion data: no limit.
+        const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+        const std::uint32_t limit = tables != nullptr && tables->loaded() ? tables->max_equip_gear_score() : 0;
+        if (limit != 0 && source.item->gearScore > limit) {
+            return ItemError::gearScoreAboveLimit;
         }
         // The item that is in the slot goes into the place of the new one.
         EquipmentSlot& target = items.equipment.slots[*slot];

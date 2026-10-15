@@ -54,6 +54,15 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   whose experience does not start at 0 or does not go up, a rank table that is shorter than
   the largest rank or has an experience of 0 below it, a largest rank with more than 16
   bits, a weapon with no reset cost for each rank). The backend then works with no tables.
+- The limits of the expansion (stage 1.1b, [DLC and entitlements](dlc-and-entitlements.md)): each player owns the
+  expansion Rise of the Angry Earth (a decision of the user), thus the largest level is the MaxDisplayLevel of the owned
+  expansion row (70; `ProgressionTables::level_cap`), and the largest rank of a weapon mastery or a trade skill is the
+  Expansion01MaxLevel of its row when it is not 0, else its MaxLevel (`ProgressionTables::rank_cap`, the rule of the client
+  `0x3CB38E0`: the trade skills and Riding 250, AzothStaff 5, each weapon the mastery level 20). The progress system and the
+  skill system use these limits for each command and each request. The grant of the expansion changes no level, no
+  experience, no point, no rank, no node, and no bar. A file of format 1 has no expansion: the limits of the file (60, the
+  base ranks). The loader refuses a file of format 2 whose expansion, entitlement, and achievement lists do not fit
+  together, or whose largest rank with the expansion is not valid for its rank table (test case DL1).
 
 ## Commands
 
@@ -71,12 +80,13 @@ tools/world bar NAME greataxe 0 Ability_Greataxe_Charge  # put an ability on a p
 
 - `tools/world` has the commands for the level, the attributes, and the skills of a character
   (routes `/v1/dev/progress`): `progress CHARACTER` (the list), `level CHARACTER LEVEL` (the
-  level of the screen, 1 to 60; the experience becomes the start of the level), `xp CHARACTER
+  level of the screen, 1 to the largest level: 70 with the expansion of stage 1.1b; the experience becomes the start of the
+  level), `xp CHARACTER
   AMOUNT`, `attribute CHARACTER NAME VALUE` (`constitution`, `focus`, `strength`,
   `dexterity`, `intelligence`; the character must have the points), `mastery CHARACTER WEAPON
   LEVEL [EXPERIENCE]` (level 1 to 20; `WEAPON` is `sword`, `bow`, `greataxe`, `firemagic`,
   ..., or the id of the game table, `SwordAbilityTable`), `tradeskill CHARACTER SKILL LEVEL
-  [EXPERIENCE]` (`Mining`, `Cooking`, ...; 0 to 200), `skillxp CHARACTER NAME AMOUNT`, `node
+  [EXPERIENCE]` (`Mining`, `Cooking`, ...; 0 to 250 with the expansion, Riding too), `skillxp CHARACTER NAME AMOUNT`, `node
   CHARACTER WEAPON NODE...` (stage 3.3a, route `POST /v1/dev/progress/node`, admin command
   `assign_node`: the node ids of the game table in the sequence of the tree; each one costs one
   mastery point, and the skill system checks the rules of the tree as for a request of the
@@ -87,9 +97,10 @@ tools/world bar NAME greataxe 0 Ability_Greataxe_Charge  # put an ability on a p
 - `tools/gamedata/progression.sh` writes `progression-tables.json` to the game data folder,
   from the same sources as the item catalog tool (the Oodle helper, or the extracted tables).
   The backend log says at the start if the tables are loaded (70 levels, 36 weapon masteries
-  and trade skills, 611 nodes). The largest level of a player is the value of the expansion
-  row `None` of the game (60), and the largest trade skill level is 200: the client has no
-  expansion with this backend.
+  and trade skills, 611 nodes) and the limits of the owned expansion (format 2, stage 1.1b: the
+  largest level 70, equip gear score 800, craft gear score 700, trade skill level 250). The file
+  has the rows of the expansion table, the entitlements that each account gets, and the
+  achievements that they give ([DLC and entitlements](dlc-and-entitlements.md)).
 - `tools/research/ability_tables.py` reads the ability table list from the memory of the live
   client (`tools/hx`) and compares it with the constant of the backend. Status 0: the lists
   are equal. Run it after a change of the game copy: a wrong sequence puts the abilities of a
@@ -114,8 +125,9 @@ tools/world bar NAME greataxe 0 Ability_Greataxe_Charge  # put an ability on a p
   experience gain: the client writes it when the window opens. Close the window and open it
   again before you read the text. The bar is correct at once.
 - The button "Respec" of the attributes is on only after an attribute state of the server
-  with spent points. A level above 60 shows "Rise of the Angry Earth needed to advance", and
-  the riding skill shows 0 for each level: the client has no expansion with this backend.
+  with spent points. With no achievement of the expansion (a progression file of format 1, or a
+  backend from before stage 1.1b) the level window at 60 shows "Rise of the Angry Earth needed to
+  advance", the trade skill limit is 200, and Riding has a lock.
 - A node that a character lost must go out one time with the level 0, and a points fragment
   with no node makes the client give all points of each pool back itself. Change the nodes of
   a character only through the skill system.

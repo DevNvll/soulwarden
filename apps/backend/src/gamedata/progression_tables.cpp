@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <set>
 
 #include <nlohmann/json.hpp>
 
@@ -55,6 +56,49 @@ bool valid_ranks(const ProgressionRow& row) {
     // A weapon: the cost of a tree reset at each rank that a character can have.
     return row.kind != ProgressionKind::weapon || row.ranks.resetCost.size() > row.maxRank;
 }
+
+bool valid_rank_caps(const ProgressionRow& row) {
+    if (!valid_ranks(row)) {
+        return false;
+    }
+    ProgressionRow expansion = row;
+    expansion.maxRank = row.expansionMaxRank;
+    return row.expansionMaxRank == 0 || valid_ranks(expansion);
+}
+
+namespace {
+
+/** @return True when the expansion rows, the entitlements, and the achievements of format 2 fit together (stage 1.1b). */
+bool valid_ownership(const ProgressionData& data) {
+    std::set<std::string> aliases;
+    std::set<std::uint32_t> entitlementBits;
+    std::set<std::string> achievementIds;
+    std::set<std::uint32_t> achievementBits;
+    for (const AchievementRow& achievement : data.achievements) {
+        if (achievement.id.empty() || achievement.index >= kAchievementBitLimit || !achievementIds.insert(achievement.id).second
+            || !achievementBits.insert(achievement.index).second) {
+            return false;
+        }
+    }
+    for (const EntitlementRow& entitlement : data.entitlements) {
+        if (entitlement.alias.empty() || entitlement.index >= kEntitlementBitLimit || !aliases.insert(entitlement.alias).second
+            || !entitlementBits.insert(entitlement.index).second
+            || (!entitlement.achievement.empty() && achievementIds.count(entitlement.achievement) == 0)) {
+            return false;
+        }
+    }
+    std::set<std::string> expansionIds;
+    for (const ExpansionRow& expansion : data.expansions) {
+        if (expansion.id.empty() || !expansionIds.insert(expansion.id).second || expansion.maxLevel == 0
+            || expansion.maxLevel > data.levels.size()
+            || (!expansion.entitlement.empty() && aliases.count(expansion.entitlement) == 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
 
 std::uint32_t progression_id(std::string_view text) {
     // The same rule as for an item id: the CRC-32 of the text with the letters A to Z in lower case.
@@ -133,8 +177,10 @@ bool ProgressionTables::load(const std::string& path) {
     }
     for (const json& row : document["progressions"]) {
         ProgressionRow progression;
-        if (!row.is_array() || row.size() != 4 || !row[0].is_string() || !row[1].is_string()
-            || !read_number(row[2], progression.maxRank) || !row[3].is_string()) {
+        // Format 2 (stage 1.1b): a fifth value, the largest rank with the expansion.
+        if (!row.is_array() || (row.size() != 4 && row.size() != 5) || !row[0].is_string() || !row[1].is_string()
+            || !read_number(row[2], progression.maxRank) || !row[3].is_string()
+            || (row.size() == 5 && !read_number(row[4], progression.expansionMaxRank))) {
             return false;
         }
         progression.id = row[0].get<std::string>();
@@ -145,7 +191,7 @@ bool ProgressionTables::load(const std::string& path) {
         }
         progression.kind = kind == "weapon" ? ProgressionKind::weapon : ProgressionKind::tradeSkill;
         progression.ranks = ranks->second;
-        if (!valid_ranks(progression)) {
+        if (!valid_rank_caps(progression)) {
             return false;
         }
         data.progressions.push_back(std::move(progression));
@@ -168,7 +214,46 @@ bool ProgressionTables::load(const std::string& path) {
         node.required = required.empty() ? 0 : progression_id(required);
         data.nodes.push_back(std::move(node));
     }
-    if (data.levels.empty() || data.levelCap == 0 || data.levelCap > data.levels.size()) {
+    // Stage 1.1b (format 2): the expansions, the entitlements of each account, and the achievements that they give. A
+    // file of format 1 has none of them.
+    if (document.contains("expansions") || document.contains("entitlements") || document.contains("achievements")) {
+        if (!document.contains("expansions") || !document.contains("entitlements") || !document.contains("achievements")
+            || !document["expansions"].is_array() || !document["entitlements"].is_array() || !document["achievements"].is_array()) {
+            return false;
+        }
+        for (const json& row : document["expansions"]) {
+            ExpansionRow expansion;
+            if (!row.is_array() || row.size() != 6 || !row[0].is_string() || !read_number(row[1], expansion.maxLevel)
+                || !read_number(row[2], expansion.maxCraftGearScore) || !read_number(row[3], expansion.maxEquipGearScore)
+                || !read_number(row[4], expansion.maxTradeSkillLevel) || !row[5].is_string()) {
+                return false;
+            }
+            expansion.id = row[0].get<std::string>();
+            expansion.entitlement = row[5].get<std::string>();
+            data.expansions.push_back(std::move(expansion));
+        }
+        for (const json& row : document["entitlements"]) {
+            EntitlementRow entitlement;
+            if (!row.is_array() || row.size() != 5 || !row[0].is_string() || !read_number(row[1], entitlement.index)
+                || !row[2].is_string() || !row[3].is_string() || !row[4].is_string()) {
+                return false;
+            }
+            entitlement.alias = row[0].get<std::string>();
+            entitlement.rewardType = row[2].get<std::string>();
+            entitlement.rewards = row[3].get<std::string>();
+            entitlement.achievement = row[4].get<std::string>();
+            data.entitlements.push_back(std::move(entitlement));
+        }
+        for (const json& row : document["achievements"]) {
+            AchievementRow achievement;
+            if (!row.is_array() || row.size() != 2 || !row[0].is_string() || !read_number(row[1], achievement.index)) {
+                return false;
+            }
+            achievement.id = row[0].get<std::string>();
+            data.achievements.push_back(std::move(achievement));
+        }
+    }
+    if (data.levels.empty() || data.levelCap == 0 || data.levelCap > data.levels.size() || !valid_ownership(data)) {
         return false;
     }
     set(std::move(data));
@@ -181,6 +266,17 @@ void ProgressionTables::set(ProgressionData data) {
 }
 
 void ProgressionTables::build_keys() {
+    // The owned expansion: the last row whose entitlement is in the list and gives an achievement (the expansion check
+    // of the client reads the achievement, image RVA 0x684B340).
+    m_owned = static_cast<std::size_t>(-1);
+    for (std::size_t position = 0; position < m_data.expansions.size(); ++position) {
+        const ExpansionRow& expansion = m_data.expansions[position];
+        const EntitlementRow* row = expansion.entitlement.empty() ? nullptr : entitlement(expansion.entitlement);
+        if (row != nullptr && !row->achievement.empty() && achievement(row->achievement) != nullptr
+            && expansion.maxLevel != 0 && expansion.maxLevel <= m_data.levels.size()) {
+            m_owned = position;
+        }
+    }
     m_progressionKeys.clear();
     m_nodeKeys.clear();
     m_lastRows.clear();
@@ -196,6 +292,38 @@ void ProgressionTables::build_keys() {
         std::uint32_t& last = m_lastRows[{node.table, node.tree}];
         last = std::max(last, node.row);
     }
+}
+
+const ExpansionRow* ProgressionTables::base_expansion() const {
+    for (const ExpansionRow& expansion : m_data.expansions) {
+        if (expansion.entitlement.empty()) {
+            return &expansion;
+        }
+    }
+    return nullptr;
+}
+
+std::uint32_t ProgressionTables::max_equip_gear_score() const {
+    const ExpansionRow* row = owned_expansion() != nullptr ? owned_expansion() : base_expansion();
+    return row != nullptr ? row->maxEquipGearScore : 0;
+}
+
+const EntitlementRow* ProgressionTables::entitlement(std::string_view alias) const {
+    for (const EntitlementRow& row : m_data.entitlements) {
+        if (row.alias == alias) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
+const AchievementRow* ProgressionTables::achievement(std::string_view id) const {
+    for (const AchievementRow& row : m_data.achievements) {
+        if (row.id == id) {
+            return &row;
+        }
+    }
+    return nullptr;
 }
 
 const LevelRow* ProgressionTables::level(std::uint32_t level) const {

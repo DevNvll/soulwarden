@@ -153,6 +153,17 @@ public:
                          StatusEnd cause);
     /** Ends the statuses of one source. */
     unsigned remove_source(Entity& character, const StatusSource& source, StatusEnd cause);
+    /**
+     * Ends the status of one row and one source of a character, also of a character whose entity left the world (code review
+     * of stage 3.3b-S2b, finding F6: an aura takes its status back from a friend that left). @return The number that ended.
+     */
+    unsigned remove_row_of(const std::string& characterId, std::string_view status, const StatusSource& source, StatusEnd cause);
+    /**
+     * Gives the status of one row of a character a different source with no new application (finding F4: the status of two
+     * Beacons stays when the Beacon of its source ends while the other one still gives it). The wire has no source: no new
+     * fragment. @return False: the character has no status of the row with the source `from`.
+     */
+    bool change_source(const std::string& characterId, std::string_view status, const StatusSource& from, const StatusSource& to);
 
     /** One status of the gear: a status that an affix of an equipped item keeps (world/gear.h). */
     struct GearStatus {

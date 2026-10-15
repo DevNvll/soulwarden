@@ -14,6 +14,12 @@ void register_omni_routes(Router& router, const Services& services);
 /** Javelin HTTP gateway. */
 void register_gateway_routes(Router& router, const Services& services);
 
+/**
+ * The entitlement service of the Amazon Games SDK (stage 1.1b, entitlement_routes.cpp): the entitlements of the account of
+ * the token (GET) and the sync (POST), from the grant policy of world/ownership.h.
+ */
+void register_entitlement_routes(Router& router, const Services& services);
+
 /** Host of the remote configuration documents of the client (an S3 bucket in the original service). */
 inline constexpr const char* kRemoteConfigurationHost = "ags-javelin-remote-config.s3.amazonaws.com";
 /**

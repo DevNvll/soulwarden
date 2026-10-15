@@ -40,7 +40,8 @@ if [[ "${data_dir%/}" == "${user_data_dir%/}" ]]; then
         "the characters of this run stay in the player data of the user." >&2
 fi
 
-if [[ "${dev_compat_dir%/}" == "${user_compat_dir}" ]]; then
+# The resolved paths: a link or a "/." names the same prefix (code review of stage 3.3b-S2b, finding F1).
+if [[ "$(realpath -m -- "${dev_compat_dir}")" == "$(realpath -m -- "${user_compat_dir}")" ]]; then
     echo "dev-run: SOULWARDEN_COMPAT_DIR is the Proton prefix of a start with no development variable." \
         "This run stops a game that the user started with that prefix." >&2
 fi
@@ -69,15 +70,10 @@ exec 8>&-
 
 # A development run makes no sound: the master volume of each account in the settings of the
 # development prefix is 0 before the start (the game keeps one settings file for each account).
-# The game is stopped here, so it does not write the old value back. The prefix of the user is
-# not changed. SOULWARDEN_DEV_SOUND=1 keeps the volumes of the prefix.
-if [[ "${SOULWARDEN_DEV_SOUND:-0}" != "1" && "${dev_compat_dir%/}" != "${user_compat_dir}" ]]; then
-    settings_directory="${dev_compat_dir%/}/pfx/drive_c/users/steamuser/AppData/Roaming/AGS/New World/savedata"
-    for settings_file in "${settings_directory}"/usersettings_*.javsave; do
-        [[ -f "${settings_file}" ]] || continue
-        sed -i -E 's/(field="m_masterVolume" value=")[0-9]+(")/\10\2/' "${settings_file}"
-    done
-fi
+# The game is stopped here, so it does not write the old value back. tools/dev-mute.sh compares
+# the resolved paths and changes nothing in the prefix of the user. SOULWARDEN_DEV_SOUND=1 keeps
+# the volumes of the prefix.
+"${repository_directory}/tools/dev-mute.sh" "${dev_compat_dir}" "${user_compat_dir}"
 
 if ! omarchy-agent-desktop status "${desktop_id}" >/dev/null 2>&1; then
     omarchy-agent-desktop create "Soulwarden game" --id "${desktop_id}" --mode "${desktop_mode}" >/dev/null

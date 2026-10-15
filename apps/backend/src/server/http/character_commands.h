@@ -323,6 +323,12 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
 /** @return The level, the attributes, the weapon masteries, and the trade skills of a character (world thread), or no value. */
 [[nodiscard]] std::optional<nlohmann::json> progress_view(world::World& world, const std::string& character);
 
+/**
+ * @return The ownership of the DLC of a character (stage 1.1b, world/ownership.h; world thread): the owned expansion with its
+ *         limits, the entitlements of its account, its achievements, and the rewards that it got; or no value.
+ */
+[[nodiscard]] std::optional<nlohmann::json> ownership_view(world::World& world, const std::string& character);
+
 /** @return The reply of an item command, of a progress command, and of a skill command. */
 [[nodiscard]] service::HttpResponse item_reply(const world::ItemResult& result);
 [[nodiscard]] service::HttpResponse progress_reply(const world::ProgressResult& result);

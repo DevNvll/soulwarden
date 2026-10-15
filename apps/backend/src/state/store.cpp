@@ -14,7 +14,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 7;
+constexpr int kSchemaVersion = 8;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -160,9 +160,38 @@ ALTER TABLE items ADD COLUMN perk4 TEXT NOT NULL DEFAULT '';
 ALTER TABLE items ADD COLUMN perk5 TEXT NOT NULL DEFAULT '';
 )sql";
 
+/**
+ * Version 8 (stage 1.1b): the ownership of the DLC. `entitlements` has the entitlements of an account (the persona id is
+ * the owner key; the alias is the UniqueTagID of the entitlement table of the game), `achievements` the achievements of a
+ * character (the AchievementID text; the bit on the wire comes from the game data at each load), and
+ * `entitlement_rewards` the rewards of an entitlement that a character got (the key of a reward that comes one time:
+ * the item of a DLC pack). The backend writes a row of the grant policy of world/ownership.h; it removes no row.
+ */
+constexpr const char* kMigration8 = R"sql(
+CREATE TABLE IF NOT EXISTS entitlements(
+    persona_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    granted_date TEXT NOT NULL,
+    PRIMARY KEY(persona_id, alias)
+);
+CREATE TABLE IF NOT EXISTS achievements(
+    character_id TEXT NOT NULL,
+    achievement TEXT NOT NULL,
+    granted_date TEXT NOT NULL,
+    PRIMARY KEY(character_id, achievement)
+);
+CREATE TABLE IF NOT EXISTS entitlement_rewards(
+    character_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    granted_date TEXT NOT NULL,
+    PRIMARY KEY(character_id, alias)
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items", "currencies", "character_progress", "progressions",
-                                            "ability_nodes", "ability_bars"};
+                                            "ability_nodes", "ability_bars", "achievements", "entitlement_rewards"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -353,6 +382,13 @@ bool Store::migrate() {
     }
     if (version < 7) {
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration7) || !execute("PRAGMA user_version=7")
+            || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 8) {
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration8) || !execute("PRAGMA user_version=8")
             || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
@@ -835,6 +871,83 @@ SkillRows Store::list_skills(const std::string& characterId) {
         }
     }
     return rows;
+}
+
+std::vector<std::string> Store::list_texts(const char* sql, const std::string& owner) {
+    std::lock_guard lock(m_mutex);
+    std::vector<std::string> texts;
+    Statement statement(m_database, sql);
+    statement.bind(1, owner);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        texts.push_back(column_text(statement.handle, 0));
+    }
+    return texts;
+}
+
+bool Store::insert_texts(const char* sql, const std::string& owner, const std::vector<std::string>& texts,
+                         const std::string& source, std::vector<std::string>* added) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    bool ok = true;
+    std::vector<std::string> inserted;
+    const std::string date = now_iso8601();
+    for (const std::string& text : texts) {
+        Statement statement(m_database, sql);
+        statement.bind(1, owner);
+        statement.bind(2, text);
+        statement.bind(3, date);
+        if (sqlite3_bind_parameter_count(statement.handle) >= 4) {
+            statement.bind(4, source);
+        }
+        ok = ok && sqlite3_step(statement.handle) == SQLITE_DONE;
+        if (ok && sqlite3_changes(m_database) == 1) {
+            inserted.push_back(text);
+        }
+    }
+    if (!ok) {
+        log::write("store: no grant for %s: %s", owner.c_str(), sqlite3_errmsg(m_database));
+    }
+    if (!end_write(ok)) {
+        return false;
+    }
+    if (added != nullptr) {
+        *added = std::move(inserted);
+    }
+    return true;
+}
+
+std::vector<std::string> Store::list_entitlements(const std::string& personaId) {
+    return list_texts("SELECT alias FROM entitlements WHERE persona_id=?1 ORDER BY granted_date, alias", personaId);
+}
+
+bool Store::grant_entitlements(const std::string& personaId,
+                               const std::vector<std::string>& aliases,
+                               const std::string& source,
+                               std::vector<std::string>* added) {
+    return insert_texts("INSERT OR IGNORE INTO entitlements(persona_id, alias, granted_date, source) VALUES(?1,?2,?3,?4)",
+                        personaId, aliases, source, added);
+}
+
+std::vector<std::string> Store::list_achievements(const std::string& characterId) {
+    return list_texts("SELECT achievement FROM achievements WHERE character_id=?1 ORDER BY granted_date, achievement", characterId);
+}
+
+bool Store::grant_achievements(const std::string& characterId, const std::vector<std::string>& ids, std::vector<std::string>* added) {
+    return insert_texts("INSERT OR IGNORE INTO achievements(character_id, achievement, granted_date) VALUES(?1,?2,?3)",
+                        characterId, ids, "", added);
+}
+
+std::vector<std::string> Store::list_entitlement_rewards(const std::string& characterId) {
+    return list_texts("SELECT alias FROM entitlement_rewards WHERE character_id=?1 ORDER BY granted_date, alias", characterId);
+}
+
+bool Store::record_entitlement_reward(const std::string& characterId, const std::string& alias) {
+    std::vector<std::string> added;
+    return insert_texts("INSERT OR IGNORE INTO entitlement_rewards(character_id, alias, granted_date) VALUES(?1,?2,?3)",
+                        characterId, {alias}, "", &added)
+           && added.size() == 1;
 }
 
 bool Store::write_skills(const std::string& characterId, const SkillRows& rows) {

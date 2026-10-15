@@ -293,6 +293,18 @@ bool SpellData::load(const std::string& path) {
                 return false;
             }
         }
+        if (document.contains("vitalsNotInData")) {
+            if (!document["vitalsNotInData"].is_array()) {
+                m_error = "the list vitalsNotInData is not a list";
+                return false;
+            }
+            for (const json& row : document["vitalsNotInData"]) {
+                if (!text_of(row, tables.vitalsNotInData.emplace_back())) {
+                    m_error = "an entry of vitalsNotInData is not a text";
+                    return false;
+                }
+            }
+        }
     }
     if (document.contains("counts")) {
         const json& counts = document["counts"];
@@ -407,6 +419,17 @@ bool SpellData::set(SpellTables tables) {
             error = "the vitals row " + row.id + " has a value that is not correct";
         } else if (!vitals.emplace(lower_ascii(row.id), index).second) {
             error = "two vitals rows have the id " + row.id;
+        }
+    }
+    // The vitals row of each slice with a Vitals component: a row of the list, or a row that the tool names as a row of a
+    // different table (code review of stage 3.3b-S2b, finding F8: a missing row gave a Pylon with no health and no damage).
+    std::set<std::string> elsewhere;
+    for (const std::string& row : tables.vitalsNotInData) {
+        elsewhere.insert(lower_ascii(row));
+    }
+    for (const SpellSlice& slice : tables.slices) {
+        if (error.empty() && slice.vitals && !vitals.contains(lower_ascii(slice.vitals->row)) && !elsewhere.contains(lower_ascii(slice.vitals->row))) {
+            error = "the slice " + slice.path + " names the vitals row " + slice.vitals->row + ", which the file does not have";
         }
     }
     if (!error.empty()) {

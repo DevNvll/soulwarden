@@ -136,7 +136,11 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   - The projectile of the trap and of the Beacon comes from the shot item of the client (the trap: the attack "traps", 8
     input steps after the press; the Beacon: the attack "heavy", 4 input steps after the press; live check of stage
     3.3b-S2b), or the server throws it 0.3 s after the time of the cast fragment (0.267 s and 0.133 s) when no item came. The
-    Pylon has no shot item (live check: the client sends no item and no message for the Pylon).
+    Pylon has no shot item (live check: the client sends no item and no message for the Pylon). The direction of such an item is
+    valid when its length in three dimensions is 1, also straight down (code review of stage 3.3b-S2b, finding F10; case
+    RK10); the direction of the press is the fallback only for a direction that is not finite or has the length 0.
+  - The status rows of the area of the Beacon (StatusEffects of its spell row) are resolved at the press: a row that the
+    data does not have refuses the press (`noRule`) before the payment (finding F9; case RK9).
 - The impact of a hit (stage 3.3b-S4, [Forced movement](forced-movement.md)): each hit of an ability goes through
   `Combat::strike` with its source (the center of an area or of a spell; the caster for a melee phase), and a creature
   that lives after it moves by the impact of the row. The start of the vortex gives the impact of its pull row

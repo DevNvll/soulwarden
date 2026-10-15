@@ -445,6 +445,22 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         for (const std::string& status : spell.effects) {
             effects = effects && m_data->status(status) != nullptr;
         }
+        // The statuses of an aura: each row of the StatusEffects of its spell row (finding F9 of the code review of stage
+        // 3.3b-S2b: a row that the data does not have refuses the press, not a Beacon with a part of its statuses).
+        if (const gamedata::SpellRow* area = spell.role == SpellRole::aura && !spell.spell.empty() ? m_data->spell(spell.spell) : nullptr) {
+            spell.statuses.clear();
+            const std::string_view list = area->cells.text("StatusEffects");
+            std::size_t start = 0;
+            while (start < list.size()) {
+                const std::size_t comma = list.find(',', start);
+                const std::string_view part = list.substr(start, comma == std::string_view::npos ? std::string_view::npos : comma - start);
+                if (!part.empty()) {
+                    effects = effects && m_data->status(part) != nullptr;
+                    spell.statuses.emplace_back(part);
+                }
+                start = comma == std::string_view::npos ? list.size() : comma + 1;
+            }
+        }
         if (spell.spell.empty() || m_data->spell(spell.spell) == nullptr || !shotData || !effects
             || (!spell.payment.empty() && !m_data->mana_cost(spell.payment))) {
             log::write("world: ability: the data has no spell %s, no projectile %s, a status, or the cost of %s", spell.spell.c_str(),
@@ -634,7 +650,10 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
         origin = launch;
     }
     std::array<float, 3> direction = shot.direction;
-    const float length = std::hypot(direction[0], direction[1]);
+    // The shot of a spell (the trap, the Beacon) flies in each direction, also straight down (code review of stage 3.3b-S2b,
+    // finding F10): its direction is a direction when its length in three dimensions is one. The basic projectile of a cast
+    // keeps the rule of its horizontal part.
+    const float length = cast.plan.spell ? std::hypot(direction[0], direction[1], direction[2]) : std::hypot(direction[0], direction[1]);
     if (!std::isfinite(length) || length < 0.01F) {
         const std::array<float, 2> ahead = direction_of(cast.yaw);
         direction = {ahead[0], ahead[1], 0.0F};
@@ -732,17 +751,9 @@ void Abilities::spell_landed(std::uint64_t number, const SpellLanding& landing) 
         if (const gamedata::SpellRow* row = m_data->spell(plan.spell)) {
             request.radius = row->radius;
             request.life = std::chrono::milliseconds(static_cast<long long>(std::lround(std::max(row->duration, 0.0F))));
-            const std::string_view statuses = row->cells.text("StatusEffects");
-            std::size_t start = 0;
-            while (start < statuses.size()) {
-                const std::size_t comma = statuses.find(',', start);
-                const std::string_view part = statuses.substr(start, comma == std::string_view::npos ? std::string_view::npos : comma - start);
-                if (!part.empty() && m_data->status(part) != nullptr) {
-                    request.statuses.emplace_back(part);
-                }
-                start = comma == std::string_view::npos ? statuses.size() : comma + 1;
-            }
         }
+        // The rows that the press resolved (each one is in the status data: finding F9).
+        request.statuses = plan.statuses;
     }
     if (request.attach == 0) {
         // On the ground below the point (the navigation data; with no data the point of the landing).

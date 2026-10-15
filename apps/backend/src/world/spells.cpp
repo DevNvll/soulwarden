@@ -16,6 +16,17 @@ namespace {
  *         0.0001 s in some slices); a positive delay is 1 ms at least (the due list advances: finding F9 of the review of
  *         stage 3.3b-S1).
  */
+/** @return The key of a status row in the aura rows: the id with the letters A to Z in lower case. */
+std::string lower(std::string_view text) {
+    std::string key(text);
+    for (char& letter : key) {
+        if (letter >= 'A' && letter <= 'Z') {
+            letter = static_cast<char>(letter - 'A' + 'a');
+        }
+    }
+    return key;
+}
+
 std::chrono::milliseconds milliseconds_of(float seconds) {
     if (!(seconds > 0.0F)) {
         return std::chrono::milliseconds(0);
@@ -93,6 +104,8 @@ const char* spell_end_text(SpellEnd cause) {
         return "it triggered";
     case SpellEnd::targetLeft:
         return "the entity that it follows left the world";
+    case SpellEnd::targetDied:
+        return "the entity that it follows died";
     }
     return "unknown";
 }
@@ -141,6 +154,23 @@ Entity* Spells::make(const SpellRequest& request) {
         log::write("world: spell: %s of %s: the slice has no %s (spell data of format 1): no entity", request.spellId.c_str(),
                    caster->name.c_str(), request.role == SpellRole::summon ? "AutoSpell" : "detection volume");
         return nullptr;
+    }
+    // A summon and a trap with a Vitals component take damage: they need the vitals row of their slice (code review of stage
+    // 3.3b-S2b, finding F8: a Pylon with no row was paid for and took no damage).
+    if ((request.role == SpellRole::summon || request.role == SpellRole::trap) && slice->vitals
+        && (m_data == nullptr || m_data->vitals_row(slice->vitals->row) == nullptr)) {
+        log::write("world: spell: %s of %s: the spell data has no vitals row %s of its slice: no entity", request.spellId.c_str(),
+                   caster->name.c_str(), slice->vitals->row.c_str());
+        return nullptr;
+    }
+    // An aura follows a living entity (finding F3): a projectile that killed its target makes no aura on the body.
+    if (request.attach != 0) {
+        const Entity* target = m_world.find(request.attach);
+        if (target == nullptr || target->life.dead || (target->kind == EntityKind::creature && target->creature.dead)) {
+            log::write("world: spell: %s of %s: the entity that it would follow is not in the world or is dead: no entity",
+                       request.spellId.c_str(), caster->name.c_str());
+            return nullptr;
+        }
     }
     const gamedata::AbilityData* abilities = m_world.options().abilityData;
     const gamedata::SpellRow* row = abilities != nullptr ? abilities->spell(request.spellId) : nullptr;
@@ -501,6 +531,10 @@ void Spells::aura_step(Entity& spell, Live& live) {
             end(spell.id, SpellEnd::targetLeft);
             return;
         }
+        if (target->life.dead || (target->kind == EntityKind::creature && target->creature.dead)) {
+            end(spell.id, SpellEnd::targetDied);
+            return;
+        }
         // The aura follows its attachment (the client moves its picture with the Spell state; the server keeps the place for the
         // interest and the area).
         m_world.place_spell(spell, target->position);
@@ -522,37 +556,114 @@ void Spells::aura_step(Entity& spell, Live& live) {
             continue;
         }
         Entity* friendly = m_world.find(id);
-        if (friendly == nullptr) {
-            continue;
-        }
-        bool given = false;
-        for (const std::string& status : live.statuses) {
-            StatusApply how;
-            how.source = StatusSource{StatusSourceKind::spell, spell.spell.spellId, 0, spell.id};
-            const StatusVerdict verdict = m_world.statuses().apply(*friendly, status, how);
-            given = given || verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed;
-        }
-        if (given) {
-            live.members.insert(id);
+        if (friendly != nullptr && give_member(spell, live, *friendly)) {
+            live.members.emplace(id, friendly->characterId);
             ++m_counts.auraGiven;
         }
     }
     clear_members(spell, live, inside);
+    renew_members(spell, live);
     if (now + spell_rules::kAuraStep < spell.spell.ends) {
         schedule(spell.id, now + spell_rules::kAuraStep, DueKind::aura);
     }
 }
 
-void Spells::clear_members(const Entity& spell, Live& live, const std::set<EntityId>& keep) {
+bool Spells::give_member(const Entity& spell, const Live& live, Entity& friendly) {
     const StatusSource source{StatusSourceKind::spell, spell.spell.spellId, 0, spell.id};
+    bool given = false;
+    for (const std::string& status : live.statuses) {
+        AuraRow& row = m_auraRows[friendly.characterId][lower(status)];
+        if (!row.auras.empty()) {
+            // A different aura gives the row already (finding F4): one status of the row, no new application, no new tick.
+            row.auras.insert(spell.id);
+            given = true;
+            continue;
+        }
+        StatusApply how;
+        how.source = source;
+        const StatusVerdict verdict = m_world.statuses().apply(friendly, status, how);
+        if (verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed) {
+            row.auras.insert(spell.id);
+            row.owner = spell.id;
+            given = true;
+        } else if (row.auras.empty()) {
+            m_auraRows[friendly.characterId].erase(lower(status));
+        }
+    }
+    if (const auto rows = m_auraRows.find(friendly.characterId); rows != m_auraRows.end() && rows->second.empty()) {
+        m_auraRows.erase(rows);
+    }
+    return given;
+}
+
+void Spells::remove_member(const Entity& spell, const Live& live, EntityId member, const std::string& characterId) {
+    const StatusSource source{StatusSourceKind::spell, spell.spell.spellId, 0, spell.id};
+    const auto rows = m_auraRows.find(characterId);
+    if (rows == m_auraRows.end()) {
+        return;
+    }
+    for (const std::string& status : live.statuses) {
+        const auto found = rows->second.find(lower(status));
+        if (found == rows->second.end() || !found->second.auras.contains(spell.id)) {
+            continue;
+        }
+        AuraRow& row = found->second;
+        row.auras.erase(spell.id);
+        if (row.owner != spell.id) {
+            continue; // The status has the source of a different aura that gives it still.
+        }
+        if (row.auras.empty()) {
+            // The last aura of the row: the status ends (ClearOnExit, ClearOnEnd), also for a character whose entity left the
+            // world (finding F6: the status of a character stays with its character id).
+            (void)m_world.statuses().remove_row_of(characterId, status, source, StatusEnd::source);
+            rows->second.erase(found);
+            continue;
+        }
+        // A different aura gives the row still (finding F4): the status stays, with the source of that aura.
+        row.owner = *row.auras.begin();
+        const Entity* owner = m_world.find(row.owner);
+        if (owner != nullptr) {
+            (void)m_world.statuses().change_source(characterId, status, source,
+                                                   StatusSource{StatusSourceKind::spell, owner->spell.spellId, 0, owner->id});
+        }
+    }
+    if (rows->second.empty()) {
+        m_auraRows.erase(rows);
+    }
+    (void)member;
+}
+
+void Spells::renew_members(const Entity& spell, const Live& live) {
+    const StatusSource source{StatusSourceKind::spell, spell.spell.spellId, 0, spell.id};
+    for (const auto& [member, characterId] : live.members) {
+        Entity* friendly = m_world.find(member);
+        const auto rows = m_auraRows.find(characterId);
+        if (friendly == nullptr || rows == m_auraRows.end()) {
+            continue;
+        }
+        for (const std::string& status : live.statuses) {
+            const auto found = rows->second.find(lower(status));
+            if (found == rows->second.end() || found->second.owner != spell.id || m_world.statuses().has(*friendly, status)) {
+                continue;
+            }
+            // The row of the status data is shorter than the aura (the Beacon with Radiance's Blessing: 15 s, its rows 10 s): a
+            // friend in the aura gets the row again when it ended, one application (no new stack while it has the row).
+            StatusApply how;
+            how.source = source;
+            if (m_world.statuses().apply(*friendly, status, how) == StatusVerdict::applied) {
+                ++m_counts.auraRenewed;
+            }
+        }
+    }
+}
+
+void Spells::clear_members(const Entity& spell, Live& live, const std::set<EntityId>& keep) {
     for (auto member = live.members.begin(); member != live.members.end();) {
-        if (keep.contains(*member)) {
+        if (keep.contains(member->first)) {
             ++member;
             continue;
         }
-        if (Entity* character = m_world.find(*member); character != nullptr && character->kind == EntityKind::player) {
-            m_world.statuses().remove_source(*character, source, StatusEnd::source);
-        }
+        remove_member(spell, live, member->first, member->second);
         ++m_counts.auraTaken;
         member = live.members.erase(member);
     }
@@ -560,7 +671,13 @@ void Spells::clear_members(const Entity& spell, Live& live, const std::set<Entit
 
 std::vector<EntityId> Spells::members(EntityId spell) const {
     const auto live = m_live.find(spell);
-    return live == m_live.end() ? std::vector<EntityId>{} : std::vector<EntityId>(live->second.members.begin(), live->second.members.end());
+    std::vector<EntityId> members;
+    if (live != m_live.end()) {
+        for (const auto& [member, characterId] : live->second.members) {
+            members.push_back(member);
+        }
+    }
+    return members;
 }
 
 float Spells::creature_hit(Entity& creature, const gamedata::CreatureContact& contact, Entity& spell) {
@@ -672,6 +789,38 @@ void Spells::target_left(EntityId target) {
     const std::vector<EntityId> spells = found->second;
     for (const EntityId spell : spells) {
         end(spell, SpellEnd::targetLeft);
+    }
+}
+
+void Spells::target_died(EntityId target) {
+    const auto found = m_byTarget.find(target);
+    if (found == m_byTarget.end()) {
+        return;
+    }
+    const std::vector<EntityId> spells = found->second;
+    for (const EntityId spell : spells) {
+        end(spell, SpellEnd::targetDied);
+    }
+}
+
+void Spells::member_left(const Entity& character) {
+    const auto rows = m_auraRows.find(character.characterId);
+    if (rows == m_auraRows.end()) {
+        return;
+    }
+    std::set<EntityId> auras;
+    for (const auto& [status, row] : rows->second) {
+        auras.insert(row.auras.begin(), row.auras.end());
+    }
+    for (const EntityId aura : auras) {
+        const auto live = m_live.find(aura);
+        const Entity* spell = m_world.find(aura);
+        if (live == m_live.end() || spell == nullptr || !live->second.members.contains(character.id)) {
+            continue;
+        }
+        remove_member(*spell, live->second, character.id, character.characterId);
+        live->second.members.erase(character.id);
+        ++m_counts.auraTaken;
     }
 }
 

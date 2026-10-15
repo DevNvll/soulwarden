@@ -61,9 +61,25 @@ service::HttpResponse show_progress(const Services& services, const RouteContext
     });
 }
 
+/** GET /v1/dev/ownership?character=ID: the ownership of the DLC of a character (stage 1.1b). */
+service::HttpResponse show_ownership(const Services& services, const RouteContext& context) {
+    service::HttpResponse refusal;
+    const auto character = character_of(context, refusal);
+    if (!character) {
+        return refusal;
+    }
+    return in_world(services, [character = *character](world::World& target) {
+        const auto view = commands::ownership_view(target, character);
+        return view ? json_reply(200, view->dump()) : message(404, "the store has no character with this id");
+    });
+}
+
 } // namespace
 
 void register_dev_progress_routes(Router& router, const Services& services) {
+    router.add("GET", "", "/v1/dev/ownership", "dev.ownership", [&services](const RouteContext& context) {
+        return show_ownership(services, context);
+    });
     router.add("GET", "", "/v1/dev/progress", "dev.progress", [&services](const RouteContext& context) {
         return show_progress(services, context);
     });

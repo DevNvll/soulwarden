@@ -52,6 +52,8 @@ inline constexpr std::uint32_t kTypeStatMultiplierState = 1525; // MB::StatMulti
 inline constexpr std::uint32_t kTypeSpellState = 2912;          // MB::SpellComponentReplicatedState
 inline constexpr std::uint32_t kTypeDelayedEventState = 3139;   // MB::DelayedEventComponentReplicatedState
 inline constexpr std::uint32_t kTypePositionInTheWorldState = 13; // MB::PositionInTheWorldReplicatedState (stage 3.3b-S2b)
+inline constexpr std::uint32_t kTypeEntitlementState = 3133;    // MB::EntitlementComponentReplicatedState (stage 1.1b)
+inline constexpr std::uint32_t kTypeAchievementState = 3210;    // MB::AchievementComponentReplicatedState (stage 1.1b)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -86,6 +88,9 @@ inline constexpr std::uint32_t kChargeSlot = 48;
 inline constexpr std::uint32_t kStatusSlot = 44;
 /** The component StatMultiplierTable of the player slice (stage 3.3b-S2a, S2a-I10; research status-speed.md): the speed table. */
 inline constexpr std::uint32_t kStatMultiplierSlot = 43;
+/** The components Entitlement and Achievement of the player slice (stage 1.1b; research dlc-entitlements.md, Q2). */
+inline constexpr std::uint32_t kEntitlementSlot = 19;
+inline constexpr std::uint32_t kAchievementSlot = 66;
 
 enum class View {
     owner,
@@ -270,6 +275,13 @@ struct StateCodec {
  *         vitals id of its row, a later one with the health and the dead mark.
  */
 [[nodiscard]] std::vector<hub::Bytes> encode_spell_vitals_parts(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The entitlements of the account of a character for the owner (states/ownership_states.cpp, stage 1.1b): the bit
+ *         vector, an empty balance map, and the mark "received". No fragment for an observer or for an entity with none.
+ */
+[[nodiscard]] hub::Bytes encode_entitlement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/** @return The achievements of a character for the owner (stage 1.1b): the bit vector. No fragment for an observer or with none. */
+[[nodiscard]] hub::Bytes encode_achievement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The coin of the character for the owner. No byte for the observer view. */
 [[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The mana state of a character (states/mana_state.cpp): owner only. */

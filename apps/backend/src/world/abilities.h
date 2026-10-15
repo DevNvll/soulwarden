@@ -305,6 +305,11 @@ struct SpellPlan {
     std::string payment;
     /** True: the projectile also hits a character (TargetTypes All of the projectile spell of the Beacon). */
     bool characters{false};
+    /**
+     * An aura: the status rows of its spell row (StatusEffects), each one in the status data. The press resolves them, and a
+     * row that the data does not have refuses the press before the payment (code review of stage 3.3b-S2b, finding F9).
+     */
+    std::vector<std::string> statuses;
 };
 
 /** The plan of a cast: the phases for the nodes of the character. */

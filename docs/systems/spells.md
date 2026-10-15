@@ -113,6 +113,10 @@ and the stop are in [World and sessions](world-and-sessions.md).
 - The health (game data): the row of the Vitals component of the slice (`IceMagicPylon`):
   `HealthOverridePercentSpellOwnerMaxHealth` (0.2) of the maximum health of the caster, else `HealthBaseMax`; its armor:
   the armor overrides of the row. A creature hit uses that armor and the level of the caster (`Combat::creature_damage`).
+  A summon or a trap whose slice names a vitals row that the spell data does not have is not made, and the Pylon pays
+  nothing (code review of stage 3.3b-S2b, finding F8; case RK8). The loader refuses a slice whose vitals row is neither in
+  the list `vitals` nor in the list `vitalsNotInData` (the rows of a different table that the tool names: the seed of the
+  Goth elephant).
 - The life (game data): `m_lifetime` of its AutoSpell (15 s). Then the expire event triggers the entity of the event
   (`DestroyTrigger`), and the entity goes away at the destroy event of that entity (1.3 s later).
 - The shots (game data): from `m_initialCastDelay` (1 s), then each `m_cooldown` (2 s), the Pylon shoots the spell of
@@ -174,14 +178,28 @@ and the stop are in [World and sessions](world-and-sessions.md).
 - The statuses (game data): each 250 ms the area looks for the friends of the caster in its radius (the position index;
   3 m up or down at most). A friend that comes in gets the statuses of the spell row (`Status_Ability_Lifestaff_Beacon`,
   `Status_Ability_Lifestaff_Beacon_SG_Potency`; the source `spell`); a friend that leaves loses them (`ClearOnExit`); at
-  the end each friend loses them (`ClearOnEnd`).
+  the end each friend loses them (`ClearOnEnd`). The press resolves the status rows of the area (`SpellPlan::statuses`): a row that the
+  data does not have refuses the press before the payment (finding F9; case RK9).
+- Two auras with one status row (code review of stage 3.3b-S2b, findings F4 to F6; project rules): a friend in two Beacons
+  has one status of each row, with the source of the first Beacon (`Spells::AuraRow`: the auras of each row of each
+  character); the second Beacon gives no new application and no new tick. The end of the Beacon of the source gives the
+  status the source of the other Beacon (`Statuses::change_source`); the end of the last Beacon ends it (cases RK4). A row
+  of the data that is shorter than the Beacon (10 s in the Beacon of 15 s of Radiance's Blessing) comes again on a friend in
+  it when it ended, with one new application (`SpellCounts::auraRenewed`; RK5). A friend that leaves the world loses the
+  statuses of each Beacon before its entity goes away (`Spells::member_left`; the status of a character stays with its
+  character id; RK6).
 - The friends (a decision of an agent; the decision of the user is open): the backend has no group. The friends of a
   character are the character itself (a group of one). A test fixture can add a pair (`World::set_test_friends`). The
   second character of a live run is not a friend: it gets no status.
 - The pulses (game data): the status `Status_Ability_Lifestaff_Beacon` has `TickRate` 1 s and `HealthModifierDamageBased`
   0.16: the status system makes a pulse each second (`StatusCounts::pulsesWithNoHeal`). The heal amount needs the heal
   base of stage 3.3b-S6: a pulse gives no health now (open).
-- The ends: its life (10 s), the leave of its target (`SpellEnd::targetLeft`), and the leave of the caster.
+- The ends: its life (10 s), the leave of its target (`SpellEnd::targetLeft`), the death of its target
+  (`SpellEnd::targetDied`: the death of a creature or of a character ends each Beacon on it; code review of stage
+  3.3b-S2b, finding F3; case RK3), and the leave of the caster. A projectile whose impact killed its target makes no
+  Beacon.
+- The record (finding F7; case RK7): a session observes a Beacon that follows an entity only while it observes that entity
+  (field 6 of the Spell state names its actor); the Beacon goes out of the interest with it.
 
 ## Commands
 

@@ -157,7 +157,11 @@ backend. The tool of each system is also in the document of that system.
   vitals slot that is not of type 15, a position slot that is not of type 13, a slice with
   neither slot, and a time, a radius, or a destroy time that is not correct; with a file of
   format 1 the Pylon, the trap, and the Beacon make no entity (test cases SB1, SB10;
-  `check_spell_tool.py` case trap-slice);
+  `check_spell_tool.py` case trap-slice; from stage 1.1b (code review of stage 3.3b-S2b) the tool stops for a time of an
+  AutoSpell (m_lifetime, m_lifetimeOnHit, m_initialCastDelay, m_cooldown) that is not a 32-bit float (F12;
+  `check_spell_tool.py` cases autospell and autospell-lifetime-width, RK12) and for a vitals row of a slice that no base
+  vitals table has, but for the rows of `VITALS_ROWS_NOT_IN_BASE_TABLES` (the seed of the Goth elephant), which go to the
+  member `vitalsNotInData`; the loader refuses a slice whose vitals row is in neither list (F8, case RK8));
   [Spell entities](../systems/spells.md)), `projectile-data.json` (stage 3.3b-S3,
   `tools/gamedata/projectiles.sh`: the 323 attacks of the ranged attack profiles of
   `rangedattackdatabase.radb`, the flight values of 85 projectile slices, 105 ammunition rows, 261
@@ -176,7 +180,12 @@ backend. The tool of each system is also in the document of that system.
   projectile component, when a player weapon profile has no shot of its light or heavy row, when
   the ammunition of an empty slot of a weapon whose shot takes the slice of its ammunition has no
   slice, and when a file that it needs has no source (an animation database) (code review of
-  stage 3.3b-S3, finding F7, `check_projectile_tool.py`, case RJ7); [Projectiles](../systems/projectiles.md)), `travel-places.json` (the spirit shrines and the inns
+  stage 3.3b-S3, finding F7, `check_projectile_tool.py`, case RJ7); from stage 1.1b (code review of stage 3.3b-S2b, finding
+  F11) the tool stops when one light or heavy row of a player profile has no shot (not only all of them), but for the rows of
+  `BASIC_ROWS_WITH_NO_SHOT` (MusketAttack2, the strike of the stock of the musket), and when a projectile spell of an
+  ability that the backend launches (`REQUIRED_ABILITY_SHOTS`: the Pylon shot, the tosses of the trap, the four Beacon
+  projectiles) has no shot or no slice (`check_projectile_tool.py` cases partial-basic-sources and missing-ability-prefab,
+  RK11); [Projectiles](../systems/projectiles.md)), `travel-places.json` (the spirit shrines and the inns
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
@@ -185,8 +194,13 @@ backend. The tool of each system is also in the document of that system.
   attribute and vitals values, the rank tables of the weapons and the trade skills, and the
   nodes of the weapon trees; from stage 1.3b also the mana regeneration of the row Player of
   the base vitals (rate 2, delay 0, delay 2 at 0 mana; a file from before has no
-  regeneration); without it the backend sends the stored values of a character and refuses a
-  command or a request that needs a table).
+  regeneration); from stage 1.1b, format 2, also the rows of the expansion table, the 19
+  entitlements that each account gets with their bits, the achievement that they give, and the
+  largest rank of each progression row with the expansion (Expansion01MaxLevel); with a file of
+  format 1 the players have the limits of no expansion and get no DLC; the tool stops for a link
+  that does not resolve (`check_progression_tool.py`, case DL9; [DLC and
+  entitlements](../systems/dlc-and-entitlements.md)); without it the backend sends the stored
+  values of a character and refuses a command or a request that needs a table).
 
 ## Commands
 
@@ -208,6 +222,14 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 ```
 
 ## Traps
+
+- Stage 1.1b changes `progression-tables.json` (format 2: the expansions, the entitlements, the achievements, the rank
+  limits with the expansion) and `spell-data.json` (the member `vitalsNotInData`; the AutoSpell times are required floats).
+  The backend of this stage refuses a spell file from before (the slice of the seed of the Goth elephant names a vitals row
+  that the list does not have): then the Pylon, the trap, the Beacon, and the vortex have no record. With a progression file
+  of format 1 the players have the limit 60 and no DLC. Write the two files again with `tools/gamedata/progression.sh` and
+  `tools/gamedata/spells.sh`, and put them into their places with the backend. `projectile-data.json` of the tool of this
+  stage is equal to the file of stage 3.3b-S2b.
 
 - Stage 3.3b-S2b changes `spell-data.json` (format 2) and `projectile-data.json` (the ability shots). The backend of this
   stage reads the older files: with a spell file of format 1 the Pylon, the trap, and the Beacon make no entity (the

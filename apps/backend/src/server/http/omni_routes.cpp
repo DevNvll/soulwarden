@@ -116,6 +116,16 @@ service::HttpResponse create_token(const Services& services, const RouteContext&
                origin_text(origin),
                ticket ? "local ticket" : "no local ticket");
     seed_character(services, *account);
+    // The DLC of the account (stage 1.1b, world/ownership.h): the grant at each login, with no purchase and no setting.
+    // A task of the world; with no start in the time limit the world entry and the sync of the client give it.
+    const std::string personaId = account->personaId;
+    world::CallStatus status = world::CallStatus::done;
+    const auto granted = services.world.call<bool>(
+        [personaId](world::World& target) { return target.ownership().grant_account(personaId, "login"); }, kWorldCallLimit, &status);
+    if (!granted) {
+        log::write("omni: the world did not give the entitlements of account %s at the login: the world entry gives them",
+                   account->personaId.c_str());
+    }
 
     const json reply = {
         {"accessToken", access_token(*account)},

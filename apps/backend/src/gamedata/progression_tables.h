@@ -80,10 +80,51 @@ struct ProgressionRow {
     /** The id on the wire. For a weapon it is also the id of its point pool and of its ability table. */
     std::uint32_t wireId{0};
     ProgressionKind kind{ProgressionKind::tradeSkill};
-    /** Largest rank of a player with no expansion. */
+    /** Largest rank of a player with no expansion (MaxLevel). ProgressionTables::rank_cap gives the rank of a player. */
     std::uint32_t maxRank{0};
     RankTable ranks;
+    /** Largest rank with the expansion (Expansion01MaxLevel; stage 1.1b). 0: the row has none, and maxRank applies. */
+    std::uint32_t expansionMaxRank{0};
 };
+
+/** One row of the expansion table of the game (Expansions): the limits of a player who owns the expansion (stage 1.1b). */
+struct ExpansionRow {
+    /** "None" (no expansion) or "Expansion2023" (Rise of the Angry Earth). */
+    std::string id;
+    /** The largest level of the screen (MaxDisplayLevel). */
+    std::uint32_t maxLevel{0};
+    /** The largest gear score of a craft (MaxCraftGS) and of an equipped item (MaxEquipGS). */
+    std::uint32_t maxCraftGearScore{0};
+    std::uint32_t maxEquipGearScore{0};
+    /** The largest trade skill level (MaxTradeskillLevel). */
+    std::uint32_t maxTradeSkillLevel{0};
+    /** The entitlement that gives the expansion (EntitlementId). Empty: the row of no expansion. */
+    std::string entitlement;
+};
+
+/** One entitlement that the backend gives each account (stage 1.1b): the expansion and the DLC packs of Steam. */
+struct EntitlementRow {
+    /** The alias (UniqueTagID), for example "Ent_Xpack_RiseOfTheAngryEarth_Owner". */
+    std::string alias;
+    /** The bit of the entitlement in the entitlement state of the client (EntitlementIndex). */
+    std::uint32_t index{0};
+    /** RewardType and Reward(s) of the game table. */
+    std::string rewardType;
+    std::string rewards;
+    /** The achievement that the entitlement gives each character of the account (AchievementId). Empty: none. */
+    std::string achievement;
+};
+
+/** One achievement that an entitlement gives: its bit in the achievement state of the client (AchievementIndex). */
+struct AchievementRow {
+    std::string id;
+    std::uint32_t index{0};
+};
+
+/** The client reads 575 bytes of the entitlement vector at most (image RVA 0x3050A50): a bit index is below 4,600. */
+inline constexpr std::uint32_t kEntitlementBitLimit = 575 * 8;
+/** The client reads 0x2000000 bytes of the achievement vector at most (image RVA 0x279E550). */
+inline constexpr std::uint32_t kAchievementBitLimit = 0x2000000U * 8;
 
 /** One node of a weapon tree: an ability or a passive that a mastery point unlocks. */
 struct AbilityNode {
@@ -113,10 +154,12 @@ inline constexpr std::uint32_t kLargestRank = 0xFFFF;
  *         its ranks. The loader refuses a file with a row that is not valid.
  */
 [[nodiscard]] bool valid_ranks(const ProgressionRow& row);
+/** @return True when the ranks of a row are valid for each largest rank that it has (maxRank, and expansionMaxRank when it is not 0). */
+[[nodiscard]] bool valid_rank_caps(const ProgressionRow& row);
 
 /** The content of the tables, for a load and for a test. */
 struct ProgressionData {
-    /** The largest level of a player, as the screen shows it. */
+    /** The largest level of a player with no expansion (the row "None"), as the screen shows it. */
     std::uint32_t levelCap{0};
     /** Entry K: the level K + 1 of the screen. */
     std::vector<LevelRow> levels;
@@ -136,16 +179,27 @@ struct ProgressionData {
     float manaRegenDelayOnEmpty{0.0F};
     std::vector<ProgressionRow> progressions;
     std::vector<AbilityNode> nodes;
+    /**
+     * Stage 1.1b (format 2): the rows of the expansion table, the entitlements that each account gets, and the
+     * achievements that they give. Empty in a file of format 1: the players have the limits of no expansion.
+     */
+    std::vector<ExpansionRow> expansions;
+    std::vector<EntitlementRow> entitlements;
+    std::vector<AchievementRow> achievements;
 };
 
 class ProgressionTables {
 public:
     /**
-     * Reads the file of the tool.
+     * Reads the file of the tool (format 1, or format 2 with the expansions of stage 1.1b).
      * @return False when the file is not there, has a different form, or has a table that is
      *         not valid: a level table whose experience does not start at 0 or does not go up,
-     *         or a rank table that is not valid (valid_ranks). The tables then stay as they
-     *         were, and the backend works with no tables.
+     *         or a rank table that is not valid (valid_ranks, also for the largest rank with the
+     *         expansion), an expansion with a level that the level table does not have or an
+     *         entitlement that the list does not have, an entitlement with a bit index outside
+     *         the range of the client or an achievement that the list does not have, two rows
+     *         with one alias, one id, or one bit index. The tables then stay as they were, and
+     *         the backend works with no tables.
      */
     [[nodiscard]] bool load(const std::string& path);
 
@@ -159,10 +213,34 @@ public:
         return m_data;
     }
 
-    /** @return The largest level of a player (a level of the screen: 1 is the first level). */
+    /**
+     * @return The largest level of a player (a level of the screen: 1 is the first level): the level of the owned
+     *         expansion, or the level of no expansion.
+     */
     [[nodiscard]] std::uint32_t level_cap() const {
-        return m_data.levelCap;
+        return owned_expansion() != nullptr ? owned_expansion()->maxLevel : m_data.levelCap;
     }
+    /**
+     * @return The expansion that each player of this backend owns (stage 1.1b), or null (a file of format 1). The backend
+     *         gives each account each entitlement of the list (world/ownership.h, a decision of the user of 2026-10-15), and
+     *         the client takes the row of the expansion whose entitlement gives an achievement that the character has
+     *         (image RVA 0x684B340): thus it is the last row whose entitlement is in the list and names an achievement.
+     */
+    [[nodiscard]] const ExpansionRow* owned_expansion() const {
+        return m_owned < m_data.expansions.size() ? &m_data.expansions[m_owned] : nullptr;
+    }
+    /** @return The row of no expansion ("None"), or null. */
+    [[nodiscard]] const ExpansionRow* base_expansion() const;
+    /** @return The largest gear score of an equipped item of a player: MaxEquipGS of the owned expansion, or of no expansion. 0: no limit (no rows). */
+    [[nodiscard]] std::uint32_t max_equip_gear_score() const;
+    /** @return The entitlements that each account gets, the expansion first. */
+    [[nodiscard]] std::span<const EntitlementRow> entitlements() const {
+        return m_data.entitlements;
+    }
+    /** @return The entitlement with this alias, or null. */
+    [[nodiscard]] const EntitlementRow* entitlement(std::string_view alias) const;
+    /** @return The achievement with this id, or null. */
+    [[nodiscard]] const AchievementRow* achievement(std::string_view id) const;
     /** @return The row of a level of the screen, or null. */
     [[nodiscard]] const LevelRow* level(std::uint32_t level) const;
     /** @return The attribute points that a character of this level has in total (spent and free). */
@@ -175,6 +253,14 @@ public:
     /** @return The health that a value of the constitution gives. 0 for a value that the table does not have. */
     [[nodiscard]] std::uint32_t constitution_health(std::uint32_t value) const;
 
+    /**
+     * @return The largest rank of a player of this backend in a weapon mastery or a trade skill: the largest rank with the
+     *         owned expansion when the row has one (not 0), else the largest rank with no expansion (the rule of the client,
+     *         image RVA 0x3CB38E0 and 0x3CB6330; stage 1.1b).
+     */
+    [[nodiscard]] std::uint32_t rank_cap(const ProgressionRow& row) const {
+        return owned_expansion() != nullptr && row.expansionMaxRank != 0 ? row.expansionMaxRank : row.maxRank;
+    }
     /** @return The weapon mastery or the trade skill with this id on the wire, or null. */
     [[nodiscard]] const ProgressionRow* progression(std::uint32_t wireId) const;
     /** @return The weapon mastery or the trade skill with this id text (the compare ignores the case of the letters A to Z), or null. */
@@ -196,6 +282,8 @@ private:
     void build_keys();
 
     ProgressionData m_data;
+    /** The index of the owned expansion in m_data.expansions; no row: the size of the list or more. */
+    std::size_t m_owned{static_cast<std::size_t>(-1)};
     std::unordered_map<std::uint32_t, std::size_t> m_progressionKeys;
     std::unordered_map<std::uint32_t, std::size_t> m_nodeKeys;
     /** (table, tree) to the last row of the tree. */

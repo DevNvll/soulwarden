@@ -70,7 +70,9 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   a player (stage 3.3b-S1, slot 44) has the two views: the owner gets its maps, an observer the
   public statuses ([Status effects](status-effects.md)). The Player state of the owner has the
   wall clock pair (group 1, fields 6 and 7, from one sample of the world clock); an observer gets
-  no field of group 1. The first record of
+  no field of group 1. The entitlement state (slot 19) and the achievement state (slot 66) of stage
+  1.1b are for the owner only, and they come before the level in the first record
+  ([DLC and entitlements](dlc-and-entitlements.md)). The first record of
   a large paperdoll has more than one part: each list group stays whole in one part (stage
   1.3b, [Items and equipment](items-and-equipment.md)), also a group that is larger than one
   carrier message (code review of stage 1.3b, finding F12: its bundle goes in chunks of the

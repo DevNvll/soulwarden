@@ -54,7 +54,9 @@ the attributes, the skills, the nodes and the ability bars (`assign_node`,
 `set_ability_bar`), the cooldowns (`reset_cooldowns`), the status effects (`apply_status`,
 `remove_status`), the cast of an ability and the spell entities (`cast_ability`,
 `end_spells`), a shot of the weapon in the hand (`shoot`), and the health of a character, for the
-creatures near it, and for a travel.
+creatures near it, and for a travel. The state of a character has its DLC (member `ownership`, stage 1.1b). The backend
+also answers the entitlement service of the client (the sync and the list of the entitlements of the account, protocol
+notes 2 and 4.29).
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
 
 The build has a library (`soulwarden_backend_core`), the backend program, and a test program that
@@ -310,10 +312,10 @@ button on "Confirm").
   (`~/.local/share/soulwarden/gamedata/progression-tables.json`): the experience, the attribute
   points, and the health of each level, the health of each value of the constitution, the
   experience of each rank of the weapon masteries and of the trade skills, and the nodes of
-  the weapon trees (protocol notes 4.12 and 4.13). It uses the same sources as the item
-  catalog tool. Without the file the backend starts, and a character keeps the level and
-  the skills that it has: the backend gives no level, no attribute point, and no mastery
-  point.
+  the weapon trees (protocol notes 4.12 and 4.13), and from stage 1.1b (format 2) the rows of the expansion table, the
+  entitlements of the DLC with their bits, and the largest rank of each skill with the expansion (protocol notes 4.29). It
+  uses the same sources as the item catalog tool. Without the file the backend starts, and a character keeps the level and
+  the skills that it has: the backend gives no level, no attribute point, no mastery point, and no DLC.
 - `tools/gamedata/creatures.sh` makes the creature data
   (`~/.local/share/soulwarden/gamedata/creatures.json`): the usual spawn points of the creatures
   of the whole world (32,840 spawn points of 3,848 kinds in the 25 regions of the supported
@@ -630,11 +632,24 @@ button on "Confirm").
   level of each trade skill. A character starts with level 1 and no skill. A kill gives
   experience and weapon mastery experience (stage 3.5a); `tools/world level`, `xp`,
   `attribute`, `mastery`, `tradeskill`, and `skillxp` set the values in a development run,
-  and the tool window (F8) sets them in each start of the game. The largest level is 60, and the largest trade skill level
-  is 200. Not there yet: the abilities of the weapons other than the great axe and the war
+  and the tool window (F8) sets them in each start of the game. The largest level is 70, and the largest trade skill level
+  is 250 (also Riding): each player owns the expansion (stage 1.1b, next item). Not there yet: the abilities of the weapons other than the great axe and the war
   hammer, the effects of an attribute other than the
   health, and the reset of a weapon tree from mastery level 11 on (it has a cost in a
   currency that the backend does not have).
+- The DLC (stage 1.1b). Each account and each character owns the expansion Rise of the Angry Earth and the DLC packs of
+  the game data, with no purchase and no setting: the backend gives the account its 19 entitlements at each login (and at
+  the entitlement sync of the client), and each character the achievement of the expansion at its world entry. The client
+  then has the limits of the expansion: the level 70 (a level 60 character keeps its level and its experience, and the
+  character window shows the experience to level 61), the trade skills 250, the flail tree with its normal points, the
+  equip gear score 800 (an item keeps its level requirement of the client: 700 needs level 65). Each character gets one
+  AmuletIsabellaT1 (the item of a DLC pack) at its first entry with a free bag slot. `tools/world ownership NAME` shows the
+  expansion, the entitlements, and the achievements of a character; the admin state of the tool window has them (member
+  `ownership`). The progression tables of format 2 (`tools/gamedata/progression.sh`) are necessary: with a file from before,
+  the players have the limits of the game with no expansion. Not there yet: the content of the expansion (the region Elysian
+  Wilds and its story, the mounts, the expeditions, its quests, its recipes) and the use of the skins, the emotes, the
+  crests, the housing item, and the title of the DLC packs. The client shows the modal "Congratulations on purchasing the
+  new expansion" only for a change during play, not at a world entry.
 - Equipment. The inventory screen has the equipment panel. The entry "Equip" of the action
   menu of an item (or a double click) puts it into its slot, the entry "Unequip" of an
   equipped item puts it back into the bag, and a drag between two weapon slots changes

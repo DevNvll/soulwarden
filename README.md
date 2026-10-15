@@ -15,6 +15,7 @@ This is an independent project with no connection to Amazon Games. The repositor
 - The world. Your character enters, moves, and comes back at the exact place where it stood.
 - The bag, the coin, and equipment. Armor and weapons show on the body.
 - Level, attributes, weapon mastery trees, the ability bar, and trade skills.
+- The full game with its DLC, for each account and each character, with no purchase and no setting: the expansion Rise of the Angry Earth and the DLC packs of the game. Your character goes up to level 70 (a level 60 character keeps its level and experience and goes on with experience), the trade skills go up to 250 (also Riding), the flail tree opens with its normal points, and items up to gear score 800 can be equipped (with their level). Food of level 65 works at level 65. Each character gets the amulet of a DLC pack (AmuletIsabellaT1) one time. The content of the expansion (the region Elysian Wilds, mounts, expeditions, its quests) is not there yet, and the skins, emotes, and crests of the DLC packs need their systems.
 - Creatures at their real spawn points in the whole world, 32,840 points and 3,848 kinds in 25 regions.
 - Melee combat with a sword, a great axe, a hatchet, a war hammer, or a spear. A hit shows its damage number, and creatures die.
 - The abilities of the great axe (Charge, Maelstrom, Gravity Well) and of the war hammer (Wrecking Ball, Shockwave, Path of Destiny), with the upgrades of their trees. An ability does its damage, its button on the HUD shows the cooldown, and a creature takes the stun, the root, the slow, the knockdown, or the weaken of the ability, with its icon at the name plate. The vortex of Gravity Well shows on the ground and bursts after 3 s with its damage numbers; another player near it sees the same vortex. Put the nodes and the bar in the Weapon Mastery window (K).
@@ -100,13 +101,13 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `appearance.sh` | Each character has the same default body |
 | `slice_ids.sh` | The server does not check the target of a client message |
 | `items.sh` | No items, and a new character has no clothing |
-| `progression.sh` | No levels and no skill points |
+| `progression.sh` | No levels and no skill points. With a file from before stage 1.1b, no DLC: level 60 and trade skill 200 at most, and the flail tree is locked: run the tool again |
 | `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still; with a file from before the ability stage, a knockdown shows the small hit reaction; with a file from before the projectile stage, a shot hits each creature with one size: run the tool again |
 | `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature; with a file from before the loot stage, a kill gives no weapon mastery experience; with a file from before the stage of the pulls and pushes, a hit moves no creature: run the tool again |
 | `loot.sh` | A kill gives no experience, no coin, and no loot |
 | `abilities.sh` | An ability does nothing. With a file from before the itemization stage, a perk of a hit, a consumable, and the heart rune have no status data, and the mana does not come back: run the tool again |
 | `perks.sh` | An item has no perk, a perk has no effect, and a potion, a food, and the heart rune do nothing |
-| `spells.sh` | The vortex of Gravity Well has no picture (its damage stays), and the Ice Pylon, the musket trap, and the Beacon do nothing; with a file from before stage 3.3b-S2b they do nothing too: run the tool again |
+| `spells.sh` | The vortex of Gravity Well has no picture (its damage stays), and the Ice Pylon, the musket trap, and the Beacon do nothing; with a file from before stage 1.1b they do nothing too (the backend refuses that file): run the tool again |
 | `projectiles.sh` | A shot of a bow, a musket, a staff, or a gauntlet does nothing; with a file from before stage 3.3b-S2b the musket trap and the Beacon do nothing, and the Ice Pylon does not shoot: run the tool again |
 | `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
 | `heights.sh` | With no navigation data, creatures do not leave their place. They attack only when you are in their reach |

@@ -289,8 +289,11 @@ void older_schemas(const Options& options) {
         " name TEXT NOT NULL DEFAULT '', level INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(character_id, pool_id, node_id));"
         "CREATE TABLE ability_bars(character_id TEXT NOT NULL, table_id INTEGER NOT NULL, slot INTEGER NOT NULL,"
         " ability_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '', PRIMARY KEY(character_id, table_id, slot));",
+        "ALTER TABLE items ADD COLUMN perk1 TEXT NOT NULL DEFAULT ''; ALTER TABLE items ADD COLUMN perk2 TEXT NOT NULL DEFAULT '';"
+        "ALTER TABLE items ADD COLUMN perk3 TEXT NOT NULL DEFAULT ''; ALTER TABLE items ADD COLUMN perk4 TEXT NOT NULL DEFAULT '';"
+        "ALTER TABLE items ADD COLUMN perk5 TEXT NOT NULL DEFAULT '';",
     };
-    for (int version = 0; version <= 6; ++version) {
+    for (int version = 0; version <= 7; ++version) {
         const std::filesystem::path path = options.workDirectory / ("review-v" + std::to_string(version) + ".sqlite3");
         std::filesystem::remove(path);
         std::string sql;
@@ -331,15 +334,24 @@ void older_schemas(const Options& options) {
         const bool progressed = store.set_progress(kCharacterA, progress) && store.progress(kCharacterA).level == 7
                                 && store.progress(kCharacterA).spent[2] == 2 && read.ranks.size() == 1 && read.nodes.size() == 1
                                 && read.bars.size() == 1 && read.ranks[0].points == 40 && read.bars[0].ability == 0x22222222;
+        // The tables of schema version 8 (stage 1.1b): the entitlements of the account, the achievements and the rewards of
+        // the character.
+        std::vector<std::string> added;
+        const bool owns = store.grant_entitlements(player.account.personaId, {"Test_Entitlement"}, "test", &added) && added.size() == 1
+                          && store.grant_achievements(kCharacterA, {"Test_Achievement"}) && store.record_entitlement_reward(kCharacterA, "Test_Entitlement")
+                          && store.list_entitlements(player.account.personaId).size() == 1 && store.list_achievements(kCharacterA).size() == 1;
         const bool deleted = store.delete_character(kCharacterA) == state::DeleteResult::deleted && store.list_items(kCharacterA).empty()
                              && store.currency(kCharacterA, state::kCurrencyCoin) == 0 && store.progress(kCharacterA).level == 1
                              && store.list_skills(kCharacterA).ranks.empty() && store.list_skills(kCharacterA).nodes.empty()
-                             && store.list_skills(kCharacterA).bars.empty();
-        check(made && opened && schema_version(path) == 7 && kept && owned && written && oldItem && progressed && deleted,
+                             && store.list_skills(kCharacterA).bars.empty() && store.list_achievements(kCharacterA).empty()
+                             && store.list_entitlement_rewards(kCharacterA).empty()
+                             && store.list_entitlements(player.account.personaId).size() == 1;
+        check(made && opened && schema_version(path) == 8 && kept && owned && written && oldItem && progressed && owns && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 7: its character row and its item stay (the item with no perk), its persona has an account, "
+                  + " opens and gets version 8: its character row and its item stay (the item with no perk), its persona has an account, "
                     "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
-                    "attribute points, and the skills, and the delete of a character removes them");
+                    "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, and the "
+                    "delete of a character removes the rows of the character (the entitlement of the account stays)");
     }
 }
 

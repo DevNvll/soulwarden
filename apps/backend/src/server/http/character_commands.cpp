@@ -613,6 +613,28 @@ std::optional<json> items_view(world::World& target, const std::string& characte
                 {"equipment", equipment}};
 }
 
+std::optional<json> ownership_view(world::World& target, const std::string& character) {
+    const auto view = target.ownership().view(character);
+    if (!view) {
+        return std::nullopt;
+    }
+    json expansion = nullptr;
+    if (view->expansion != nullptr) {
+        expansion = {{"id", view->expansion->id},
+                     {"maxLevel", view->expansion->maxLevel},
+                     {"maxEquipGearScore", view->expansion->maxEquipGearScore},
+                     {"maxCraftGearScore", view->expansion->maxCraftGearScore},
+                     {"maxTradeSkillLevel", view->expansion->maxTradeSkillLevel},
+                     {"entitlement", view->expansion->entitlement}};
+    }
+    return json{{"character", character},
+                {"inWorld", view->inWorld},
+                {"expansion", expansion},
+                {"entitlements", view->entitlements},
+                {"achievements", view->achievements},
+                {"rewards", view->rewards}};
+}
+
 std::optional<json> progress_view(world::World& target, const std::string& character) {
     const auto progress = target.progress().view(character);
     const auto skills = target.skills().view(character);
@@ -640,7 +662,8 @@ std::optional<json> progress_view(world::World& target, const std::string& chara
             const auto found = skills->skills.progressions.find(row.wireId);
             const world::ProgressionRank value =
                 found == skills->skills.progressions.end() ? world::ProgressionRank{} : found->second;
-            const std::uint32_t next = value.rank < row.maxRank && value.rank < row.ranks.experience.size()
+            const std::uint32_t cap = tables->rank_cap(row);
+            const std::uint32_t next = value.rank < cap && value.rank < row.ranks.experience.size()
                                            ? row.ranks.experience[value.rank]
                                            : 0;
             if (row.kind == gamedata::ProgressionKind::tradeSkill) {
@@ -648,7 +671,7 @@ std::optional<json> progress_view(world::World& target, const std::string& chara
                                        {"level", value.rank},
                                        {"experience", value.points},
                                        {"nextLevel", next},
-                                       {"maxLevel", row.maxRank}});
+                                       {"maxLevel", cap}});
                 continue;
             }
             json nodes = json::array();

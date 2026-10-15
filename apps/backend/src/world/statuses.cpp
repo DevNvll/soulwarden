@@ -373,6 +373,38 @@ unsigned Statuses::remove_source(Entity& character, const StatusSource& source, 
     return remove(character, [&](const ActiveStatus& status) { return status.source == source; }, cause);
 }
 
+unsigned Statuses::remove_row_of(const std::string& characterId, std::string_view status, const StatusSource& source, StatusEnd cause) {
+    const auto found = m_characters.find(characterId);
+    if (found == m_characters.end()) {
+        return 0;
+    }
+    return end_statuses(m_world.find_character(characterId), characterId, found->second,
+                        [&](const ActiveStatus& entry) { return entry.source == source && same_text(entry.status, status); }, cause);
+}
+
+bool Statuses::change_source(const std::string& characterId, std::string_view status, const StatusSource& from, const StatusSource& to) {
+    const auto found = m_characters.find(characterId);
+    if (found == m_characters.end()) {
+        return false;
+    }
+    bool changed = false;
+    for (ActiveStatus& entry : found->second.statuses) {
+        if (entry.source == from && same_text(entry.status, status)) {
+            entry.source = to;
+            changed = true;
+        }
+    }
+    // The copy of the entity (the rules of the other systems read it); the state on the wire does not change.
+    if (Entity* character = m_world.find_character(characterId); character != nullptr && changed) {
+        for (ActiveStatus& entry : character->statuses) {
+            if (entry.source == from && same_text(entry.status, status)) {
+                entry.source = to;
+            }
+        }
+    }
+    return changed;
+}
+
 void Statuses::set_gear(Entity& character, const std::vector<GearStatus>& wanted) {
     if (character.kind != EntityKind::player) {
         return;

@@ -71,6 +71,16 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   data, and the wolf with a capsule) is common to the cases PJ, RJ (the review of stage 3.3b-S3; RJ7 runs
   `check_projectile_tool.py`), and SB (stage 3.3b-S2b: `tests/spell_kind_tests.cpp` adds the ice gauntlet, the musket, the
   life staff, and the slices of the Pylon, the trap, and the Beacon).
+- The spell kind fixture (`tests/support/spell_kind_fixture.h`: the Pylon, the trap, and the Beacon on the projectile
+  fixture) is common to the cases SB (stage 3.3b-S2b) and RK (the corrections of its code review, stage 1.1b,
+  `tests/review_spells2_tests.cpp`).
+- Case RK1 runs `tools/check_dev_mute.py` (the mute of `tools/dev-mute.sh` against made-up prefixes in a temporary folder),
+  RK11 `check_projectile_tool.py`, RK12 `check_spell_tool.py`, and DL9 `tools/gamedata/check_progression_tool.py`
+  (stage 1.1b): with no Python 3 these cases fail. `check_dev_mute.py --script FILE` runs the check against a different mute
+  script (the proof on the tree of stage 3.3b-S2b used the block of its `tools/dev-run.sh`).
+- The state decoder of the tests knows the entitlement state (3133) and the achievement state (3210) of stage 1.1b: a case
+  with expansion data has them in the first record of a character (cases DL2, DL10). The stored bytes of T2 have no
+  expansion data: the change of stage 1.1b does not change them.
 - In a test, a JSON initializer with a list of pairs (`{"spells", {{"Name", 0}}}`) is an object for `nlohmann::json`, not a
   list of lists: write `json::array({json::array({"Name", 0})})`.
 - The state decoder of the tests (`tests/support/state_decoder.h`) must know each state type of a record: a type that it

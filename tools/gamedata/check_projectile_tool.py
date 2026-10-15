@@ -16,6 +16,10 @@ backend runs it (case PJ11).
   empty-projectile-slice  that slice has no projectile component: status 1, the old file stays (F7)
   no-animation-database   no animation database: the bow has no shot: status 1, the old file stays (F7)
   missing-slice-override  a SliceOverride of the clip names no slice: status 1, the old file stays (F7)
+  partial-basic-sources   the animation database has the clip of the light row of the bow and no clip of its heavy row:
+                          status 1, the old file stays (code review of stage 3.3b-S2b, finding F11; case RK11)
+  missing-ability-prefab  the prefab of a projectile spell of an ability that the backend launches (the Beacon) names no
+                          slice: status 1, the old file stays (F11)
 
 Usage: check_projectile_tool.py WORK_FOLDER
 Status 0: each case has the expected result.
@@ -77,12 +81,15 @@ def projectile_slice() -> list[Element]:
                               real("m_stuckLifetime", 8.0)])]
 
 
-def animation_database(charge: str, override: str = "") -> bytes:
-    return (f'<AnimDB><FragmentList><Bow_Shoot><Fragment Tags="Bow"><ProcLayer><Procedural type="CAGE-RangedAttack">'
-            f'<ProceduralParams><RangedAttackName value="Basic"/><ChargeValue value="{charge}"/><DamageTableRow value="TestRow"/>'
-            f'<SliceOverride value="{override}"/><UseAmmo value="true"/><AmmoSlot value="PaperdollSlotTypes::ARROW_AMMO_SLOT"/>'
-            f'<ConsumeAmmo value="true"/></ProceduralParams></Procedural></ProcLayer></Fragment></Bow_Shoot></FragmentList>'
-            f'</AnimDB>').encode()
+def animation_database(charge: str, override: str = "", heavy: bool = True) -> bytes:
+    """@return An animation database with a clip of the light row of the bow and (`heavy`) a clip of its heavy row."""
+    def clip(fragment: str, row: str) -> str:
+        return (f'<{fragment}><Fragment Tags="Bow"><ProcLayer><Procedural type="CAGE-RangedAttack">'
+                f'<ProceduralParams><RangedAttackName value="Basic"/><ChargeValue value="{charge}"/><DamageTableRow value="{row}"/>'
+                f'<SliceOverride value="{override}"/><UseAmmo value="true"/><AmmoSlot value="PaperdollSlotTypes::ARROW_AMMO_SLOT"/>'
+                f'<ConsumeAmmo value="true"/></ProceduralParams></Procedural></ProcLayer></Fragment></{fragment}>')
+    clips = clip("Bow_Shoot", "TestRow") + (clip("Bow_Heavy", "TestHeavy") if heavy else "")
+    return f'<AnimDB><FragmentList>{clips}</FragmentList></AnimDB>'.encode()
 
 
 def tables(case: str) -> dict:
@@ -90,14 +97,22 @@ def tables(case: str) -> dict:
              "DamageTableRow": "", "ManaCost": ""}
     if case == "missing-column":
         del spell["RangedAttackName"]
+    damage = [{"DamageID": "TestRow", "WeaponCategory": "Bow", "AttackType": "Light"},
+              {"DamageID": "TestHeavy", "WeaponCategory": "Bow", "AttackType": "Heavy"}]
+    spells = [spell]
+    if case == "missing-ability-prefab":
+        # The projectile spell of the Beacon (an ability that the backend launches) with a prefab that names no slice.
+        damage.append({"DamageID": "LifeStaff_Beacon", "WeaponCategory": "LifeMagic", "AttackType": "Ability"})
+        spells.append({"SpellID": "Spell_Ability_Lifestaff_Beacon_Projectile", "SpellPrefabPath": "Items/Weapons/missing_beacon",
+                       "CastingTypes": "Projectile", "RangedAttackProfile": "Bow", "RangedAttackName": "Basic",
+                       "DamageTableRow": "LifeStaff_Beacon", "ManaCost": ""})
     return {
         "ammo": (tool.AMMO_TYPE, FakeSheet("Ammo", [{"AmmoID": "DefaultArrow", "AmmoType": "Arrow", "DamageModifier": 1.2,
                                                      "AmmoPrefabPath": "Items/Weapons/test_arrow"}])),
         "weapons": (tool.WEAPON_TYPE, FakeSheet("Weapons", [{"WeaponID": "TestBow", "RangedAttackProfile": "Bow", "AmmoType": "Arrow",
                                                              "TooltipPrimaryAttackData": "TestRow", "TooltipAlternateAttackData": "TestHeavy"}])),
-        "spells": (tool.SPELL_TYPE, FakeSheet("Spells", [spell])),
-        "damage": (tool.DAMAGE_TYPE, FakeSheet(tool.DAMAGE_TABLE, [{"DamageID": "TestRow", "WeaponCategory": "Bow", "AttackType": "Light"},
-                                                                   {"DamageID": "TestHeavy", "WeaponCategory": "Bow", "AttackType": "Heavy"}])),
+        "spells": (tool.SPELL_TYPE, FakeSheet("Spells", spells)),
+        "damage": (tool.DAMAGE_TYPE, FakeSheet(tool.DAMAGE_TABLE, damage)),
     }
 
 
@@ -105,7 +120,8 @@ def run(work: Path, case: str) -> tuple[int, str]:
     sheets = tables(case)
     database = radb(math.nan if case == "range-not-finite" else 100.0)
     adb = animation_database("x" if case == "bad-charge" else "0",
-                             "Items/Weapons/missing_override" if case == "missing-slice-override" else "")
+                             "Items/Weapons/missing_override" if case == "missing-slice-override" else "",
+                             case != "partial-basic-sources")
 
     class Sources:
         used: dict = {}
@@ -155,14 +171,14 @@ def main() -> int:
     failures = 0
     status, text = run(work, "valid")
     document = json.loads(text) if status == 0 and text != MARK else {}
-    expected_shot = ["Bow", "Basic", "TestRow", 0.0, -1, "", "", False, 12, True]
-    passed = (status == 0 and document.get("shots") == [expected_shot] and document.get("weapons") == [["TestBow", "Bow", "Arrow"]]
+    expected_shots = [["Bow", "Basic", "TestHeavy", 0.0, -1, "", "", True, 12, True], ["Bow", "Basic", "TestRow", 0.0, -1, "", "", False, 12, True]]
+    passed = (status == 0 and document.get("shots") == expected_shots and document.get("weapons") == [["TestBow", "Bow", "Arrow"]]
               and document.get("ammo") == [["DefaultArrow", "Arrow", 1.2, 0]] and len(document.get("slices", [])) == 1
               and document["attacks"][0][:6] == ["Bow", "Basic", False, 100.0, 0.15, 2.0])
     print(f"{'ok  ' if passed else 'FAIL'}  valid: status {status}, shots {document.get('shots')}")
     failures += 0 if passed else 1
     for case in ("missing-column", "range-not-finite", "bad-charge", "missing-ammo-prefab", "empty-projectile-slice",
-                 "no-animation-database", "missing-slice-override"):
+                 "no-animation-database", "missing-slice-override", "partial-basic-sources", "missing-ability-prefab"):
         status, text = run(work, case)
         passed = status == 1 and text == MARK
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, file {'kept' if text == MARK else 'replaced'}")

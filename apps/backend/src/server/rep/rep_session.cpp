@@ -883,6 +883,19 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
             }
         }
     }
+    // A spell that follows an entity (an aura) names that entity in its record: the session observes it only while it observes
+    // that entity (code review of stage 3.3b-S2b, finding F7). Its attachment goes out: the spell goes out too.
+    for (const auto& [id, known] : m_observer.known()) {
+        const world::Entity* entity = m_world.find(id);
+        if (entity == nullptr || entity->kind != world::EntityKind::spell || entity->spell.attached == 0 || entity->spell.attached == own.id
+            || std::find(gone.begin(), gone.end(), id) != gone.end()) {
+            continue;
+        }
+        if (m_observer.find(entity->spell.attached) == nullptr
+            || std::find(gone.begin(), gone.end(), entity->spell.attached) != gone.end()) {
+            gone.push_back(id);
+        }
+    }
     for (const world::EntityId id : gone) {
         const std::uint32_t interest = m_observer.remove(id);
         if (interest == 0) {
@@ -922,8 +935,11 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
             return;
         }
         if (entity.kind == world::EntityKind::spell) {
-            // A spell entity (stage 3.3b-S2a) at the m_sliceSpawnRadius of its slice; a spell with no slice data has no record.
-            if (entity.spell.slice != nullptr && distance <= m_world.interest_enter(entity)) {
+            // A spell entity (stage 3.3b-S2a) at the m_sliceSpawnRadius of its slice; a spell with no slice data has no record. An
+            // aura that follows an entity waits until the session observes that entity (finding F7: its record names the actor).
+            const bool attachment = entity.spell.attached == 0 || entity.spell.attached == own.id
+                                    || m_observer.find(entity.spell.attached) != nullptr;
+            if (entity.spell.slice != nullptr && attachment && distance <= m_world.interest_enter(entity)) {
                 const std::uint32_t interest = m_observer.add(entity.id);
                 if (interest != 0) {
                     log::write("rep: spell %016llx (%s) comes into the interest table (interest %u, %.1f m, age %lld ms)",

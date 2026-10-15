@@ -137,8 +137,10 @@ enum class SpellEnd : std::uint8_t {
     triggered,
     /** The entity of its attachment went away (an aura; stage 3.3b-S2b). */
     targetLeft,
+    /** The entity of its attachment died (an aura; code review of stage 3.3b-S2b, finding F3). */
+    targetDied,
 };
-inline constexpr std::size_t kSpellEndCount = 7;
+inline constexpr std::size_t kSpellEndCount = 8;
 
 [[nodiscard]] const char* spell_end_text(SpellEnd cause);
 [[nodiscard]] const char* spell_role_text(SpellRole role);
@@ -162,6 +164,8 @@ struct SpellCounts {
     /** The statuses that an aura gave, and the statuses that it took back (ClearOnExit, ClearOnEnd). */
     std::uint64_t auraGiven{0};
     std::uint64_t auraTaken{0};
+    /** The rows that an aura gave again to a friend in it after their end (code review of stage 3.3b-S2b, finding F5). */
+    std::uint64_t auraRenewed{0};
     /** The entities that the steps of the summons, the traps, and the auras looked at (the position index: the load). */
     std::uint64_t looked{0};
 };
@@ -197,6 +201,13 @@ public:
     void caster_died(EntityId caster);
     /** An entity left the world (a character, a creature): each aura that follows it ends (SpellEnd::targetLeft). */
     void target_left(EntityId target);
+    /** An entity died (a character, a creature): each aura that follows it ends (SpellEnd::targetDied; finding F3). */
+    void target_died(EntityId target);
+    /**
+     * A character leaves the world (World::remove_entity, before its entity goes away): each aura that gives it its statuses
+     * takes them back (ClearOnExit; code review of stage 3.3b-S2b, finding F6: the statuses stay with the character id).
+     */
+    void member_left(const Entity& character);
     /** Ends a spell (a command). @return False: no spell with this id. */
     bool end(EntityId spell, SpellEnd cause);
     /** Ends each spell of a caster. @return The number of the spells that ended. */
@@ -254,10 +265,10 @@ private:
         /** The phases that ran (one time each). */
         std::vector<bool> done;
         SpellRole role{SpellRole::area};
-        /** An aura: its radius, its statuses, and the characters that have them now. */
+        /** An aura: its radius, its statuses, and the characters that have them now (the entity and its character id). */
         float radius{0.0F};
         std::vector<std::string> statuses;
-        std::set<EntityId> members;
+        std::map<EntityId, std::string> members;
         /** A trap: the status rows of its hit. */
         std::vector<std::string> effects;
         /** The weapon of the cast. */
@@ -280,6 +291,19 @@ private:
     void aura_step(Entity& spell, Live& live);
     /** The friends of the caster of an aura lose its statuses (ClearOnExit, ClearOnEnd). */
     void clear_members(const Entity& spell, Live& live, const std::set<EntityId>& keep);
+    /** A friend comes into an aura: the status rows of the aura that it does not have from a different aura. @return True: it has them. */
+    bool give_member(const Entity& spell, const Live& live, Entity& friendly);
+    /** A friend leaves an aura (or the aura ends): each row that no other aura gives ends, and a row that one gives gets its source. */
+    void remove_member(const Entity& spell, const Live& live, EntityId member, const std::string& characterId);
+    /** The friends in an aura get each row of the aura again that ended while they are in it (finding F5: a row of 10 s in an aura of 15 s). */
+    void renew_members(const Entity& spell, const Live& live);
+    /** One status row of a character from the auras (code review of stage 3.3b-S2b, finding F4). */
+    struct AuraRow {
+        /** The auras that give the row to the character now. */
+        std::set<EntityId> auras;
+        /** The aura whose source the status of the row has. */
+        EntityId owner{0};
+    };
 
     World& m_world;
     const gamedata::SpellData* m_data;
@@ -289,6 +313,8 @@ private:
     std::unordered_map<EntityId, std::vector<EntityId>> m_byCaster;
     /** The auras of each entity that they follow (the cancel at its leave). */
     std::unordered_map<EntityId, std::vector<EntityId>> m_byTarget;
+    /** The status rows that the auras give: character id to (the lower-case id of the row to its auras). */
+    std::unordered_map<std::string, std::map<std::string, AuraRow>> m_auraRows;
     /** The end causes of the spells in their end chain (the log line of the removal). */
     std::unordered_map<EntityId, SpellEnd> m_endCauses;
     SpellCounts m_counts;

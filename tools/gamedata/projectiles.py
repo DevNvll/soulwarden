@@ -279,6 +279,15 @@ DEFAULT_AMMO = {"arrow": "defaultarrow", "shot": "defaultshot"}
 # the blunderbuss; abilities-magic.md Q2: the four magic weapons). The other profiles of the weapon table are creatures and
 # thrown weapons with no basic shot.
 PLAYER_PROFILES = ("bow", "musket", "blunderbuss", "fireball", "icemagic", "lifestaff", "voidgauntlet")
+# The light and heavy rows of a player profile that are not a shot (code review of stage 3.3b-S2b, finding F11): the alternate
+# attack of the musket (MusketAttack2, the tooltip row of TooltipAlternateAttackData of each musket) is a strike of the stock
+# (damage type Strike, research abilities-ranged.md, appendix A), with no clip of a ranged attack in the animation databases.
+BASIC_ROWS_WITH_NO_SHOT = {("musket", "musketattack2")}
+# The projectile spells of the abilities that the backend launches (stage 3.3b-S2b, world/abilities.cpp): each one must have a
+# shot (code review of stage 3.3b-S2b, finding F11): a prefab with no projectile slice stops the tool, and the old file stays.
+REQUIRED_ABILITY_SHOTS = ("IceMagic_Pylon_Projectile", "Musket_Trap_Toss", "Musket_Trap_Toss_DMG",
+                          "Spell_Ability_Lifestaff_Beacon_Projectile", "Spell_Ability_Lifestaff_Beacon_Projectile_Upgrade",
+                          "Spell_Ability_Lifestaff_Beacon_Projectile_Upgrade2", "Spell_Ability_Lifestaff_Beacon_Projectile_Upgrade3")
 
 
 def check_joins(shot_rows: list, light_heavy: dict, weapons: list, ammo: list, profiles: dict) -> None:
@@ -286,11 +295,16 @@ def check_joins(shot_rows: list, light_heavy: dict, weapons: list, ammo: list, p
     profile of PLAYER_PROFILES of a weapon with a light or heavy row (TooltipPrimaryAttackData, TooltipAlternateAttackData) has a shot of such a
     row (an animation database with no clip, or no animation database, gives none), and the ammunition of an empty slot of the
     ammunition type of each weapon whose shot takes the slice of the ammunition (slice -1) has a slice."""
+    # Each light and heavy row of a player profile, not only one of them (code review of stage 3.3b-S2b, finding F11: a
+    # source of the light row with no source of the heavy row gave a file with no heavy shot).
     for profile, wanted in sorted(light_heavy.items()):
         if profile not in PLAYER_PROFILES:
             continue
-        if not any(entry[0].lower() == profile and entry[2].lower() in wanted for entry in shot_rows):
-            raise Failure(f"the profile {profiles.get(profile, profile)} has no shot of its light or heavy row")
+        for row in sorted(wanted):
+            if (profile, row) in BASIC_ROWS_WITH_NO_SHOT:
+                continue
+            if not any(entry[0].lower() == profile and entry[2].lower() == row for entry in shot_rows):
+                raise Failure(f"the row {row} of the profile {profiles.get(profile, profile)} has no shot")
     slice_of_ammo = {entry[0].lower(): entry[3] for entry in ammo}
     fallback_profiles = {entry[0].lower() for entry in shot_rows if entry[4] < 0}
     for weapon, profile, ammo_type in weapons:
@@ -430,7 +444,8 @@ def build_document(sources: Sources) -> dict:
             key = (profile, attack.lower(), damage, identifier.lower())
             if key in shots:
                 continue
-            index = projectile_slice(str(sheet.source(row, "SpellPrefabPath")), False)
+            required = identifier.lower() in (name.lower() for name in REQUIRED_ABILITY_SHOTS)
+            index = projectile_slice(str(sheet.source(row, "SpellPrefabPath")), required)
             if index < 0:
                 ability_no_slice += 1
                 continue
@@ -441,6 +456,11 @@ def build_document(sources: Sources) -> dict:
 
     shot_rows = sorted(shots.values(), key=lambda entry: (entry[0].lower(), entry[1].lower(), entry[2].lower(), entry[5].lower()))
     check_joins(shot_rows, light_heavy, weapons, ammo, profiles)
+    spells_of_shots = {entry[5].lower() for entry in shot_rows}
+    known = {str(sheet.cell(row, "SpellID")).strip().lower() for sheet in sheets[SPELL_TYPE] for row in range(sheet.row_count)}
+    for name in REQUIRED_ABILITY_SHOTS:
+        if name.lower() in known and name.lower() not in spells_of_shots:
+            raise Failure(f"the ability spell {name} has no shot (its profile, its attack, or its damage row is not a row of the data)")
     return {"format": 1,
             "counts": {"attacks": len(attacks), "slices": len(slices), "ammo": len(ammo), "weapons": len(weapons),
                        "shots": len(shot_rows), "abilityShots": ability_shots, "abilityShotsWithNoSlice": ability_no_slice},

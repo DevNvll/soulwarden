@@ -49,14 +49,20 @@ of that system.
   sound server: the sound server keeps a volume by the application name, and the game of the user
   has the same name ("New World"). `SOULWARDEN_DEV_SOUND=1` keeps the volumes. Trap: an account
   that has no settings file yet (its first world entry) has the volume of the game until the next
-  start.
+  start. The script `tools/dev-mute.sh` makes the change. It compares the resolved paths (code
+  review of stage 3.3b-S2b, finding F1): when the development prefix, its savedata folder, or a
+  settings file resolves to the prefix of the user or to a path in it (a link, a path that ends in
+  `/.`), it writes no file and prints a message `dev-mute: ...`, and the run has the volume of the
+  game. `tools/check_dev_mute.py` checks this with folders of a test (case RK1), never with the
+  prefix of the user.
 - This is a development environment: data loss is not a problem. A test uses the fastest
   path to the state that it needs. The development data directory stays between runs:
   `tools/scenarios/play.sh RUN_LABEL` enters the world with a character that is there
   already. Its database has two accounts now: the Steam account of the computer with the
   character `Soulwarden`, and the made-up test identity (`76561202255233008`, `Tester`) with the
   characters `Remote` and `Gearone`. `Soulwarden` has a chest armor, leg armor, an amulet, a
-  sword, and a potion stack in a quick slot on it, the level 26 with points on strength,
+  sword, and a potion stack in a quick slot on it, the level 65 (stage 1.1b; `tools/world level Soulwarden 60` gives the
+  level of the research of the DLC) with points on strength,
   dexterity, and constitution (strength 8, dexterity 25: the damage values of protocol notes
   4.15), a spear (`2hSpearT1`) in weapon slot 2 (slot 25), a great axe (`2hGreatAxeT2`), a
   hatchet (`1hHatchetT2`), and a war hammer (`2hWarhammerT2`) in the bag (`tools/world equip
@@ -64,7 +70,9 @@ of that system.
   hatchet) at the mastery level 20 with 19 nodes each and no ability on a bar (114 nodes:
   rows of a test, written into the database with no check of the tree rules), the war hammer
   at the mastery level 8, and the trade skills mining, cooking, and armoring; `Remote` has the level 35; `Remote` has a chest armor, leg armor,
-  and a sword on it; `Gearone` is a character of the creation with the armor and the sword
+  and a sword on it; from stage 1.1b each account owns the DLC (the rows of `entitlements` and `achievements`), `Soulwarden`
+  has a sword of gear score 700 in weapon slot 1, FoodCONT5 in quick slot 17 (key 6), Mining 250, Riding 5, a flail node
+  (Arcane Smite), and each character of the two accounts that entered has the amulet of a DLC pack (AmuletIsabellaT1); `Gearone` is a character of the creation with the armor and the sword
   of the archetype Soldier. Make a new empty data directory or a new character only when the
   test is about an empty database or about the creation. A database backup is not necessary.
   `sqlite3 ~/Games/soulwarden/work/dev-data/soulwarden.sqlite3 "update characters set position_x=null,

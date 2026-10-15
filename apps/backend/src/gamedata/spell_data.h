@@ -195,6 +195,12 @@ struct SpellTables {
     std::vector<std::pair<std::string, std::size_t>> spells;
     /** The rows of the base vitals tables that the slices name (format 2). */
     std::vector<SpellVitalsRow> vitals;
+    /**
+     * The vitals rows that a slice names and that the base vitals tables do not have (a row of a creature table; the member
+     * `vitalsNotInData` of the tool). A slice whose vitals row is in neither list is refused (code review of stage 3.3b-S2b,
+     * finding F8), and the spell of a slice whose row is in this list makes no summon and no trap (Spells::make).
+     */
+    std::vector<std::string> vitalsNotInData;
 };
 
 class SpellData {

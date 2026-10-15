@@ -34,7 +34,7 @@ SkillSet Skills::read_skills(const std::string& characterId) const {
         std::uint32_t rank = std::min(row.rank, kLargestRank);
         if (tables() != nullptr) {
             if (const gamedata::ProgressionRow* progression = tables()->progression(row.id)) {
-                rank = std::min(rank, progression->maxRank);
+                rank = std::min(rank, tables()->rank_cap(*progression));
             }
         }
         if (rank != 0 || row.points != 0) {
@@ -241,9 +241,10 @@ SkillResult Skills::set_rank(const std::string& characterId,
         }
         // The experience of a rank is below the experience that gives the next rank. The
         // largest rank has no experience.
-        const std::uint64_t limit =
-            rank < row->maxRank && rank < row->ranks.experience.size() ? row->ranks.experience[rank] : 0;
-        if (rank > row->maxRank || (points != 0 && points >= limit)) {
+        // The largest rank is the rank of the owned expansion (stage 1.1b: Riding 250, a trade skill 250).
+        const std::uint32_t cap = tables()->rank_cap(*row);
+        const std::uint64_t limit = rank < cap && rank < row->ranks.experience.size() ? row->ranks.experience[rank] : 0;
+        if (rank > cap || (points != 0 && points >= limit)) {
             return ProgressError::badRank;
         }
         if (rank == 0 && points == 0) {
@@ -282,7 +283,7 @@ SkillResult Skills::add_experience(const std::string& characterId, std::string_v
         value.points += amount;
         // The counter is wider than the rank on the wire, and the largest rank is a rank on the
         // wire: the loop has an end for each table, also for one that no loader checked.
-        const std::uint32_t largest = std::min(row->maxRank, gamedata::kLargestRank);
+        const std::uint32_t largest = std::min(tables()->rank_cap(*row), gamedata::kLargestRank);
         std::uint32_t rank = value.rank;
         while (rank < largest && rank < row->ranks.experience.size() && value.points >= row->ranks.experience[rank]) {
             value.points -= row->ranks.experience[rank];

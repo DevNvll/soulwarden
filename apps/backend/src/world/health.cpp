@@ -38,6 +38,8 @@ HealthResult Health::apply(Entity& target, float damage) {
         m_world.statuses().died(target);
         // The spells of the character whose row has EndOnCasterDeath end (stage 3.3b-S2a).
         m_world.spells().caster_died(target.id);
+        // The auras that follow the character end (code review of stage 3.3b-S2b, finding F3).
+        m_world.spells().target_died(target.id);
     }
     return result;
 }

@@ -30,7 +30,8 @@ constexpr ComponentKey kAllComponents[] = {ComponentKey::metadata,    ComponentK
                                            ComponentKey::vitals,      ComponentKey::appearance, ComponentKey::progression,
                                            ComponentKey::attribute,   ComponentKey::currency,  ComponentKey::container,
                                            ComponentKey::paperdoll,   ComponentKey::categorical, ComponentKey::points,
-                                           ComponentKey::abilities, ComponentKey::mana, ComponentKey::cooldowns};
+                                           ComponentKey::abilities, ComponentKey::mana, ComponentKey::cooldowns,
+                                           ComponentKey::entitlements, ComponentKey::achievements};
 /**
  * The states that a new entity of a character also marks (code review of stage 3.3b-S1, finding F2): the statuses that the
  * character keeps across a new session and their speed table. The first record has them; their encoders give no fragment
@@ -60,6 +61,7 @@ World::World(const WorldClock& clock,
       m_inventory(*this, store, options.itemCatalog),
       m_progress(*this, store, options.progressionTables),
       m_skills(*this, store, options.progressionTables),
+      m_ownership(*this, store, options.progressionTables),
       m_navigation(*this, options.navigationData, options.terrain, options.navigationThread),
       m_creatures(*this, options.creatureData),
       m_combat(*this, options.combatTables),
@@ -238,6 +240,10 @@ Entity& World::make_entity(const state::Character& character) {
     }
     m_characters[entity.characterId] = entity.id;
     m_index.insert(entity.id, entity.position);
+    // The entitlements and the achievements of the DLC (stage 1.1b), before the first record: the client reads the
+    // expansion of the character before its level window and its mastery tree. After the insert of the entity: the
+    // reward item of a DLC pack goes into the bag of the entity.
+    m_ownership.entered(entity);
     log::write("world: entity %016llx (actor %s) of character %s (%s) at %.2f %.2f %.2f",
                static_cast<unsigned long long>(entity.id),
                actor_text(entity.actor).c_str(),
@@ -280,6 +286,9 @@ void World::remove_entity(EntityId id) {
         // The activation of a heart rune ends with no explosion (finding F4 of the review of stage 1.3b), and the statuses
         // of the gear end (the next entry gives them again from the items). The other statuses stay with the character.
         m_runes.left(found->second);
+        // The auras that give the character their statuses take them back while the entity is here (code review of stage
+        // 3.3b-S2b, finding F6).
+        m_spells.member_left(found->second);
         m_statuses.left(found->second);
         m_characters.erase(entity.characterId);
     }
@@ -611,6 +620,17 @@ float World::interest_leave(const Entity& entity) const {
 Entity* World::find(EntityId id) {
     const auto found = m_entities.find(id);
     return found == m_entities.end() ? nullptr : &found->second;
+}
+
+std::vector<Entity*> World::characters_of_account(const std::string& personaId) {
+    std::vector<Entity*> entities;
+    for (const auto& [character, id] : m_characters) {
+        const auto found = m_entities.find(id);
+        if (found != m_entities.end() && found->second.personaId == personaId) {
+            entities.push_back(&found->second);
+        }
+    }
+    return entities;
 }
 
 Entity* World::find_character(const std::string& characterId) {

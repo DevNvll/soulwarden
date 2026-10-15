@@ -220,6 +220,8 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         // A dead creature has no target, and the attack that it plays does no damage.
         m_behavior.died(*entity);
         m_forced.stop(*entity);
+        // The auras that follow the creature end (code review of stage 3.3b-S2b, finding F3).
+        m_world.spells().target_died(entity->id);
         // The death action of the slice: the body falls and stays on the ground. The client
         // starts this action only when the server starts it.
         const gamedata::CreatureSlice& body = *entity->creature.body;

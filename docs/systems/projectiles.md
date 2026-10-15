@@ -83,7 +83,9 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   a near range, and the capsule must be in the near range (with the radius of the projectile and 0.25 m) of the origin,
   with the point 4 m or less from the creature and no wall between. The receiver must be the first creature on the line of
   the launch in the near range (a sweep in the direction of the item), with no wall between the launch place and the
-  surface of its capsule (finding F1, test case RJ1). The hit is at the launch, and no projectile flies. A
+  surface of its capsule (finding F1, test case RJ1), and with no wall on the line of the launch before its contact
+  with the capsule (code review of stage 3.3b-S2b, finding F2, case RK2: the line to the nearest point of the surface can
+  pass beside a corner of a wall). The hit is at the launch, and no projectile flies. A
   dead creature or one on its way back is passed: the server flies the projectile.
 - The wall test of a segment (`Navigation::line_stop`) gives the first blocked point of the segment in a cell, not the
   entry of the cell (finding F4, test case RJ4): a shot down at a creature hits the creature before the ground.

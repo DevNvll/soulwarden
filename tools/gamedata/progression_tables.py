@@ -14,14 +14,25 @@ tools/research/pakx.py extracted).
   XPLevels (ExperienceData)                      for each level: the total experience at its start,
                                                  the attribute points of the level, the health of
                                                  the level, the cost of an attribute reset
-  Expansions (ExpansionData), row "None"         the largest level and the largest trade skill level
-                                                 of a player with no expansion
+  Expansions (ExpansionData)                     the limits of each expansion row (the largest level,
+                                                 the gear score limits, the largest trade skill
+                                                 level) and its entitlement; the row "None" also
+                                                 gives levelCap and tradeSkillCap (no expansion)
+  EntitlementData (EntitlementData)              the entitlements that each account gets (stage 1.1b,
+                                                 decision of the user of 2026-10-15): the entitlement
+                                                 of each expansion row and the DLC packs of Steam
+                                                 (RETAIL_DLC_ROOTS and the entitlements that they
+                                                 give), with the bit index of each one
+  AchievementDataTable (AchievementData)         the bit index of each achievement that such an
+                                                 entitlement names (the expansion: Expansion_2023_Unlock)
   Constitution (AttributeDefinition)             the health that each value of the attribute gives,
                                                  and the smallest and the largest value
   BaseVitals_Player (VitalsBaseData), "Player"   health, stamina, and mana of a player at the start
   CategoricalProgression                         the weapon masteries (rank table "WeaponMastery")
   (CategoricalProgressionData)                   and the trade skills (a rank table of the type
                                                  TradeskillRankData), with the largest rank
+                                                 (MaxLevel) and the largest rank with the expansion
+                                                 (Expansion01MaxLevel; 0: the row has none)
   the rank tables                                the experience of each rank, and for a weapon the
                                                  cost of a tree reset
   ProgressionPoints (ProgressionPointData)       the nodes of each weapon tree: the pool, and the
@@ -29,17 +40,26 @@ tools/research/pakx.py extracted).
   the weapon ability tables (AbilityData)        for each node: the tree, the row, the column, and
                                                  if it is an active ability
 
-Output: {"format": 1, "levelCap": N, "tradeSkillCap": N,
+Output: {"format": 2, "levelCap": N, "tradeSkillCap": N,
+"expansions": [[id, maxLevel, maxCraftGearScore, maxEquipGearScore, maxTradeSkillLevel, entitlement], ...],
+"entitlements": [[alias, index, rewardType, rewards, achievement], ...],
+"achievements": [[id, index], ...],
 "levels": [[experience, attributePoints, health, resetCost], ...],
 "attributes": {"minimum": N, "maximum": N, "constitutionHealth": [...]},
 "vitals": {"health": N, "stamina": N, "mana": N},
 "rankTables": {"<name>": {"experience": [...], "resetCost": [...]}, ...},
-"progressions": [[id, kind, maxRank, rankTable], ...],
+"progressions": [[id, kind, maxRank, rankTable, expansionMaxRank], ...],
 "abilities": [[table, node, tree, row, column, active, requiredNode], ...]}.
 Entry K of `levels` (from 0) is the level K + 1 of the screen. `levelCap` is a level of the
 screen. Entry K of `constitutionHealth` is the value `minimum` + K. `kind` is "weapon" or
 "tradeskill". Entry R of a rank table is the experience that takes a character from the rank R
-to the next rank.
+to the next rank. `entitlements` is the list of the entitlements that the backend gives each
+account (the expansion first): `index` is the bit of the entitlement in the entitlement state of
+the client (EntitlementIndex), `rewards` the text of the column Reward(s), `achievement` the
+achievement that the entitlement gives each character (AchievementId; empty: none). The tool
+stops (and keeps the old file) when an expansion names an entitlement that the table does not
+have, an entitlement of the list is not enabled or names an achievement that the table does not
+have, or a bit index is outside the range of the client.
 
 Usage: progression_tables.py [OUTPUT.json]
 Default output: <SOULWARDEN_GAMEDATA_DIR>/progression-tables.json
@@ -82,9 +102,24 @@ WEAPON_RANK_TABLE = "WeaponMastery"
 TRADE_SKILL_RANK_TYPE = "TradeskillRankData"
 RANK_TYPES = ("CategoricalProgressionRankData", TRADE_SKILL_RANK_TYPE)
 ABILITY_TYPE = "AbilityData"
+ENTITLEMENT_TYPE = "EntitlementData"
+ACHIEVEMENT_TYPE = "AchievementData"
 # The table types that this tool reads the cells of.
 USED_TYPES = ("ExperienceData", "ExpansionData", "AttributeDefinition", "VitalsBaseData",
-              "CategoricalProgressionData", "ProgressionPointData", ABILITY_TYPE) + RANK_TYPES
+              "CategoricalProgressionData", "ProgressionPointData", ABILITY_TYPE, ENTITLEMENT_TYPE,
+              ACHIEVEMENT_TYPE) + RANK_TYPES
+# The DLC packs of Steam (stage 1.1b; research dlc-entitlements.md, Q1): the Steam-named entitlement
+# rows of the retail bonus set. A row with the reward type "Entitlement" gives the entitlements of its
+# Reward(s) too (the tool adds them). Not in the list: the alpha test title (STEAM_APP_ID.1266160, a
+# test participation) and the four WorldId rows (realm access). This list is a decision of the
+# project from the research: the table has no column that names a DLC pack.
+RETAIL_DLC_ROOTS = ("STEAM_APP_ID.1200566", "STEAM_APP_ID.1211760", "STEAM_APP_ID.1200560", "STEAM_APP_ID.1200561",
+                    "STEAM_APP_ID.1200562", "STEAM_APP_ID.1200563", "STEAM_APP_ID.1200564", "STEAM_APP_ID.1200565",
+                    "STEAM_APP_ID.1200567")
+# The entitlement state of the client takes 575 bytes at most (reader at image RVA 0x3050A50): a bit
+# index is below 575 * 8. The achievement state takes 0x2000000 bytes at most (0x279E550).
+ENTITLEMENT_BIT_LIMIT = 575 * 8
+ACHIEVEMENT_BIT_LIMIT = 0x2000000 * 8
 
 
 def whole(value) -> int:
@@ -118,6 +153,78 @@ def row_of(sheet: Sheet, column: str, key: str) -> int:
     raise Failure(f"the table {sheet.name} has no row {key}")
 
 
+def one_of_type(sheets: dict[str, Sheet], kinds: dict[str, str], kind: str) -> Sheet:
+    names = [name for name, value in kinds.items() if value == kind]
+    if len(names) != 1:
+        raise Failure(f"the game data has {len(names)} tables of the type {kind}, not one")
+    return sheets[names[0]]
+
+
+def build_ownership(sheets: dict[str, Sheet], kinds: dict[str, str], expansions: Sheet,
+                    level_count: int) -> tuple[list, list, list]:
+    """@return The expansion rows, the entitlements of the grant (stage 1.1b), and the achievements that they name."""
+    for column in ("ExpansionId", "MaxDisplayLevel", "MaxCraftGS", "MaxEquipGS", "MaxTradeskillLevel", "EntitlementId"):
+        if column not in expansions.columns:
+            raise Failure(f"the table {EXPANSION_TABLE} has no column {column}")
+    table = one_of_type(sheets, kinds, ENTITLEMENT_TYPE)
+    for column in ("UniqueTagID", "EntitlementIndex", "IsEnabled", "RewardType", "Reward(s)", "AchievementId"):
+        if column not in table.columns:
+            raise Failure(f"the table {table.name} has no column {column}")
+    rows = {str(table.cell(row, "UniqueTagID")): row for row in range(table.row_count)}
+    achievement_table = one_of_type(sheets, kinds, ACHIEVEMENT_TYPE)
+    for column in ("AchievementID", "AchievementIndex"):
+        if column not in achievement_table.columns:
+            raise Failure(f"the table {achievement_table.name} has no column {column}")
+    achievement_rows = {str(achievement_table.cell(row, "AchievementID")): row for row in range(achievement_table.row_count)}
+
+    expansion_rows = []
+    wanted: list[str] = []
+    for row in range(expansions.row_count):
+        maximum = whole(expansions.cell(row, "MaxDisplayLevel"))
+        if maximum < 1 or maximum > level_count:
+            raise Failure(f"row {row} of the table {EXPANSION_TABLE} has the level {maximum}: not a level of the level table")
+        alias = str(expansions.cell(row, "EntitlementId"))
+        expansion_rows.append([str(expansions.cell(row, "ExpansionId")), maximum, whole(expansions.cell(row, "MaxCraftGS")),
+                               whole(expansions.cell(row, "MaxEquipGS")), whole(expansions.cell(row, "MaxTradeskillLevel")), alias])
+        if alias:
+            if alias not in rows:
+                raise Failure(f"the expansion {expansion_rows[-1][0]} names the entitlement {alias}, which the table {table.name} does not have")
+            wanted.append(alias)
+    # The DLC packs: each root and the entitlements that an entitlement of the list gives (reward type
+    # "Entitlement", the ids of Reward(s) with "+" between them).
+    queue = list(RETAIL_DLC_ROOTS)
+    while queue:
+        alias = queue.pop(0)
+        if alias in wanted:
+            continue
+        if alias not in rows:
+            raise Failure(f"the DLC entitlement {alias} is not a row of the table {table.name}")
+        wanted.append(alias)
+        if str(table.cell(rows[alias], "RewardType")) == "Entitlement":
+            queue.extend(part for part in str(table.cell(rows[alias], "Reward(s)")).split("+") if part)
+
+    entitlements = []
+    achievements = []
+    for alias in wanted:
+        row = rows[alias]
+        index = whole(table.cell(row, "EntitlementIndex"))
+        if not flag(table.cell(row, "IsEnabled")):
+            raise Failure(f"the entitlement {alias} is not enabled")
+        if index < 0 or index >= ENTITLEMENT_BIT_LIMIT:
+            raise Failure(f"the entitlement {alias} has the bit index {index}: outside the range of the client")
+        achievement = str(table.cell(row, "AchievementId"))
+        if achievement and all(entry[0] != achievement for entry in achievements):
+            if achievement not in achievement_rows:
+                raise Failure(f"the entitlement {alias} names the achievement {achievement}, which the table "
+                              f"{achievement_table.name} does not have")
+            bit = whole(achievement_table.cell(achievement_rows[achievement], "AchievementIndex"))
+            if bit < 0 or bit >= ACHIEVEMENT_BIT_LIMIT:
+                raise Failure(f"the achievement {achievement} has the bit index {bit}: outside the range of the client")
+            achievements.append([achievement, bit])
+        entitlements.append([alias, index, str(table.cell(row, "RewardType")), str(table.cell(row, "Reward(s)")), achievement])
+    return expansion_rows, entitlements, achievements
+
+
 def build_tables(contents: list[bytes]) -> dict:
     sheets: dict[str, Sheet] = {}
     kinds: dict[str, str] = {}
@@ -148,6 +255,7 @@ def build_tables(contents: list[bytes]) -> dict:
     trade_skill_cap = whole(expansions.cell(expansion, "MaxTradeskillLevel"))
     if level_cap < 1:
         raise Failure(f"the row {NO_EXPANSION_ROW} of the table {EXPANSION_TABLE} has no level")
+    expansion_rows, entitlements, achievements = build_ownership(sheets, kinds, expansions, len(levels))
 
     constitution = one_table(sheets, CONSTITUTION_TABLE)
     minimum = whole(constitution.cell(0, "Level"))
@@ -200,7 +308,12 @@ def build_tables(contents: list[bytes]) -> dict:
             if kind == "weapon":
                 rank_tables[table]["resetCost"] = cost
         largest = min(whole(progression_sheet.cell(row, "MaxLevel")), len(rank_tables[table]["experience"]) - 1)
-        progressions.append([identifier, kind, largest, table])
+        # The largest rank with the expansion (the client takes a value that is not 0, 0x3CB38E0).
+        if "Expansion01MaxLevel" not in progression_sheet.columns:
+            raise Failure(f"the table {PROGRESSION_TABLE} has no column Expansion01MaxLevel")
+        expansion_largest = min(whole(progression_sheet.cell(row, "Expansion01MaxLevel")),
+                                len(rank_tables[table]["experience"]) - 1)
+        progressions.append([identifier, kind, largest, table, expansion_largest])
     weapons = {entry[0].lower() for entry in progressions if entry[1] == "weapon"}
     if not weapons:
         raise Failure(f"the table {PROGRESSION_TABLE} has no weapon mastery")
@@ -232,7 +345,8 @@ def build_tables(contents: list[bytes]) -> dict:
                           str(point_sheet.cell(row, "RequiredProgressionPointId"))])
     if not abilities:
         raise Failure(f"the table {POINT_TABLE} has no node of a weapon tree")
-    return {"format": 1, "levelCap": level_cap, "tradeSkillCap": trade_skill_cap, "levels": levels,
+    return {"format": 2, "levelCap": level_cap, "tradeSkillCap": trade_skill_cap, "expansions": expansion_rows,
+            "entitlements": entitlements, "achievements": achievements, "levels": levels,
             "attributes": {"minimum": minimum, "maximum": minimum + len(health) - 1, "constitutionHealth": health},
             "vitals": vitals, "rankTables": rank_tables, "progressions": progressions, "abilities": abilities}
 
@@ -264,7 +378,12 @@ def main() -> int:
         print(f"progression: {target}: {error}", file=sys.stderr)
         return 1
     weapons = sum(1 for entry in tables["progressions"] if entry[1] == "weapon")
-    print(f"{target}: {len(tables['levels'])} levels (the largest level of a player is {tables['levelCap']}), "
+    owned = [row for row in tables["expansions"] if row[5]]
+    print(f"{target}: {len(tables['levels'])} levels (the largest level with no expansion is {tables['levelCap']}; "
+          + ", ".join(f"{row[0]}: level {row[1]}, equip gear score {row[3]}, craft gear score {row[2]}, trade skill "
+                      f"level {row[4]}" for row in owned) + "), "
+          f"{len(tables['entitlements'])} entitlements of each account, {len(tables['achievements'])} achievement(s) of each "
+          f"character, "
           f"{len(tables['attributes']['constitutionHealth'])} values of an attribute, {weapons} weapon masteries, "
           f"{len(tables['progressions']) - weapons} trade skills (the largest level is {tables['tradeSkillCap']}), "
           f"{len(tables['rankTables'])} rank tables, {len(tables['abilities'])} nodes of the weapon trees "

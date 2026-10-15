@@ -6,7 +6,9 @@ finding F5: a delay of a delayed event with a value of one byte (not a 32-bit fl
 the vortex then came at the start of the spell. This check gives the entry point of the tool one spell table and one
 slice (a spell component, a delayed event of slot 7 to a child entity with the damage row of the burst) with a source
 provider that reads no game copy, and compares the status and the output file of each case. The test program of the
-backend runs it (case RG5; the case trap-slice: case SB1 of stage 3.3b-S2b).
+backend runs it (case RG5; the case trap-slice: case SB1 of stage 3.3b-S2b). Code review of stage 3.3b-S2b, finding F12: an
+AutoSpell (the rule of a summon) with a lifetime of one byte gave the lifetime 0; the cases autospell and
+autospell-lifetime-width check it (case RK12).
 
 Usage: check_spell_tool.py WORK_FOLDER
 Status 0: each case has the expected result.
@@ -50,10 +52,11 @@ def component(kind, serial: int, fields: list) -> Element:
     return element(kind=kind, children=[base, *fields])
 
 
-def slice_nodes(delay: bytes, trap: bool = False) -> list[Element]:
+def slice_nodes(delay: bytes, trap: bool = False, lifetime: bytes | None = None) -> list[Element]:
     """@return The nodes of a slice: a root entity with a Spell component (slot 1) and a delayed event (slot 7) of `delay`.
     `trap`: a PositionInTheWorld component (slot 1) in place of the Spell component, and an event that starts at a trigger
-    (format 2, stage 3.3b-S2b)."""
+    (format 2, stage 3.3b-S2b). `lifetime`: an AutoSpell component with this m_lifetime value (finding F12 of the code review
+    of stage 3.3b-S2b)."""
     spell_kind = uuid.UUID(next(key for key, value in tool.COMPONENT_CLASSES.items() if value[0] == ("PositionInTheWorld" if trap else "Spell")))
     delay_kind = uuid.UUID(next(key for key, value in tool.COMPONENT_CLASSES.items() if value[0] == "DelayedEvent"))
     transform = element(children=[element(tool.LOCAL_TRANSFORM_FIELD), identifier(tool.PARENT_FIELD, tool.NO_ENTITY)])
@@ -62,8 +65,15 @@ def slice_nodes(delay: bytes, trap: bool = False) -> list[Element]:
     flags = [element(tool.START_ON_INIT_FIELD, b"\x00"), element(tool.START_ON_TRIGGER_FIELD, b"\x01")] if trap else []
     delayed = component(delay_kind, 12, [element(tool.REPLICATION_FIELD, b"\x07"), element(tool.DELAY_FIELD, delay),
                                          element(tool.EVENT_FIELD, children=event), *flags])
+    components = [transform, spell, delayed]
+    if lifetime is not None:
+        components.append(component(tool.AUTO_SPELL_CLASS, 20, [
+            element(tool.SPELL_NAME_FIELD, b"Test_Spell_Projectile"), element(tool.LIFETIME_FIELD, lifetime),
+            element(tool.LIFETIME_ON_HIT_FIELD, struct.pack(">f", 0.0)),
+            element(tool.DEFAULT_RATE_FIELD, children=[element(tool.INITIAL_DELAY_FIELD, struct.pack(">f", 1.0)),
+                                                       element(tool.COOLDOWN_FIELD, struct.pack(">f", 2.0))])]))
     root = element(kind=tool.ENTITY_TYPE, children=[identifier(tool.ID_FIELD, 100), element(tool.NAME_FIELD, b"Vortex", tool.TEXT_TYPE),
-                                                    element(tool.COMPONENTS_FIELD, children=[transform, spell, delayed]),
+                                                    element(tool.COMPONENTS_FIELD, children=components),
                                                     element(tool.SPAWN_RADIUS_FIELD, struct.pack(">f", 50.0))])
     offense = element(kind=tool.OFFENSE_CLASS, children=[element(tool.DAMAGE_DATA_FIELD, children=[
         element(tool.DAMAGE_ENTRY_FIELD, b"GreatAxe_GravityWell_Burst")])])
@@ -72,10 +82,10 @@ def slice_nodes(delay: bytes, trap: bool = False) -> list[Element]:
     return [root, child]
 
 
-def run(work: Path, case: str, delay: bytes) -> tuple[int, str]:
+def run(work: Path, case: str, delay: bytes, lifetime: bytes | None = None) -> tuple[int, str]:
     sheet = FakeSheet("Spells", [{"SpellID": "Test_Spell", "SpellPrefabPath": PREFAB}])
     path = tool.slice_path(PREFAB)
-    roots = slice_nodes(delay, case == "trap-slice")
+    roots = slice_nodes(delay, case == "trap-slice", lifetime)
 
     class Sources:
         used: dict = {}
@@ -137,6 +147,16 @@ def main() -> int:
         passed = status == 1 and text == MARK
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, file {'kept' if text == MARK else 'replaced'}")
         failures += 0 if passed else 1
+    # Finding F12 of the code review of stage 3.3b-S2b: the times of an AutoSpell are required 32-bit floats.
+    status, text = run(work, "autospell", struct.pack(">f", 3.0), struct.pack(">f", 15.0))
+    entry = json.loads(text)["slices"][0] if status == 0 and text != MARK else {}
+    passed = status == 0 and (entry.get("autoSpell") or [None, None])[1] == 15.0
+    print(f"{'ok  ' if passed else 'FAIL'}  autospell: status {status}, AutoSpell {entry.get('autoSpell')}")
+    failures += 0 if passed else 1
+    status, text = run(work, "autospell-lifetime-width", struct.pack(">f", 3.0), b"\x01")
+    passed = status == 1 and text == MARK
+    print(f"{'ok  ' if passed else 'FAIL'}  autospell-lifetime-width: status {status}, file {'kept' if text == MARK else 'replaced'}")
+    failures += 0 if passed else 1
     return 1 if failures else 0
 
 

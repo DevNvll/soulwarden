@@ -194,3 +194,4 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | Travel, the travel places, a conversation and the lock of the input | [Travel and conversations](docs/systems/travel-and-conversations.md) |
 | The tool window (F8) and the admin interface | [Tool window and admin](docs/systems/tool-window-and-admin.md) |
 | Player identity, accounts, the character creation, the main menu | [Identity and characters](docs/systems/identity-and-characters.md) |
+| The DLC for each player: the entitlements of an account, the achievements of a character, the expansion limits, the rewards of the DLC packs, the entitlement routes | [DLC and entitlements](docs/systems/dlc-and-entitlements.md) |

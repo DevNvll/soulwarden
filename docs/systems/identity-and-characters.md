@@ -19,6 +19,8 @@ protocol notes (sections 2.1, 2.2, and 3.4).
   them to the client and to the backend in a local ticket. The ticket is not a credential, and
   the backend does not validate it (stub authentication). The Steam id selects the account
   row; the persona id of the account is the owner key of all player data.
+- The DLC (stage 1.1b): the token route gives each account the entitlements of the DLC, and a world entry gives each
+  character the achievement of the expansion, with no purchase and no setting ([DLC and entitlements](dlc-and-entitlements.md)).
 
 ## Commands
 

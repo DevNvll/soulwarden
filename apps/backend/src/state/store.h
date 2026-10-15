@@ -286,7 +286,43 @@ public:
      */
     [[nodiscard]] bool write_skills(const std::string& characterId, const SkillRows& rows);
 
+    /** @return The entitlement aliases of an account (stage 1.1b, table `entitlements`), the oldest first. */
+    [[nodiscard]] std::vector<std::string> list_entitlements(const std::string& personaId);
+    /**
+     * Gives an account the entitlements that it does not have, in one write (in a batch: a savepoint of it). A row that
+     * is there stays: a grant again changes nothing.
+     * @param source A text for a reader of the database, for example "policy".
+     * @param added When not null: the aliases that the account did not have.
+     * @return False when the database did not accept the change. Then no row changed.
+     */
+    [[nodiscard]] bool grant_entitlements(const std::string& personaId,
+                                          const std::vector<std::string>& aliases,
+                                          const std::string& source,
+                                          std::vector<std::string>* added = nullptr);
+    /** @return The achievement ids of a character (stage 1.1b, table `achievements`), the oldest first. */
+    [[nodiscard]] std::vector<std::string> list_achievements(const std::string& characterId);
+    /** Gives a character the achievements that it does not have, in one write. The same rules as grant_entitlements. */
+    [[nodiscard]] bool grant_achievements(const std::string& characterId,
+                                          const std::vector<std::string>& ids,
+                                          std::vector<std::string>* added = nullptr);
+    /** @return The entitlements whose reward a character got (stage 1.1b, table `entitlement_rewards`). */
+    [[nodiscard]] std::vector<std::string> list_entitlement_rewards(const std::string& characterId);
+    /**
+     * Records that a character got the reward of an entitlement. In a batch it is a savepoint of the transaction of the
+     * reward (the item rows and this row commit together).
+     * @return True when the row is new. False when the character had it already or the database did not accept it.
+     */
+    [[nodiscard]] bool record_entitlement_reward(const std::string& characterId, const std::string& alias);
+
 private:
+    /** @return The first column of each row of a query with one parameter (the owner key). */
+    [[nodiscard]] std::vector<std::string> list_texts(const char* sql, const std::string& owner);
+    /** Runs an insert with the parameters owner, text, date (and source, when the statement has a fourth one) for each text, in one write. */
+    [[nodiscard]] bool insert_texts(const char* sql,
+                                    const std::string& owner,
+                                    const std::vector<std::string>& texts,
+                                    const std::string& source,
+                                    std::vector<std::string>* added);
     /** Starts a write: a transaction, or a savepoint in a batch. */
     bool begin_write();
     /** Ends a write: commits it when `ok`, if not rolls it back. @return True when it is written (in a batch: in the batch). */

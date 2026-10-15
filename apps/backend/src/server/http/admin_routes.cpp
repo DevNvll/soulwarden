@@ -249,6 +249,10 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 }
                 // The health of the character, and if the creatures ignore it.
                 reply["health"] = commands::health_json(target, selected);
+                // The DLC of the character (stage 1.1b): the owned expansion with its limits, and the entitlements.
+                if (const auto ownership = commands::ownership_view(target, selected)) {
+                    reply["ownership"] = *ownership;
+                }
             }
         }
         return json_reply(200, reply.dump());

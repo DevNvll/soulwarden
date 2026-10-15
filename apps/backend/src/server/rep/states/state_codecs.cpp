@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 19> codecs{{
+    static constexpr std::array<StateCodec, 21> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -17,6 +17,10 @@ std::span<const StateCodec> player_codecs() {
         // player slice has no mana component: owner only.
         {world::ComponentKey::mana, kManaSlot, kTypeManaState, encode_mana_state, nullptr, true},
         {world::ComponentKey::appearance, kAppearanceSlot, kTypeAppearanceState, encode_appearance_state},
+        // The ownership of the DLC (stage 1.1b): owner only, before the level. The client reads the expansion of its
+        // character (the achievement) for the limit of the level and for the mastery trees.
+        {world::ComponentKey::entitlements, kEntitlementSlot, kTypeEntitlementState, encode_entitlement_state, nullptr, true},
+        {world::ComponentKey::achievements, kAchievementSlot, kTypeAchievementState, encode_achievement_state, nullptr, true},
         // The level is before the bag: it is in the first bundle of a record also when the bag
         // needs more than one bundle, and the client needs it to show an item.
         // The remote player slice has the component: an observer gets the level.

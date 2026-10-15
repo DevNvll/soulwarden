@@ -184,6 +184,32 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         return group == 1 ? (field == 0 || field == 3 ? 4 : field == 4 ? 2 : -1) : -1;
     case 5399: // Marker: enabled.
         return group == 0 && field == 0 ? 1 : -1;
+    case 3133: // Entitlement (stage 1.1b): the byte vector, the balance map (no entry), and the mark "received".
+    case 3210: // Achievement (stage 1.1b): the byte vector.
+        if (group != 0 || (type == 3210 && field != 0) || field > 2) {
+            return -1;
+        }
+        if (field == 2) {
+            return 1;
+        }
+        {
+            // The full form of a container: changes (0), the version (has, sequence), the count, the elements (a byte of a
+            // vector; the map of the balances has no element).
+            server::hub::Reader reader(rest);
+            if (reader.size() != 0 || !reader.ok()) {
+                return -1;
+            }
+            const std::uint8_t has = reader.u8();
+            if (has == 1) {
+                reader.size64();
+            }
+            const std::uint32_t count = reader.size();
+            if (!reader.ok() || has > 1 || (field == 1 && count != 0)) {
+                return -1;
+            }
+            const std::size_t size = reader.position() + count;
+            return size <= rest.size() ? static_cast<int>(size) : -1;
+        }
     case 1652: // Mana: current, maximum, regeneration delay, regeneration rate (32-bit floats).
         return group == 0 && field < 4 ? 4 : -1;
     case 1195: // Appearance: 12 fields of one byte.
@@ -288,6 +314,8 @@ inline unsigned group_count(std::uint32_t type) {
     case 2912:
     case 3139:
     case 13:
+    case 3133:
+    case 3210:
         return 1;
     case 4236:
         return 4;

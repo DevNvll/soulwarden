@@ -63,6 +63,13 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 - A loot item gets the perks of the roll of the client (`world/perk_roll.h`, protocol notes
   4.23): each instance of a drop has its own roll, with the level of the character.
 - The rarity of an item is a value of the client: it computes it from the perk count.
+- The gear score of an equipped item (stage 1.1b): an equip of an item above the MaxEquipGS of the owned expansion (800;
+  game data, the rule of the client in `equipmentcommon.lua`) is refused (`gearScoreAboveLimit`, the message "equip item
+  fail" for a request of a client). With no expansion data there is no such limit. The item level of a gear score (the first
+  level whose MaxEquippableGearScore takes it: 700 needs level 65) is a rule of the client that the backend does not check
+  yet ([DLC and entitlements](dlc-and-entitlements.md)).
+- The reward item of a DLC pack (stage 1.1b): each character gets one AmuletIsabellaT1 (the reward of the entitlement
+  `STEAM_APP_ID.1200562`) one time, at a world entry, through `Inventory::give` in the transaction of its reward row.
 
 ## Commands
 
@@ -175,8 +182,8 @@ tools/world equipment NAME           # the equipment of a character
   only the create route gives them, at the creation. Give such a character its gear with
   `tools/world give` and `tools/world equip`.
 - A potion or a food with a level requirement above the level of the character: the client
-  uses no such item (a quick slot key sends no bit). FoodCONT5 needs the level 65; the level
-  cap of the backend is 60.
+  uses no such item (a quick slot key sends no bit). FoodCONT5 needs the level 65: with the
+  expansion of stage 1.1b a character can have it (live proof: refused at 60, used at 65).
 - `tools/gamedata/items.sh` writes the catalog to the common game data folder: the next start
   of the user reads it too. The backend that the user starts then gives items only through
   a development run or a later tool window: a start of the user has no development commands.

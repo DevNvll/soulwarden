@@ -170,6 +170,7 @@ below is the layout after the port.
 | 0.6a | Session model: tests with two sessions, session ids, session end, world thread | 0.3, 1.2 | M | verified | done | |
 | 0.6b | World model: entity table, observer view, id allocator, remote player | 0.6a | M | verified | done | |
 | 1.1 | Steam account identity | 0.1 | S | done | done | done |
+| 1.1b | The DLC for each player | 1.1, 3.3b | S | verified | done | |
 | 1.2 | Character creation and deletion | 1.1 | M | done | done | done |
 | 1.3 | Inventory and currency | 1.2, 0.6b | M | verified | done | |
 | 1.4 | Equipment and visible gear | 1.3 | M | verified | done | |
@@ -245,7 +246,7 @@ stage with a letter is a part of the system with that number.
 | 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | done |
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
 | 11 | 3.3b | Abilities, the shared parts (research file `abilities-shared.md`): part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte), part S3 (the projectiles of the basic attacks of the bow and the fire staff, and the check of a ranged hit), and part S2b (the spell entities of three kinds: the Pylon of the ice gauntlet, the trap of the musket, the Beacon of the life staff) | 1.3b | S1, S2a, S4, S3, S2b done |
-| 12 | 1.1b | The DLC for each player: each account and each character owns the expansion (Rise of the Angry Earth) and the DLC packs of the client data, with no purchase and no setting: the limits of the expansion (level, gear score, trade skills), the flail tree, the content of the expansion (research file `dlc-entitlements.md`) | 3.3b | research |
+| 12 | 1.1b | The DLC for each player: each account and each character owns the expansion (Rise of the Angry Earth) and the DLC packs of the client data, with no purchase and no setting: the limits of the expansion (level, gear score, trade skills), the flail tree, the content of the expansion (research file `dlc-entitlements.md`) | 3.3b | done (the ownership, the limits, the flail tree, the amulet of a DLC pack; the content of the expansion keeps its own stages) |
 | 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | open |
 | 14 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
 | 15 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
@@ -442,6 +443,36 @@ tool window, and a new character starts with the original first quest.
 
 - Result: the Steam id selects the account row. Stub authentication. Accounts are in SQLite.
 - Evidence: `~/Games/soulwarden/work/evidence/steam-account/`, protocol notes 2.1 and 3.4.
+
+### 1.1b The DLC for each player (done)
+
+- Decision of the user (2026-10-15): "i want the full game with dlc. for any player, auto unlock the dlc". Research file
+  `dlc-entitlements.md`. Evidence `~/Games/soulwarden/work/evidence/dlc/implement/`, protocol notes 4.29, document
+  `docs/systems/dlc-and-entitlements.md`.
+- The live checks came first (run `dlc-l1a` with the backend of stage 3.3b-S2b and `tools/world fragment`, run `dlc-l1d`
+  with the routes and no state): the client needs the achievement `Expansion_2023_Unlock` of the character (slot 66, type
+  3210); the entitlement bit of the expansion (slot 19, type 3133) alone and the entitlement routes alone open nothing that
+  a player sees. With the achievement the level window at 60 shows 96,451 XP to level 61, the flail tree has its button
+  "Assign", the trade skill limit is 250, and Riding has no lock. The level limit of the client is 70 (the probe of
+  `0x3CED4B0`); the level override of the client is 0. The installed-DLC request of Steam (`0x647AB30`) and the DLC
+  enumeration did not run.
+- Result: each account owns the 19 entitlements of the data (the expansion and the nine Steam roots of the DLC packs with
+  the entitlements that they give; rows written at the login, the sync, and the world entry; the routes of the entitlement
+  service with the owner check of the token), each character the achievement of the expansion (before its first record),
+  and the two owner states. The limits of the owned expansion: the level 70 (a level 60 character keeps its level and its
+  experience), the rank of each skill with an expansion value (the trade skills and Riding 250), the equip gear score 800;
+  FoodCONT5 works at level 65. Each character gets one AmuletIsabellaT1 (the reward of a DLC pack) one time. The
+  progression tables have the format 2 (the expansions, the entitlements, the achievements), schema version 8 (the tables
+  `entitlements`, `achievements`, `entitlement_rewards`). The stage also corrected the twelve findings of the review of
+  stage 3.3b-S2b (cases RK1 to RK12; each case fails on the tree of stage 3.3b-S2b): the mute of a development run through a
+  link, the wall before a near hit, the Beacon on a dead target, two Beacons with one status row, a status row shorter than
+  the Beacon, a friend that leaves, the record of an attached Beacon, the vitals row of a summon, the status rows of an area
+  at the press, a spell shot straight down, and two tools that keep the old file for a source that is not complete. Test
+  cases DL1 to DL10 (DL2: two accounts and two characters of one account), RK1 to RK12.
+- Open: the content behind the expansion (the region Elysian Wilds and its story, expeditions, mounts, recipes, quests:
+  their own stages, DL12 of the research), the use of the rewards of the DLC packs other than the amulet (skins, emotes,
+  crests, the housing item, the title, the art book: their systems), the item level of a gear score in the backend (the
+  client checks it).
 
 ### 1.2 Character creation and deletion (complete)
 

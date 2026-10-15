@@ -272,6 +272,7 @@ int main(int argc, char** argv) {
     const std::string progressionTablesPath = (gameDataDirectory / gamedata::kProgressionTablesFile).string();
     gamedata::ProgressionTables progressionTables;
     if (progressionTables.load(progressionTablesPath)) {
+        const gamedata::ExpansionRow* expansion = progressionTables.owned_expansion();
         log::write("backend: progression tables loaded from %s (%zu levels, the largest level of a player is %u, %zu "
                    "weapon masteries and trade skills, %zu nodes of the weapon trees)",
                    progressionTablesPath.c_str(),
@@ -279,6 +280,20 @@ int main(int argc, char** argv) {
                    progressionTables.level_cap(),
                    progressionTables.progressions().size(),
                    progressionTables.nodes().size());
+        if (expansion != nullptr) {
+            log::write("backend: each player owns the expansion %s and the DLC packs (%zu entitlements of each account): the "
+                       "largest level %u, equip gear score %u, craft gear score %u, trade skill level %u",
+                       expansion->id.c_str(),
+                       progressionTables.entitlements().size(),
+                       expansion->maxLevel,
+                       expansion->maxEquipGearScore,
+                       expansion->maxCraftGearScore,
+                       expansion->maxTradeSkillLevel);
+        } else {
+            log::write("backend: the progression tables have no expansion (a file from before stage 1.1b): the players have "
+                       "the limits of the game with no expansion, and the client locks the expansion. Make the file again "
+                       "with tools/gamedata/progression.sh");
+        }
     } else {
         log::write("backend: no progression tables at %s: the backend sends the stored level and skills of a "
                    "character, and it gives no level, no attribute point, and no mastery point. Make the file with "
@@ -579,6 +594,7 @@ int main(int argc, char** argv) {
     server::http::register_channel_routes(router);
     server::http::register_omni_routes(router, services);
     server::http::register_gateway_routes(router, services);
+    server::http::register_entitlement_routes(router, services);
     server::http::AwsOptions awsOptions;
     awsOptions.meleeReport = options.meleeReport;
     server::http::register_aws_routes(router, awsOptions);

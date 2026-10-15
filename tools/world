@@ -126,6 +126,9 @@ The level, the attributes, and the skills of a character (the character can be i
 not, as for the items):
   tools/world progress CHARACTER                the level, the experience, the attributes, the
                                                 weapon masteries, and the trade skills
+  tools/world ownership CHARACTER               the DLC of a character (stage 1.1b): the expansion
+                                                with its limits, the entitlements of its account,
+                                                its achievements, and the rewards that it got
   tools/world level CHARACTER LEVEL             set the level (the level of the screen). The
                                                 experience becomes the start of the level
   tools/world xp CHARACTER AMOUNT               give experience: the level goes up at the limit
@@ -339,6 +342,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         document = {"message": body}
     if isinstance(document, dict) and "weapons" in document:
         show_progress(document)
+    elif isinstance(document, dict) and "entitlements" in document and "achievements" in document:
+        show_ownership(document)
     elif isinstance(document, dict) and "spawnPointsWaiting" in document:
         show_creatures(document)
     elif isinstance(document, dict) and "kinds" in document:
@@ -686,6 +691,21 @@ def show_progress(document: dict) -> None:
           "are above the start")
 
 
+def show_ownership(document: dict) -> None:
+    """The ownership of the DLC of a character (stage 1.1b): the expansion with its limits, the entitlements, the achievements."""
+    place = "in the world" if document["inWorld"] else "not in the world"
+    expansion = document["expansion"]
+    if expansion:
+        print(f"expansion {expansion['id']} ({expansion['entitlement']}): the largest level {expansion['maxLevel']}, equip gear score "
+              f"{expansion['maxEquipGearScore']}, craft gear score {expansion['maxCraftGearScore']}, trade skill level "
+              f"{expansion['maxTradeSkillLevel']} (the character is {place})")
+    else:
+        print(f"no expansion: the backend has no expansion data (tools/gamedata/progression.sh) (the character is {place})")
+    print(f"{len(document['entitlements'])} entitlement(s) of the account: {', '.join(document['entitlements']) or '-'}")
+    print(f"{len(document['achievements'])} achievement(s) of the character: {', '.join(document['achievements']) or '-'}")
+    print(f"rewards that the character got: {', '.join(document['rewards']) or '-'}")
+
+
 def show(entity: dict) -> None:
     x, y, z = entity["position"]
     session = f"session s{entity['session']}" if entity["session"] else "no session"
@@ -967,6 +987,8 @@ def main() -> None:
                                   f"&slot={whole(arguments[2], 'the slot of the paperdoll')}{target}")
     elif command == "progress" and len(arguments) == 2:
         request(data_dir, "GET", f"/v1/dev/progress?character={character_id(data_dir, arguments[1])}")
+    elif command == "ownership" and len(arguments) == 2:
+        request(data_dir, "GET", f"/v1/dev/ownership?character={character_id(data_dir, arguments[1])}")
     elif command == "level" and len(arguments) == 3:
         request(data_dir, "POST", f"/v1/dev/progress/level?character={character_id(data_dir, arguments[1])}"
                                   f"&level={whole(arguments[2], 'the level')}")

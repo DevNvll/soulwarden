@@ -431,7 +431,11 @@ ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, Attack
                 });
             }
             const state::WorldPosition contact = touch ? along(launch.origin, far, *touch) : launch.origin;
-            if (!first || !valid_position(claim.nearPoint) || distance3(claim.nearPoint, target->position) > projectile_rules::kNearPointRange
+            // A wall on the line of the launch before its contact with the capsule stops the shot there (code review of stage
+            // 3.3b-S2b, finding F2: a line to the nearest point of the surface can pass beside a corner of the wall).
+            const std::optional<float> wall = touch ? m_world.navigation().line_stop(launch.origin, far) : std::nullopt;
+            if (!first || (wall && *wall < *touch) || !valid_position(claim.nearPoint)
+                || distance3(claim.nearPoint, target->position) > projectile_rules::kNearPointRange
                 || m_world.navigation().line_stop(launch.origin, surface_toward(capsule, contact))) {
                 return refuse(ShotVerdict::nearTooFar);
             }

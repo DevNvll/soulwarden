@@ -300,11 +300,17 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
                     volumes.append((entity_id, sphere_radius(component)))
                 if component.type_id == AUTO_SPELL_CLASS:
                     rate = deep(component, DEFAULT_RATE_FIELD)
+                    # The times of the rule of a summon are required 32-bit floats (code review of stage 3.3b-S2b, finding
+                    # F12): a field with a different size or no field stops the tool, not a life of 0 at the creation.
+                    what = f"the AutoSpell of {name} in the slice {path}"
+                    if rate is None:
+                        raise Failure(f"{what} has no m_defaultRate")
                     auto_spells.append({"spell": text_of(deep(component, SPELL_NAME_FIELD)),
-                                        "lifetime": round(real_of(deep(component, LIFETIME_FIELD)), 4),
-                                        "lifetimeOnHit": round(real_of(deep(component, LIFETIME_ON_HIT_FIELD)), 4),
-                                        "initialDelay": round(real_of(deep(rate, INITIAL_DELAY_FIELD)) if rate is not None else 0.0, 4),
-                                        "cooldown": round(real_of(deep(rate, COOLDOWN_FIELD)) if rate is not None else 0.0, 4),
+                                        "lifetime": round(required_real(deep(component, LIFETIME_FIELD), f"m_lifetime of {what}"), 4),
+                                        "lifetimeOnHit": round(required_real(deep(component, LIFETIME_ON_HIT_FIELD),
+                                                                             f"m_lifetimeOnHit of {what}"), 4),
+                                        "initialDelay": round(required_real(deep(rate, INITIAL_DELAY_FIELD), f"m_initialCastDelay of {what}"), 4),
+                                        "cooldown": round(required_real(deep(rate, COOLDOWN_FIELD), f"m_cooldown of {what}"), 4),
                                         "expire": event_target(deep(component, LIFETIME_EXPIRE_FIELD)),
                                         "cast": event_target(deep(component, CAST_EVENT_FIELD)),
                                         "exclude": sorted(text_of(child) for child in walk(deep(component, EXCLUDE_TAGS_FIELD) or component)
@@ -466,11 +472,25 @@ def build_document(sources: Sources) -> dict:
                 continue
             spells[identifier.lower()] = [identifier, slice_index[path]]
     sources.check_complete()
-    vitals, no_row, no_column = read_vitals(sources, {entry["vitals"][1].lower() for entry in slices if entry["vitals"]})
+    named = {entry["vitals"][1].lower(): entry["vitals"][1] for entry in slices if entry["vitals"]}
+    vitals, no_row, no_column = read_vitals(sources, set(named))
+    # A vitals row that the base vitals tables do not have (code review of stage 3.3b-S2b, finding F8): the rows of the list
+    # VITALS_ROWS_NOT_IN_BASE_TABLES go to the member vitalsNotInData (the backend makes no summon and no trap of such a slice);
+    # a different row stops the tool.
+    found = {row[0].lower() for row in vitals}
+    elsewhere = sorted(named[key] for key in named if key not in found)
+    unknown = [row for row in elsewhere if row.lower() not in {name.lower() for name in VITALS_ROWS_NOT_IN_BASE_TABLES}]
+    if unknown:
+        raise Failure(f"a spell slice names the vitals row {unknown[0]}, which no base vitals table has")
     return {"format": 2, "counts": {"spells": len(spells), "slices": len(slices), "spellsWithNoSlice": no_slice,
                                     "slicesWithNoSpellComponent": no_spell_component, "vitals": len(vitals),
                                     "vitalsRowsNotInBaseTables": no_row, "vitalsCellsOfAbsentColumns": no_column},
-            "slices": slices, "spells": sorted(spells.values()), "vitals": vitals}
+            "slices": slices, "spells": sorted(spells.values()), "vitals": vitals, "vitalsNotInData": elsewhere}
+
+
+# The vitals rows of the spell slices of the game copy that are not in a base vitals table (VitalsBaseData): a row of a creature
+# table (the seed of the Goth elephant, ai_spell_goth_seed_aoe). Code review of stage 3.3b-S2b, finding F8.
+VITALS_ROWS_NOT_IN_BASE_TABLES = ("CK_Elephant_H_Goth_Blossom",)
 
 
 def read_vitals(sources: Sources, wanted: set[str]) -> tuple[list[list], int, int]:

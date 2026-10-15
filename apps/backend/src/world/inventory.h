@@ -71,6 +71,11 @@ enum class ItemError {
     badPerk,
     /** The consumable system refused the use (world/consumables.h gives the cause). */
     notUsable,
+    /**
+     * The gear score of the item is above the largest gear score of an equipped item (MaxEquipGS of the owned expansion, stage
+     * 1.1b: 800 with Rise of the Angry Earth, 625 with no expansion).
+     */
+    gearScoreAboveLimit,
 };
 
 /** @return A short text for a log line and for the reply of a command. */

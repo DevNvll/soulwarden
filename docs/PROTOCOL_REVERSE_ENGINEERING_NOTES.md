@@ -46,6 +46,8 @@ Client state names (string table at 0x84FA000): `QueryGameUpdateCheck`,
 | Create character | `POST /prod/game/worlds/{world}/characters` | `{"Character":{CharacterId,...}}` (2.2.3) |
 | Delete character | `DELETE /prod/game/characters/{character}` | Status only (2.2.6) |
 | Login queue | `POST /prod/game/login/queue/v2?tokenVersion=10` | Request `{"LoginQueueRequest":{CharacterId,...}}`; reply `{"LoginQueueResponse":{Token:{RepAddress,...},...}}` (reader 0x74E4F20, 0x74E5990) |
+| Entitlement sync | `POST /players/{persona}/games/new-world/platforms/steam/entitlements/sync`, host `client.entitlementservice.amazongames.com` | Request `{"syncTypes":["FirstTimeLogin","PrimeGamingSync","CodeRedemptionSync","TwitchDropsSync","SteamRetailSync"]}` (builder 0x74D5100); reply `{}` (4.29) |
+| Entitlement list | `GET /players/{persona}/games/new-world/platforms/steam/entitlements`, same host | `{"entitlements":[{"alias":TEXT,"amount":{"freeAmount","paidAmount","pendingAmount","lossAmount","totalAmount"}}],"hasMoreResults":false}` (parsers 0x74C2770, 0x74C2E60, 0x74C15D0; 4.29) |
 | Remote configuration | `GET /applications/publicGameplay/configuration-sets/ProductId/STEAM_APP_ID.<app>/versionless`, host `ags-javelin-remote-config.s3.amazonaws.com` | The document `{"javelin.enable-client-authoritative-melee":true}` (2.3). Each other object of a host with `.s3.` in its name: status 404, `NoSuchKey` |
 
 World checks in the client (0x6423730): `WorldStatus == "ACTIVE"`, `WorldType` is `OpenWorld` or
@@ -5361,6 +5363,63 @@ cast CHARACTER 0 [--yaw DEGREES]` (a remote test character: the server throws th
 - The friendly relation of two players (the groups): a decision of the user.
 - The Pylon spells of the nodes (`_Regen`, `_Refresh`, `_Ultimate`, the burst `PylonBurst`), the frost volume of the Pylon,
   the interaction option of the trap (stage 2.5), and a creature that takes a trap as its target.
+
+**The corrections of the code review** (made in stage 1.1b; test cases RK2 to RK12; project rules):
+
+| Rule | What the backend does |
+| --- | --- |
+| A near-hit claim (F2) | The line of the launch from the origin in the near range: a wall on it before the contact with the capsule refuses the claim (`nearTooFar`), as for a flight. |
+| The death of the attachment (F3) | The death of a creature or of a character ends each aura that follows it (`SpellEnd::targetDied`), and the aura step ends an aura on a dead entity. A projectile whose impact killed its target makes no aura. |
+| Two auras with one status row (F4) | One status of the row on the friend, with the source of the first aura; the other aura is a second source of the row, with no new application and no new tick. The end of the aura of the source gives the status the source of the other aura; the end of the last source ends the status. |
+| A status row shorter than the aura (F5) | A friend in the aura gets the row again when it ended (one application of the aura of its source; no new stack while it has the row). |
+| A friend that leaves the world (F6) | The aura takes its statuses back before the entity goes away (the status of a character stays with its character id). |
+| The record of an attached aura (F7) | A session observes an aura that follows an entity only while it observes that entity (field 6 names its actor); the aura goes out with its attachment. |
+| A summon or a trap with no vitals row (F8) | The spell data refuses a slice whose vitals row is not in the list `vitals` and not in the list `vitalsNotInData` (a row of a different table that the tool names); such a slice makes no summon and no trap, and the Pylon pays nothing. |
+| A status row of an aura that the data does not have (F9) | The press is refused (`noRule`) before the payment; the press gives the resolved rows to the landing. |
+| A spell shot straight down (F10) | The direction of a shot of the trap or of the Beacon is valid when its length in three dimensions is 1; the horizontal fallback only for a direction that is not finite or has the length 0. |
+
+### 4.29 The DLC: the entitlements of an account, the achievements of a character, the expansion (live proof of stage 1.1b; the rules are project rules from a decision of the user, with the values of the game data)
+
+Stage 1.1b. Research: `~/Games/soulwarden/work/research/dlc-entitlements.md`. Live checks and the live proof:
+`~/Games/soulwarden/work/evidence/dlc/implement/RESULT.md` (runs `dlc-l1a` with the dist backend and `tools/world
+fragment`, `dlc-l1d` with the routes and no state, `dlc-l2` and the final runs with the backend of the stage). Code:
+`world/ownership.h` (the grant policy), `server/rep/states/ownership_states.cpp` (the two states),
+`server/http/entitlement_routes.cpp` (the routes), `gamedata/progression_tables.h` (format 2: the expansions, the
+entitlements, the achievements, the rank limits with the expansion), `tools/gamedata/progression_tables.py`. Document:
+[DLC and entitlements](systems/dlc-and-entitlements.md). Test cases DL1 to DL10.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The entitlement state (type 3133, `MB::EntitlementComponentReplicatedState`) at slot 19 of the player slice, owner only (the remote player slice has no such component): one group; field 0 the byte vector of the entitlements (bit `index & 7` of byte `index >> 3` for the EntitlementIndex of a row of the entitlement table; 575 bytes at most), field 1 the map of the balances (CRC to u32; the backend sends none), field 2 `entitlementsReceived` (true). A vector or a map is the full form of a container: `changes:size` 0, the version (`has:u8` 1 and `sequence:size64`), `count:size`, the elements. | Live check L1 (run `dlc-l1a`: the fragment of 198 bytes with the bit 1484, no read failure in the game log); test case DL10. | `0x302C5D0` (constructor), `0x3050A50` (vector reader), `0x3050940` (map reader), `0x303F960` (the bit of an entitlement), `0x279DC70` (container) |
+| The entitlement bit of the expansion alone changes nothing that a player sees: the level window at 60 says "Rise of the Angry Earth needed to advance", the flail tree has "Requires Rise of the Angry Earth" and "Learn More", the trade skill limit is 200, and the mount tab says "Requires Rise of the Angry Earth". | Live check L1 (run `dlc-l1a`: `l1b-*`). | — |
+| The achievement state (type 3210, `MB::AchievementComponentReplicatedState`) at slot 66 of the player slice, owner only: one group, field 0 the byte vector of the achievements (bit of the AchievementIndex: `Expansion_2023_Unlock` 11979, byte 1497, mask 08; 0x2000000 bytes at most). The bit of `Expansion_2023_Unlock` alone opens the expansion for the character: the level window shows "96,451 XP to Level 61" at level 60 (after the next change of the level), the flail tree shows "Rise of the Angry Earth" and the button "Assign", the trade skill limit is 250, Riding has no lock, and the mount tab shows the next requirement of the game ("Reach Level 20 and complete My Kingdom for a Horse"). A change of the bit during play opens the modal "Congratulations on purchasing the new expansion" one time (its text says "level cap 65"; the limit of the client is 70); the bit in the first record of a world entry opened no modal in the final runs. | Live check L1 (run `dlc-l1a`: `l1c-*`); live proof (runs `dlc-l2` and final: `i8-*`, `f-*`). | `0x317FEC0` (constructor), `0x279E550` (reader), `0x318D5E0` (the bit of an achievement), `0x684B340` (the expansion check: the achievement of each entitlement of the expansion enum), `0x6826B20` (the owned expansion row) |
+| The level limit of the client: `0x3CED4B0` takes the MaxDisplayLevel of the owned expansion row minus 1. With the achievement in the first record it is 70 (the probe at `0x3CED5D0`: `rax=0x46`); with no achievement 60 (`rax=0x3C`). `javelin.max-player-display-level-override` is 0 (the override path did not run; the value at `0x149EF1CF4` read 0). | Live check L2 (runs `dlc-l1a` and `dlc-l2`). | `0x3CED4B0`, `0x3CED5D0`, `0x3CED56C`, `0x3CED62D` |
+| The entitlement routes: the client sends the sync and then the list, after the token and before the character list; a reply 200 (`{}` for the sync, the list with the 19 aliases of the grant) is taken (no second request); a reply 404 (the backend before stage 1.1b) gives no error on the screen. The routes alone open nothing that a player sees. | Live check L1 (run `dlc-l1d`: the routes and no state, `l1d-*`; run `dlc-l1a` with 404). | `0x74D5100` (sync), `0x74CAA10`, `0x74CB580`, `0x74CC700` (list), `0x74C2770`, `0x74C2E60`, `0x74C15D0` (parsers) |
+| Steam: the installed-DLC request of the client (`0x647AB30`, `BIsDlcInstalled` of Apps008 slot 7) did not run in three runs from the start to the world; Apps slots 10 and 11 (DLC enumeration) had no call (the hook logs each slot with no method). The hook answers true for slots 6 and 7 (no change in stage 1.1b). | Live check L8 (the trace point at `0x647AB30` in runs `dlc-l1a`, `dlc-l2`, and the final run; `steam: unimplemented` lines of the hook log). | `0x647AB30`, `0x647AB9B` |
+| An equip of an item above the gear score of the owned expansion (MaxEquipGS: 800; 625 with no expansion): the client shows `@inv_cannotequipversionlevel` with no expansion; the item level of a gear score (the first level whose MaxEquippableGearScore takes it: 700 needs level 65) is a rule of the client (the tooltip "Requirement: Level 65", red at 60). | Static proof (`equipmentcommon.lua`, `0x5C4C960`, `0x4403360`); live proof (`i8-15`, `i8-16`: the sword of 700 at 60 and 65, equipped at 65). | `0x5C4C960`, `0x4403360` |
+
+**The data** (`progression-tables.json` format 2, `tools/gamedata/progression.sh`): `expansions` (each row of the expansion
+table: id, MaxDisplayLevel, MaxCraftGS, MaxEquipGS, MaxTradeskillLevel, EntitlementId: `None` 60 625 625 200, `Expansion2023`
+70 700 800 250 `Ent_Xpack_RiseOfTheAngryEarth_Owner`), `entitlements` (the 19 entitlements of the grant: the expansion,
+index 1484, and the nine Steam roots of the DLC packs with the 9 entitlements that they give; each with its index, reward
+type, rewards, and achievement), `achievements` (`Expansion_2023_Unlock` 11979), and the fifth value of each progression
+row (Expansion01MaxLevel: 250 for 18 trade skills, Riding 250, AzothStaff 0, each weapon 0).
+
+**The rules** (project rules from the decision of the user of 2026-10-15; the source of each rule is in
+[DLC and entitlements](systems/dlc-and-entitlements.md)): each account owns each entitlement of the list (rows of
+`entitlements`, written at the login, at the sync, and at a world entry); each character owns the achievement of each
+entitlement of its account that names one (rows of `achievements`, before its first record); the reward of an entitlement
+of the type InventoryItem (AmuletIsabellaT1) comes one time to each character (a row of `entitlement_rewards` in the
+transaction of the item); the limits of a player are the limits of the owned expansion (the level 70, the rank of a
+progression row with an expansion value, the equip gear score 800). A route with the token of a different account gets 403
+and changes nothing.
+
+**Not known, not done** (stage 1.1b): the content behind the expansion (the region Elysian Wilds and its story, the
+expeditions, the mounts, the recipes, the quests: their own stages); the use of the rewards of the DLC packs other than
+the amulet (the skins, the emotes, the crests, the housing item, the title, the art book: their systems); the balances
+of field 1; the effect of `entitlementsReceived` false; the Steam app id of the expansion (not needed).
 
 ## 5. Open items
 
