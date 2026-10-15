@@ -22,6 +22,7 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 | The effects on a creature: stun, root, slow, weaken, knockdown, stagger, the icons | `Creatures::apply_effect`, `Creatures::knock`, `world/behavior.cpp`, `server/rep/states/status_state.cpp`, test cases AB8, AB9 |
 | The ability data of the game | `tools/gamedata/abilities.sh` (`abilities.py`), `gamedata/ability_data.h`, [Game data](../development/game-data.md) |
 | The cost of a cast and the mana: the one mana path, the regeneration, the mana state | `Abilities::mana_cost`, `Abilities::change_mana`, `Abilities::tick`, `server/rep/states/mana_state.cpp`, test case IZ8 |
+| The passive rules of the nodes and the critical hits of an ability (stage 3.3b-S5): the evaluator, the spell selections of the action data | [Passive rules](passive-rules.md), `world/passives.h`, `Abilities::plan` (`selected_spell`, `data_rule`), `gamedata/ability_data.h` (`action_spells`), test cases PS1, CH7 |
 | The perks of an ability (Sundering Shockwave, Insatiable Gravity Well, Refreshing Move) | [Gear and perks](gear-and-perks.md), `Abilities::perk_burst`, `Abilities::reduce_weapon_cooldowns`, test case IZ5 |
 | The pull and the push of an ability, the dash of Charge, the counter of Riposte (stage 3.3b-S4) | [Forced movement](forced-movement.md), `CasterMotion`, `Abilities::motion_allowance`, `Abilities::countered`, test cases FM6, CM1, CM2, RC1, RC2 |
 
@@ -158,6 +159,26 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   condition Riposte_Attack of the action data: the mannequin tag Rapier and the timer; code review of stage 3.3b-S4,
   finding F2, test case RM2): a change of the weapon ends the window (`Abilities::weapon_changed`), a hit with a different
   weapon in the hand starts no counter, and the counter hit needs the weapon too.
+- The rules of the nodes in a plan (stage 3.3b-S5, [Passive rules](passive-rules.md)). A node changes an ability in one of
+  two ways, and the data says which one:
+  - A rule row of the node (an ability row with a cell of a rule): the evaluator of the passive rules applies it at each hit
+    of the ability (the hit has the row, the attack type Ability, the ability of the cast, the spell of the area, and the
+    count of the creatures in the area). The plan does not apply such a row a second time: Aftershock
+    (`Ult_Passive_WarHammer_SlowOnCC`), Frailty (`Upgrade_WarHammer_Shockwave_Weaken`), Crowded Well
+    (`Upgrade_Greataxe_GravityWell_DmgPerFoe`), and Stimulated Reduction (`Upgrade_WarHammer_PathOfDestiny_CDRPerHit`) have
+    their rule of stage 3.3a in the plan only for an ability file with no rule row (`data_rule`: a file of an older tool).
+  - A spell selection of the action data (`actionSpells` of `ability-data.json` format 4: a CastSpell of the action list of
+    the weapon in an IfThenElse with a test IfAbilityActive of a node): the plan takes the spell of the first selection
+    whose nodes the character has (`selected_spell`). Shockwave: `WarHammer_Spell_Shockwave_L2` with Meteoric Crater
+    (`Upgrade_WarHammer_Shockwave_SizeIncrease`); Path of Destiny: `_L2` with Upgrade_WarHammer_PathOfDestiny_Stagger, `_L3`
+    with Upgrade_WarHammer_PathOfDestiny_CDRPerHit; Gravity Well: the projectile spell (its SecondarySpellID is the vortex);
+    the Beacon: its projectile. An action with no selection in the file keeps the rule of stage 3.3a. A selection with a
+    test that the tool cannot write as a list of nodes (an Or of a state; two casts of the ice storm) is not exported: the
+    tool lists it in `actionSpellsNotExported`.
+- A critical hit of an ability (stage 3.3b-S5, [Combat and health](combat-and-health.md)): each hit of a phase rolls, as a
+  basic attack does; an area has its center as the source of a hit from behind (no direction for a creature at the
+  center); a tick of a status does not roll. Each phase hit has its attack: the cast (`kAttackCast`), for the hit counts of
+  the rules.
 - A new ability needs, in this sequence: a live check of its keys, its contacts, and its
   shots (protocol notes 4.22: L1, L3, L7), its rule in `Abilities::plan` with the rows and the
   spells of the data, a test case, and a live video. Do not make a message of the server for

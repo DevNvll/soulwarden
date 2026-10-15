@@ -882,6 +882,24 @@ void register_dev_routes(Router& router, const Services& services) {
             return json_reply(200, commands::gear_json(target, character).dump());
         });
     });
+    // The passive rules of the data (stage 3.3b-S5): the rules of a character, and the rules of a weapon tree.
+    router.add("GET", "", "/v1/dev/passives", "dev.passives", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        return in_world(services, [character = *character](world::World& target) {
+            return json_reply(200, commands::passives_json(target, character).dump());
+        });
+    });
+    router.add("GET", "", "/v1/dev/passives/table", "dev.passives_table", [&services](const RouteContext& context) {
+        const std::string table = query_text(context.request, "table").value_or("");
+        if (table.empty() || table.size() > 64) {
+            return message(400, "give table (the id of an ability table: GreatAxeAbilityTable)");
+        }
+        return in_world(services, [table](world::World& target) { return json_reply(200, commands::passives_table_json(target, table).dump()); });
+    });
     router.add("POST", "", "/v1/dev/items/use", "dev.items_use", command_route(services, commands::use_item));
     router.add("POST", "", "/v1/dev/items/perks", "dev.items_perks", command_route(services, commands::set_item_perks));
     router.add("POST", "", "/v1/dev/rune/charge", "dev.rune_charge", command_route(services, commands::set_rune_charge));

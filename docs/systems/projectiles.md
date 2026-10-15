@@ -78,6 +78,18 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   bounce; the penetration depth of 0.2 m of the bow has no known use). A wall or the ground first: the projectile ends with
   no hit. The damage number goes to the client of the caster; each observer of the creature gets its health and its
   reaction (the common hit path).
+- The head of a creature (stage 3.3b-S5, `head_contact`, protocol notes 4.30). A hit of a projectile is a headshot when the
+  line of the projectile through the body meets the head volume of the creature: the line from one radius of the body
+  capsule before the point of the hit to two radii of the body and one radius of the head after it, with the radius of the
+  projectile. The head volume is the capsule of the slice (`creatures.json`: the HitVolume with m_isHeadshot on its bone
+  in the bind pose of the skeleton), turned with the yaw of the creature (`head_of`). A slice with no head volume (no
+  skeleton in the game copy, or a shape with no radius) has no headshot. The hit near the muzzle (the receiver of the
+  item) uses the line of the launch. A headshot is a critical hit with the flags Ranged, CanCrit, Crit, and Headshot
+  ([Combat and health](combat-and-health.md)). Each hit of a projectile has the flag Ranged, and its own attack for the
+  hit counts of the passive rules (`kAttackShot` and the number of the projectile).
+- The data of a shot of an ability (code review of stage 1.1b, finding F4, test case RD4): the projectile tool requires each
+  projectile spell of the abilities of the backend (`REQUIRED_ABILITY_SHOTS` of `tools/gamedata/projectiles.py`) in the
+  source and in the output; with one missing it stops and keeps the old file.
 - The hit near the muzzle. A shot item with a receiver: the receiver must be a creature of the world with a reference of
   its slice (its actor, its entity, the facet target of a hit volume), the session must observe it, the profile must have
   a near range, and the capsule must be in the near range (with the radius of the projectile and 0.25 m) of the origin,
@@ -155,3 +167,8 @@ tools/gamedata/projectiles.sh --find TEXT...   # print the attacks, the shots, a
 - The damage number shows for about 1 s: take the pictures in a loop from the shot on.
 - A projectile data file of the game data folder that the tool did not finish is not used: the tool writes, then renames.
   A file from before stage 3.3b-S3 does not exist: with no file each shot is refused.
+- A headshot test: aim with the right button (`tools/hx 'mousedown right'`), move the crosshair onto the head with small
+  `'look DX DY'` steps and a picture after each step, then `'mousedown left' 'wait 80' 'mouseup left'`. With a wolf that
+  looks at the character, a shot at its chest can meet its head: the head is in front of the chest on the line, and the
+  backend uses the bind pose. For a shot on the body with no headshot, spawn the wolf with its side to the character
+  (`--yaw 0`) and aim at its hind part.

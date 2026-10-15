@@ -191,7 +191,7 @@ below is the layout after the port.
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
-| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b done | |
+| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b, 3.3b-S5 done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
@@ -247,7 +247,7 @@ stage with a letter is a part of the system with that number.
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
 | 11 | 3.3b | Abilities, the shared parts (research file `abilities-shared.md`): part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte), part S3 (the projectiles of the basic attacks of the bow and the fire staff, and the check of a ranged hit), and part S2b (the spell entities of three kinds: the Pylon of the ice gauntlet, the trap of the musket, the Beacon of the life staff) | 1.3b | S1, S2a, S4, S3, S2b done |
 | 12 | 1.1b | The DLC for each player: each account and each character owns the expansion (Rise of the Angry Earth) and the DLC packs of the client data, with no purchase and no setting: the limits of the expansion (level, gear score, trade skills), the flail tree, the content of the expansion (research file `dlc-entitlements.md`) | 3.3b | done (the ownership, the limits, the flail tree, the amulet of a DLC pack; the content of the expansion keeps its own stages) |
-| 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | open |
+| 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | S5 done (the critical hits, a hit from behind, the headshot of a projectile, and one evaluator of the passive rules of the data); S6, M1, M2, M3 open |
 | 14 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
 | 15 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
 | 16 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
@@ -1243,6 +1243,43 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   projectile of the server for an observer, the Ownership state. Not in this stage:
   the critical hits (S5), the heal base (S6), the groups, the interaction option of the trap (2.5), the Pylon spells of
   the nodes, the other abilities of the weapons.
+- Stage 3.3b-S5, the critical hits and the passive events (done, protocol notes 4.30, documents
+  `docs/systems/combat-and-health.md` and `docs/systems/passive-rules.md`; evidence
+  `~/Games/soulwarden/work/evidence/abilities-crit/implement/`). The live check came first (L6, run `crit-l6` with the
+  backend of stage 1.1b and `tools/world message`): the client shows the special damage number (orange, larger) for the
+  flag Crit, or for Headshot with Ranged and CanCrit; Headshot alone, Ranged alone, and IsFromStatusEffect alone give the
+  normal number. The rules (decisions of the user of 2026-10-15): one independent roll for each hit with the generator of
+  the world and the chance of the data (the weapon, the fixed nodes, the rules of the hit, the statuses); the multiplier
+  of the weapon (or DmgCoefCrit of the row) plus one additive pool of the bonuses; a hit from behind at the critical angle
+  of the slice of the creature (the wolf: 135 degrees) and a projectile on the head volume of the slice are critical with
+  no roll, because the data makes them critical. The tools write the new data: `criticals` and `hitRules` of
+  `combat-tables.json`, the angles and the head volume of 374 slices of `creatures.json` (the bone of the HitVolume in the
+  bind pose of the skeleton of the character), and `ability-data.json` format 4 (the 2,025 rows of the ability tables of
+  the players, the 52 spell selections of the action lists). One evaluator of the passive rules (`world/passives.h`)
+  reads the cells of each learned node and each perk row: the events OnHit, OnCrit, OnKill, OnHitTaken, OnHeadShot, and
+  OnHitBehind, the conditions with the comparator of the client (the blank comparator is LessThanOrEqual, client code
+  0x43B6390; an equal band of 0.001), the hit counts of one attack, the entities near a character (the tracking spell of
+  the rule), and the effects (a damage part, the critical parts, the armor penetration, a status on the caster or on the
+  target, a heal of a part of the damage, a cooldown change, a fixed stat); the gear system has no condition check of its
+  own now. The plans of Shockwave, Path of Destiny, Gravity Well, and the Beacon take their spell from the action data.
+  `tools/world passives NAME` and `--table WEAPON` list each rule with what the backend does with it: the great axe 18
+  of 38 nodes applied, the war hammer 22 of 38; the rest is listed with the cause (no plan of its ability yet, an action
+  of the client, a block, grit). The stage also corrected the six findings of the review of stage 1.1b (cases RD1 to RD6;
+  each case fails on the tree of stage 1.1b): the mute of a development run opens and writes each settings file through
+  one checked descriptor (F1), a Vitals component needs its row (F2), the progression tool checks the rank limits (F3),
+  the projectile tool requires the shots of the abilities (F4), and the progression loader reads the format first and
+  checks the children of a DLC root (F5, F6). Test cases CH1 to CH10 (CH2: a fixed generator; CH10: two sessions), PS1 to PS7 (PS2: the
+  limits of Executioner 50, its critical node 30, and Leaping Strike 30; PS5: two sessions; PS6: the load of 50
+  characters in 4,200 creatures, with a time limit), RD1 to RD6; 420 cases pass, and the stored bytes of T2 did not
+  change. Live (runs `crit-live1` and `crit-live2` with the backend of the stage): critical numbers on a wolf with a
+  status of critical chance (667, 718, 597, and Shockwave 343 and 340), a hit from behind (603; the same hit from the
+  front 502), a headshot of the bow (367; a shot on the body 283), the statuses of Mauler's Fury and Greed in the HUD,
+  and the exhaust of Exhaustive Attacks at the name plate of the wolf (5 s). Open: the roll and the composition of the
+  original server (a pity rule is not known); the head in the pose of an animation (the backend uses the bind pose: a
+  shot at the chest of a wolf that looks at the shooter can be a headshot); a hit from behind and a headshot on a player.
+  Not in this stage: the heals of an ability (S6), the special rules of the other weapons (Berserk, the channels, the
+  stacks of the rapier and the spear, the stances of the greatsword), grit, blocks, and the abilities of the great axe
+  and the war hammer that have no plan yet (M2, M3).
 
 ### 3.4 Creatures: spawn, behavior, navigation
 

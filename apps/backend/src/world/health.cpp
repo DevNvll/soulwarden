@@ -73,6 +73,8 @@ void Health::creature_hit(Entity& creature, const gamedata::CreatureContact& con
     m_world.gear().on_hit_taken(target, contact);
     // A counter of an ability (stage 3.3b-S4, Riposte): the window took the hit (its absorption), and the counter starts.
     if (!result.died) {
+        // The passive rules with OnHitTaken of the weapon in the hand (stage 3.3b-S5: Power Through Pain).
+        m_world.passives().hit_taken(target);
         m_world.abilities().countered(target, creature, contact.reach + behavior_rules::kContactTolerance);
     }
     DamageTaken taken;

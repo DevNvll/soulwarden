@@ -51,7 +51,12 @@ backend. The tool of each system is also in the document of that system.
   the same four columns with "_AI", and UseAttackerPosForReaction; the pull and the push of a
   hit, [Forced movement](../systems/forced-movement.md)); with a file from before, a hit moves
   no creature; the tool stops for a decay rate above 1, and the loader refuses a value that is
-  not finite, a value above 100, and an impact of a row that the file does not have), `loot-tables.json` (stage 3.5a: the experience and the
+  not finite, a value above 100, and an impact of a row that the file does not have; from stage 3.3b-S5 also the members
+  `criticals` (CritChance and CritDamageMultiplier of each weapon, 587 rows) and `hitRules` (CanCrit, NoHeadshot,
+  NoBackstab, DmgCoefHead, DmgCoefCrit of each damage row, 414 rows): with a file from before no hit is critical; the tool
+  stops for a weapon table with only one of the two critical columns, a CritChance above 1, and a damage table with no
+  column of the hit rules, and the loader refuses a file with only one of the two members ([Combat and
+  health](../systems/combat-and-health.md))), `loot-tables.json` (stage 3.5a: the experience and the
   coin of a kill of each creature level, the reward factors of each creature type, the
   level differences, the coin chance of the kill events, the credit data of the game, the
   gear score ranges of each level and the loot ceiling of each creature level, the loot data
@@ -103,7 +108,12 @@ backend. The tool of each system is also in the document of that system.
   not evaluate disables the row) and for a status table with no ABSStandard, ABSSiege, ABSAcid,
   DMGSiege, or DMGAcid, but for the two tables of the creatures with no ABSAcid in
   `STATUS_TABLE_DIFFERENCES` (code review of stage 3.3b-S2a, finding F4; cases RG4 of
-  `check_ability_tool.py`)), `perk-data.json` (stage 1.3b, `tools/gamedata/perks.sh`: the perk list in the order of
+  `check_ability_tool.py`); from stage 3.3b-S5, format 4, each row of the ability tables of the players (2,025 rows: the
+  passive rules, [Passive rules](../systems/passive-rules.md)), and the spell selections of the action lists of the players
+  (`actionSpells`: 52 selections, each one with its action list, action, spell, the nodes that it needs, and the nodes that
+  it excludes; `actionNodes`: the 26 nodes that an action list tests; `actionSpellsNotExported`: the 2 selections whose test
+  is not a list of nodes, an Or with a state); the tool stops for a test of an unknown spell, and the loader takes the formats
+  1 to 3 too (with format 3: no spell selection, and only the rows of that file)), `perk-data.json` (stage 1.3b, `tools/gamedata/perks.sh`: the perk list in the order of
   the client, each perk with its affixes, abilities, labels, scaling, and channel, the cells of
   the affixes and of the ability rows that the perks name, the perk buckets, the perk places
   of each item, the consumables, the encumbrance row and the load of each armor item, the
@@ -222,6 +232,14 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 ```
 
 ## Traps
+
+- Stage 3.3b-S5 changes `combat-tables.json` (the members `criticals` and `hitRules`), `creatures.json` (the members `behind`
+  and `head` of a slice, and four counts), and `ability-data.json` (format 4). The backend of this stage reads the older
+  files: then no hit is critical, no hit is from behind, no projectile hit is a headshot, the evaluator has only the rows of
+  a format 3 file, and the plans keep the node rules of stage 3.3a. Write the three files again with
+  `tools/gamedata/combat.sh`, `creatures.sh`, and `abilities.sh` (the creature tool also reads the skeletons of
+  `objects/characters/`). `progression-tables.json` and `projectile-data.json` of the tools of this stage (with the checks
+  of the review of stage 1.1b) are equal to the files of stage 1.1b; `spell-data.json` too.
 
 - Stage 1.1b changes `progression-tables.json` (format 2: the expansions, the entitlements, the achievements, the rank
   limits with the expansion) and `spell-data.json` (the member `vitalsNotInData`; the AutoSpell times are required floats).

@@ -13,10 +13,10 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 | The one owner of the statuses of a character: apply, end, ticks, values | `apps/backend/src/world/statuses.h` (`world::Statuses`), `world/entity.h` (`ActiveStatus`, `StatusSource`), test cases ST2 to ST5 |
 | The status state of a player (slot 44, type 4236) and the wall clock pair of the Player state | Protocol notes 4.24, `server/rep/states/status_state.cpp` (`encode_player_status_state`), `states/player_state.cpp`, test cases ST6, ST7 |
 | The values of a status in the gear summary, the limits of the categories | `Statuses::values`, `Gear::refresh` ([Gear and perks](gear-and-perks.md)), test case ST4 |
-| A caster effect of a learned node or of a perk (SelfApplyStatusEffect) | `Gear::on_hit`, `Gear::caster_effect`, test case ST8 |
+| A caster effect of a learned node or of a perk (SelfApplyStatusEffect), a status while creatures are near | [Passive rules](passive-rules.md), `Passives::after_hit`, `Passives::tick`, `Gear::caster_effect`, test cases ST8, PS3 |
 | The speed of a status: the speed table of the player (slot 43, type 1525), the position check | Protocol notes 4.24, `server/rep/states/stat_multiplier_state.cpp`, `Gear::refresh` (`Entity::moveMultiplier`, `sprintMultiplier`), `PositionTrack::set_client_speed`, `client_speed`, test cases SV1 to SV3, RS1, ST9 |
 | The corrections of the code review of stage 3.3b-S1 (F1 to F13) | `apps/backend/tests/review_status_tests.cpp`, test cases RS1 to RS13 |
-| The status categories and the caster effect rows of the game data | `tools/gamedata/abilities.sh` (format 3), `gamedata/ability_data.h` (`StatusCategory`, `AbilityRow`), test case ST1 |
+| The status categories and the caster effect rows of the game data | `tools/gamedata/abilities.sh` (format 4), `gamedata/ability_data.h` (`StatusCategory`, `AbilityRow`), test case ST1 |
 
 ## Rules
 
@@ -72,7 +72,9 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   Rune_Detonate_CastAoE comes, and its CastSpell is the explosion. A different spell is not in this stage (a count in
   `tools/world status`).
 - The values (`Statuses::values`): MOD<attribute>, MaxHealthMod, PhysicalArmor, ElementalArmor, BaseDamageReduction,
-  DMG<type> and DMGStandard, ABS<type>, MoveSpeedMod, and SprintSpeedMod, each times the potency and the stacks. The
+  DMG<type> and DMGStandard, ABS<type>, MoveSpeedMod, SprintSpeedMod, and from stage 3.3b-S5 CritChanceModifier and
+  CritDamageModifier (the critical parts of the gear summary: [Combat and health](combat-and-health.md)), each times the
+  potency and the stacks. The
   sum of a value over the statuses of a category is not above the positive ValueLimits of the category and not below
   the negative one (StatusEffectCategoryData: Haste MoveSpeedMod 0.4, Slow -0.5, ArmorFortify PhysicalArmor 2.0,
   Fortify ABS 0.5, ...; client code 0x40242C0 sums the speed values by category). A status with two categories with a
@@ -91,8 +93,11 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   row ([Gear and perks](gear-and-perks.md)), and InSequence: the hit is a hit of the cast of an ability of the list (a
   rule of this project: InSequenceTime is not read). The build: Safety Measures (a hit of Wrecking Ball: the fortify
   WarHammer_WreckingBall_Fortify), Greed (a light hit of the great axe: three stacks of its empower), Hammer Time (a heavy
-  hit of the war hammer). A row with OnHitTaken (Power Through Pain) or a condition that the backend does not evaluate
-  (NumAroundMe: Crowded Protection) has no effect in this stage. The time of a caster effect is the
+  hit of the war hammer). From stage 3.3b-S5 the evaluator of the passive rules does this ([Passive rules](passive-rules.md)):
+  a row with OnHitTaken (Power Through Pain) puts its status on the caster after a hit that a creature gives it, and a row
+  with NumAroundMe and no event (Crowded Protection, Center of Attention) is a status with no end while the creatures near
+  the character meet the condition (source "ability" with the rule id; it ends when the condition does not hold and at the
+  leave of the world). The time of a caster effect is the
   SelfApplyStatusEffectDurations of its ability row (a number, or a list in the sequence of the statuses), else the
   duration of the status row (finding F10, test case RS10).
 - The status state of a player (protocol notes 4.24). The owner gets the full map (group 1, field 0) with each status

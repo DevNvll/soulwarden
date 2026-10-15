@@ -151,6 +151,13 @@ not, as for the items):
   tools/world cooldowns CHARACTER [reset]       the cooldowns of the abilities of a character with the
                                                 time that they have, and the counts of the abilities
                                                 (reset: each cooldown ends; stage 3.3a)
+  tools/world passives CHARACTER                the passive rules of a character (stage 3.3b-S5): each learned
+                                                node of its weapon trees and each ability row of its perks, with
+                                                its kinds and what the backend does with it ("NOT APPLIED" and the
+                                                cause), the critical values of the weapon in the hand, the counts
+  tools/world passives --table WEAPON           the same for each node of a weapon tree (greataxe, warhammer, or
+                                                the id of the table): the rules that the evaluator applies and the
+                                                rules that it does not apply yet
   tools/world node CHARACTER WEAPON NODE...     spend one mastery point on each node of a weapon
                                                 tree, in this sequence (NODE: the id text of the
                                                 game table, Ability_WarHammer_WreckingBall). The
@@ -1143,6 +1150,31 @@ def main() -> None:
             else:
                 fail("tools/world roll KIND [LEVEL] [--count N] [--forced] [--character CHARACTER]")
         request(data_dir, "GET", f"/v1/dev/loot/roll?{query}")
+    elif command == "passives" and len(arguments) == 3 and arguments[1] == "--table":
+        if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[2]):
+            fail("give the weapon (greataxe) or the id of its ability table (GreatAxeAbilityTable)")
+        document = fetch(data_dir, f"/v1/dev/passives/table?table={arguments[2]}")
+        print(f"{document['table']}: {document['count']} nodes, {document['applied']} applied")
+        for rule in document["rules"]:
+            mark = "applied    " if rule["applied"] else "NOT APPLIED"
+            kinds = ", ".join(rule["kinds"]) or "-"
+            print(f"  {mark} {rule['id']} ({rule['origin']}; {kinds}): {rule['note']}")
+    elif command == "passives" and len(arguments) == 2:
+        document = fetch(data_dir, f"/v1/dev/passives?character={character_id(data_dir, arguments[1])}")
+        if not document.get("inWorld"):
+            fail("the character is not in the world")
+        critical = document["critical"]
+        if critical.get("weapon"):
+            print(f"critical: weapon {critical['weapon']} chance {critical['weaponChance']:.3f} multiplier "
+                  f"{critical['weaponMultiplier']:.3f}; fixed rules +{critical['fixedChance']:.3f} chance +{critical['fixedDamage']:.3f} "
+                  f"damage; statuses +{critical['statusChance']:.3f} chance +{critical['statusDamage']:.3f} damage; total chance "
+                  f"{critical['chance']:.3f}, multiplier {critical['multiplier']:.3f} (the rules of a hit add their parts at the hit)"
+                  + ("" if critical["hasValues"] else "; NO critical values in the combat data: no critical hit"))
+        for rule in document["rules"]:
+            mark = "applied    " if rule["applied"] else "NOT APPLIED"
+            kinds = ", ".join(rule["kinds"]) or "-"
+            print(f"  {mark} {rule['id']} ({rule['origin']}; {kinds}): {rule['note']}")
+        print("counts: " + ", ".join(f"{name} {value}" for name, value in document["counts"].items()))
     elif command == "gear" and len(arguments) == 2:
         document = fetch(data_dir, f"/v1/dev/gear?character={character_id(data_dir, arguments[1])}")
         print(json.dumps(document, indent=1, sort_keys=True))

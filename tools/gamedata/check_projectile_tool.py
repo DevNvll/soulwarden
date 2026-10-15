@@ -20,6 +20,11 @@ backend runs it (case PJ11).
                           status 1, the old file stays (code review of stage 3.3b-S2b, finding F11; case RK11)
   missing-ability-prefab  the prefab of a projectile spell of an ability that the backend launches (the Beacon) names no
                           slice: status 1, the old file stays (F11)
+  missing-required-row    the spell table has no row of the Pylon projectile (IceMagic_Pylon_Projectile), an ability spell
+                          that the backend launches: status 1, the old file stays (code review of stage 1.1b, finding F4)
+
+Each case but missing-required-row has a row of each ability spell that the backend launches (REQUIRED_ABILITY_SHOTS of the
+tool), with the slice of the test and an ability damage row: the valid case has their shots.
 
 Usage: check_projectile_tool.py WORK_FOLDER
 Status 0: each case has the expected result.
@@ -95,17 +100,23 @@ def animation_database(charge: str, override: str = "", heavy: bool = True) -> b
 def tables(case: str) -> dict:
     spell = {"SpellID": "TestSpell", "SpellPrefabPath": "", "CastingTypes": "AoE", "RangedAttackProfile": "", "RangedAttackName": "",
              "DamageTableRow": "", "ManaCost": ""}
-    if case == "missing-column":
-        del spell["RangedAttackName"]
     damage = [{"DamageID": "TestRow", "WeaponCategory": "Bow", "AttackType": "Light"},
               {"DamageID": "TestHeavy", "WeaponCategory": "Bow", "AttackType": "Heavy"}]
     spells = [spell]
-    if case == "missing-ability-prefab":
-        # The projectile spell of the Beacon (an ability that the backend launches) with a prefab that names no slice.
-        damage.append({"DamageID": "LifeStaff_Beacon", "WeaponCategory": "LifeMagic", "AttackType": "Ability"})
-        spells.append({"SpellID": "Spell_Ability_Lifestaff_Beacon_Projectile", "SpellPrefabPath": "Items/Weapons/missing_beacon",
+    # A row of each ability spell that the backend launches (code review of stage 1.1b, finding F4: each one must be a row of
+    # the source). The case missing-ability-prefab gives the Beacon a prefab that names no slice; missing-required-row has no
+    # row of the Pylon projectile.
+    damage.append({"DamageID": "TestAbilityDamage", "WeaponCategory": "LifeMagic", "AttackType": "Ability"})
+    for name in tool.REQUIRED_ABILITY_SHOTS:
+        if case == "missing-required-row" and name == "IceMagic_Pylon_Projectile":
+            continue
+        missing = case == "missing-ability-prefab" and name == "Spell_Ability_Lifestaff_Beacon_Projectile"
+        spells.append({"SpellID": name, "SpellPrefabPath": "Items/Weapons/missing_beacon" if missing else "Items/Weapons/test_arrow",
                        "CastingTypes": "Projectile", "RangedAttackProfile": "Bow", "RangedAttackName": "Basic",
-                       "DamageTableRow": "LifeStaff_Beacon", "ManaCost": ""})
+                       "DamageTableRow": "TestAbilityDamage", "ManaCost": ""})
+    if case == "missing-column":
+        for row in spells:
+            del row["RangedAttackName"]
     return {
         "ammo": (tool.AMMO_TYPE, FakeSheet("Ammo", [{"AmmoID": "DefaultArrow", "AmmoType": "Arrow", "DamageModifier": 1.2,
                                                      "AmmoPrefabPath": "Items/Weapons/test_arrow"}])),
@@ -172,13 +183,18 @@ def main() -> int:
     status, text = run(work, "valid")
     document = json.loads(text) if status == 0 and text != MARK else {}
     expected_shots = [["Bow", "Basic", "TestHeavy", 0.0, -1, "", "", True, 12, True], ["Bow", "Basic", "TestRow", 0.0, -1, "", "", False, 12, True]]
-    passed = (status == 0 and document.get("shots") == expected_shots and document.get("weapons") == [["TestBow", "Bow", "Arrow"]]
+    shots = document.get("shots", [])
+    basic = [shot for shot in shots if not shot[5]]
+    ability = sorted(shot[5] for shot in shots if shot[5])
+    passed = (status == 0 and basic == expected_shots and ability == sorted(tool.REQUIRED_ABILITY_SHOTS)
+              and document.get("weapons") == [["TestBow", "Bow", "Arrow"]]
               and document.get("ammo") == [["DefaultArrow", "Arrow", 1.2, 0]] and len(document.get("slices", [])) == 1
               and document["attacks"][0][:6] == ["Bow", "Basic", False, 100.0, 0.15, 2.0])
-    print(f"{'ok  ' if passed else 'FAIL'}  valid: status {status}, shots {document.get('shots')}")
+    print(f"{'ok  ' if passed else 'FAIL'}  valid: status {status}, basic shots {basic}, ability shots {ability}")
     failures += 0 if passed else 1
     for case in ("missing-column", "range-not-finite", "bad-charge", "missing-ammo-prefab", "empty-projectile-slice",
-                 "no-animation-database", "missing-slice-override", "partial-basic-sources", "missing-ability-prefab"):
+                 "no-animation-database", "missing-slice-override", "partial-basic-sources", "missing-ability-prefab",
+                 "missing-required-row"):
         status, text = run(work, case)
         passed = status == 1 and text == MARK
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, file {'kept' if text == MARK else 'replaced'}")

@@ -49,11 +49,18 @@ of that system.
   sound server: the sound server keeps a volume by the application name, and the game of the user
   has the same name ("New World"). `SOULWARDEN_DEV_SOUND=1` keeps the volumes. Trap: an account
   that has no settings file yet (its first world entry) has the volume of the game until the next
-  start. The script `tools/dev-mute.sh` makes the change. It compares the resolved paths (code
-  review of stage 3.3b-S2b, finding F1): when the development prefix, its savedata folder, or a
-  settings file resolves to the prefix of the user or to a path in it (a link, a path that ends in
-  `/.`), it writes no file and prints a message `dev-mute: ...`, and the run has the volume of the
-  game. `tools/check_dev_mute.py` checks this with folders of a test (case RK1), never with the
+  start. The script `tools/dev-mute.sh` makes the change with `tools/dev_mute.py`. A check of a path
+  and a later write by that path is never safe: a folder can move and a link can take its place
+  between the two (code review of stage 1.1b, finding F1). Thus the helper opens the development
+  prefix and each part of its savedata folder one time (no follow of a link in a part), opens each
+  settings file one time from the folder descriptor (no follow of a link), and checks the open
+  descriptor: its real path is in the resolved development prefix and not in the resolved prefix of
+  the user, it is a regular file with one link, and its device and inode are not those of a settings
+  file of the user. It then reads and writes through the same descriptor. When a check fails (the
+  prefix of the user, a path in it, a link, a path that ends in `/.`, a hard link), it writes no
+  file and prints a message `dev-mute: ...`, and the run has the volume of the game.
+  `tools/check_dev_mute.py` checks this with folders of a test (case RK1; also the move of the
+  savedata folder at the write, after the checks, and after the folder open), never with the
   prefix of the user.
 - This is a development environment: data loss is not a problem. A test uses the fastest
   path to the state that it needs. The development data directory stays between runs:

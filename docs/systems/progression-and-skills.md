@@ -63,6 +63,16 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   experience, no point, no rank, no node, and no bar. A file of format 1 has no expansion: the limits of the file (60, the
   base ranks). The loader refuses a file of format 2 whose expansion, entitlement, and achievement lists do not fit
   together, or whose largest rank with the expansion is not valid for its rank table (test case DL1).
+- The format of the progression file (code review of stage 1.1b, findings F5 and F6, test cases RD5 and RD6): the loader
+  reads the member `format` first (no member: format 1; only 1 or 2). Format 2 has the expansion, entitlement, and
+  achievement lists, and each progression row has 5 values; format 1 has none of the lists and 4 values. A mix is refused.
+  An entitlement with the reward type Entitlement must name its child entitlements ("A+B"), and each child must be an
+  alias of the list; an empty list is refused. The tool stops when the MaxLevel or the Expansion01MaxLevel of a row is not
+  less than the number of the ranks of its table (finding F3, test case RD3).
+- The effect of a learned node (stage 3.3b-S5): the evaluator of the passive rules applies the row of each learned node of
+  the tree of the weapon of a hit, and the fixed stats of the nodes of the weapon in the hand go into the gear values
+  ([Passive rules](passive-rules.md)). The skill system does not change for this: a node change gives the gear refresh,
+  as before. `tools/world passives NAME` lists each learned node with what the backend does with it.
 
 ## Commands
 

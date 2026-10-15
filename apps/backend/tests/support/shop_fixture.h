@@ -406,7 +406,7 @@ inline gamedata::PerkTables shop_perks() {
          cells({{"OnHit", 1.0F}, {"ActivationCooldown", 1.5F}}, {{"OtherApplyStatusEffect", "Status_Perk_Weapon_Attunement_VoidDMG"}})},
         {"global_weapon_chainvoid",
          cells({{"OnHit", 1.0F}, {"ActivationCooldown", 2.0F}}, {{"AttackType", "Light,Heavy"}, {"OtherApplyStatusEffect", "ChainLVoidTrigger"}})},
-        {"test_ability_unknowncondition", cells({{"OnHit", 1.0F}, {"DamageIsMelee", 1.0F}, {"BaseDamage", 0.5F}})},
+        {"test_ability_unknowncondition", cells({{"OnHit", 1.0F}, {"DistFromDefender", 5.0F}, {"BaseDamage", 0.5F}})},
         {"heartgem_rune_detonate_major", cells({})},
         {"heartgem_rune_detonate_dominator", cells({{"OnHit", 1.0F}, {"BaseDamage", 0.2F}}, {{"RemoteDamageTableRow", "Rune_Detonate_AoE"}})},
         {"global_earring_potioncdr", cells({{"OnUsedConsumable", 1.0F}, {"CooldownTimer", -0.2F}})},

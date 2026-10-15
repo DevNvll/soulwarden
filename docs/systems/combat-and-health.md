@@ -11,6 +11,7 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
 | A melee attack of a player on a creature: the contact report of the client, the hit check, the damage rule, the damage number | Protocol notes 2.3, 4.7, and 4.15, `apps/backend/src/world/combat.h`, `gamedata/combat_tables.h`, `server/rep/client_input.h`, `server/rep/combat_messages.h`, `server/http/aws_routes.cpp`, `tools/gamedata/combat.sh`, `tools/research/input_packet.py --contacts` |
 | A hit of an ability: the contact of an ability phase, the hit of an area, the weaken of a creature | Protocol notes 4.22, [Abilities](abilities.md), `world/combat.h` (`Combat::claim`, `Combat::strike`), `world/abilities.h` (`Abilities::contact_phase`), test cases AB4, AB5 |
 | A hit of a projectile of a ranged or magic basic attack (the bow, the fire staff) | Protocol notes 4.27, [Projectiles](projectiles.md), `world/projectiles.h`, test cases PJ3, PJ8 |
+| A critical hit, a hit from behind, a headshot, the flags of the damage number | Protocol notes 4.30, `world/combat.h` (`Combat::critical`, `Combat::source_angle`, `damage_flags`), `world/projectiles.cpp` (`head_contact`), [Passive rules](passive-rules.md), test cases CH1 to CH10 |
 | The mana of a character and the mana meter of the HUD (the blue bar below the crosshair) | Protocol notes 4.5, `apps/backend/src/server/rep/states/mana_state.cpp`, test case UT4 |
 | The health and the death of a character: the damage of a creature, the damage mark, the death screen, the respawn | Protocol notes 4.18, `apps/backend/src/world/health.h`, `world/combat.h` (`Combat::creature_damage`), `server/rep/health_messages.h`, `server/rep/states/vitals_state.cpp`, `server/http/health_commands.cpp`, `tools/world heal` |
 
@@ -109,6 +110,42 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   hit of an ability uses the conversion of the gem of the weapon at the press of the cast
   (`CastConversion`, the last argument of `Combat::strike`), not the weapon in the slot at
   the time of the hit (code review of stage 3.3b-S1, finding F3, test case RS3).
+- Critical hits (stage 3.3b-S5, protocol notes 4.30, test cases CH1 to CH8). `Combat::strike` collects the facts of the
+  hit first: the attack (`HitContext::attack`: one press, one cast, or one projectile), the kind (a contact, a projectile,
+  an area), the health of the target before the hit, a hit from behind, and a headshot. Then it asks the evaluator of the
+  passive rules for the bonuses ([Passive rules](passive-rules.md)), then `Combat::critical` decides the critical hit. The
+  rule and the source of each part:
+  - The chance: the CritChance of the weapon in the hand (`criticals` of the combat data), plus the CritChance of the fixed
+    node rules and of the rules of the hit, plus the CritChanceModifier of the statuses of the attacker; 0 to 1. Source:
+    game data, and a decision of the user (2026-10-15: the chance of the data from the weapon, the perks, the nodes, and the
+    statuses).
+  - The roll: each hit with a chance above 0 takes one independent number of the generator of the world
+    (`World::random_unit`, `World::set_random_seed` in a test). The hit is critical when the number is below the chance.
+    Source: a decision of the user. A hit of a fixed amount (`Combat::strike_amount`: a tick, a chain) takes no number.
+  - The multiplier: the DmgCoefCrit of the row when it has one (11 rows: Path of Destiny 1.2), or else the
+    CritDamageMultiplier of the weapon; plus one additive pool of the bonuses (the CritDamage of the rules, the
+    CritDamageModifier of the statuses, HeadshotDamage for a headshot). Source: a decision of the user (one additive
+    pool); DmgCoefCrit in the place of the weapon value is a decision of an agent (the row value is the critical
+    coefficient of the row, as DmgCoefHead is its head coefficient). The multiplier changes the damage that the target
+    takes: both parts of a conversion.
+  - A hit from behind (`Combat::source_angle`): the angle between the front of the creature (its yaw) and the source of the
+    hit (the attacker, the point of a projectile, the center of an area) is not less than m_isHitFromBehindMinAngle of the
+    slice of the creature (the wolf: 2.0944, 120 degrees). At m_isHitByCritFromBehindMinAngle or more (the wolf: 2.3562,
+    135 degrees) and with a row that has no NoBackstab, the hit is critical with no roll. A source at the creature (less
+    than 0.05 m) has no direction: no hit from behind. Source: game data (the DamageReceiver of the slice) and the decision of
+    the user (where the data makes such a hit critical, it is critical).
+  - A headshot: only a projectile, when its line meets the head volume of the creature
+    ([Projectiles](projectiles.md)), and its row has no NoHeadshot. A headshot is critical with no roll. Source: game data
+    (the HitVolume with m_isHeadshot), the client (the special number for Headshot with Ranged and CanCrit, live check
+    L6), and the decision of the user. A melee contact has no headshot: the contact of the client has no bone.
+  - The flags of the damage number (`damage_flags`): Ranged for each hit of a projectile, Crit and CanCrit for each
+    critical hit, Headshot for each headshot, DamageCausedDeath for a kill. Only real facts of the hit: no other code
+    writes a flag.
+  - A combat file with no `criticals` (from a tool before stage 3.3b-S5) gives no critical hit and no roll. The loader
+    refuses a file with only one of the two lists `criticals` and `hitRules`.
+- ArmorPenetration of a rule (stage 3.3b-S5): the part of the mitigation of the target that the hit does not meet. The
+  defense factor is the mitigation times (1 plus the armor part of the target) times (1 minus the penetration, 0 to 1).
+  Source: game data (the cell of the rule); the place in the formula is a decision of an agent.
 - A creature hit on a character in the window of a counter (Riposte, stage 3.3b-S4): the absorption of the status of the
   window takes the damage, and `Health::creature_hit` gives the hit to `Abilities::countered` after the damage: the
   counter starts one time and hits the attacker ([Forced movement](forced-movement.md)).
@@ -129,7 +166,9 @@ tools/world hurt NAME 500            # lower the health of a character (the heal
 ```
 
 - `tools/gamedata/combat.sh` writes `combat-tables.json` to the game data folder (14,073 items
-  with a weapon, 587 weapons, 414 damage rows, the defense values of 8,779 vitals rows). It
+  with a weapon, 587 weapons, 414 damage rows, the defense values of 8,779 vitals rows; from stage
+  3.3b-S5 also `criticals`, the critical chance and multiplier of each weapon, and `hitRules`, the CanCrit, NoHeadshot,
+  NoBackstab, DmgCoefHead, and DmgCoefCrit cells of each damage row). It
   reads the data tables and the base attributes file of the game copy from the sources of
   the creature data tool: the extracted files of the work folder are sufficient for it (6 s),
   and `SOULWARDEN_OODLE_LIB` reads the pak files. `tools/gamedata/combat.sh --find TEXT...` prints
@@ -197,3 +236,13 @@ tools/world hurt NAME 500            # lower the health of a character (the heal
   starts with the first weapon slot again, in the client and in the backend.
 - A dead rabbit shows the text "No equipped Knife" at its name: the skinning interaction of
   the client, which the backend does not have.
+- A live test of a critical hit (stage 3.3b-S5): the chance of a weapon is low (the war hammer 6 percent). Give the
+  character a status with CritChanceModifier: `tools/world status Soulwarden TSE_CritChance_Inc_10PCT 600 10` (10 stacks
+  for 600 s: each hit is critical). Give the seconds: the row has the duration -1, and the seconds 0 (the duration of the
+  row) make it an application of one moment with no stack (the count "one application now"). For a hit from behind remove it (`tools/world status Soulwarden remove
+  TSE_CritChance_Inc_10PCT`) and spawn the wolf with its back to the character: `tools/world creature spawn Wolf_Grey_7
+  Soulwarden -2.2 0 0 --yaw 90` (`--yaw 270`: the wolf looks at the character). The log line after the hit line gives the
+  cause: `world: hit: NAME, the hit on creature ID: critical: roll|behind|headshot (chance C, roll R, multiplier M)`. The
+  roll 1.000 is "no number taken".
+- The critical number is orange and larger, with no other mark. A number in yellow with an arrow is a weakness of the
+  creature (thrust on a wolf), not a critical hit.

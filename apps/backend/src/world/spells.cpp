@@ -157,10 +157,14 @@ Entity* Spells::make(const SpellRequest& request) {
     }
     // A summon and a trap with a Vitals component take damage: they need the vitals row of their slice (code review of stage
     // 3.3b-S2b, finding F8: a Pylon with no row was paid for and took no damage).
-    if ((request.role == SpellRole::summon || request.role == SpellRole::trap) && slice->vitals
-        && (m_data == nullptr || m_data->vitals_row(slice->vitals->row) == nullptr)) {
+    // A Vitals slot with no vitals metadata needs the row too (code review of stage 1.1b, finding F2): a paid summon with no
+    // damage path is no entity.
+    const bool vitalsSlot = slice != nullptr && std::any_of(slice->slots.begin(), slice->slots.end(),
+                                                            [](const gamedata::SpellSlot& slot) { return slot.type == 15; });
+    if ((request.role == SpellRole::summon || request.role == SpellRole::trap) && (slice->vitals || vitalsSlot)
+        && (m_data == nullptr || !slice->vitals || m_data->vitals_row(slice->vitals->row) == nullptr)) {
         log::write("world: spell: %s of %s: the spell data has no vitals row %s of its slice: no entity", request.spellId.c_str(),
-                   caster->name.c_str(), slice->vitals->row.c_str());
+                   caster->name.c_str(), slice->vitals ? slice->vitals->row.c_str() : "(none)");
         return nullptr;
     }
     // An aura follows a living entity (finding F3): a projectile that killed its target makes no aura on the body.

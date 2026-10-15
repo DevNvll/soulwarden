@@ -37,6 +37,7 @@
 #include "world/load_meter.h"
 #include "world/navigation.h"
 #include "world/ownership.h"
+#include "world/passives.h"
 #include "world/position_index.h"
 #include "world/position_report.h"
 #include "world/progress.h"
@@ -682,6 +683,13 @@ public:
     [[nodiscard]] const Gear& gear() const {
         return m_gear;
     }
+    /** @return The evaluator of the passive rules of the data (stage 3.3b-S5): the nodes of the weapon trees and the perks. */
+    [[nodiscard]] Passives& passives() {
+        return m_passives;
+    }
+    [[nodiscard]] const Passives& passives() const {
+        return m_passives;
+    }
     /** @return The consumable system: the use of a potion or a food, and the effects on a character (stage 1.3b). */
     [[nodiscard]] Consumables& consumables() {
         return m_consumables;
@@ -792,6 +800,7 @@ private:
     Rewards m_rewards;
     Abilities m_abilities;
     Gear m_gear;
+    Passives m_passives;
     Consumables m_consumables;
     Runes m_runes;
     /** The status effects of the characters (stage 3.3b-S1). */

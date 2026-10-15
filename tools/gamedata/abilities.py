@@ -26,7 +26,14 @@ extracted).
   AbilityData (each table)         (stage 1.3b, I14) the cost columns of each ability row that has one:
                                    ManaCostList, ManaCostMult, StaminaCostList, StaminaCostFlatMod
   AbilityData (tables of players)  (stage 3.3b-S1) each row with a SelfApplyStatusEffect (a status on the
-                                   caster: Safety Measures, Greed, Hammer Time): its cells that are not empty
+                                   caster: Safety Measures, Greed, Hammer Time): its cells that are not empty;
+                                   (stage 3.3b-S5, format 4) each row with an id: the rules of the nodes of the
+                                   weapon trees and of the perks for the evaluator of the backend
+  the action lists of the player   (stage 3.3b-S5) playeractions_*.actionlist of the folder of the player actions:
+                                   each CastSpell activity whose IfThenElse conditions test learned nodes
+                                   (IfAbilityActive, also below Not), with the nodes that the spell needs and the
+                                   nodes that it must not have ("actionSpells"), and the nodes that each action list
+                                   tests ("actionNodes")
   StatusEffectCategoryData         (stage 3.3b-S1) the ValueLimits of each status category: the largest sum
                                    (a positive limit) or the smallest sum (a negative limit) of a value over
                                    the effects of the category ("Haste": MoveSpeedMod 0.4)
@@ -38,7 +45,7 @@ the list of the CRC values of all rows of all status tables, in the unsigned ord
 duplicate (the list of the client: live check L5 of stage 3.3a, 4,517 rows of the supported
 build). A duplicate id has the first position.
 
-Output: {"format": 3, "statusRows": N,
+Output: {"format": 4, "statusRows": N,
 "counts": {"cooldowns": N, "statusEffects": N, "spells": N, "manaCosts": N, "staminaCosts": N, "abilityCosts": N,
 "abilityRows": N, "statusCategories": N, "statMultipliers": N},
 "cooldowns": [[id, time, minTime], ...],
@@ -47,7 +54,10 @@ Output: {"format": 3, "statusRows": N,
 "manaCosts": [[id, cost], ...], "staminaCosts": [[id, cost], ...],
 "abilityCosts": [[id, [mana cost id, ...], manaCostMult, [stamina cost id, ...], staminaCostFlatMod], ...],
 "abilityRows": [[id, {cells}], ...], "statusCategories": [[id, {value name: limit, ...}], ...],
-"statMultipliers": [[id, min, max], ...]}.
+"statMultipliers": [[id, min, max], ...],
+"actionSpells": [[action list, action, spell, [node, ...], [node, ...]], ...],
+"actionNodes": [[action list, [node, ...]], ...],
+"actionSpellsNotExported": [[action list, action, spell, cause], ...]}.
 `cells` has the other cells of the row that are not empty and not 0 (a number, or a text).
 
 The tool writes no file (status 1) when a table type is not in the game copy, when a table does
@@ -82,7 +92,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure  # noqa: E402
-from creature_data import TABLES_FOLDER, Sources  # noqa: E402
+from creature_data import TABLES_FOLDER, Sources, read_xml  # noqa: E402
 from item_catalog import Sheet, sheet_type  # noqa: E402
 
 OUTPUT_NAME = "ability-data.json"
@@ -229,6 +239,10 @@ DUPLICATES_IN_GAME = frozenset({"sanctuary", "raid_monarchsbluffs00_interactbarr
 # stage 1.3b). "All" in a ManaCostList is a key of the modifier for each cost id (0x67EAED0).
 COSTS_NOT_IN_GAME = frozenset({"specialattack", "elemental_fire_staff_heavy", "lifestaff_holyshield_mana_upgrade",
                                "lifestaff_speed_intro", "siphon_healing_check_to_cast", "all"})
+# The action lists of the player (stage 3.3b-S5): the folder and the start of the file names of the ability lists.
+ACTION_FOLDER = "sharedassets/springboardentitites/playerdata/cage/"
+ACTION_PREFIX = "playeractions_"
+ACTION_SUFFIX = ".actionlist"
 # Largest number of a status effect on the wire (16 bits).
 MAX_STATUS_INDEX = 0xFFFF
 
@@ -460,12 +474,14 @@ def build_data(sources: Sources) -> dict:
         require(sheet, CASTER_COLUMNS + CASTER_RULE_COLUMNS)
         for row in range(sheet.row_count):
             identifier = str(sheet.cell(row, "AbilityID")).strip()
-            if identifier and str(sheet.source(row, "SelfApplyStatusEffect")).strip():
+            # Format 4 (stage 3.3b-S5): each row with an id, also a row with no cell (a node whose rule the action data has).
+            if identifier:
                 add_row(ability_rows, [identifier, cells_of(sheet, row, ABILITY_SKIP)], "ability tables")
     for entry in ability_rows.values():
-        for status in [part.strip() for part in entry[1]["SelfApplyStatusEffect"].split(",") if part.strip()]:
+        for status in [part.strip() for part in str(entry[1].get("SelfApplyStatusEffect", "")).split(",") if part.strip()]:
             if status.lower() not in statuses:
                 raise Failure(f"the ability {entry[0]} names the status {status}, which the status tables do not have")
+    action_spells, action_nodes, action_skipped = read_action_lists(sources, spells)
 
     # The status categories (stage 3.3b-S1): the ValueLimits of each category ("MoveSpeedMod:0.4,SprintSpeedMod:0.4").
     categories: dict[str, list] = {}
@@ -502,17 +518,107 @@ def build_data(sources: Sources) -> dict:
 
     if not cooldowns:
         raise Failure("the cooldown tables have no row")
-    data = {"format": 3, "statusRows": len(all_crcs),
+    data = {"format": 4, "statusRows": len(all_crcs),
             "counts": {"cooldowns": len(cooldowns), "statusEffects": len(statuses), "spells": len(spells),
                        "manaCosts": len(mana_costs), "staminaCosts": len(stamina_costs), "abilityCosts": len(ability_costs),
                        "abilityRows": len(ability_rows), "statusCategories": len(categories),
-                       "statMultipliers": len(multipliers)},
+                       "statMultipliers": len(multipliers), "actionSpells": len(action_spells),
+                       "actionNodes": len(action_nodes), "actionSpellsNotExported": len(action_skipped)},
             "cooldowns": sorted(cooldowns.values()), "statusEffects": sorted(statuses.values(), key=lambda entry: entry[1]),
             "spells": sorted(spells.values()), "manaCosts": sorted(mana_costs.values()),
             "staminaCosts": sorted(stamina_costs.values()), "abilityCosts": sorted(ability_costs.values()),
             "abilityRows": sorted(ability_rows.values()), "statusCategories": sorted(categories.values()),
-            "statMultipliers": sorted(multipliers.values())}
+            "statMultipliers": sorted(multipliers.values()), "actionSpells": action_spells, "actionNodes": action_nodes,
+            "actionSpellsNotExported": action_skipped}
     return data
+
+
+def condition_tests(element, negated: bool, tests: list[tuple[str, bool]]) -> bool:
+    """Adds the learned-node tests of a condition (IfAbilityActive, with its sign below Not) to `tests`: the tests of an And,
+    and of an Or below a Not (De Morgan: Not(Or(a, b)) is And(Not a, Not b)). @return False for a condition that an AND of
+    node tests cannot give (an Or with a node test in it, or a Not of an And of more than one part with a node test)."""
+    for child in element:
+        has_test = any(node.tag == "IfAbilityActive" for node in child.iter())
+        if child.tag == "IfAbilityActive":
+            tests.append((child.get("AbilityName", "").strip(), negated))
+        elif child.tag == "Not":
+            if not condition_tests(child, not negated, tests):
+                return False
+        elif child.tag in ("And", "Or"):
+            # An And keeps the AND when it is not negated; an Or gives an AND when it is negated.
+            if (child.tag == "And") == (not negated) or len(list(child)) == 1:
+                if not condition_tests(child, negated, tests):
+                    return False
+            elif has_test:
+                return False
+        elif has_test:
+            return False
+    return True
+
+
+def read_action_lists(sources: Sources, spells: dict[str, list]) -> tuple[list, list]:
+    """@return The spell selections and the node tests of the action lists of the player (stage 3.3b-S5): for each CastSpell
+    activity below IfThenElse activities whose conditions test learned nodes, [action list, action, spell, nodes that it
+    needs, nodes that it must not have] (an Else branch takes the tests of its condition with the other sign); for each action
+    list the nodes that its conditions test; and each cast whose condition is not an AND of node tests (an Or with a test of the
+    state of the client), which is no selection of node rules. A spell of a selection that the spell tables do not have stops
+    the tool."""
+    selections: list[list] = []
+    tested: list[list] = []
+    skipped: list[list] = []
+    for path in sources.paths(ACTION_FOLDER, ACTION_SUFFIX):
+        stem = path.rsplit("/", 1)[-1][:-len(ACTION_SUFFIX)]
+        if not stem.startswith(ACTION_PREFIX):
+            continue
+        root = read_xml(sources, path, "the folder of the player actions")
+        if root is None:
+            continue
+        names = sorted({node.get("AbilityName", "").strip() for node in root.iter("IfAbilityActive")} - {""}, key=str.lower)
+        if names:
+            tested.append([stem, names])
+
+        def visit(element, action: str, tests: list[tuple[str, bool]]) -> None:
+            for child in element:
+                current = child.get("Name", action) if child.tag == "Action" else action
+                if child.tag == "IfThenElse":
+                    condition = child.find("IfCondition")
+                    found: list[tuple[str, bool]] = []
+                    simple = condition is None or condition_tests(condition, False, found)
+                    tested_nodes = condition is not None and any(node.tag == "IfAbilityActive" for node in condition.iter())
+                    for branch, flip in (("ThenActivity", False), ("ElseActivity", True)):
+                        part = child.find(branch)
+                        if part is None:
+                            continue
+                        # A condition that is not an AND of node tests (an Or with a node test and a test of the state of the
+                        # client: the mana of the ice storm), and an Else branch of more than one node test (the negation of an
+                        # AND): no selection of node rules. Each such cast is in the list "actionSpellsNotExported".
+                        if (tested_nodes and not simple) or (flip and len(found) > 1):
+                            for node in part.iter("CastSpell"):
+                                default = node.find("Default")
+                                spell = default.get("SpellName", "").strip() if default is not None else ""
+                                entry = [stem, current, spell, "a condition that is not an AND of node tests"]
+                                if spell and entry not in skipped:
+                                    skipped.append(entry)
+                            continue
+                        visit(part, current, tests + [(name, negated != flip) for name, negated in found])
+                    continue
+                if child.tag == "CastSpell" and any(True for _ in tests):
+                    default = child.find("Default")
+                    spell = default.get("SpellName", "").strip() if default is not None else ""
+                    if not spell:
+                        continue
+                    if spell.lower() not in spells:
+                        raise Failure(f"{path}: the action {current} casts the spell {spell}, which the spell tables do not have")
+                    needs = sorted({name for name, negated in tests if not negated}, key=str.lower)
+                    excludes = sorted({name for name, negated in tests if negated}, key=str.lower)
+                    entry = [stem, current, spell, needs, excludes]
+                    if entry not in selections:
+                        selections.append(entry)
+                    continue
+                visit(child, current, tests)
+
+        visit(root, "", [])
+    return selections, tested, skipped
 
 
 def print_found(data: dict, texts: list[str]) -> None:
@@ -553,7 +659,8 @@ def main() -> int:
     print(f"{target}: {counts['cooldowns']} cooldowns, {counts['statusEffects']} status effects (numbers of "
           f"{data['statusRows']} rows), {counts['spells']} spells, {counts['manaCosts']} mana costs, "
           f"{counts['staminaCosts']} stamina costs, {counts['abilityCosts']} ability rows with a cost, "
-          f"{counts['abilityRows']} ability rows with a caster effect, {counts['statusCategories']} status categories "
+          f"{counts['abilityRows']} ability rows, {counts['actionSpells']} spell selections of the action lists "
+          f"({counts['actionSpellsNotExported']} casts with a condition that is not an AND of node tests), {counts['statusCategories']} status categories "
           f"(source: {', '.join(f'{count} from the {name}' for name, count in sorted(sources.used.items()))})")
     return 0
 

@@ -159,8 +159,15 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 - The capsule of a creature (stage 3.3b-S3): the creature data has the capsule of the CharacterComponent of its slice
   (`CreatureSlice::capsule`: the radius, the length of the segment, the axis in the frame of the creature, the offset;
   the wolf: 0.7 m, 0.9 m, the axis of its body). The projectile system turns it by the direction of the creature and puts
-  its lowest point at the feet ([Projectiles](projectiles.md)). The posed hit volumes of the slice (the bones, the head)
-  are not in the data.
+  its lowest point at the feet ([Projectiles](projectiles.md)). The posed hit volumes of the slice (the bones in an
+  animation) are not in the data.
+- The hit facts of a slice (stage 3.3b-S5, protocol notes 4.30): `CreatureSlice::behind`, the two angles of the
+  DamageReceiver of the slice (m_isHitFromBehindMinAngle, m_isHitByCritFromBehindMinAngle; the wolf 2.0944 and 2.3562;
+  503 slices), and `CreatureSlice::head`, the head volume (the HitVolume with m_isHeadshot) as a capsule in the frame of the
+  creature: the bone of the volume in the bind pose of the skeleton of the character of the slice (the `.chr` file of its
+  `.cdf` file: the chunk CompiledBones 0x2000), with the center, the axis, the height, and the radius of its shape (374
+  slices; the wolf: the bone `bind_neck_2_jnt`, radius 0.2 m). A slice with no such data has no hit from behind and no
+  headshot ([Combat and health](combat-and-health.md)).
 
 ## Commands
 
@@ -189,7 +196,11 @@ tools/world creature effect 2c knockdown 2                  # a knockdown (or st
   a slice of the list `spawnAction` has no action `Spawn` with a fragment. Each slice has the
   member `reactions` (stage 3.3a): the fragment indexes of `r_R0_F` to `r_R4_F` of its
   action `Reaction` (-1: the slice has no such fragment). With a file from before, a
-  knockdown plays the fragment of the hit reaction.
+  knockdown plays the fragment of the hit reaction. From stage 3.3b-S5 each slice also has `behind` and `head` (the hit
+  facts), and the counts `slicesWithBehindAngles`, `slicesWithHead`, `headsWithNoSkeleton` (140: the skeleton of the
+  character is not in the game copy), and `headsWithOtherShape` (3: a shape with no radius). The tool reads the skeletons
+  of `objects/characters/`; `tools/gamedata/check_hit_facts_tool.py` checks the reader with made-up sources (test case
+  CH9).
 - `tools/gamedata/creatures.sh --no-attack FILE` writes one line for each kind that does not
   attack, with the cause (859 kinds of the supported build).
 - `tools/research/creature_tour.py` is the picture check of the creature slices: `prepare

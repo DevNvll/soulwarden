@@ -200,6 +200,38 @@ WorldCapsule capsule_of(const Entity& creature) {
     return result;
 }
 
+std::optional<WorldCapsule> head_of(const Entity& creature) {
+    if (creature.kind != EntityKind::creature || creature.creature.body == nullptr || !creature.creature.body->head) {
+        return std::nullopt;
+    }
+    const gamedata::CreatureHead& head = *creature.creature.body->head;
+    // The frame of the creature: x to its right, y to its front, z up (capsule_of); the points of the head are from its feet.
+    const float yaw = radians(creature.creature.yaw);
+    const std::array<float, 2> front{-std::sin(yaw), std::cos(yaw)};
+    const std::array<float, 2> right{std::cos(yaw), std::sin(yaw)};
+    const auto place = [&](const std::array<float, 3>& local) {
+        return state::WorldPosition{creature.position.x + right[0] * local[0] + front[0] * local[1],
+                                    creature.position.y + right[1] * local[0] + front[1] * local[1], creature.position.z + local[2]};
+    };
+    return WorldCapsule{place(head.a), place(head.b), head.radius};
+}
+
+bool head_contact(const Entity& creature, const state::WorldPosition& point, const std::array<float, 3>& direction, float radius) {
+    const std::optional<WorldCapsule> head = head_of(creature);
+    const float size = std::hypot(direction[0], direction[1], direction[2]);
+    if (!head || !(size > 1.0e-6F)) {
+        return false;
+    }
+    // The line through the body: from one radius of the body capsule before the point to two radii after it.
+    const WorldCapsule body = capsule_of(creature);
+    const float back = body.radius;
+    const float ahead = 2.0F * body.radius + head->radius;
+    const std::array<float, 3> unit{direction[0] / size, direction[1] / size, direction[2] / size};
+    const state::WorldPosition from{point.x - unit[0] * back, point.y - unit[1] * back, point.z - unit[2] * back};
+    const state::WorldPosition to{point.x + unit[0] * ahead, point.y + unit[1] * ahead, point.z + unit[2] * ahead};
+    return sweep(from, to, *head, radius).has_value();
+}
+
 std::optional<float> sweep(const state::WorldPosition& from, const state::WorldPosition& to, const WorldCapsule& capsule, float radius) {
     const float reach = capsule.radius + radius;
     if (point_segment(from, capsule.a, capsule.b) <= reach) {
@@ -654,7 +686,8 @@ ShotResult Projectiles::fire(Entity& character, const Launch& launch) {
     if (launch.nearTarget != 0) {
         if (Entity* target = m_world.creatures().find(launch.nearTarget)) {
             result.nearHit = true;
-            result.hit = hit(projectile, *target, launch.origin);
+            result.hit = hit(projectile, *target, launch.origin,
+                             head_contact(*target, launch.origin, launch.direction, launch.attack != nullptr ? launch.attack->radius : 0.0F));
         }
         finish(projectile, ProjectileEnd::nearHit, launch.origin);
         return result;
@@ -664,7 +697,7 @@ ShotResult Projectiles::fire(Entity& character, const Launch& launch) {
     return result;
 }
 
-HitResult Projectiles::hit(Projectile& projectile, Entity& target, const state::WorldPosition& point) {
+HitResult Projectiles::hit(Projectile& projectile, Entity& target, const state::WorldPosition& point, bool head) {
     Entity* caster = m_world.find(projectile.caster);
     HitResult result;
     if (caster == nullptr || caster->life.dead || projectile.weapon.row == nullptr || target.kind != EntityKind::creature) {
@@ -679,6 +712,10 @@ HitResult Projectiles::hit(Projectile& projectile, Entity& target, const state::
     const std::string what = what_of(*projectile.rule);
     HitWeapon weapon = projectile.weapon;
     weapon.threat = projectile.threat;
+    // The facts of the hit (stage 3.3b-S5): a projectile, its own attack (one hit for each projectile), a contact with the head.
+    weapon.kind = HitKind::projectile;
+    weapon.attack = passive_rules::kAttackShot | projectile.number;
+    weapon.head = head;
     result = m_world.combat().strike(*caster, target, weapon, projectile.rowIndex, projectile.factor, what.c_str(),
                                      &projectile.conversion, &point);
     if (result.verdict == HitVerdict::accepted) {
@@ -778,7 +815,8 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
         if (first && (!wall || *first <= *wall)) {
             const state::WorldPosition point = along(projectile.position, end, *first);
             if (Entity* target = m_world.find(struck)) {
-                hit(projectile, *target, point);
+                const std::array<float, 3> direction{end.x - projectile.position.x, end.y - projectile.position.y, end.z - projectile.position.z};
+                hit(projectile, *target, point, head_contact(*target, point, direction, attack.radius));
             }
             finish(projectile, ProjectileEnd::hit, point, struck);
             return ProjectileEnd::hit;

@@ -17,6 +17,23 @@ case. It never reads or changes the real prefix of the user, and it starts no ga
                                 link to the settings file of the user
   user path through a link      its own folder; the user prefix path    its file muted, the user file kept
                                 has a link in it
+  swap at the write (sed shim)  its own folder; a command "sed" of the  its file muted, the user file kept
+                                test first moves the development
+                                savedata folder and puts a link to the
+                                savedata of the user at its old path
+                                (code review of stage 1.1b, finding F1:
+                                the probe RDM1 of the reviewer)
+  swap after the checks         the same move and link after the        the moved development file muted, the
+                                checks of the files, before the write   user file kept
+                                (the hook "write" of tools/dev_mute.py)
+  swap after the folder open    the same move and link after the open   the moved development file muted, the
+                                of the settings folder (hook "folder")  user file kept
+  hard link                     its own folder; its settings file is a  the user file kept, a message
+                                hard link of the settings file of the
+                                user
+
+The two hook cases import tools/dev_mute.py from the folder of the script: a script with no helper fails them (the
+proof on the tree of stage 1.1b).
 
 Each run must give status 0. Usage: check_dev_mute.py [--script PATH]: PATH is a bash script
 with the arguments DEVELOPMENT_PREFIX USER_PREFIX (default: tools/dev-mute.sh of this tree).
@@ -37,7 +54,38 @@ SETTINGS = Path("pfx/drive_c/users/steamuser/AppData/Roaming/AGS/New World/saved
 LOUD = '<field field="m_masterVolume" value="37"/>\n'
 MUTED = '<field field="m_masterVolume" value="0"/>\n'
 CASES = ("separate prefix with spaces", "exact user prefix", "sound override", "prefix link", "dot alias",
-         "savedata link", "settings file link", "user path through a link")
+         "savedata link", "settings file link", "user path through a link", "swap at the write (sed shim)",
+         "swap after the checks", "swap after the folder open", "hard link")
+HOOK_CASES = {"swap after the checks": "write", "swap after the folder open": "folder"}
+
+
+def swap(development: Path, user: Path) -> None:
+    """The race of finding F1: the development savedata folder moves, and a link to the savedata of the user takes its place."""
+    folder = development / SETTINGS
+    folder.rename(folder.with_name("savedata.before"))
+    folder.symlink_to(user / SETTINGS, target_is_directory=True)
+
+
+def run_hook_case(script: Path, development: Path, user: Path, moment: str) -> subprocess.CompletedProcess:
+    """Runs the helper of the script in this process, with the swap at one moment of its work."""
+    helper = script.resolve().parent / "dev_mute.py"
+    if not helper.is_file():
+        return subprocess.CompletedProcess([], 1, "", "no helper tools/dev_mute.py beside the script")
+    sys.path.insert(0, str(helper.parent))
+    try:
+        import dev_mute  # noqa: PLC0415 (the helper of the script under test)
+    finally:
+        sys.path.pop(0)
+
+    def hook(at: str) -> None:
+        if at == moment:
+            swap(development, user)
+
+    try:
+        dev_mute.mute(str(development), str(user), hook)
+    except dev_mute.Refused as refused:
+        return subprocess.CompletedProcess([], 0, "", f"dev-mute: {refused}")
+    return subprocess.CompletedProcess([], 0, "", "")
 
 
 def run_case(script: Path, root: Path, case: str) -> list[tuple[bool, str]]:
@@ -72,12 +120,32 @@ def run_case(script: Path, root: Path, case: str) -> list[tuple[bool, str]]:
         link = base / "user link"
         link.symlink_to(base, target_is_directory=True)
         user_argument = str(link / "user prefix")
-    result = subprocess.run(["bash", str(script), development_argument, user_argument], env=environment,
-                            capture_output=True, text=True, check=False)
+    elif case == "swap at the write (sed shim)":
+        shim = base / "shim"
+        shim.mkdir()
+        (shim / "sed").write_text("#!/usr/bin/env bash\nset -eu\n"
+                                  'mv -- "$CHECK_DEV_SETTINGS" "$CHECK_DEV_SETTINGS.before"\n'
+                                  'ln -s -- "$CHECK_USER_SETTINGS" "$CHECK_DEV_SETTINGS"\n'
+                                  'exec /usr/bin/sed "$@"\n')
+        (shim / "sed").chmod(0o755)
+        environment.update(PATH=f"{shim}:{environment['PATH']}", CHECK_DEV_SETTINGS=str(development / SETTINGS),
+                           CHECK_USER_SETTINGS=str(user / SETTINGS))
+    elif case == "hard link":
+        development_file.unlink()
+        os.link(user_file, development_file)
+    if case in HOOK_CASES:
+        result = run_hook_case(script, development, user, HOOK_CASES[case])
+    else:
+        result = subprocess.run(["bash", str(script), development_argument, user_argument], env=environment,
+                                capture_output=True, text=True, check=False)
     checks = [(result.returncode == 0, f"{case}: status 0 (status {result.returncode})"),
               (user_file.read_text() == LOUD, f"{case}: the settings file of the user did not change")]
-    if case in ("separate prefix with spaces", "user path through a link"):
+    if case in ("separate prefix with spaces", "user path through a link", "swap at the write (sed shim)"):
         checks.append((development_file.read_text() == MUTED, f"{case}: the development settings file has the volume 0"))
+    elif case in HOOK_CASES:
+        moved = development / SETTINGS.with_name("savedata.before") / development_file.name
+        checks.append((moved.is_file() and moved.read_text() == MUTED,
+                       f"{case}: the development settings file (now in the moved folder) has the volume 0 ({result.stderr.strip()})"))
     elif case == "sound override":
         checks.append((development_file.read_text() == LOUD, f"{case}: the development settings file did not change"))
     else:

@@ -409,6 +409,10 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
         auto = [auto["spell"], auto["lifetime"], auto["lifetimeOnHit"], auto["initialDelay"], auto["cooldown"], named(auto["expire"]),
                 named(auto["cast"]), auto["exclude"]]
     vitals_slots = [slot[0] for slot in slots if slot[1] == "Vitals"]
+    # A Vitals component takes damage only with its vitals row (code review of stage 1.1b, finding F2): a component with no
+    # row reference stops the tool before the file changes (the backend refuses a Vitals slot with no vitals row too).
+    if vitals_slots and not row:
+        raise Failure(f"the spell slice {path} has a Vitals component with no row reference (m_rowReference)")
     return {"path": path, "asset": str(uuid.UUID(bytes=asset[0])).upper(), "sub": asset[1], "root": f"{roots_found[-1]:016X}",
             "interestRadius": round(radius, 3), "spellSlot": spell_slots[0] if spell_slots else 0,
             "positionSlot": position_slots[0] if position_slots else 0, "slots": slots, "events": resolved,

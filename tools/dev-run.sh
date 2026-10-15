@@ -70,9 +70,10 @@ exec 8>&-
 
 # A development run makes no sound: the master volume of each account in the settings of the
 # development prefix is 0 before the start (the game keeps one settings file for each account).
-# The game is stopped here, so it does not write the old value back. tools/dev-mute.sh compares
-# the resolved paths and changes nothing in the prefix of the user. SOULWARDEN_DEV_SOUND=1 keeps
-# the volumes of the prefix.
+# The game is stopped here, so it does not write the old value back. tools/dev-mute.sh (with
+# tools/dev_mute.py) opens each folder and file one time, checks the open descriptor, and writes
+# through it: it changes nothing in the prefix of the user. SOULWARDEN_DEV_SOUND=1 keeps the
+# volumes of the prefix.
 "${repository_directory}/tools/dev-mute.sh" "${dev_compat_dir}" "${user_compat_dir}"
 
 if ! omarchy-agent-desktop status "${desktop_id}" >/dev/null 2>&1; then

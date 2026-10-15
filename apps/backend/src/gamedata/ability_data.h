@@ -128,6 +128,27 @@ struct StatLimit {
     float max{0.0F};
 };
 
+/**
+ * A spell that an action of the player casts when the character has some learned nodes and not some others (stage 3.3b-S5,
+ * file format 4: a CastSpell activity of an action list below IfThenElse activities with IfAbilityActive tests). The rule of
+ * an action of the data: Shockwave casts WarHammer_Spell_Shockwave_L2 with the node Upgrade_WarHammer_Shockwave_SizeIncrease.
+ */
+struct ActionSpell {
+    /** The action list (the file name with no extension: "playeractions_ability_warhammer") and the action of the cast. */
+    std::string list;
+    std::string action;
+    std::string spell;
+    /** The nodes that the character must have, and the nodes that it must not have. */
+    std::vector<std::string> needs;
+    std::vector<std::string> excludes;
+};
+
+/** The learned nodes that the conditions of one action list of the player test (stage 3.3b-S5, file format 4). */
+struct ActionNodes {
+    std::string list;
+    std::vector<std::string> nodes;
+};
+
 /** The data as plain values: the content of the file, and what a test sets. */
 struct AbilityTables {
     std::vector<CooldownRow> cooldowns;
@@ -142,6 +163,12 @@ struct AbilityTables {
     std::vector<StatusCategory> statusCategories;
     /** The limits of the stat multipliers (stage 3.3b-S2a; empty for an older file): MoveSpeedMod and SprintSpeedMod 0 to 1.5. */
     std::vector<StatLimit> statMultipliers;
+    /**
+     * The spell selections and the node tests of the action lists of the player (stage 3.3b-S5, file format 4; empty for an
+     * older file). From format 4 `abilityRows` has each row of the ability tables of the players (the rules of the nodes).
+     */
+    std::vector<ActionSpell> actionSpells;
+    std::vector<ActionNodes> actionNodes;
     /**
      * The number of the rows of the status tables of the game, with each duplicate: the length of the
      * status list of the client. Each status number is below it (code review of stage 3.3a, finding F10).
@@ -187,6 +214,17 @@ public:
     [[nodiscard]] const StatusCategory* category(std::string_view id) const;
     /** @return The limits of a stat multiplier (stage 3.3b-S2a), or null. */
     [[nodiscard]] const StatLimit* stat_limit(std::string_view id) const;
+    /** @return The spell selections of an action of the player (stage 3.3b-S5), in the sequence of the data. Empty: none. */
+    [[nodiscard]] std::vector<const ActionSpell*> action_spells(std::string_view action) const;
+    /** @return True when a condition of an action list of the player tests this node (IfAbilityActive; stage 3.3b-S5). */
+    [[nodiscard]] bool action_tests(std::string_view node) const;
+    /** @return The names of the action lists whose conditions test this node (stage 3.3b-S5). */
+    [[nodiscard]] std::vector<std::string> action_lists_of(std::string_view node) const;
+    /**
+     * @return The spell that tracks the number of entities near for a rule (stage 3.3b-S5): a spell row with the AbilityId of
+     *         the rule and TrackNumInVolume (its Radius and its TargetTypes), or null.
+     */
+    [[nodiscard]] const SpellRow* tracking_spell(std::string_view rule) const;
 
 private:
     AbilityTables m_tables;
@@ -199,6 +237,10 @@ private:
     std::unordered_map<std::string, std::size_t> m_abilityRows;
     std::unordered_map<std::string, std::size_t> m_categories;
     std::unordered_map<std::string, std::size_t> m_statLimits;
+    /** Lower-case action to the selections of `actionSpells`; lower-case node to its action lists; lower-case rule to its tracking spell. */
+    std::unordered_map<std::string, std::vector<std::size_t>> m_actionSpells;
+    std::unordered_map<std::string, std::vector<std::string>> m_actionNodes;
+    std::unordered_map<std::string, std::size_t> m_trackingSpells;
     std::string m_error;
     /** The check of `set`, with `fromFile` true for a file: the file must name the number of the status rows (finding F10). */
     [[nodiscard]] bool accept(AbilityTables tables, bool fromFile);

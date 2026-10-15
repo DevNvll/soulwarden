@@ -117,6 +117,9 @@ struct StatusValues {
     std::unordered_map<std::string, float> absorption;
     float moveSpeed{0.0F};
     float sprintSpeed{0.0F};
+    /** The critical chance and the critical damage parts (CritChanceModifier, CritDamageModifier; stage 3.3b-S5). */
+    float critChance{0.0F};
+    float critDamage{0.0F};
 };
 
 /** Counts of the status system, for the log, `tools/world list`, and the tests. */

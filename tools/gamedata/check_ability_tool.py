@@ -24,6 +24,13 @@ files is replaced: no file of the game is necessary), and it runs the builder an
   missing-end-link       an OnEndStatusEffect names a status that no table has    status 1, the file stays
   game-end-link          the one OnEndStatusEffect link of the game with no row   status 0 (the named link of the game)
   missing-cast-spell     a CastSpell names a spell that no table has              status 1, the file stays
+  action-or              an action list casts a spell below an Or of node tests   status 0: no selection of it, the cast is
+                                                                                  in actionSpellsNotExported
+  action-unknown-spell   an action list casts a spell that no table has            status 1, the file stays
+
+Format 4 (stage 3.3b-S5): the valid document has each row of the ability tables of the players (also the row with no
+caster effect), and the spell selections of a made-up action list of the player (a Not of a node test, a Not of an Or of
+node tests: De Morgan, an Else branch) and the nodes that it tests.
 
 The cases from missing-StackMax on are the corrections of the findings F13 and F8 of the code review of stage
 3.3b-S1: each column of the rules of the status system and of a caster effect is in each table (with the named
@@ -32,7 +39,7 @@ differences of the game), and each link of a status row resolves (with the named
 The first six cases after valid are the corrections of the findings F11 and F12 of the code review of stage 3.3a
 (a column that is not there is not 0 or false; two rows with one id must agree). The last three are the cost data of
 stage 1.3b (criterion I14). The last three are the caster effect rows and the status categories of stage 3.3b-S1
-(format 3). The values of the valid document: the format 3; the status row with its number among
+(format 3). The values of the valid document: the format 4; the status row with its number among
 the CRC values of all rows; its other cells (Health 400, TickRate 1, EffectCategories); the spell with its cost id
 "SpecialAttack" (an id that the game itself does not resolve: no cost); the mana cost 25 of a cost id; the cost
 columns of an ability row.
@@ -183,11 +190,48 @@ def sheets(case: str) -> dict:
     return tables
 
 
+ACTION_PATH = "sharedassets/springboardentitites/playerdata/cage/playeractions_ability_test.actionlist"
+
+
+def action_list(case: str) -> bytes:
+    """@return A made-up action list of the player: two selections of the spell of the test by node tests."""
+    first = ("<Or><IfAbilityActive AbilityName='Upgrade_Test_Small'/><IfAbilityActive AbilityName='Upgrade_Test_Tiny'/></Or>"
+             if case == "action-or" else
+             "<Not><Or><IfAbilityActive AbilityName='Upgrade_Test_Small'/><IfAbilityActive AbilityName='Upgrade_Test_Tiny'/></Or></Not>")
+    spell = "NoSuchSpell" if case == "action-unknown-spell" else "WarHammer_Spell_Shockwave"
+    return (f"<ActionList><Actions><Action Name='Ability_Test_Slam'><Activities>"
+            f"<IfThenElse><IfCondition><And><IfMannequinMarker MarkerName='Slam'/>{first}</And></IfCondition>"
+            f"<ThenActivity><CastSpell><Default SpellName='{spell}'/></CastSpell></ThenActivity><ElseActivity/></IfThenElse>"
+            f"<IfThenElse><IfCondition><IfAbilityActive AbilityName='Upgrade_Test_Big'/></IfCondition><ThenActivity/>"
+            f"<ElseActivity><CastSpell><Default SpellName='WarHammer_Spell_Shockwave'/></CastSpell></ElseActivity></IfThenElse>"
+            f"</Activities></Action></Actions></ActionList>").encode()
+
+
+class FakeSources:
+    """The source provider of the check: no pak file; one made-up action list of the player."""
+
+    def __init__(self, case: str) -> None:
+        self.used: dict = {}
+        self.case = case
+
+    def paths(self, prefix: str, suffix: str) -> list[str]:
+        return [ACTION_PATH] if suffix == tool.ACTION_SUFFIX else []
+
+    def has(self, path: str) -> bool:
+        return path == ACTION_PATH
+
+    def read(self, path: str) -> bytes | None:
+        return action_list(self.case) if path == ACTION_PATH else None
+
+    def check_complete(self) -> None:
+        pass
+
+
 def valid_values(document: dict, case: str) -> list[str]:
     """@return The values of the valid document that are not correct."""
     wrong = []
     statuses = {row[0]: row for row in document["statusEffects"]}
-    if document["format"] != 3:
+    if document["format"] != 4:
         wrong.append(f"the format {document['format']}")
     potion = statuses.get("PotionHeal")
     if potion is None or potion[9] != {"Health": 400.0, "TickRate": 1.0, "EffectCategories": "SurvivalPotion"}:
@@ -215,9 +259,17 @@ def valid_values(document: dict, case: str) -> list[str]:
         wrong.append(f"the mana costs {document['manaCosts']}")
     if document["abilityCosts"] != [["Passive_Test_ManaCost", ["LifeStaff_TouchOfLife"], -0.25, [], 0.0]]:
         wrong.append(f"the ability costs {document['abilityCosts']}")
-    if document["abilityRows"] != [["Upgrade_Test_Fortify", {"SelfApplyStatusEffect": "PotionHeal", "OnHit": 1.0,
-                                                             "DamageTableRow": "Test_Row"}]]:
-        wrong.append(f"the caster effect rows {document['abilityRows']}")
+    rows = {row[0]: row[1] for row in document["abilityRows"]}
+    if (rows.get("Upgrade_Test_Fortify") != {"SelfApplyStatusEffect": "PotionHeal", "OnHit": 1.0, "DamageTableRow": "Test_Row"}
+            or rows.get("Passive_Test_ManaCost", {}).get("ManaCostMult") != -0.25 or "AI_Bite" in rows):
+        wrong.append(f"the ability rows {document['abilityRows']}")
+    selections = [["playeractions_ability_test", "Ability_Test_Slam", "WarHammer_Spell_Shockwave", [],
+                   ["Upgrade_Test_Small", "Upgrade_Test_Tiny"]],
+                  ["playeractions_ability_test", "Ability_Test_Slam", "WarHammer_Spell_Shockwave", [], ["Upgrade_Test_Big"]]]
+    if document.get("actionSpells") != selections:
+        wrong.append(f"the action spells {document.get('actionSpells')}")
+    if document.get("actionNodes") != [["playeractions_ability_test", ["Upgrade_Test_Big", "Upgrade_Test_Small", "Upgrade_Test_Tiny"]]]:
+        wrong.append(f"the action nodes {document.get('actionNodes')}")
     if document["statusCategories"] != [["Buff", {}], ["Haste", {"MoveSpeedMod": 0.4, "SprintSpeedMod": 0.4}]]:
         wrong.append(f"the status categories {document['statusCategories']}")
     if document.get("statMultipliers") != [["MoveSpeedMod", 0.0, 1.5], ["SprintSpeedMod", 0.0, 1.5]]:
@@ -236,12 +288,12 @@ def main() -> int:
              "game-duplicate", "missing-cost", "partial-cost-columns", "negative-cost", "missing-SelfApply",
              "unknown-caster-status", "bad-limit", "missing-StackMax", "missing-caster-OnHit", "game-table-difference",
              "missing-end-link", "game-end-link", "missing-cast-spell", "missing-ABSStandard", "missing-RemoteDamageTableRow",
-             "missing-NumAroundMe")
+             "missing-NumAroundMe", "action-or", "action-unknown-spell")
     for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")
         errors = io.StringIO()
-        with patch.object(tool, "Sources", lambda path: type("S", (), {"used": {}})()), \
+        with patch.object(tool, "Sources", lambda path, case=case: FakeSources(case)), \
                 patch.object(tool, "read_sheets", lambda sources, case=case: sheets(case)), \
                 patch.object(sys, "argv", ["abilities.py", str(target)]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
@@ -250,11 +302,22 @@ def main() -> int:
             except Exception as error:  # noqa: BLE001 - a crash of the tool is a failure of the case
                 status = f"exception {type(error).__name__}: {error}"
         text = target.read_text(encoding="utf-8")
+        if case == "action-or":
+            document = json.loads(text) if status == 0 and text != MARK else {}
+            passed = (document.get("actionSpells") == [["playeractions_ability_test", "Ability_Test_Slam", "WarHammer_Spell_Shockwave",
+                                                        [], ["Upgrade_Test_Big"]]]
+                      and document.get("actionSpellsNotExported") == [["playeractions_ability_test", "Ability_Test_Slam",
+                                                                       "WarHammer_Spell_Shockwave",
+                                                                       "a condition that is not an AND of node tests"]])
+            print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, selections {document.get('actionSpells')}, "
+                  f"not exported {document.get('actionSpellsNotExported')}")
+            failures += 0 if passed else 1
+            continue
         if case in ("valid", "game-duplicate", "game-table-difference", "game-end-link"):
             try:
                 wrong = valid_values(json.loads(text), case) if status == 0 and text != MARK else ["no document"]
             except (ValueError, KeyError, IndexError, TypeError) as error:
-                wrong = [f"the document does not have the form of format 3 ({type(error).__name__})"]
+                wrong = [f"the document does not have the form of format 4 ({type(error).__name__})"]
             passed = status == 0 and not wrong
             detail = f"status {status}" + (f", not correct: {'; '.join(wrong)}" if wrong else ", each value is correct")
         else:

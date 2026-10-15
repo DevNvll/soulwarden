@@ -186,6 +186,26 @@ struct CreatureCapsule {
     std::array<float, 3> offset{};
 };
 
+/**
+ * The hit facts of a slice (stage 3.3b-S5, the members `behind` and `head` of the tool). The angles of its DamageReceiver
+ * (radians): a hit whose source is at this angle from the front of the creature or more is a hit from behind
+ * (m_isHitFromBehindMinAngle), and a critical hit from behind (m_isHitByCritFromBehindMinAngle).
+ */
+struct CreatureBehind {
+    float hit{0.0F};
+    float critical{0.0F};
+};
+
+/**
+ * The head volume of a slice (stage 3.3b-S5): the segment of its capsule in the frame of the creature at its feet (x to its
+ * right, y to its front, z up; the bind pose of its bone from the skeleton of the game), and its radius.
+ */
+struct CreatureHead {
+    std::array<float, 3> a{};
+    std::array<float, 3> b{};
+    float radius{0.0F};
+};
+
 /** One slice of a creature. */
 struct CreatureSlice {
     /** One component of the slice that has a facet: a target of a client message (protocol notes 4.2). */
@@ -304,6 +324,9 @@ struct CreatureSlice {
     std::optional<CreatureBehavior> behavior;
     /** The capsule of the character of the slice (stage 3.3b-S3). No value: the slice has none, or a file of an older tool. */
     std::optional<CreatureCapsule> capsule;
+    /** The angles of a hit from behind and the head volume (stage 3.3b-S5). No value: the slice has none, or a file of an older tool. */
+    std::optional<CreatureBehind> behind;
+    std::optional<CreatureHead> head;
     /** The attacks of the slice. Empty: a creature with this slice does not attack. */
     std::vector<CreatureAttack> attacks;
     /** The indexes of its attacks that are not heavy, and of its heavy attacks, in the sequence of the data. */

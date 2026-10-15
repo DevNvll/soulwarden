@@ -190,6 +190,11 @@ struct SpellSlice {
 
 /** The data as plain values: the content of the file, and what a test sets. */
 struct SpellTables {
+    /**
+     * The format of the file (1: stage 3.3b-S2a, 2: stage 3.3b-S2b). In format 2 each Vitals slot (type 15) of a slice has its
+     * vitals row (code review of stage 1.1b, finding F2): a file with a Vitals slot and no vitals row is refused. A test sets 2.
+     */
+    std::uint32_t format{2};
     std::vector<SpellSlice> slices;
     /** Each spell row with a slice: its id and the index of its slice. */
     std::vector<std::pair<std::string, std::size_t>> spells;

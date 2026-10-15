@@ -117,6 +117,10 @@ and the stop are in [World and sessions](world-and-sessions.md).
   nothing (code review of stage 3.3b-S2b, finding F8; case RK8). The loader refuses a slice whose vitals row is neither in
   the list `vitals` nor in the list `vitalsNotInData` (the rows of a different table that the tool names: the seed of the
   Goth elephant).
+- A Vitals component with no row (code review of stage 1.1b, finding F2, test case RD2): the spell tool stops when a
+  Vitals component of a slice names no row. The loader refuses a file of format 2 with a slice that has a slot of the
+  Vitals state (type 15) and no vitals values. The spell system makes a summon or a trap with a Vitals state slot or with
+  vitals values only when its vitals row is resolved: else no spell, and no payment.
 - The life (game data): `m_lifetime` of its AutoSpell (15 s). Then the expire event triggers the entity of the event
   (`DestroyTrigger`), and the entity goes away at the destroy event of that entity (1.3 s later).
 - The shots (game data): from `m_initialCastDelay` (1 s), then each `m_cooldown` (2 s), the Pylon shoots the spell of

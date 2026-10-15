@@ -1401,13 +1401,14 @@ void review_tool_sources(const Options& options) {
         correct += line.rfind("ok  ", 0) == 0 ? 1 : 0;
         wrong += line.rfind("FAIL", 0) == 0 ? 1 : 0;
     }
-    check(status == 0 && correct == 15 && wrong == 0,
+    check(status == 0 && correct == 18 && wrong == 0,
           "the tool writes its file for complete tables and for a row name that the game itself does not have, and it writes "
           "no file (status 1) for a damage row that is not there, a damage type that is not there, a base vitals row that is "
           "not there, a column that is not there, a text in a number cell, a cell that is not finite, a base vitals table "
           "with no weakness column, an armor factor that is not finite, an armor table with no column of the tool, a base "
           "attributes file with no exponent of the armor rule, a level difference that is not a whole number, a damage table "
-          "with no impact column, and a decay rate above 1 (stage 3.3b-S4)");
+          "with no impact column, a decay rate above 1 (stage 3.3b-S4), a weapon table with one of the two critical columns, a "
+          "critical chance above 1, and a damage table with no column of the hit rules (stage 3.3b-S5)");
     std::filesystem::remove(output);
 }
 

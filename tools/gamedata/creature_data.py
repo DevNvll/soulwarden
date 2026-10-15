@@ -130,7 +130,7 @@ CATALOG_PATH = "assetcatalog.catalog"
 NAMES_PATH = "localization/en-us/javelindata_vitals.loc.xml"
 # The paths that the tool can need: the index of the pak files keeps only these.
 WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", "sharedassets/", "animations/mannequin/", CATALOG_PATH,
-          NAMES_PATH)
+          NAMES_PATH, "objects/characters/")
 # The start place of a new character (meters), and the radius of the default area.
 DEFAULT_CENTER = (8880.0, 4250.0)
 DEFAULT_RADIUS = 800.0
@@ -896,6 +896,135 @@ def read_capsule(path: str, roots: list[Element]) -> list | None:
     return None
 
 
+# The hit facts of a creature slice (stage 3.3b-S5): the two angles of its DamageReceiver (a hit from behind and a critical
+# hit from behind: the angle between the front of the creature and the direction to the source of the hit, radians), and
+# its head volume (the HitVolume with m_isHeadshot: a shape on a bone of its skeleton).
+BEHIND_FIELD = field_id("m_isHitFromBehindMinAngle")
+BEHIND_CRIT_FIELD = field_id("m_isHitByCritFromBehindMinAngle")
+HEADSHOT_FIELD = field_id("m_isHeadshot")
+TARGET_BONE_FIELD = field_id("m_targetBoneName")
+VOLUME_CENTER_FIELD = field_id("m_center")
+CDF_FIELD = field_id("m_cdfPath")
+# The skeleton file of a character (CryEngine chunk file "CrCh" 0x746): the chunk CompiledBones (type 0x2000, version
+# 0x800) has 32 reserved bytes and one record of 584 bytes for each bone: the controller id (4), two physics records (208),
+# the mass (4), the matrices world to bone and bone to world (48 each: 3 rows of 4 floats, little-endian), the name (256
+# bytes), the limb id, the parent offset, the child count, and the child offset (4 each).
+SKELETON_CHUNK = 0x2000
+SKELETON_VERSION = 0x800
+BONE_RECORD = 584
+BONE_TO_WORLD = 264
+BONE_NAME = 312
+
+
+def read_skeleton(data: bytes, path: str) -> dict[str, tuple]:
+    """@return The bind pose of each bone of a skeleton file: name to (rotation rows, translation) in the model frame."""
+    if len(data) < 16 or data[:4] != b"CrCh":
+        raise Failure(f"{path} is not a chunk file (CrCh)")
+    version, count, table = struct.unpack_from("<III", data, 4)
+    if version != 0x746 or table + count * 16 > len(data):
+        raise Failure(f"{path} has the chunk version {version:#x} or a chunk table out of the file")
+    for index in range(count):
+        kind, chunk_version, _, size, offset = struct.unpack_from("<HHiII", data, table + index * 16)
+        if kind != SKELETON_CHUNK:
+            continue
+        if chunk_version != SKELETON_VERSION or size < 32 or (size - 32) % BONE_RECORD != 0 or offset + size > len(data):
+            raise Failure(f"{path}: the bone chunk has the version {chunk_version:#x} or a size of {size} bytes")
+        bones: dict[str, tuple] = {}
+        for bone in range((size - 32) // BONE_RECORD):
+            start = offset + 32 + bone * BONE_RECORD
+            matrix = struct.unpack_from("<12f", data, start + BONE_TO_WORLD)
+            name = data[start + BONE_NAME:start + BONE_NAME + 256].split(b"\0")[0].decode("utf-8", "replace")
+            if not all(math.isfinite(value) for value in matrix):
+                raise Failure(f"{path}: the bone {name} has a matrix with a number that is not finite")
+            rows = (matrix[0:3], matrix[4:7], matrix[8:11])
+            bones.setdefault(name.lower(), (rows, (matrix[3], matrix[7], matrix[11])))
+        return bones
+    raise Failure(f"{path} has no bone chunk")
+
+
+def text_value(element: Element | None) -> str:
+    while element is not None and element.value is None and len(element.children) == 1:
+        element = element.children[0]
+    return element.value.decode("utf-8", "replace") if element is not None and element.value is not None else ""
+
+
+def read_hit_facts(sources: Sources, path: str, roots: list[Element], skeletons: dict[str, dict | None],
+                   counts: dict[str, int]) -> dict:
+    """@return The members "behind" ([hit angle, critical angle]) and "head" ([[x, y, z], [x, y, z], radius]: the segment of
+    the head capsule in the frame of the creature at its feet, x to its right, y to its front, z up; the bind pose of the
+    bone of the volume) of a slice, each one only when the slice has it. A slice whose character file or skeleton is not in
+    the game has no head (counts["noSkeleton"]); a file that is in the game and not correct stops the tool."""
+    facts: dict = {}
+    head_volume = None
+    cdf_path = ""
+    for root in roots:
+        for element in walk(root):
+            children = {child.name: child for child in element.children}
+            if BEHIND_FIELD in children and BEHIND_CRIT_FIELD in children and "behind" not in facts:
+                angles = [real(children[BEHIND_FIELD]), real(children[BEHIND_CRIT_FIELD])]
+                if not all(math.isfinite(angle) and 0.0 <= angle <= math.pi + 1e-4 for angle in angles):
+                    raise Failure(f"{path}: an angle of the DamageReceiver is not an angle of 0 to pi")
+                facts["behind"] = [round(angle, 6) for angle in angles]
+            flag = children.get(HEADSHOT_FIELD)
+            if flag is not None and flag.value == b"\x01" and head_volume is None:
+                head_volume = element
+            if element.name == CDF_FIELD and not cdf_path:
+                cdf_path = text_value(first(element, ASSET_PATH_FIELD)).strip().lower()
+    if head_volume is None:
+        return facts
+    bone = text_value(find_field(head_volume, TARGET_BONE_FIELD)).strip().lower()
+    center = vector_of(find_field(head_volume, VOLUME_CENTER_FIELD), f"{path}: the center of the head volume")
+    shape = find_field(head_volume, SHAPE_FIELD)
+    radius_node = first(shape, CAPSULE_RADIUS_FIELD) if shape is not None else None
+    if radius_node is None:
+        # A head volume of a different shape (a box of a plant): no head (counts["headOtherShape"]).
+        counts["headOtherShape"] = counts.get("headOtherShape", 0) + 1
+        return facts
+    radius = real(radius_node)
+    height_node = first(shape, CAPSULE_HEIGHT_FIELD)
+    height = real(height_node) if height_node is not None else 0.0
+    axis_node = first(shape, CAPSULE_AXIS_FIELD)
+    axis = vector_of(axis_node, f"{path}: the axis of the head volume") if axis_node is not None else [0.0, 0.0, 0.0]
+    if not (math.isfinite(radius) and radius > 0.0 and math.isfinite(height) and height >= 0.0):
+        raise Failure(f"{path}: the head volume has a radius or a height that is not a size")
+    if not cdf_path or not sources.has(cdf_path):
+        counts["noSkeleton"] = counts.get("noSkeleton", 0) + 1
+        return facts
+    if cdf_path not in skeletons:
+        skeleton = None
+        # The field names a character definition (.cdf, XML with the skeleton file of its Model) or the skeleton itself (.chr).
+        definition = sources.read(cdf_path) if not cdf_path.endswith(".chr") else None
+        if cdf_path.endswith(".chr"):
+            data = sources.read(cdf_path)
+            skeleton = read_skeleton(data, cdf_path) if data is not None else None
+        elif definition is not None:
+            try:
+                model = ElementTree.fromstring(definition.decode("utf-8", "replace")).find("Model")
+            except ElementTree.ParseError as error:
+                raise Failure(f"{cdf_path} is not a character definition: {error}") from error
+            chr_path = (model.get("File", "") if model is not None else "").strip().replace("\\", "/").lower()
+            if chr_path and sources.has(chr_path):
+                data = sources.read(chr_path)
+                skeleton = read_skeleton(data, chr_path) if data is not None else None
+        skeletons[cdf_path] = skeleton
+    skeleton = skeletons[cdf_path]
+    if skeleton is None or bone not in skeleton:
+        counts["noSkeleton"] = counts.get("noSkeleton", 0) + 1
+        return facts
+    rows, translation = skeleton[bone]
+    def turn(vector):
+        return [sum(rows[row][column] * vector[column] for column in range(3)) for row in range(3)]
+    middle = [value + offset for value, offset in zip(turn(center), translation)]
+    direction = turn(axis)
+    size = math.sqrt(sum(value * value for value in direction))
+    half = height * 0.5 / size if size > 1e-6 else 0.0
+    a = [round(middle[index] - direction[index] * half, 4) for index in range(3)]
+    b = [round(middle[index] + direction[index] * half, 4) for index in range(3)]
+    facts["head"] = [a, b, round(radius, 4)]
+    counts["heads"] = counts.get("heads", 0) + 1
+    return facts
+
+
 def read_creature_slice(path: str, asset: tuple[bytes, int], roots: list[Element]) -> dict:
     """@return The data of one creature slice: its root entity, and each component with a replicated state or a facet."""
     entities: list[tuple[int, int | None]] = []
@@ -994,6 +1123,14 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                  "capsule": [radius, height, [x, y, z] axis, [x, y, z] offset],   the capsule of the
                                                        CharacterComponent of the slice (stage 3.3b-S3); only
                                                        for a slice that has one
+                 "behind": [hit angle, critical angle],  the angles of its DamageReceiver (radians, stage
+                                                       3.3b-S5): m_isHitFromBehindMinAngle and
+                                                       m_isHitByCritFromBehindMinAngle; only for a slice that has them
+                 "head": [[x, y, z], [x, y, z], radius],  the segment and the radius of its head volume (the
+                                                       HitVolume with m_isHeadshot) in the frame of the creature at
+                                                       its feet (x right, y front, z up), with the bind pose of its
+                                                       bone from the skeleton of its character (stage 3.3b-S5); only
+                                                       for a slice with a head volume and a skeleton in the game
                  "attacks": [[action, time, [[contact time, reach, damage factor, added damage,
                                               damage type, type number, type category, damage row], ...]], ...]},
                 ...]
@@ -1035,6 +1172,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     left_out: dict[str, int] = {}
     slices: list[dict] = []
     slice_index: dict[str, int] = {}
+    skeletons: dict[str, dict | None] = {}
+    hit_counts: dict[str, int] = {}
     spawners: dict[str, dict | None] = {}
     aliases: dict[tuple[bytes, int], list] = {}
     kinds: dict[tuple, dict] = {}
@@ -1074,6 +1213,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 reactions = read_reaction_fragments(sources, roots)
                 if reactions is not None and any(index >= 0 for index in reactions):
                     slices[-1]["reactions"] = reactions
+                # The hit facts (stage 3.3b-S5): the angles of a hit from behind and the head volume.
+                slices[-1].update(read_hit_facts(sources, path, roots, skeletons, hit_counts))
             except Failure as error:
                 raise Failure(f"the action table of {path} is not complete: {error}") from error
             # What the behavior of a creature with this slice needs: its sense and speed values, the
@@ -1281,6 +1422,11 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     counts["slicesWithBehavior"] = sum(1 for body in used if "behavior" in slices[body])
     counts["slicesWithAttacks"] = sum(1 for body in used if slices[body].get("attacks"))
     counts["slicesWithTags"] = sum(1 for body in used if "tags" in slices[body])
+    # The hit facts (stage 3.3b-S5).
+    counts["slicesWithBehindAngles"] = sum(1 for body in used if "behind" in slices[body])
+    counts["slicesWithHead"] = sum(1 for body in used if "head" in slices[body])
+    counts["headsWithNoSkeleton"] = hit_counts.get("noSkeleton", 0)
+    counts["headsWithOtherShape"] = hit_counts.get("headOtherShape", 0)
     # A kind attacks when one of its slices has an attack and the values for the way to a target.
     quiet = 0
     quiet_points = 0

@@ -3296,8 +3296,9 @@ effects: a rend).
   the level of a creature, the order of the factors). The rule does not use the armor rating
   of the level. Some rows of the game have a mitigation above 1 or an absorption below 0: a
   factor is not less than 0.
-- The rule has no critical hit, no hit of the head or of the back, no block, no status
-  effect, and no stamina. The damage is a 32-bit float with no rounding.
+- The rule has no block and no stamina. The damage is a 32-bit float with no rounding. From
+  stage 3.3b-S5 a hit can be critical (a roll, a hit from behind, a headshot of a projectile:
+  4.30); the statuses and the gear change the damage from stage 1.3b and 3.3b-S1 (4.23, 4.24).
 - The worked example of the research: the item `1hSwordT1` (weapon `SwordT1`, base damage 64,
   gear score 100), the level 1, strength 5 and dexterity 5, the light row `1H_Sword_Attack1`
   (slash, factor 1), and a target with no defense give 64. A target with the mitigation 0.35
@@ -3347,8 +3348,10 @@ DamageReceiverComponentClientFacet_OnDamageDealt, type 2071     (reader 0x65B4B5
                                  the root entity of the player slice)
   actor id:16 bytes  G:u64       the entity that took the damage
   u32 u32                        two keys (feedback, sound): 0
-  flags:2 bytes                  low byte first; bit 3 "the damage was the death", bit 6
-                                 "critical hit", bit 8 "head shot": the backend sets bit 3
+  flags:2 bytes                  low byte first; bit 0 Ranged, bit 3 DamageCausedDeath, bit 5
+                                 CanCrit, bit 6 Crit, bit 8 Headshot, bit 9 IsFromStatusEffect:
+                                 the backend sets bit 3, and from stage 3.3b-S5 bits 0, 5, 6,
+                                 and 8 (4.30)
   count:size                     1
     type:u8 amount:f32 part:f32  the number of the damage type (slash 4, thrust 5, strike 6),
                                  the damage, and the part of the damage before the defense
@@ -3365,8 +3368,9 @@ and of case HT4): `ccc47f93daf6bfc3 0000000100000002 040000000100000020000000000
   damage type that the creature is weak to (thrust for a wolf), the client shows the number
   in yellow with an arrow mark itself: it reads the weakness from its own tables.
 - The message has the damage that the world computed. The client computes none.
-- Not tested: the two keys, the flags (also the effect of bit 3), a part that is not 1, more
-  than one entry, and the message for a target that is a player.
+- Not tested: the two keys, the effect of bit 3, a part that is not 1, and the message for a
+  target that is a player. The flags of a critical hit and of a headshot: 4.30 (live check L6
+  of stage 3.3b-S5).
 
 **Not known, not done.**
 
@@ -5421,6 +5425,66 @@ expeditions, the mounts, the recipes, the quests: their own stages); the use of 
 the amulet (the skins, the emotes, the crests, the housing item, the title, the art book: their systems); the balances
 of field 1; the effect of `entitlementsReceived` false; the Steam app id of the expansion (not needed).
 
+### 4.30 Critical hits, a hit from behind, a headshot, and the passive rules (live proof of stage 3.3b-S5; the rules are project rules from a decision of the user, with the values of the game data)
+
+Stage 3.3b-S5. Research: `~/Games/soulwarden/work/research/abilities-shared.md` (Q5, K15). Live check L6 and the live
+proof: `~/Games/soulwarden/work/evidence/abilities-crit/implement/RESULT.md` (run `crit-l6` with the dist backend and
+`tools/world message`, run `crit-live1` with the backend of the stage). Code: `world/combat.h` (`Combat::critical`,
+`Combat::source_angle`, `damage_flags`), `world/passives.h` (the evaluator of the passive rules), `world/data_rules.h`
+(the comparator), `world/projectiles.cpp` (`head_contact`), `gamedata/combat_tables.h` (`criticals`, `hitRules`),
+`gamedata/creature_data.h` (`behind`, `head`), `gamedata/ability_data.h` (format 4). Documents:
+[Combat and health](systems/combat-and-health.md), [Passive rules](systems/passive-rules.md). Test cases CH1 to CH10, PS1 to
+PS7.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The flags of the damage number (type 2071, 4.15; two bytes, low byte first). The client shows the special number (orange and larger) for bit 6 Crit, or for bit 8 Headshot together with bit 0 Ranged and bit 5 CanCrit. A number with no flag, with Ranged alone, with Headshot alone, or with IsFromStatusEffect (bit 9) alone is the normal number (white, or yellow with an arrow for a weakness of the target). | Live check L6 (run `crit-l6`, `tools/world message` on a wolf: `0000` white, `0040` orange, `0060` orange, `0100` white, `0121` orange, `0001` white, `0161` orange, `0200` white); static proof. Live proof: a critical hit of a roll (667, 718), a hit from behind (603; the same hit from the front 502), a headshot of the bow (367; a shot on the body 283), all orange. | `0x686CC50` (handler), `0x694A7F0` (reader), `0x68E2400` (reflection) |
+| The client reports no critical hit, no hit from behind, and no headshot: the melee contact has a point and no bone, and the shot item has no head flag (4.27). The server decides each of the four facts: a critical roll, a hit from behind, a critical hit from behind, a contact with the head volume. | Static proof (research Q5: the three input lists); stage 3.3b-S3 (no report after a shot). | `0x2A1A590` (the tail bytes of a contact) |
+| The comparator of an AbilityData column with no text (TargetComparisonType, MyComparisonType, NumberOfHitsComparisonType, NumAroundComparisonType, and the stamina and mana kinds) is LessThanOrEqual. | Static proof (the parser maps each other text to enum 4). | `0x43B6390` |
+
+**The data** (game data; the tools of [Game data](development/game-data.md)):
+
+- `combat-tables.json`: `criticals`, for each weapon its CritChance and CritDamageMultiplier (587 weapons; the great axe 0.07
+  and 1.35, the war hammer 0.06 and 1.2, the bow 0.08 and 1.3); `hitRules`, for each damage row CanCrit, NoHeadshot,
+  NoBackstab, DmgCoefHead, and DmgCoefCrit (414 rows; DmgCoefCrit on 11 rows).
+- `creatures.json`: for each slice with a DamageReceiver the two angles of a hit from behind
+  (m_isHitFromBehindMinAngle, m_isHitByCritFromBehindMinAngle: the Grey Wolf 2.0944 and 2.3562, the player 1.5708 and
+  2.3562; 503 slices), and the head volume (the HitVolume with m_isHeadshot) as a capsule in the frame of the creature: the
+  bone of the volume in the bind pose of the skeleton of its character (the chunk CompiledBones 0x2000 of the `.chr`
+  file), the center, the axis, the height, and the radius of the shape (374 slices; the wolf: the bone `bind_neck_2_jnt`,
+  radius 0.2 m).
+- `ability-data.json` format 4: each row of the ability tables of the players (2,025 rows, the passive rules), and the
+  spell selections of the action lists (`actionSpells`, `actionNodes`: a CastSpell in an IfThenElse with a test
+  IfAbilityActive of a node).
+
+**The rules** (project rules; the source of each rule is in [Combat and health](systems/combat-and-health.md)):
+
+- The chance of a hit is the CritChance of the weapon in the hand plus the CritChance of the fixed node rules and of the
+  rules of the hit, plus the CritChanceModifier of the statuses of the attacker (0 to 1). Each hit with a chance above 0 takes
+  one independent number of the generator of the world (`World::random_unit`): the hit is critical when the number is below
+  the chance (a decision of the user, 2026-10-15). A tick of a status effect takes no number.
+- The multiplier of a critical hit is DmgCoefCrit of the row (when it has one) or the CritDamageMultiplier of the weapon, plus
+  one additive pool of the bonuses: the CritDamage of the rules, the CritDamageModifier of the statuses, and HeadshotDamage
+  for a headshot (a decision of the user; DmgCoefCrit in the place of the weapon value: a decision of an agent). The bonus
+  multiplies the damage that the target takes, both parts of a conversion.
+- A hit from behind: the angle between the front of the creature (its yaw) and the source of the hit is not less than
+  m_isHitFromBehindMinAngle of its slice. A hit at m_isHitByCritFromBehindMinAngle or more of a row with no NoBackstab is a
+  critical hit with no roll (the data and the decision of the user: where the data makes such a hit critical, it is
+  critical).
+- A headshot: the line of a projectile through the body of the creature meets its head volume, and the row has no
+  NoHeadshot. A headshot is a critical hit with no roll. A melee contact has no headshot.
+- The flags: Ranged for each hit of a projectile, Crit and CanCrit for each critical hit, Headshot for each headshot,
+  DamageCausedDeath for a kill. A combat file with no `criticals` (a tool from before stage 3.3b-S5) gives no critical hit
+  and no roll.
+
+**Not known, not done** (stage 3.3b-S5): the roll of the original server (a pity rule, the setting of 5000 ms of the
+component CriticalHits), the full order of the critical multiplier, the empower, and the mitigation; the head in the pose of
+an animation (the backend uses the bind pose: a shot at the chest of a wolf that looks at the shooter can meet its head); a
+hit from behind and a headshot on a player; NoLegShots; the meaning of CanCrit of a row (true only for the rows of the rapier
+and of the heart rune; the backend does not read it).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are
@@ -5439,8 +5503,8 @@ of field 1; the effect of `entitlementsReceived` false; the Steam app id of the 
   no message 327 to bind the visual of the owner); the use of `m_extraSpeed` and `m_timeForMaxSpeed` of a projectile
   slice is not known (the server flies at `m_baseSpeed`); the server uses `m_accel` of the slice, not the predicted
   acceleration of the profile (the fire ball: 0 and −9.8); the heavy fire ball of a client of the harness does not come
-  (the hold bit 191); the grouped spread (2719, 2570), a hit scan, the penetration depth, the bounces, the fall of the
-  damage, and the headshots are not done.
+  (the hold bit 191); the grouped spread (2719, 2570), a hit scan, the penetration depth, the bounces, and the fall of the
+  damage are not done (the headshots: 4.30, stage 3.3b-S5).
 - The speed of a status of a player (4.24, stage 3.3b-S1): the client does not apply the
   MoveSpeedMod or the SprintSpeedMod of a status of the owner map to its run (a haste of 0.2
   and of 0.4, a slow of −0.6: the distance of a walk of 2 s does not change). The server
@@ -5487,7 +5551,7 @@ of field 1; the effect of `entitlementsReceived` false; the Steam app id of the 
     are not in the creature data.
 - The health and the death of a character (4.18). Open for them:
   - The damage rule of a creature attack is a project rule (the formula of the original
-    server is not known). No block, no dodge, no critical hit, no status effect, and no
+    server is not known). No block, no dodge, no critical hit of a creature, and no
     stamina cost. The health that comes back out of a fight, and the 10 s with no target
     after a travel, are project rules too (4.19): the original values are not known.
   - The respawn place is the nearest travel place: the camps, the inns, and the houses of

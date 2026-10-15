@@ -188,8 +188,9 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | Creatures: the spawn points, the record for a session, the actions, the creature data | [Creatures](docs/systems/creatures.md) |
 | The behavior of a creature: the fight, the way back, patrol and wander | [Creature behavior](docs/systems/creature-behavior.md) |
 | The navigation data, the path search, the terrain heights | [Navigation](docs/systems/navigation.md) |
-| Melee attacks, the damage, the health and the death of a character, the mana | [Combat and health](docs/systems/combat-and-health.md) |
+| Melee attacks, the damage, the critical hits (the roll, a hit from behind, a headshot), the health and the death of a character, the mana | [Combat and health](docs/systems/combat-and-health.md) |
 | The abilities of a player: the press, the cast, the cooldown, the hits, the effects on a creature | [Abilities](docs/systems/abilities.md) |
+| The passive rules of the weapon trees and the perks: the one evaluator, its events, conditions, and effects, the list of the rules that it does not apply | [Passive rules](docs/systems/passive-rules.md) |
 | The rewards of a kill and the respawn of a creature | [Rewards](docs/systems/rewards.md) |
 | Travel, the travel places, a conversation and the lock of the input | [Travel and conversations](docs/systems/travel-and-conversations.md) |
 | The tool window (F8) and the admin interface | [Tool window and admin](docs/systems/tool-window-and-admin.md) |

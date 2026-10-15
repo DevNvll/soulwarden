@@ -13,7 +13,7 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
 | --- | --- |
 | The perks of a character and their potency, the passive values | `apps/backend/src/world/gear.h` (`Gear::perks_of`, `Gear::values`, `Gear::refresh`), `world/entity.h` (`GearSummary`, `Attributes::bonus`), test case IZ4 |
 | The damage of a hit with the gear: the part of the gear, the gem conversion, the DMG and ABS parts, a rend | `Gear::hit_damage`, `Combat::damage` (`HitModifiers`), `Combat::strike`, `Combat::creature_damage`, protocol notes 4.15 and 4.18, test cases IZ4, IZ5 |
-| A perk of a hit: its conditions, its effects | `Gear::on_hit`, `Gear::conditions_pass`, `Gear::perk_status`, `Gear::perk_damage`, `Combat::strike_amount`, test case IZ5 |
+| A perk of a hit: its conditions, its effects | [Passive rules](passive-rules.md) (`Passives::after_hit`, `conditions_pass`), `Gear::on_hit`, `Gear::perk_status`, `Gear::perk_damage`, `Combat::strike_amount`, test cases IZ5, PS1 |
 | The attribute bonus on the wire | `server/rep/states/attribute_state.cpp` (field 1), `Progress::refresh_vitals` |
 | The perk data of the game | `tools/gamedata/perks.sh` (`perks.py`), `gamedata/perk_data.h`, [Game data](../development/game-data.md) |
 
@@ -34,7 +34,8 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   item. Each effective perk counts one time for an item (code review of stage 1.3b, finding F2:
   the instance has the swapped id of a fixed perk, and the definition the old id). A perk with the condition OnActive or OnUnsheathed counts only for the weapon in the hand
   (and its off hand item). A perk that the item cannot have counts nothing.
-- The passive values (the cells of the affixes and the ability rows with no event; the status row
+- The passive values (the cells of the affixes, the ability rows with no event, and from stage 3.3b-S5 the fixed node rows
+  of the tree of the weapon in the hand: `Passives::fixed`; the status row
   that an affix keeps is a status of the status system with the source "gear"), each one times
   the potency: MOD<attribute> (the bonus, a whole
   number), MaxHealthMod and MaxHealth (a part of the health of the base, the level, and the
@@ -66,28 +67,18 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
 - The damage of a creature on a character (`Combat::creature_damage`): the armor times (1 +
   the armor part of the character for the category), then times (1 - ABS<type>) and (1 -
   BaseDamageReduction).
-- The perks of a hit (`Gear::on_hit`, after an accepted hit): each ability row with OnHit and an
-  effect, when its conditions pass and its ActivationCooldown (a value of the character) ended.
-  The conditions that the backend evaluates: AttackType, DamageTableRow, RemoteDamageTableRow,
-  TargetStatusEffectCategory with its comparison, the health, stamina, and mana percents, grit
-  (no grit in the backend: a row that needs it does not pass), the vitals category,
-  DontHaveStatusEffect (a status of the status system), and InSequence (stage 3.3b-S1: the hit
-  is a hit of the cast of an ability of the list). A blank TargetComparisonType,
-  MyComparisonType, MyStaminaComparisonType, or MyManaComparisonType is LessThanOrEqual: the
-  AbilityData parser of the client (image RVA 0x43B6390) gives enum 4 for each text that it does
-  not know, also an empty text (research abilities-shared.md K15; before stage 3.3b-S1 the
-  backend used Equal: Executioner 50 percent, its critical node 30 percent, and Leaping Strike 30
-  percent need it). A row with a different column that is not a value has no effect (a
-  rule of this project). The effects: OtherApplyStatusEffect (a rend of the armor of the
-  creature; a damage over time of HealthModifierDamageBased of the raw damage of the hit, with
-  its ticks; CastSpell: a chain to the next creatures near the target, MaxChainNum, 8 at most,
-  with sight), DmgPctToHealth (a heal of a part of the damage, with the heal factor),
-  CooldownTimer with CDRImmediatelyOptions ActiveWeapon (a part of the cooldown of each ability
-  of the bar of the weapon in the hand), and SelfApplyStatusEffect (stage 3.3b-S1: a status on
-  the caster through the status system, with the time of SelfApplyStatusEffectDurations: code
-  review of stage 3.3b-S1, finding F10). The learned nodes of the ability table of the weapon
-  of the hit with a caster effect row of the game data count the same (Safety Measures, Greed,
-  Hammer Time: [Status effects](status-effects.md)).
+- The perks of a hit. From stage 3.3b-S5 the evaluator of the passive rules ([Passive rules](passive-rules.md),
+  `world/passives.h`) evaluates each ability row of a perk and each learned node of the tree of the weapon of the hit: one
+  list of conditions, one comparator (`world/data_rules.h`), and one list of effects for the two. `Combat::strike` takes the
+  BaseDamage part of the rules of the hit from `Passives::before_hit` (`Gear::hit_damage` gives the same sum), and
+  `Gear::on_hit` gives each accepted hit to `Passives::after_hit`. The gear system keeps the effects that only the gear has: a rend of the armor of the creature, a
+  damage over time of HealthModifierDamageBased of the raw damage of the hit with its ticks, a chain (CastSpell: the next
+  creatures near the target, MaxChainNum, 8 at most, with sight) (`Gear::perk_status`), the burst of a perk
+  (`Gear::perk_burst_of`), and the status on the caster (`Gear::caster_effect`, with the time of
+  SelfApplyStatusEffectDurations: code review of stage 3.3b-S1, finding F10). A blank comparison kind is LessThanOrEqual
+  (the AbilityData parser of the client, image RVA 0x43B6390; research abilities-shared.md K15; before stage 3.3b-S1 the
+  backend used Equal). A row with a column that the evaluator does not have has no effect, and `tools/world passives NAME`
+  names it with the column (a rule of this project).
 - A tick and a chain hit go through `Combat::strike_amount`: the defense of the creature for
   the type, the creature system, the damage number. No perk of the attacker counts for them.
   A caster that left the world or died does no damage. A tick or a chain hit with a change of
@@ -103,7 +94,7 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   | Chain Void | A light or heavy hit casts the chain (3 creatures, 15 percent of the raw damage, 0.3 s apart). |
   | The runeglass and ward gems | ABS and DMG parts (passive). |
   | Health, Wellness, Acutely Empowered, Slash Protection, Slash Damage, Regenerating, Refreshing Toast | Passive values; Refreshing Toast shortens the cooldown of a consumable. |
-  | Thwarting Strikes, Resilient, Shirking Fortification, Freedom, Stamina Recovery, Gambled Energy, Purifying Toast, the PvP ring perk | No effect: the backend has no grit, no critical hit, no dodge, no crowd control on a player, no stamina, no debuff on a player, and no player target. |
+  | Thwarting Strikes, Resilient, Shirking Fortification, Freedom, Stamina Recovery, Gambled Energy, Purifying Toast, the PvP ring perk | No effect: the backend has no grit, no dodge, no crowd control on a player, no stamina, no debuff on a player, and no player target (the critical hits came in stage 3.3b-S5: [Combat and health](combat-and-health.md)). |
 
 - The cost of the rules: a hit looks at the perks of one character (55 at most), the chain at
   the position index near its target; the effects of a creature are in the creature system

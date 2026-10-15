@@ -87,6 +87,38 @@ bool valid_ownership(const ProgressionData& data) {
             return false;
         }
     }
+    // A root of a DLC pack gives its children (reward type Entitlement, the aliases with "+" between them): each child is an
+    // entitlement of the file (code review of stage 1.1b, finding F6: a root whose child was absent gave no child).
+    for (const EntitlementRow& entitlement : data.entitlements) {
+        if (entitlement.rewardType != "Entitlement") {
+            continue;
+        }
+        std::size_t start = 0;
+        bool any = false;
+        while (start <= entitlement.rewards.size()) {
+            std::size_t end = entitlement.rewards.find('+', start);
+            if (end == std::string::npos) {
+                end = entitlement.rewards.size();
+            }
+            std::string child = entitlement.rewards.substr(start, end - start);
+            while (!child.empty() && child.front() == ' ') {
+                child.erase(child.begin());
+            }
+            while (!child.empty() && child.back() == ' ') {
+                child.pop_back();
+            }
+            if (!child.empty()) {
+                any = true;
+                if (aliases.count(child) == 0) {
+                    return false;
+                }
+            }
+            start = end + 1;
+        }
+        if (!any) {
+            return false;
+        }
+    }
     std::set<std::string> expansionIds;
     for (const ExpansionRow& expansion : data.expansions) {
         if (expansion.id.empty() || !expansionIds.insert(expansion.id).second || expansion.maxLevel == 0
@@ -118,6 +150,16 @@ bool ProgressionTables::load(const std::string& path) {
         if (!document.contains(member)) {
             return false;
         }
+    }
+    // The format first (code review of stage 1.1b, finding F5): format 1 (or no member: a file of stage 1.6) has rows of four
+    // values and no expansion; format 2 (stage 1.1b) has rows of five values and the three lists of the ownership.
+    std::uint32_t format = 1;
+    if (document.contains("format") && (!read_number(document["format"], format) || (format != 1 && format != 2))) {
+        return false;
+    }
+    const bool format2 = format == 2;
+    if (format2 != (document.contains("expansions") || document.contains("entitlements") || document.contains("achievements"))) {
+        return false;
     }
     ProgressionData data;
     if (!read_number(document["levelCap"], data.levelCap) || !document["levels"].is_array()) {
@@ -178,9 +220,9 @@ bool ProgressionTables::load(const std::string& path) {
     for (const json& row : document["progressions"]) {
         ProgressionRow progression;
         // Format 2 (stage 1.1b): a fifth value, the largest rank with the expansion.
-        if (!row.is_array() || (row.size() != 4 && row.size() != 5) || !row[0].is_string() || !row[1].is_string()
+        if (!row.is_array() || row.size() != (format2 ? 5U : 4U) || !row[0].is_string() || !row[1].is_string()
             || !read_number(row[2], progression.maxRank) || !row[3].is_string()
-            || (row.size() == 5 && !read_number(row[4], progression.expansionMaxRank))) {
+            || (format2 && !read_number(row[4], progression.expansionMaxRank))) {
             return false;
         }
         progression.id = row[0].get<std::string>();
@@ -216,7 +258,7 @@ bool ProgressionTables::load(const std::string& path) {
     }
     // Stage 1.1b (format 2): the expansions, the entitlements of each account, and the achievements that they give. A
     // file of format 1 has none of them.
-    if (document.contains("expansions") || document.contains("entitlements") || document.contains("achievements")) {
+    if (format2) {
         if (!document.contains("expansions") || !document.contains("entitlements") || !document.contains("achievements")
             || !document["expansions"].is_array() || !document["entitlements"].is_array() || !document["achievements"].is_array()) {
             return false;

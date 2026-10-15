@@ -458,8 +458,12 @@ def build_document(sources: Sources) -> dict:
     check_joins(shot_rows, light_heavy, weapons, ammo, profiles)
     spells_of_shots = {entry[5].lower() for entry in shot_rows}
     known = {str(sheet.cell(row, "SpellID")).strip().lower() for sheet in sheets[SPELL_TYPE] for row in range(sheet.row_count)}
+    # Each required ability spell must be a row of the source and a shot of the output (code review of stage 1.1b, finding F4: a
+    # source with no row of the Pylon projectile gave a file with no Pylon shot).
     for name in REQUIRED_ABILITY_SHOTS:
-        if name.lower() in known and name.lower() not in spells_of_shots:
+        if name.lower() not in known:
+            raise Failure(f"the ability spell {name} is not a row of the spell tables of the source")
+        if name.lower() not in spells_of_shots:
             raise Failure(f"the ability spell {name} has no shot (its profile, its attack, or its damage row is not a row of the data)")
     return {"format": 1,
             "counts": {"attacks": len(attacks), "slices": len(slices), "ammo": len(ammo), "weapons": len(weapons),

@@ -56,6 +56,12 @@ before a live test of the expansion. The wire contracts are in the protocol note
   - The gear score of a craft: MaxCraftGS 700 is in the data for the crafting stage (3.7).
   - With no expansion data (a file of format 1, or no file) the players have the limits of the file (level 60, the base
     ranks), and the backend sends neither state.
+- The checks of the data (code review of stage 1.1b, findings F3, F5, F6; test cases RD3, RD5, RD6): the loader reads the
+  `format` of the progression file first and refuses a mix of the two formats (format 2 needs the three lists and 5 values
+  in each progression row). An entitlement of the reward type `Entitlement` must name at least one child, and each child
+  must be an alias of the list. The tool stops when a rank limit of a row (MaxLevel, Expansion01MaxLevel) is not less than
+  the number of the ranks of its table. A refused file gives no limits of an expansion: the backend works with no tables
+  ([Level, attributes, and skills](progression-and-skills.md)).
 - The entitlement state (slot 19) and the achievement state (slot 66) are for the owner only; an observer gets neither. The
   first record of a character has both, before the level (the codec sequence). The sequence of a container is the world
   revision of the last change of the state.

@@ -654,7 +654,8 @@ StatusValues Statuses::values(const Entity& character) const {
         for (const char* column : kAttributeColumns) {
             add(*row, column, row->cells.number(column) * factor);
         }
-        for (const char* column : {"MaxHealthMod", "PhysicalArmor", "ElementalArmor", "BaseDamageReduction", "SprintSpeedMod"}) {
+        for (const char* column : {"MaxHealthMod", "PhysicalArmor", "ElementalArmor", "BaseDamageReduction", "SprintSpeedMod",
+                                   "CritChanceModifier", "CritDamageModifier"}) {
             add(*row, column, row->cells.number(column) * factor);
         }
         add(*row, "MoveSpeedMod", row->moveSpeed * factor);
@@ -682,6 +683,9 @@ StatusValues Statuses::values(const Entity& character) const {
     values.physicalArmor = value("PhysicalArmor");
     values.elementalArmor = value("ElementalArmor");
     values.damageReduction = value("BaseDamageReduction");
+    // The critical parts of the statuses (stage 3.3b-S5): CritChanceModifier and CritDamageModifier.
+    values.critChance = value("CritChanceModifier");
+    values.critDamage = value("CritDamageModifier");
     values.moveSpeed = value("MoveSpeedMod");
     values.sprintSpeed = value("SprintSpeedMod");
     for (const std::string& name : typeNames) {

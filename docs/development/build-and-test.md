@@ -78,6 +78,19 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   RK11 `check_projectile_tool.py`, RK12 `check_spell_tool.py`, and DL9 `tools/gamedata/check_progression_tool.py`
   (stage 1.1b): with no Python 3 these cases fail. `check_dev_mute.py --script FILE` runs the check against a different mute
   script (the proof on the tree of stage 3.3b-S2b used the block of its `tools/dev-run.sh`).
+- Stage 3.3b-S5 adds the cases CH1 to CH10 (`tests/crit_tests.cpp`: the critical hits), PS1 to PS7
+  (`tests/passive_tests.cpp`: the evaluator of the passive rules), and RD1 to RD6 (`tests/review_dlc_tests.cpp`: the
+  corrections of the code review of stage 1.1b). The passive fixture (`tests/support/passive_fixture.h`) has rows of the
+  ability tables of the game copy (the rows that each case names, with their statuses and spells: made-up ids only, no
+  file of the game), a combat file with critical values, a progression file with the trees of the great axe and the war
+  hammer, and a wolf slice with its angles and its head volume. Case CH9 runs `tools/gamedata/check_hit_facts_tool.py`,
+  RD1 `tools/check_dev_mute.py`, RD2 `check_spell_tool.py`, RD3 `check_progression_tool.py`, and RD4
+  `check_projectile_tool.py`. A test of a roll sets the seed of the generator of the world (`World::set_random_seed`):
+  the numbers of a seed are fixed (splitmix64), and the case computes the first number itself.
+- The mute of a development run is `tools/dev_mute.py` (code review of stage 1.1b, finding F1): it opens each folder with
+  no link and each settings file one time, checks the real path of the descriptor and its device and inode, and writes
+  through the same descriptor. `python3 -B tools/check_dev_mute.py` (status 0) tests it with made-up folders, also a swap of
+  the folder at three moments and a hard link; never run it against a real prefix.
 - The state decoder of the tests knows the entitlement state (3133) and the achievement state (3210) of stage 1.1b: a case
   with expansion data has them in the first record of a character (cases DL2, DL10). The stored bytes of T2 have no
   expansion data: the change of stage 1.1b does not change them.

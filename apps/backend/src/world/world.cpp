@@ -69,6 +69,7 @@ World::World(const WorldClock& clock,
       m_rewards(*this, options.lootTables),
       m_abilities(*this, options.abilityData, options.combatTables),
       m_gear(*this),
+      m_passives(*this),
       m_consumables(*this),
       m_runes(*this),
       m_statuses(*this),
@@ -128,6 +129,7 @@ void World::tick() {
         m_creatures.tick();
         m_health.tick();
         m_statuses.tick();
+        m_passives.tick();
         m_abilities.tick();
         m_spells.tick();
         m_projectiles.tick();
@@ -289,6 +291,8 @@ void World::remove_entity(EntityId id) {
         // The auras that give the character their statuses take them back while the entity is here (code review of stage
         // 3.3b-S2b, finding F6).
         m_spells.member_left(found->second);
+        // The statuses of the rules near the character end: the next entry evaluates them again (stage 3.3b-S5).
+        m_passives.left(found->second);
         m_statuses.left(found->second);
         m_characters.erase(entity.characterId);
     }

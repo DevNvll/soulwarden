@@ -11,7 +11,8 @@ hub::Bytes damage_dealt_body(world::EntityId attacker, const world::DamageDealt&
     body.u32(0);
     body.u32(0);
     // The flags are two raw bytes, the low byte first (client reader at image RVA 0x694A7F0).
-    const std::uint16_t flags = damage.killed ? kDamageCausedDeath : 0;
+    // Stage 3.3b-S5: the other flags of the hit (a ranged hit, a critical hit with CanCrit, a headshot; live check L6).
+    const std::uint16_t flags = static_cast<std::uint16_t>((damage.killed ? kDamageCausedDeath : 0) | damage.flags);
     body.u8(static_cast<std::uint8_t>(flags));
     body.u8(static_cast<std::uint8_t>(flags >> 8));
     // A converted part (a gem of the weapon, stage 1.3b) is a second entry with its own damage type.

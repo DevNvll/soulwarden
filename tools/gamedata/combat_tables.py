@@ -55,7 +55,13 @@ gearScoreRate, mastery], ...],
 "defenses": [[physicalMitigation, elementalMitigation, {"<damage type>": weakness, ...},
 {"<damage type>": absorption, ...}], ...],
 "vitals": {"<vitals row id in lower case>": defense, ...},
-"impacts": [[id, x, y, z, decay, aiX, aiY, aiZ, aiDecay, fromAttacker], ...]}.
+"impacts": [[id, x, y, z, decay, aiX, aiY, aiZ, aiDecay, fromAttacker], ...],
+"criticals": [[weapon id, critChance, critDamageMultiplier], ...],
+"hitRules": [[damage row id, canCrit, noHeadshot, noBackstab, dmgCoefHead, dmgCoefCrit], ...]}.
+`criticals` (stage 3.3b-S5) has the critical chance and the critical damage multiplier of each weapon of a weapon table with
+the columns CritChance and CritDamageMultiplier (the weapons of a table with no such column have no entry: no critical hit),
+and `hitRules` the cells of each damage row for a critical hit, a headshot, and a hit from behind (CanCrit, NoHeadshot,
+NoBackstab, DmgCoefHead, DmgCoefCrit; a blank DmgCoefCrit is 0).
 `impacts` has the damage rows whose hit moves its target (a distance that is not 0, in the normal or in the "_AI"
 columns): x to the side, y away from the source of the hit (a negative y pulls), z up, in meters; the decay rate of
 the travel (client code at image RVA 0x48A0D30: the travel at the time t is distance * (1 - decay^(30 t)); 0 or less:
@@ -140,6 +146,11 @@ MASTERY_COLUMN = "WeaponMasteryCategoryId"
 IMPACT_COLUMNS = ("ImpactDistanceX", "ImpactDistanceY", "ImpactDistanceZ", "ImpactDecayRate")
 IMPACT_AI_COLUMNS = tuple(column + "_AI" for column in IMPACT_COLUMNS)
 IMPACT_SOURCE_COLUMN = "UseAttackerPosForReaction"
+# The critical values of a weapon (stage 3.3b-S5): a weapon table has both columns or none (the table of the heart runes).
+CRITICAL_COLUMNS = ("CritChance", "CritDamageMultiplier")
+# The cells of a damage row for a critical hit, a headshot, and a hit from behind (stage 3.3b-S5): each one is required.
+HIT_FLAG_COLUMNS = ("CanCrit", "NoHeadshot", "NoBackstab")
+HIT_FACTOR_COLUMNS = ("DmgCoefHead", "DmgCoefCrit")
 
 
 def cell(sheet: Sheet, row: int, column: str):
@@ -271,6 +282,7 @@ def build_tables(sources: Sources) -> dict:
 
     damage_rows = []
     impacts = []
+    hit_rules = []
     row_ids: set[str] = set()
     # The rows of the damage table that have no damage type: a weapon can name one, and it then has no damage row.
     typeless: set[str] = set()
@@ -303,11 +315,17 @@ def build_tables(sources: Sources) -> dict:
                 raise Failure(f"the damage row {name} has a decay rate above 1")
             if any(value != 0.0 for value in normal[:3] + creature[:3]):
                 impacts.append([name] + normal + creature + [bool(cell(sheet, row, IMPACT_SOURCE_COLUMN))])
+            # The critical, head, and behind cells (stage 3.3b-S5).
+            factors = [rounded(number(sheet, row, column)) for column in HIT_FACTOR_COLUMNS]
+            if any(factor < 0.0 for factor in factors):
+                raise Failure(f"the damage row {name} has a DmgCoefHead or a DmgCoefCrit below 0")
+            hit_rules.append([name] + [bool(cell(sheet, row, column)) for column in HIT_FLAG_COLUMNS] + factors)
     if not damage_rows:
         raise Failure(f"the game copy has no damage table with the name {DAMAGE_TABLE}")
 
     weapons = []
     weapon_index: dict[str, int] = {}
+    criticals = []
 
     def row_of(weapon: str, reference: str) -> str:
         """@return The damage row that a weapon names, or an empty text for no row. A name that does not resolve
@@ -341,6 +359,16 @@ def build_tables(sources: Sources) -> dict:
                             # The weapon mastery of the weapon (stage 3.5a: the mastery experience of a
                             # kill). Empty for a weapon of a creature and for a tool.
                             str(cell(sheet, row, MASTERY_COLUMN)).strip() if MASTERY_COLUMN in sheet.columns else ""])
+            # The critical values (stage 3.3b-S5): a table with one of the two columns and not the other is not a table of
+            # the supported build.
+            present = [column in sheet.columns for column in CRITICAL_COLUMNS]
+            if any(present) and not all(present):
+                raise Failure(f"the table {sheet.name} has one of the columns {', '.join(CRITICAL_COLUMNS)} and not the other")
+            if all(present):
+                chance, multiplier = (rounded(number(sheet, row, column)) for column in CRITICAL_COLUMNS)
+                if not 0.0 <= chance <= 1.0 or multiplier < 0.0:
+                    raise Failure(f"the weapon {name} has a CritChance outside 0 to 1 or a CritDamageMultiplier below 0")
+                criticals.append([name, chance, multiplier])
 
     items: dict[str, int] = {}
     for sheet in sheets[ITEM_TYPE]:
@@ -440,7 +468,8 @@ def build_tables(sources: Sources) -> dict:
 
     return {"format": 1, "constants": constants, "damageTypes": damage_types, "attributes": attributes,
             "damageRows": damage_rows, "weapons": weapons, "items": items, "defenses": defenses, "vitals": vitals,
-            "armor": armor, "levelDamage": sorted(level_damage), "impacts": impacts}
+            "armor": armor, "levelDamage": sorted(level_damage), "impacts": impacts, "criticals": criticals,
+            "hitRules": hit_rules}
 
 
 def print_found(tables: dict, texts: list[str]) -> None:

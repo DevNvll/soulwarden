@@ -81,9 +81,13 @@ class MadeUpSources:
                   "ScalingStrength": 0.0085, "ScalingDexterity": 0.0065, "ScalingIntelligence": 0.0, "ScalingFocus": 0.0,
                   "TooltipPrimaryAttackData": "Light",
                   "TooltipAlternateAttackData": KNOWN_ABSENT_ROW if mode == "known-absent-row" else "Heavy",
-                  "WeaponBaseDamageCompoundIncrease": 0.0}
+                  "WeaponBaseDamageCompoundIncrease": 0.0, "CritChance": 0.07, "CritDamageMultiplier": 1.3}
         if mode == "missing-column":
             weapon.pop("BaseDamage")
+        if mode == "one-crit-column":
+            weapon.pop("CritDamageMultiplier")
+        if mode == "crit-above-one":
+            weapon["CritChance"] = 1.5
         if mode == "text-cell":
             weapon["BaseDamage"] = "sixty-four"
         add("Weapons", tool.WEAPON_TYPE, [weapon])
@@ -95,16 +99,22 @@ class MadeUpSources:
         heavy_impact = {column: 0.0 for column in light_impact}
         if mode == "decay-above-one":
             light_impact["ImpactDecayRate"] = 1.5
+        # The critical, head, and behind cells (stage 3.3b-S5).
+        hit_cells = {"CanCrit": False, "NoHeadshot": False, "NoBackstab": False, "DmgCoefHead": 1.3, "DmgCoefCrit": 0.0}
         damage = [{"DamageID": "Light", "WeaponCategory": "Sword", "AttackType": "Light", "DamageType": "Slash",
-                   "DmgCoef": 1.0, "AddDmg": 0.0, "AttackRuneCharge": 1.105, "HitRuneCharge": 0.27625, **light_impact}]
+                   "DmgCoef": 1.0, "AddDmg": 0.0, "AttackRuneCharge": 1.105, "HitRuneCharge": 0.27625, **light_impact, **hit_cells}]
         if mode == "no-impact-column":
             damage[0].pop("ImpactDecayRate_AI")
+        if mode == "no-hit-column":
+            damage[0].pop("NoBackstab")
         if mode != "missing-row":
             damage.append({"DamageID": "Heavy", "WeaponCategory": "Sword", "AttackType": "Heavy",
                            "DamageType": "Slsh" if mode == "unknown-type" else "Slash", "DmgCoef": 1.2, "AddDmg": 0.0,
-                           "AttackRuneCharge": 1.604, "HitRuneCharge": 0.401, **heavy_impact})
+                           "AttackRuneCharge": 1.604, "HitRuneCharge": 0.401, **heavy_impact, **hit_cells})
             if mode == "no-impact-column":
                 damage[1].pop("ImpactDecayRate_AI")
+            if mode == "no-hit-column":
+                damage[1].pop("NoBackstab")
         add(tool.DAMAGE_TABLE, tool.DAMAGE_TYPE, damage)
         add("DamageTypes", tool.DAMAGE_TYPE_TYPE, [{"TypeID": "Slash", "IntID": 4, "Category": "Physical"}])
         for attribute in tool.ATTRIBUTE_TABLES:
@@ -167,6 +177,9 @@ CASES = [
     ("part-level", False, "a level difference that is not a whole number"),
     ("no-impact-column", False, "a damage table with no column ImpactDecayRate_AI (stage 3.3b-S4)"),
     ("decay-above-one", False, "a decay rate of an impact above 1 (stage 3.3b-S4)"),
+    ("one-crit-column", False, "a weapon table with CritChance and no CritDamageMultiplier (stage 3.3b-S5)"),
+    ("crit-above-one", False, "a CritChance above 1 (stage 3.3b-S5)"),
+    ("no-hit-column", False, "a damage table with no column NoBackstab (stage 3.3b-S5)"),
 ]
 
 
@@ -191,7 +204,9 @@ def main() -> int:
                        and sorted(tables["vitals"]) == ["basewolf", "testwolf"] and tables["defenses"][0][2] == {"Slash": 0.2}
                        and tables["armor"]["items"] == {"testchest": [0.25, 0.25, 0.3]}
                        and tables["armor"]["ratingExponent"] == 1.2 and tables["levelDamage"] == [[6, 0.2]]
-                       and tables["impacts"] == [["Light", 0.0, -1.5, 0.0, 0.8, 0.0, -2.0, 0.0, 0.0, True]])
+                       and tables["impacts"] == [["Light", 0.0, -1.5, 0.0, 0.8, 0.0, -2.0, 0.0, 0.0, True]]
+                       and tables["criticals"] == [["Sword", 0.07, 1.3]]
+                       and tables["hitRules"] == [["Light", False, False, False, 1.3, 0.0], ["Heavy", False, False, False, 1.3, 0.0]])
         if correct and mode == "known-absent-row":
             correct = json.loads(target.read_text(encoding="utf-8"))["weapons"][0][9] == ""
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""

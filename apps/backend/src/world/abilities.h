@@ -455,6 +455,12 @@ public:
      */
     void reduce_weapon_cooldowns(Entity& character, float part);
     /**
+     * The same for some abilities of the bar (stage 3.3b-S5, CDRImmediatelyOptions of a passive rule): `only` an ability whose id
+     * or cooldown id (CooldownId of its row) is this text (AbilitySpecific), or each ability but such an ability (`except`:
+     * AllExcept). An empty text: no filter.
+     */
+    void reduce_weapon_cooldowns(Entity& character, float part, std::string_view only, std::string_view except = {});
+    /**
      * @return The envelope of the movement of the cast of a character at a time (stage 3.3b-S4): the distance and the speed
      *         that the position check accepts in addition for its dash (World::report_position). Zero: no such cast, or its
      *         envelope ended (its length and one window of the check after it).
@@ -499,7 +505,17 @@ public:
      * @return The plan of a cast of an ability for the nodes of a character (the rules of this
      *         project, with the ids of the game data). No value: the ability has no rule here.
      */
-    [[nodiscard]] static std::optional<CastPlan> plan(std::uint32_t ability, const SkillSet& skills);
+    [[nodiscard]] static std::optional<CastPlan> plan(std::uint32_t ability, const SkillSet& skills,
+                                                      const gamedata::AbilityData* data = nullptr);
+    /**
+     * @return True when the plan of this backend takes the spell of an action from the spell selections of the action data
+     *         (stage 3.3b-S5: Shockwave, Path of Destiny, the projectile of Gravity Well, the Beacon).
+     */
+    [[nodiscard]] static bool action_selected(std::string_view action);
+    /** @return True when the plan of an ability of this backend (stage 3.3a) selects a row or an effect by this node. */
+    [[nodiscard]] static bool plan_node(std::string_view node);
+    /** @return True when this backend has a plan for the ability with this id text. */
+    [[nodiscard]] static bool has_plan(std::string_view ability);
 
     [[nodiscard]] const AbilityCounts& counts() const {
         return m_counts;
@@ -585,7 +601,8 @@ private:
      * One hit of an area phase, with its damage and its effects. @param center The center of the area: the source of the
      * impact of the hit (stage 3.3b-S4). @return True when the creature took the hit.
      */
-    bool area_hit(Cast& cast, std::uint32_t phase, Entity& caster, Entity& target, float factor, const state::WorldPosition& center);
+    bool area_hit(Cast& cast, std::uint32_t phase, Entity& caster, Entity& target, float factor, const state::WorldPosition& center,
+                  std::uint32_t areaCount = 0);
     /** Gives the effects of a phase to a creature that a hit of the phase hurt. */
     void give_effects(Cast& cast, const PhasePlan& phase, Entity& target);
     /** The movement of the caster of an accepted cast starts (stage 3.3b-S4): the actions for the observers, and the dash of the server. */

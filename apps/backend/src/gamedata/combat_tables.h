@@ -83,6 +83,15 @@ struct DamageRow {
     float hitCharge{0.0F};
     /** The impact of a hit (stage 3.3b-S4). No value: the hit moves no target (also a file of a tool from before the stage). */
     std::optional<DamageImpact> impact{};
+    /**
+     * The cells of the row for a critical hit, a headshot, and a hit from behind (stage 3.3b-S5, the member `hitRules` of the
+     * tool): CanCrit (the flag CanCrit of the damage number), NoHeadshot, NoBackstab, DmgCoefHead, and DmgCoefCrit (0: blank).
+     */
+    bool canCrit{false};
+    bool noHeadshot{false};
+    bool noBackstab{false};
+    float headFactor{0.0F};
+    float critFactor{0.0F};
 };
 
 /** One row of the weapon table. */
@@ -106,6 +115,13 @@ struct WeaponRow {
      * before stage 3.5a.
      */
     std::string mastery;
+    /**
+     * The critical values of the weapon (stage 3.3b-S5, the member `criticals` of the tool): CritChance and
+     * CritDamageMultiplier. `critical` false: no values (a file of a tool from before the stage), and no critical hit.
+     */
+    bool critical{false};
+    float critChance{0.0F};
+    float critMultiplier{1.0F};
 };
 
 /** The defense values of one creature kind (its base vitals row). */

@@ -8,7 +8,9 @@ slice (a spell component, a delayed event of slot 7 to a child entity with the d
 provider that reads no game copy, and compares the status and the output file of each case. The test program of the
 backend runs it (case RG5; the case trap-slice: case SB1 of stage 3.3b-S2b). Code review of stage 3.3b-S2b, finding F12: an
 AutoSpell (the rule of a summon) with a lifetime of one byte gave the lifetime 0; the cases autospell and
-autospell-lifetime-width check it (case RK12).
+autospell-lifetime-width check it (case RK12). Code review of stage 1.1b, finding F2: a Vitals component with no row
+reference gave the member vitals null and a paid Pylon with no damage path; the case vitals-no-row checks that the tool keeps
+the old file (case RD2).
 
 Usage: check_spell_tool.py WORK_FOLDER
 Status 0: each case has the expected result.
@@ -52,7 +54,7 @@ def component(kind, serial: int, fields: list) -> Element:
     return element(kind=kind, children=[base, *fields])
 
 
-def slice_nodes(delay: bytes, trap: bool = False, lifetime: bytes | None = None) -> list[Element]:
+def slice_nodes(delay: bytes, trap: bool = False, lifetime: bytes | None = None, vitals: bool = False) -> list[Element]:
     """@return The nodes of a slice: a root entity with a Spell component (slot 1) and a delayed event (slot 7) of `delay`.
     `trap`: a PositionInTheWorld component (slot 1) in place of the Spell component, and an event that starts at a trigger
     (format 2, stage 3.3b-S2b). `lifetime`: an AutoSpell component with this m_lifetime value (finding F12 of the code review
@@ -66,6 +68,10 @@ def slice_nodes(delay: bytes, trap: bool = False, lifetime: bytes | None = None)
     delayed = component(delay_kind, 12, [element(tool.REPLICATION_FIELD, b"\x07"), element(tool.DELAY_FIELD, delay),
                                          element(tool.EVENT_FIELD, children=event), *flags])
     components = [transform, spell, delayed]
+    if vitals:
+        # A Vitals component (slot 21) with no m_rowReference (finding F2 of the code review of stage 1.1b).
+        vitals_kind = uuid.UUID(next(key for key, value in tool.COMPONENT_CLASSES.items() if value[0] == "Vitals"))
+        components.append(component(vitals_kind, 21, [element(tool.REPLICATION_FIELD, b"\x15")]))
     if lifetime is not None:
         components.append(component(tool.AUTO_SPELL_CLASS, 20, [
             element(tool.SPELL_NAME_FIELD, b"Test_Spell_Projectile"), element(tool.LIFETIME_FIELD, lifetime),
@@ -85,7 +91,7 @@ def slice_nodes(delay: bytes, trap: bool = False, lifetime: bytes | None = None)
 def run(work: Path, case: str, delay: bytes, lifetime: bytes | None = None) -> tuple[int, str]:
     sheet = FakeSheet("Spells", [{"SpellID": "Test_Spell", "SpellPrefabPath": PREFAB}])
     path = tool.slice_path(PREFAB)
-    roots = slice_nodes(delay, case == "trap-slice", lifetime)
+    roots = slice_nodes(delay, case == "trap-slice", lifetime, case == "vitals-no-row")
 
     class Sources:
         used: dict = {}
@@ -156,6 +162,11 @@ def main() -> int:
     status, text = run(work, "autospell-lifetime-width", struct.pack(">f", 3.0), b"\x01")
     passed = status == 1 and text == MARK
     print(f"{'ok  ' if passed else 'FAIL'}  autospell-lifetime-width: status {status}, file {'kept' if text == MARK else 'replaced'}")
+    failures += 0 if passed else 1
+    # Finding F2 of the code review of stage 1.1b: a Vitals component needs its row reference.
+    status, text = run(work, "vitals-no-row", struct.pack(">f", 3.0))
+    passed = status == 1 and text == MARK
+    print(f"{'ok  ' if passed else 'FAIL'}  vitals-no-row: status {status}, file {'kept' if text == MARK else 'replaced'}")
     failures += 0 if passed else 1
     return 1 if failures else 0
 

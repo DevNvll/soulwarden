@@ -291,6 +291,20 @@ struct WorldCapsule {
 [[nodiscard]] WorldCapsule capsule_of(const Entity& creature);
 
 /**
+ * @return The head volume of a creature at its place (stage 3.3b-S5): the head capsule of its slice (gamedata::CreatureHead: the
+ *         HitVolume with m_isHeadshot on its bone in the bind pose of the skeleton, game data) turned by the direction of the
+ *         creature, from its feet. No value: the slice has no head volume (or a creature data file of an older tool).
+ */
+[[nodiscard]] std::optional<WorldCapsule> head_of(const Entity& creature);
+
+/**
+ * @return True when a projectile that touches a creature at `point` with this direction touches its head volume (stage
+ *         3.3b-S5, a decision of this project: the server has no animated bones, thus the line of the projectile from the point
+ *         through the body of the creature, with the radius of the projectile, against the head volume in the bind pose).
+ */
+[[nodiscard]] bool head_contact(const Entity& creature, const state::WorldPosition& point, const std::array<float, 3>& direction, float radius);
+
+/**
  * @return The part of the segment `from` - `to` (0 to 1) at which a sphere of `radius` that moves on it first touches the
  *         capsule. 0 when it touches at `from`. No value: it does not touch.
  */
@@ -394,7 +408,7 @@ private:
     /** Flies one projectile to `now`. @return The end, or no value while it is in the air. */
     std::optional<ProjectileEnd> advance(Projectile& projectile, WorldClock::time_point now);
     /** One hit of a projectile on a creature through Combat::strike. @return The values of the hit. */
-    HitResult hit(Projectile& projectile, Entity& target, const state::WorldPosition& point);
+    HitResult hit(Projectile& projectile, Entity& target, const state::WorldPosition& point, bool head = false);
     void finish(const Projectile& projectile, ProjectileEnd end, const state::WorldPosition& at, EntityId struck = 0);
 
     World& m_world;

@@ -16,8 +16,11 @@
 //     target:u64 entity:u64                       the damage receiver facet of the attacker
 //     actor id:16 bytes  G:u64                    the entity that took the damage
 //     u32 u32                                     two keys (feedback, sound): 0
-//     flags:2 bytes                               low byte first: bit 3 "the damage was the
-//                                                 death", bit 6 "critical hit", ...: 0
+//     flags:2 bytes                               low byte first: bit 0 "ranged", bit 3 "the
+//                                                 damage was the death", bit 5 "can crit", bit 6
+//                                                 "critical hit", bit 8 "headshot" (stage 3.3b-S5:
+//                                                 the client shows the special number for bit 6, or
+//                                                 for bits 0, 5, and 8 together: live check L6)
 //     count:size, then for each entry:
 //       damage type:u8 amount:f32 part:f32        `part` is the part of the damage before the
 //                                                 defense that the target took: 1

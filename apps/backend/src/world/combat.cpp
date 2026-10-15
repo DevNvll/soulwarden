@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <string>
+#include <string_view>
 
 #include "core/logging/log.h"
 #include "world/world.h"
@@ -254,7 +257,7 @@ void Combat::select_weapon(SessionId session, unsigned key) {
     }
 }
 
-float Combat::defense_factor(std::uint32_t typeIndex, const gamedata::DefenseRow* defense, float armor) const {
+float Combat::defense_factor(std::uint32_t typeIndex, const gamedata::DefenseRow* defense, float armor, float penetration) const {
     if (defense == nullptr) {
         return 1.0F;
     }
@@ -266,8 +269,9 @@ float Combat::defense_factor(std::uint32_t typeIndex, const gamedata::DefenseRow
     // category): a factor is not less than 0. A rend of an effect lowers the mitigation.
     const float weakness = typeIndex < defense->weakness.size() ? defense->weakness[typeIndex] : 0.0F;
     const float absorption = typeIndex < defense->absorption.size() ? defense->absorption[typeIndex] : 0.0F;
-    return std::max(1.0F - mitigation * std::max(1.0F + armor, 0.0F), 0.0F) * std::max(1.0F + weakness, 0.0F)
-           * std::max(1.0F - absorption, 0.0F);
+    // ArmorPenetration of the passive rules of the hit (stage 3.3b-S5): the hit meets a smaller part of the mitigation.
+    return std::max(1.0F - mitigation * std::max(1.0F + armor, 0.0F) * std::clamp(1.0F - penetration, 0.0F, 1.0F), 0.0F)
+           * std::max(1.0F + weakness, 0.0F) * std::max(1.0F - absorption, 0.0F);
 }
 
 Damage Combat::damage(const Entity& attacker,
@@ -311,6 +315,7 @@ Damage Combat::damage(const Entity& attacker,
         return found == modifiers->typeParts->end() ? 0.0F : found->second;
     };
     const float armor = modifiers != nullptr ? modifiers->armor : 0.0F;
+    const float penetration = modifiers != nullptr ? modifiers->penetration : 0.0F;
     if (modifiers != nullptr) {
         damage.raw *= std::max(1.0F + modifiers->part, 0.0F);
         if (modifiers->conversionPart > 0.0F && !modifiers->conversionType.empty()) {
@@ -329,11 +334,11 @@ Damage Combat::damage(const Entity& attacker,
         }
     }
     // The defense of the target (a rule of this project), for each part with its type.
-    const float mainDealt = (damage.raw - convertedRaw) * std::max(1.0F + typePart(type.name), 0.0F) * defense_factor(row.type, defense, armor);
+    const float mainDealt = (damage.raw - convertedRaw) * std::max(1.0F + typePart(type.name), 0.0F) * defense_factor(row.type, defense, armor, penetration);
     float convertedDealt = 0.0F;
     if (convertedIndex) {
         const gamedata::DamageType& converted = m_tables->damage_type(*convertedIndex);
-        convertedDealt = convertedRaw * std::max(1.0F + typePart(converted.name), 0.0F) * defense_factor(*convertedIndex, defense, armor);
+        convertedDealt = convertedRaw * std::max(1.0F + typePart(converted.name), 0.0F) * defense_factor(*convertedIndex, defense, armor, penetration);
         damage.convertedType = converted.wire;
     }
     if (!std::isfinite(convertedDealt) || convertedDealt < 0.0F) {
@@ -485,9 +490,9 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
         limits.note_hit(HitLimits::Hit{target->id, now, claim.input, session, track.sequence()});
         const AbilityKind kind = m_world.abilities().kind_of(phase->cast);
         const CastConversion conversion{phase->conversionType, phase->conversionPart};
-        result = strike(*attacker, *target,
-                        HitWeapon{phase->itemId, phase->slot, weapon, phase->gearScore, m_world.abilities().ability_of(phase->cast)},
-                        phase->row, 1.0F, ability_name(kind), &conversion);
+        HitWeapon use{phase->itemId, phase->slot, weapon, phase->gearScore, m_world.abilities().ability_of(phase->cast)};
+        use.attack = passive_rules::kAttackCast | phase->cast; // The hits of one cast are the hits of one attack (stage 3.3b-S5).
+        result = strike(*attacker, *target, use, phase->row, 1.0F, ability_name(kind), &conversion);
         if (result.verdict != HitVerdict::accepted) {
             return refuse(result.verdict);
         }
@@ -533,8 +538,10 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     }
     limits.note_hit(HitLimits::Hit{target->id, now, claim.input, session, track.sequence()});
     const AttackKind kind = result.kind;
-    result = strike(*attacker, *target, HitWeapon{item->itemId, weapon_slot_in_hand(*attacker).value_or(0), weapon, item->gearScore, {}},
-                    *rowIndex, 1.0F, kind == AttackKind::heavy ? "heavy attack" : "light attack");
+    // The hits of one attack input are the hits of one attack (stage 3.3b-S5: TrackHitCount of a passive rule), with the session.
+    HitWeapon use{item->itemId, weapon_slot_in_hand(*attacker).value_or(0), weapon, item->gearScore, {}};
+    use.attack = passive_rules::kAttackPress | (static_cast<std::uint64_t>(session & 0xFFFFFFU) << 32) | attack->number;
+    result = strike(*attacker, *target, use, *rowIndex, 1.0F, kind == AttackKind::heavy ? "heavy attack" : "light attack");
     result.kind = kind;
     if (result.verdict != HitVerdict::accepted) {
         return refuse(result.verdict);
@@ -556,15 +563,37 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     const gamedata::WeaponRow& weapon = *use.row;
     const std::string& itemId = use.itemId;
     const std::uint32_t gearScore = use.gearScore;
+    const EntityId attackerId = attacker.id;
+    const EntityId targetId = target.id;
+    const state::WorldPosition attackerPlace = attacker.position;
+    const state::WorldPosition from = source != nullptr ? *source : attackerPlace;
     HitContext hit;
     hit.row = row.id;
     hit.attackType = row.attackType;
     hit.ability = use.ability;
     hit.table = weapon.mastery.empty() ? 0 : gamedata::progression_id(weapon.mastery);
+    // The facts of the hit (stage 3.3b-S5): its attack, its kind, its area, the health of the target before it, a hit from behind
+    // (the angles of the DamageReceiver of the slice of the target: game data), and a headshot of a projectile.
+    hit.attack = use.attack;
+    hit.kind = use.kind;
+    hit.spell = use.spell;
+    hit.areaCount = use.areaCount;
+    hit.targetHealth = target.vitals.health;
+    hit.targetHealthMax = target.vitals.healthMax;
+    bool behindCrit = false;
+    if (target.creature.body != nullptr && target.creature.body->behind) {
+        const float angle = source_angle(target, from);
+        hit.behind = angle >= 0.0F && angle >= target.creature.body->behind->hit;
+        behindCrit = angle >= 0.0F && angle >= target.creature.body->behind->critical && !row.noBackstab;
+    }
+    hit.head = use.head && use.kind == HitKind::projectile && !row.noHeadshot;
+    // The modifiers of the passive rules of the hit (world/passives.h): the damage part, the critical parts, the penetration.
+    const HitBonus bonus = m_world.passives().before_hit(attacker, target, hit);
     HitModifiers modifiers;
-    modifiers.part = m_world.gear().hit_damage(attacker, target, hit);
+    modifiers.part = attacker.gear.baseDamage + bonus.damage + m_world.gear().load_part(attacker);
     modifiers.typeParts = &attacker.gear.damage;
     modifiers.armor = target.creature.armor_part(m_world.clock().now());
+    modifiers.penetration = bonus.penetration;
     // The gem of the weapon of the hit: the instance of the slot of the hit (finding F1 of the review of stage 1.3b), when
     // that slot still has the item of the hit.
     if (cast != nullptr) {
@@ -584,11 +613,42 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
         result.damage.dealt *= std::max(factor, 0.0F);
         result.damage.converted *= std::max(factor, 0.0F);
     }
-    const EntityId attackerId = attacker.id;
-    const EntityId targetId = target.id;
-    const state::WorldPosition attackerPlace = attacker.position;
-    const state::WorldPosition from = source != nullptr ? *source : attackerPlace;
-    result = apply_hit(attacker, target, result.damage, itemId, row.id, what, use.threat);
+    // The critical rule (Combat::critical): the bonus multiplies the damage that the target takes (both parts of a conversion).
+    const Critical critical = this->critical(weapon, row, bonus.critChance, bonus.critDamage, behindCrit, hit.head);
+    if (critical.critical) {
+        result.damage.dealt *= critical.multiplier;
+        result.damage.converted *= critical.multiplier;
+    }
+    hit.critical = critical.critical;
+    std::uint16_t flags = 0;
+    if (use.kind == HitKind::projectile) {
+        flags |= damage_flags::kRanged;
+    }
+    if (critical.critical) {
+        flags |= damage_flags::kCrit | damage_flags::kCanCrit;
+    }
+    if (hit.head) {
+        flags |= damage_flags::kHeadshot;
+    }
+    // The note of the log: the cause of a critical hit, then each fact of the hit that the cause does not already name.
+    char note[160] = "";
+    if (critical.critical || hit.behind || hit.head) {
+        const std::string_view cause = critical.critical ? critical.cause : "";
+        std::string facts = critical.critical ? "critical: " + std::string(cause) : std::string();
+        if (hit.head && cause != "headshot") {
+            facts += facts.empty() ? "headshot" : ", headshot";
+        }
+        if (hit.behind && cause != "behind") {
+            facts += facts.empty() ? "from behind" : ", from behind";
+        }
+        std::snprintf(note, sizeof(note), "%s (chance %.3f, roll %.3f, multiplier %.3f)", facts.c_str(),
+                      static_cast<double>(critical.chance), static_cast<double>(critical.roll), static_cast<double>(critical.multiplier));
+    }
+    const Damage dealt = result.damage;
+    result = apply_hit(attacker, target, dealt, itemId, row.id, what, use.threat, flags, note[0] != '\0' ? note : nullptr);
+    result.critical = critical;
+    result.behind = hit.behind;
+    result.head = hit.head;
     if (result.verdict != HitVerdict::accepted) {
         return result;
     }
@@ -601,7 +661,8 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     if (row.impact && !hurt->creature.dead) {
         m_world.creatures().impact(*hurt, *row.impact, from, attackerPlace, row.id);
     }
-    // The heart rune charge of the hit (AttackRuneCharge of the row), and the perks of a hit (stage 1.3b).
+    // The heart rune charge of the hit (AttackRuneCharge of the row), and the perks and the passive rules of a hit (stage 1.3b,
+    // stage 3.3b-S5).
     if (row.attackCharge > 0.0F) {
         m_world.runes().gain(*own, row.attackCharge);
     }
@@ -610,6 +671,47 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     hit.killed = result.killed;
     m_world.gear().on_hit(*own, *hurt, hit);
     return result;
+}
+
+Critical Combat::critical(const gamedata::WeaponRow& weapon, const gamedata::DamageRow& row, float bonusChance, float bonusDamage,
+                          bool behindCrit, bool head) {
+    Critical result;
+    if (!weapon.critical) {
+        return result; // No critical values (a combat file of a tool from before stage 3.3b-S5): no critical hit.
+    }
+    result.chance = std::clamp(weapon.critChance + bonusChance, 0.0F, 1.0F);
+    // DmgCoefCrit of the row in the place of the multiplier of the weapon (a decision of an agent: the data has it on 11 rows, the
+    // critical coefficient of the row as DmgCoefHead is its head coefficient; Path of Destiny 1.2, the war hammer 1.2), then one
+    // additive pool of the bonuses (a decision of the user).
+    result.multiplier = std::max((row.critFactor > 0.0F ? row.critFactor : weapon.critMultiplier) + bonusDamage, 0.0F);
+    if (behindCrit) {
+        result.critical = true;
+        result.cause = "behind";
+    } else if (head) {
+        result.critical = true;
+        result.cause = "headshot";
+    } else if (result.chance > 0.0F) {
+        // One independent roll for each hit with the generator of the world (a decision of the user). A chance of 0 takes no number.
+        result.roll = m_world.random_unit();
+        result.critical = result.roll < result.chance;
+        result.cause = "roll";
+    }
+    return result;
+}
+
+float Combat::source_angle(const Entity& target, const state::WorldPosition& source) {
+    const float dx = source.x - target.position.x;
+    const float dy = source.y - target.position.y;
+    const float away = std::hypot(dx, dy);
+    if (!(away > 0.05F)) {
+        return -1.0F;
+    }
+    // The front of the creature: its yaw in degrees, 0 for north, larger to the west (world/projectiles.cpp, capsule_of).
+    const float yaw = target.creature.yaw * 3.14159265F / 180.0F;
+    const float frontX = -std::sin(yaw);
+    const float frontY = std::cos(yaw);
+    const float cosine = std::clamp((frontX * dx + frontY * dy) / away, -1.0F, 1.0F);
+    return std::acos(cosine);
 }
 
 HitResult Combat::strike_amount(Entity& attacker, Entity& target, float amount, const std::string& typeName, const char* what) {
@@ -639,7 +741,7 @@ HitResult Combat::strike_amount(Entity& attacker, Entity& target, float amount, 
 }
 
 HitResult Combat::apply_hit(Entity& attacker, Entity& target, const Damage& damage, const std::string& itemId, const std::string& row,
-                            const char* what, EntityId threat) {
+                            const char* what, EntityId threat, std::uint16_t flags, const char* note) {
     HitResult result;
     result.verdict = HitVerdict::dead;
     result.damage = damage;
@@ -684,6 +786,9 @@ HitResult Combat::apply_hit(Entity& attacker, Entity& target, const Damage& dama
                result.healthBefore,
                result.healthAfter,
                result.killed ? ": dead" : "");
+    if (note != nullptr) {
+        log::write("world: hit: %s, the hit on creature %016llx: %s", attacker.name.c_str(), static_cast<unsigned long long>(targetId), note);
+    }
     DamageDealt dealt;
     dealt.target = targetId;
     dealt.targetActor = targetActor;
@@ -692,6 +797,7 @@ HitResult Combat::apply_hit(Entity& attacker, Entity& target, const Damage& dama
     dealt.secondType = result.damage.convertedType;
     dealt.secondAmount = result.damage.converted;
     dealt.killed = result.killed;
+    dealt.flags = flags;
     m_world.damage_dealt(attacker.owner, dealt);
     return result;
 }

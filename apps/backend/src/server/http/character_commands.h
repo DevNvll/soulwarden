@@ -205,6 +205,14 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
  *         effects, the item cooldowns, the rune charge, the health and the mana, and the counts.
  */
 [[nodiscard]] nlohmann::json gear_json(world::World& world, const std::string& character);
+/**
+ * @return The passive rules of a character (world thread; stage 3.3b-S5, world/passives.h): each learned node of its weapon trees
+ *         and each ability row of its perks with its kinds, whether the backend applies it, and what it does or why it has no
+ *         effect; the critical values of the weapon in the hand; the counts of the evaluator.
+ */
+[[nodiscard]] nlohmann::json passives_json(world::World& world, const std::string& character);
+/** @return Each node of a weapon tree (the id text of its ability table: "GreatAxeAbilityTable") with what the backend does with it. */
+[[nodiscard]] nlohmann::json passives_table_json(world::World& world, const std::string& table);
 
 // The loot commands (world/rewards.h, server/http/loot_commands.cpp).
 // set_force_loot: `force` (1 or 0). A development switch of a character (the debug message

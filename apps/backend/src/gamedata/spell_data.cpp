@@ -267,6 +267,7 @@ bool SpellData::load(const std::string& path) {
         return false;
     }
     SpellTables tables;
+    tables.format = format2 ? 2 : 1;
     for (const json& entry : document["slices"]) {
         if (!read_slice(entry, tables.slices.emplace_back(), format2)) {
             m_error = "slice " + std::to_string(tables.slices.size() - 1) + " does not have the form of the tool";
@@ -354,6 +355,12 @@ bool SpellData::set(SpellTables tables) {
         }
         if (error.empty() && slice.vitals && (slice.vitals->slot == 0 || type_of(slice.vitals->slot) != kVitalsStateType)) {
             error = name + " has a vitals row with no Vitals slot of the type 15";
+        }
+        // A Vitals slot needs its vitals row (format 2; code review of stage 1.1b, finding F2): with no row the entity of the
+        // slice would take no damage.
+        if (error.empty() && tables.format >= 2 && !slice.vitals
+            && std::any_of(slice.slots.begin(), slice.slots.end(), [](const SpellSlot& slot) { return slot.type == kVitalsStateType; })) {
+            error = name + " has a Vitals slot of the type 15 with no vitals row";
         }
         const auto time = [](float value) { return std::isfinite(value) && value >= 0.0F; };
         if (error.empty() && slice.autoCast

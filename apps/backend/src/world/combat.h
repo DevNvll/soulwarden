@@ -214,6 +214,35 @@ struct HitModifiers {
     float conversionPart{0.0F};
     /** The part of the armor of the target that its effects add (a rend: -0.05). */
     float armor{0.0F};
+    /**
+     * The part of the mitigation of the target that the hit does not meet (ArmorPenetration of the passive rules of the hit;
+     * stage 3.3b-S5): the mitigation times (1 - this part). A rule of this project.
+     */
+    float penetration{0.0F};
+};
+
+/** The flags of the damage number (type 2071), low byte first (client reader at image RVA 0x694A7F0; live check L6 of stage 3.3b-S5). */
+namespace damage_flags {
+inline constexpr std::uint16_t kRanged = 1U << 0;
+inline constexpr std::uint16_t kDamageCausedDeath = 1U << 3;
+inline constexpr std::uint16_t kCanCrit = 1U << 5;
+inline constexpr std::uint16_t kCrit = 1U << 6;
+inline constexpr std::uint16_t kHeadshot = 1U << 8;
+} // namespace damage_flags
+
+/**
+ * The critical result of one hit (stage 3.3b-S5, Combat::critical). The rules are decisions of the user (2026-10-15, through the
+ * orchestrator) on the inputs of the game data: an independent roll for each hit with the critical chance of the data, and one
+ * additive pool of critical damage bonuses on the multiplier of the weapon.
+ */
+struct Critical {
+    bool critical{false};
+    /** The cause: "roll", "behind" (a hit by crit from behind: the angle of the data), "headshot" (a projectile on the head volume). */
+    const char* cause{""};
+    /** The critical chance (0 to 1), the number of the roll (1: no roll), and the factor of the damage of a critical hit. */
+    float chance{0.0F};
+    float roll{1.0F};
+    float multiplier{1.0F};
 };
 
 /** What the session of an attacker gets for one hit of its character: the number at the target. */
@@ -228,6 +257,8 @@ struct DamageDealt {
     std::uint8_t secondType{0};
     /** True when the hit was the death of the target. */
     bool killed{false};
+    /** The other flags of the damage number (damage_flags: kRanged, kCanCrit, kCrit, kHeadshot; stage 3.3b-S5). */
+    std::uint16_t flags{0};
 };
 
 /** The damage of one contact of an attack of a creature on a character, with the values of each step of the rule. */
@@ -254,6 +285,10 @@ struct HitResult {
     float healthBefore{0.0F};
     float healthAfter{0.0F};
     bool killed{false};
+    /** The critical result of the hit and its facts (stage 3.3b-S5). */
+    Critical critical;
+    bool behind{false};
+    bool head{false};
 };
 
 /**
@@ -426,6 +461,16 @@ struct HitWeapon {
      * its spell row). 0: the attacker.
      */
     EntityId threat{0};
+    /**
+     * The facts of the hit for the critical rule and the passive rules (stage 3.3b-S5, world/passives.h): the identity of its
+     * attack (passive_rules::kAttackPress, kAttackCast, kAttackShot), its kind, the spell of its area and the number of the
+     * creatures in the area, and a contact of a projectile with the head volume of the target.
+     */
+    std::uint64_t attack{0};
+    HitKind kind{HitKind::contact};
+    std::string spell{};
+    std::uint32_t areaCount{0};
+    bool head{false};
 };
 
 /**
@@ -565,12 +610,33 @@ public:
      */
     [[nodiscard]] HitLimits& limits_of(const std::string& characterId);
 
+    /**
+     * The critical rule (stage 3.3b-S5; decisions of the user of 2026-10-15 on the inputs of the data, and the rules that the data
+     * and the client prove):
+     *
+     *   chance     = CritChance of the weapon + the critical chance of the passive rules and of the statuses (HitBonus), 0 to 1
+     *   critical   = a hit by crit from behind (the angle of the target at m_isHitByCritFromBehindMinAngle of its slice or more,
+     *                a row with no NoBackstab), or a headshot (a projectile on the head volume, a row with no NoHeadshot), or else
+     *                one independent roll of the generator of the world below the chance
+     *   multiplier = DmgCoefCrit of the row (when it is not 0), else CritDamageMultiplier of the weapon, plus the sum of the
+     *                critical damage bonuses (HitBonus): one additive pool
+     *
+     * A weapon with no critical values (a file of the combat tool from before the stage) gives no critical hit and no roll.
+     */
+    [[nodiscard]] Critical critical(const gamedata::WeaponRow& weapon, const gamedata::DamageRow& row, float bonusChance, float bonusDamage,
+                                    bool behindCrit, bool head);
+    /**
+     * @return The angle between the front of a creature and the direction from it to a source point (radians, 0 to pi), or a
+     *         negative value when the source is at the creature (no direction).
+     */
+    [[nodiscard]] static float source_angle(const Entity& target, const state::WorldPosition& source);
+
 private:
     /** @return The part of a damage of a type that a target with these defense values takes (mitigation, weakness, absorption). */
-    [[nodiscard]] float defense_factor(std::uint32_t type, const gamedata::DefenseRow* defense, float armor) const;
+    [[nodiscard]] float defense_factor(std::uint32_t type, const gamedata::DefenseRow* defense, float armor, float penetration = 0.0F) const;
     /** Gives the damage of a hit to a creature through the creature system, with the log line and the damage number. */
     HitResult apply_hit(Entity& attacker, Entity& target, const Damage& damage, const std::string& itemId, const std::string& row,
-                        const char* what, EntityId threat = 0);
+                        const char* what, EntityId threat = 0, std::uint16_t flags = 0, const char* note = nullptr);
 
     World& m_world;
     const gamedata::CombatTables* m_tables;

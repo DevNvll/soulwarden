@@ -5,6 +5,7 @@
 
 #include "core/logging/log.h"
 #include "gamedata/progression_tables.h"
+#include "world/data_rules.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -55,6 +56,57 @@ bool has_node(const SkillSet& skills, const char* table, const char* node) {
     }
     const auto found = pool->second.find(gamedata::progression_id(node));
     return found != pool->second.end() && found->second.level != 0;
+}
+
+/** @return True when the character has the node with this id text in any tree (the conditions of the action data name no tree). */
+bool learned(const SkillSet& skills, std::string_view node) {
+    const std::uint32_t id = gamedata::progression_id(node);
+    for (const auto& [table, nodes] : skills.pools) {
+        const auto found = nodes.find(id);
+        if (found != nodes.end() && found->second.level != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * The actions whose spell the plan takes from the spell selections of the action data (stage 3.3b-S5): the rule of an action of
+ * the data. Each one has the 3.3a rule as its fallback for a data file with no selection (a file of an older tool).
+ */
+constexpr const char* kActionSelections[] = {"Ability_WarHammer_Shockwave", "Ability_WarHammer_PathOfDestiny", "GreatAxe_GravityWell",
+                                             "Ability_Lifestaff_Beacon"};
+
+/** The nodes that a plan of this backend reads (has_node): the rules of an action that the plan applies by hand. */
+constexpr const char* kPlanNodes[] = {
+    "Ult_Passive_WarHammer_SlowOnCC", "Upgrade_Greataxe_Maelstorm_Rng", "Passive_Greataxe_Mauler_PullDur", "Upgrade_Greataxe_Maelstorm_SpinAttack",
+    "Upgrade_Greataxe_GravityWell_ArmorInWell", "Upgrade_Greataxe_GravityWell_DmgPerFoe", "Upgrade_WarHammer_Wreck_Pushback",
+    "Upgrade_WarHammer_Shockwave_SizeIncrease", "Upgrade_WarHammer_Shockwave_Weaken", "Upgrade_WarHammer_PathOfDestiny_Stagger",
+    "Upgrade_WarHammer_PathOfDestiny_CDRPerHit", "Rapier_Riposte_Mod3", "Upgrade_Musket_TrapRend", "Upgrade_Lifestaff_Protection_AoeInc",
+    "Upgrade_Lifestaff_Protection_DurOnLow", "Upgrade_Lifestaff_Protection_AddHaste"};
+
+/**
+ * @return The spell that an action of the data casts for the nodes of a character (stage 3.3b-S5): the first selection whose
+ *         nodes the character has and whose other nodes it does not have. No value: the data has no selection for the action.
+ */
+std::optional<std::string> selected_spell(const gamedata::AbilityData* data, std::string_view action, const SkillSet& skills) {
+    if (data == nullptr) {
+        return std::nullopt;
+    }
+    for (const gamedata::ActionSpell* selection : data->action_spells(action)) {
+        const bool needs = std::all_of(selection->needs.begin(), selection->needs.end(), [&](const std::string& node) { return learned(skills, node); });
+        const bool excludes = std::none_of(selection->excludes.begin(), selection->excludes.end(), [&](const std::string& node) { return learned(skills, node); });
+        if (needs && excludes && data->spell(selection->spell) != nullptr) {
+            return selection->spell;
+        }
+    }
+    return std::nullopt;
+}
+
+/** @return True when the data has the rule row of a node with this column: the evaluator of the passive rules applies it (stage 3.3b-S5). */
+bool data_rule(const gamedata::AbilityData* data, std::string_view row, const char* column) {
+    const gamedata::AbilityRow* found = data != nullptr ? data->ability_row(row) : nullptr;
+    return found != nullptr && found->cells.has(column);
 }
 
 constexpr const char* kGreatAxe = "GreatAxeAbilityTable";
@@ -120,7 +172,19 @@ const char* cast_verdict_text(CastVerdict verdict) {
 Abilities::Abilities(World& world, const gamedata::AbilityData* data, const gamedata::CombatTables* combat)
     : m_world(world), m_data(data), m_combat(combat) {}
 
-std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& skills) {
+bool Abilities::action_selected(std::string_view action) {
+    return std::any_of(std::begin(kActionSelections), std::end(kActionSelections), [&](const char* name) { return data_rules::same_text(name, action); });
+}
+
+bool Abilities::plan_node(std::string_view node) {
+    return std::any_of(std::begin(kPlanNodes), std::end(kPlanNodes), [&](const char* name) { return data_rules::same_text(name, node); });
+}
+
+bool Abilities::has_plan(std::string_view ability) {
+    return rule_of(gamedata::progression_id(ability)) != nullptr;
+}
+
+std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& skills, const gamedata::AbilityData* data) {
     const AbilityRule* rule = rule_of(ability);
     if (rule == nullptr) {
         return std::nullopt;
@@ -135,8 +199,11 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         phase.lastStep = last;
         return phase;
     };
-    // Aftershock (Ult_Passive_WarHammer_SlowOnCC): each hit of an ability of the hammer slows the target.
-    const bool aftershock = has_node(skills, kWarHammer, "Ult_Passive_WarHammer_SlowOnCC");
+    // Aftershock (Ult_Passive_WarHammer_SlowOnCC): each hit of an ability of the hammer slows the target. From stage 3.3b-S5 the
+    // evaluator of the passive rules applies its row of the data (OnHit, AttackType Ability, OtherApplyStatusEffect); the plan
+    // gives the slow only with an ability file that has no such row.
+    const bool aftershock = has_node(skills, kWarHammer, "Ult_Passive_WarHammer_SlowOnCC")
+                            && !data_rule(data, "Ult_Passive_WarHammer_SlowOnCC", "OtherApplyStatusEffect");
     const EffectPlan slowOnHit{"WarHammer_Ult_SlowOnCC", {}, 0, {}};
     switch (rule->kind) {
     case AbilityKind::charge: {
@@ -181,7 +248,15 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         // The swing of the axe (one contact), the projectile, the vortex (a root and a slow at its
         // start), and the burst 3 s after the start (live check L7: one contact and one shot).
         const bool upgrade = has_node(skills, kGreatAxe, "Upgrade_Greataxe_GravityWell_ArmorInWell");
-        const std::string vortexSpell = upgrade ? "Spell_GreatAxe_GravityWell_Vortex_Upgrade" : "Spell_GreatAxe_GravityWell_Vortex";
+        std::string vortexSpell = upgrade ? "Spell_GreatAxe_GravityWell_Vortex_Upgrade" : "Spell_GreatAxe_GravityWell_Vortex";
+        // The rule of the action (stage 3.3b-S5): the action GreatAxe_GravityWell casts the projectile of the data for the nodes
+        // (_Upgrade with Unyielding), and its SecondarySpellID is the vortex.
+        if (const std::optional<std::string> projectile = selected_spell(data, "GreatAxe_GravityWell", skills)) {
+            if (const std::string_view secondary = data->spell(*projectile)->cells.text("SecondarySpellID");
+                !secondary.empty() && data->spell(secondary) != nullptr) {
+                vortexSpell = std::string(data->spell(secondary)->id);
+            }
+        }
         plan.length = std::chrono::milliseconds(600);
         plan.phases.push_back(contact("GreatAxe_GravityWell", 3, 30));
         PhasePlan vortex;
@@ -197,7 +272,10 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         burst.spell = vortexSpell;
         burst.row = "GreatAxe_GravityWell_Burst";
         burst.at = std::chrono::milliseconds(3000);
-        burst.crowded = has_node(skills, kGreatAxe, "Upgrade_Greataxe_GravityWell_DmgPerFoe");
+        // Crowded Well: the evaluator of the passive rules applies its row of the data (BaseDamage for each creature in the vortex,
+        // MaxNumAroundMe; stage 3.3b-S5); the factor of the plan only with an ability file that has no such row.
+        burst.crowded = has_node(skills, kGreatAxe, "Upgrade_Greataxe_GravityWell_DmgPerFoe")
+                        && !data_rule(data, "Upgrade_Greataxe_GravityWell_DmgPerFoe", "NumAroundMe");
         plan.phases.push_back(burst);
         break;
     }
@@ -223,8 +301,17 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         phase.at = std::chrono::milliseconds(800);
         phase.spell = crater ? "WarHammer_Spell_Shockwave_L2" : "WarHammer_Spell_Shockwave";
         phase.row = crater ? "Warhammer_Damage_Shockwave_L2" : "Warhammer_Damage_Shockwave";
+        // The rule of the action (stage 3.3b-S5): the spell that the action of the data casts for the nodes, and its damage row.
+        if (const std::optional<std::string> spell = selected_spell(data, "Ability_WarHammer_Shockwave", skills)) {
+            phase.spell = *spell;
+            if (const std::string_view row = data->spell(*spell)->cells.text("DamageTableRow"); !row.empty()) {
+                phase.row = std::string(row);
+            }
+        }
         phase.effects.push_back(EffectPlan{"WarHammer_Shockwave_Stun", {}, 0, {}});
-        if (has_node(skills, kWarHammer, "Upgrade_WarHammer_Shockwave_Weaken")) {
+        // Frailty: the evaluator applies its row of the data (OnHit, InAction, OtherApplyStatusEffect; stage 3.3b-S5).
+        if (has_node(skills, kWarHammer, "Upgrade_WarHammer_Shockwave_Weaken")
+            && !data_rule(data, "Upgrade_WarHammer_Shockwave_Weaken", "OtherApplyStatusEffect")) {
             phase.effects.push_back(EffectPlan{"WarHammer_Shockwave_Weaken", {}, 0, {}});
         }
         if (aftershock) {
@@ -245,7 +332,16 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         phase.at = std::chrono::milliseconds(1000);
         phase.spell = std::string("WarHammer_Spell_PathOfDestiny") + level;
         phase.row = std::string("Warhammer_Damage_PathOfDestiny") + level;
-        phase.cooldownPerHit = reduction;
+        // The rule of the action (stage 3.3b-S5): the spell of the data for the nodes (L2 with Seismic Waves, L3 with Stimulated
+        // Reduction), and its damage row.
+        if (const std::optional<std::string> spell = selected_spell(data, "Ability_WarHammer_PathOfDestiny", skills)) {
+            phase.spell = *spell;
+            if (const std::string_view row = data->spell(*spell)->cells.text("DamageTableRow"); !row.empty()) {
+                phase.row = std::string(row);
+            }
+        }
+        // Stimulated Reduction: the evaluator applies its row of the data (TrackHitCount, AbilitySpecific; stage 3.3b-S5).
+        phase.cooldownPerHit = reduction && !data_rule(data, "Upgrade_WarHammer_PathOfDestiny_CDRPerHit", "CooldownTimer");
         if (seismic) {
             phase.effects.push_back(EffectPlan{"", {}, ability_rules::kStaggerPower, ability_rules::kStaggerTime});
         }
@@ -324,6 +420,11 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         SpellPlan spell;
         spell.role = SpellRole::aura;
         spell.projectile = kProjectiles[upgrades];
+        // The rule of the action (stage 3.3b-S5): the projectile that the action of the data casts for the nodes. It replaces the
+        // chain of the nodes above (a decision of an agent of stage 3.3b-S2b) where the data has the selection.
+        if (const std::optional<std::string> projectile = selected_spell(data, "Ability_Lifestaff_Beacon", skills)) {
+            spell.projectile = *projectile;
+        }
         spell.at = std::chrono::milliseconds(133);
         spell.characters = true;
         plan.spell = spell;
@@ -404,7 +505,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         return refuse(CastVerdict::notLearned);
     }
     const AbilityRule* rule = rule_of(ability);
-    std::optional<CastPlan> planned = plan(ability, character->skills);
+    std::optional<CastPlan> planned = plan(ability, character->skills, m_data);
     const gamedata::CooldownRow* cooldown = rule != nullptr ? m_data->cooldown(rule->id) : nullptr;
     if (!planned || cooldown == nullptr) {
         return refuse(CastVerdict::noRule);
@@ -1101,7 +1202,7 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
             ++m_counts.blocked;
             continue;
         }
-        if (area_hit(cast, index, *caster, *target, factor, center)) {
+        if (area_hit(cast, index, *caster, *target, factor, center, static_cast<std::uint32_t>(found_.size()))) {
             ++hits;
             ++phaseHits;
         }
@@ -1117,7 +1218,8 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
                hits);
 }
 
-bool Abilities::area_hit(Cast& cast, std::uint32_t index, Entity& caster, Entity& target, float factor, const state::WorldPosition& center) {
+bool Abilities::area_hit(Cast& cast, std::uint32_t index, Entity& caster, Entity& target, float factor, const state::WorldPosition& center,
+                         std::uint32_t areaCount) {
     const PhasePlan& phase = cast.plan.phases[index];
     if (phase.row.empty()) {
         // A phase with no damage (the start of the vortex): only its effects, and the impact of its pull row (stage 3.3b-S4).
@@ -1139,9 +1241,14 @@ bool Abilities::area_hit(Cast& cast, std::uint32_t index, Entity& caster, Entity
         return false;
     }
     const CastConversion conversion{cast.conversionType, cast.conversionPart};
-    const HitResult result =
-        m_world.combat().strike(caster, target, HitWeapon{cast.itemId, cast.slot, weapon, cast.gearScore, ability_text(cast.ability)}, *row,
-                                factor, ability_name(cast.plan.kind), &conversion, &center);
+    // The facts of the hit for the passive rules (stage 3.3b-S5): the cast is the attack, the spell of the phase and the number of
+    // the creatures of its area (Crowded Well counts the creatures in the vortex).
+    HitWeapon use{cast.itemId, cast.slot, weapon, cast.gearScore, ability_text(cast.ability)};
+    use.attack = passive_rules::kAttackCast | cast.number;
+    use.kind = HitKind::area;
+    use.spell = phase.spell;
+    use.areaCount = areaCount;
+    const HitResult result = m_world.combat().strike(caster, target, use, *row, factor, ability_name(cast.plan.kind), &conversion, &center);
     if (result.verdict != HitVerdict::accepted) {
         return false;
     }
@@ -1474,9 +1581,9 @@ void Abilities::counter_hit(std::uint64_t number, std::uint32_t index, EntityId 
         return;
     }
     const CastConversion conversion{cast.conversionType, cast.conversionPart};
-    const HitResult result = m_world.combat().strike(*caster, *target, HitWeapon{cast.itemId, cast.slot, weapon, cast.gearScore,
-                                                                               ability_text(cast.ability)},
-                                                     *row, 1.0F, ability_name(cast.plan.kind), &conversion);
+    HitWeapon use{cast.itemId, cast.slot, weapon, cast.gearScore, ability_text(cast.ability)};
+    use.attack = passive_rules::kAttackCast | cast.number;
+    const HitResult result = m_world.combat().strike(*caster, *target, use, *row, 1.0F, ability_name(cast.plan.kind), &conversion);
     if (result.verdict != HitVerdict::accepted) {
         return;
     }
@@ -1732,9 +1839,21 @@ void Abilities::perk_burst(Entity& caster, std::string_view spellId) {
 }
 
 void Abilities::reduce_weapon_cooldowns(Entity& character, float part) {
+    reduce_weapon_cooldowns(character, part, {}, {});
+}
+
+void Abilities::reduce_weapon_cooldowns(Entity& character, float part, std::string_view only, std::string_view except) {
     if (!has_data() || !(part > 0.0F)) {
         return;
     }
+    // An ability is the one of the filter when its id or the cooldown id of its row (CooldownId: "Executioner") is the text.
+    const auto named = [&](const AbilityRule& rule, std::string_view text) {
+        if (data_rules::same_text(rule.id, text)) {
+            return true;
+        }
+        const gamedata::AbilityRow* row = m_data->ability_row(rule.id);
+        return row != nullptr && data_rules::same_text(row->cells.text("CooldownId"), text);
+    };
     const ItemInstance* item = Combat::weapon_in_hand(character);
     const gamedata::WeaponRow* weapon = item != nullptr ? m_combat->weapon_of(item->itemId) : nullptr;
     if (weapon == nullptr || weapon->mastery.empty()) {
@@ -1752,6 +1871,9 @@ void Abilities::reduce_weapon_cooldowns(Entity& character, float part) {
         const AbilityRule* rule = rule_of(ability);
         const gamedata::CooldownRow* row = rule != nullptr ? m_data->cooldown(rule->id) : nullptr;
         if (timer == state->second.cooldowns.end() || row == nullptr || timer->second.end <= now || timer->second.indefinite) {
+            continue;
+        }
+        if ((!only.empty() && !named(*rule, only)) || (!except.empty() && named(*rule, except))) {
             continue;
         }
         const auto cut = milliseconds(row->time * part);

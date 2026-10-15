@@ -43,13 +43,10 @@
 //     22.9"), its class by the percents of the row Player of the encumbrance
 //     table (light below 26, medium below 46, heavy to 100, overburdened above), and the part of the damage of each class
 //     (EquipLoadDamageMult*: light +0.15, medium 0, heavy -0.15) and the factor of a heal (EquipLoadHealMult*).
-//   - On a hit (Gear::on_hit): the ability rows of the perks with OnHit, with the conditions that the backend can
-//     evaluate (AttackType, DamageTableRow, RemoteDamageTableRow, TargetStatusEffectCategory, TargetHealthPercent,
-//     MyHealthPercent, MyStaminaPercent, MyManaPercent, HasGritActive, AttackerVitalsCategory, TargetVitalsCategory,
-//     DontHaveStatusEffect) and ActivationCooldown: BaseDamage (Gear::hit_damage), OtherApplyStatusEffect (a status on
-//     the creature: a rend, a damage over time, a chain), DmgPctToHealth (a heal), CooldownTimer with
-//     CDRImmediatelyOptions ActiveWeapon (a shorter cooldown of the abilities of the weapon in the hand). A row with a
-//     condition that the backend cannot evaluate has no effect (a rule of this project).
+//   - On a hit (Gear::on_hit): the evaluator of the passive rules (world/passives.h, stage 3.3b-S5) evaluates the ability
+//     rows of the perks and the learned nodes: their conditions, their ActivationCooldown, and their effects. The gear
+//     system keeps the effects that only the gear has: a rend, a damage over time, a chain (Gear::perk_status), the burst
+//     of a perk (Gear::perk_burst_of), and the status on the caster (Gear::caster_effect).
 //
 // The cost: a hit looks at the perks of the items of one character (55 at most) and at the effects on it and on its
 // target; no rule looks at other entities, but the chain of a void perk, which looks at the position index near its
@@ -125,7 +122,7 @@ struct Conversion {
     float part{0.0F};
 };
 
-/** What a hit of a character on a creature is, for the conditions of a perk. */
+/** What a hit of a character on a creature is, for the conditions of a perk and of a passive rule (world/passives.h). */
 struct HitContext {
     /** The damage row of the hit ("GreatAxe_PrimaryAttack", "Rune_Detonate_AoE"), and its attack type ("Light", "Heavy", "Ability", "Heartgem"). */
     std::string row;
@@ -141,6 +138,23 @@ struct HitContext {
     float raw{0.0F};
     /** True when the hit was the death of the creature. */
     bool killed{false};
+    /**
+     * The facts of the hit (stage 3.3b-S5). `attack`: the identity of one attack (passive_rules::kAttackPress, kAttackCast,
+     * kAttackShot with its number; 0: the hit is its own attack), for the hit counts of a rule. `kind`: melee, projectile, or area.
+     * `behind`: the source of the hit is at the hit angle of the target or more; `head`: the projectile touched the head volume;
+     * `critical`: the hit is a critical hit (the roll, a hit by crit from behind, or a headshot).
+     */
+    std::uint64_t attack{0};
+    HitKind kind{HitKind::contact};
+    bool behind{false};
+    bool head{false};
+    bool critical{false};
+    /** The spell of the area of the hit and the number of the creatures in it (NumAroundMe of a rule tracked by that spell). */
+    std::string spell;
+    std::uint32_t areaCount{0};
+    /** The health of the target before the hit (the conditions TargetHealthPercent of each rule of the hit). Negative: not set. */
+    float targetHealth{-1.0F};
+    float targetHealthMax{0.0F};
 };
 
 /** Counts of the gear system, for the log and for the tests. */
@@ -157,6 +171,9 @@ struct GearCounts {
 };
 
 class Gear {
+    /** The evaluator of the passive rules counts the perk effects in the counts of the gear (stage 3.3b-S5). */
+    friend class Passives;
+
 public:
     explicit Gear(World& world) : m_world(world) {}
 
@@ -196,19 +213,23 @@ public:
     void on_hit_taken(Entity& character, const gamedata::CreatureContact& contact);
     /** @return The heal factor of the equip load class of a character (EquipLoadHealMult*). */
     [[nodiscard]] float heal_factor(const Entity& character) const;
+    /** @return The part of the damage of a hit of the equip load class of a character (EquipLoadDamageMult*). */
+    [[nodiscard]] float load_part(const Entity& attacker) const;
 
     [[nodiscard]] const GearCounts& counts() const {
         return m_counts;
     }
 
-private:
-    /** @return True when the conditions of an OnHit ability row pass for this hit. */
-    [[nodiscard]] bool conditions_pass(const gamedata::CellValues& row, const Entity& attacker, const Entity& target,
-                                       const HitContext& hit) const;
     /** The caster effect of an ability row that passed its conditions: its SelfApplyStatusEffect on the character. */
     void caster_effect(Entity& attacker, const gamedata::CellValues& row, const std::string& name, float potency);
-    /** Gives the creature the damage over time or the chain of a status of a perk, with the damage of the hit. */
+    /** Gives the creature the rend, the damage over time, or the chain of a status of a perk or a rule, with the damage of the hit. */
     void perk_status(Entity& attacker, Entity& target, std::string_view status, float potency, const HitContext& hit);
+    /** @return True for a status that perk_status gives (a rend of the armor, a damage over time, a chain). */
+    [[nodiscard]] static bool perk_status_kind(const gamedata::StatusRow& row);
+    /** The burst of a perk (gear_rules::kPerkBursts) around a character in the next tick, when the rule is a perk with a burst. */
+    void perk_burst_of(const Entity& character, std::string_view rule);
+
+private:
     /** One hit of a perk with a fixed amount (a tick, a chain): through Combat::strike_amount. */
     void perk_damage(EntityId attacker, EntityId target, float amount, const std::string& type, const char* what, float charge);
 

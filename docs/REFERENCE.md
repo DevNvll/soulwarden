@@ -417,7 +417,14 @@ button on "Confirm").
   the speed of a haste has the limit of the client, 1.5 times (from stage 3.3b-S4; before it
   the speed had no upper limit). From stage 3.3b-S4 the tool stops when an ability table of
   the players does not have a rule column of the backend, or a status table does not have the
-  absorption and damage columns of each damage type (it keeps the file that is there).
+  absorption and damage columns of each damage type (it keeps the file that is there). From stage
+  3.3b-S5 the file (format 4, 2.5 MB) has each row of the ability tables of the players (the
+  passive rules of the nodes and of the perks) and the spell selections of the action lists:
+  with a file of format 3 most nodes do nothing, and Shockwave, Path of Destiny, Gravity Well,
+  and the Beacon keep the spells of stage 3.3a. The combat tool writes the critical values of
+  each weapon and the head and critical cells of each damage row, and the creature tool
+  writes the angles of a hit from behind and the head volume of each creature model (from
+  its skeleton): with older files no hit is critical.
 - `tools/gamedata/projectiles.sh` makes the projectile data
   (`~/.local/share/soulwarden/gamedata/projectile-data.json`, 72 KB, stage 3.3b-S3): the ranged
   attack profiles of the game (the range, the radius, the near range, the acceleration delay),
@@ -510,9 +517,8 @@ button on "Confirm").
   health 0 your character dies: the client shows "You died" for 5 s and then its respawn
   screen. The button "Respawn" puts your character at the nearest spirit shrine or inn
   with its full health (with no travel places: at the place of its death). A character is
-  never dead after a login. Not yet: health regeneration, food and potions, blocks,
-  dodges, critical hits, status effects, and the respawn points of the game (camps,
-  houses).
+  never dead after a login. Not yet: blocks, dodges, and the respawn points of the game
+  (camps, houses).
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is
@@ -533,7 +539,26 @@ button on "Confirm").
   attack, the attributes and the level of the character, and the defense values of the
   creature. The client finds each contact itself and reports it, and the backend checks each
   report (the creature, the distance, the weapon, the time of the attack): the rules are
-  rules of this project (protocol notes 4.15). Not yet: critical hits and blocks.
+  rules of this project (protocol notes 4.15). Not yet: blocks.
+- Critical hits (stage 3.3b-S5, protocol notes 4.30, `docs/systems/combat-and-health.md`). Each
+  hit of your character on a creature (a melee attack, an ability, a projectile) can be
+  critical: one roll of the server for each hit with the critical chance of the weapon (the
+  great axe 7 percent, the war hammer 6, the bow 8) plus the critical chance of your nodes,
+  perks, and effects. A critical hit does the critical multiplier of the weapon (the great axe
+  1.35, the war hammer 1.2, the bow 1.3) plus the critical damage of your nodes and effects,
+  and the damage number shows in orange and larger. A hit from behind a creature (for a wolf,
+  135 degrees or more from its front) is critical with no roll, and a projectile that touches
+  the head of a creature (the head volume of the game data) is a critical headshot. In a
+  development run, `tools/world passives NAME` shows the chance and the multiplier of the
+  weapon in the hand.
+- Passive nodes (stage 3.3b-S5, `docs/systems/passive-rules.md`). The nodes of the weapon
+  trees and the ability rows of your perks act with the rules of their rows in the game data:
+  an effect on your character after a hit, after a hit that you take, or while creatures are
+  near you; an effect on the creature; a shorter cooldown; a heal of a part of the damage; a
+  damage part, an armor penetration, or a critical part. A node of an ability that does not
+  work yet, and a node that needs grit, a block, or an action of the client that the server
+  does not have, does nothing: `tools/world passives NAME` (and `--table greataxe`) lists each
+  node with what the backend does with it.
 - Ranged and magic basic attacks (stage 3.3b-S3, protocol notes 4.27,
   `docs/systems/projectiles.md`). With the projectile data, a shot of the bow (a hip shot, an
   aimed shot with the right pointer button, a charged shot with a hold of 0.5 s or more) or a
@@ -581,9 +606,8 @@ button on "Confirm").
   does no damage, and 0.43 s later the counter of the server hits it one time (the damage of
   the row, the stun of 2 s, a push of 1.5 m), when it is still in the reach of its hit. Not
   yet: the counter animation of your character, the other abilities of the rapier, the
-  abilities of the other weapons, the passive
-  nodes and the effects on your own character (fortify, grit, empower, heal), and the perks
-  of an item that change an ability.
+  abilities of the other weapons, grit, and the perks of an item that change an ability (the
+  passive nodes: stage 3.3b-S5).
 - Spell abilities (stage 3.3b-S2b, protocol notes 4.28, `docs/systems/spells.md`). With the
   spell data and the projectile data of this stage, the key Q uses Ice Pylon of the ice
   gauntlet, Traps of the musket, and Beacon of the life staff when they are on the bar. The

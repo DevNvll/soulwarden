@@ -748,9 +748,25 @@ struct GearSummary {
      */
     float moveSpeed{0.0F};
     float sprintSpeed{0.0F};
+    /**
+     * The critical chance and the critical damage parts of the statuses (CritChanceModifier, CritDamageModifier with the limits of
+     * their categories; stage 3.3b-S5). The critical rule adds them at each hit (world/passives.h).
+     */
+    float critChance{0.0F};
+    float critDamage{0.0F};
     /** The equip load of the armor (tenths: the client shows 38.75 as 3.8) and its class: 0 light, 1 medium, 2 heavy, 3 overburdened. */
     float equipLoad{0.0F};
     std::uint8_t loadClass{0};
+};
+
+/** The kind of a hit (stage 3.3b-S5: the conditions DamageIsMelee and DamageIsRanged of a passive rule). */
+enum class HitKind : std::uint8_t {
+    /** A melee contact (an attack, or a melee phase of an ability). */
+    contact,
+    /** A projectile. */
+    projectile,
+    /** An area or a spell (not melee and not ranged). */
+    area,
 };
 
 /** The combat values of a character. The combat system sets them (world/combat.h). */

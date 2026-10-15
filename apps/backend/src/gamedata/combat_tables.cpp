@@ -1,7 +1,9 @@
 #include "gamedata/combat_tables.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <unordered_map>
 
 #include <nlohmann/json.hpp>
 
@@ -424,6 +426,57 @@ bool CombatTables::load(const std::string& path) {
                 return fail("the damage row " + entry[0].get<std::string>() + " has two impacts");
             }
             data.damageRows[row->second].impact = impact;
+        }
+    }
+    // The critical values (stage 3.3b-S5): [[weapon id, critChance, critDamageMultiplier], ...] and [[row id, canCrit,
+    // noHeadshot, noBackstab, dmgCoefHead, dmgCoefCrit], ...]. A file of a tool from before the stage has none: no critical hit.
+    if (document.contains("criticals") || document.contains("hitRules")) {
+        if (!document.contains("criticals") || !document.contains("hitRules") || !document["criticals"].is_array()
+            || !document["hitRules"].is_array()) {
+            return fail("the criticals and the hit rules are not two lists");
+        }
+        std::unordered_map<std::string, std::uint32_t> weaponIndex;
+        for (std::uint32_t index = 0; index < data.weapons.size(); ++index) {
+            weaponIndex.emplace(lower(data.weapons[index].id), index);
+        }
+        for (const json& entry : document["criticals"]) {
+            float chance = 0.0F;
+            float multiplier = 0.0F;
+            if (!entry.is_array() || entry.size() != 3 || !entry[0].is_string() || !read_float(entry[1], chance)
+                || !read_float(entry[2], multiplier) || chance < 0.0F || chance > 1.0F || multiplier < 0.0F) {
+                return fail("a critical entry does not have the form of the tool");
+            }
+            const auto weapon = weaponIndex.find(lower(entry[0].get<std::string>()));
+            if (weapon == weaponIndex.end() || data.weapons[weapon->second].critical) {
+                return fail("the critical entry of " + entry[0].get<std::string>() + " names no weapon of the file, or a weapon two times");
+            }
+            WeaponRow& row = data.weapons[weapon->second];
+            row.critical = true;
+            row.critChance = chance;
+            row.critMultiplier = multiplier;
+        }
+        std::vector<bool> seen(data.damageRows.size(), false);
+        for (const json& entry : document["hitRules"]) {
+            float head = 0.0F;
+            float crit = 0.0F;
+            if (!entry.is_array() || entry.size() != 6 || !entry[0].is_string() || !entry[1].is_boolean() || !entry[2].is_boolean()
+                || !entry[3].is_boolean() || !read_float(entry[4], head) || !read_float(entry[5], crit) || head < 0.0F || crit < 0.0F) {
+                return fail("a hit rule does not have the form of the tool");
+            }
+            const auto row = rowIndex.find(lower(entry[0].get<std::string>()));
+            if (row == rowIndex.end() || seen[row->second]) {
+                return fail("the hit rule of " + entry[0].get<std::string>() + " names no damage row of the file, or a row two times");
+            }
+            seen[row->second] = true;
+            DamageRow& damage = data.damageRows[row->second];
+            damage.canCrit = entry[1].get<bool>();
+            damage.noHeadshot = entry[2].get<bool>();
+            damage.noBackstab = entry[3].get<bool>();
+            damage.headFactor = head;
+            damage.critFactor = crit;
+        }
+        if (std::find(seen.begin(), seen.end(), false) != seen.end()) {
+            return fail("a damage row has no hit rule");
         }
     }
     // The damage of a level difference: [[difference, part of the damage], ...].

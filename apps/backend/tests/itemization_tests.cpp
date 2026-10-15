@@ -355,7 +355,7 @@ void hit_perks(const Options&) {
     // A perk row with a condition that the backend does not evaluate has no effect.
     check(shop.wear("TestChest", world::paperdoll::kChest, {"PerkID_Test_Unknown_Condition"}).ok(), "setup: a chest with a perk of an unknown condition");
     const world::HitResult plain = shop.strike(*wolf, "Test_Light", "TestAxe");
-    check(near(plain.damage.raw, kWeaponDamage, 0.1F), "a perk row with a condition that the backend cannot evaluate (DamageIsMelee) adds nothing");
+    check(near(plain.damage.raw, kWeaponDamage, 0.1F), "a perk row with a condition that the backend cannot evaluate (DistFromDefender) adds nothing");
 }
 
 /** IZ6: the heart rune: the charge of hits, the state of the owner, the key, one explosion, the variant, the refusals. */

@@ -16,6 +16,8 @@ using nlohmann::json;
  * effect rows and the status categories; 2 from stage 1.3b, with the other cells of each status row and spell row and
  * the costs; 1 has none of them. */
 constexpr std::uint64_t kFormat = 3;
+/** Format 4 (stage 3.3b-S5): each row of the ability tables of the players, and the action spells and nodes. */
+constexpr std::uint64_t kRulesFormat = 4;
 constexpr std::uint64_t kCostFormat = 2;
 constexpr std::uint64_t kOldFormat = 1;
 
@@ -200,6 +202,15 @@ bool read_category(const json& row, StatusCategory& category) {
     return true;
 }
 
+bool read_action_spell(const json& row, ActionSpell& action) {
+    return row.is_array() && row.size() == 5 && text(row, 0, action.list) && text(row, 1, action.action) && text(row, 2, action.spell)
+           && read_texts(row[3], action.needs) && read_texts(row[4], action.excludes);
+}
+
+bool read_action_nodes(const json& row, ActionNodes& nodes) {
+    return row.is_array() && row.size() == 2 && text(row, 0, nodes.list) && read_texts(row[1], nodes.nodes) && !nodes.nodes.empty();
+}
+
 bool read_stat_limit(const json& row, StatLimit& limit) {
     return row.is_array() && row.size() == 3 && text(row, 0, limit.id) && number(row, 1, limit.min) && number(row, 2, limit.max);
 }
@@ -269,8 +280,8 @@ bool AbilityData::load(const std::string& path) {
     }
     const std::uint64_t format =
         document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kFormat && format != kCostFormat && format != kOldFormat) {
-        m_error = "the file does not have the format 1, 2, or 3";
+    if (format != kRulesFormat && format != kFormat && format != kCostFormat && format != kOldFormat) {
+        m_error = "the file does not have the format 1, 2, 3, or 4";
         return false;
     }
     AbilityTables tables;
@@ -302,6 +313,11 @@ bool AbilityData::load(const std::string& path) {
         && !read_list(document, "statMultipliers", read_stat_limit, tables.statMultipliers, m_error)) {
         return false;
     }
+    if (format >= kRulesFormat
+        && (!read_list(document, "actionSpells", read_action_spell, tables.actionSpells, m_error)
+            || !read_list(document, "actionNodes", read_action_nodes, tables.actionNodes, m_error))) {
+        return false;
+    }
     return accept(std::move(tables), true);
 }
 
@@ -320,6 +336,9 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
     m_abilityRows.clear();
     m_categories.clear();
     m_statLimits.clear();
+    m_actionSpells.clear();
+    m_actionNodes.clear();
+    m_trackingSpells.clear();
     std::unordered_map<std::string, std::size_t> cooldowns;
     std::unordered_map<std::string, std::size_t> status;
     std::unordered_map<std::string, std::size_t> spells;
@@ -435,10 +454,37 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
             }
         }
     }
+    // The action spells (stage 3.3b-S5): each spell of a selection is a spell of the data.
+    std::unordered_map<std::string, std::vector<std::size_t>> actionSpells;
+    for (std::size_t index = 0; error.empty() && index < tables.actionSpells.size(); ++index) {
+        const ActionSpell& action = tables.actionSpells[index];
+        if (spells.count(lower_ascii(action.spell)) == 0) {
+            error = "the action " + action.action + " casts the spell " + action.spell + ", which the data does not have";
+        }
+        actionSpells[lower_ascii(action.action)].push_back(index);
+    }
+    std::unordered_map<std::string, std::vector<std::string>> actionNodes;
+    for (const ActionNodes& list : tables.actionNodes) {
+        for (const std::string& node : list.nodes) {
+            actionNodes[lower_ascii(node)].push_back(list.list);
+        }
+    }
+    // The tracking spell of a rule: the first spell row with its AbilityId and TrackNumInVolume.
+    std::unordered_map<std::string, std::size_t> tracking;
+    for (std::size_t index = 0; index < tables.spells.size(); ++index) {
+        const SpellRow& spell = tables.spells[index];
+        const std::string_view rule = spell.cells.text("AbilityId");
+        if (!rule.empty() && spell.cells.number("TrackNumInVolume") != 0.0F) {
+            tracking.emplace(lower_ascii(rule), index);
+        }
+    }
     if (!error.empty()) {
         m_error = error;
         return false;
     }
+    m_actionSpells = std::move(actionSpells);
+    m_actionNodes = std::move(actionNodes);
+    m_trackingSpells = std::move(tracking);
     m_tables = std::move(tables);
     m_cooldowns = std::move(cooldowns);
     m_status = std::move(status);
@@ -489,6 +535,30 @@ const StatusCategory* AbilityData::category(std::string_view id) const {
 
 const StatLimit* AbilityData::stat_limit(std::string_view id) const {
     return find_row(m_tables.statMultipliers, m_statLimits, id);
+}
+
+std::vector<const ActionSpell*> AbilityData::action_spells(std::string_view action) const {
+    std::vector<const ActionSpell*> result;
+    if (const auto found = m_actionSpells.find(lower_ascii(action)); found != m_actionSpells.end()) {
+        for (const std::size_t index : found->second) {
+            result.push_back(&m_tables.actionSpells[index]);
+        }
+    }
+    return result;
+}
+
+bool AbilityData::action_tests(std::string_view node) const {
+    return m_actionNodes.count(lower_ascii(node)) != 0;
+}
+
+std::vector<std::string> AbilityData::action_lists_of(std::string_view node) const {
+    const auto found = m_actionNodes.find(lower_ascii(node));
+    return found == m_actionNodes.end() ? std::vector<std::string>{} : found->second;
+}
+
+const SpellRow* AbilityData::tracking_spell(std::string_view rule) const {
+    const auto found = m_trackingSpells.find(lower_ascii(rule));
+    return found == m_trackingSpells.end() ? nullptr : &m_tables.spells[found->second];
 }
 
 } // namespace soulwarden::backend::gamedata

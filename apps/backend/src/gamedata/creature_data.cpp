@@ -239,6 +239,30 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
         }
         slice.capsule = capsule;
     }
+    // The hit facts (stage 3.3b-S5): the two angles of a hit from behind (0 to pi), and the head volume.
+    if (entry.contains("behind")) {
+        const json& values = entry["behind"];
+        CreatureBehind behind;
+        constexpr float kPi = 3.14159274F;
+        if (!values.is_array() || values.size() != 2 || !read_real(values[0], behind.hit) || !read_real(values[1], behind.critical)
+            || behind.hit < 0.0F || behind.hit > kPi + 0.001F || behind.critical < 0.0F || behind.critical > kPi + 0.001F) {
+            return false;
+        }
+        slice.behind = behind;
+    }
+    if (entry.contains("head")) {
+        const json& values = entry["head"];
+        CreatureHead head;
+        const auto point = [](const json& value, std::array<float, 3>& out) {
+            return value.is_array() && value.size() == 3 && read_real(value[0], out[0]) && read_real(value[1], out[1])
+                   && read_real(value[2], out[2]);
+        };
+        if (!values.is_array() || values.size() != 3 || !point(values[0], head.a) || !point(values[1], head.b)
+            || !read_real(values[2], head.radius) || !(head.radius > 0.0F)) {
+            return false;
+        }
+        slice.head = head;
+    }
     // The members of the behavior (format 2). Each one is a member of a slice that has it: a
     // member with a wrong form is a fault of the file.
     if (entry.contains("tags")) {

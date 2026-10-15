@@ -307,12 +307,17 @@ def build_tables(contents: list[bytes]) -> dict:
             rank_tables[table] = {"experience": experience}
             if kind == "weapon":
                 rank_tables[table]["resetCost"] = cost
-        largest = min(whole(progression_sheet.cell(row, "MaxLevel")), len(rank_tables[table]["experience"]) - 1)
-        # The largest rank with the expansion (the client takes a value that is not 0, 0x3CB38E0).
+        # The largest rank, and the largest rank with the expansion (the client takes a value that is not 0, 0x3CB38E0). The rank
+        # table must have a row for each rank to the largest one: a short source stops the tool, the cap of the data stays (code
+        # review of stage 1.1b, finding F3: a short Mining table gave the cap 200 in place of 250).
         if "Expansion01MaxLevel" not in progression_sheet.columns:
             raise Failure(f"the table {PROGRESSION_TABLE} has no column Expansion01MaxLevel")
-        expansion_largest = min(whole(progression_sheet.cell(row, "Expansion01MaxLevel")),
-                                len(rank_tables[table]["experience"]) - 1)
+        largest = whole(progression_sheet.cell(row, "MaxLevel"))
+        expansion_largest = whole(progression_sheet.cell(row, "Expansion01MaxLevel"))
+        ranks = len(rank_tables[table]["experience"])
+        for column, value in (("MaxLevel", largest), ("Expansion01MaxLevel", expansion_largest)):
+            if value >= ranks:
+                raise Failure(f"the {column} {value} of {identifier} has no row in its rank table {table} (ranks 0 to {ranks - 1})")
         progressions.append([identifier, kind, largest, table, expansion_largest])
     weapons = {entry[0].lower() for entry in progressions if entry[1] == "weapon"}
     if not weapons:
