@@ -21,13 +21,16 @@
 #include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/item_catalog.h"
+#include "gamedata/perk_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/travel_places.h"
 #include "state/store.h"
 #include "world/abilities.h"
 #include "world/combat.h"
+#include "world/consumables.h"
 #include "world/creatures.h"
 #include "world/entity.h"
+#include "world/gear.h"
 #include "world/health.h"
 #include "world/ids.h"
 #include "world/inventory.h"
@@ -37,6 +40,7 @@
 #include "world/position_report.h"
 #include "world/progress.h"
 #include "world/rewards.h"
+#include "world/runes.h"
 #include "world/skills.h"
 #include "world/world_clock.h"
 
@@ -241,6 +245,8 @@ struct WorldOptions {
     const gamedata::LootTables* lootTables{nullptr};
     /** The ability data (game data, stage 3.3a). Null: the backend refuses each ability press. */
     const gamedata::AbilityData* abilityData{nullptr};
+    /** The perk data (game data, stage 1.3b). Null: an item has no perk, and no perk has an effect. */
+    const gamedata::PerkData* perkData{nullptr};
     /**
      * The terrain heights (game data): the ground for a creature that walks. Null: no creature
      * leaves its place. The world asks it only in the world thread.
@@ -312,6 +318,10 @@ public:
     }
     [[nodiscard]] const WorldOptions& options() const {
         return m_options;
+    }
+    /** @return The perk data (game data, stage 1.3b), or null when the backend has none. */
+    [[nodiscard]] const gamedata::PerkData* perk_data() const {
+        return m_options.perkData != nullptr && m_options.perkData->loaded() ? m_options.perkData : nullptr;
     }
     /**
      * Turns the behavior of the creatures on or off (WorldOptions::creatureBehavior): the start
@@ -607,6 +617,21 @@ public:
     [[nodiscard]] Abilities& abilities() {
         return m_abilities;
     }
+    /** @return The gear system: what the equipment and the effects give a character (stage 1.3b). */
+    [[nodiscard]] Gear& gear() {
+        return m_gear;
+    }
+    [[nodiscard]] const Gear& gear() const {
+        return m_gear;
+    }
+    /** @return The consumable system: the use of a potion or a food, and the effects on a character (stage 1.3b). */
+    [[nodiscard]] Consumables& consumables() {
+        return m_consumables;
+    }
+    /** @return The heart rune system: the charge and the activation of the heart rune of a character (stage 1.3b). */
+    [[nodiscard]] Runes& runes() {
+        return m_runes;
+    }
     /** @return The navigation: the ground, the next step, and the sight of a creature. */
     [[nodiscard]] Navigation& navigation() {
         return m_navigation;
@@ -687,6 +712,9 @@ private:
     Health m_health;
     Rewards m_rewards;
     Abilities m_abilities;
+    Gear m_gear;
+    Consumables m_consumables;
+    Runes m_runes;
 };
 
 template <class Result>

@@ -596,6 +596,53 @@ def print_found(document: dict, texts: list[str]) -> None:
                           + (f" gear score {entry[5]}-{entry[6]}" if entry[6] else ""))
 
 
+# The largest level of a reward and of a reward level delta: the limit of the backend (gamedata/loot_tables.cpp).
+LARGEST_LEVEL = 1000
+
+
+def check_ranges(document: dict) -> None:
+    """Stops the tool when a value of the document is outside the range that the backend accepts (LootTables::check):
+    the tool does not replace a working file with a file that the backend refuses (code review of stage 3.3a, finding
+    F13: a kill experience modifier below -1, a reward level delta above 1000, and negative bucket odds gave a file that
+    the backend refused)."""
+    def bad(what: str) -> None:
+        raise Failure(f"{what} is outside the range of the backend")
+
+    if not document["rewards"] or len(document["rewards"]) > LARGEST_LEVEL:
+        bad("the number of the reward levels")
+    for name, values in document["modifiers"].items():
+        experience, currency, chance, loot, progression = values
+        if experience < 0 or currency < 0 or not 0 <= chance <= 1 or loot < 0 or (progression is not None and progression < 0):
+            bad(f"a reward factor of the creature type {name}")
+    for difference, experience, delta in document["disparity"]:
+        if not -1.0 <= experience <= 100.0 or not 0 <= delta <= LARGEST_LEVEL:
+            bad(f"the level difference row {difference} (KillExpModifier {experience}, MaxRewardLevelDelta {delta})")
+    for event, chance in document["events"].items():
+        if not 0 <= chance <= 1:
+            bad(f"the coin chance of the event {event}")
+    credit = document["credit"]
+    if credit["timeLimit"] <= 0 or not 0 <= credit["healthShare"] <= 1 or credit["range"] <= 0 or credit["receivers"] <= 0:
+        bad("the credit data")
+    for modifier in credit["modifiers"]:
+        if any(value < 0 for value in modifier):
+            bad("a credit modifier")
+    for level in document["gearScore"]:
+        for low, high in zip(level[0::2], level[1::2]):
+            if high < low:
+                bad("a gear score range of a level")
+    for name, candidates in document["buckets"].items():
+        for item, low, high, odds, _, tags in candidates:
+            if high < low or odds < 0:
+                bad(f"the candidate {item} of the loot bucket {name}")
+            for tag in tags:
+                if len(tag) == 3 and tag[2] < tag[1]:
+                    bad(f"a tag of the loot bucket {name}")
+    for name, table in document["tables"].items():
+        for entry in table[7]:
+            if entry[4] < entry[3] or entry[6] < entry[5]:
+                bad(f"an entry of the loot table {name}")
+
+
 def main() -> int:
     home = Path.home()
     game = Path(os.environ.get("SOULWARDEN_GAME_DIR") or home / "Games/soulwarden/game")
@@ -607,6 +654,7 @@ def main() -> int:
     try:
         sources = Sources(game / "assets")
         document = build_tables(sources)
+        check_ranges(document)
         if find is not None:
             print_found(document, find)
             return 0

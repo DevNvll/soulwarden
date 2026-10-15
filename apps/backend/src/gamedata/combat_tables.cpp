@@ -110,7 +110,8 @@ bool CombatTables::check(const CombatData& data, std::string& error) {
     }
     for (const DamageRow& row : data.damageRows) {
         if (row.type >= data.damageTypes.size() || !std::isfinite(row.factor) || row.factor < 0.0F
-            || !std::isfinite(row.added) || row.added < 0.0F) {
+            || !std::isfinite(row.added) || row.added < 0.0F || !std::isfinite(row.attackCharge) || row.attackCharge < 0.0F
+            || !std::isfinite(row.hitCharge) || row.hitCharge < 0.0F) {
             return fail("a damage row is not valid");
         }
     }
@@ -272,15 +273,17 @@ bool CombatTables::load(const std::string& path) {
             data.attributeDamage[attribute].push_back(value);
         }
     }
-    // The damage rows: [id, weapon category, attack type, damage type, factor, added].
+    // The damage rows: [id, weapon category, attack type, damage type, factor, added, attack rune charge, hit rune
+    // charge]. A file of a tool from before stage 1.3b has no rune charge (6 values): a hit then gives no charge.
     std::unordered_map<std::string, std::uint32_t> rowIndex;
     if (!document["damageRows"].is_array()) {
         return fail("the damage rows are not a list");
     }
     for (const json& entry : document["damageRows"]) {
         DamageRow row;
-        if (!entry.is_array() || entry.size() != 6 || !entry[0].is_string() || !entry[2].is_string() || !entry[3].is_string()
-            || !read_float(entry[4], row.factor) || !read_float(entry[5], row.added)) {
+        if (!entry.is_array() || (entry.size() != 6 && entry.size() != 8) || !entry[0].is_string() || !entry[2].is_string()
+            || !entry[3].is_string() || !read_float(entry[4], row.factor) || !read_float(entry[5], row.added)
+            || (entry.size() == 8 && (!read_float(entry[6], row.attackCharge) || !read_float(entry[7], row.hitCharge)))) {
             return fail("a damage row does not have the form of the tool");
         }
         row.id = entry[0].get<std::string>();

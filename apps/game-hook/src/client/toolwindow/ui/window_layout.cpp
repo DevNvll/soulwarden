@@ -37,6 +37,9 @@ double g_searchChangedAt = 0.0;
 std::string g_selectedItem;
 unsigned g_selectedMaxStack = 1;
 int g_quantity = 1;
+/** The gear score (0: the value of the item table) and the perks of a give (stage 1.3b): PerkID texts with "," between them. */
+int g_gearScore = 0;
+char g_perks[512] = {};
 
 // The controls of the tab "Creatures".
 char g_kindSearchText[96] = "";
@@ -190,10 +193,27 @@ void draw_items() {
     ImGui::InputInt("##quantity", &g_quantity, 1, 10);
     g_quantity = std::clamp(g_quantity, 1, 100000);
     ImGui::SameLine();
+    ImGui::TextUnformatted("Gear score");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(line * 8.0F);
+    ImGui::InputInt("##gearScore", &g_gearScore, 5, 50);
+    g_gearScore = std::clamp(g_gearScore, 0, 1000);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Perks");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1.0F);
+    ImGui::InputTextWithHint("##perks", "PerkID texts with \",\" between them (an empty part: no perk; a gem is a perk)", g_perks,
+                             sizeof(g_perks));
     ImGui::BeginDisabled(g_selectedItem.empty() || g_data.busy);
     if (ImGui::Button("Give")) {
-        send("give_item", {{"item", g_selectedItem}, {"quantity", g_quantity}},
-             "Give " + std::to_string(g_quantity) + " " + g_selectedItem);
+        nlohmann::json arguments{{"item", g_selectedItem}, {"quantity", g_quantity}};
+        if (g_gearScore > 0) {
+            arguments["gearScore"] = g_gearScore;
+        }
+        if (g_perks[0] != '\0') {
+            arguments["perks"] = std::string(g_perks);
+        }
+        send("give_item", arguments, "Give " + std::to_string(g_quantity) + " " + g_selectedItem);
     }
     ImGui::EndDisabled();
 

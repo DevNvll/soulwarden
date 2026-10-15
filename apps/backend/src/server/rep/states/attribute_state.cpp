@@ -11,8 +11,11 @@
 //   3 persistentAttributeData  unspent:u32 ignoreBackstory:u8 hasRespec:u8 count:size
 //                              (type:u32 points:u32)* behavior:u32
 // A replicated map or array in the full form is `00` (no change entries), a version flag
-// (`00`: no version), and the count of the elements. The backend has no bonus: the two fields
-// are empty. They are in each fragment: a container in the full form is a change for the
+// (`00`: no version), and the count of the elements. From stage 1.3b the map attributeBonuses has
+// an entry type:u32 value:u32 for each attribute with a bonus (the food, an effect, a perk:
+// Attributes::bonus; live check I4: a fragment with the bonus 48 of the constitution shows CON 55
+// for the value 7), and field 0 has the value with no bonus. The placing bonuses stay empty. The
+// fields are in each fragment: a container in the full form is a change for the
 // client in each fragment, thus the facet (apply at image RVA 0x2788BE0) copies all four fields
 // each time, and the values of the server replace the values that the client computed itself
 // when it sent a request.
@@ -54,10 +57,23 @@ hub::Bytes encode_attribute_state(const world::Entity& entity, View view, const 
     std::uint32_t spentTypes = 0;
     for (unsigned type = 0; type < world::attribute::kCount; ++type) {
         values.u32(type);
-        values.u32(attributes.value(type));
+        values.u32(attributes.base(type));
         spentTypes += attributes.spent[type] != 0 ? 1 : 0;
     }
-    empty_container(state.field(0, kAttributeBonuses));
+    hub::Writer& bonuses = state.field(0, kAttributeBonuses);
+    std::uint32_t bonusTypes = 0;
+    for (unsigned type = 0; type < world::attribute::kCount; ++type) {
+        bonusTypes += attributes.bonus[type] != 0 ? 1 : 0;
+    }
+    bonuses.size(0); // No change entry: the full form.
+    bonuses.u8(0);   // No version.
+    bonuses.size(bonusTypes);
+    for (unsigned type = 0; type < world::attribute::kCount; ++type) {
+        if (attributes.bonus[type] != 0) {
+            bonuses.u32(type);
+            bonuses.u32(attributes.bonus[type]);
+        }
+    }
     empty_container(state.field(0, kPlacingBonuses));
     hub::Writer& persistent = state.field(0, kPersistentData);
     persistent.u32(attributes.unspent);

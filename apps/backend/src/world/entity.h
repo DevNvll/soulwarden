@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gamedata/creature_data.h"
@@ -63,6 +64,8 @@ enum class ComponentKey {
     cooldowns,
     /** The status effects of a creature (stage 3.3a): the icons at its name plate. */
     status,
+    /** The heart rune charge of a character (stage 1.3b, slot 48). Only the owner gets it. */
+    charge,
 };
 
 /**
@@ -77,6 +80,13 @@ struct Vitals {
     float staminaMax{100.0F};
     float mana{100.0F};
     float manaMax{100.0F};
+    /**
+     * The mana regeneration (stage 1.3b, I14): the mana comes back from this time on, at the rate of the base vitals of a
+     * player (a spend sets the delay of the data). No value: the mana is full, or the backend has no rate.
+     */
+    std::optional<WorldClock::time_point> manaRegenFrom;
+    /** The mana in one second of the regeneration (the base vitals of a player; the mana state sends it while the mana is not full). */
+    float manaRegenRate{0.0F};
 };
 
 /**
@@ -106,13 +116,24 @@ inline constexpr unsigned kCount = 5;
 struct Attributes {
     /** The points that the character spent on each attribute. The value of an attribute is `minimum` plus its points. */
     std::array<std::uint32_t, attribute::kCount> spent{};
+    /**
+     * The bonus of the equipment and of the effects on the character (stage 1.3b: the food, a perk with an attribute
+     * value): the gear system sets it (world/gear.h). It is not in the database. The attribute state sends it in the map
+     * `attributeBonuses`, apart from the base values.
+     */
+    std::array<std::uint32_t, attribute::kCount> bonus{};
     /** The value of an attribute with no point (the first row of the attribute tables of the game). */
     std::uint32_t minimum{5};
     /** The points that the character can spend: the points of its level minus the spent points. The progress system computes it. */
     std::uint32_t unspent{0};
 
-    [[nodiscard]] std::uint32_t value(unsigned type) const {
+    /** @return The value of an attribute with the points of the character and with no bonus (field 0 of the attribute state). */
+    [[nodiscard]] std::uint32_t base(unsigned type) const {
         return minimum + spent[type];
+    }
+    /** @return The value of an attribute that the rules use: the base value and the bonus. */
+    [[nodiscard]] std::uint32_t value(unsigned type) const {
+        return minimum + spent[type] + bonus[type];
     }
 };
 
@@ -367,6 +388,8 @@ struct CreatureEffect {
     float speed{1.0F};
     /** The part of the damage of the creature that the effect adds (-0.1: a weaken of 10 percent). */
     float damage{0.0F};
+    /** The part of the armor of the creature that the effect adds (-0.05: a rend of a perk; stage 1.3b). */
+    float armor{0.0F};
     /** The effect ends at the next hit that the creature takes (a stun of Shockwave). */
     bool endsOnHit{false};
     /** The end of the effect on the world clock. */
@@ -489,6 +512,16 @@ struct Creature {
         }
         return part < -1.0F ? 0.0F : 1.0F + part;
     }
+    /** @return The part of the armor of the creature that its effects add (a rend: -0.05; stage 1.3b). The strongest rend counts. */
+    [[nodiscard]] float armor_part(WorldClock::time_point now) const {
+        float part = 0.0F;
+        for (const CreatureEffect& effect : effects) {
+            if (now < effect.ends && effect.armor < part) {
+                part = effect.armor;
+            }
+        }
+        return part;
+    }
 };
 
 /**
@@ -500,6 +533,38 @@ struct AbilityCooldown {
     WorldClock::time_point start{};
     WorldClock::time_point end{};
     WorldClock::time_point minEnd{};
+    /**
+     * The end of the cooldown of the client (stage 1.3b, I8): the client starts its own cooldown at a press that it plays,
+     * and it does not play a press in it (live check I8). A perk or a node that the client knows changes it as the end;
+     * a command of the server does not (the server has no message for the client cooldown).
+     */
+    WorldClock::time_point clientEnd{};
+};
+
+/**
+ * One effect of a status row on a character (stage 1.3b): a potion, a food, a dust, or the status of a heart rune. The
+ * consumable system and the rune system keep the effects of a character with the character id as their key and put a
+ * copy into its entity (world/consumables.h).
+ */
+struct PlayerEffect {
+    /** The id text of the status row ("PotionHealT5", "FoodCONT5"). */
+    std::string status;
+    /** The potency of the effect (1, or the potency of a perk). */
+    float potency{1.0F};
+    /** The start and the end of the effect on the world clock. */
+    WorldClock::time_point started{};
+    WorldClock::time_point ends{};
+    /** The time of the next tick of an effect with a TickRate. No value: no tick. */
+    std::optional<WorldClock::time_point> nextTick;
+    /** StopOnHitCount: the hits that the character can take before the effect ends. 0: no such limit. */
+    std::uint32_t hitsLeft{0};
+};
+
+/** The cooldown of one consumable item of a character (stage 1.3b): the key of the client is the item id. */
+struct ItemCooldown {
+    /** The CRC-32 of the lower-case item id: the key of the map of the client (live check I7). */
+    std::uint32_t item{0};
+    WorldClock::time_point end{};
 };
 
 /**
@@ -529,6 +594,26 @@ struct Life {
      */
     WorldClock::time_point shelterUntil{};
     bool shelterWaits{false};
+};
+
+/** The values that the equipment and the effects give a character (stage 1.3b). The gear system sets them (world/gear.h). */
+struct GearSummary {
+    /** The part of the maximum health that the perks and the effects add (0.047: 4.7 percent more). */
+    float healthPart{0.0F};
+    /** The part of the damage of each hit (BaseDamage of a passive perk), and of the damage of a type (DMG<type>). */
+    float baseDamage{0.0F};
+    std::unordered_map<std::string, float> damage;
+    /** The parts of the armor (PhysicalArmor, ElementalArmor), and the part of a damage type that the character does not take (ABS<type>). */
+    float physicalArmor{0.0F};
+    float elementalArmor{0.0F};
+    std::unordered_map<std::string, float> absorption;
+    /** The part of the damage that the character takes less (BaseDamageReduction). */
+    float damageReduction{0.0F};
+    /** The part of the maximum health that comes back in each second (a regeneration perk, a food). */
+    float regeneration{0.0F};
+    /** The equip load of the armor (tenths: the client shows 38.75 as 3.8) and its class: 0 light, 1 medium, 2 heavy, 3 overburdened. */
+    float equipLoad{0.0F};
+    std::uint8_t loadClass{0};
 };
 
 /** The combat values of a character. The combat system sets them (world/combat.h). */
@@ -613,6 +698,8 @@ struct Entity {
     Wallet wallet;
     /** The combat values of the character. The combat system changes them (world/combat.h). */
     CombatState combat;
+    /** The values of the equipment and the effects of the character. The gear system changes them (world/gear.h). */
+    GearSummary gear;
     /** The life state of the character. The health system changes it (world/health.h). */
     Life life;
     /**
@@ -621,6 +708,15 @@ struct Entity {
      * puts a copy here for the cooldown state of the owner.
      */
     std::map<std::uint32_t, AbilityCooldown> cooldowns;
+    /**
+     * The cooldowns of the consumable items of the character (stage 1.3b), for the field 3 of the cooldown state. The
+     * consumable system keeps them with the character id as their key and puts a copy here.
+     */
+    std::vector<ItemCooldown> itemCooldowns;
+    /** The effects on the character (stage 1.3b), a copy of the values of the consumable and the rune systems. */
+    std::vector<PlayerEffect> effects;
+    /** The heart rune charge of the character (stage 1.3b), 0 to 100 percent; a copy of the value of the rune system. */
+    float runeCharge{0.0F};
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */
     std::vector<RawFragment> rawFragments;
 

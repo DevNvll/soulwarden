@@ -293,6 +293,7 @@ private:
      * gets the message "equip item fail".
      */
     void handle_equip_item(std::span<const std::uint8_t> body);
+    void handle_use_item(std::span<const std::uint8_t> body);
     void handle_unequip_item(std::span<const std::uint8_t> body);
     void handle_swap_items(std::span<const std::uint8_t> body);
     /**

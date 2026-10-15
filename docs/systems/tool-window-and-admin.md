@@ -66,7 +66,15 @@ protocol notes (section 6).
   behavior of the creatures is on). The commands `assign_node` (arguments `weapon`, `node`),
   `set_ability_bar` (arguments `weapon`, `slot`, `ability`), and `reset_cooldowns` (no
   argument) are the node, bar, and cooldown commands of stage 3.3a
-  ([Abilities](abilities.md)); the tool window has no button for them yet. The command that
+  ([Abilities](abilities.md)); the tool window has no button for them yet. Stage 1.3b: the
+  command `give_item` takes `perks` (up to five PerkID texts with "," between them), and the
+  tab "Items" of the tool window has the fields "Gear score" and "Perks" for it (live check
+  I2-08); the commands `set_item_perks` (arguments `slot`, `container`, `perks`), `use_item`
+  (`slot`, `container`), `set_rune_charge` (`percent`), and `activate_rune` (no argument) are
+  the commands of the itemization ([Items and equipment](items-and-equipment.md),
+  [Consumables and the heart rune](consumables-and-heart-rune.md)); the tool window has no
+  button for these four. The perk roll of an item (`tools/world perkroll`) is a development
+  route only. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn
   point, and an effect on a creature are development routes only (`tools/world hurt`, `roll`,
   `creature respawn`, `creature effect`). A

@@ -20,7 +20,12 @@ runs the document builder and the writer of the tool (main).
   negative-experience      a kill experience -10                              status 1, the file stays
   negative-factor          an experience factor -1                            status 1, the file stays
   bad-flag                 the flag text "NONE"                               status 1, the file stays
-The six cases after not-finite are the corrections of the findings F3 and F4 of the code review of stage 3.5a.
+  negative-disparity       a KillExpModifier -2                               status 1, the file stays
+  large-disparity          a MaxRewardLevelDelta 1001                         status 1, the file stays
+  negative-bucket-odds     the odds -0.2 of a bucket candidate                status 1, the file stays
+The six cases after not-finite are the corrections of the findings F3 and F4 of the code review of stage 3.5a, the
+last three the correction of finding F13 of the code review of stage 3.3a (each value is outside the range of the
+backend, LootTables::check: the tool writes no file that the backend refuses).
 
 The values of the valid document: the entries of a table in the sequence of their thresholds with the
 quantity ranges of the row NAME_Qty and MaxRoll of the row NAME_Probs; the references resolved by their
@@ -30,7 +35,7 @@ an empty ProgressionCurrencyAmount is null; the flag text "TRULE" (a fact of the
 variant vitals row has the loot data of its base row; only the tables that a vitals row reaches are in
 the document.
 
-Usage: check_loot_tool.py WORK_FOLDER     status 0: each case gives its result
+Usage: check_loot_tool.py WORK_FOLDER [CASE...]     status 0: each case (or each named case) gives its result
 """
 
 from __future__ import annotations
@@ -85,12 +90,12 @@ def loot_table_sheet(case: str) -> FakeSheet:
     ])
 
 
-def bucket_sheet() -> FakeSheet:
+def bucket_sheet(case: str) -> FakeSheet:
     columns = ["RowPlaceholders", "LootBucket1", "Item1", "Quantity1", "Tags1", "MatchOne1", "Odds1",
                "LootBucket2", "Item2", "Quantity2", "Tags2", "MatchOne2"]
     return FakeSheet("LootBuckets", columns, [
         ["", "Test_Weapons", "TestSword", "1", "MinContLevel:0-18,Beast", "FALSE", "", "Test_Rare", "TestNamed", "1", "Named", "TRUE"],
-        ["", "", "TestSwordT3", "1", "Level:5", "False", "0.2", "", "", "", "", ""],
+        ["", "", "TestSwordT3", "1", "Level:5", "False", "-0.2" if case == "negative-bucket-odds" else "0.2", "", "", "", "", ""],
         ["", "", "TestSwordT5", "1", "Level:49-59-59", "0", "", "", "", "", "", ""],
     ])
 
@@ -110,7 +115,8 @@ def sheets(case: str) -> dict:
                                      [["Solo", experience, "1", "", "1", ""], ["Solo+", "2", "1.15", "0", "1", "3"],
                                       ["Critter", "0", "0", "", "1", ""]])],
         lt.DISPARITY_TYPE: [FakeSheet("AILevelDisparity", ["LevelDisparity", "KillExpModifier", "MaxRewardLevelDelta"],
-                                      [["10", "0", "10"], ["-10", "-0.4", "0"]])],
+                                      [["10", "0", "1001" if case == "large-disparity" else "10"],
+                                       ["-10", "-2" if case == "negative-disparity" else "-0.4", "0"]])],
         lt.EVENT_TYPE: [FakeSheet("GameEvents", ["EventID", "CoinRewardChance"], [["KillEvent", "0.05"], ["KillStructure", "0"]]),
                         FakeSheet("GameEvents_01", ["EventID"], [["KillOther"]])],
         lt.EXPERIENCE_TYPE: [FakeSheet("XPLevels", ["Level Number"] + [f"GSLimitT{tier}" for tier in range(1, 6)],
@@ -124,7 +130,7 @@ def sheets(case: str) -> dict:
                                   ["Rock", rock_type, "False", "", "", "", "", rock_flag, rock_event]])],
         lt.VARIANT_TYPE: [FakeSheet("LevelVariantVitals_Common", ["VitalsID", "BaseVitalsId"], variants)],
         lt.LOOT_TABLE_TYPE: [loot_table_sheet(case)],
-        lt.LOOT_BUCKET_TYPE: [bucket_sheet()],
+        lt.LOOT_BUCKET_TYPE: [bucket_sheet(case)],
     }
 
 
@@ -172,14 +178,16 @@ def valid_values(document: dict) -> list[str]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         print(__doc__, file=sys.stderr)
         return 2
     work = Path(sys.argv[1])
     work.mkdir(parents=True, exist_ok=True)
     failures = 0
-    for case in ("valid", "unresolved-table", "unresolved-bucket", "base-table", "quantity-text", "reward-levels", "not-finite",
-                 "variant-base", "event-override", "creature-type", "negative-experience", "negative-factor", "bad-flag"):
+    cases = ("valid", "unresolved-table", "unresolved-bucket", "base-table", "quantity-text", "reward-levels", "not-finite",
+             "variant-base", "event-override", "creature-type", "negative-experience", "negative-factor", "bad-flag",
+             "negative-disparity", "large-disparity", "negative-bucket-odds")
+    for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")
         errors = io.StringIO()

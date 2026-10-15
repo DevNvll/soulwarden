@@ -82,8 +82,18 @@ inline constexpr unsigned kCooldownHits = 5;
 /** Crowded Well: the burst of Gravity Well does this part more for each creature in the vortex, for this number at most. */
 inline constexpr float kCrowdedPart = 0.10F;
 inline constexpr unsigned kCrowdedMost = 5;
-/** Largest number of creatures that one phase of an area hurts (a limit of the cost). */
+/**
+ * Largest number of creatures that one phase of an area hurts, also across the circles of a path (a limit of the
+ * cost; code review of stage 3.3a, finding F4). A project value: the spell rows and the ability rows of the game data
+ * have no column for a count of targets.
+ */
 inline constexpr std::size_t kAreaMost = 32;
+/**
+ * A contact of a melee phase comes this much before the first time of the phase at most (the time of its first input
+ * step from the press, on the world clock; code review of stage 3.3a, finding F1): the tolerance for a press and a
+ * contact that come in reports with a different delay.
+ */
+inline constexpr std::chrono::milliseconds kPhaseEarly{250};
 } // namespace ability_rules
 
 /** The abilities that this backend has (the build of stage 3.3a): the great axe and the war hammer. */
@@ -122,8 +132,10 @@ enum class CastVerdict : std::uint8_t {
     cooldown,
     /** A different cast of the character plays. */
     casting,
+    /** The character has less mana than the cost of the cast (stage 1.3b, I14). */
+    noMana,
 };
-inline constexpr std::size_t kCastVerdictCount = 11;
+inline constexpr std::size_t kCastVerdictCount = 12;
 
 /** @return A short text for a log line, for example "the cooldown runs". */
 [[nodiscard]] const char* cast_verdict_text(CastVerdict verdict);
@@ -252,10 +264,15 @@ public:
 
     /**
      * @return The contact phase of the cast of a character that a contact of this input number
-     *         fits (Combat::claim), for this target. No value: no cast with such a phase.
+     *         fits (Combat::claim), for this target. No value: no cast with such a phase, a contact before the first
+     *         time of the phase on the world clock, or a contact of a newer press (findings F1 and F2 of the review
+     *         of stage 3.3a).
+     * @param attack The input number of the attack input of the session that the contact fits (AttackTrack::press_for),
+     *        when it has one: an attack after the press of the cast owns the contact.
      */
     [[nodiscard]] std::optional<MeleePhase> contact_phase(const Entity& attacker, SessionId session, std::uint16_t input,
-                                                          std::uint32_t sequence, EntityId target);
+                                                          std::uint32_t sequence, EntityId target,
+                                                          std::optional<std::uint16_t> attack = std::nullopt);
     /** @return The ability of a cast (a cast that the table has; Wrecking Ball for one that it does not have). */
     [[nodiscard]] AbilityKind kind_of(std::uint64_t cast) const;
     /** A contact phase hurt a creature (Combat::claim): the phase does not hurt it again, and the creature gets the effects. */
@@ -271,8 +288,41 @@ public:
 
     /** The world made the entity of a character: it gets the cooldowns of the character. */
     void entered(Entity& character);
-    /** Ends each cooldown of a character (a command). @return False: the store has no such character in the world and no value. */
-    bool reset_cooldowns(const std::string& characterId);
+
+    /**
+     * @return The mana cost of a cast (stage 1.3b, I14; protocol notes 4.23): the ManaCost of the first spell of the plan
+     *         whose cost id the mana table of the players has (a cost id with no row costs nothing: client code at image
+     *         RVA 0x6801430 pays nothing for it), times 1 + the ManaCostMult of each learned node of the character whose
+     *         ManaCostList has the id or "All" (client code at image RVA 0x67EAED0), not less than 0.
+     */
+    [[nodiscard]] float mana_cost(const Entity& character, const CastPlan& plan) const;
+    /**
+     * The one path of a change of the mana of a character (stage 1.3b, I14): a cost (a negative amount) and a gain (a
+     * potion). The mana stays between 0 and its maximum. A spend starts the regeneration after the delay of the data
+     * (ManaRegenDelay, or ManaRegenDelayOnEmpty at 0). The vitals state and the mana state of the owner change.
+     */
+    void change_mana(Entity& character, float amount, const char* what);
+    /**
+     * A shorter cooldown of each ability of the bar of the weapon in the hand (stage 1.3b: Refreshing Move, CooldownTimer
+     * with CDRImmediatelyOptions ActiveWeapon): `part` of the cooldown of the data, not below the minimum end and not
+     * below now. The end of the client cooldown changes the same.
+     */
+    void reduce_weapon_cooldowns(Entity& character, float part);
+    /** The world calls it in each tick: the mana regeneration of the characters whose mana is not full. */
+    void tick();
+    /**
+     * The burst of a perk around a character (stage 1.3b, gear_rules::kPerkBursts): each creature in the shape of the
+     * spell (its Radius, kAreaHeight, and the sight from the character; kAreaMost at most) takes a hit of the damage row
+     * of the spell (DamageTableRow) with the weapon in the hand, through Combat::strike.
+     */
+    void perk_burst(Entity& caster, std::string_view spellId);
+    /**
+     * Ends each cooldown of a character (a command). The client keeps its own cooldown (live check I8-05 of stage 1.3b):
+     * a press before its end stays refused, with `client` false.
+     * @param client True: the cooldown of the client ends too (a test client that has no cooldown of its own).
+     * @return False: the store has no such character in the world and no value.
+     */
+    bool reset_cooldowns(const std::string& characterId, bool client = false);
     /** @return The cooldowns of a character, with the ability id as the key. */
     [[nodiscard]] const std::map<std::uint32_t, AbilityCooldown>* cooldowns_of(const std::string& characterId) const;
 
@@ -312,6 +362,8 @@ private:
         bool thrown{false};
         /** The area phases (and the throw) that are not done. */
         unsigned pending{0};
+        /** The input number of a later press of the session (accepted or refused): the contact windows end there. */
+        std::optional<std::uint16_t> closedAt;
     };
     /** The values of one character: its cooldowns and its cast. */
     struct CharacterState {
@@ -338,6 +390,8 @@ private:
     std::map<std::uint64_t, Cast> m_casts;
     std::uint64_t m_nextCast{1};
     AbilityCounts m_counts;
+    /** The characters whose mana comes back, with the time of the last step of the regeneration. */
+    std::map<std::string, WorldClock::time_point> m_regenerating;
 };
 
 } // namespace soulwarden::backend::world

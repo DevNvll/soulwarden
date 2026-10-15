@@ -50,6 +50,12 @@ inline constexpr std::uint32_t kMaxItemDurability = 8000;
 /** Largest number of slots of one container: the client reads 500 elements at most. */
 inline constexpr std::uint32_t kMaxContainerSlots = 500;
 
+/** Number of perk places of an item instance on the wire (a gem is one of them). */
+inline constexpr std::size_t kPerkPlaces = 5;
+
+/** The PerkID texts of the five perk places of an instance. An empty text: no perk in the place. */
+using PerkIds = std::array<std::string, kPerkPlaces>;
+
 /** One item instance: one stack in one slot. */
 struct ItemInstance {
     InstanceId instance{};
@@ -68,7 +74,35 @@ struct ItemInstance {
     std::uint32_t chrono{0};
     /** kItemBound, kItemLocked. */
     std::uint8_t flags{0};
+    /**
+     * The perks of the instance (stage 1.3b): the PerkID text of each place, the key of a perk in the
+     * database. A gem is a perk of the type "Gem" in one of the places. The client computes the
+     * rarity from the perks (image RVA 0x5C528D0): the instance has no rarity value.
+     */
+    PerkIds perks{};
+    /**
+     * The index of each perk in the list of the client (gamedata/perk_data.h), from the perk data
+     * at each load. 0: no perk, or the perk data does not have the perk (the place is empty on the wire).
+     */
+    std::array<std::uint16_t, kPerkPlaces> perkIndex{};
+
+    /** @return True when the instance has a perk in a place. */
+    [[nodiscard]] bool has_perks() const {
+        for (const std::string& perk : perks) {
+            if (!perk.empty()) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
+
+/**
+ * @return True when two instances can be one stack: the same item, the same bind flag, and the same perks.
+ *         An equal ItemID alone is not enough (stage 1.3b). The gear score is not compared: a stack keeps
+ *         the gear score of its first instance, as before stage 1.3b.
+ */
+[[nodiscard]] bool same_stack(const ItemInstance& one, const ItemInstance& two);
 
 /** One slot of a container. */
 struct BagSlot {
@@ -116,6 +150,11 @@ inline constexpr std::uint32_t kMainHand3 = 26;
 inline constexpr std::uint32_t kOffHand1 = 27;
 inline constexpr std::uint32_t kOffHand3 = 29;
 /** Number of slot values: a slot number is below it. */
+/** The heart rune (stage 1.3b, item class HeartGem). */
+inline constexpr std::uint32_t kHeartRune = 45;
+/** The quick slots of the consumables that a key uses (keys 3 to 6 of the default profile; live check I7). */
+inline constexpr std::uint32_t kQuickFirst = 14;
+inline constexpr std::uint32_t kQuickLast = 17;
 inline constexpr std::uint32_t kSlotCount = 50;
 
 /**

@@ -127,6 +127,57 @@ void exporter_checks(const Options& options) {
     }
 }
 
+/**
+ * Runs a check tool of tools/gamedata (made-up tables) and gives the cases whose line starts with "ok".
+ * @param cases The cases to run (empty: each case of the tool).
+ */
+std::set<std::string> tool_check(const Options& options, const char* tool, const char* folder, const std::vector<std::string>& cases) {
+    const std::filesystem::path script = options.goldenDirectory / ".." / ".." / ".." / ".." / "tools" / "gamedata" / tool;
+    std::filesystem::create_directories(options.workDirectory);
+    const auto output = options.workDirectory / (std::string(folder) + ".log");
+    const char* python = std::getenv("SOULWARDEN_PYTHON");
+    std::string command = std::string(python != nullptr && *python != '\0' ? python : "python3") + " -I -B \""
+                          + script.lexically_normal().string() + "\" \"" + (options.workDirectory / folder).string() + "\"";
+    for (const std::string& name : cases) {
+        command += " " + name;
+    }
+    command += " > \"" + output.string() + "\" 2>&1";
+    (void)std::system(command.c_str());
+    std::ifstream log(output);
+    std::set<std::string> passed;
+    for (std::string line; std::getline(log, line);) {
+        if (line.rfind("ok  ", 0) == 0) {
+            passed.insert(line.substr(6, line.find(':') - 6));
+        }
+    }
+    return passed;
+}
+
+/** RA12 (review of stage 3.3a, F11 and F12): the ability data tool refuses an absent column and two rows of one id. */
+void ability_exporter_checks(const Options& options) {
+    const std::set<std::string> passed = tool_check(options, "check_ability_tool.py", "review-ability-tool", {});
+    check(passed.count("valid") == 1 && passed.count("game-duplicate") == 1,
+          "complete tables give the file of format 2; the duplicate of the game (Sanctuary) keeps its first row");
+    for (const char* name : {"missing-Time", "missing-Stunned", "missing-Radius"}) {
+        check(passed.count(name) == 1, std::string("F11, ") + name + ": the tool stops with status 1 and keeps the old file");
+    }
+    for (const char* name : {"conflicting-status", "conflicting-spell"}) {
+        check(passed.count(name) == 1, std::string("F12, ") + name + ": the tool stops with status 1 and keeps the old file");
+    }
+    for (const char* name : {"missing-cost", "partial-cost-columns", "negative-cost"}) {
+        check(passed.count(name) == 1, std::string("I14, ") + name + ": the tool stops with status 1 and keeps the old file");
+    }
+}
+
+/** RA13 (review of stage 3.3a, F13): the loot tool writes no file with a value that the backend refuses. */
+void loot_exporter_ranges(const Options& options) {
+    const std::set<std::string> passed =
+        tool_check(options, "check_loot_tool.py", "review-loot-ranges", {"negative-disparity", "large-disparity", "negative-bucket-odds"});
+    for (const char* name : {"negative-disparity", "large-disparity", "negative-bucket-odds"}) {
+        check(passed.count(name) == 1, std::string("F13, ") + name + ": the tool stops with status 1 and keeps the old file");
+    }
+}
+
 /** RL8 (F8): a command removes the body of a dead creature of a spawn point: no automatic respawn. */
 void removal_clears_respawn(const Options&) {
     LootHost fixture(true, {loot_point("review-point", 1010, 1000, 2, 2)});
@@ -213,7 +264,10 @@ std::vector<Case> review_loot_cases() {
             {"RL8", "review of 3.5a, F8: a command removal of a dead creature clears its respawn time", removal_clears_respawn},
             {"RL9", "review of 3.5a, F9: the reference states the credit rule of the code", reference_credit_rule},
             {"RL10", "review of 3.5a, F10: the roll command counts each roll of an item one time", roll_counts},
-            {"RL11", "review of 3.5a, F11: a drop that fits in the bag is not cut at the limit of the give command", large_drop}};
+            {"RL11", "review of 3.5a, F11: a drop that fits in the bag is not cut at the limit of the give command", large_drop},
+            {"RA12", "review of 3.3a, F11 and F12: the ability data tool stops for an absent column and for two rows of one id",
+             ability_exporter_checks},
+            {"RA13", "review of 3.3a, F13: the loot tool writes no file with a value that the backend refuses", loot_exporter_ranges}};
 }
 
 } // namespace soulwarden::backend::tests

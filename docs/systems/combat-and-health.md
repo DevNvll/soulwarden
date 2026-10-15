@@ -40,7 +40,14 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   only, `states/mana_state.cpp`). The mana meter of the HUD (the blue bar below the
   crosshair) reads only the mana state: with no mana state it shows always. A change of the
   mana marks the two states (`ComponentKey::vitals`, `ComponentKey::mana`). Protocol notes
-  4.5.
+  4.5. Stage 1.3b: each change of the mana goes through one path (`Abilities::change_mana`:
+  a cost, a potion), and the regeneration of the data runs after a spend
+  ([Abilities](abilities.md)).
+- The heal of a potion, a food, or a perk goes through one function (`Health::heal_amount`,
+  stage 1.3b): a character that lives gets the health to its maximum, and the vitals state
+  changes. The rest rule (3 percent of the maximum each second after 6 s with no fight) and
+  the regeneration of the gear (an earring, a food: a part of the maximum each second, also in
+  a fight) run in `Health::tick`.
 - A melee attack of a player (protocol notes 4.15). The client finds each melee contact
   itself and reports it in the third list of its input entry (the contact report). The
   report is on in each start: the backend answers one remote configuration request of the
@@ -85,6 +92,11 @@ protocol notes (sections 2.3, 4.5, 4.7, 4.15, and 4.18).
   The damage of a creature to a character (`Combat::creature_damage`) is multiplied by the
   weaken of the creature (`Creature::damage_factor`: 1 plus the `DMGStandard` of each of its
   effects, not below 0).
+- The gear in the two damage rules (stage 1.3b, protocol notes 4.15, 4.18, and 4.23; the
+  rules in [Gear and perks](gear-and-perks.md)): the part of the gear of the attacker, the
+  conversion of a gem, the DMG and ABS parts, the armor parts, a rend of the creature, and
+  BaseDamageReduction. A hit of a fixed amount (a tick, a chain) goes through
+  `Combat::strike_amount`. The damage number has a second entry for a converted part.
 - The weapon in the hand of a character is the item of the weapon slot that its client
   selected with a weapon key (`Entity::combat.selectedWeapon`), or the first weapon slot
   with an item. The sheathe bits and the active bits of the paperdoll state do not follow

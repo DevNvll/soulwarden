@@ -45,9 +45,11 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   to 4 and the weapon slots 24 to 29) and nothing of the other slots. A paperdoll fragment
   has only the slots that changed. The progression encoder has the two views too: the owner
   gets the level and the experience, and an observer gets the level (the name tag of a remote
-  player shows it). The attribute state, the three skill states, and the cooldown state
-  (stage 3.3a) are for the owner only. The status state of a creature (stage 3.3a) has only
-  the observer view.
+  player shows it). The attribute state, the three skill states, the cooldown state (stage
+  3.3a), and the charge state of the heart rune (stage 1.3b, slot 48) are for the owner only.
+  The status state of a creature (stage 3.3a) has only the observer view. The first record of
+  a large paperdoll has more than one part: each list group stays whole in one part (stage
+  1.3b, [Items and equipment](items-and-equipment.md)).
 - A change of more than one system is one change of the store (review of stage 3.5a, finding
   F1): the caller opens a batch (`state::Store::Batch`, one transaction), the write of each
   system is a save point in it (`Store::begin_write`, `end_write`), and the batch commits at

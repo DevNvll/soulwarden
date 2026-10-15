@@ -121,6 +121,13 @@ struct InputStep {
      * The bit is in the first entry of a press only (the hold and the release have their own bits).
      */
     std::uint8_t abilityKey{0};
+    /**
+     * The key of a quick slot came (Use_Quickslot_1 to 4: the bits 404, 117, 140, 513; live check I7 of stage 1.3b): 1
+     * to 4 for the paperdoll slots 14 to 17. 0: none.
+     */
+    std::uint8_t quickKey{0};
+    /** The key of the heart rune came (rune_ability: bit 450; live check I6 of stage 1.3b). */
+    bool runeKey{false};
     /** Number of items of the two projectile lists. */
     std::uint32_t projectileHits{0};
     std::uint32_t shots{0};

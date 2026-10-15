@@ -1,6 +1,7 @@
 #include "gamedata/progression_tables.h"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 
 #include <nlohmann/json.hpp>
@@ -101,6 +102,17 @@ bool ProgressionTables::load(const std::string& path) {
         || !read_number(vitals["health"], data.baseHealth) || !read_number(vitals["stamina"], data.baseStamina)
         || !read_number(vitals["mana"], data.baseMana)) {
         return false;
+    }
+    // The mana regeneration (stage 1.3b): three numbers of 0 or more, or none of them (a file from before).
+    for (const auto& [member, target] : {std::pair<const char*, float*>{"manaRegenRate", &data.manaRegenRate},
+                                         {"manaRegenDelay", &data.manaRegenDelay},
+                                         {"manaRegenDelayOnEmpty", &data.manaRegenDelayOnEmpty}}) {
+        if (vitals.contains(member)) {
+            if (!vitals[member].is_number() || !std::isfinite(vitals[member].get<float>()) || vitals[member].get<float>() < 0.0F) {
+                return false;
+            }
+            *target = vitals[member].get<float>();
+        }
     }
     // The rank tables: {"<name>": {"experience": [...], "resetCost": [...]}}.
     std::map<std::string, RankTable> rankTables;

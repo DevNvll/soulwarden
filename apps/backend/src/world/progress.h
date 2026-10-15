@@ -129,6 +129,12 @@ public:
 
     /** Reads the level, the experience, and the attributes of the character of a new entity from the store, and sets its vitals. */
     void load(Entity& entity);
+    /**
+     * The attribute bonus or the health part of a character changed (the gear system, stage 1.3b): the maximum health
+     * again from the values of the entity, with the health keeping its part of the maximum. Marks the vitals state when
+     * it changed. World thread only.
+     */
+    void refresh_vitals(Entity& entity);
 
     /** @return The level, the attributes, and the vitals of a character, or no value when the store does not have the character. */
     [[nodiscard]] std::optional<ProgressView> view(const std::string& characterId);
@@ -174,6 +180,8 @@ private:
     struct Sheet {
         Progression progression;
         Attributes attributes;
+        /** The part of the maximum health of the gear and the effects (Entity::gear, stage 1.3b). */
+        float healthPart{0.0F};
     };
 
     /** A change: `apply(Sheet&, std::uint64_t& cost)` gives a ProgressError. */

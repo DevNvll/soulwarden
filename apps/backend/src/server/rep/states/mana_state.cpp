@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <chrono>
+
 #include "server/rep/replication.h"
 #include "server/rep/states/state_codecs.h"
 
@@ -13,8 +16,11 @@
 //
 // View     Fields
 // owner    group 0: the four fields. The values are the mana of the vitals state of the
-//          entity (Entity::vitals): the two states have the same values. The rates are 0:
-//          the client does not change the value itself.
+//          entity (Entity::vitals): the two states have the same values. While the mana is not
+//          full (stage 1.3b, I14), the delay that is left before the regeneration and the rate
+//          of the base vitals of a player (ManaBaseRegenRate 2): the client predicts the same
+//          gain (client code at image RVA 0x676B8E0) and compares it with the next state. Full
+//          mana: the rates are 0, and the client does not change the value.
 // observer no fragment: the remote player slice has no mana component.
 
 namespace soulwarden::backend::server::rep {
@@ -28,15 +34,21 @@ constexpr unsigned kRegenerationRate = 3;
 
 } // namespace
 
-hub::Bytes encode_mana_state(const world::Entity& entity, View view, const world::WorldClock&) {
+hub::Bytes encode_mana_state(const world::Entity& entity, View view, const world::WorldClock& clock) {
     if (view != View::owner) {
         return {};
+    }
+    float delay = 0.0F;
+    float rate = 0.0F;
+    if (entity.vitals.manaRegenFrom && entity.vitals.mana < entity.vitals.manaMax) {
+        delay = std::max(std::chrono::duration<float>(*entity.vitals.manaRegenFrom - clock.now()).count(), 0.0F);
+        rate = entity.vitals.manaRegenRate;
     }
     StateWriter state(kGroups);
     state.field(0, kCurrent).f32(entity.vitals.mana);
     state.field(0, kMaximum).f32(entity.vitals.manaMax);
-    state.field(0, kRegenerationDelay).f32(0.0F);
-    state.field(0, kRegenerationRate).f32(0.0F);
+    state.field(0, kRegenerationDelay).f32(delay);
+    state.field(0, kRegenerationRate).f32(rate);
     return state.finish();
 }
 

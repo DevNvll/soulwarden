@@ -62,12 +62,28 @@ Usage:
 The items, the equipment, and the coin of a character (the character can be in the world or
 not: a command for a character that is not in the world changes its rows in the database):
   tools/world items CHARACTER                   the items of the bag, the equipment, and the coin
-  tools/world give CHARACTER ITEM [QUANTITY] [--action N]
+  tools/world gear CHARACTER                    the gear of a character (stage 1.3b): the perks with an
+                                                effect, the attribute bonus, the armor, the equip load,
+                                                the effects, the item cooldowns, the rune charge
+  tools/world perks CHARACTER SLOT P1,P2,P3,P4,P5 [--paperdoll]
+                                                set the perks of the item of a bag slot (or of a
+                                                paperdoll slot), with the checks and the swap of a give
+  tools/world use CHARACTER SLOT [--paperdoll]  use the consumable of a bag slot (or of a quick slot
+                                                14 to 19 with --paperdoll), with the rule of a client
+  tools/world rune CHARACTER charge PERCENT|activate
+                                                set the heart rune charge, or press the rune key
+  tools/world perkroll ITEM [--gs N] [--level N] [--count N]
+                                                roll the perks of a loot item N times (no item given)
+  tools/world give CHARACTER ITEM [QUANTITY] [--action N] [--gs N] [--perks P1,P2,P3,P4,P5]
                                                 give a quantity of an item (default 1). ITEM is
                                                 the ItemID text of the item catalog, for example
                                                 1hSwordT1 (tools/gamedata/items.sh --find ITEM).
                                                 --action: the cause of the change on the wire
                                                 (1: the loot notice of the HUD, protocol notes 4.10)
+                                                --gs: the gear score (in the range of the item table)
+                                                --perks: the PerkID of each of the five places
+                                                (tools/gamedata/perks.sh --find TEXT; an empty part
+                                                is a place with no perk; a gem is a perk of a place)
   tools/world take CHARACTER SLOT [QUANTITY]    remove the item of a slot, or a quantity of it
   tools/world coin CHARACTER AMOUNT             set the coin, for example 123.45
   tools/world move CHARACTER FROM TO            move the item of a slot to a different slot: an
@@ -257,8 +273,13 @@ def character_id(data_dir: Path, text: str) -> str:
 
 def item_text(item: dict) -> str:
     marks = "".join(f" {mark}" for mark in ("bound", "locked") if item[mark])
+    perks = ""
+    if any(item.get("perks", [])):
+        # The perks of the five places (stage 1.3b), with the index on the wire of each one (0: not in the perk data).
+        perks = "\n" + " " * 10 + "perks: " + ", ".join(
+            f"{name} ({index})" if name else "-" for name, index in zip(item["perks"], item.get("perkIndexes", [0] * 5)))
     return (f"{item['quantity']:>5} x {item['item']:<32} index {item['index']:>5}  gear score {item['gearScore']:>3}  "
-            f"durability {item['durability']}/{item['maxDurability']}{marks}  instance {item['instance']}")
+            f"durability {item['durability']}/{item['maxDurability']}{marks}  instance {item['instance']}{perks}")
 
 
 def meter_of(entry: dict) -> str:
@@ -721,18 +742,28 @@ def main() -> None:
         creature_command(data_dir, arguments[1:])
     elif command == "items" and len(arguments) == 2:
         request(data_dir, "GET", f"/v1/dev/items?character={character_id(data_dir, arguments[1])}")
-    elif command == "give" and len(arguments) in (3, 4, 5, 6):
-        action = ""
-        if len(arguments) >= 5 and arguments[-2] == "--action":
-            action = f"&action={whole(arguments[-1], 'the action')}"
-            arguments = arguments[:-2]
+    elif command == "give" and 3 <= len(arguments) <= 10:
+        extra = ""
+        for option, name in (("--action", "action"), ("--gs", "gearScore"), ("--perks", "perks")):
+            if option in arguments[3:]:
+                position = arguments.index(option, 3)
+                if position + 1 >= len(arguments):
+                    fail(f"give a value after {option}")
+                value = arguments[position + 1]
+                if name == "perks":
+                    if not re.fullmatch(r"[A-Za-z0-9_,]*", value) or value.count(",") > 4:
+                        fail("--perks: at most five PerkID texts with \",\" between them (an empty part: no perk)")
+                    extra += f"&perks={value}"
+                else:
+                    extra += f"&{name}={whole(value, option)}"
+                arguments = arguments[:position] + arguments[position + 2:]
         if len(arguments) not in (3, 4):
-            fail("tools/world give CHARACTER ITEM [QUANTITY] [--action N]")
+            fail("tools/world give CHARACTER ITEM [QUANTITY] [--action N] [--gs N] [--perks P1,P2,P3,P4,P5]")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[2]):
             fail("the item must be the ItemID text of the item catalog")
         quantity = whole(arguments[3], "the quantity") if len(arguments) == 4 else 1
         request(data_dir, "POST", f"/v1/dev/items/give?character={character_id(data_dir, arguments[1])}"
-                                  f"&item={arguments[2]}&quantity={quantity}{action}")
+                                  f"&item={arguments[2]}&quantity={quantity}{extra}")
     elif command == "take" and len(arguments) in (3, 4):
         quantity = f"&quantity={whole(arguments[3], 'the quantity')}" if len(arguments) == 4 else ""
         request(data_dir, "POST", f"/v1/dev/items/remove?character={character_id(data_dir, arguments[1])}"
@@ -913,6 +944,41 @@ def main() -> None:
             else:
                 fail("tools/world roll KIND [LEVEL] [--count N] [--forced] [--character CHARACTER]")
         request(data_dir, "GET", f"/v1/dev/loot/roll?{query}")
+    elif command == "gear" and len(arguments) == 2:
+        document = fetch(data_dir, f"/v1/dev/gear?character={character_id(data_dir, arguments[1])}")
+        print(json.dumps(document, indent=1, sort_keys=True))
+    elif command == "perks" and len(arguments) in (4, 5) and (len(arguments) == 4 or arguments[4] == "--paperdoll"):
+        if not re.fullmatch(r"[A-Za-z0-9_,]*", arguments[3]) or arguments[3].count(",") > 4:
+            fail("the perks: at most five PerkID texts with \",\" between them (an empty part: no perk)")
+        container = "paperdoll" if len(arguments) == 5 else "bag"
+        request(data_dir, "POST", f"/v1/dev/items/perks?character={character_id(data_dir, arguments[1])}"
+                                  f"&slot={whole(arguments[2], 'the slot')}&container={container}&perks={arguments[3]}")
+    elif command == "use" and len(arguments) in (3, 4) and (len(arguments) == 3 or arguments[3] == "--paperdoll"):
+        container = "paperdoll" if len(arguments) == 4 else "bag"
+        request(data_dir, "POST", f"/v1/dev/items/use?character={character_id(data_dir, arguments[1])}"
+                                  f"&slot={whole(arguments[2], 'the slot')}&container={container}", show_bag=False)
+    elif command == "rune" and len(arguments) in (3, 4):
+        target = character_id(data_dir, arguments[1])
+        if arguments[2] == "charge" and len(arguments) == 4:
+            request(data_dir, "POST", f"/v1/dev/rune/charge?character={target}&percent={numbers(arguments[3:], 1)[0]}",
+                    show_bag=False)
+        elif arguments[2] == "activate" and len(arguments) == 3:
+            request(data_dir, "POST", f"/v1/dev/rune/activate?character={target}", show_bag=False)
+        else:
+            fail("tools/world rune CHARACTER charge PERCENT|activate")
+    elif command == "perkroll" and len(arguments) >= 2:
+        if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[1]):
+            fail("the item must be an ItemID of the item catalog")
+        query = f"item={arguments[1]}"
+        words = arguments[2:]
+        while words:
+            word = words.pop(0)
+            if word in ("--gs", "--level", "--count") and words:
+                query += f"&{word[2:]}={whole(words.pop(0), word[2:])}"
+            else:
+                fail("tools/world perkroll ITEM [--gs N] [--level N] [--count N]")
+        document = fetch(data_dir, f"/v1/dev/perks/roll?{query}")
+        print(json.dumps(document, indent=1, sort_keys=True))
     elif command == "hurt" and len(arguments) == 3:
         request(data_dir, "POST", f"/v1/dev/world/hurt?character={character_id(data_dir, arguments[1])}"
                                   f"&amount={numbers(arguments[2:], 1)[0]}")

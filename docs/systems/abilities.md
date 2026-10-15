@@ -3,7 +3,7 @@
 Read this document before a change of the abilities of a player: the press of a key of the bar, the
 cast, the cooldown, the hits of an ability, and the effects of an ability on a creature, and before
 a live test of an ability. The wire contracts are in the protocol notes (section 4.22, and 4.7,
-4.13, 4.15). The nodes and the bars of a character are in
+4.13, 4.15; the cost, the mana, and the perks of an ability in 4.23). The nodes and the bars of a character are in
 [Level, attributes, and skills](progression-and-skills.md), and the effects on a creature also in
 [Creatures](creatures.md) and [Creature behavior](creature-behavior.md).
 
@@ -18,6 +18,8 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 | An area of an ability (Shockwave, Path of Destiny, the vortex and the burst of Gravity Well) | `Abilities::run_area`, `throw_projectile`, `World::for_each_near`, `Navigation::sees`, test cases AB5 to AB7, AB10 |
 | The effects on a creature: stun, root, slow, weaken, knockdown, stagger, the icons | `Creatures::apply_effect`, `Creatures::knock`, `world/behavior.cpp`, `server/rep/states/status_state.cpp`, test cases AB8, AB9 |
 | The ability data of the game | `tools/gamedata/abilities.sh` (`abilities.py`), `gamedata/ability_data.h`, [Game data](../development/game-data.md) |
+| The cost of a cast and the mana: the one mana path, the regeneration, the mana state | `Abilities::mana_cost`, `Abilities::change_mana`, `Abilities::tick`, `server/rep/states/mana_state.cpp`, test case IZ8 |
+| The perks of an ability (Sundering Shockwave, Insatiable Gravity Well, Refreshing Move) | [Gear and perks](gear-and-perks.md), `Abilities::perk_burst`, `Abilities::reduce_weapon_cooldowns`, test case IZ5 |
 
 ## Rules
 
@@ -39,18 +41,48 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 - The cooldown starts at an accepted press, with the time of the data (`Time`, and the
   minimum `MinTime`) on the world clock. The owner gets the cooldown state (slot 45, type
   2932): one map for each place of the bar. Only the owner gets it. A cooldown is per ability,
-  not per place.
-- The cost of the six abilities is 0 (live check L8: the client predicts no cost, and the
-  data gives none). A different weapon can have a cost: check it live before its rule.
+  not per place. A change of the bar sends the cooldown state again (code review of stage
+  3.3a, finding F8): the countdown is on the new key.
+- The cooldown of the client (stage 1.3b, I8). Each cooldown has a second end: the end of the
+  cooldown of the client (`AbilityCooldown::clientEnd`). The client starts its own cooldown at
+  the press, and a reset of the server does not end it (live check I8-05). A press before the
+  end of the client cooldown is refused: the client does not play it. The reset command ends
+  only the cooldown of the server. A cooldown reduction (Stimulated Reduction, Refreshing
+  Move) changes the two ends.
+- The cost (stage 1.3b, I14; protocol notes 4.23). The mana cost of a cast is the `ManaCost` of
+  the first spell of the plan whose cost id the mana table of the players has, times 1 + the
+  `ManaCostMult` of each learned node whose `ManaCostList` has the id or "All", not less than
+  0. A cost id with no row costs nothing: the client pays nothing for it (static proof). A
+  press with less mana than the cost is refused (`noMana`): no cast, no cooldown. An accepted
+  cast pays through the one mana path (`Abilities::change_mana`), which the mana potion uses
+  too. The six abilities of the build have no cost: the spells of the war hammer name
+  `SpecialAttack`, which the mana table does not have, and the spells of the great axe name no
+  cost id. The stamina has no model in the backend (the stamina rows of the two weapons are 0).
+- The mana regeneration (stage 1.3b): a spend starts it after `ManaRegenDelay` (0 s), or after
+  `ManaRegenDelayOnEmpty` (2 s) at 0 mana, at `ManaBaseRegenRate` (2 mana in each second; the
+  row Player of the base vitals). The mana state (slot 47) has the delay that is left and the
+  rate while the mana is not full: the client predicts the same gain. The world sends the
+  state again at each change and when the mana is full.
 - A melee phase is a window of input steps after the press (and the same time on the world
   clock, plus 0.5 s). A contact of the session of the caster in the window is a hit of that
   phase, with its damage row. A creature takes one hit of each phase. The hit check of a melee
   attack stays (the observer, the immune mark, the weapon, the distance, the point, the rate).
+  Code review of stage 3.3a: a contact that comes more than 250 ms before the first time of
+  the phase on the world clock is not a hit (finding F1, `ability_rules::kPhaseEarly`); a
+  later press of the session, accepted or refused, ends the windows of the earlier cast, and
+  a contact of an attack input that started after the press is a hit of the attack (F2).
 - An area phase runs at its time on the world clock. It takes the creatures of its circle
   from the position index, not more than 3 m higher or lower (or the `Height` of the spell),
   with no wall between the center and the creature (`Navigation::sees`), 32 at most, the
-  nearest first. A creature takes one hit of each phase. A creature on its way back takes
-  nothing. A caster that left the world or died does nothing.
+  nearest first (for the whole phase, also across the circles of a path: finding F4 of the
+  review of stage 3.3a; a project value, because the spell rows and the ability rows of the
+  data have no column for a count of targets). A creature takes one hit of each phase. A
+  creature on its way back takes nothing. A caster that left the world or died does nothing.
+- The shot of Gravity Well: the origin of a shot must be near the character with no wall
+  between the launch place of the server (1.5 m above the character) and it (finding F3);
+  else the server throws the projectile from the character.
+- Each status row of a plan, also of a delayed effect, must be in the data: an ability with a
+  part of its data is refused (`noRule`; finding F9).
 - Each hit of an ability goes through `Combat::strike`: the damage of the row, the creature
   system with the attacker (the target, the credit, the rewards of a kill), and the damage
   number to the owner.
@@ -108,10 +140,12 @@ tools/gamedata/abilities.sh          # write ability-data.json to the game data 
   its own cooldown. Thus the client and the server agree in a normal game. A cooldown that
   only the server has (a command, or a different client) shows a countdown, but the client
   plays a press in it: the server then refuses it, and the animation plays with no damage.
-- One press after the first weapon change of a session sent the key bits, and the client did
-  not play the ability (live check L1, run r2). The server takes the press as a cast: the
-  cooldown starts with no animation. In a test, make one press after the weapon change
-  before the test, or reset the cooldowns (`tools/world cooldowns NAME reset`).
+- A press in the local cooldown of the client sends the key bits, and the client does not
+  play it (stage 1.3b, I8: this is the cause of the "first press after a weapon change" of
+  stage 3.3a, whose tries reset the cooldowns of the server between presses). The backend
+  refuses such a press (the cooldown of the client). The reset command does not end the
+  cooldown of the client: after a reset, wait for the countdown of the HUD before the next
+  press.
 - After a travel the body of the character faces north, also when the camera faces a
   different direction. Charge and Wrecking Ball go in the direction of the body: walk forward
   for a short time (`tools/hx 'keydown 0x57' 'wait 250' 'keyup 0x57'`) before such an ability.

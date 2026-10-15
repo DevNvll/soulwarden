@@ -103,6 +103,10 @@ bool weapon_slot(std::uint32_t slot) {
 
 } // namespace paperdoll
 
+bool same_stack(const ItemInstance& one, const ItemInstance& two) {
+    return one.itemId == two.itemId && (one.flags & kItemBound) == (two.flags & kItemBound) && one.perks == two.perks;
+}
+
 std::string instance_text(const InstanceId& instance) {
     static const char* digits = "0123456789abcdef";
     std::string text;

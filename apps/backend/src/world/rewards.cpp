@@ -5,6 +5,7 @@
 
 #include "core/logging/log.h"
 #include "world/combat.h"
+#include "world/perk_roll.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -445,8 +446,26 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
         if (written && (!reward.items.empty() || reward.coin != 0)) {
             std::vector<GrantItem> grants;
             grants.reserve(reward.items.size());
+            const gamedata::PerkData* perks = m_world.perk_data();
+            const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
             for (const LootDrop& drop : reward.items) {
-                grants.push_back(GrantItem{drop.itemId, drop.quantity, drop.gearScore});
+                const gamedata::ItemDefinition* definition = catalog != nullptr ? catalog->find(drop.itemId) : nullptr;
+                if (perks == nullptr || definition == nullptr || !can_roll_perks(*perks, *definition)) {
+                    grants.push_back(GrantItem{drop.itemId, drop.quantity, drop.gearScore});
+                    continue;
+                }
+                // An item with perk places: each instance gets its own roll (stage 1.3b, I3; world/perk_roll.h).
+                // The gear score of the instance: the rule of the inventory for a loot item (Inventory::new_item).
+                std::uint32_t gearScore = 0;
+                if (definition->maxGearScore != 0) {
+                    const std::uint32_t standard = definition->gearScoreOverride != 0 ? definition->gearScoreOverride : definition->minGearScore;
+                    gearScore = std::clamp(drop.gearScore.value_or(standard), 1U, std::max(definition->maxGearScore, 1U));
+                }
+                for (std::uint32_t unit = 0; unit < drop.quantity; ++unit) {
+                    const PerkIds rolled = roll_perks(*perks, *definition, gearScore, character.progression.level,
+                                                      [this] { return m_world.random_unit(); });
+                    grants.push_back(GrantItem{drop.itemId, 1, drop.gearScore, rolled});
+                }
             }
             std::vector<GrantItem> lost;
             const ItemResult given = m_world.inventory().grant(character.characterId, grants, reward.coin, &lost);
@@ -455,7 +474,7 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
             for (const GrantItem& item : lost) {
                 itemsLost += item.quantity;
             }
-            itemsGiven = reward.items.size() - std::min(reward.items.size(), lost.size());
+            itemsGiven = grants.size() - std::min(grants.size(), lost.size());
         }
         written = written && batch.commit();
         if (!written) {

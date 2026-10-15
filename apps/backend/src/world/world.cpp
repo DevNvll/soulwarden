@@ -53,7 +53,10 @@ World::World(const WorldClock& clock,
       m_combat(*this, options.combatTables),
       m_health(*this),
       m_rewards(*this, options.lootTables),
-      m_abilities(*this, options.abilityData, options.combatTables) {
+      m_abilities(*this, options.abilityData, options.combatTables),
+      m_gear(*this),
+      m_consumables(*this),
+      m_runes(*this) {
     m_random = options.randomSeed;
 }
 
@@ -107,6 +110,8 @@ void World::tick() {
         m_navigation.tick();
         m_creatures.tick();
         m_health.tick();
+        m_consumables.tick();
+        m_abilities.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -200,6 +205,10 @@ Entity& World::make_entity(const state::Character& character) {
     m_progress.load(entity);
     m_skills.load(entity);
     m_abilities.entered(entity);
+    // The effects, the charge, and the values of the equipment (stage 1.3b): the gear values need the effects.
+    m_consumables.entered(entity);
+    m_runes.entered(entity);
+    m_gear.refresh(entity);
     const Revision revision = ++m_revision;
     entity.positionRevision = revision;
     for (const ComponentKey key : kAllComponents) {

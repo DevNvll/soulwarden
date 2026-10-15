@@ -22,7 +22,8 @@
 //   POST /admin/v1/commands
 //        One command for one character: {"command": NAME, "character": ID, "args": {...}}.
 //        NAME and the members of "args":
-//          give_item           item (the ItemID text), quantity, gearScore
+//          give_item           item (the ItemID text), quantity, gearScore, perks (stage 1.3b:
+//                              up to five perk ids with "," between them; a gem is one of them)
 //          remove_item         slot (a slot of the bag), quantity
 //          set_coin            amount (hundredths of a coin)
 //          set_level           level (a level of the screen)
@@ -51,6 +52,12 @@
 //          set_creatures_ignore ignore (1 or 0): the creatures ignore the character
 //          set_force_loot      force (1 or 0): each kill of the character drops loot and coin
 //                              (the loot switch, stage 3.5a)
+//          set_item_perks      slot, container (bag or paperdoll), perks (the form of give_item):
+//                              the perks of an item of the character (stage 1.3b)
+//          use_item            slot, container (bag or paperdoll): the use of a consumable
+//                              (stage 1.3b), with the rule of a request of a client
+//          set_rune_charge     percent (0 to 100): the heart rune charge (stage 1.3b)
+//          activate_rune       no argument: the key of the heart rune (stage 1.3b)
 //        remove_creature, set_creature_health, and kill_creature change only a creature of
 //        the list of the character (150 m or less from it), and the character must be in the
 //        world: a different creature gives the reply 404, and nothing changes.
@@ -119,6 +126,10 @@ constexpr NamedCommand kCommands[] = {
     {"heal", commands::heal},
     {"set_creatures_ignore", commands::set_creatures_ignore},
     {"set_force_loot", commands::set_force_loot},
+    {"set_item_perks", commands::set_item_perks},
+    {"use_item", commands::use_item},
+    {"set_rune_charge", commands::set_rune_charge},
+    {"activate_rune", commands::activate_rune},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */

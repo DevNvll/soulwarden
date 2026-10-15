@@ -1870,7 +1870,7 @@ packed := ((((quantity * 64 + action) * 502 + slotCode) << 20) + itemIndex) * 80
 | `maxDurability`, `durability` | 0 to 8000 | behavioral proof (item +0x0C, +0x08) |
 | `chrono` | order counter of the item in the container | behavioral proof (item +0x14); its effect is not known |
 | `gearScore` | | behavioral proof (item +0x3E) |
-| `perk` x5 | index in the perk list of the client, 0 is no perk | static proof; the backend sends 0 |
+| `perk` x5 | index in the perk list of the client, 0 is no perk | live proof I1 and I2 of stage 1.3b: the backend sends the perks of the instance (4.23) |
 | `dye`, `skinDye` | | static proof; the backend sends 0 |
 | `instance` | 16 bytes that name the stack; all zero is "no instance" | behavioral proof (item +0x220) |
 | `flags` | bit 0 bound to the player, bit 1 locked | behavioral proof for bit 0 (item +0x160) |
@@ -2069,6 +2069,10 @@ its durability). The client handles each entry as a change of that slot:
   (`00 00 16 F9 98 30 00 00` and 37 zero bytes), and an item leaves its old slot before it
   is in a new one (a swap of two weapon slots, behavioral proof). A new item has the cause 4
   (item equipped), and an item of a first record the cause 0x11.
+- A first record in more than one part (stage 1.3b, live I12): a later part with entries of a
+  list group (the cause 0x11) took the items of the same group of an earlier part out of their
+  slots. Thus the backend keeps each group whole in one part when it fits (the slots that do
+  not show on the body first), and each part of the owner has `isLocalPlayer` (4.23).
 
 **Owner view** (behavioral proof). The client reads the item lists only when the state has
 `isLocalPlayer` = 1 (static proof 0x6771AB0). The client uses the two list groups in the same
@@ -3260,6 +3264,12 @@ raw    = core x DmgCoef + AddDmg
 dealt  = raw x (1 - mitigation) x (1 + weakness) x (1 - absorption), each factor not less than 0
 ```
 
+Stage 1.3b (4.23): `raw` times (1 + the part of the gear of the attacker: BaseDamage of its
+perks, the perks of the hit, the equip load); a gem of the weapon converts a part of `raw` to
+its damage type; each part times (1 + the DMG<type> part of the attacker) and the defense of
+the target for its type; the mitigation of the target times (1 + the armor part of its
+effects: a rend).
+
 | Value | Source |
 | --- | --- |
 | The weapon of an item | Column `ItemStatsRef` of the item tables: a row of the weapon table (`WeaponItemDefinitions`) |
@@ -3918,6 +3928,10 @@ armor  = the sum, for the armor items of the slots 0 to 4 of the character, of
 part   = armor / ( armor + gear score of the level of the creature ^ 1.2 )
 damage = raw x level x ( 1 - part )
 ```
+
+Stage 1.3b (4.23): `armor` times (1 + the armor part of the perks and the effects of the
+character for the category: a dust, the status of the heart rune), and `damage` times (1 - the
+ABS<type> part of the character for the damage type) and (1 - BaseDamageReduction).
 
 - `round1` is a value with one decimal. The set scale factor of an item is
   `PhysicalArmorSetScaleFactor` for a damage type of the category `Physical` and
@@ -4592,8 +4606,9 @@ stage 1.3, 1.5, and 1.6. The HUD (`lootticker2024.luac`) shows one line for each
   (research). The load of the bag at a world entry has the cause 0x11: no notice.
 - The notice of an item shows also for a slot that is new in the vector (a full bag of 6 slots
   got the slot 6 with the cause 1: "Longsword").
-- An item has five perk indexes 0 on the wire (stage 1.3b adds the perks of an instance). The
-  client shows the perks and the gem that the item definition itself has: the amulet
+- An item had five perk indexes 0 on the wire before stage 1.3b; a loot item now gets the
+  perks of the roll of 4.23 (live I12: a rapier of a drop with the perk "Acutely Empowered").
+  The client shows the perks and the gem that the item definition itself has: the amulet
   `AmuletJasperT2` shows "+1.19% Max Health" and "Strike Ward I", and its rarity "Uncommon"
   (live `L8-10`). A weapon of a drop table shows "Common" and its gear score (`L8-03`).
 
@@ -4719,13 +4734,9 @@ in weapon slot 2 at mastery level 8):
 | The respawn of the Sacred Starhide of the spawn point | Brimstone Sands | 360 s after the death (the spawner 360 and 360) the client had no body (the client removes it after 300 s), and at the next scan the creature stood at its point with its name plate and its full health (`L5-02`, log line `world: creature ... of the kind Bobcat_61 ... (spawn point)`). |
 
 **Not known, not done (stage 1.3b and later):**
-- The perks of an instance: the final perk allocator of the client is not proved (`loot.md`
-  2.2 and Unknowns 3 and 4: `PerkChance`, `PerkBucketOverridesN`, the perk counts of the
-  gear score ranges of `PerkGenerationData`, `MinLevelRollPerks` 7). Stage 1.3b must export
-  the perk index list of the client (not the perk CRC), roll the perks of each new instance
-  from the perk buckets of its definition and of its table entry, write them into the five
-  perk places of the item on the wire and into the database (a column for each place), and
-  derive no rarity byte: the client computes the rarity from the perks (0x5C528D0).
+- The perks of an instance: done in stage 1.3b (4.23: the perk roll of the client, the five
+  perk places on the wire and in the database). Open: the `PerkBucketOverridesN` and
+  `PerkOverridesN` of a loot table entry (no table that the backend reads has them).
 - The gems, the dyes, the bind rule of a new instance (`BindOnPickup` is sent as the flag of
   the definition), the loot bias for the equipment of the character (`LootBiasingChance` of
   `XPLevels`), the loot limits and their counters (`javelindata_lootlimits`), the filter of
@@ -4772,8 +4783,13 @@ the virtual bit, one or two entries have the hold bit, and one entry has the rel
   no correction (none is proved).
 - One press after the first weapon change of a session sent the key bits, and the client did
   not play the ability (no setter call, live L1 and run r2). Its input entries were equal to
-  the entries of a press that played, in each field. The cause is not known: the backend
-  cannot see it, and it takes such a press as a cast.
+  the entries of a press that played, in each field. Stage 1.3b (I8): not reproduced in five
+  tries after a weapon change (live I8-01 to I8-04). A press in the local cooldown of the
+  client gives the same symptom: the client sends the bits, does not play the press, and keeps
+  its countdown; a cooldown reset of the server between two presses (`tools/world cooldowns
+  NAME reset`, used in the tries of stage 3.3a) made the server take such a press (live I8-05).
+  The backend now keeps the end of the client cooldown and refuses such a press (the rule
+  "The cooldown" below; test case IZ9; live I12).
 - After a travel the body of the character faces north, also when the camera faces a
   different direction. Wrecking Ball and Charge go in the direction of the body (live run r3):
   a short walk turns the body to the camera.
@@ -4871,8 +4887,8 @@ refuses each press (`no data`).
 | Rule | What the backend does |
 | --- | --- |
 | The cast | The session gives each press bit of a new input step (one cast for each input sequence: a client sends an entry in five reports) to the world (`Abilities::press`), with the input number, the look direction of the camera, and the lock (a travel that the client did not confirm). The world finds the character from the session, the weapon in its hand (`Combat::weapon_in_hand`) and its ability table (the weapon mastery of the weapon row), and the ability of the place of the key on the bar of that table. It refuses (no cast, no cost, no hit, no message) when the character is dead, the input is locked, the weapon has no ability table, the place is empty, the character does not have the node, the ability has no rule here or the data has no row for it, its cooldown runs, or a different cast plays (the time of the cast below). |
-| The cooldown | At an accepted press, the cooldown of the data (`Time`, and the minimum `MinTime`) on the world clock: a value of the character with the character id as its key (`Abilities`), which a new session and a new entity of the character keep. |
-| The cost | 0: the data gives the six abilities no direct cost (`ability-use.md` Q2), and the client predicts none (live L8: the stamina bar stays full, no mana meter). |
+| The cooldown | At an accepted press, the cooldown of the data (`Time`, and the minimum `MinTime`) on the world clock: a value of the character with the character id as its key (`Abilities`), which a new session and a new entity of the character keep. The end of the cooldown of the client is a second value (stage 1.3b, I8): a reset command ends the cooldown of the server, not that of the client, and a press before the end of the client cooldown is refused (live I8-05 and I12: the client does not play such a press and keeps its countdown). A cooldown reduction (Stimulated Reduction, Refreshing Move) changes the two ends. |
+| The cost | Stage 1.3b (I14, 4.23): the mana cost of the first spell of the plan whose `ManaCost` id the mana table of the players has, times 1 + the `ManaCostMult` of each learned node that lists the id or "All"; a press with less mana than the cost makes no cast and starts no cooldown; an accepted cast pays through the one mana path (`Abilities::change_mana`). The six abilities of the build have no cost: their spells name `SpecialAttack` (war hammer) or no id (great axe), and the mana table has no row `SpecialAttack` (static proof: the client pays nothing for an id with no row). Live I12: six casts, the mana stays 100, no mana meter (as live L8). |
 | Melee phases | A contact of the session of the caster in the window of a phase (input steps from the press, and the same time on the world clock plus 0.5 s) is a hit of that phase (`Combat::claim`), with its damage row; one hit of a creature for each phase. The hit check of a melee attack stays (the target, the observer, the immune mark, the weapon, the distance, the point, the rate). The damage goes through `Combat::strike`, the one function of each hit: `Combat::damage` with the row, `Creatures::hurt` with the attacker (the credit and the rewards of a kill), the damage number to the owner. |
 | Area phases | At the time of a phase (a timer of the world clock), the creatures of its circle from the position index (`World::for_each_near`: no scan of the world), not more than 3 m higher or lower (or the `Height` of the spell), with no wall between the center and the creature (`Navigation::sees`), 32 at most (the nearest first); each one gets the damage and the effects one time for each phase. A creature on its way back takes nothing. A caster that left the world or died does nothing. |
 | The effects | A status effect has the values of its row: a stun (`Stunned`: no movement, no attack; its attack that plays stops, and it plays its action `Stun`), a root (`NoNav`: no movement; it turns and attacks in its reach), a slow (`MoveSpeedMod`: the speed of each step times 1 + the value; the strongest slow of the effects), a weaken (`DMGStandard`: the damage of the creature times 1 + the value, `Combat::creature_damage`), the end at the next hit (`StopOnHitCount`). The same effect again gets the later end. A knockdown (power 4) or a stagger (power 2): the action `Reaction` with the reaction fragment of the power, and no movement and no attack for 2 s or 1 s. The world ends each effect at its time (only the creatures with an effect). A creature on its way back takes no effect, and a creature with a root or a stun on its way back waits (it is not at its anchor). |
@@ -4916,7 +4932,98 @@ list` has the line `abilities`.
   a correction for a press that the backend refuses.
 - The full status map of an observer (its wall clock) and the status state of the owner (the
   tray of a player).
-- The cause of the press after the first weapon change that the client did not play.
+
+### 4.23 Itemization: the perks of an item, the gear values, the heart rune, the consumables, the cost of an ability (live proof of stage 1.3b; the rules are project rules with the values of the game data)
+
+Stage 1.3b. Research: `~/Games/soulwarden/work/research/itemization.md`, and the results of the
+stage in `~/Games/soulwarden/work/research/scratch/itemization-implement/` (`perk-roll/`,
+`perk-swap/`, `cost-analysis/`). Live checks and the live proof:
+`~/Games/soulwarden/work/evidence/itemization/implement/` (`live/LIVE-CHECKS.md`, `live/I*`).
+Code: `gamedata/perk_data.h`, `world/item.h`, `world/inventory.h` (the perks of an instance),
+`world/gear.h` (the gear values and the perks of a hit), `world/perk_roll.h` (the perk roll of a
+loot item), `world/runes.h`, `world/consumables.h`, `world/abilities.h` (the cost, the mana, the
+client cooldown), `world/combat.h` (the damage with the gear), `server/rep/states/` (the charge
+state, the item map of the cooldown state, the bonus map of the attribute state, the mana state,
+the parts of the paperdoll state). Tools: `tools/gamedata/perks.sh` (`perks.py`),
+`tools/research/perk_index.py`. Test cases IZ1 to IZ11.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| A perk of an item on the wire is the index of the perk in the perk list of the client: entry 0 is "no perk", then the rows of the seven perk tables in the order ItemPerks_Gems, Infix, Deprecated, Artifacts, 2025, EquipmentSetBonuses, ItemPerks; in each table the order of the buckets of the hash map of the table (descending bucket of `crc * 0xDE5FB9D2630458E9`, low and high words added, and the bucket count a power of two). 1,822 entries for the supported build. | Live proof I1: the list of two client starts is equal in each entry to the list of the tool. | `0x448E310` (list), `0x448E4F0` (bucket roll) |
+| The five perk places of an item record (bag and paperdoll) are five numbers in the size code (4.10); a gem is a perk of a place (PerkType Gem). The client computes the rarity from the count of the perks. | Live proof I2: the tooltips show the perks, the gem, the gear score, and the rarity; the equip keeps them (I3-01). | `0x5C481D0`, `0x5C528D0` (rarity) |
+| The client shows and uses a different perk for some perks of an item: the perk swap table (ItemPerkSwapData). An ItemId row of the item wins; else the first ItemClass row, in the sequence of the table, whose classes are all classes of the item. A pass changes each perk one time; the client makes two or three passes (a chain of two steps). A perk whose new perk the item has already (not a gem, not a charm) goes out. Then the client removes a perk that the item cannot have (no class of its ItemClass, or a class of ExcludeItemClass, or deprecated). | Static proof (perk-swap/RESULT.md); live proof I2: the Soldier perk of a weapon shows as Acutely Empowered, of armor and jewelry as Wellness. | `0x44407E0` (pass), `0x4431E80` (loader), `0x5C0A440` (class test), `0x5CF4A40`, `0x5CF5750` |
+| The potency of a perk: 1 plus, for each step of its ScalingPerGearScore, the slope times the part of the gear score range of the step that the gear score covers from 100. | Live proof I2: the numbers of the tooltips (Health 0.03 x 1.5715 = 4.7 percent, and three more). | `0x3692600` |
+| The client shows the fixed perks of an item definition (Perk1..5) also when the instance does not have them (the heart rune, the opal jewelry). | Live proof I2. | — |
+| The attribute state, group 0 field 1 (`attributeBonuses`): a map of the attribute type and the bonus. The client adds the bonus to the value of the character sheet. | Live proof I4: CON 7 to 55 with a bonus of 48. | — |
+| The client computes the equip load, the average gear score, and the armor of the inventory screen from the paperdoll items itself; the load of each armor item counts in whole tenths. | Live proof I4 and I12: 23.25 + 15.5 shows as 3.8; the five armor items of the build (231.57) as "Medium 22.9"; the armor 1,564.9 and 1,173.7 of the backend rule. | — |
+| The charge state, slot 48, type 5257 (`MB::ChargeComponentReplicatedState`): group 0 field 0, one byte, the percent of the heart rune charge. The HUD fills the icon of the key G from it. | Live proof I6 and I12. | `0x66F13D0`, `0x279E210` (reader), `0x683AB80` (apply) |
+| The key G (`rune_ability`) is bit 450 of the action words of the input entry; the client empties its icon at once and shows no explosion of its own. | Live proof I6 and I12. | — |
+| The quick slot keys 3 to 6 (`Use_Quickslot_1` to 4) are the bits 404, 117, 140, 513 for the paperdoll slots 14 to 17; no message. The client plays the drink itself, also in a cooldown of the server. It sends no bit for an item whose level requirement is above the level of the character. | Live proof I7 and I12. | — |
+| ContainerComponentServerFacet_ServerUseItem (type 2917): the entry "Use" of the action menu of an item of the bag. Body: target u64, entity u64, bag slot u32 (20 bytes). | Live proof I7 (the message); I12 could not open the action menu with the harness. | `0x48B4E40`, `0x48E7D00` |
+| The cooldown state (slot 45, type 2932), group 0 field 3 (`ccdmap`): a list in the full form of entries `key:u32 end:u64 a:u32 b:u32`, the key the CRC-32 of the lower-case item id; the client shows the countdown on each quick slot and bag item with the key. The key of a cooldown id shows nothing. `a` and `b` are 0. | Live proof I7 and I12 (the countdowns of the potion and of the potions of the same cooldown id). | — |
+| The mana state (slot 47, type 1652), fields 2 and 3: the delay that is left before the regeneration, and the rate. The client adds the rate times the time to its mana (after the delay) and compares its value with the next state. | Static proof (cost-analysis/RESULT.md). Not proved live with a cost: the build has no ability with a cost. | `0x676B8E0` (step), `0x6949DE0` (spend) |
+| The damage number (type 2071) has a list of entries; two entries (a converted part of a gem) show two numbers at the target. | Live proof I12 (148 Slash and 156 Corruption). | — |
+| The paperdoll state of the owner in more than one part (4.11): in a first record each entry has the cause "load", and a later part with entries of the same list group took the items of that group of the earlier part out of their slots. | Live proof I12 (a second part with the heart rune only took the jewelry and the quick slot items out). | — |
+| The cost of an ability: a cost id with no row in the mana table (ManaCosts_Player) costs nothing: the lookup returns false and writes no value; the pay paths then pay nothing, and the check IfManaCost is false. The mana cost is the row times the product of (1 + ManaCostMult) of each active ability whose ManaCostList has the id or "all", not below 0, times a character multiplier. The stamina cost is the row times the cost multiplier of the action plus the StaminaCostFlatMod of the first active ability that lists the id. The client pays no spell `ManaCost` itself. | Static proof (cost-analysis/RESULT.md). | `0x6801430`, `0x67EAED0`, `0x67EB010`, `0x2C34F60` |
+
+**The data** (`perk-data.json`, `tools/gamedata/perks.sh`): the perk list in the order of the
+client; each perk (type, condition, ItemClass, ExcludeItemClass, exclusive labels, scaling,
+affixes, abilities, channel, deprecated); the cells of the affixes (AffixStatData) and of the
+ability rows that the perks name; the perk buckets with their weights; the perk places of each
+item (Perk1..5, PerkBucket1..5, PerkSlot1..5, ForceRarity, CanHavePerks); the consumables
+(AddStatusEffects, DurationOverrides, CooldownId, CooldownDuration, SharedCooldownLocString,
+RemoveStatusEffects, RemoveStatusEffectCategories, DisableUseInCombat); the encumbrance row
+Player and the load of each armor item; the exclusive labels; the swap table; the EquipAbility
+rows of the heart runes; the perk generation data (the largest perk count of a tier for each
+gear score, the largest channel, MinLevelRollPerks). `ability-data.json` (format 2) has the
+cells of each status row and spell row, and the cost tables (4.22). `combat-tables.json` has
+AttackRuneCharge and HitRuneCharge of each damage row; `creatures.json` the HitRuneCharge of
+each contact; `progression-tables.json` the mana regeneration of the row Player of the base
+vitals.
+
+**The rules** (project rules; the values of the data where it has a value):
+
+| Rule | What the backend does |
+| --- | --- |
+| The perks of an instance | Five places with the PerkID text (the database: the columns `perk1` to `perk5`, schema 7; the wire: the index of the perk data at each load). A give and a perk command check each perk (in the data, one place, one gem at most, a perk for the item class, not deprecated) and apply the swap table of the game; the stored perks are the perks that the client shows and uses, so that its passes change nothing. A stack takes only an item with the same perks. |
+| The perk roll of a loot item | The procedure of the client (`world/perk_roll.h`; perk-roll/RESULT.md): no rolled perk below level 7; the fixed perks; the largest perk count of the tier at the gear score; one count roll from the last bucket; a bucket roll with the channel, label, class, and deprecated filters, a label roll by weight, and a weighted pick; one Inherent perk at most. No perk biasing. Each instance of a drop gets its own roll. |
+| The gear values | The perks of the equipped items (armor, jewelry, the weapon in the hand for OnActive and OnUnsheathed, the heart rune) with the swap and the potency: MOD&lt;attribute&gt; (the attribute bonus, a whole number), MaxHealthMod and MaxHealth (a part of the health of the base, the level, and the constitution), BaseDamage (a part of the damage), DMG&lt;type&gt;, ABS&lt;type&gt;, PhysicalArmor and ElementalArmor, BaseDamageReduction, the regeneration of a status with TickRate; an ability row counts IsStackableMax times at most. The effects on the character (a food, a dust, the status of the heart rune) count the same. |
+| A gem conversion | DamagePercentage of an affix of the weapon of the hit: that part of the raw damage has the DamageType of the affix, with the defense of the target for that type; the damage number has two entries. |
+| The perks of a hit | The ability rows with OnHit of the perks of the attacker, with the conditions that the backend evaluates (AttackType, DamageTableRow, RemoteDamageTableRow, TargetStatusEffectCategory, the health, stamina, and mana percents, grit, the vitals category, DontHaveStatusEffect) and ActivationCooldown: BaseDamage, OtherApplyStatusEffect (a rend of the armor of the creature, a damage over time based on the damage of the hit, a chain of a spell), DmgPctToHealth (a heal), CooldownTimer with CDRImmediatelyOptions ActiveWeapon (a shorter cooldown of the bar of the weapon in the hand). A row with a different condition has no effect. The burst of Insatiable Gravity Well: the spell InsatiableGravityWell around the character (the client text of the perk). |
+| The equip load | The load of the armor items in whole tenths; the class by the percents of the row Player (light below 26, medium below 46, heavy to 100); the damage part (+0.15, 0, -0.15) and the heal factor of the class. |
+| The heart rune | The charge of the character (60 at most; 6 at most for one gain): AttackRuneCharge of an accepted hit, HitRuneCharge of a hit taken, SourceRuneChargeOnApply and OnTick of a status of a perk with a change of the health. The key at a full charge: the charge goes to 0, the character gets the first variant status of the action that a perk of the rune has (Dominator, Greater, Major; one status), and 3 s later one explosion: each creature in Radius 5 and Height 5 of the spell Rune_Detonate_AoE that the character sees, the row Rune_Detonate_AoE with the weapon of the rune. A death before the end: no explosion. |
+| The consumables | A quick slot key or the message 2917 uses the item of the slot: a consumable of the data, not SiegeWarOnly, not in a fight for DisableUseInCombat, not in its cooldown. One item goes in one transaction; the effects: one heal and one mana change for an effect with no duration, or an effect for its time (ticks with TickRate, StopOnHitCount); the cooldown of the item, shorter by the perks with OnUsedConsumable; the other items of the cooldown id get 80 percent of it (the client text of SharedCooldownLocString) or all of it. The effects and the cooldowns are values of the character. |
+| The mana | One path for each change (`Abilities::change_mana`): a cost, a potion. A spend starts the regeneration after ManaRegenDelay (0), or ManaRegenDelayOnEmpty (2 s) at 0; the rate is ManaBaseRegenRate (2 in each second); the mana state has the delay and the rate while the mana is not full. |
+| The owner and the observers | The charge state, the item map, the attribute bonus, and the mana state go to the owner only; each observer of a creature gets its health, its status icons (a rend), and its death (case IZ10). |
+| The cost of the rules | A hit looks at the perks of one character and at the creatures near its target (a chain); the consumable tick looks only at the characters with an effect; an explosion looks at the position index near one character (case IZ11: 50 characters, 2,000 hits, 4,400 creatures). |
+
+**The commands** (development routes; the admin interface has `give_item` with `perks`,
+`set_item_perks`, `use_item`, `set_rune_charge`, `activate_rune`; the tool window gives an item
+with a gear score and perks): `tools/world give CHARACTER ITEM [QUANTITY] [--gs N] [--perks
+P1,...]`, `tools/world perks CHARACTER SLOT P1,... [--paperdoll]` (`POST /v1/dev/items/perks`),
+`tools/world gear CHARACTER` (`GET /v1/dev/gear`), `tools/world use CHARACTER SLOT
+[--paperdoll]` (`POST /v1/dev/items/use`), `tools/world rune CHARACTER charge PERCENT|activate`
+(`POST /v1/dev/rune/charge`, `/v1/dev/rune/activate`), `tools/world perkroll ITEM [--gs N]
+[--level N] [--count N]` (`GET /v1/dev/perks/roll`).
+
+**Not known, not done** (stage 1.3b):
+
+- The status state of a player (the tray and the client armor of a food, a dust, the status of
+  the heart rune): the backend sends no status effect of a player, thus the client does not
+  show the icon, and its character sheet shows no armor of a dust.
+- The action menu of an item in the bag with the harness (I12): the message 2917 is proved
+  (I7), and the world path of the use is the path of a quick slot key.
+- A food with a level requirement above 60 (FoodCONT5: level 65): the client sends no use.
+- The perks with a system that the backend does not have: grit (Thwarting Strikes), stamina
+  (Abyssal Gambit, Gambled Energy, Stamina Recovery), critical hits (Resilient on armor),
+  dodge (Shirking Fortification), crowd control on a player (Freedom), the removal of a
+  debuff (Purifying Toast), a player target (the PvP ring perk), and the speed of the status of
+  the heart rune.
+- The other heart runes (nine abilities), the crafting, the repair, the salvage, the socket
+  action, and the perk biasing of a roll.
+- A paperdoll group of lists larger than one part (more than about 15 items of one group).
 
 ## 5. Open items
 

@@ -1,10 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+#include "gamedata/cell_values.h"
 
 // The ability data: what the abilities of a player need from the game files (stage 3.3a,
 // protocol notes 4.22). The cooldown of each ability (the cooldown table of the players), the
@@ -54,6 +57,12 @@ struct StatusRow {
     bool nameplate{false};
     /** DMGStandard: the part of the damage of the target that the effect adds (-0.1: a weaken). */
     float damage{0.0F};
+    /**
+     * The other cells of the row that are not empty (stage 1.3b, file format 2): Health,
+     * HealthModifierPercent, TickRate, MODConstitution, PhysicalArmor, ABS<type>, DMG<type>,
+     * EffectCategories, OnEndStatusEffect, CastSpell, SourceRuneChargeOnApply, ... Empty for a file of format 1.
+     */
+    CellValues cells;
 };
 
 /** One spell (SpellData): the shape of an area or of a path. */
@@ -69,6 +78,27 @@ struct SpellRow {
     float spawnRate{0.0F};
     /** Duration (milliseconds). */
     float duration{0.0F};
+    /** The other cells of the row that are not empty (stage 1.3b): DamageTableRow, ManaCost, MaxChainNum, ... */
+    CellValues cells;
+};
+
+/** One row of a cost table of the players (ManaData or StaminaData, stage 1.3b): the cost of a cost id. */
+struct CostRow {
+    std::string id;
+    float cost{0.0F};
+};
+
+/**
+ * The cost columns of one ability row (stage 1.3b): an active ability with a ManaCostMult changes the mana
+ * cost of each cost id of its ManaCostList ("All": each id), and one with a StaminaCostFlatMod adds to the
+ * stamina cost of each id of its StaminaCostList (client code at image RVA 0x67EAED0 and 0x67EB010).
+ */
+struct AbilityCostRow {
+    std::string id;
+    std::vector<std::string> mana;
+    float manaMultiplier{0.0F};
+    std::vector<std::string> stamina;
+    float staminaFlat{0.0F};
 };
 
 /** The data as plain values: the content of the file, and what a test sets. */
@@ -76,6 +106,16 @@ struct AbilityTables {
     std::vector<CooldownRow> cooldowns;
     std::vector<StatusRow> statusEffects;
     std::vector<SpellRow> spells;
+    /** The cost tables and the cost columns of the ability rows (stage 1.3b, file format 2). */
+    std::vector<CostRow> manaCosts;
+    std::vector<CostRow> staminaCosts;
+    std::vector<AbilityCostRow> abilityCosts;
+    /**
+     * The number of the rows of the status tables of the game, with each duplicate: the length of the
+     * status list of the client. Each status number is below it (code review of stage 3.3a, finding F10).
+     * 0: not known (a test), and only the sequence of the numbers is checked.
+     */
+    std::uint32_t statusRows{0};
 };
 
 class AbilityData {
@@ -103,12 +143,20 @@ public:
     [[nodiscard]] const CooldownRow* cooldown(std::string_view id) const;
     [[nodiscard]] const StatusRow* status(std::string_view id) const;
     [[nodiscard]] const SpellRow* spell(std::string_view id) const;
+    /** @return The cost of a cost id of a cost table (stage 1.3b), or no value: the id has no row, thus no cost. */
+    [[nodiscard]] std::optional<float> mana_cost(std::string_view id) const;
+    [[nodiscard]] std::optional<float> stamina_cost(std::string_view id) const;
+    /** @return The cost columns of an ability row, or null for a row with none. */
+    [[nodiscard]] const AbilityCostRow* ability_cost(std::string_view id) const;
 
 private:
     AbilityTables m_tables;
     std::unordered_map<std::string, std::size_t> m_cooldowns;
     std::unordered_map<std::string, std::size_t> m_status;
     std::unordered_map<std::string, std::size_t> m_spells;
+    std::unordered_map<std::string, std::size_t> m_manaCosts;
+    std::unordered_map<std::string, std::size_t> m_staminaCosts;
+    std::unordered_map<std::string, std::size_t> m_abilityCosts;
     std::string m_error;
 };
 

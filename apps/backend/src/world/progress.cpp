@@ -1,6 +1,7 @@
 #include "world/progress.h"
 
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 #include <set>
 
@@ -103,8 +104,11 @@ Vitals Progress::vitals_of(const Sheet& sheet, const Vitals& old) const {
         return vitals;
     }
     const gamedata::ProgressionData& data = tables()->data();
-    const std::uint32_t health = data.baseHealth + tables()->level(sheet.progression.level)->health
-                                 + tables()->constitution_health(sheet.attributes.value(attribute::kConstitution));
+    // The health of the perks and the effects (stage 1.3b, world/gear.h): a part of the health of the base, the level,
+    // and the constitution (a rule of this project: "of the base value" of the tooltip of the client).
+    const std::uint32_t plain = data.baseHealth + tables()->level(sheet.progression.level)->health
+                                + tables()->constitution_health(sheet.attributes.value(attribute::kConstitution));
+    const auto health = static_cast<std::uint32_t>(std::lround(static_cast<float>(plain) * std::max(1.0F + sheet.healthPart, 0.0F)));
     // The amount keeps its part of the maximum: full health stays full health.
     const auto scale = [](float amount, float oldMaximum, float maximum) {
         return oldMaximum > 0.0F ? std::min(maximum, amount * maximum / oldMaximum) : maximum;
@@ -159,6 +163,18 @@ void Progress::load(Entity& entity) {
                tables() == nullptr ? " (no progression tables)" : "");
 }
 
+void Progress::refresh_vitals(Entity& entity) {
+    Sheet sheet;
+    sheet.progression = entity.progression;
+    sheet.attributes = entity.attributes;
+    sheet.healthPart = entity.gear.healthPart;
+    const Vitals vitals = vitals_of(sheet, entity.vitals);
+    if (vitals.healthMax != entity.vitals.healthMax || vitals.health != entity.vitals.health) {
+        entity.vitals = vitals;
+        m_world.touch(entity.id, ComponentKey::vitals);
+    }
+}
+
 std::optional<ProgressView> Progress::view(const std::string& characterId) {
     ProgressView view;
     if (const Entity* entity = m_world.find_character(characterId)) {
@@ -194,6 +210,7 @@ ProgressResult Progress::change(const std::string& characterId, const char* what
     if (entity != nullptr) {
         sheet.progression = entity->progression;
         sheet.attributes = entity->attributes;
+        sheet.healthPart = entity->gear.healthPart;
         result.inWorld = true;
     } else if (m_store.find_character(characterId)) {
         sheet = read_sheet(characterId, false);

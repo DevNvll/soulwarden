@@ -23,6 +23,7 @@ namespace soulwarden::backend::server::rep {
 /** Type indexes from the typeindex.json file of the supported client build. */
 inline constexpr std::uint32_t kTypeDropInventoryItems = 1838; // ItemDropComponentServerFacet_DropInventoryItems
 inline constexpr std::uint32_t kTypeSetLockState = 2549;       // ItemRepairComponentServerFacet_RequestSetLockState
+inline constexpr std::uint32_t kTypeUseItem = 2917;            // ContainerComponentServerFacet_ServerUseItem (stage 1.3b)
 inline constexpr std::uint32_t kTypeEquipItem = 3895;          // PaperdollComponentServerFacet_ServerEquipItem
 inline constexpr std::uint32_t kTypeUnequipItem = 3896;        // PaperdollComponentServerFacet_ServerUnequipItem
 inline constexpr std::uint32_t kTypeSwapItems = 3900;          // PaperdollComponentServerFacet_ServerSwapItems

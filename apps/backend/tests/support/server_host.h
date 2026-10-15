@@ -15,6 +15,7 @@
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
 #include "gamedata/item_catalog.h"
+#include "gamedata/perk_data.h"
 #include "gamedata/loot_tables.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/travel_places.h"
@@ -66,8 +67,10 @@ struct ServerHost {
     gamedata::LootTables loot;
     /** The ability data of the world (stage 3.3a). It is empty until a case sets it: each ability press is then refused. */
     gamedata::AbilityData abilities;
+    /** The perk data of the world (stage 1.3b). It is empty until a case sets it: an item then has no perk with an effect. */
+    gamedata::PerkData perks;
     world::World world{clock, store, tables,
-                       with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities)};
+                       with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities, perks)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -155,6 +158,20 @@ struct ServerHost {
                                               const gamedata::AbilityData& abilities) {
         world::WorldOptions options = with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot);
         options.abilityData = &abilities;
+        return options;
+    }
+    static world::WorldOptions with_game_data(const gamedata::ItemCatalog& catalog,
+                                              const gamedata::ProgressionTables& progression,
+                                              const gamedata::CreatureData& creatures,
+                                              const gamedata::CombatTables& combat,
+                                              const gamedata::TravelPlaces& places,
+                                              gamedata::Terrain& terrain,
+                                              const gamedata::NavigationData& navigation,
+                                              const gamedata::LootTables& loot,
+                                              const gamedata::AbilityData& abilities,
+                                              const gamedata::PerkData& perks) {
+        world::WorldOptions options = with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities);
+        options.perkData = &perks;
         return options;
     }
 

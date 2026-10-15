@@ -25,8 +25,9 @@
 //   packed    := ((((quantity * 64 + action) * 502 + slot) << 20) + itemIndex) * 8001 + maxDurability
 //
 // The two values at the end are there when the client setting `javelin.enable-transmog` is
-// true (ItemWire). The item index is the index of the item catalog. The perk indexes and the
-// dye bytes are zero: the backend has no perks and no dyes yet.
+// true (ItemWire). The item index is the index of the item catalog. A perk is the index of the perk
+// in the list of the client (gamedata/perk_data.h, stage 1.3b; 0: no perk). The dye bytes are zero:
+// the backend has no dyes yet.
 //
 // View     Fragments
 // owner    A session with no record of the entity: the full vector. When the vector is larger
@@ -110,8 +111,9 @@ hub::Bytes encode_item(const world::ItemInstance* item, std::uint32_t slot, std:
     out.size(empty ? 0 : std::min(item->durability, world::kMaxItemDurability));
     out.size(empty ? 0 : item->chrono);
     out.size(empty ? 0 : item->gearScore);
+    // The five perk places (stage 1.3b): the index of each perk in the list of the client, 0 for no perk.
     for (unsigned perk = 0; perk < kPerkCount; ++perk) {
-        out.size(0);
+        out.size(empty ? 0 : item->perkIndex[perk]);
     }
     out.zeros(4); // Dye settings.
     if (empty) {

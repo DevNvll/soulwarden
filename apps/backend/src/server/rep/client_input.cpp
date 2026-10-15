@@ -70,6 +70,12 @@ constexpr unsigned kActionWeapon2 = 355;
  * with the bit "abilityN_virtual"; the next entries have the hold bit and then the release bit.
  */
 constexpr unsigned kActionAbility[3] = {402, 115, 139};
+/**
+ * The keys of the four quick slots ("Use_Quickslot_1" to "Use_Quickslot_4"; 3 to 6 of the default profile) and of the
+ * heart rune ("rune_ability"; G). Live proof of stage 1.3b (I7, I6): one entry with the bit, and no message.
+ */
+constexpr unsigned kActionQuickslot[4] = {404, 117, 140, 513};
+constexpr unsigned kActionRune = 450;
 /** Offsets in a shot item of the second list: the start, the direction, and the attack (reader 0x2A1A590). */
 constexpr std::size_t kShotDirection = 12;
 constexpr std::size_t kShotAttack = 180;
@@ -406,6 +412,12 @@ std::optional<ClientInput> read_entry(hub::Reader& reader, EntryBase& base, Inpu
                 step.abilityKey = static_cast<std::uint8_t>(place + 1);
             }
         }
+        for (std::uint8_t place = 0; place < 4; ++place) {
+            if (step.quickKey == 0 && has_action(words, index, kActionQuickslot[place])) {
+                step.quickKey = static_cast<std::uint8_t>(place + 1);
+            }
+        }
+        step.runeKey = step.runeKey || has_action(words, index, kActionRune);
     }
     for (float& axis : input.axes) {
         axis = static_cast<float>(reader.u8()) / 256.0F * 2.0F - 1.0F;

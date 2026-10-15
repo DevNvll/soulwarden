@@ -19,21 +19,35 @@ extracted).
                                    DMGStandard
   SpellData (each table)           for each spell: Radius, Height, CastDistance, NumToSpawn,
                                    SpawnRate, Duration
+  StatusEffectData, SpellData      (stage 1.3b) the other cells of each row that are not empty: the
+                                   heal, the tick, the attributes, the armor, the absorption, the
+                                   damage of an effect; the damage row, the mana cost id of a spell
+  ManaData, StaminaData            (stage 1.3b, I14) the mana cost and the stamina cost of each cost id
+  AbilityData (each table)         (stage 1.3b, I14) the cost columns of each ability row that has one:
+                                   ManaCostList, ManaCostMult, StaminaCostList, StaminaCostFlatMod
 
 The number of a status effect on the wire is the position of the CRC-32 of its lower-case id in
 the list of the CRC values of all rows of all status tables, in the unsigned order, with each
 duplicate (the list of the client: live check L5 of stage 3.3a, 4,517 rows of the supported
 build). A duplicate id has the first position.
 
-Output: {"format": 1, "statusRows": N,
-"counts": {"cooldowns": N, "statusEffects": N, "spells": N},
+Output: {"format": 2, "statusRows": N,
+"counts": {"cooldowns": N, "statusEffects": N, "spells": N, "manaCosts": N, "staminaCosts": N, "abilityCosts": N},
 "cooldowns": [[id, time, minTime], ...],
-"statusEffects": [[id, index, duration, moveSpeed, stunned, root, stopOnHit, nameplate, damage], ...],
-"spells": [[id, radius, height, castDistance, count, spawnRate, duration], ...]}.
+"statusEffects": [[id, index, duration, moveSpeed, stunned, root, stopOnHit, nameplate, damage, {cells}], ...],
+"spells": [[id, radius, height, castDistance, count, spawnRate, duration, {cells}], ...],
+"manaCosts": [[id, cost], ...], "staminaCosts": [[id, cost], ...],
+"abilityCosts": [[id, [mana cost id, ...], manaCostMult, [stamina cost id, ...], staminaCostFlatMod], ...]}.
+`cells` has the other cells of the row that are not empty and not 0 (a number, or a text).
 
-The tool writes no file (status 1) when a table type is not in the game copy, when a row has an
-empty id, when a number is not finite, when a cooldown is negative, and when two rows of one
-list have the same id with different values.
+The tool writes no file (status 1) when a table type is not in the game copy, when a table does
+not have a column that the tool reads (code review of stage 3.3a, finding F11: an absent column
+is not 0 or false; the two creature ability tables have no cost column as a whole), when a row
+has an empty id, when a number is not finite, when a cooldown or a cost is negative, when two
+rows of one list have the same id with different values (finding F12; the duplicates of the game
+in DUPLICATES_IN_GAME keep their first row), and when a cost id names no row of a cost table (but
+the ids of COSTS_NOT_IN_GAME, which the game itself does not resolve: the client gives them no
+cost).
 
 Usage: abilities.py [OUTPUT.json]
        abilities.py --find TEXT...   print the rows with a text (no file)
@@ -64,7 +78,30 @@ OUTPUT_NAME = "ability-data.json"
 COOLDOWN_TYPE = "CooldownData"
 STATUS_TYPE = "StatusEffectData"
 SPELL_TYPE = "SpellData"
-USED_TYPES = (COOLDOWN_TYPE, STATUS_TYPE, SPELL_TYPE)
+MANA_TYPE = "ManaData"
+STAMINA_TYPE = "StaminaData"
+ABILITY_TYPE = "AbilityData"
+USED_TYPES = (COOLDOWN_TYPE, STATUS_TYPE, SPELL_TYPE, MANA_TYPE, STAMINA_TYPE, ABILITY_TYPE)
+# The columns that the tool reads: each one must be in each source table (finding F11 of the review of stage 3.3a).
+COOLDOWN_COLUMNS = ("AbilityID", "Time", "MinTime")
+STATUS_COLUMNS = ("StatusID", "BaseDuration", "MoveSpeedMod", "Stunned", "NoNav", "StopOnHitCount", "ShowInNameplates",
+                  "DMGStandard")
+SPELL_COLUMNS = ("SpellID", "Radius", "Height", "CastDistance", "NumToSpawn", "SpawnRate", "Duration")
+COST_COLUMNS = ("ManaCostList", "ManaCostMult", "StaminaCostList", "StaminaCostFlatMod")
+# The other cells of a status row and of a spell row (stage 1.3b) have no text for a person.
+STATUS_SKIP = {"StatusID", "DisplayName", "Description", "Notes", "PlaceholderIcon", "FxScriptOn", "FxScriptOff", "WindowHeader",
+               "LocTextTagForDeathRecap", "ExpansionForDeathRecap", "ObjectiveLocTextTagForDeathRecap", "XPIncreasesTooltip",
+               "EffectDurationMods_Tooltip", "DMGVitalsCategory_Tooltip", "ModDmgBasedMultValue_ForTooltip"} | set(STATUS_COLUMNS)
+SPELL_SKIP = {"SpellID", "SpellPrefabPath", "SecondaryPrefabPath", "TertiaryPrefabPath", "BeamEffect", "IndicatorVFX",
+              "FireJointName"} | set(SPELL_COLUMNS)
+# Ids with two rows of different values in the game (the first row in the byte order of the paths stays): the status
+# effect Sanctuary (the common and the catacombs table: equal values but its name text) and one spell of a raid.
+DUPLICATES_IN_GAME = frozenset({"sanctuary", "raid_monarchsbluffs00_interactbarrel"})
+# Cost ids that the cost tables of the game do not have (stage 1.3b, I14). The client gives such an id no cost: its
+# lookup (image RVA 0x6801430) has no default row and no other table, and the callers pay nothing (cost analysis of
+# stage 1.3b). "All" in a ManaCostList is a key of the modifier for each cost id (0x67EAED0).
+COSTS_NOT_IN_GAME = frozenset({"specialattack", "elemental_fire_staff_heavy", "lifestaff_holyshield_mana_upgrade",
+                               "lifestaff_speed_intro", "siphon_healing_check_to_cast", "all"})
 # Largest number of a status effect on the wire (16 bits).
 MAX_STATUS_INDEX = 0xFFFF
 
@@ -129,18 +166,49 @@ def read_sheets(sources: Sources) -> dict[str, list[Sheet]]:
     return sheets
 
 
-def add_row(rows: dict[str, list], row: list, what: str) -> None:
-    """Adds a row by its lower-case id. The same id again with the same values is one row; with different values it stops the tool."""
+def add_row(rows: dict[str, list], row: list, what: str, duplicates: frozenset[str] = frozenset()) -> None:
+    """Adds a row by its lower-case id. The same id again with the same values is one row; with different values it
+    stops the tool (finding F12), but for an id of `duplicates` (the duplicates of the game): its first row stays."""
     key = row[0].lower()
-    if key in rows and rows[key][1:] != row[1:]:
+    if key in rows and rows[key][1:] != row[1:] and key not in duplicates:
         raise Failure(f"two rows of the {what} have the id {row[0]} with different values")
     rows.setdefault(key, row)
+
+
+def require(sheet: Sheet, columns) -> None:
+    """Stops the tool when a column that the tool reads is not in its table (code review of stage 3.3a, finding
+    F11): an absent column is not 0 or false."""
+    missing = [column for column in columns if column not in sheet.columns]
+    if missing:
+        raise Failure(f"the table {sheet.name} has no column {', '.join(missing)}")
+
+
+def cells_of(sheet: Sheet, row: int, skip: set[str]) -> dict:
+    """@return The other cells of a row that are not empty and not 0: a number as a number, each other cell as a text."""
+    values: dict = {}
+    for column in sheet.columns:
+        if column in skip:
+            continue
+        source = str(sheet.source(row, column)).strip()
+        if source in ("", "0"):
+            continue
+        try:
+            value = float(source)
+        except ValueError:
+            values[column] = source
+            continue
+        if not math.isfinite(value):
+            raise Failure(f"the cell {column} of row {row} of the table {sheet.name} is not a finite number")
+        if value != 0.0:
+            values[column] = rounded(value)
+    return values
 
 
 def build_data(sources: Sources) -> dict:
     sheets = read_sheets(sources)
     cooldowns: dict[str, list] = {}
     for sheet in sheets[COOLDOWN_TYPE]:
+        require(sheet, COOLDOWN_COLUMNS)
         for row in range(sheet.row_count):
             identifier = str(sheet.cell(row, "AbilityID")).strip()
             if not identifier:
@@ -155,6 +223,7 @@ def build_data(sources: Sources) -> dict:
     all_crcs: list[int] = []
     status_rows: list[tuple[Sheet, int, str]] = []
     for sheet in sheets[STATUS_TYPE]:
+        require(sheet, STATUS_COLUMNS)
         for row in range(sheet.row_count):
             identifier = str(sheet.cell(row, "StatusID")).strip()
             if not identifier:
@@ -169,14 +238,17 @@ def build_data(sources: Sources) -> dict:
             raise Failure(f"the status effect {identifier} has the number {index}, above 16 bits")
         entry = [identifier, index, rounded(number(sheet, row, "BaseDuration")), rounded(number(sheet, row, "MoveSpeedMod")),
                  flag(sheet, row, "Stunned"), flag(sheet, row, "NoNav"), int(number(sheet, row, "StopOnHitCount")),
-                 flag(sheet, row, "ShowInNameplates"), rounded(number(sheet, row, "DMGStandard"))]
+                 flag(sheet, row, "ShowInNameplates"), rounded(number(sheet, row, "DMGStandard")),
+                 cells_of(sheet, row, STATUS_SKIP)]
         if entry[6] < 0:
             raise Failure(f"the status effect {identifier} has a negative StopOnHitCount")
-        # The duplicate of the game (Sanctuary) has its first row.
-        statuses.setdefault(identifier.lower(), entry)
+        # Two rows with one id must have the same values (finding F12), but the duplicates of the game: the
+        # first row stays, and each row stays in the count of the numbers.
+        add_row(statuses, entry, "status tables", DUPLICATES_IN_GAME)
 
     spells: dict[str, list] = {}
     for sheet in sheets[SPELL_TYPE]:
+        require(sheet, SPELL_COLUMNS)
         for row in range(sheet.row_count):
             identifier = str(sheet.cell(row, "SpellID")).strip()
             if not identifier:
@@ -186,21 +258,72 @@ def build_data(sources: Sources) -> dict:
                 raise Failure(f"the spell {identifier} has a NumToSpawn that is not a whole number")
             entry = [identifier, rounded(number(sheet, row, "Radius")), rounded(number(sheet, row, "Height")),
                      rounded(number(sheet, row, "CastDistance")), int(count), rounded(number(sheet, row, "SpawnRate")),
-                     rounded(number(sheet, row, "Duration"))]
-            spells.setdefault(identifier.lower(), entry)
+                     rounded(number(sheet, row, "Duration")), cells_of(sheet, row, SPELL_SKIP)]
+            add_row(spells, entry, "spell tables", DUPLICATES_IN_GAME)
+
+    # The costs (stage 1.3b, criterion I14): the two cost tables of the players and the cost columns of the
+    # ability rows. A cost id of an ability or a spell names a row of a cost table.
+    mana_costs: dict[str, list] = {}
+    for sheet in sheets[MANA_TYPE]:
+        require(sheet, ("CostID", "ManaCost"))
+        for row in range(sheet.row_count):
+            identifier = str(sheet.cell(row, "CostID")).strip()
+            cost = number(sheet, row, "ManaCost")
+            if identifier and cost < 0.0:
+                raise Failure(f"the mana cost {identifier} is negative")
+            if identifier:
+                add_row(mana_costs, [identifier, rounded(cost)], "mana cost tables")
+    stamina_costs: dict[str, list] = {}
+    for sheet in sheets[STAMINA_TYPE]:
+        require(sheet, ("CostID", "StaminaCost"))
+        for row in range(sheet.row_count):
+            identifier = str(sheet.cell(row, "CostID")).strip()
+            cost = number(sheet, row, "StaminaCost")
+            if identifier and cost < 0.0:
+                raise Failure(f"the stamina cost {identifier} is negative")
+            if identifier:
+                # The two stamina tables (players, Damned) can have one id: the table of the players is first in
+                # the byte order of the paths, and it stays.
+                stamina_costs.setdefault(identifier.lower(), [identifier, rounded(cost)])
+    ability_costs: dict[str, list] = {}
+    for sheet in sheets[ABILITY_TYPE]:
+        require(sheet, ("AbilityID",))
+        present = [column for column in COST_COLUMNS if column in sheet.columns]
+        if not present:
+            continue  # The tables of the creatures (AI) have no cost column: their abilities have no cost.
+        require(sheet, COST_COLUMNS)
+        for row in range(sheet.row_count):
+            identifier = str(sheet.cell(row, "AbilityID")).strip()
+            mana = [part.strip() for part in str(sheet.source(row, "ManaCostList")).split(",") if part.strip()]
+            stamina = [part.strip() for part in str(sheet.source(row, "StaminaCostList")).split(",") if part.strip()]
+            multiplier = number(sheet, row, "ManaCostMult")
+            flat = number(sheet, row, "StaminaCostFlatMod")
+            if identifier and (mana or stamina or multiplier != 0.0 or flat != 0.0):
+                add_row(ability_costs, [identifier, mana, rounded(multiplier), stamina, rounded(flat)], "ability tables")
+    references = [(entry[0], cost) for entry in ability_costs.values() for cost in entry[1]]
+    references += [(entry[0], entry[7]["ManaCost"]) for entry in spells.values() if "ManaCost" in entry[7]]
+    for owner, cost in references:
+        if cost.lower() not in mana_costs and cost.lower() not in COSTS_NOT_IN_GAME:
+            raise Failure(f"{owner} names the mana cost {cost}, which the mana cost table does not have")
+    for entry in ability_costs.values():
+        for cost in entry[3]:
+            if cost.lower() not in stamina_costs and cost.lower() not in COSTS_NOT_IN_GAME:
+                raise Failure(f"{entry[0]} names the stamina cost {cost}, which the stamina cost tables do not have")
 
     if not cooldowns:
         raise Failure("the cooldown tables have no row")
-    data = {"format": 1, "statusRows": len(all_crcs),
-            "counts": {"cooldowns": len(cooldowns), "statusEffects": len(statuses), "spells": len(spells)},
+    data = {"format": 2, "statusRows": len(all_crcs),
+            "counts": {"cooldowns": len(cooldowns), "statusEffects": len(statuses), "spells": len(spells),
+                       "manaCosts": len(mana_costs), "staminaCosts": len(stamina_costs), "abilityCosts": len(ability_costs)},
             "cooldowns": sorted(cooldowns.values()), "statusEffects": sorted(statuses.values(), key=lambda entry: entry[1]),
-            "spells": sorted(spells.values())}
+            "spells": sorted(spells.values()), "manaCosts": sorted(mana_costs.values()),
+            "staminaCosts": sorted(stamina_costs.values()), "abilityCosts": sorted(ability_costs.values())}
     return data
 
 
 def print_found(data: dict, texts: list[str]) -> None:
     wanted = [text.lower() for text in texts]
-    for name in ("cooldowns", "statusEffects", "spells"):
+    for name in ("cooldowns", "statusEffects", "spells", "manaCosts", "staminaCosts", "abilityCosts"):
         for row in data[name]:
             if any(text in row[0].lower() for text in wanted):
                 print(f"{name}: {row}")
@@ -233,7 +356,8 @@ def main() -> int:
         return 1
     counts = data["counts"]
     print(f"{target}: {counts['cooldowns']} cooldowns, {counts['statusEffects']} status effects (numbers of "
-          f"{data['statusRows']} rows), {counts['spells']} spells "
+          f"{data['statusRows']} rows), {counts['spells']} spells, {counts['manaCosts']} mana costs, "
+          f"{counts['staminaCosts']} stamina costs, {counts['abilityCosts']} ability rows with a cost "
           f"(source: {', '.join(f'{count} from the {name}' for name, count in sorted(sources.used.items()))})")
     return 0
 

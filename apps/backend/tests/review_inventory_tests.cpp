@@ -276,9 +276,21 @@ void older_schemas(const Options& options) {
         " chrono INTEGER NOT NULL DEFAULT 0);"
         "CREATE UNIQUE INDEX items_place ON items(character_id, container, slot);"
         "CREATE TABLE currencies(character_id TEXT NOT NULL, currency_id TEXT NOT NULL, amount INTEGER NOT NULL,"
-        " PRIMARY KEY(character_id, currency_id));",
+        " PRIMARY KEY(character_id, currency_id));"
+        // An item of a database of version 5 or 6 has no perk column: after the migration it has no perk.
+        "INSERT INTO items(instance_id, character_id, container, slot, item_id, quantity)"
+        " VALUES('0f0e0d0c0b0a09080706050403020100', 'migration-canary', 1, 0, 'TestOre', 3);",
+        "CREATE TABLE character_progress(character_id TEXT PRIMARY KEY, level INTEGER NOT NULL DEFAULT 1,"
+        " experience INTEGER NOT NULL DEFAULT 0, constitution INTEGER NOT NULL DEFAULT 0, focus INTEGER NOT NULL DEFAULT 0,"
+        " strength INTEGER NOT NULL DEFAULT 0, dexterity INTEGER NOT NULL DEFAULT 0, intelligence INTEGER NOT NULL DEFAULT 0);"
+        "CREATE TABLE progressions(character_id TEXT NOT NULL, progression_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '',"
+        " rank INTEGER NOT NULL DEFAULT 0, points INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(character_id, progression_id));"
+        "CREATE TABLE ability_nodes(character_id TEXT NOT NULL, pool_id INTEGER NOT NULL, node_id INTEGER NOT NULL,"
+        " name TEXT NOT NULL DEFAULT '', level INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(character_id, pool_id, node_id));"
+        "CREATE TABLE ability_bars(character_id TEXT NOT NULL, table_id INTEGER NOT NULL, slot INTEGER NOT NULL,"
+        " ability_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '', PRIMARY KEY(character_id, table_id, slot));",
     };
-    for (int version = 0; version <= 5; ++version) {
+    for (int version = 0; version <= 6; ++version) {
         const std::filesystem::path path = options.workDirectory / ("review-v" + std::to_string(version) + ".sqlite3");
         std::filesystem::remove(path);
         std::string sql;
@@ -295,9 +307,17 @@ void older_schemas(const Options& options) {
         const bool owned = version == 0 || store.find_account("old-persona-0001").has_value();
         const Player player = add_player(store, kSteamIdA, "Tester A", kCharacterA, "Alpha", std::nullopt);
         state::ItemRow worn{"00112233445566778899aabbccddeeff", state::kContainerPaperdoll, 1, "TestChest", 1};
+        // Schema version 7 (stage 1.3b): the five perk places of an instance.
+        worn.perks = {"PerkID_Test_A", "", "PerkID_Test_Gem", "", "PerkID_Test_B"};
         state::ItemRow carried{"00112233445566778899aabbccddee00", state::kContainerBag, 0, "TestOre", 10};
-        const bool written = store.write_items(kCharacterA, {}, {worn, carried}) && store.set_currency(kCharacterA, state::kCurrencyCoin, 12345)
-                             && store.list_items(kCharacterA).size() == 2;
+        const std::vector<state::ItemRow> back = store.write_items(kCharacterA, {}, {worn, carried}) ? store.list_items(kCharacterA)
+                                                                                                     : std::vector<state::ItemRow>{};
+        const bool written = store.set_currency(kCharacterA, state::kCurrencyCoin, 12345) && back.size() == 2
+                             && back[1].container == state::kContainerPaperdoll && back[1].perks == worn.perks
+                             && back[0].perks == state::ItemRow{}.perks;
+        // The item of the old database: no perk.
+        const std::vector<state::ItemRow> old = store.list_items("migration-canary");
+        const bool oldItem = version < 5 || (old.size() == 1 && old[0].quantity == 3 && old[0].perks == state::ItemRow{}.perks);
         // The tables of schema version 6: the level and the attributes, and the skills.
         state::ProgressRow progress;
         progress.level = 7;
@@ -315,11 +335,11 @@ void older_schemas(const Options& options) {
                              && store.currency(kCharacterA, state::kCurrencyCoin) == 0 && store.progress(kCharacterA).level == 1
                              && store.list_skills(kCharacterA).ranks.empty() && store.list_skills(kCharacterA).nodes.empty()
                              && store.list_skills(kCharacterA).bars.empty();
-        check(made && opened && schema_version(path) == 6 && kept && owned && written && progressed && deleted,
+        check(made && opened && schema_version(path) == 7 && kept && owned && written && oldItem && progressed && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 6: its character row stays, its persona has an account, the tables take an item of the bag, an item of the "
-                    "paperdoll, the coin, the level with the attribute points, and the skills, and the delete of a "
-                    "character removes them");
+                  + " opens and gets version 7: its character row and its item stay (the item with no perk), its persona has an account, "
+                    "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
+                    "attribute points, and the skills, and the delete of a character removes them");
     }
 }
 

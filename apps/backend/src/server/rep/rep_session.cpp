@@ -394,6 +394,10 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_interaction_cancel(body);
         break;
+    case kTypeUseItem:
+        check_route(route, type, body, firstOfType);
+        handle_use_item(body);
+        break;
     default:
         check_route(route, type, body, firstOfType);
         if (firstOfType) {
@@ -1180,6 +1184,18 @@ void RepSession::handle_attacks(const ClientInput& input) {
         if (step.abilityKey != 0) {
             press_ability(input, step);
         }
+        // A quick slot key and the heart rune key (stage 1.3b): the world finds the character from the session.
+        if (step.quickKey != 0) {
+            const world::UseVerdict verdict = m_world.consumables().use_quick(m_id, step.quickKey);
+            log::write("rep: quick slot key %u (input %u): %s",
+                       static_cast<unsigned>(step.quickKey),
+                       static_cast<unsigned>(step.sequence),
+                       world::use_verdict_text(verdict));
+        }
+        if (step.runeKey) {
+            const world::RuneVerdict verdict = m_world.runes().activate(m_id);
+            log::write("rep: heart rune key (input %u): %s", static_cast<unsigned>(step.sequence), world::rune_verdict_text(verdict));
+        }
         // A shot of the client: the projectile of an ability of its character (Gravity Well).
         for (const InputShot& item : step.shotItems) {
             world::AbilityShot shot;
@@ -1704,6 +1720,21 @@ std::optional<ComponentCall> RepSession::equipment_call(const world::Entity& own
 
 void RepSession::send_equip_fail(const ComponentCall& call) {
     send_message(kTypeEquipItemFail, equip_fail_body(call));
+}
+
+void RepSession::handle_use_item(std::span<const std::uint8_t> body) {
+    // ContainerComponentServerFacet_ServerUseItem (type 2917, stage 1.3b): the target, the entity, and the bag slot (u32;
+    // live check I7: 20 bytes from the entry "Use" of the action menu of an item in the bag).
+    hub::Reader reader(body);
+    reader.u64();
+    reader.u64();
+    const std::uint32_t slot = reader.u32();
+    if (!reader.ok()) {
+        log::write("rep: use item request (type %u, %zu bytes) does not have the form of the request: no change", kTypeUseItem, body.size());
+        return;
+    }
+    const world::UseVerdict verdict = m_world.consumables().use_bag(m_id, slot);
+    log::write("rep: use item request (type %u, bag slot %u): %s", kTypeUseItem, slot, world::use_verdict_text(verdict));
 }
 
 void RepSession::handle_equip_item(std::span<const std::uint8_t> body) {

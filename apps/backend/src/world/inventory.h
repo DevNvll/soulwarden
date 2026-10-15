@@ -67,6 +67,10 @@ enum class ItemError {
     notEnoughCoin,
     /** The database did not accept the change. */
     storeFailed,
+    /** A perk of the request is not in the perk data, is in two places, is a second gem, or is not a perk for the item. */
+    badPerk,
+    /** The consumable system refused the use (world/consumables.h gives the cause). */
+    notUsable,
 };
 
 /** @return A short text for a log line and for the reply of a command. */
@@ -89,6 +93,12 @@ struct ItemResult {
 struct GiveOptions {
     /** Gear score of a new instance. No value: the value of the item table. */
     std::optional<std::uint32_t> gearScore;
+    /**
+     * The perks of each new instance (stage 1.3b): the PerkID text of each place (a gem is one of
+     * them). No value: no perk. Each perk must be in the perk data, a perk is in one place at most,
+     * and an instance has one gem at most.
+     */
+    std::optional<PerkIds> perks;
     /** The cause that the client gets for the changed slots (namespace sync). */
     std::uint8_t action{sync::kItemAdded};
 };
@@ -100,6 +110,8 @@ struct GrantItem {
     std::uint32_t quantity{0};
     /** The gear score of a new instance. No value: the value of the item table. */
     std::optional<std::uint32_t> gearScore;
+    /** The perks of a new instance (stage 1.3b: the roll of world/perk_roll.h). */
+    PerkIds perks{};
 };
 
 /** One entry of a drop request: a quantity of the item instance in a slot. */
@@ -140,6 +152,13 @@ public:
 
     /** Reads the bag, the equipment, and the coin of the character of a new entity from the store. */
     void load(Entity& entity);
+
+    /**
+     * Sets the index on the wire of each perk of an instance from the perk data (0 for a perk that the
+     * data does not have: the place is empty for the client, and the row keeps the id).
+     * @return The number of perks that the data does not have.
+     */
+    unsigned resolve_perks(ItemInstance& item) const;
 
     /** @return The bag, the equipment, and the coin of a character, or no value when the store does not have the character. */
     [[nodiscard]] std::optional<Holdings> holdings(const std::string& characterId);
@@ -252,6 +271,24 @@ public:
      * @param firstInstance, secondInstance The item instance that the request names for each
      *        slot (all zero for an empty slot), or null for no check.
      */
+    /**
+     * Sets the perks of the item of a slot of the bag or of the paperdoll (a command; stage 1.3b, the change of a
+     * character of the user, I11): the checks and the swap of a give (GiveOptions::perks). The instance, the gear
+     * score, and the durability stay; the row changes in one transaction.
+     */
+    ItemResult set_perks(const std::string& characterId, bool paperdoll, std::uint32_t slot, const PerkIds& perks);
+
+    /**
+     * Takes one item from a slot of the bag or of the paperdoll (a quick slot): the use of a
+     * consumable (world/consumables.h). The row changes in one transaction; an item with a
+     * quantity of 1 goes away.
+     * @param check Gets the item before the change: an error other than `none` stops the change.
+     */
+    ItemResult take_one(const std::string& characterId,
+                        bool paperdoll,
+                        std::uint32_t slot,
+                        const std::function<ItemError(const ItemInstance&)>& check);
+
     ItemResult swap_equipped(const std::string& characterId,
                              std::uint32_t first,
                              std::uint32_t second,
@@ -280,6 +317,8 @@ private:
     template <class Change>
     ItemResult change_bag(const std::string& characterId, const char* what, Change&& apply);
     [[nodiscard]] Carried read_items(const std::string& characterId) const;
+    /** @return The perks of a request after the checks and the swap of the game, or no value for a perk that is not correct. */
+    [[nodiscard]] std::optional<PerkIds> checked_perks(const PerkIds& requested, const gamedata::ItemDefinition& definition) const;
 
     World& m_world;
     state::Store& m_store;

@@ -104,7 +104,8 @@ tools/gamedata/progression.sh      # one time: progression tables (without them 
 tools/gamedata/creatures.sh        # one time: creature data (without it the world has no creature); needs an Oodle library (see below)
 tools/gamedata/combat.sh           # one time: combat tables (without them an attack of your character has no effect; from stage 3.5a also the weapon mastery of each weapon)
 tools/gamedata/loot.sh             # one time: loot tables and kill rewards (without them a kill gives nothing); 10 s
-tools/gamedata/abilities.sh        # one time: ability data (cooldowns, status effects, spells; without it an ability does nothing)
+tools/gamedata/abilities.sh        # one time: ability data (cooldowns, status effects, spells, costs; without it an ability does nothing)
+tools/gamedata/perks.sh            # one time: perk data (perks, buckets, item perk places, consumables, equip load; without it an item has no perk)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
@@ -177,7 +178,7 @@ it is hidden, the game has its input again. The window is for the character that
 
 | Tab | What you can do |
 | --- | --- |
-| Items | Type a text in the search field to find items of the catalog (the text is compared with the id, the type, and the class of an item, for example `sword`, `potionhealth`, `ore`, `consumable`). Click an item, set the quantity, and press "Give": the item is in the bag. The list "Bag" has each item of the bag with a "Remove" button. |
+| Items | Type a text in the search field to find items of the catalog (the text is compared with the id, the type, and the class of an item, for example `sword`, `potionhealth`, `ore`, `consumable`). Click an item, set the quantity, and press "Give": the item is in the bag. "Gear score" (0: the value of the item table) and "Perks" (up to five PerkID texts with "," between them; an empty part is a place with no perk; a gem is a perk) give an item with perks (stage 1.3b): the backend refuses a perk that is not for the item, and it changes a perk as the client does (the perk swap of the game: the Soldier perk of a weapon becomes "Acutely Empowered"). The list "Bag" has each item of the bag with a "Remove" button. |
 | Character | Set the level, give experience, set the coin, and set the value of each attribute (the character must have the free points for it). The row "Health" shows the health of your character: "Heal" gives it its full health, and for a dead character the button has the text "Revive" (the character lives again at its place, and the death screen closes). With the mark "Creatures ignore this character", no creature takes your character as its target, and a kill gives it nothing; the mark "Each kill drops loot and coin" makes each kill of your character drop loot and coin (the loot switch, stage 3.5a). The two values stay until the backend stops. |
 | Skills | Set the mastery level of each weapon (each level above 1 gives one mastery point for its tree) and the level of each trade skill. |
 | Creatures | The list at the bottom has each creature that is 150 m or less from your character, the nearest one first, with its level, its health, and its distance. "Set" sets the health of a creature to the percent value above the list, "Kill" kills it, and "Remove" takes it out of the world. To make a creature, type a text in the search field (the id, the name, or the family of a kind, for example `wolf`, `risen`, `rabbit`), click a kind, set the level and the distance, and press "Spawn": the creature is that many meters to the north of your character (the window covers the left half of the picture: press F8 to see the creature). "Reset" makes each spawn point free again whose creature you killed or removed. |
@@ -376,7 +377,18 @@ button on "Confirm").
   `tools/gamedata/abilities.sh --find TEXT` prints the rows with a text. Without the file the
   backend starts, and an ability does nothing. The creature data tool (stage 3.3a) also
   writes the reaction fragments of each creature model: with a file from before, a
-  knockdown shows the small hit reaction.
+  knockdown shows the small hit reaction. From stage 1.3b the file (format 2, 2 MB) also has
+  the cells of each status effect and spell and the cost tables of the players.
+- `tools/gamedata/perks.sh` makes the perk data (`~/.local/share/soulwarden/gamedata/perk-data.json`,
+  6.5 MB, stage 1.3b): the perk list in the order of the client, the values of each perk, the
+  perk buckets and the perk places of each item (the perk roll of a loot item), the
+  consumables, the equip load of each armor item, the perk swap table, and the heart runes
+  (protocol notes 4.23). It reads the data tables and the base attributes file of the game
+  copy, from the same sources as the creature data tool. `tools/gamedata/perks.sh --find TEXT`
+  prints the perks, the buckets, and the items with a text. Without the file the backend
+  starts, an item has no perk, and a consumable and the heart rune do nothing. Make the
+  combat tables, the creature data, and the progression tables of stage 1.3b with it (the rune
+  charge of a hit, the mana regeneration).
 - Creatures. With the creature data, the creatures of each region of the world stand at
   their spawn points: rabbits, wolves, Risen, skeletons, sheep, and many others. Each
   one has its body, its idle animation, its name plate with its level, and its health bar.

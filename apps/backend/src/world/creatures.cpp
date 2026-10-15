@@ -460,20 +460,30 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
 
 bool Creatures::knock(Entity& entity, unsigned power, std::chrono::milliseconds time) {
     Creature& creature = entity.creature;
-    if (creature.dead || creature.immune() || !creature.body->hitAction) {
+    if (creature.dead || creature.immune()) {
         return false;
     }
     const WorldClock::time_point now = m_world.clock().now();
     creature.mind.attack.reset();
-    creature.knockedUntil = now + time;
+    // The hold does not depend on the animation data (code review of stage 3.3a, finding F5): a slice with no
+    // reaction action is held too. A new knock does not end an earlier one that ends later (finding F6): the
+    // creature keeps the later end, and the stronger reaction that plays stays until its own end.
+    const WorldClock::time_point end = now + time;
+    const bool longer = !creature.knockedUntil || end > *creature.knockedUntil || now >= *creature.knockedUntil;
+    creature.knockedUntil = longer ? end : *creature.knockedUntil;
     m_affected.insert(entity.id);
     // The reaction of the power: the action "Reaction" with the fragment of that power of the
-    // slice (r_R4_F for a knockdown), or with the fragment of its action.
-    if (start_action(entity, *creature.body->hitAction, time)) {
+    // slice (r_R4_F for a knockdown), or with the fragment of its action. A slice with no such action plays no
+    // reaction: its observers get the scope with no record of the attack that it stopped.
+    if (longer && creature.body->hitAction && start_action(entity, *creature.body->hitAction, time)) {
         const std::size_t level = std::min<std::size_t>(power, creature.body->reactions.size() - 1);
         if (creature.body->reactions[level] >= 0) {
             creature.action->fragment = static_cast<std::uint32_t>(creature.body->reactions[level]);
         }
+    } else if (longer && !creature.body->hitAction && creature.action) {
+        creature.action.reset();
+        m_acting.erase(entity.id);
+        m_world.touch(entity.id, ComponentKey::movement);
     }
     log::write("world: effect: creature %016llx (%s) has a reaction of power %u for %.1f s (it does not move and does not attack)",
                static_cast<unsigned long long>(entity.id),
@@ -529,6 +539,7 @@ void Creatures::end_effects() {
 
 void Creatures::end_actions() {
     const WorldClock::time_point now = m_world.clock().now();
+    std::vector<EntityId> stunned;
     for (auto acting = m_acting.begin(); acting != m_acting.end();) {
         Entity* entity = find(*acting);
         if (entity != nullptr && entity->creature.action && entity->creature.action->ends
@@ -546,8 +557,24 @@ void Creatures::end_actions() {
             // (Creature::spawnAction), and the end of an action does not change it, also for a
             // creature that died while its reaction played.
             entity->creature.action.reset();
+            // A stun that still holds the creature after a shorter knockdown: its action "Stun" comes back
+            // (code review of stage 3.3a, finding F7), with a mark of the movement state, after this loop.
+            const Creature& creature = entity->creature;
+            if (!creature.dead && creature.body->stunAction) {
+                for (const CreatureEffect& effect : creature.effects) {
+                    if (effect.stun && now < effect.ends) {
+                        stunned.push_back(entity->id);
+                        break;
+                    }
+                }
+            }
         }
         acting = m_acting.erase(acting);
+    }
+    for (const EntityId id : stunned) {
+        if (Entity* entity = find(id)) {
+            start_action(*entity, *entity->creature.body->stunAction);
+        }
     }
 }
 

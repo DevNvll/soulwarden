@@ -43,7 +43,7 @@ Output: {"format": 1,
 "gearScoreLimit": N, "gearScoreSmallerRate": N},
 "damageTypes": [[name, number, category], ...],
 "attributes": {"minimum": N, "strength": [...], "dexterity": [...], "intelligence": [...], "focus": [...]},
-"damageRows": [[id, weaponCategory, attackType, damageType, factor, added], ...],
+"damageRows": [[id, weaponCategory, attackType, damageType, factor, added, attackRuneCharge, hitRuneCharge], ...],
 "weapons": [[id, use, tags, baseDamage, strength, dexterity, intelligence, focus, lightRow, heavyRow,
 gearScoreRate, mastery], ...],
 "items": {"<item id in lower case>": weapon, ...},
@@ -274,8 +274,11 @@ def build_tables(sources: Sources) -> dict:
                 typeless.add(name.lower())
                 continue
             row_ids.add(name.lower())
+            charges = [rounded(number(sheet, row, column)) for column in ("AttackRuneCharge", "HitRuneCharge")]
+            if any(charge < 0.0 for charge in charges):
+                raise Failure(f"the damage row {name} has a negative rune charge")
             damage_rows.append([name, str(cell(sheet, row, "WeaponCategory")), str(cell(sheet, row, "AttackType")), kind,
-                                rounded(number(sheet, row, "DmgCoef")), rounded(number(sheet, row, "AddDmg"))])
+                                rounded(number(sheet, row, "DmgCoef")), rounded(number(sheet, row, "AddDmg"))] + charges)
     if not damage_rows:
         raise Failure(f"the game copy has no damage table with the name {DAMAGE_TABLE}")
 

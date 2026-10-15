@@ -14,7 +14,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 6;
+constexpr int kSchemaVersion = 7;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -145,6 +145,19 @@ CREATE TABLE IF NOT EXISTS ability_bars(
     name TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(character_id, table_id, slot)
 );
+)sql";
+
+/**
+ * Version 7 (stage 1.3b): the perks of an item instance. One column for each of the five perk places of
+ * the instance on the wire, with the PerkID text of the perk (not the index on the wire, which comes
+ * from the perk data at each load); an empty text is no perk. A row of an older version has no perk.
+ */
+constexpr const char* kMigration7 = R"sql(
+ALTER TABLE items ADD COLUMN perk1 TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN perk2 TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN perk3 TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN perk4 TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN perk5 TEXT NOT NULL DEFAULT '';
 )sql";
 
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
@@ -333,6 +346,13 @@ bool Store::migrate() {
     }
     if (version < 6) {
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration6) || !execute("PRAGMA user_version=6")
+            || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 7) {
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration7) || !execute("PRAGMA user_version=7")
             || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
@@ -590,7 +610,8 @@ std::vector<ItemRow> Store::list_items(const std::string& characterId) {
     std::vector<ItemRow> rows;
     Statement statement(m_database,
                         "SELECT instance_id, container, slot, item_id, quantity, gear_score, durability, "
-                        "max_durability, flags, chrono FROM items WHERE character_id=?1 ORDER BY container, slot");
+                        "max_durability, flags, chrono, perk1, perk2, perk3, perk4, perk5 FROM items "
+                        "WHERE character_id=?1 ORDER BY container, slot");
     statement.bind(1, characterId);
     while (sqlite3_step(statement.handle) == SQLITE_ROW) {
         ItemRow row;
@@ -604,6 +625,9 @@ std::vector<ItemRow> Store::list_items(const std::string& characterId) {
         row.maxDurability = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 7));
         row.flags = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 8));
         row.chrono = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 9));
+        for (std::size_t place = 0; place < row.perks.size(); ++place) {
+            row.perks[place] = column_text(statement.handle, static_cast<int>(10 + place));
+        }
         rows.push_back(std::move(row));
     }
     return rows;
@@ -653,8 +677,8 @@ bool Store::write_items(const std::string& characterId,
 bool Store::insert_item(const std::string& characterId, const ItemRow& row) {
     Statement statement(m_database,
                         "INSERT INTO items(instance_id, character_id, container, slot, item_id, quantity, "
-                        "gear_score, durability, max_durability, flags, chrono) "
-                        "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)");
+                        "gear_score, durability, max_durability, flags, chrono, perk1, perk2, perk3, perk4, perk5) "
+                        "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)");
     statement.bind(1, row.instanceId);
     statement.bind(2, characterId);
     sqlite3_bind_int(statement.handle, 3, row.container);
@@ -666,6 +690,9 @@ bool Store::insert_item(const std::string& characterId, const ItemRow& row) {
     sqlite3_bind_int64(statement.handle, 9, row.maxDurability);
     sqlite3_bind_int64(statement.handle, 10, row.flags);
     sqlite3_bind_int64(statement.handle, 11, row.chrono);
+    for (std::size_t place = 0; place < row.perks.size(); ++place) {
+        statement.bind(static_cast<int>(12 + place), row.perks[place]);
+    }
     if (sqlite3_step(statement.handle) != SQLITE_DONE) {
         // An instance id of a different character, or a slot that has an item.
         log::write("store: no write of an item of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));

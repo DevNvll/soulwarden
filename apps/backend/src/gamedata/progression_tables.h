@@ -127,6 +127,13 @@ struct ProgressionData {
     std::uint32_t baseHealth{0};
     std::uint32_t baseStamina{0};
     std::uint32_t baseMana{0};
+    /**
+     * The mana regeneration of a player (stage 1.3b, the row Player of the base vitals): the mana in one second, and the
+     * delay after a spend and after a spend to 0 (seconds). A file from before stage 1.3b: no regeneration.
+     */
+    float manaRegenRate{0.0F};
+    float manaRegenDelay{0.0F};
+    float manaRegenDelayOnEmpty{0.0F};
     std::vector<ProgressionRow> progressions;
     std::vector<AbilityNode> nodes;
 };

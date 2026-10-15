@@ -2,7 +2,9 @@
 
 Read this document before a change of the bag, the coin, the equipment (the paperdoll), or the items
 of an archetype, and before a live test with the bag window or the inventory screen. The wire
-contracts are in the protocol notes (sections 4.10 and 4.11).
+contracts are in the protocol notes (sections 4.10 and 4.11; the perks of an item in 4.23). What the
+perks and the gear give a character is in [Gear and perks](gear-and-perks.md); the use of a consumable
+in [Consumables and the heart rune](consumables-and-heart-rune.md).
 
 ## Start here
 
@@ -10,6 +12,7 @@ contracts are in the protocol notes (sections 4.10 and 4.11).
 | --- | --- |
 | Items, the bag, the coin of a character | Protocol notes 4.10, `apps/backend/src/world/inventory.h`, `tools/world give`, `tools/gamedata/items.sh` |
 | Equipment: the paperdoll, equip and unequip, visible gear, the items of an archetype | Protocol notes 4.11, `apps/backend/src/world/inventory.h`, `server/rep/states/paperdoll_state.cpp`, `tools/world equip` |
+| The perks of an item instance: the places, the swap, the give with perks, the perk command, the loot roll | Protocol notes 4.23, `world/item.h` (`ItemInstance::perks`), `world/inventory.h` (`checked_perks`, `set_perks`, `resolve_perks`), `gamedata/perk_data.h`, `world/perk_roll.h`, test cases IZ1 to IZ3 |
 
 ## Rules
 
@@ -41,6 +44,24 @@ contracts are in the protocol notes (sections 4.10 and 4.11).
   the character creation (the member `creationBackstories` of the catalog: the seven
   archetypes and the default backstory of the client), and it gives the reply 400 for a
   different one. A catalog with no such member gives no item to a new character.
+- The perks of an instance (stage 1.3b). An item has five perk places: the PerkID text of each
+  place (a gem is a perk of a place). The database has a column for each place (`perk1` to
+  `perk5`, schema 7: an older database gets empty places). The wire has the index of the
+  perk in the perk list of the client, from the perk data at each load (a perk that the data
+  does not have is an empty place for the client; the row keeps it).
+- A give with perks and the perk command (`Inventory::set_perks`) check each perk: it is in
+  the perk data, in one place, one gem at most, a perk for the item class (one class of its
+  ItemClass, no class of its ExcludeItemClass), and not deprecated. Then the swap table of the
+  game changes a perk as the client does (an ItemId row first, else the first class row whose
+  classes the item has; two or three passes): the row has the perk that the client shows and
+  uses. A swap can take a perk out (the item has its new perk already): the other perks move
+  forward. A stack takes only an item with the same perks; the gear score does not stop it.
+- The client shows the fixed perks of an item definition also when the instance does not
+  have them (the heart rune, the opal jewelry): the backend does not write them into the
+  instance of a give, and the gear system counts them.
+- A loot item gets the perks of the roll of the client (`world/perk_roll.h`, protocol notes
+  4.23): each instance of a drop has its own roll, with the level of the character.
+- The rarity of an item is a value of the client: it computes it from the perk count.
 
 ## Commands
 
@@ -63,6 +84,13 @@ tools/world equipment NAME           # the equipment of a character
   CHARACTER SLOT on|off`. The character can be in the world or not: a command for a character
   that is not in the world changes its rows, and its next session gets the result. The bag
   window of the client (Tab key, `tools/hx 'key 0x09'`) shows the result at once.
+- The perks (stage 1.3b): `tools/world give NAME ITEM 1 --gs 600 --perks P1,P2,P3,P4,P5`
+  (an empty part is a place with no perk), `tools/world perks NAME SLOT P1,P2,... [--paperdoll]`
+  (the perks of an item that the character has; route `/v1/dev/items/perks`), `tools/world
+  perkroll ITEM [--gs N] [--level N] [--count N]` (the perk roll of a loot item, with no
+  item; route `/v1/dev/perks/roll`). `tools/gamedata/perks.sh --find TEXT` prints the perks,
+  the buckets, and the items with a text. The admin interface has `give_item` with `perks`
+  and `set_item_perks`; the tool window has the fields "Gear score" and "Perks".
 - `tools/world` has the commands for the equipment of a character (routes
   `/v1/dev/items/equip` and `/v1/dev/items/unequip`): `equipment CHARACTER`, `equip
   CHARACTER BAGSLOT [SLOT]` (with no slot: the slot of the item class, and for a weapon the
@@ -129,13 +157,20 @@ tools/world equipment NAME           # the equipment of a character
   `SOULWARDEN_RESEARCH_SESSION=refuse-equipment=1`: the handler of the client is the trace point
   `687BB60`.
 - A paperdoll fragment has only the slots that changed: a slot with no entry keeps its item
-  in the client. A fragment of `tools/world fragment NAME 62 3183` whose three lists do not
+  in the client. A first record in more than one part is different (live check I12 of stage
+  1.3b): a later part with entries of the same list group (the slots that do not show on the
+  body: jewelry, quick slots, bags, tools, the heart rune) took the items of that group of the
+  earlier part out. The encoder keeps each group whole in one part. 15 items with perks need
+  two parts; a group that does not fit one part (about 15 items) is not checked. A fragment of `tools/world fragment NAME 62 3183` whose three lists do not
   have the same length has no effect and gives no log line.
 - The bag window does not show an ammunition item (`ArrowT1`): do not use one for a test of
   the bag. The equipment slots for ammunition (12, 13) take no item in the backend.
 - A character from before stage 1.4, and a seeded character, have no items of an archetype:
   only the create route gives them, at the creation. Give such a character its gear with
   `tools/world give` and `tools/world equip`.
+- A potion or a food with a level requirement above the level of the character: the client
+  uses no such item (a quick slot key sends no bit). FoodCONT5 needs the level 65; the level
+  cap of the backend is 60.
 - `tools/gamedata/items.sh` writes the catalog to the common game data folder: the next start
   of the user reads it too. The backend that the user starts then gives items only through
   a development run or a later tool window: a start of the user has no development commands.

@@ -194,10 +194,26 @@ struct Damage {
     float weapon{0.0F};
     /** The weapon damage with the attributes and the level of the attacker. */
     float core{0.0F};
-    /** The damage of the attack before the defense of the target. */
+    /** The damage of the attack before the defense of the target (with the part of the gear). */
     float raw{0.0F};
-    /** The damage that the target takes. */
+    /** The damage that the target takes: the two parts together. */
     float dealt{0.0F};
+    /** The part of `dealt` that a gem of the weapon converted, and its damage type on the wire. 0: no conversion. */
+    float converted{0.0F};
+    std::uint8_t convertedType{0};
+};
+
+/** What the gear of the attacker and the effects on the target change in one hit (stage 1.3b, world/gear.h). */
+struct HitModifiers {
+    /** The part of the damage that the gear of the attacker adds (Gear::hit_damage). */
+    float part{0.0F};
+    /** The DMG<type> parts of the attacker by the name of the damage type. Null: none. */
+    const std::unordered_map<std::string, float>* typeParts{nullptr};
+    /** The name of the damage type of a gem of the weapon, and the part of the damage that it converts. 0: none. */
+    std::string conversionType;
+    float conversionPart{0.0F};
+    /** The part of the armor of the target that its effects add (a rend: -0.05). */
+    float armor{0.0F};
 };
 
 /** What the session of an attacker gets for one hit of its character: the number at the target. */
@@ -207,6 +223,9 @@ struct DamageDealt {
     /** Number of the damage type on the wire, and the damage that the target took. */
     std::uint8_t type{0};
     float amount{0.0F};
+    /** The converted part of the damage (a gem of the weapon), and its damage type: a second entry of the message. 0: none. */
+    float secondAmount{0.0F};
+    std::uint8_t secondType{0};
     /** True when the hit was the death of the target. */
     bool killed{false};
 };
@@ -397,6 +416,14 @@ public:
                      float factor,
                      const char* what);
 
+    /**
+     * One hit of a fixed amount of a damage type of a character on a creature (stage 1.3b: a tick of a damage over time
+     * of a perk, a hit of a chain): the defense of the creature for the type, then the creature system and the damage
+     * number, as `strike`. No perk of the attacker counts (a tick is not a hit of a weapon).
+     * @param typeName The name of the damage type of the combat tables ("Corruption").
+     */
+    HitResult strike_amount(Entity& attacker, Entity& target, float amount, const std::string& typeName, const char* what);
+
     /** @return The combat tables, or null. */
     [[nodiscard]] const gamedata::CombatTables* tables() const {
         return has_tables() ? m_tables : nullptr;
@@ -430,13 +457,19 @@ public:
      * above the limit. The first three lines are the rule of the client for the damage of a
      * weapon (static proof). The last line, and the use of the mitigation value as a part of
      * the damage, are choices of this project.
+     * The gear of the attacker (stage 1.3b, `modifiers`; rules of this project, protocol notes 4.23): raw times (1 +
+     * the part of the gear); a gem of the weapon converts a part of raw to its damage type; each part times (1 +
+     * the DMG<type> part of the attacker for its type) and the defense of the target for its type; the mitigation
+     * of the target times (1 + the armor part of its effects, a rend).
      * @param defense The defense values of the target. Null: the target takes the raw damage.
+     * @param modifiers The gear of the attacker and the effects on the target. Null: none.
      */
     [[nodiscard]] Damage damage(const Entity& attacker,
                                 const gamedata::WeaponRow& weapon,
                                 std::uint32_t gearScore,
                                 const gamedata::DamageRow& row,
-                                const gamedata::DefenseRow* defense) const;
+                                const gamedata::DefenseRow* defense,
+                                const HitModifiers* modifiers = nullptr) const;
 
     /**
      * The damage rule for an attack of a creature on a character (a rule of this project;
@@ -475,6 +508,12 @@ public:
     [[nodiscard]] HitLimits& limits_of(const std::string& characterId);
 
 private:
+    /** @return The part of a damage of a type that a target with these defense values takes (mitigation, weakness, absorption). */
+    [[nodiscard]] float defense_factor(std::uint32_t type, const gamedata::DefenseRow* defense, float armor) const;
+    /** Gives the damage of a hit to a creature through the creature system, with the log line and the damage number. */
+    HitResult apply_hit(Entity& attacker, Entity& target, const Damage& damage, const std::string& itemId, const std::string& row,
+                        const char* what);
+
     World& m_world;
     const gamedata::CombatTables* m_tables;
     /** Character id to the limits of the character. An entry with no value in its time window goes away. */

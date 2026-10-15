@@ -269,7 +269,8 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
             return false;
         }
         for (const json& row : entry["attacks"]) {
-            // [action, time, [[contact time, reach, factor, added, type, type number, category, row], ...]]
+            // [action, time, [[contact time, reach, factor, added, type, type number, category, row, hit rune charge], ...]]
+            // A file of a tool from before stage 1.3b has no rune charge (8 values): a hit then gives no charge.
             CreatureAttack attack;
             if (!row.is_array() || row.size() != 3 || !read_number(row[0], attack.action) || !read_real(row[1], attack.length)
                 || !row[2].is_array()) {
@@ -278,9 +279,10 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
             for (const json& cell : row[2]) {
                 CreatureContact contact;
                 std::uint32_t wire = 0;
-                if (!cell.is_array() || cell.size() != 8 || !read_real(cell[0], contact.time) || !read_real(cell[1], contact.reach)
-                    || !read_real(cell[2], contact.factor) || !read_real(cell[3], contact.added) || !cell[4].is_string()
-                    || !read_number(cell[5], wire) || wire == 0 || wire > 255 || !cell[6].is_string() || !cell[7].is_string()) {
+                if (!cell.is_array() || (cell.size() != 8 && cell.size() != 9) || !read_real(cell[0], contact.time)
+                    || !read_real(cell[1], contact.reach) || !read_real(cell[2], contact.factor) || !read_real(cell[3], contact.added)
+                    || !cell[4].is_string() || !read_number(cell[5], wire) || wire == 0 || wire > 255 || !cell[6].is_string()
+                    || !cell[7].is_string() || (cell.size() == 9 && (!read_real(cell[8], contact.hitCharge) || contact.hitCharge < 0.0F))) {
                     return false;
                 }
                 const std::string category = cell[6].get<std::string>();

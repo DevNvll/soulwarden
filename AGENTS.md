@@ -177,7 +177,9 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | Static and live analysis of the client | [Analysis of the client](docs/development/client-analysis.md) |
 | The world object, the entity table, sessions, component states, bundles | [World and sessions](docs/systems/world-and-sessions.md) |
 | The position of a character and the position report of the client | [Position](docs/systems/position.md) |
-| The bag, the coin, the equipment | [Items and equipment](docs/systems/items-and-equipment.md) |
+| The bag, the coin, the equipment, the perks of an item instance | [Items and equipment](docs/systems/items-and-equipment.md) |
+| What the equipment and the effects give a character, the perks of a hit, the gem conversion | [Gear and perks](docs/systems/gear-and-perks.md) |
+| The use of a potion or a food, the effects on a character, the heart rune | [Consumables and the heart rune](docs/systems/consumables-and-heart-rune.md) |
 | The level, the attributes, the weapon masteries, the ability bars, the trade skills | [Progression and skills](docs/systems/progression-and-skills.md) |
 | Creatures: the spawn points, the record for a session, the actions, the creature data | [Creatures](docs/systems/creatures.md) |
 | The behavior of a creature: the fight, the way back, patrol and wander | [Creature behavior](docs/systems/creature-behavior.md) |

@@ -59,7 +59,7 @@
 // The items, the equipment, and the coin of a character (world/inventory.h). A command for a
 // character that is not in the world changes its rows, and the reply has "applied":"stored".
 //   GET  /v1/dev/items?character=ID                      the bag, the equipment, and the coin
-//   POST /v1/dev/items/give?character=ID&item=ITEM&quantity=N[&gearScore=N][&action=N]
+//   POST /v1/dev/items/give?character=ID&item=ITEM&quantity=N[&gearScore=N][&action=N][&perks=P1,P2,,P4]
 //                                                        give a quantity of an item (ITEM: the
 //                                                        ItemID text of the item catalog)
 //   POST /v1/dev/items/remove?character=ID&slot=N[&quantity=N]
@@ -694,6 +694,30 @@ void register_dev_routes(Router& router, const Services& services) {
         });
     });
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));
+    // The itemization (stage 1.3b): the gear, a use of a consumable, the heart rune, and a perk roll.
+    router.add("GET", "", "/v1/dev/gear", "dev.gear", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        return in_world(services, [character = *character](world::World& target) {
+            return json_reply(200, commands::gear_json(target, character).dump());
+        });
+    });
+    router.add("POST", "", "/v1/dev/items/use", "dev.items_use", command_route(services, commands::use_item));
+    router.add("POST", "", "/v1/dev/items/perks", "dev.items_perks", command_route(services, commands::set_item_perks));
+    router.add("POST", "", "/v1/dev/rune/charge", "dev.rune_charge", command_route(services, commands::set_rune_charge));
+    router.add("POST", "", "/v1/dev/rune/activate", "dev.rune_activate", command_route(services, commands::activate_rune));
+    router.add("GET", "", "/v1/dev/perks/roll", "dev.perks_roll", [&services](const RouteContext& context) {
+        if (!context.request.host.empty()) {
+            return message(403, "forbidden");
+        }
+        service::HttpResponse refusal;
+        const std::string character = query_text(context.request, "character").value_or("");
+        commands::WorldCommand step = commands::roll_item_perks(character, commands::QueryArguments(context.request), refusal);
+        return step ? in_world(services, std::move(step)) : refusal;
+    });
     router.add("POST", "", "/v1/dev/creatures/anchor", "dev.creatures_anchor",
                creature_route(services, commands::move_creature_anchor));
     router.add("POST", "", "/v1/dev/creatures/respawn", "dev.creatures_respawn",

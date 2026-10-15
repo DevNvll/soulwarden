@@ -22,13 +22,18 @@
 // View     Fields
 // owner    group 0: the three maps, with each cooldown of an ability that is on a place of a
 //          bar of the character. No fragment in the first record of a character with no
-//          cooldown.
+//          cooldown. Field 3 (ccdmap, stage 1.3b) when the character has a cooldown of a
+//          consumable: one entry for each item, key = the CRC-32 of the lower-case item id, the
+//          end, and two values 0 (key:u32 end:u64 a:u32 b:u32; live check I7: the key of the
+//          item shows the countdown on its quick slot, the key of the cooldown id shows nothing).
 // observer no fragment: the remote player slice has no cooldown component.
 
 namespace soulwarden::backend::server::rep {
 namespace {
 
 constexpr unsigned kGroups = 1;
+/** Field 3: the cooldowns of the consumables by item (ccdmap). */
+constexpr unsigned kItemMap = 3;
 
 std::uint64_t microseconds(world::WorldClock::time_point time) {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(time.time_since_epoch()).count());
@@ -49,7 +54,7 @@ std::optional<unsigned> place_of(const world::SkillSet& skills, std::uint32_t ab
 } // namespace
 
 std::vector<hub::Bytes> encode_cooldown_state(const world::Entity& entity, View view, const PartsRequest& request) {
-    if (view != View::owner || (request.since == 0 && entity.cooldowns.empty())) {
+    if (view != View::owner || (request.since == 0 && entity.cooldowns.empty() && entity.itemCooldowns.empty())) {
         return {};
     }
     const auto changed = entity.changed.find(world::ComponentKey::cooldowns);
@@ -71,6 +76,19 @@ std::vector<hub::Bytes> encode_cooldown_state(const world::Entity& entity, View 
             field.u32(ability);
             field.u64(microseconds(timer->end));
             field.u64(microseconds(timer->minEnd));
+        }
+    }
+    if (!entity.itemCooldowns.empty()) {
+        hub::Writer& field = state.field(0, kItemMap);
+        field.size(0);
+        field.u8(1);
+        field.size64(sequence);
+        field.size(static_cast<std::uint32_t>(entity.itemCooldowns.size()));
+        for (const world::ItemCooldown& cooldown : entity.itemCooldowns) {
+            field.u32(cooldown.item);
+            field.u64(microseconds(cooldown.end));
+            field.u32(0);
+            field.u32(0);
         }
     }
     return {state.finish()};

@@ -46,6 +46,14 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
 - A drop goes into the bag whole when the bag has space for it (finding F11, case RL11). The
   limit of the give command (100,000) is a limit of that command only, not of
   `Inventory::grant`. Only the stack size and the capacity of the bag limit a drop.
+- The perks of a drop (stage 1.3b, protocol notes 4.23): an item with perk places in the perk
+  data gets the perk roll of the client (`world/perk_roll.h`) for each instance, with the level
+  of the character that gets it and the gear score of the drop; the swap of the game follows
+  at the grant. A character below level 7 gets only the fixed perks. `tools/world perkroll`
+  rolls with no item (test case IZ3; live check I12: a rapier of a drop with one perk).
+- The loot tool writes no file with a value that the backend refuses (code review of stage
+  3.3a, finding F13, case RA13): the KillExpModifier of a level difference from -1 to 100, its
+  MaxRewardLevelDelta from 0 to 1,000, and the odds of a bucket candidate not below 0.
 - The respawn: a command removal of a dead creature (`tools/world creature remove`) clears the
   respawn time of its spawn point (finding F8, case RL8): the point stays empty until a reset.
   The removal of a body by the distance keeps the respawn time.

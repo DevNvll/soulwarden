@@ -200,16 +200,35 @@ void Combat::select_weapon(SessionId session, unsigned key) {
         return;
     }
     const std::uint32_t slot = paperdoll::kMainHand1 + key - 1;
-    if (entity->equipment.item(slot) != nullptr) {
+    if (entity->equipment.item(slot) != nullptr && entity->combat.selectedWeapon != slot) {
         entity->combat.selectedWeapon = slot;
+        // The perks of a weapon with OnActive count only while it is in the hand (stage 1.3b).
+        m_world.gear().refresh(*entity);
     }
+}
+
+float Combat::defense_factor(std::uint32_t typeIndex, const gamedata::DefenseRow* defense, float armor) const {
+    if (defense == nullptr) {
+        return 1.0F;
+    }
+    const gamedata::DamageType& type = m_tables->damage_type(typeIndex);
+    const float mitigation = type.category == gamedata::DamageCategory::physical    ? defense->physical
+                             : type.category == gamedata::DamageCategory::elemental ? defense->elemental
+                                                                                    : 0.0F;
+    // A value of the game tables can be above 1 (a creature that takes no damage of a
+    // category): a factor is not less than 0. A rend of an effect lowers the mitigation.
+    const float weakness = typeIndex < defense->weakness.size() ? defense->weakness[typeIndex] : 0.0F;
+    const float absorption = typeIndex < defense->absorption.size() ? defense->absorption[typeIndex] : 0.0F;
+    return std::max(1.0F - mitigation * std::max(1.0F + armor, 0.0F), 0.0F) * std::max(1.0F + weakness, 0.0F)
+           * std::max(1.0F - absorption, 0.0F);
 }
 
 Damage Combat::damage(const Entity& attacker,
                       const gamedata::WeaponRow& weapon,
                       std::uint32_t gearScore,
                       const gamedata::DamageRow& row,
-                      const gamedata::DefenseRow* defense) const {
+                      const gamedata::DefenseRow* defense,
+                      const HitModifiers* modifiers) const {
     const gamedata::CombatConstants& constants = m_tables->constants();
     const gamedata::DamageType& type = m_tables->damage_type(row.type);
     Damage damage;
@@ -234,19 +253,50 @@ Damage Combat::damage(const Entity& attacker,
     bonus += constants.levelDamage * static_cast<float>(level - 1);
     damage.core = damage.weapon * (1.0F + bonus);
     damage.raw = damage.core * row.factor + row.added;
-    // The defense of the target (a rule of this project).
-    damage.dealt = damage.raw;
-    if (defense != nullptr) {
-        const float mitigation = type.category == gamedata::DamageCategory::physical    ? defense->physical
-                                 : type.category == gamedata::DamageCategory::elemental ? defense->elemental
-                                                                                        : 0.0F;
-        // A value of the game tables can be above 1 (a creature that takes no damage of a
-        // category): a factor is not less than 0.
-        damage.dealt = damage.raw * std::max(1.0F - mitigation, 0.0F) * std::max(1.0F + defense->weakness[row.type], 0.0F)
-                       * std::max(1.0F - defense->absorption[row.type], 0.0F);
+    // The gear of the attacker (stage 1.3b): a part of the damage, a conversion of a gem, and the DMG<type> parts.
+    float convertedRaw = 0.0F;
+    std::optional<std::uint32_t> convertedIndex;
+    const auto typePart = [&](const std::string& name) {
+        if (modifiers == nullptr || modifiers->typeParts == nullptr) {
+            return 0.0F;
+        }
+        const auto found = modifiers->typeParts->find(name);
+        return found == modifiers->typeParts->end() ? 0.0F : found->second;
+    };
+    const float armor = modifiers != nullptr ? modifiers->armor : 0.0F;
+    if (modifiers != nullptr) {
+        damage.raw *= std::max(1.0F + modifiers->part, 0.0F);
+        if (modifiers->conversionPart > 0.0F && !modifiers->conversionType.empty()) {
+            for (std::uint32_t index = 0; index < m_tables->data().damageTypes.size(); ++index) {
+                if (m_tables->data().damageTypes[index].name == modifiers->conversionType) {
+                    convertedIndex = index;
+                }
+            }
+            // A row of the type of the gem: the damage has one type, and one part.
+            if (convertedIndex && *convertedIndex == row.type) {
+                convertedIndex.reset();
+            }
+            if (convertedIndex) {
+                convertedRaw = damage.raw * std::min(modifiers->conversionPart, 1.0F);
+            }
+        }
     }
+    // The defense of the target (a rule of this project), for each part with its type.
+    const float mainDealt = (damage.raw - convertedRaw) * std::max(1.0F + typePart(type.name), 0.0F) * defense_factor(row.type, defense, armor);
+    float convertedDealt = 0.0F;
+    if (convertedIndex) {
+        const gamedata::DamageType& converted = m_tables->damage_type(*convertedIndex);
+        convertedDealt = convertedRaw * std::max(1.0F + typePart(converted.name), 0.0F) * defense_factor(*convertedIndex, defense, armor);
+        damage.convertedType = converted.wire;
+    }
+    if (!std::isfinite(convertedDealt) || convertedDealt < 0.0F) {
+        convertedDealt = 0.0F;
+    }
+    damage.converted = convertedDealt;
+    damage.dealt = mainDealt + convertedDealt;
     if (!std::isfinite(damage.dealt) || damage.dealt < 0.0F) {
         damage.dealt = 0.0F;
+        damage.converted = 0.0F;
     }
     return damage;
 }
@@ -289,6 +339,11 @@ CreatureDamage Combat::creature_damage(const Entity& creature,
                                 - static_cast<std::int64_t>(std::max<std::uint32_t>(target.progression.level, 1));
         damage.levelFactor = 1.0F + m_tables->level_damage(difference);
         damage.armor = armor_of(target, contact.category);
+        // The armor parts of the perks and of the effects of the character (stage 1.3b: a dust, the status of a rune).
+        const float part = contact.category == gamedata::DamageCategory::physical    ? target.gear.physicalArmor
+                           : contact.category == gamedata::DamageCategory::elemental ? target.gear.elementalArmor
+                                                                                     : 0.0F;
+        damage.armor *= std::max(1.0F + part, 0.0F);
         const float gearScore = data->gear_score(creature.creature.level);
         if (damage.armor > 0.0F && gearScore > 0.0F) {
             const float against = std::pow(gearScore, m_tables->armor_constants().mitigationExponent);
@@ -298,6 +353,11 @@ CreatureDamage Combat::creature_damage(const Entity& creature,
     // A weaken of an ability on the creature lowers its damage (stage 3.3a, Creature::damage_factor).
     damage.dealt = damage.raw * std::max(damage.levelFactor, 0.0F) * std::max(1.0F - damage.mitigation, 0.0F)
                    * creature.creature.damage_factor(m_world.clock().now());
+    // The absorption of the damage type (ABS<type>: a ward of a gem or of an amulet) and BaseDamageReduction (stage 1.3b).
+    if (const auto absorbed = target.gear.absorption.find(contact.type); absorbed != target.gear.absorption.end()) {
+        damage.dealt *= std::max(1.0F - absorbed->second, 0.0F);
+    }
+    damage.dealt *= std::max(1.0F - target.gear.damageReduction, 0.0F);
     if (!std::isfinite(damage.dealt) || damage.dealt < 0.0F) {
         damage.dealt = 0.0F;
     }
@@ -351,8 +411,10 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     }
     // A contact in the window of a phase of an ability that plays (world/abilities.h): a hit of
     // that phase, with its damage row. The hit check of a melee attack stays.
-    if (const std::optional<MeleePhase> phase =
-            m_world.abilities().contact_phase(*attacker, session, claim.input, track.sequence(), target->id)) {
+    const AttackTrack::Press* fitting = track.press_for(claim.input);
+    if (const std::optional<MeleePhase> phase = m_world.abilities().contact_phase(
+            *attacker, session, claim.input, track.sequence(), target->id,
+            fitting != nullptr ? std::optional<std::uint16_t>(fitting->input) : std::nullopt)) {
         if (phase->done) {
             return refuse(HitVerdict::sameAttack);
         }
@@ -439,10 +501,82 @@ HitResult Combat::strike(Entity& attacker,
         return result;
     }
     const gamedata::DamageRow& row = m_tables->damage_row(rowIndex);
-    result.damage = damage(attacker, weapon, gearScore, row, m_tables->defense_of(target.creature.kind->vitals));
+    // The gear of the attacker and the effects on the target (stage 1.3b, world/gear.h).
+    HitContext hit;
+    hit.row = row.id;
+    hit.attackType = row.attackType;
+    HitModifiers modifiers;
+    modifiers.part = m_world.gear().hit_damage(attacker, target, hit);
+    modifiers.typeParts = &attacker.gear.damage;
+    modifiers.armor = target.creature.armor_part(m_world.clock().now());
+    // The gem of the weapon of the hit: the weapon in the hand, or the item of a different slot (the heart rune).
+    for (const auto& [slot, place] : attacker.equipment.slots) {
+        if (place.item && place.item->itemId == itemId && (paperdoll::weapon_slot(slot) || slot == paperdoll::kHeartRune)) {
+            if (const std::optional<Conversion> conversion = m_world.gear().conversion(*place.item, slot)) {
+                modifiers.conversionType = conversion->type;
+                modifiers.conversionPart = conversion->part;
+            }
+            break;
+        }
+    }
+    result.damage = damage(attacker, weapon, gearScore, row, m_tables->defense_of(target.creature.kind->vitals), &modifiers);
     if (factor != 1.0F) {
         result.damage.dealt *= std::max(factor, 0.0F);
+        result.damage.converted *= std::max(factor, 0.0F);
     }
+    const EntityId attackerId = attacker.id;
+    const EntityId targetId = target.id;
+    result = apply_hit(attacker, target, result.damage, itemId, row.id, what);
+    if (result.verdict != HitVerdict::accepted) {
+        return result;
+    }
+    Entity* own = m_world.find(attackerId);
+    Entity* hurt = m_world.creatures().find(targetId);
+    if (own == nullptr || hurt == nullptr) {
+        return result;
+    }
+    // The heart rune charge of the hit (AttackRuneCharge of the row), and the perks of a hit (stage 1.3b).
+    if (row.attackCharge > 0.0F) {
+        m_world.runes().gain(*own, row.attackCharge);
+    }
+    hit.dealt = result.damage.dealt;
+    hit.raw = result.damage.raw;
+    hit.killed = result.killed;
+    m_world.gear().on_hit(*own, *hurt, hit);
+    return result;
+}
+
+HitResult Combat::strike_amount(Entity& attacker, Entity& target, float amount, const std::string& typeName, const char* what) {
+    HitResult result;
+    result.verdict = HitVerdict::noTables;
+    if (!has_tables() || !std::isfinite(amount) || amount <= 0.0F) {
+        return result;
+    }
+    std::optional<std::uint32_t> typeIndex;
+    for (std::uint32_t index = 0; index < m_tables->data().damageTypes.size(); ++index) {
+        if (m_tables->data().damageTypes[index].name == typeName) {
+            typeIndex = index;
+        }
+    }
+    if (!typeIndex) {
+        return result;
+    }
+    Damage damage;
+    damage.type = m_tables->damage_type(*typeIndex).wire;
+    damage.raw = amount;
+    damage.dealt = amount * defense_factor(*typeIndex, m_tables->defense_of(target.creature.kind->vitals),
+                                           target.creature.armor_part(m_world.clock().now()));
+    if (!std::isfinite(damage.dealt) || damage.dealt < 0.0F) {
+        damage.dealt = 0.0F;
+    }
+    return apply_hit(attacker, target, damage, "", typeName, what);
+}
+
+HitResult Combat::apply_hit(Entity& attacker, Entity& target, const Damage& damage, const std::string& itemId, const std::string& row,
+                            const char* what) {
+    HitResult result;
+    result.verdict = HitVerdict::dead;
+    result.damage = damage;
     result.healthBefore = target.vitals.health;
     const EntityId targetId = target.id;
     const ActorId targetActor = target.actor;
@@ -457,16 +591,27 @@ HitResult Combat::strike(Entity& attacker,
     result.healthAfter = hurt.entity->vitals.health;
     result.killed = hurt.entity->creature.dead;
     result.verdict = HitVerdict::accepted;
-    log::write("world: hit: %s hurts creature %016llx (%s) with %s (%s, row %s): %.1f damage of the type %s (weapon "
+    const auto type_name = [&](std::uint8_t wire) -> const char* {
+        for (const gamedata::DamageType& type : m_tables->data().damageTypes) {
+            if (type.wire == wire) {
+                return type.name.c_str();
+            }
+        }
+        return "?";
+    };
+    log::write("world: hit: %s hurts creature %016llx (%s) with %s (%s, row %s): %.1f damage of the type %s%s%s%s (weapon "
                "%.1f, with attributes and level %.1f, before the defense %.1f), health %.1f to %.1f%s",
                attacker.name.c_str(),
                static_cast<unsigned long long>(targetId),
                hurt.entity->creature.kind->id.c_str(),
-               itemId.c_str(),
+               itemId.empty() ? "no item" : itemId.c_str(),
                what,
-               row.id.c_str(),
+               row.c_str(),
                result.damage.dealt,
-               m_tables->damage_type(row.type).name.c_str(),
+               type_name(result.damage.type),
+               result.damage.converted > 0.0F ? " (converted part " : "",
+               result.damage.converted > 0.0F ? (std::to_string(result.damage.converted).substr(0, 8) + " of the type ").c_str() : "",
+               result.damage.converted > 0.0F ? (std::string(type_name(result.damage.convertedType)) + ")").c_str() : "",
                result.damage.weapon,
                result.damage.core,
                result.damage.raw,
@@ -477,7 +622,9 @@ HitResult Combat::strike(Entity& attacker,
     dealt.target = targetId;
     dealt.targetActor = targetActor;
     dealt.type = result.damage.type;
-    dealt.amount = result.damage.dealt;
+    dealt.amount = result.damage.dealt - result.damage.converted;
+    dealt.secondType = result.damage.convertedType;
+    dealt.secondAmount = result.damage.converted;
     dealt.killed = result.killed;
     m_world.damage_dealt(attacker.owner, dealt);
     return result;

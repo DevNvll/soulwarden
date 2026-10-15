@@ -1244,12 +1244,13 @@ void loot_tool(const Options& options) {
         correct += line.rfind("ok  ", 0) == 0 ? 1 : 0;
         wrong += line.rfind("FAIL", 0) == 0 ? 1 : 0;
     }
-    check(status == 0 && correct == 13 && wrong == 0,
+    check(status == 0 && correct == 16 && wrong == 0,
           "the loot tool writes the document of complete tables (the entries in the sequence of their thresholds, the "
           "references resolved, the tag ranges, the odds, the empty cells), and it stops with status 1 and keeps the file that "
           "was there for a table, a bucket, or a vitals table reference that does not resolve, a quantity text, reward levels "
           "with a gap, a number that is not finite, and (code review of stage 3.5a, F3 and F4) a variant, an event, or a "
-          "creature type that does not resolve, a negative reward or factor, and the flag text NONE");
+          "creature type that does not resolve, a negative reward or factor, and the flag text NONE, and (code review of stage "
+          "3.3a, F13) a level difference or the odds of a bucket outside the range of the backend");
 }
 
 } // namespace

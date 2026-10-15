@@ -154,6 +154,9 @@ json item_json(const world::ItemInstance& item, std::uint32_t slot) {
         {"bound", (item.flags & world::kItemBound) != 0},
         {"locked", (item.flags & world::kItemLocked) != 0},
         {"instance", world::instance_text(item.instance)},
+        // The perks of the five places (stage 1.3b): the PerkID texts and the indexes on the wire.
+        {"perks", item.perks},
+        {"perkIndexes", item.perkIndex},
     };
 }
 
@@ -223,6 +226,34 @@ WorldCommand give_item(const std::string& character, const Arguments& arguments,
             return {};
         }
         options.action = static_cast<std::uint8_t>(*action);
+    }
+    if (arguments.has("perks")) {
+        // The perks of the five places (stage 1.3b): PerkID texts with "," between them; an empty
+        // part is a place with no perk ("PerkID_A,,PerkID_Gem_VoidDMG4"). The world checks each perk.
+        const auto list = arguments.text("perks");
+        world::PerkIds perks{};
+        std::size_t place = 0;
+        bool valid = list.has_value();
+        if (valid) {
+            std::size_t start = 0;
+            while (valid) {
+                const std::size_t end = std::min(list->find(',', start), list->size());
+                if (place >= world::kPerkPlaces || end - start > 200) {
+                    valid = false;
+                    break;
+                }
+                perks[place++] = list->substr(start, end - start);
+                if (end >= list->size()) {
+                    break;
+                }
+                start = end + 1;
+            }
+        }
+        if (!valid) {
+            refusal = message(400, "perks must be at most five PerkID texts with \",\" between them");
+            return {};
+        }
+        options.perks = perks;
     }
     return [character, item = *item, quantity = static_cast<std::uint32_t>(*quantity), options](world::World& target) {
         return item_reply(target.inventory().give(character, item, quantity, options));
@@ -439,7 +470,8 @@ std::optional<json> progress_view(world::World& target, const std::string& chara
     json attributes = json::object();
     for (unsigned type = 0; type < world::attribute::kCount; ++type) {
         attributes[kAttributeNames[type]] = {{"value", progress->attributes.value(type)},
-                                             {"spent", progress->attributes.spent[type]}};
+                                             {"spent", progress->attributes.spent[type]},
+                                             {"bonus", progress->attributes.bonus[type]}};
     }
     const auto node_name = [&](std::uint32_t id) {
         const gamedata::AbilityNode* node = loaded ? tables->node(id) : nullptr;

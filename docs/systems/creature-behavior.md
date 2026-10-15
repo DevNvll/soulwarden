@@ -75,6 +75,11 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   strongest slow) lowers the speed of each step: the way to a target, the way back, the
   trail, and a roam. A creature with a root or a stun on its way back waits at its place: it
   is not at its anchor. A creature on its way back takes no new effect.
+- A knockdown and a stagger (code review of stage 3.3a). A slice with no reaction fragment for
+  the power still gets the hold of the knockdown: no movement and no attack for its time (finding
+  F5). A shorter or weaker knock does not end an earlier one: the later end and the stronger
+  reaction stay (F6). At the end of a knock while a stun runs, the creature plays its action
+  `Stun` again (F7).
 - A creature with no way to its target (stage 3.4e) holds 12 s at the nearest place. A step
   on a new path ends the hold, also a step on a partial path to a new nearest place: a new
   hold starts at the end of that path (review of stage 3.5a, finding F7, case RL7).

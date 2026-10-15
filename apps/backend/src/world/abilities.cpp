@@ -105,6 +105,8 @@ const char* cast_verdict_text(CastVerdict verdict) {
         return "the cooldown runs";
     case CastVerdict::casting:
         return "a different cast plays";
+    case CastVerdict::noMana:
+        return "the character has less mana than the cost";
     }
     return "unknown";
 }
@@ -285,11 +287,29 @@ CastVerdict Abilities::press(SessionId session, const AbilityPress& press) {
             log::write("world: ability: the data has no row %s or no spell %s of %s", phase.row.c_str(), phase.spell.c_str(), rule->name);
             return refuse(CastVerdict::noRule);
         }
+        // Each status row of an effect of the plan, also of a delayed effect (code review of stage 3.3a, finding F9).
+        for (const EffectPlan& effect : phase.effects) {
+            if (!effect.status.empty() && m_data->status(effect.status) == nullptr) {
+                log::write("world: ability: the data has no status effect %s of %s", effect.status.c_str(), rule->name);
+                return refuse(CastVerdict::noRule);
+            }
+        }
     }
     const WorldClock::time_point now = m_world.clock().now();
     CharacterState& state = m_characters[character->characterId];
+    // A later press of the session, accepted or refused, ends the contact windows of the earlier cast (code review of
+    // stage 3.3a, finding F2): a contact after it is not a hit of that cast.
+    if (state.cast) {
+        const auto earlier = m_casts.find(*state.cast);
+        if (earlier != m_casts.end() && earlier->second.session == session && earlier->second.sequence == press.sequence
+            && !earlier->second.closedAt) {
+            earlier->second.closedAt = press.input;
+        }
+    }
+    // The cooldown of the server, and the cooldown of the client: the client does not play a press in its own cooldown,
+    // also when the cooldown of the server ended before (a reset command; stage 1.3b, I8, live check I8-05).
     const auto running = state.cooldowns.find(ability);
-    if (running != state.cooldowns.end() && now < running->second.end) {
+    if (running != state.cooldowns.end() && (now < running->second.end || now < running->second.clientEnd)) {
         return refuse(CastVerdict::cooldown);
     }
     if (state.cast) {
@@ -302,8 +322,12 @@ CastVerdict Abilities::press(SessionId session, const AbilityPress& press) {
     for (auto old = m_casts.begin(); old != m_casts.end();) {
         old = old->second.pending == 0 && now - old->second.started >= kCastKeep ? m_casts.erase(old) : std::next(old);
     }
-    // The cast. Its cost is 0 (a rule of this project: the data gives the six abilities no
-    // cost, and the client predicts none: live check L8).
+    // The cost of the cast (stage 1.3b, I14): a press with less mana than the cost makes no cast. The six abilities of
+    // the build have no cost in the data (their spells name SpecialAttack, which the mana table does not have).
+    const float cost = mana_cost(*character, *planned);
+    if (cost > 0.0F && character->vitals.mana + 0.001F < cost) {
+        return refuse(CastVerdict::noMana);
+    }
     Cast cast;
     cast.number = m_nextCast++;
     cast.plan = std::move(*planned);
@@ -325,6 +349,7 @@ CastVerdict Abilities::press(SessionId session, const AbilityPress& press) {
     timer.start = now;
     timer.end = now + milliseconds(cooldown->time);
     timer.minEnd = now + milliseconds(cooldown->minTime);
+    timer.clientEnd = timer.end;
     state.cooldowns[ability] = timer;
     state.cast = cast.number;
     const std::uint64_t number = cast.number;
@@ -370,6 +395,9 @@ CastVerdict Abilities::press(SessionId session, const AbilityPress& press) {
         });
     }
     publish(stored.characterId);
+    if (cost > 0.0F) {
+        change_mana(*character, -cost, ability_name(stored.plan.kind));
+    }
     ++m_counts.presses[static_cast<std::size_t>(CastVerdict::accepted)];
     log::write("world: ability: %s casts %s (place %u of the bar): cooldown %.1f s, %zu phase(s)",
                character->name.c_str(),
@@ -398,10 +426,13 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
     // The shot is a claim of the client: an origin far from the character, or a direction that
     // is not a direction, is not used.
     Cast& cast = found->second;
+    state::WorldPosition launch = character->position;
+    launch.z += 1.5F;
     state::WorldPosition origin = shot.origin;
-    if (!valid_position(origin) || distance3(origin, character->position) > kShotOrigin) {
-        origin = character->position;
-        origin.z += 1.5F;
+    // The origin must be near the character, with no wall between the launch place of the server and it (code review of
+    // stage 3.3a, finding F3): a client cannot put the origin behind a wall.
+    if (!valid_position(origin) || distance3(origin, character->position) > kShotOrigin || !m_world.navigation().sees(launch, origin)) {
+        origin = launch;
     }
     std::array<float, 3> direction = shot.direction;
     const float length = std::hypot(direction[0], direction[1]);
@@ -486,7 +517,7 @@ void Abilities::throw_projectile(Cast& cast, const state::WorldPosition& origin,
 }
 
 std::optional<MeleePhase> Abilities::contact_phase(const Entity& attacker, SessionId session, std::uint16_t input,
-                                                   std::uint32_t sequence, EntityId target) {
+                                                   std::uint32_t sequence, EntityId target, std::optional<std::uint16_t> attack) {
     const auto state = m_characters.find(attacker.characterId);
     if (state == m_characters.end() || !state->second.cast) {
         return std::nullopt;
@@ -501,15 +532,29 @@ std::optional<MeleePhase> Abilities::contact_phase(const Entity& attacker, Sessi
         return std::nullopt;
     }
     const unsigned steps = static_cast<std::uint16_t>(input - cast.input);
+    // A newer press (finding F2): an attack input of the client after the press of the cast, or a later ability press
+    // of the session, owns the contacts from its input number on.
+    if (attack) {
+        const unsigned attackSteps = static_cast<std::uint16_t>(*attack - cast.input);
+        if (attackSteps > 0 && attackSteps <= steps) {
+            return std::nullopt;
+        }
+    }
+    if (cast.closedAt && static_cast<std::uint16_t>(*cast.closedAt - cast.input) <= steps) {
+        return std::nullopt;
+    }
     const WorldClock::time_point now = m_world.clock().now();
     for (std::uint32_t index = 0; index < cast.plan.phases.size(); ++index) {
         const PhasePlan& phase = cast.plan.phases[index];
         if (phase.kind != PhaseKind::contact || steps < phase.firstStep || steps > phase.lastStep) {
             continue;
         }
-        // The window on the world clock too: the input numbers are values of the client.
+        // The window on the world clock too: the input numbers are values of the client. The first time of a phase
+        // (finding F1): a client that sends its input numbers faster than 30 in a second does not reach a later phase
+        // before its time; the tolerance is ability_rules::kPhaseEarly.
         const auto latest = std::chrono::milliseconds(phase.lastStep * 1000 / ability_rules::kStepsInSecond + 500);
-        if (now - cast.started > latest) {
+        const auto earliest = std::chrono::milliseconds(phase.firstStep * 1000 / ability_rules::kStepsInSecond) - ability_rules::kPhaseEarly;
+        if (now - cast.started > latest || now - cast.started < earliest) {
             return std::nullopt;
         }
         MeleePhase result;
@@ -583,7 +628,14 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
         factor += ability_rules::kCrowdedPart * count;
     }
     unsigned hits = 0;
+    // The cap is for the whole phase, also for a path of more circles (code review of stage 3.3a, finding F4): the hits
+    // of the circles before this one count.
+    std::size_t phaseHits = static_cast<std::size_t>(
+        std::distance(cast.hits.lower_bound({index, 0}), cast.hits.lower_bound({index + 1, 0})));
     for (const auto& [away, id] : found_) {
+        if (phaseHits >= ability_rules::kAreaMost) {
+            break;
+        }
         Entity* target = m_world.creatures().find(id);
         if (target == nullptr || target->creature.dead || cast.hits.count({index, id}) != 0) {
             continue;
@@ -597,7 +649,10 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
             ++m_counts.blocked;
             continue;
         }
-        hits += area_hit(cast, index, *caster, *target, factor) ? 1 : 0;
+        if (area_hit(cast, index, *caster, *target, factor)) {
+            ++hits;
+            ++phaseHits;
+        }
     }
     log::write("world: ability: %s of %s at %.2f %.2f %.2f (radius %.1f m): %zu creature(s) in the area, %u hit(s)",
                phase.kind == PhaseKind::vortex ? "the vortex" : phase.kind == PhaseKind::burst ? "the burst" : "the area",
@@ -645,6 +700,7 @@ bool Abilities::area_hit(Cast& cast, std::uint32_t index, Entity& caster, Entity
             // The part of the whole cooldown of the data, for each hit.
             const auto part = milliseconds(row->time * ability_rules::kCooldownPerHit);
             timer->second.end = std::max({timer->second.end - part, timer->second.minEnd, m_world.clock().now()});
+            timer->second.clientEnd = std::max({timer->second.clientEnd - part, timer->second.minEnd, m_world.clock().now()});
             publish(cast.characterId);
         }
     }
@@ -720,15 +776,223 @@ void Abilities::entered(Entity& character) {
     character.cooldowns = state->second.cooldowns;
 }
 
-bool Abilities::reset_cooldowns(const std::string& characterId) {
+bool Abilities::reset_cooldowns(const std::string& characterId, bool client) {
     CharacterState& state = m_characters[characterId];
-    state.cooldowns.clear();
+    // The cooldowns of the server end now. The client keeps its own cooldown (live check I8-05): the entry keeps the end
+    // of the client until it comes.
+    const WorldClock::time_point now = m_world.clock().now();
+    for (auto timer = state.cooldowns.begin(); timer != state.cooldowns.end();) {
+        if (client || timer->second.clientEnd <= now) {
+            timer = state.cooldowns.erase(timer);
+            continue;
+        }
+        timer->second.end = now;
+        timer->second.minEnd = now;
+        ++timer;
+    }
     if (Entity* entity = m_world.find_character(characterId)) {
         entity->cooldowns.clear();
         m_world.touch(entity->id, ComponentKey::cooldowns);
         return true;
     }
     return false;
+}
+
+float Abilities::mana_cost(const Entity& character, const CastPlan& plan) const {
+    if (!has_data()) {
+        return 0.0F;
+    }
+    std::optional<float> base;
+    std::string id;
+    for (const PhasePlan& phase : plan.phases) {
+        const gamedata::SpellRow* spell = phase.spell.empty() ? nullptr : m_data->spell(phase.spell);
+        if (spell == nullptr) {
+            continue;
+        }
+        const std::string_view costId = spell->cells.text("ManaCost");
+        if (!costId.empty()) {
+            if (const std::optional<float> cost = m_data->mana_cost(costId)) {
+                base = cost;
+                id = std::string(costId);
+                break;
+            }
+        }
+    }
+    if (!base || *base <= 0.0F) {
+        return 0.0F;
+    }
+    // The ManaCostMult of the learned nodes of the character whose ManaCostList has the id or "All".
+    float factor = 1.0F;
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    for (const auto& [pool, nodes] : character.skills.pools) {
+        for (const auto& [node, value] : nodes) {
+            const gamedata::AbilityNode* row = tables != nullptr && value.level > 0 ? tables->node(node) : nullptr;
+            const gamedata::AbilityCostRow* cost = row != nullptr ? m_data->ability_cost(row->id) : nullptr;
+            if (cost == nullptr || cost->manaMultiplier == 0.0F) {
+                continue;
+            }
+            // The client compares the CRC-32 of the lower-case texts (0x9F761B8: the CRC of "all").
+            const std::uint32_t wanted = gamedata::progression_id(id);
+            const std::uint32_t all = gamedata::progression_id("All");
+            if (std::any_of(cost->mana.begin(), cost->mana.end(), [&](const std::string& entry) {
+                    const std::uint32_t crc = gamedata::progression_id(entry);
+                    return crc == wanted || crc == all;
+                })) {
+                factor *= 1.0F + cost->manaMultiplier;
+            }
+        }
+    }
+    return std::max(*base * factor, 0.0F);
+}
+
+void Abilities::change_mana(Entity& character, float amount, const char* what) {
+    if (character.kind != EntityKind::player || !std::isfinite(amount) || amount == 0.0F) {
+        return;
+    }
+    const float before = character.vitals.mana;
+    character.vitals.mana = std::clamp(character.vitals.mana + amount, 0.0F, character.vitals.manaMax);
+    if (character.vitals.mana == before) {
+        return;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const float rate = tables != nullptr && tables->loaded() ? tables->data().manaRegenRate : 0.0F;
+    if (amount < 0.0F) {
+        // A spend: the regeneration starts after the delay of the data (client code at image RVA 0x6949DE0).
+        const float delay = tables != nullptr && tables->loaded()
+                                ? (character.vitals.mana > 0.0F ? tables->data().manaRegenDelay : tables->data().manaRegenDelayOnEmpty)
+                                : 0.0F;
+        character.vitals.manaRegenFrom = now + milliseconds(delay);
+    } else if (character.vitals.mana < character.vitals.manaMax && !character.vitals.manaRegenFrom) {
+        character.vitals.manaRegenFrom = now;
+    }
+    character.vitals.manaRegenRate = rate;
+    if (character.vitals.mana >= character.vitals.manaMax) {
+        character.vitals.manaRegenFrom.reset();
+        m_regenerating.erase(character.characterId);
+    } else if (rate > 0.0F) {
+        m_regenerating[character.characterId] = std::max(now, *character.vitals.manaRegenFrom);
+    }
+    m_world.touch(character.id, ComponentKey::vitals);
+    m_world.touch(character.id, ComponentKey::mana);
+    const std::string mark = log::session_mark(character.owner, character.characterId);
+    const log::Context context(mark);
+    log::write("world: mana: %s %s %.1f mana (%s), mana %.1f to %.1f",
+               character.name.c_str(),
+               amount < 0.0F ? "pays" : "gets",
+               static_cast<double>(std::fabs(amount)),
+               what,
+               static_cast<double>(before),
+               static_cast<double>(character.vitals.mana));
+}
+
+void Abilities::tick() {
+    if (m_regenerating.empty()) {
+        return;
+    }
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const float rate = tables != nullptr && tables->loaded() ? tables->data().manaRegenRate : 0.0F;
+    const WorldClock::time_point now = m_world.clock().now();
+    for (auto entry = m_regenerating.begin(); entry != m_regenerating.end();) {
+        Entity* character = m_world.find_character(entry->first);
+        if (character == nullptr || rate <= 0.0F || !character->vitals.manaRegenFrom) {
+            entry = m_regenerating.erase(entry);
+            continue;
+        }
+        const WorldClock::time_point from = std::max(entry->second, *character->vitals.manaRegenFrom);
+        if (now <= from) {
+            ++entry;
+            continue;
+        }
+        // The client predicts the same gain with the rate of the mana state: the server sends the state only when the mana
+        // is full again (and at each spend), and the client compares its value with it.
+        const float seconds = std::chrono::duration<float>(now - from).count();
+        character->vitals.mana = std::min(character->vitals.mana + rate * seconds, character->vitals.manaMax);
+        entry->second = now;
+        if (character->vitals.mana >= character->vitals.manaMax) {
+            character->vitals.manaRegenFrom.reset();
+            m_world.touch(character->id, ComponentKey::vitals);
+            m_world.touch(character->id, ComponentKey::mana);
+            entry = m_regenerating.erase(entry);
+            continue;
+        }
+        ++entry;
+    }
+}
+
+void Abilities::perk_burst(Entity& caster, std::string_view spellId) {
+    if (!has_data() || caster.life.dead) {
+        return;
+    }
+    const gamedata::SpellRow* spell = m_data->spell(spellId);
+    const ItemInstance* item = Combat::weapon_in_hand(caster);
+    const gamedata::WeaponRow* weapon = item != nullptr ? m_combat->weapon_of(item->itemId) : nullptr;
+    const std::optional<std::uint32_t> row = spell != nullptr ? m_combat->row_index(spell->cells.text("DamageTableRow")) : std::nullopt;
+    if (spell == nullptr || weapon == nullptr || !row) {
+        return;
+    }
+    const state::WorldPosition center = caster.position;
+    std::vector<std::pair<float, EntityId>> found_;
+    m_world.for_each_near(center, spell->radius, [&](Entity& entity) {
+        ++m_counts.areaLooked;
+        if (entity.kind == EntityKind::creature && !entity.creature.dead && std::fabs(entity.position.z - center.z) <= ability_rules::kAreaHeight) {
+            found_.emplace_back(horizontal_distance(entity.position, center), entity.id);
+        }
+    });
+    std::sort(found_.begin(), found_.end());
+    const std::string itemId = item->itemId;
+    const std::uint32_t gearScore = item->gearScore;
+    const EntityId casterId = caster.id;
+    unsigned hits = 0;
+    for (const auto& [away, id] : found_) {
+        Entity* own = m_world.find(casterId);
+        Entity* target = m_world.creatures().find(id);
+        if (hits >= ability_rules::kAreaMost || own == nullptr || own->life.dead) {
+            break;
+        }
+        if (target == nullptr || target->creature.dead || target->creature.immune() || !m_world.navigation().sees(center, target->position)) {
+            continue;
+        }
+        if (m_world.combat().strike(*own, *target, itemId, *weapon, gearScore, *row, 1.0F, "a burst of a perk").verdict == HitVerdict::accepted) {
+            ++hits;
+            ++m_counts.areaHits;
+        }
+    }
+    log::write("world: ability: the burst of a perk (%s) of %s (radius %.1f m): %zu creature(s) in the area, %u hit(s)",
+               spell->id.c_str(), caster.name.c_str(), static_cast<double>(spell->radius), found_.size(), hits);
+}
+
+void Abilities::reduce_weapon_cooldowns(Entity& character, float part) {
+    if (!has_data() || !(part > 0.0F)) {
+        return;
+    }
+    const ItemInstance* item = Combat::weapon_in_hand(character);
+    const gamedata::WeaponRow* weapon = item != nullptr ? m_combat->weapon_of(item->itemId) : nullptr;
+    if (weapon == nullptr || weapon->mastery.empty()) {
+        return;
+    }
+    const auto bar = character.skills.bars.find(gamedata::progression_id(weapon->mastery));
+    const auto state = m_characters.find(character.characterId);
+    if (bar == character.skills.bars.end() || state == m_characters.end()) {
+        return;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    bool changed = false;
+    for (const std::uint32_t ability : bar->second) {
+        const auto timer = state->second.cooldowns.find(ability);
+        const AbilityRule* rule = rule_of(ability);
+        const gamedata::CooldownRow* row = rule != nullptr ? m_data->cooldown(rule->id) : nullptr;
+        if (timer == state->second.cooldowns.end() || row == nullptr || timer->second.end <= now) {
+            continue;
+        }
+        const auto cut = milliseconds(row->time * part);
+        timer->second.end = std::max({timer->second.end - cut, timer->second.minEnd, now});
+        timer->second.clientEnd = std::max({timer->second.clientEnd - cut, timer->second.minEnd, now});
+        changed = true;
+    }
+    if (changed) {
+        publish(character.characterId);
+    }
 }
 
 const std::map<std::uint32_t, AbilityCooldown>* Abilities::cooldowns_of(const std::string& characterId) const {

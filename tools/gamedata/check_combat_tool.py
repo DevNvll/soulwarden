@@ -88,10 +88,11 @@ class MadeUpSources:
             weapon["BaseDamage"] = "sixty-four"
         add("Weapons", tool.WEAPON_TYPE, [weapon])
         damage = [{"DamageID": "Light", "WeaponCategory": "Sword", "AttackType": "Light", "DamageType": "Slash",
-                   "DmgCoef": 1.0, "AddDmg": 0.0}]
+                   "DmgCoef": 1.0, "AddDmg": 0.0, "AttackRuneCharge": 1.105, "HitRuneCharge": 0.27625}]
         if mode != "missing-row":
             damage.append({"DamageID": "Heavy", "WeaponCategory": "Sword", "AttackType": "Heavy",
-                           "DamageType": "Slsh" if mode == "unknown-type" else "Slash", "DmgCoef": 1.2, "AddDmg": 0.0})
+                           "DamageType": "Slsh" if mode == "unknown-type" else "Slash", "DmgCoef": 1.2, "AddDmg": 0.0,
+                           "AttackRuneCharge": 1.604, "HitRuneCharge": 0.401})
         add(tool.DAMAGE_TABLE, tool.DAMAGE_TYPE, damage)
         add("DamageTypes", tool.DAMAGE_TYPE_TYPE, [{"TypeID": "Slash", "IntID": 4, "Category": "Physical"}])
         for attribute in tool.ATTRIBUTE_TABLES:

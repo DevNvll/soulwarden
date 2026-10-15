@@ -25,6 +25,12 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   level, and the health of the constitution) and marks the vitals state. The cost of a reset
   goes from the coin through the inventory system (`Inventory::pay`), in the transaction that
   writes the points. A system that gives experience later calls `Progress::add_experience`.
+- The attribute bonus (stage 1.3b, [Gear and perks](gear-and-perks.md)): the gear system sets
+  `Attributes::bonus` from the perks and the effects of a character; the rules use the value
+  with the bonus (`Attributes::value`), the attribute state has the base value in field 0 and
+  the bonus map in field 1 (only the attributes with a bonus: a character with no bonus sends
+  the same bytes as before). The maximum health has the health part of the gear
+  (`Progress::refresh_vitals`). The bonus is not in the database.
 - The weapon masteries, the nodes of the weapon trees, the ability bars, and the trade skills
   of a character are in its entity (`world::SkillSet`) and in the tables `progressions`,
   `ability_nodes`, and `ability_bars`, with the id on the wire of each row (the CRC-32 of the

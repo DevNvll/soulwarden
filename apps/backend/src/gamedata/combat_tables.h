@@ -54,6 +54,12 @@ struct DamageRow {
     /** The part of the weapon damage that the attack does, and the damage that it adds. */
     float factor{1.0F};
     float added{0.0F};
+    /**
+     * The heart rune charge of a hit of this row (stage 1.3b, columns AttackRuneCharge and HitRuneCharge): the
+     * charge that the attacker gets, and the charge that a player gets who takes the hit. 0: no charge.
+     */
+    float attackCharge{0.0F};
+    float hitCharge{0.0F};
 };
 
 /** One row of the weapon table. */

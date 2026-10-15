@@ -131,6 +131,8 @@ struct CreatureContact {
     DamageCategory category{DamageCategory::direct};
     /** Name of the damage row of the game. For a log line only. */
     std::string row;
+    /** The heart rune charge of the character that takes the hit (HitRuneCharge of the row, stage 1.3b). */
+    float hitCharge{0.0F};
     /**
      * True: the contact is `kContactGap` or less after the contact before it. The two are one
      * hit (two hit volumes of one swing), and the world does not test this one. The backend

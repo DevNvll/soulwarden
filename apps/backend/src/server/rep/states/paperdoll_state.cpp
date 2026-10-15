@@ -183,21 +183,40 @@ std::vector<hub::Bytes> encode_paperdoll_state(const world::Entity& entity, View
         return parts;
     }
     const std::size_t budget = std::max<std::size_t>(request.budget, kStateOverhead + 1);
+    // The parts: the entries of the slots that do not show on the body first, then the others. A group of lists stays in
+    // one part when it fits the budget: in a first record each entry has the cause "load", and a later part with the same
+    // group replaced the items of that group of the part before it (live check I12 of stage 1.3b: a second part with only
+    // the heart rune took the jewelry and the quick slot items out of their slots).
+    std::stable_partition(entries.begin(), entries.end(), [](const Entry& entry) { return !world::paperdoll::visible_slot(entry.slot); });
+    const auto entry_size = [](const Entry& entry) { return entry.element.size() + 8; }; // The slot number and the durability.
+    const auto otherCount = static_cast<std::size_t>(std::count_if(
+        entries.begin(), entries.end(), [](const Entry& entry) { return !world::paperdoll::visible_slot(entry.slot); }));
     std::size_t next = 0;
     bool head = true;
     while (head || next < entries.size()) {
-        // The entries of this fragment: as many as the budget permits, and one at least.
+        // The entries of this fragment: as many as the budget permits, and one at least. The visible group starts a new
+        // part when it does not fit as a whole after the other group.
         std::vector<Entry> visible;
         std::vector<Entry> other;
         std::size_t size = kStateOverhead;
         while (next < entries.size()) {
             const Entry& entry = entries[next];
-            const std::size_t entrySize = entry.element.size() + 8; // The slot number and the durability.
+            const std::size_t entrySize = entry_size(entry);
+            const bool isVisible = world::paperdoll::visible_slot(entry.slot);
             if ((!visible.empty() || !other.empty()) && size + entrySize > budget) {
                 break;
             }
+            if (isVisible && !other.empty() && next == otherCount) {
+                std::size_t visibleSize = 0;
+                for (std::size_t index = otherCount; index < entries.size(); ++index) {
+                    visibleSize += entry_size(entries[index]);
+                }
+                if (size + visibleSize > budget && kStateOverhead + visibleSize <= budget) {
+                    break;
+                }
+            }
             size += entrySize;
-            (world::paperdoll::visible_slot(entry.slot) ? visible : other).push_back(entry);
+            (isVisible ? visible : other).push_back(entry);
             ++next;
         }
         StateWriter state(kGroups);
@@ -215,7 +234,10 @@ std::vector<hub::Bytes> encode_paperdoll_state(const world::Entity& entity, View
             write_slots(state.field(kCommonGroup, kVisibleSlots), visible);
             write_elements(state.field(kCommonGroup, kVisibleLooks), visible);
         }
-        if (head && owner) {
+        // Each part of the owner has isLocalPlayer: the client reads the item lists of a part only with it (live check
+        // I12 of stage 1.3b: a second part with no isLocalPlayer took the items of the first part out of the slots that
+        // do not show on the body).
+        if (owner) {
             state.field(kOwnerGroup, kIsLocalPlayer).u8(1);
         }
         if (head && maps) {

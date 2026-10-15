@@ -22,7 +22,10 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures find their way around walls and rocks, up stairs, and on the floors of buildings and ruins.
 - Creatures walk their patrol routes from the game files, or wander near their place. After a fight a creature runs back to the place where it saw you. On that way it is immune and walks the way that it came, and at that place it has its full health and patrols again.
 - Health and death. Your character loses health and dies, and it comes back at the nearest spirit shrine or inn.
-- Rewards of a kill. A creature that you kill gives experience and weapon mastery experience, sometimes coin, and sometimes loot from the loot tables of the game, with the notices of the HUD. A creature of a spawn point comes back after its respawn time, 6 minutes for most of them.
+- Rewards of a kill. A creature that you kill gives experience and weapon mastery experience, sometimes coin, and sometimes loot from the loot tables of the game, with the notices of the HUD. A loot item gets its perks with the perk roll of the game. A creature of a spawn point comes back after its respawn time, 6 minutes for most of them.
+- Item perks and gems. An item has up to five perks; the tooltip shows them, the gem, the gear score, and the rarity. The perks of your gear give their values: health, armor, absorption, damage, the gem conversion, the regeneration, and the perks of a hit (Sundering Shockwave, Insatiable Gravity Well, Refreshing Move, the void perks). The equip load changes your damage.
+- Potions, food, and dust. The quick slot keys (3 to 6) use the item of the slot: it heals, gives its effect, and starts its cooldown, with the countdown on the slot. The other potions of the same kind get 80 percent of the cooldown.
+- The heart rune. Hits fill the charge of the heart rune (key G). At a full charge, G starts Detonate: 3 seconds later it hurts each creature within 5 m.
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.
 
@@ -31,8 +34,9 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures do not jump, drop from an edge, climb, swim, or fly. A creature that has no way to you waits at the place nearest to you for 12 s and then goes back.
 - Creatures do not fight in groups, call others, or flee. Only 23 of the 24,895 waypoint tasks of the patrols have an animation, so a creature stands in its idle pose at the other waypoints.
 - 859 kinds of creature have no attack yet: they do not attack you, but they patrol or wander when their data has a route. No creature has a ranged attack, magic, or an ability.
-- Only the six abilities of the great axe and the war hammer work. The abilities of the other weapons do nothing. The vortex of Gravity Well has no picture, and Maelstrom and the vortex do not pull. The passive nodes and the effects on your own character (fortify, grit, empower, heal) do nothing, and no item perk changes an ability.
-- Loot items have no rolled perks, gems, or rarity yet, and nothing drops on the ground. A full bag loses the items that have no slot.
+- Only the six abilities of the great axe and the war hammer work. The abilities of the other weapons do nothing. The vortex of Gravity Well has no picture, and Maelstrom and the vortex do not pull. The passive nodes and the effects on your own character (fortify, grit, empower) do nothing.
+- Perks that need grit, stamina, critical hits, a dodge, or another player do nothing. Your character shows no icon for a food or a potion effect, and the character sheet does not show the attributes of a food (the game counts them). Only the Detonate heart rune works. No crafting, repair, salvage, or gem socket.
+- Nothing drops on the ground. A full bag loses the items that have no slot.
 - You cannot block or dodge. The tool window heals your character.
 - Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
 - Only kills give experience. No quest and no gathering gives experience yet.
@@ -61,7 +65,7 @@ tools/build-soulwarden-game-hook.sh
 tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh     # the backend tests, with no game process
 
-tools/gamedata/appearance.sh         # eleven game data tools, one time each
+tools/gamedata/appearance.sh         # twelve game data tools, one time each
 tools/gamedata/slice_ids.sh
 tools/gamedata/items.sh
 tools/gamedata/progression.sh
@@ -69,6 +73,7 @@ tools/gamedata/creatures.sh
 tools/gamedata/combat.sh
 tools/gamedata/loot.sh
 tools/gamedata/abilities.sh
+tools/gamedata/perks.sh
 tools/gamedata/places.sh
 tools/gamedata/heights.sh
 tools/gamedata/navigation.sh
@@ -91,7 +96,8 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still; with a file from before the ability stage, a knockdown shows the small hit reaction: run the tool again |
 | `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature; with a file from before the loot stage, a kill gives no weapon mastery experience: run the tool again |
 | `loot.sh` | A kill gives no experience, no coin, and no loot |
-| `abilities.sh` | An ability does nothing |
+| `abilities.sh` | An ability does nothing. With a file from before the itemization stage, a perk of a hit, a consumable, and the heart rune have no status data, and the mana does not come back: run the tool again |
+| `perks.sh` | An item has no perk, a perk has no effect, and a potion, a food, and the heart rune do nothing |
 | `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
 | `heights.sh` | With no navigation data, creatures do not leave their place. They attack only when you are in their reach |
 | `navigation.sh` | Creatures go on a straight line on the terrain, through walls and rocks, and they see you through a wall. A creature on a floor of a building does not leave its place |
@@ -101,6 +107,8 @@ Some tables of the game have Oodle compression. `creatures.sh` and `places.sh` n
 ## The tool window
 
 Press F8 in the world. The window has five tabs for items, the character, skills, creatures, and travel. It gives items, levels, and skills at once; in the world only kills give them yet.
+
+The tab "Items" gives an item with a gear score and with perks: type the PerkID texts with "," between them (for example `PerkID_Stat_TwoHandSoldier,PerkID_Weapon_CDRBasic,PerkID_Gem_VoidDMG4`; a gem is a perk).
 
 The tab "Character" shows your health. "Heal" gives your character its full health, and it makes a dead character live again at its place. With the mark "Creatures ignore this character", no creature attacks you, and your kills give nothing. With the mark "Each kill drops loot and coin", each kill of your character drops loot and coin (without it, a wolf drops loot in about 1 of 10 kills). `SOULWARDEN_CREATURE_BEHAVIOR=0` starts the game with creatures that stand still. After you come into the world, travel, or respawn, no creature attacks you for 10 seconds unless you hit it. Out of a fight, your health comes back in about 30 seconds.
 

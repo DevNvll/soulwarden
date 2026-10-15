@@ -129,6 +129,14 @@ public:
     /** A character did damage to a creature: it is in a fight (its health does not come back for `kRestTime`). */
     void fought(Entity& character);
 
+    /**
+     * A character that lives gets health (stage 1.3b: a potion, a food, a perk), to its maximum. The vitals state of
+     * the owner and of each observer changes.
+     * @param what The source for the log line ("PotionHealT5").
+     * @return The health that the character got.
+     */
+    float heal_amount(Entity& character, float amount, const char* what);
+
     /** The world calls it in each tick: the health of the characters that are not in a fight comes back. */
     void tick();
 

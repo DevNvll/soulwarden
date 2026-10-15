@@ -241,20 +241,20 @@ gamedata::AbilityTables ability_tables() {
     tables.cooldowns = {{"Ability_Greataxe_Charge", 20.0F, 0.0F},        {"Ability_Greataxe_Maelstorm", 20.0F, 0.0F},
                         {"Ability_Greataxe_GravityWell", 30.0F, 0.0F},    {"Ability_WarHammer_WreckingBall", 15.0F, 0.0F},
                         {"Ability_WarHammer_Shockwave", 20.0F, 0.0F},     {"Ability_WarHammer_PathOfDestiny", 22.0F, 2.0F}};
-    tables.statusEffects = {{"WarHammer_Shockwave_Stun", kStunIndex, 2.0F, 0.0F, true, false, 1, true, 0.0F},
-                            {"WarHammer_Ult_SlowOnCC", kSlowIndex, 4.0F, -0.2F, false, false, 0, true, 0.0F},
-                            {"WarHammer_Shockwave_Weaken", 1700, 10.0F, 0.0F, false, false, 0, true, -0.1F},
-                            {"GreatAxe_Vortex_Root", kRootIndex, 1.0F, 0.0F, false, true, 0, true, 0.0F},
-                            {"GreatAxe_Vortex", 3399, 3.0F, -0.6F, false, false, 0, false, 0.0F},
-                            {"Status_Passive_GreatAxe_Gravity_Root_Hold", 2182, 0.4F, 0.0F, false, true, 0, true, 0.0F}};
-    tables.spells = {{"WarHammer_Spell_Shockwave", 3.0F, 0.0F, 0.0F, 0, 0.0F, 6000.0F},
-                     {"WarHammer_Spell_Shockwave_L2", 4.0F, 0.0F, 0.0F, 0, 0.0F, 6000.0F},
-                     {"WarHammer_Spell_PathOfDestiny", 4.0F, 2.0F, 3.8F, 3, 200.0F, 770.0F},
-                     {"WarHammer_Spell_PathOfDestiny_L2", 4.0F, 2.0F, 3.8F, 3, 200.0F, 770.0F},
-                     {"WarHammer_Spell_PathOfDestiny_L3", 4.0F, 2.0F, 3.8F, 3, 200.0F, 770.0F},
-                     {"Spell_GreatAxe_GravityWell_Projectile", 0.0F, 0.0F, 10.0F, 0, 0.0F, 2000.0F},
-                     {"Spell_GreatAxe_GravityWell_Vortex", 4.0F, 0.0F, 0.0F, 0, 0.0F, -1.0F},
-                     {"Spell_GreatAxe_GravityWell_Vortex_Upgrade", 4.0F, 0.0F, 0.0F, 0, 0.0F, -1.0F}};
+    tables.statusEffects = {{"WarHammer_Shockwave_Stun", kStunIndex, 2.0F, 0.0F, true, false, 1, true, 0.0F, {}},
+                            {"WarHammer_Ult_SlowOnCC", kSlowIndex, 4.0F, -0.2F, false, false, 0, true, 0.0F, {}},
+                            {"WarHammer_Shockwave_Weaken", 240, 10.0F, 0.0F, false, false, 0, true, -0.1F, {}},
+                            {"GreatAxe_Vortex_Root", kRootIndex, 1.0F, 0.0F, false, true, 0, true, 0.0F, {}},
+                            {"GreatAxe_Vortex", 3399, 3.0F, -0.6F, false, false, 0, false, 0.0F, {}},
+                            {"Status_Passive_GreatAxe_Gravity_Root_Hold", 2182, 0.4F, 0.0F, false, true, 0, true, 0.0F, {}}};
+    tables.spells = {{"WarHammer_Spell_Shockwave", 3.0F, 0.0F, 0.0F, 0, 0.0F, 6000.0F, {}},
+                     {"WarHammer_Spell_Shockwave_L2", 4.0F, 0.0F, 0.0F, 0, 0.0F, 6000.0F, {}},
+                     {"WarHammer_Spell_PathOfDestiny", 4.0F, 2.0F, 3.8F, 3, 200.0F, 770.0F, {}},
+                     {"WarHammer_Spell_PathOfDestiny_L2", 4.0F, 2.0F, 3.8F, 3, 200.0F, 770.0F, {}},
+                     {"WarHammer_Spell_PathOfDestiny_L3", 4.0F, 2.0F, 3.8F, 3, 200.0F, 770.0F, {}},
+                     {"Spell_GreatAxe_GravityWell_Projectile", 0.0F, 0.0F, 10.0F, 0, 0.0F, 2000.0F, {}},
+                     {"Spell_GreatAxe_GravityWell_Vortex", 4.0F, 0.0F, 0.0F, 0, 0.0F, -1.0F, {}},
+                     {"Spell_GreatAxe_GravityWell_Vortex_Upgrade", 4.0F, 0.0F, 0.0F, 0, 0.0F, -1.0F, {}}};
     return tables;
 }
 
@@ -500,6 +500,7 @@ bool has_effect(const world::Entity& creature, const char* status) {
 void data_and_reader(const Options& options) {
     const auto path = options.workDirectory / "ability-data.json";
     const json good = {{"format", 1},
+                       {"statusRows", 4517},
                        {"counts", {{"cooldowns", 1}, {"statusEffects", 1}, {"spells", 1}}},
                        {"cooldowns", {{"Ability_WarHammer_WreckingBall", 15.0, 0.0}}},
                        {"statusEffects", {{"WarHammer_Shockwave_Stun", 1710, 2.0, 0.0, true, false, 1, true, 0.0}}},
@@ -971,7 +972,8 @@ void load(const Options&) {
     const auto started = std::chrono::steady_clock::now();
     const std::uint64_t lookedBefore = arena.abilities().counts().areaLooked;
     for (int cast = 0; cast < 100; ++cast) {
-        (void)arena.abilities().reset_cooldowns(kCharacterA);
+        // The test client has no cooldown of its own: the reset ends the cooldown of the client too.
+        (void)arena.abilities().reset_cooldowns(kCharacterA, true);
         arena.caster.press(1);
         arena.caster.idle(27);
         own->vitals.health = own->vitals.healthMax;
@@ -1058,6 +1060,239 @@ void plans(const Options&) {
           "an ability of a different weapon has no rule in this stage");
 }
 
+// The review of stage 3.3a (findings F1 to F10, stage 1.3b): the proof tests of the review, each one a case that
+// failed before its correction. The review wrote them; the corrections are in world/abilities.cpp, world/combat.cpp,
+// world/creatures.cpp, gamedata/ability_data.cpp, and server/rep/states/cooldown_state.cpp.
+
+void early_contacts(const Options&) {
+    Arena arena;
+    arena.character()->combat.selectedWeapon = world::paperdoll::kMainHand1;
+    auto* wolf = arena.wolf(2);
+    const float full = wolf->vitals.health;
+    arena.caster.idle(20);
+    arena.caster.send(arena.caster.entry({kActionAbility2}));
+    const auto started = arena.host.clock.now();
+    for (int step=1;step<=26;++step) {
+        auto entry=arena.caster.entry();
+        if(step==14 || step==26) entry.contacts={contact_with(*wolf)};
+        arena.host.clock.advance(std::chrono::milliseconds(1));
+        arena.host.datagram(arena.a.peer,arena.a.input_report(entry));
+        arena.host.tick();
+        arena.a.exchange(arena.host);
+    }
+    note("elapsed us=" + std::to_string(std::chrono::duration_cast<std::chrono::microseconds>(arena.host.clock.now()-started).count())
+         + ", contact hits=" + std::to_string(arena.abilities().counts().contactHits) + ", damage=" + std::to_string(full-wolf->vitals.health));
+    const auto& track=arena.host.session(arena.character()->owner).attack_track();
+    for(unsigned i=1;i<world::kHitVerdictCount;++i) {
+        const auto v=static_cast<world::HitVerdict>(i);
+        if(track.count(v)) note(std::string(world::hit_verdict_text(v))+"="+std::to_string(track.count(v)));
+    }
+    check(arena.accepted() == 1, "setup: one accepted Maelstrom press through the session");
+    check(track.count(world::HitVerdict::notObserved)==0,"setup: the session observes the creature");
+    check(arena.abilities().counts().contactHits <= 1, "the second spin cannot hit before its world-clock window starts");
+}
+
+void shot_origin_wall(const Options& options) {
+    Arena arena;
+    arena.character()->combat.selectedWeapon = world::paperdoll::kMainHand1;
+    const auto folder = options.workDirectory / "review-shot-wall";
+    TestNavRegion region;
+    region.tiles[{15,15}] = [](int cx, int, std::vector<TestFloor>& floors) {
+        const float x=960+(cx+0.5F)*0.25F;
+        if(x>998 && x<998.3F) floors={{kHeight+4, gamedata::NavFloor::kBlocked}};
+    };
+    region.write(folder);
+    check(arena.host.navigation.set_directory(folder.string()), "setup: navigation loads");
+    auto* wolf=arena.wolf(-6);
+    check(!arena.host.world.navigation().sees(kPlace,wolf->position), "setup: a wall blocks the caster from the target");
+    arena.caster.press(2);
+    arena.caster.shot({{996,1000,51.5F},{-1,0,0},gamedata::progression_id("GravityWell")});
+    arena.pass(0.3F);
+    note("shots="+std::to_string(arena.abilities().counts().shots)+", rooted="+std::to_string(wolf->creature.rooted(arena.host.clock.now())));
+    check(!wolf->creature.rooted(arena.host.clock.now()), "an origin beyond the wall cannot launch the well through the wall");
+}
+
+void phase_cap(const Options&) {
+    Arena arena;
+    std::vector<world::EntityId> ids;
+    for(int group=0;group<2;++group) for(int i=0;i<20;++i) {
+        auto* e=arena.host.world.creatures().spawn("Test_Wolf",at(kPlace.x-(group?11.4F:3.8F),kPlace.y),0).entity;
+        ids.push_back(e->id);
+    }
+    arena.caster.idle(20);
+    arena.caster.press(2);
+    arena.pass(1.6F);
+    std::size_t hurt=0;
+    for(auto id:ids) hurt += arena.host.world.find(id)->vitals.health<kWolfHealth;
+    note("one path phase hurt="+std::to_string(hurt));
+    check(arena.accepted()==1, "setup: one accepted Path of Destiny");
+    check(hurt<=world::ability_rules::kAreaMost, "one phase hurts at most 32 creatures across all circles");
+}
+
+void overlap_control(const Options&) {
+    Arena arena;
+    auto* wolf=arena.wolf(2);
+    check(arena.abilities().apply_status(*wolf,"WarHammer_Shockwave_Stun",arena.character()->id,5),"setup: a five-second stun");
+    check(arena.host.world.creatures().knock(*wolf,4,std::chrono::milliseconds(1000)),"setup: a shorter knockdown");
+    arena.pass(1.2F);
+    note("held="+std::to_string(wolf->creature.held(arena.host.clock.now()))+", action="+(wolf->creature.action?std::to_string(wolf->creature.action->action):"none"));
+    check(wolf->creature.held(arena.host.clock.now()),"setup: the stun still holds the creature");
+    arena.enter_b();
+    int action=-3;
+    const auto records=fragments_of(arena.b,kWolfSlots[0],11);
+    if(!records.empty()) {
+        const auto it=records.front().fields.find({0,33});
+        if(it!=records.front().fields.end()) {
+            server::hub::Reader reader(it->second);
+            if(reader.size()==0) action=-1;
+            else { reader.u16(); reader.size(); action=static_cast<int>(reader.size())-1; }
+        }
+    }
+    note("new observer wire action="+std::to_string(action));
+    check(action==static_cast<int>(kStun),"a new observer gets the remaining Stun action");
+    check(wolf->creature.action && wolf->creature.action->action==kStun,"the remaining stun restores its Stun record after the knockdown");
+}
+
+void knock_without_fragment(const Options&) {
+    Arena arena;
+    auto slice=wolf_slice();
+    slice.actions[kReaction].fragmentIndex=-1;
+    slice.reactions.fill(-1);
+    check(arena.host.creatures.set_full({slice},{wolf_kind()},{},{{1,kWolfHealth,100,50}}),"setup: a valid slice with no reaction fragment");
+    auto* wolf=arena.wolf(2);
+    check(!wolf->creature.body->hitAction,"setup: the slice has no usable Reaction action");
+    const auto press=arena.caster.press(0);
+    arena.caster.until(press,24);
+    arena.caster.contact({contact_with(*wolf)});
+    note("damage="+std::to_string(kWolfHealth-wolf->vitals.health)+", held="+std::to_string(wolf->creature.held(arena.host.clock.now())));
+    check(wolf->vitals.health<kWolfHealth,"setup: Wrecking Ball hit the creature");
+    check(wolf->creature.held(arena.host.clock.now()),"a missing reaction fragment does not remove the knockdown rule");
+}
+
+void missing_status(const Options&) {
+    Arena arena;
+    auto data=ability_tables();
+    data.statusEffects.clear();
+    check(arena.host.abilities.set(data),"setup: the loader accepts cooldowns and spells with no status rows");
+    auto* wolf=arena.wolf(2);
+    const float full=wolf->vitals.health;
+    arena.caster.press(1);
+    arena.pass(1);
+    note("accepted="+std::to_string(arena.accepted())+", damage="+std::to_string(full-wolf->vitals.health)+", effects="+std::to_string(wolf->creature.effects.size()));
+    check(arena.accepted()==0 && wolf->vitals.health==full && arena.character()->cooldowns.empty(),"an incomplete Shockwave plan is refused before its cooldown or damage");
+}
+
+void status_indices(const Options& options) {
+    json document={{"format",1},{"statusRows",1},{"counts",{{"cooldowns",1},{"statusEffects",2},{"spells",0}}},
+        {"cooldowns",{{"Ability_WarHammer_Shockwave",20.0,0.0}}},
+        {"statusEffects",{{"WarHammer_Shockwave_Stun",1710,2.0,0.0,true,false,1,true,0.0},
+                          {"GreatAxe_Vortex_Root",1710,1.0,0.0,false,true,0,true,0.0}}},{"spells",json::array()}};
+    const auto path=options.workDirectory/"review-status-indices.json";
+    std::ofstream(path)<<document.dump();
+    gamedata::AbilityData data;
+    const bool loaded=data.load(path.string());
+    note("loaded="+std::to_string(loaded)+", declared status rows=1, both wire indices=1710");
+    check(!loaded,"the loader refuses status indices that do not fit the declared row list");
+}
+
+void cooldown_bar_move(const Options&) {
+    Arena arena;
+    arena.caster.press(1);
+    arena.pass(1);
+    const auto from=arena.a.got.size();
+    check(arena.host.world.skills().set_bar(kCharacterA,kWarHammer,0,kShockwave).ok(),"setup: move the cooling Shockwave from R to Q");
+    arena.caster.idle(3);
+    const auto states=fragments_of(arena.a,45,2932,from);
+    note("cooldown fragments after bar move="+std::to_string(states.size())+", running cooldowns="+std::to_string(arena.character()->cooldowns.size()));
+    check(!states.empty(),"moving an ability on its bar sends its timer on the new key");
+}
+
+void refused_contact(const Options&) {
+    for(bool refused : {false,true}) {
+        Arena arena;
+        auto* wolf=arena.wolf(2);
+        const float full=wolf->vitals.health;
+        arena.caster.press(0);
+        if(refused) {
+            arena.caster.press(2);
+            arena.caster.idle(8);
+        } else {
+            arena.pass(0.85F);
+            arena.caster.send(arena.caster.entry({kActionAttack}));
+            arena.caster.send(arena.caster.entry({kActionAttackRelease}));
+            arena.caster.idle(5);
+        }
+        arena.caster.contact({contact_with(*wolf)});
+        note(std::string(refused?"refused ability":"later light attack")+": contact hits="+std::to_string(arena.abilities().counts().contactHits)+", damage="+std::to_string(full-wolf->vitals.health));
+        if(refused) {
+            check(arena.refused(CastVerdict::casting)==1,"setup: the server refused the second ability press");
+            check(wolf->vitals.health==full,"a contact following the refused press cannot borrow the earlier cast");
+        } else {
+            check(near(full-wolf->vitals.health,kWeaponDamage),"a light attack after the cast uses its own damage row");
+            check(!wolf->creature.knockedUntil,"a light attack after Wrecking Ball does not add a knockdown");
+        }
+    }
+}
+
+void shorten_knock(const Options&) {
+    Arena arena;
+    auto* wolf=arena.wolf(2);
+    check(arena.host.world.creatures().knock(*wolf,4,std::chrono::milliseconds(2000)),"setup: a two-second knockdown");
+    const auto firstEnd=*wolf->creature.knockedUntil;
+    arena.pass(0.3F);
+    check(arena.host.world.creatures().knock(*wolf,2,std::chrono::milliseconds(1000)),"setup: a one-second stagger during the knockdown");
+    note("old end minus replacement end ms="+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(firstEnd-*wolf->creature.knockedUntil).count()));
+    arena.pass(1.1F);
+    note("old knockdown still due="+std::to_string(arena.host.clock.now()<firstEnd)+", held="+std::to_string(wolf->creature.held(arena.host.clock.now())));
+    check(wolf->creature.held(arena.host.clock.now()),"a shorter new stagger does not end the earlier knockdown");
+}
+
+void positive_controls(const Options&) {
+    {
+        Arena arena;
+        auto* wolf=arena.wolf(2);
+        arena.caster.idle(20);
+        arena.caster.contact({contact_with(*wolf)});
+        check(wolf->vitals.health==kWolfHealth,"a contact with no press or basic attack hurts nothing");
+        arena.host.clock.advance(std::chrono::seconds(3));
+        arena.caster.history.clear();
+        arena.caster.input=65530;
+        arena.caster.send(arena.caster.entry());
+        const auto press=arena.caster.press(0);
+        arena.caster.until(press,24);
+        arena.caster.contact({contact_with(*wolf)});
+        check(arena.accepted()==1 && arena.abilities().counts().contactHits==1,"one cast and one hit across input-number wrap");
+        const auto after=wolf->vitals.health;
+        arena.caster.contact({contact_with(*wolf)});
+        check(wolf->vitals.health==after,"a second contact in the same phase is refused after wrap");
+    }
+    for(bool nonfinite : {false,true}) {
+        Arena arena;
+        arena.character()->combat.selectedWeapon=world::paperdoll::kMainHand1;
+        auto* wolf=arena.wolf(-5);
+        InputShotItem shot{{9000,9000,9000},{-100,0,0},gamedata::progression_id("GravityWell")};
+        if(nonfinite) shot.direction[0]=std::numeric_limits<float>::quiet_NaN();
+        arena.caster.shot(shot);
+        check(arena.abilities().counts().shots==0,"a shot with no press has no effect");
+        arena.caster.press(2);
+        arena.caster.shot(shot);
+        arena.caster.shot(shot);
+        arena.pass(0.4F);
+        check(arena.abilities().counts().shots==1 && arena.abilities().counts().vortexes==1,"many shots make one well; a far origin is replaced by the caster origin");
+        check(wolf->creature.rooted(arena.host.clock.now()),nonfinite?"a nonfinite flat direction uses the caster yaw":"a nonunit flat direction follows the normalized line");
+    }
+    for(bool leave : {false,true}) {
+        Arena arena;
+        auto* wolf=arena.wolf(2);
+        arena.caster.press(1);
+        if(leave) arena.host.disconnect(arena.a.peer);
+        else (void)arena.host.world.health().hurt(kCharacterA,arena.character()->vitals.health+1);
+        arena.host.clock.advance(std::chrono::seconds(1));
+        arena.host.tick();
+        check(wolf->vitals.health==kWolfHealth,leave?"a caster that left causes no delayed area damage":"a dead caster causes no delayed area damage");
+    }
+}
+
 } // namespace
 
 std::vector<Case> ability_cases() {
@@ -1072,7 +1307,18 @@ std::vector<Case> ability_cases() {
             {"AB9", "abilities: two sessions (the observer gets the effect, only the owner the cooldown and the number)", two_sessions},
             {"AB10", "abilities: the load of area abilities near many creatures, with a time limit", load},
             {"AB11", "abilities: the node, bar, cooldown, and effect commands", commands},
-            {"AB12", "abilities: the plan of each ability for the nodes of the character", plans}};
+            {"AB12", "abilities: the plan of each ability for the nodes of the character", plans},
+            {"RA1", "review of 3.3a, F1: a contact before the world time of its phase is not a hit", early_contacts},
+            {"RA2", "review of 3.3a, F3: a shot origin behind a wall does not throw the well through the wall", shot_origin_wall},
+            {"RA3", "review of 3.3a, F4: one phase of an area hurts the cap of creatures at most, across its circles", phase_cap},
+            {"RA4", "review of 3.3a, F7: the stun action comes back after a shorter knockdown", overlap_control},
+            {"RA5", "review of 3.3a, F5: a slice with no reaction fragment gets the knockdown hold", knock_without_fragment},
+            {"RA6", "review of 3.3a, F9: a cast whose status rows are not in the data is refused", missing_status},
+            {"RA7", "review of 3.3a, F10: the loader refuses status numbers that do not fit together", status_indices},
+            {"RA8", "review of 3.3a, F8: a bar change sends the running cooldown on its new key", cooldown_bar_move},
+            {"RA9", "review of 3.3a, F2: a later attack and a refused press do not take the row of an earlier cast", refused_contact},
+            {"RA10", "review of 3.3a, F6: a shorter stagger does not end an earlier knockdown", shorten_knock},
+            {"RA11", "review of 3.3a: the controls of the review (input wrap, shots, a caster that left or died)", positive_controls}};
 }
 
 } // namespace soulwarden::backend::tests

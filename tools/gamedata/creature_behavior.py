@@ -276,7 +276,11 @@ class Tables:
                         rows = {}
                         for row in range(sheet.row_count):
                             factor, added = sheet.cell(row, "DmgCoef"), sheet.cell(row, "AddDmg")
+                            # The heart rune charge that a player gets who takes the hit (stage 1.3b). A table
+                            # with no such column gives no charge.
+                            charge = sheet.cell(row, "HitRuneCharge") if "HitRuneCharge" in sheet.columns else 0.0
                             rows.setdefault(str(sheet.cell(row, "DamageID")).lower(), {
+                                "charge": charge if isinstance(charge, float) and math.isfinite(charge) and charge > 0.0 else 0.0,
                                 "id": str(sheet.cell(row, "DamageID")),
                                 "type": str(sheet.cell(row, "DamageType")),
                                 "ranged": sheet.cell(row, "IsRanged") in (True, 1.0, "1", "TRUE", "true"),
@@ -577,7 +581,7 @@ class Behavior:
                     break
                 wire, category = self.tables.types[row["type"]]
                 contacts.append([rounded(time), rounded(reach_of(parameters)), rounded(row["factor"]), rounded(row["added"]),
-                                 row["type"], wire, category, row["id"]])
+                                 row["type"], wire, category, row["id"], rounded(row["charge"])])
             if not usable or not contacts:
                 continue
             last = contacts[-1][0]

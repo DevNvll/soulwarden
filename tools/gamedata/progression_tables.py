@@ -51,6 +51,7 @@ Environment: SOULWARDEN_GAME_DIR (default ~/Games/soulwarden/game),
 from __future__ import annotations
 
 import json
+import math
 import os
 import struct
 import sys
@@ -161,6 +162,17 @@ def build_tables(contents: list[bytes]) -> dict:
     vitals = {"health": whole(vitals_sheet.cell(vitals_row, "HealthBaseMax")),
               "stamina": whole(vitals_sheet.cell(vitals_row, "StaminaBaseMax")),
               "mana": whole(vitals_sheet.cell(vitals_row, "ManaBaseMax"))}
+    # The mana regeneration of a player (stage 1.3b, I14): the rate (mana in one second) and the delays after a spend
+    # and after a spend to 0 (seconds). A column that is not there stops the tool.
+    for member, column in (("manaRegenRate", "ManaBaseRegenRate"), ("manaRegenDelay", "ManaRegenDelay"),
+                           ("manaRegenDelayOnEmpty", "ManaRegenDelayOnEmpty")):
+        if column not in vitals_sheet.columns:
+            raise Failure(f"the table {PLAYER_VITALS_TABLE} has no column {column}")
+        value = vitals_sheet.cell(vitals_row, column)
+        value = float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else float(str(value).strip() or 0)
+        if not math.isfinite(value) or value < 0:
+            raise Failure(f"the value {column} of the row {PLAYER_VITALS_ROW} is not a number of 0 or more")
+        vitals[member] = round(value, 6)
 
     # The weapon masteries and the trade skills, with the rank table of each one.
     progression_sheet = one_table(sheets, PROGRESSION_TABLE)

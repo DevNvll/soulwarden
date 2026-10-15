@@ -171,6 +171,9 @@ SkillResult Skills::change(const std::string& characterId, const char* what, Cha
         }
         if (touched.bars) {
             m_world.touch(entity->id, ComponentKey::abilities);
+            // The cooldown state puts each cooldown on the key of the place of its ability: a bar change moves it
+            // (code review of stage 3.3a, finding F8). The mark gives the maps a new sequence.
+            m_world.touch(entity->id, ComponentKey::cooldowns);
         }
         entity->skills = std::move(skills);
     }

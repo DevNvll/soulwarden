@@ -120,9 +120,10 @@ compares each stage with them.
 ### 1.7 Languages and repository layout
 
 Decision of the user (2026-10-13): the backend services are in Go, the hook library stays
-as it is (C++), and the repository is a monorepo. The Go port starts when milestone 1 is
-complete (stages P.1 and P.2, section 4). It has no research step. Until then the stages
-continue in the C++ backend, and the layout below is the layout after the port.
+as it is (C++), and the repository is a monorepo. The Go port (stages P.1 and P.2, section
+4) has no research step. A decision of the user of 2026-10-15 puts it at the end of the
+roadmap (section 2.1). Until then the stages continue in the C++ backend, and the layout
+below is the layout after the port.
 
 | Path | Content |
 | --- | --- |
@@ -177,8 +178,8 @@ continue in the C++ backend, and the layout below is the layout after the port.
 | 1.7 | Tool window and admin interface | 1.3, 1.5 | M | verified | done | |
 | 1.8 | The generic quest engine: each quest from the quest data of the game (before: the original quest state of a new character) | 1.4, 1.6 | M | verified | | |
 | 1.9 | Acceptance test from an empty database | 1.1 to 1.8 | S | not necessary | | |
-| P.1 | Go port, part 1: monorepo, HTTP services, and store | 1.9 | M | not necessary | | |
-| P.2 | Go port, part 2: game server, world, and the systems of milestone 1 | P.1 | L | not necessary | | |
+| P.1 | Go port, part 1: monorepo, HTTP services, and store (at the end of the roadmap) | all other stages | M | not necessary | | |
+| P.2 | Go port, part 2: game server, world, and all systems of the C++ backend | P.1 | XL | not necessary | | |
 | 2.1 | Client message base | 0.3, 0.6b | S | verified (ids), first pass (messages) | | |
 | 2.2 | World time and weather | 2.1 | S | verified | | |
 | 2.3 | Exact position and full movement | 0.4, 0.6b | L | verified (position) | 2.3a done | |
@@ -242,23 +243,39 @@ stage with a letter is a part of the system with that number.
 | 7 | 3.4e | Patrol and wander: a creature walks its patrol route or wanders near its spawn point; the reset makes a creature immune on its way back, and it walks back on its way, not in one jump | 3.4d | done |
 | 8 | 3.5a | Loot and experience from a kill; the creature spawns again | 3.4b | done |
 | 9 | 3.3a | Abilities: the use of an ability of the bar, its cooldown, its damage and its area, and the main status effects; the great axe and the war hammer first (research file `ability-use.md`, live checks L1 to L8 first) | 3.5a | done |
-| 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | open |
-| 11 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" | 1.3b | open |
-| 12 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
-| 13 | P.1, P.2 | Go port | 1.9 | open |
+| 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
+| 11 | 3.3b | Abilities of all weapons: the basic attacks and the abilities of the other weapons (melee, ranged, magic), and the open parts of 3.3a (a spell entity, the pull, the status state of a player, the passive nodes, the refusal of a cast); research files `abilities-shared.md`, `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`; the research can split it into parts | 1.3b | research |
+| 12 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
+| 13 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
+| 14 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
+| 15 | 3.6 | Gathering and fishing (research file `gathering-stage.md`) | 2.5 | research |
+| 16 | 3.7 | Crafting, refining, repair, salvage (research file `crafting-stage.md`) | 3.6 | research |
+| 17 | 5.1 | Shops (research file `shops-stage.md`) | 2.5 | research |
+| 18 | 5.6 | Cosmetics and transmog (research file `cosmetics-stage.md`) | 5.1 | research |
+| 19 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" (research file `quest-engine.md`) | 5.6 | research |
+| 20 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 1.8 | open |
 
 Decisions of the user (2026-10-14): the abilities come directly after loot and experience
 ("prioritize the abilities", "after loot and experience"), and itemization after the
 abilities. The quests are one generic engine that reads the quest data of the game, not one
 stage for each quest: stage 1.8 is now that engine.
 
-After the Go port, the sequence is the sequence of the summary table, with these changes:
-the other parts of the systems 3.1 to 3.7 come before milestone 4, and milestone 6 comes
-after milestone 7.
+Decisions of the user (2026-10-15): after the abilities and the items are complete ("close
+abilities and items"), the interaction base, the world time and weather, gathering,
+crafting (3.7), and the shops come, and then the cosmetics and the transmog. The Go port
+comes at the end of the roadmap ("put port at the end"). Decisions of the orchestrator in
+this order: the chests and the loot on the ground (3.5b) come directly after 2.5, because
+they need it; the quest engine (1.8) comes after 5.6, because the user gave it no place
+and it uses the events of the systems before it. A research thread for each stage of the
+rows 11 to 19 started on 2026-10-15.
 
-Consequence for the Go port: it comes after the first combat stages, not directly after the
-character systems. The stages 3.4a to 3.5a are in C++, and the port has them as reference
-code. The user can change this.
+After stage 1.9, the sequence is the sequence of the summary table, with these changes:
+the other parts of the systems 3.1 to 3.7 come before milestone 4, and milestone 6 comes
+after milestone 7. The Go port (P.1, P.2) comes after all of them.
+
+Consequence for the Go port: all systems of the roadmap are in C++ first, and the port has
+them as reference code. The port is then larger, and the C++ backend stays in the
+repository until its end. The user can change this.
 
 ## 3. Milestone 0: foundation
 
@@ -718,6 +735,10 @@ compares each system of milestone 1 with its criteria.
 
 ### Go port: stages P.1 and P.2
 
+Decision of the user (2026-10-15): the Go port comes at the end of the roadmap (section
+2.1). The text below is from the time when the port came after milestone 1: at the time of
+the port, the C++ backend has all systems of the roadmap, and P.2 ports each of them.
+
 Decision of the user (2026-10-13): the Go port starts when milestone 1 is complete, and it
 has no research step. A later decision of the same day puts the first combat stages before
 the end of milestone 1 (section 2.1): the port then has these stages as reference code too. The implementer reads the C++ code and writes the Go code. At that
@@ -741,7 +762,8 @@ each with its tests and its verified wire contracts. It is the reference for the
 - After the gate of P.2, `apps/backend-cpp` and its library copies (Mbed TLS, SQLite, the
   JSON library) go out of the repository. A copy stays in the tree copies outside the
   repository.
-- The systems of milestone 2 and later are in Go from their first version.
+- The systems of milestone 2 and later were to be in Go from their first version. With the
+  decision of 2026-10-15 they are in C++ first, and P.2 ports them.
 
 ## 5. Milestone 2: the world base
 
@@ -1009,6 +1031,34 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   the passive nodes (fortify, grit, empower, critical hits, heal), a refusal message, and the
   perks of an item that change an ability (stage 1.3b: protocol notes 4.22 "Not known, not
   done").
+- Stage 1.3b, itemization (done, protocol notes 4.23, documents
+  `docs/systems/items-and-equipment.md`, `gear-and-perks.md`, `consumables-and-heart-rune.md`;
+  evidence `~/Games/soulwarden/work/evidence/itemization/implement/`). The live checks came
+  first: the perk list of the client (1,822 entries, equal to the list of the new tool
+  `tools/gamedata/perks.sh` after a second start), the perks, the gem, the gear score, and the
+  rarity of an item in the tooltip, the perk swap of the client, the attribute bonus map, the
+  charge state of the heart rune (slot 48, type 5257) and its key (bit 450), the quick slot
+  keys (bits 404, 117, 140, 513), the use message of the bag (2917), and the countdown of a
+  consumable (the item map of the cooldown state). The backend stores five perk places for
+  each item (schema 7), sends their indexes, applies the swap table of the game at a give, and
+  rolls the perks of a loot item with the procedure of the client. The gear system gives the
+  passive values of the perks and the effects (attribute bonus, health, armor, absorption, the
+  DMG parts, the equip load in whole tenths), the gem conversion (two damage numbers), and the
+  perks of a hit with the conditions of the data (Sundering Shockwave, Insatiable Gravity Well
+  with its burst, Refreshing Move, the void damage over time and the chain). The heart rune
+  charges from hits and makes one explosion of 5 m 3 s after its key. A quick slot key or the
+  message of the bag uses a potion, a food, or a dust: one item, its effect, its cooldown and
+  the shared cooldown. The cost of an ability comes from the game data (I14): the six abilities
+  of the build have none. The cooldown of the client after a reset of the server was the cause
+  of the "first press after a weapon change" of stage 3.3a (I8). The paperdoll of a first
+  record in two parts lost the jewelry and the quick slots in the client: each list group now
+  stays in one part. The character of the user got the perks and the gems of the build. Test
+  cases IZ1 to IZ11 (IZ11: 50 characters with 2,000 hits, their perks, chains, ticks, and 150
+  explosions in a world of 4,400 creatures in 0.07 s, limit 5 s). The stage also corrected the
+  thirteen findings of the review of stage 3.3a (cases RA1 to RA13). Not in this stage:
+  crafting, repair, salvage, the socket action, the status state of a player (no icon of a
+  food), the perks that need grit, stamina, a critical hit, a dodge, or a player target, the
+  other heart runes, and the perk biasing of a roll.
 
 ### 3.4 Creatures: spawn, behavior, navigation
 
@@ -1407,3 +1457,9 @@ Decision of the user (2026-10-13):
    to its spawn point at its leash. The itemization (stage 1.3b) comes after loot, when its
    research has its second check: the user wants a full character build with the perks,
    the gems, and the heartrune of its items.
+
+9. The order after the itemization (2026-10-15): the abilities of all weapons (3.3b), the
+   interaction base (2.5), chests and loot on the ground (3.5b), world time and weather
+   (2.2), gathering (3.6), crafting (3.7), shops (5.1), cosmetics and transmog (5.6), the
+   generic quest engine (1.8), and the acceptance test (1.9). The Go port comes at the end
+   of the roadmap (section 2.1).

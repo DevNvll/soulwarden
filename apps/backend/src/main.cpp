@@ -20,6 +20,7 @@
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
 #include "gamedata/item_catalog.h"
+#include "gamedata/perk_data.h"
 #include "gamedata/navigation_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/slice_ids.h"
@@ -435,6 +436,23 @@ int main(int argc, char** argv) {
                    abilityDataPath.c_str(),
                    abilityData.error().c_str());
     }
+    // The perk data (stage 1.3b): the perks of an item instance and their effects.
+    const std::string perkDataPath = (gameDataDirectory / gamedata::kPerkDataFile).string();
+    gamedata::PerkData perkData;
+    if (perkData.load(perkDataPath)) {
+        log::write("backend: perk data loaded from %s (%u entries of the perk list, %zu perk buckets, %zu items with perk "
+                   "places, %zu consumables)",
+                   perkDataPath.c_str(),
+                   perkData.list_size(),
+                   perkData.tables().buckets.size(),
+                   perkData.tables().items.size(),
+                   perkData.tables().consumables.size());
+    } else {
+        log::write("backend: no perk data at %s (%s): an item has no perk, no perk has an effect, and no item can be used. "
+                   "Make the file with tools/gamedata/perks.sh",
+                   perkDataPath.c_str(),
+                   perkData.error().c_str());
+    }
     // The travel places: the places of the travel command.
     const std::string travelPlacesPath = (gameDataDirectory / gamedata::kTravelPlacesFile).string();
     gamedata::TravelPlaces travelPlaces;
@@ -466,6 +484,7 @@ int main(int argc, char** argv) {
     worldOptions.travelPlaces = &travelPlaces;
     worldOptions.lootTables = &lootTables;
     worldOptions.abilityData = &abilityData;
+    worldOptions.perkData = &perkData;
     worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
     worldOptions.navigationData = &navigationData;
     worldOptions.navigationThread = true;

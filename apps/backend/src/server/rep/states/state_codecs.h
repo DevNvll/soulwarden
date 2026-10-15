@@ -46,6 +46,7 @@ inline constexpr std::uint32_t kTypeAbilityState = 185;         // MB::AbilityCo
 inline constexpr std::uint32_t kTypeMarkerState = 5399;         // MB::MarkerComponentReplicatedState
 inline constexpr std::uint32_t kTypeManaState = 1652;           // MB::ManaComponentReplicatedState
 inline constexpr std::uint32_t kTypeCooldownState = 2932;       // MB::CooldownTimersComponentReplicatedState
+inline constexpr std::uint32_t kTypeChargeState = 5257;         // MB::ChargeComponentReplicatedState
 inline constexpr std::uint32_t kTypeStatusEffectsState = 4236;  // MB::StatusEffectsComponentReplicatedState
 
 /** Slot of the metadata state in each slice. */
@@ -75,6 +76,8 @@ inline constexpr std::uint32_t kPointsSlot = 67;
 inline constexpr std::uint32_t kAbilitySlot = 46;
 /** The component CooldownTimers of the entity "Stats" of the player slice (stage 3.3a). */
 inline constexpr std::uint32_t kCooldownSlot = 45;
+/** The component ChargeComponent of the player slice: the heart rune charge (stage 1.3b). */
+inline constexpr std::uint32_t kChargeSlot = 48;
 
 enum class View {
     owner,
@@ -195,6 +198,8 @@ struct StateCodec {
  *         the first record of a character with no cooldown.
  */
 [[nodiscard]] std::vector<hub::Bytes> encode_cooldown_state(const world::Entity& entity, View view, const PartsRequest& request);
+/** The heart rune charge of a character (slot 48, stage 1.3b). */
+[[nodiscard]] std::vector<hub::Bytes> encode_charge_state(const world::Entity& entity, View view, const PartsRequest& request);
 /**
  * @return The status effects of a creature for an observer (states/status_state.cpp): the compact
  *         map with the effects that show at the name plate. No fragment in the first record of a

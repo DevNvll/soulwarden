@@ -106,6 +106,8 @@ struct ItemRow {
     std::uint32_t flags{0};
     /** Order counter of the item in its container. */
     std::uint32_t chrono{0};
+    /** The PerkID text of each of the five perk places (stage 1.3b, schema version 7). Empty: no perk. */
+    std::array<std::string, 5> perks{};
 };
 
 /**

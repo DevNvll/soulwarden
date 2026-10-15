@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 15> codecs{{
+    static constexpr std::array<StateCodec, 16> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -39,6 +39,8 @@ std::span<const StateCodec> player_codecs() {
         // The cooldowns of the abilities (stage 3.3a): owner only, after the bars that name the
         // abilities of the maps.
         {world::ComponentKey::cooldowns, kCooldownSlot, kTypeCooldownState, nullptr, encode_cooldown_state, true},
+        // The heart rune charge (stage 1.3b): owner only.
+        {world::ComponentKey::charge, kChargeSlot, kTypeChargeState, nullptr, encode_charge_state, true},
     }};
     return codecs;
 }

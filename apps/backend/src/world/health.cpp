@@ -61,6 +61,8 @@ void Health::creature_hit(Entity& creature, const gamedata::CreatureContact& con
                static_cast<double>(result.before),
                static_cast<double>(result.after),
                result.died ? ": dead" : "");
+    // The effects that end after hits, and the heart rune charge of the hit (stage 1.3b).
+    m_world.gear().on_hit_taken(target, contact);
     DamageTaken taken;
     taken.source = creature.id;
     taken.from = creature.position;
@@ -136,6 +138,27 @@ HealthResult Health::heal(const std::string& characterId) {
     return result;
 }
 
+float Health::heal_amount(Entity& character, float amount, const char* what) {
+    if (character.kind != EntityKind::player || character.life.dead || !std::isfinite(amount) || amount <= 0.0F) {
+        return 0.0F;
+    }
+    const float before = character.vitals.health;
+    character.vitals.health = std::min(character.vitals.health + amount, character.vitals.healthMax);
+    const float healed = character.vitals.health - before;
+    if (healed > 0.0F) {
+        m_world.touch(character.id, ComponentKey::vitals);
+        const std::string mark = log::session_mark(character.owner, character.characterId);
+        const log::Context context(mark);
+        log::write("world: heal: %s gets %.1f health from %s, health %.1f to %.1f",
+                   character.name.c_str(),
+                   static_cast<double>(healed),
+                   what,
+                   static_cast<double>(before),
+                   static_cast<double>(character.vitals.health));
+    }
+    return healed;
+}
+
 void Health::fought(Entity& character) {
     if (character.kind == EntityKind::player) {
         character.life.foughtAt = m_world.clock().now();
@@ -152,7 +175,7 @@ void Health::tick() {
     std::vector<EntityId> rested;
     m_world.for_each_character([&](const Entity& character) {
         if (!character.life.dead && character.vitals.health < character.vitals.healthMax
-            && (!character.life.foughtAt || now - *character.life.foughtAt >= kRestTime)) {
+            && ((!character.life.foughtAt || now - *character.life.foughtAt >= kRestTime) || character.gear.regeneration > 0.0F)) {
             rested.push_back(character.id);
         }
     });
@@ -161,8 +184,10 @@ void Health::tick() {
         if (character == nullptr) {
             continue;
         }
-        character->vitals.health =
-            std::min(character->vitals.health + character->vitals.healthMax * kRestPart, character->vitals.healthMax);
+        // The rest rule, and the regeneration of the perks and the effects (stage 1.3b), each second of a whole interval.
+        const bool resting = !character->life.foughtAt || now - *character->life.foughtAt >= kRestTime;
+        const float part = (resting ? kRestPart : 0.0F) + character->gear.regeneration * std::chrono::duration<float>(kRestInterval).count();
+        character->vitals.health = std::min(character->vitals.health + character->vitals.healthMax * part, character->vitals.healthMax);
         m_world.touch(character->id, ComponentKey::vitals);
         ++m_rests;
     }

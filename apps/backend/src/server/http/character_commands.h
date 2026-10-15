@@ -96,7 +96,9 @@ using WorldCommand = std::function<service::HttpResponse(world::World&)>;
 using Command = WorldCommand (*)(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
 // The item commands (world/inventory.h). Arguments: give `item`, `quantity`, `gearScore`,
-// `action`; remove `slot`, `quantity`; coin `amount` (hundredths of a coin).
+// `action`, `perks` (stage 1.3b: at most five PerkID texts with "," between them, one for each
+// place; an empty part is a place with no perk; a gem is a perk of one place); remove `slot`,
+// `quantity`; coin `amount` (hundredths of a coin).
 [[nodiscard]] WorldCommand give_item(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand remove_item(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand set_coin(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
@@ -155,6 +157,28 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
                                                 service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand hurt_character(const std::string& character, const Arguments& arguments,
                                           service::HttpResponse& refusal);
+
+// The itemization commands (stage 1.3b, server/http/gear_commands.cpp).
+// use_item: `slot`, and when necessary `container` ("bag", or "paperdoll" for a quick slot 14 to
+// 19): the use of a consumable through the rule of a client request (world/consumables.h).
+// set_rune_charge: `percent` (0 to 100): the heart rune charge (world/runes.h). activate_rune: no
+// argument: the key of the heart rune. roll_item_perks: `item`, and when necessary `gs`, `level`,
+// `count`: the perk roll of a loot item (world/perk_roll.h), with no item; the reply has the
+// count of each perk. Only the development routes have roll_item_perks.
+// set_item_perks: `slot`, `perks` (the form of give_item), and when necessary `container`: the perks of an item that the
+// character has, with the checks and the swap of a give (Inventory::set_perks).
+[[nodiscard]] WorldCommand set_item_perks(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand use_item(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand set_rune_charge(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand activate_rune(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand roll_item_perks(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * @return The gear of a character (world thread): the perks with an effect (slot, item, perk, the
+ *         perk before the swap, potency), the attribute bonus, the parts of the health, the
+ *         damage, the armor, and the absorption, the armor, the equip load and its class, the
+ *         effects, the item cooldowns, the rune charge, the health and the mana, and the counts.
+ */
+[[nodiscard]] nlohmann::json gear_json(world::World& world, const std::string& character);
 
 // The loot commands (world/rewards.h, server/http/loot_commands.cpp).
 // set_force_loot: `force` (1 or 0). A development switch of a character (the debug message
