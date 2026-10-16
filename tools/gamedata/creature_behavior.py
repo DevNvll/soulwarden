@@ -156,7 +156,9 @@ BASIC_RANGED_EXCEPTIONS: dict[tuple[str, str, str], str] = {}
 # A cast of an area spell of the list (a supported spell: creature_slices.json, areaSpells) with a malformed event or a broken join stops
 # the tool (code review of stage 3.4f-C, finding AR-R7: the cast went to `areasLeftOut`, and an export with status 0 lost the area attack
 # of an area-only creature), but for these authored cases of the retail data, each with its reason: the slice keeps no such area attack.
-# Key: (the slice path, the action, the cause). The count `areasLeftOut` keeps only the casts of spells and actions with no support.
+# Key: (the slice path, the action, the cause). The count `areasLeftOut` keeps only the casts of spells and actions with no support. A
+# spell of the list whose spell row, slice asset, slice, or shape is not there is a broken join too (code review of stage 3.4f-D, finding
+# SU-R4: the tool replaced the export with no area attack).
 AREA_EXCEPTIONS: dict[tuple[str, str, str], str] = {
     ("slices/characters/ghost.dynamicslice", "Spell_Plagued_Plague_Nova",
      "the damage row of the spell is not a row of the damage table of the slice"):
@@ -951,7 +953,9 @@ class Behavior:
             return None, "a cast event names no spell", False
         found, cause = self.area_spells.shape(spell)
         if found is None:
-            return None, cause, False
+            # A spell of the list with no spell row, no slice asset, no slice, or no supported shape is a broken join too (code review of
+            # stage 3.4f-D, finding SU-R4); a spell that is not in the list is a count of `areasLeftOut`.
+            return None, cause, self.area_spells.listed(spell)
         if time is None:
             return None, "a cast event has a time that is not a finite number", True
         aim = {name: strict_number(values.get(name)) for name in ("ProjectileSpeed", "AILeadTargetMaxAngle", "AIAimMaxAngle",

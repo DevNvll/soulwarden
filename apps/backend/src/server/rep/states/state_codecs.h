@@ -61,6 +61,8 @@ inline constexpr std::uint32_t kTypeBuildableState = 1594;      // MB::Buildable
 inline constexpr std::uint32_t kTypeOwnershipState = 3217;      // MB::OwnershipComponentReplicatedState (stage 2.5b)
 inline constexpr std::uint32_t kTypeProjectileState = 16;       // MB::ProjectileReplicatedState (stage 3.4f-A)
 inline constexpr std::uint32_t kTypeStaminaState = 4297;        // MB::StaminaComponentReplicatedState (stage 3.4f-B)
+inline constexpr std::uint32_t kTypeGatheringState = 81;        // MB::GatheringComponentReplicatedState (stage 3.5b.1)
+inline constexpr std::uint32_t kTypeLootTrackerState = 982;     // MB::LootTrackerComponentReplicatedState (stage 3.5b.1)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -102,6 +104,9 @@ inline constexpr std::uint32_t kEntitlementSlot = 19;
 inline constexpr std::uint32_t kAchievementSlot = 66;
 /** The component Interactor of the entity RootPlayer of the player slice and of the remote player slice (stage 2.5a). */
 inline constexpr std::uint32_t kInteractorSlot = 26;
+/** The components LootTracker and Gathering of the player slice (stage 3.5b.1; research chests-ground-loot.md Q2, gathering-stage.md Q2). */
+inline constexpr std::uint32_t kLootTrackerSlot = 33;
+inline constexpr std::uint32_t kGatheringSlot = 36;
 
 enum class View {
     owner,
@@ -467,6 +472,16 @@ struct CreatureScope {
  *         interaction, or the empty value after its end. No fragment for a character that had none.
  */
 [[nodiscard]] std::vector<hub::Bytes> encode_interactor_parts(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The Gathering state of a character (stage 3.5b.1, states/chest_states.cpp): the progress of the open of a chest. Owner only;
+ *         no fragment for a character that had no open.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_gathering_state(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The LootTracker state of a character (stage 3.5b.1, states/chest_states.cpp): the full map of its loot claims near it. Owner
+ *         only; no fragment in a first record with no claim.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_loot_tracker_state(const world::Entity& entity, View view, const PartsRequest& request);
 /** @return The Interact state of each bound of an object entity (stage 2.5a): Enabled and HasInteractors. */
 [[nodiscard]] std::vector<SlotState> encode_interact_states(const world::Entity& entity, View view, const PartsRequest& request);
 

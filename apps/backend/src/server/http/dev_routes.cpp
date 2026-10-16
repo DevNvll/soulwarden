@@ -59,7 +59,8 @@
 //                                                        has its entity id and its actor id
 //   POST /v1/dev/world/probe/remove?entity=ID            remove a probe entity: each observer gets the stop
 //   POST /v1/dev/world/fragment?entity=ID&slot=N&type=N&state=HEX
-//                                                        the fragment command for a probe entity
+//                                                        the fragment command for a probe entity or an object entity
+//                                                        (a server child, or a level object with an entity: stage 3.5b.1)
 //                                                        (stage 3.4f-A: in the state of a probe or of a
 //                                                        fragment, each 8 bytes 7E7E7E7E7E7E7E7E become the
 //                                                        server time in microseconds, u64 big-endian, at the
@@ -125,6 +126,11 @@
 //   POST /v1/dev/interactions/cancel?character=ID        end the committed interaction of a character (3746)
 //   POST /v1/dev/interactions/fixture?character=ID&name=NAME[&dx=N&dy=N&dz=N][&yaw=N][&permission=N]
 //                                                        a fixture of the interaction data near a character (stage 2.5b)
+//   GET  /v1/dev/chests?character=ID[&radius=N]          the chests of a character (stage 3.5b.1): its open, its loot claims,
+//                                                        the chests near it (default 30 m, 2000 m at most), the counts
+//   POST /v1/dev/chests/clear?character=ID&chest=KEY     remove the claim of a character on a chest
+//   POST /v1/dev/chests/reset?character=ID&chest=KEY&seconds=N
+//                                                        DEVELOPMENT AID (live check L8): the looted claim resets after N s
 //   POST /v1/dev/interactions/remove?character=ID&entity=HEX16
 //                                                        remove a server child: its uses end (3746), each observer gets the stop
 //   GET  /v1/dev/abilities?character=ID                  the cooldowns of the character and the
@@ -524,12 +530,12 @@ service::HttpResponse raw_fragment(const Services& services, const RouteContext&
         const world::Entity* entity =
             isCreature ? target.creatures().find(std::strtoull(character.c_str(), nullptr, 16)) : target.find_character(character);
         if (isProbe) {
-            // A probe, or a server child (stage 2.5b: a live check of a state of its slice before its encoder).
+            // A probe, a server child (stage 2.5b: a live check of a state of its slice before its encoder), or the entity of a level
+            // object (stage 3.5b.1: a state of a chest of the level data, live check L2; `tools/world object CHARACTER KEY on` makes its
+            // entity).
             entity = target.find(std::strtoull(character.c_str(), nullptr, 16));
-            entity = entity != nullptr && (entity->kind == world::EntityKind::probe
-                                           || (entity->kind == world::EntityKind::object && entity->object.spawned))
-                         ? entity
-                         : nullptr;
+            entity = entity != nullptr && (entity->kind == world::EntityKind::probe || entity->kind == world::EntityKind::object) ? entity
+                                                                                                                               : nullptr;
         }
         if (entity == nullptr) {
             return message(404, isCreature ? "the world has no creature with this id" : "the character is not in the world");
@@ -961,6 +967,24 @@ void register_dev_routes(Router& router, const Services& services) {
     // Stage 2.5b: the fixtures of the live checks L5 and L6, and the removal of a server child (the end of a use at the removal).
     router.add("POST", "", "/v1/dev/interactions/fixture", "dev.interactions_fixture", command_route(services, commands::make_fixture));
     router.add("POST", "", "/v1/dev/interactions/remove", "dev.interactions_remove", command_route(services, commands::remove_object));
+    // The chests (stage 3.5b.1): the claims of a character and the chests near it, the removal of a claim, and the short reset of a
+    // claim (a development aid of live check L8).
+    router.add("GET", "", "/v1/dev/chests", "dev.chests", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        const auto radius = commands::QueryArguments(context.request).number("radius", 0.0F, 2000.0F);
+        if (commands::QueryArguments(context.request).has("radius") && !radius) {
+            return message(400, "radius must be 0 to 2000 m");
+        }
+        return in_world(services, [character = *character, radius = radius.value_or(30.0F)](world::World& target) {
+            return json_reply(200, commands::chests_view(target, character, radius).dump());
+        });
+    });
+    router.add("POST", "", "/v1/dev/chests/clear", "dev.chests_clear", command_route(services, commands::clear_chest_claim));
+    router.add("POST", "", "/v1/dev/chests/reset", "dev.chests_reset", command_route(services, commands::set_chest_reset));
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));
     router.add("POST", "", "/v1/dev/abilities/cast", "dev.abilities_cast", command_route(services, commands::cast_ability));
     router.add("POST", "", "/v1/dev/spells/end", "dev.spells_end", command_route(services, commands::end_spells));

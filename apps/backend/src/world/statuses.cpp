@@ -698,38 +698,40 @@ void Statuses::tick() {
             continue;
         }
         const std::uint64_t serial = status->serial;
-        if (status->source.kind == StatusSourceKind::spell && status->source.entity != 0
-            && !m_world.spells().holds(status->source.entity, *character)) {
-            // The character left the status area of the source before this tick (code review of stage 3.4f-C, finding AR-R2): the
-            // exit comes first, and its status goes with m_removeOnExit. A status that stays (no m_removeOnExit) has its tick.
-            if (std::none_of(state->second.statuses.begin(), state->second.statuses.end(),
-                             [&](const ActiveStatus& entry) { return entry.serial == serial; })) {
-                continue;
-            }
-        }
-        const auto current = std::find_if(state->second.statuses.begin(), state->second.statuses.end(),
-                                          [&](const ActiveStatus& entry) { return entry.serial == serial; });
-        if (current == state->second.statuses.end() || !current->nextTick || *current->nextTick != at) {
-            continue;
-        }
-        status = current;
+        const auto find_status = [&]() {
+            return std::find_if(state->second.statuses.begin(), state->second.statuses.end(),
+                                [&](const ActiveStatus& entry) { return entry.serial == serial; });
+        };
         const float amount = status->potency * static_cast<float>(status->stacks);
         const StatusSource source = status->source;
         const HealSource heal = status->heal;
         const DamageSource damage = status->damage;
-        WorldClock::time_point next = *status->nextTick;
+        const bool fromArea = source.kind == StatusSourceKind::spell && source.entity != 0;
+        WorldClock::time_point next = at;
         bool alive = true;
         while (alive && next <= now && (status->permanent || next < status->ends)) {
+            if (fromArea && !m_world.spells().holds(source.entity, *character, next)) {
+                // The character left the status area of the source before this tick (code review of stage 3.4f-C, finding AR-R2), or the
+                // area ended before it (stage 3.4f-D, finding SU-R7: also a tick of the catch-up of a late world step): the exit comes
+                // first, and its status goes with m_removeOnExit. A status that stays (no m_removeOnExit) has its tick.
+                const auto still = find_status();
+                if (still == state->second.statuses.end()) {
+                    alive = false;
+                    break;
+                }
+                status = still;
+            }
             give(*character, *row, amount, source, heal, true, damage, next);
             ++m_counts.ticks;
             next += milliseconds_of(rate);
             // The heal can change the gear values; the status stays with its number.
-            const auto again = std::find_if(state->second.statuses.begin(), state->second.statuses.end(),
-                                            [&](const ActiveStatus& entry) { return entry.serial == serial; });
+            const auto again = find_status();
             alive = again != state->second.statuses.end();
+            if (alive) {
+                status = again;
+            }
         }
-        const auto again = std::find_if(state->second.statuses.begin(), state->second.statuses.end(),
-                                        [&](const ActiveStatus& entry) { return entry.serial == serial; });
+        const auto again = find_status();
         if (again != state->second.statuses.end() && (again->permanent || next < again->ends)) {
             again->nextTick = next;
             m_due.emplace(next, Due{due.characterId, serial, false});

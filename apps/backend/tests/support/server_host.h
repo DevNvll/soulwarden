@@ -14,6 +14,7 @@
 #include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
+#include "gamedata/chest_data.h"
 #include "gamedata/interaction_data.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/perk_data.h"
@@ -84,11 +85,15 @@ struct ServerHost {
     gamedata::InteractionData interactions;
     /** The stamina data (stage 3.4f-B). It is empty until a case sets it: a character then keeps its full stamina and has no dodge rule. */
     gamedata::StaminaData stamina;
+    /** The chest data (stage 3.5b.1). It is empty until a case sets it: each open of a chest is then refused. */
+    gamedata::ChestData chests;
     world::World world{clock, store, tables,
-                       with_stamina(with_interactions(with_game_data(catalog, progression, creatures, combat, places, terrain, navigation,
-                                                                     loot, abilities, perks, spells, projectiles, weaponActions),
-                                                      interactions),
-                                    stamina)};
+                       with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures, combat, places, terrain,
+                                                                                 navigation, loot, abilities, perks, spells, projectiles,
+                                                                                 weaponActions),
+                                                                  interactions),
+                                                stamina),
+                                   chests)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -250,6 +255,10 @@ struct ServerHost {
     }
     static world::WorldOptions with_stamina(world::WorldOptions options, const gamedata::StaminaData& stamina) {
         options.staminaData = &stamina;
+        return options;
+    }
+    static world::WorldOptions with_chests(world::WorldOptions options, const gamedata::ChestData& chests) {
+        options.chestData = &chests;
         return options;
     }
 

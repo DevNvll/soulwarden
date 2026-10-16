@@ -6134,6 +6134,66 @@ proof: `~/Games/soulwarden/work/evidence/creature-support/implement/` (`live/LIV
 - The self-destructs (`Ghost_Charred_SelfDestruct`, `Invasion_Bomber_SelfDestruct`): the death of the caster is a DamageSelf hit of the
   fragment, and the rewards of a creature that kills itself have no rule in the data or the client.
 
+### 4.41 The ordinary chests: the open, its progress, the loot claim of a character (live proof of stage 3.5b.1; static proof for the client code and the game data; the rules are project rules with the values of the game data)
+
+Stage 3.5b.1. Research: `~/Games/soulwarden/work/research/chests-ground-loot.md` (Q1, Q2), `gathering-stage.md` (the Gathering state).
+Live checks and the live proof: `~/Games/soulwarden/work/evidence/chests/implement/` (`LIVE-CHECKS.md`, `probe/`, `proof/`, `RESULT.md`).
+Code: `world/chests.h`, `server/rep/states/chest_states.cpp`, `gamedata/chest_data.h`, `tools/gamedata/chests.py`. Document:
+[Chests](systems/chests.md). Test cases LC1 to LC9.
+
+**The wire contracts** (live checks L1 to L4, L8, L9; a probe backend and `tools/world fragment` before the code):
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The open of a chest is the interaction request of 4.35: the input block of input 1589 with the actor of the chest (the UUID rule of the placement), G and the facet target of its bound (the XOR rule), action 14, base 14, the option GatherOption, committed. The reply 3743 result 1 alone makes the character kneel and shows no progress. | Live L1 (the supply chest `Abandoned_T1_S`, the values of the interaction data). | Request builder `0x4918560`, consumer `0x4910750`, validation apply `0x49175F0` |
+| The Gathering state (type 81, player slot 36, owner only), group 1: status u8 (0 None, 1 Success, 2 Failure, 3 Done), remaining f32, speed f32, count u8, reference u32, water reference u32, active bool, G u64 of the target (`0x00000000FFFFFFFF`: none), sync reference u32. The client applies fields 0 to 3 only at a new reference (field 4), and fields 6 and 7 only at a new sync reference (field 8). Success with remaining T and speed 1 shows the progress ring of the prompt for T seconds; the ring time is remaining / speed (speed 2.5 made 2.5 s run in about 0.8 s). Done makes the client stand up and send 2473 at once. After Failure the next E starts a new use with a full ring. | Live L3, L4. | Ctor `0x4904A90`, apply `0x4905130`, `0x48FF4D0`; status enum `0x49024D0` |
+| The LootTracker state (type 982, player slot 33, owner only), field 0: a map in its full form: changes size 0, version present u8 0, count size, and for each entry 58 bytes: actor 16, state u32, kind u32, resetTime u64, lootedTime u64, privileged u8, x, y, z f32, tag u32, selector u8. The states (InstancedLootState): 0 Initial, 1 Rolled, 2 Looted, 3 RegeneratedForMission, 4 NotOnRequiredQuest, 5 Locked, 6 Unlocked. Initial, Rolled, Unlocked: the prompt shows. Looted: the prompt goes at once, and the client sends 2473 at once during a use. Locked and NotOnRequiredQuest: the prompt goes (an unmet gate). The map with no entry gives the prompt back at once; Initial after Looted only after a new focus. A map with two entries works. | Live L2, L9. | Readers `0x3727A00`, `0x3727C60`, apply `0x3759360`, compare `0x37760A0`; InstancedLootState reflection `0x36FD370` |
+| The client does not end a claim at its resetTime (the raw value in server microseconds, nanoseconds, or Unix seconds, milliseconds, microseconds, nanoseconds: the prompt stays away after the time). The server ends a claim with the map with no entry. | Live L8. | — |
+| The loot notice: an item change of the bag with the cause 1 (ItemGathered, 4.21) shows "+N NAME" with its icon. | Live L3, run 3 ("+11 Pure Solvent"). | — |
+| The GatherableController state (slot 3, type 12) of the chest object changes nothing for an instanced chest (Depleted: the prompt stays). | Live L2. | Apply `0x3371590` returns when the instanced reference is valid |
+| An elite chest: a 5 s ring, the celebration effect of the depletion, the loot list of the HUD for more items ("3 More Items"), and after the Looted claim the prompt "X ELITE SUPPLY CHEST" with no light of the loot. | Live L9 (`ChestEliteT4`, Brightwood). | — |
+
+**The game data** (static; `chests.py`, `loot_tables.py`):
+
+| Fact | Source |
+| --- | --- |
+| A chest: a placement with a variant name of `Gatherable_LootContainers` (the slice `master_lootcontainer`: Variation 1, PositionInTheWorld 2, GatherableController 3, Interact 4, Marker 5); the row names GatherableEntryID and LootTableComponent (the root). | `javelindata_variations_gatherables_lootcontainers.datasheet`, the layer capitals |
+| The gatherable row: BaseGatherTime (2.5 s supply, 5 s elite), MinRespawnRate and MaxRespawnRate (82,800 s for `LootLargeT3ElitePOI`, 0 for a supply chest), the restrictions. | GatherableData tables |
+| The reset of an instanced chest 60 minutes and its count 60 (`Instanced Loot Chest Reset Time Mins`, `Max Instanced Loot Chest Count`). | `playerbaseattributes.pbadb` (reflection `0x5CAD110`) |
+| The territories of a chest: the record of the layer metadata (GatherableLocations) 0.06 m or less from the placement; LootTags and AIVariantLevelOverride of TerritoryDefinition rows. | `.metadata` of the layers, `javelindata_territorydefinitions`, `javelindata_areadefinitions` |
+| The container floor of the gear score: ContainerLootGSFloor of each level. | VitalsLevels |
+| The action Gather ends at a hit (IfDamagedByPowerLevel 0 or more); it has no condition of the weight of the bag. | `playeractions_gather.actionlist` |
+
+**The rules** (the source of each rule is in [Chests](systems/chests.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The open | GatherOption of an ordinary chest with no Looted claim of the character: the Gathering state Success with the BaseGatherTime of the data and the speed 1; a timer of the world of the same time. A release, 2473, a walk out of the range, a travel, the death, or damage before the end: Failure and no item. |
+| The completion | The base checks the use again; the roll of the root of the chest (the level of the character, the content level and the loot tags of its territories, the container floor); one transaction: the items (cause 1) and the Looted claim with its reset; the Gathering state Done; the LootTracker of the owner with the claim. |
+| A full bag | The whole result must fit (500 slots): else no item, the roll stays in a Rolled claim, the chest stays closed, 3746; the next open gives the kept roll. No weight check (the client has none for the action). |
+| The reset | The reset values of the gatherable row, else 60 minutes; on the wall clock in the store (a restart keeps it); the server removes the claim and sends the map with no entry. |
+| The map | The claims 192 m or less from the character and a Locked entry for each unavailable chest 192 m or less from it; made again at a new cell of 64 m. Each active claim stays in the store also above 60. |
+
+**The live proof** (stage 3.5b.1, `proof/` of the evidence folder, the backend of the stage and the game data of the stage):
+
+| Check | Result |
+| --- | --- |
+| P1 The open of a supply chest (`p1-supply-open.mp4`, daylight) | The supply cache `Abandoned_T1_S` (Everfall): "E SUPPLY CACHE", the ring for 2.5 s, the notices "+8 Obsidian Sandpaper" and "+12 Wireweave", then no prompt. The client sent 2473 9 ms after the completion. |
+| P2 The items in the bag (`p2-bag-tooltip-wireweave.png`) | The reagents of the bag; the tooltip "Wireweave, Uncommon, Tier 5, Source: Supply Containers". |
+| P3 A second open (`a-02`, `a-04`) | The looted elite chest shows "X ELITE SUPPLY CHEST", and E sends no request. With a probe map that gives the E prompt back, the request gets 3743 result 2 ("the character has a claim on the chest"). |
+| P4 A restart (`a-01`, `f-00`) | The elite claim of an earlier backend and the supply claim stay after a restart of the backend and of the client (the LootTracker of the first record); the override of the reset (20 s) gives the prompt back at its time (`p4-reset.mp4`). |
+| P5 A second owner (`p5-second-owner.mp4`) | A second account and character open the same chest during the claim of the first one: "+11 Wireweave". |
+| P6 An unmet gate (`e-01`, `e-02`) | The quest chest `MSQ_18018_WerebearChest` with the Locked entry: no prompt and no light of the loot; a probe map with no entry gives the light of the loot. A chest behind a glyph gate shows "X" also with no entry (the client). |
+| P7 A cancel | A walk 1.2 s after E: 2473, no item, no claim. |
+
+**Not known, not done** (stage 3.5b.1):
+
+- The rule of the original server for a full bag (the client has no notice for it): a project rule.
+- The rule of the original server for more than 60 claims: no client eviction was found; a project rule.
+- The loot limits (LootLimits), HWMMult, and LootBiasing of the roller; the umbral currency and the territory standing of the elite event.
+- The personal loot bag of a creature (AILoot, stage 3.5b.2); the locks, keys, quests, and events (stage 3.5b.3); the gathering nodes
+  (stage 3.6).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

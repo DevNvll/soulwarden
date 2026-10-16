@@ -1826,6 +1826,11 @@ void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
     std::erase_if(m_seenRequests, [&](const SeenRequest& seen) { return now >= seen.keep; });
     const bool late = !ended && std::any_of(m_seenRequests.begin(), m_seenRequests.end(),
                                             [&](const SeenRequest& seen) { return seen.reference == cancel->reference; });
+    // The echo of an attempt that the world ended (3746; code review of stage 3.4f-D, finding SU-R5): the request of the attempt is in the
+    // list with its mark serverEnded.
+    const bool serverEndedEcho = late && std::any_of(m_seenRequests.begin(), m_seenRequests.end(), [&](const SeenRequest& seen) {
+                                     return seen.reference == cancel->reference && seen.serverEnded;
+                                 });
     // One cancel for each attempt (code review of stage 3.4f-B, finding CS-R3): the cancel that ended the use, or the late cancel (the
     // echo of a use that the server ended), takes the request of the attempt. A cancel of a next attempt of the same reference then finds
     // no request: it is early, and its mark stops the delayed press of that attempt.
@@ -1847,10 +1852,14 @@ void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
         }
         m_earlyCancels.push_back(mark);
     }
-    if (ended) {
+    const bool sameBlock = m_interactionBlock && m_interactionBlock->actor == cancel->reference.actor
+                           && m_interactionBlock->group == cancel->reference.group && m_interactionBlock->target == cancel->reference.target;
+    if (ended || (serverEndedEcho && sameBlock)) {
         // The attempt of this block ended: a later input step with the same block is a new request (code review of stage 2.5a,
         // finding INT-R2: a new press of the same object with no report of an absent block between). The input numbers of the
-        // steps that the session processed stay: an old report changes nothing.
+        // steps that the session processed stay: an old report changes nothing. The echo of a use that the world ended ends the
+        // attempt of its block too (finding SU-R5: the next press of the same object started no use); a block of a different
+        // reference stays.
         m_interactionBlock.reset();
     }
     log::write("rep: the client ended its interaction (type %u) with the object %016llx target %016llx: %s",

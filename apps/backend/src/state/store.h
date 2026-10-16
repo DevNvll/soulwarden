@@ -157,6 +157,34 @@ struct SkillRows {
     std::vector<Bar> bars;
 };
 
+/** One item instance of a rolled loot claim (stage 3.5b.1, table `loot_claim_items`): a roll that the character did not get yet. */
+struct ClaimItemRow {
+    std::string itemId;
+    std::uint32_t quantity{0};
+    /** The gear score of the instance. No value: the item has none. */
+    std::optional<std::uint32_t> gearScore;
+    /** The PerkID text of each of the five perk places. Empty: no perk. */
+    std::array<std::string, 5> perks{};
+};
+
+/**
+ * The loot claim of a character on a chest (stage 3.5b.1, table `loot_claims`; docs/systems/chests.md). The character id is the owner
+ * key; the object key is the placement UUID of the chest. The times are Unix milliseconds (the wall clock: a reset goes on while the
+ * backend is off).
+ */
+struct LootClaimRow {
+    std::string objectKey;
+    /** 1 Rolled (the roll is kept: `items`), 2 Looted (the InstancedLootState of the client). */
+    std::uint32_t state{0};
+    /** The number of the claim of the character on this object (each new claim takes the next one). */
+    std::uint64_t generation{0};
+    std::int64_t rolledAt{0};
+    /** The time of the open and the time of the reset of a looted claim. 0: none. */
+    std::int64_t lootedAt{0};
+    std::int64_t resetAt{0};
+    std::vector<ClaimItemRow> items;
+};
+
 /** Durable player state in one SQLite database. One writer connection, serialized by a mutex. */
 class Store {
 public:
@@ -313,6 +341,17 @@ public:
      * @return True when the row is new. False when the character had it already or the database did not accept it.
      */
     [[nodiscard]] bool record_entitlement_reward(const std::string& characterId, const std::string& alias);
+
+    /** @return The loot claims of a character (stage 3.5b.1), with the items of each rolled claim, in the sequence of their keys. */
+    [[nodiscard]] std::vector<LootClaimRow> list_loot_claims(const std::string& characterId);
+    /**
+     * Writes the loot claim of a character on an object: the row and its items replace a row of the same key (in a batch: a savepoint of
+     * its transaction; the claim and the items of the bag commit together).
+     * @return False when the database did not accept the change. Then no row changed.
+     */
+    [[nodiscard]] bool write_loot_claim(const std::string& characterId, const LootClaimRow& claim);
+    /** Removes the loot claims of a character on these objects (a reset), with their items. @return False: no change. */
+    [[nodiscard]] bool delete_loot_claims(const std::string& characterId, const std::vector<std::string>& objectKeys);
 
 private:
     /** @return The first column of each row of a query with one parameter (the owner key). */

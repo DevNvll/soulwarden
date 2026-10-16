@@ -45,6 +45,16 @@ reader, the joins, the projectile reader, the builder, and the writer of the too
   review-malformed-time         the ExitTime before the release is "1.3x"           status 1, the file stays (CR-R6)
   review-malformed-aim          the ProjectileSpeed of the release is "fast"        status 1, the file stays (CR-R6)
 
+The correction of the code review of stage 3.4f-D (finding SU-R4; test case RSU4), with the production spell slice reader, AreaSpells.shape,
+the cast joins, the builder, and the writer (made-up sources): a cast of a spell of the list of the proved area spells whose required join
+breaks before the shape stops the tool.
+
+  case                          what                                                expected result
+  review-support-valid          a cast of the listed strike spell, with each source status 0, one area attack
+  review-support-missing-row    the spell tables have no row of the spell           status 1, the file stays
+  review-support-missing-asset  the catalog has no asset of the spell slice         status 1, the file stays
+  review-support-missing-slice  the spell slice has no source                       status 1, the file stays
+
 Usage: check_creature_tool.py WORK_FOLDER     status 0: each case gives its result
 """
 
@@ -547,6 +557,10 @@ def check_review_areas(work: Path) -> int:
 
     class KnownSpells:
         @staticmethod
+        def listed(name):
+            return name == "Test_Strike"
+
+        @staticmethod
         def shape(name):
             if name == "Test_Strike":
                 return {"spell": "Test_Strike", "shape": "strike", "table": "TestShamanTable", "row": "Test_Strike"}, ""
@@ -610,6 +624,115 @@ def check_review_areas(work: Path) -> int:
     return failures
 
 
+REVIEW_SUPPORT_CASES = ("review-support-valid", "review-support-missing-row", "review-support-missing-asset", "review-support-missing-slice")
+REVIEW_SUPPORT_ADB = "animations/test/support-review.adb"
+REVIEW_SUPPORT_PREFAB = "Characters/Test_Support_Strike"
+
+
+def check_review_support(work: Path) -> int:
+    """The cases of the finding SU-R4 of the code review of stage 3.4f-D: a cast of a spell of the list of the proved area spells whose spell
+    row, slice asset, or slice is not there stops the tool, and the file stays (the tool replaced the export with no area attack).
+    @return The number of failures."""
+    import check_spell_tool as sf
+    import creature_behavior as cb
+    import spells
+    failures = 0
+    state = {"case": REVIEW_SUPPORT_CASES[0]}
+    Sources.case = "none"
+    spell_path = spells.slice_path(REVIEW_SUPPORT_PREFAB)
+
+    def roots() -> list:
+        # The slice of a strike: a Spell component on the root, a volume with no shape on the child, and a delayed event that activates the
+        # child at 0.95 s.
+        result = sf.slice_nodes(struct.pack(">f", 0.9))
+        result[1].children[1].value = b"Damage"
+        spells.find_field(result[1], spells.COMPONENTS_FIELD).children = [sf.component(spells.VOLUME_CLASS, 30, [])]
+        delay_kind = uuid.UUID(next(key for key, value in spells.COMPONENT_CLASSES.items() if value[0] == "DelayedEvent"))
+        event = [sf.element(spells.ENTITY_REF_FIELD, children=[sf.identifier(spells.ID_FIELD, 200)]),
+                 sf.element(spells.EVENT_TYPE_FIELD, b"\x03")]
+        delayed = sf.component(delay_kind, 13, [sf.element(spells.REPLICATION_FIELD, b"\x08"),
+                                               sf.element(spells.DELAY_FIELD, struct.pack(">f", 0.95)),
+                                               sf.element(spells.EVENT_FIELD, children=event)])
+        spells.find_field(result[0], spells.COMPONENTS_FIELD).children.append(delayed)
+        return result
+
+    def animation() -> bytes:
+        values = {"SpellName": "Test_Support_Strike", "AIAimAtTarget": "true", "ProjectileSpeed": "100", "AILeadTargetMaxAngle": "20",
+                  "AIAimMaxAngle": "45", "AIMissMinDistance": "0", "AIMissMaxDistance": "2", "UseAllAvailableTargets": "true"}
+        return ("<AnimDB><FragmentList><Shaman_Bomb><Fragment Tags=\"Bow\"><AnimLayer><Blend ExitTime=\"3.0\"/>"
+                "<Animation name=\"\"/></AnimLayer><ProcLayer><Blend ExitTime=\"1.2\"/><Procedural type=\"CAGE-CastSpell\"><ProceduralParams>"
+                + "".join(f"<{key} value=\"{value}\"/>" for key, value in values.items())
+                + "</ProceduralParams></Procedural></ProcLayer></Fragment></Shaman_Bomb></FragmentList></AnimDB>").encode()
+
+    class SupportSources(Sources):
+        def read(self, path: str) -> bytes:
+            return animation() if path == REVIEW_SUPPORT_ADB else super().read(path)
+
+        def has(self, path: str) -> bool:
+            return not (path == spell_path and state["case"] == "review-support-missing-slice")
+
+        def stream(self, path: str) -> list:
+            return roots() if path == spell_path else super().stream(path)
+
+    class SupportBehavior(cb.Behavior):
+        def __init__(self, sources, folder, ranged_attacks, projectile_of, area_spells=None, status_actions=None) -> None:
+            self.sources = sources
+            self.animations = cb.Animations(sources)
+            self.area_spells = spells.AreaSpells(sources, {"test_support_strike": "a made-up live check"})
+            self.area_spells._rows = {} if state["case"] == "review-support-missing-row" else {
+                "test_support_strike": {"SpellID": "Test_Support_Strike", "SpellPrefabPath": REVIEW_SUPPORT_PREFAB, "TargetTypes": "Enemy",
+                                        "ShapeTypes": "Sphere", "Radius": "2.5", "DamageTable": "TestShamanTable",
+                                        "DamageTableRow": "Test_Strike"}}
+            self.area_spells._by_path = {} if state["case"] == "review-support-missing-asset" else {spell_path: sf.ASSET}
+            self.areas_left_out = {}
+            self.ranged_left_out = {}
+            self.tables = type("Tables", (), {"types": {"Lightning": (9, "Elemental")}})()
+
+        def read(self, roots, controller, actions, slice_path="", markers=None) -> dict:
+            rows = {"test_strike": {"ordinal": 0, "table": "TestShamanTable", "id": "Test_Strike", "type": "Lightning", "factor": 0.85,
+                                    "added": 0.0, "charge": 0.0}}
+            result = Behavior.read(self)
+            areas = self.read_areas(actions, [REVIEW_SUPPORT_ADB], {"bow"}, rows, slice_path)
+            if areas:
+                result["areas"] = areas
+            return result
+
+    tables = {"variants": {}, "bases": {1: {"id": "Check_Kind", "family": "Wildlife", "creatureType": "Solo", "healthMod": 1.0,
+                                           "damageMod": 1.0, "name": ""}},
+              "categories": {}, "levels": {18: (1000.0, 100.0, 180.0)}, "modifiers": {"Solo": (1.0, 1.0)}}
+    entries = [{"vitals": 1, "category": 0, "level": 18, "position": (1000.0, 1000.0, 50.0), "coatlicue": True, "override": False,
+                "encounter": False}]
+    for case in REVIEW_SUPPORT_CASES:
+        state["case"] = case
+        target = work / f"{case}.json"
+        target.write_text(MARK, encoding="utf-8")
+        replacements = {"Sources": SupportSources, "Catalog": Catalog, "read_tables": lambda _: tables, "read_names": lambda _: {},
+                        "read_slice_lists": lambda: (set(), set()), "read_spawn_entries": lambda _: entries,
+                        "read_creature_slice": creature_slice, "read_ranged_attacks": lambda _: {}, "slice_assets": lambda _: {},
+                        "read_action_table": lambda *arguments: [["Shaman_Bomb", "Shaman_Bomb", 120, False]]}
+        errors = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            for name, value in replacements.items():
+                stack.enter_context(patch.object(cd, name, value))
+            stack.enter_context(patch.object(cd.creature_behavior, "Behavior", SupportBehavior))
+            stack.enter_context(patch.object(cd.height_maps, "Terrain", Terrain))
+            stack.enter_context(patch.object(sys, "argv", ["creature_data.py", str(target)]))
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+                status = cd.main()
+        text = target.read_text(encoding="utf-8")
+        kept = text == MARK
+        document = {} if kept else json.loads(text)
+        areas = sum(len(entry.get("areas", [])) for entry in document.get("slices", []))
+        if case == "review-support-valid":
+            passed = status == 0 and areas == 1
+        else:
+            passed = status == 1 and kept and not (work / f"{case}.json.tmp").exists()
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, file {'kept' if kept else 'replaced'}, {areas} area attack(s) "
+              f"{errors.getvalue().strip()[:160]}")
+        failures += 0 if passed else 1
+    return failures
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
@@ -657,6 +780,7 @@ def main() -> int:
     failures += check_review_ranged(work)
     failures += check_areas()
     failures += check_review_areas(work)
+    failures += check_review_support(work)
     failures += check_status_actions()
     return 1 if failures else 0
 

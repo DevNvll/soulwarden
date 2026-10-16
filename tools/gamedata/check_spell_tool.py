@@ -204,7 +204,8 @@ def main() -> int:
     # (1 s, also for an entity that is active at the start), and a cut size field of its shape keeps the old file.
     status, text = run(work, "area-valid", struct.pack(">f", 1.0))
     entry = json.loads(text)["slices"][0] if status == 0 and text != MARK else {}
-    passed = status == 0 and entry.get("volumes") == [["Cloud", 0.0, 1.0, "cylinder", 1.5, 4.0, -0.5, -1.0]]
+    # Format 5 (code review of stage 3.4f-D, finding SU-R3): the last member is the list of the parents of the entity (none here).
+    passed = status == 0 and entry.get("volumes") == [["Cloud", 0.0, 1.0, "cylinder", 1.5, 4.0, -0.5, -1.0, []]]
     print(f"{'ok  ' if passed else 'FAIL'}  area-valid: status {status}, volumes {entry.get('volumes')}")
     failures += 0 if passed else 1
     for case in ("area-cut-radius", "area-cut-height", "area-cut-center"):

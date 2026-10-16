@@ -263,10 +263,12 @@ public:
     /**
      * A status of a status area of a creature has a tick now (code review of stage 3.4f-C, finding AR-R2: the world runs the statuses
      * before the spells, and a character that left the cloud took one more tick). The area looks at this one character: a character
-     * that is not in its active volume leaves it now (its statuses go with m_removeOnExit). Only that area: no scan.
+     * that is not in its active volume leaves it now (its statuses go with m_removeOnExit). Only that area: no scan. `at`: the due time of
+     * the tick. An area whose life or activity ended at `at` or before it holds no character (code review of stage 3.4f-D, finding SU-R7:
+     * a mushroom ends at its destroy event, and a late world step gave one more tick after that end).
      * @return False: the character left the area.
      */
-    bool holds(EntityId area, const Entity& character);
+    bool holds(EntityId area, const Entity& character, WorldClock::time_point at);
 
     /**
      * @return The time of the activation of the target with the damage row `row` on the timeline of a spell (the burst of

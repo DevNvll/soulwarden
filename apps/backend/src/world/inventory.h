@@ -186,11 +186,14 @@ public:
      * the catalog does not have, is not given (it goes into `lost`), and the other items and the
      * coin are given. The coin is not more than the wallet limit. A gear score of an item is the
      * gear score of the roll (not below 1, and not above the largest gear score of the item).
+     * @param whole True (the open of a chest, stage 3.5b.1): when the bag has no place for the whole quantity of an item of the
+     *        catalog, nothing changes (ItemError::bagFull). An item that the catalog does not have is not given, as before.
      */
     ItemResult grant(const std::string& characterId,
                      const std::vector<GrantItem>& items,
                      std::uint64_t coin,
-                     std::vector<GrantItem>* lost = nullptr);
+                     std::vector<GrantItem>* lost = nullptr,
+                     bool whole = false);
 
     /** Removes a quantity from the item of a slot. No quantity: the full stack. */
     ItemResult remove(const std::string& characterId, std::uint32_t slot, std::optional<std::uint32_t> quantity = {});

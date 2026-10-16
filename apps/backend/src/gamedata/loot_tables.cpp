@@ -175,6 +175,12 @@ bool LootTables::check(LootData& data, std::string& error) {
             return fail("a loot table has no id, or its id is in the file two times");
         }
     }
+    // A chest root names a table of the file (stage 3.5b.1).
+    for (const std::string& root : data.chestRoots) {
+        if (tableKeys.find(lower_text(root)) == tableKeys.end()) {
+            return fail("the chest root " + root + " names a table that the file does not have");
+        }
+    }
     std::unordered_map<std::string, std::uint32_t> bucketKeys;
     for (std::uint32_t index = 0; index < data.buckets.size(); ++index) {
         if (data.buckets[index].id.empty() || !bucketKeys.emplace(lower_text(data.buckets[index].id), index).second) {
@@ -274,8 +280,17 @@ bool LootTables::load(const std::string& path) {
             return fail(std::string("the file has no member ") + member);
         }
     }
-    if (document["format"] != 1) {
+    // Format 1 (stage 3.5a), format 2 (stage 3.5b.1: the container floor, the chest roots, the loot limits).
+    if (document["format"] != 1 && document["format"] != 2) {
         return fail("the file has a format that this backend does not read");
+    }
+    const bool chests = document["format"] == 2;
+    if (chests) {
+        for (const char* member : {"containerFloor", "chestRoots", "limits"}) {
+            if (!document.contains(member)) {
+                return fail(std::string("the file of format 2 has no member ") + member);
+            }
+        }
     }
     LootData data;
     // The rewards: [level, experience, coin, progression], the levels from 1 up by 1.
@@ -382,6 +397,26 @@ bool LootTables::load(const std::string& path) {
             return fail("a loot ceiling row does not have the form of the tool");
         }
         data.lootCeiling[level] = ceiling;
+    }
+    if (chests) {
+        if (!document["containerFloor"].is_array() || !document["chestRoots"].is_array() || !document["limits"].is_object()) {
+            return fail("the container floors, the chest roots, or the loot limits do not have the form of the tool");
+        }
+        for (const json& row : document["containerFloor"]) {
+            std::uint32_t level = 0;
+            std::uint32_t floor = 0;
+            if (!row.is_array() || row.size() != 2 || !read_whole(row[0], level) || !read_whole(row[1], floor)) {
+                return fail("a container floor row does not have the form of the tool");
+            }
+            data.containerFloor[level] = floor;
+        }
+        for (const json& root : document["chestRoots"]) {
+            if (!root.is_string() || root.get<std::string>().empty()) {
+                return fail("a chest root is not a text");
+            }
+            data.chestRoots.push_back(root.get<std::string>());
+        }
+        data.limits = document["limits"].size();
     }
     // The tables first: a base row names a table by its id.
     if (!document["tables"].is_object()) {
@@ -542,6 +577,16 @@ std::optional<std::pair<std::uint32_t, std::uint32_t>> LootTables::gear_score(st
 std::optional<std::uint32_t> LootTables::loot_ceiling(std::uint32_t level) const {
     const auto found = m_data.lootCeiling.find(level);
     return found == m_data.lootCeiling.end() ? std::nullopt : std::optional<std::uint32_t>(found->second);
+}
+
+std::optional<std::uint32_t> LootTables::container_floor(std::uint32_t level) const {
+    const auto found = m_data.containerFloor.find(level);
+    return found == m_data.containerFloor.end() ? std::nullopt : std::optional<std::uint32_t>(found->second);
+}
+
+std::optional<std::uint32_t> LootTables::table_index(std::string_view id) const {
+    const auto found = m_tableKeys.find(lower_text(id));
+    return found == m_tableKeys.end() ? std::nullopt : std::optional<std::uint32_t>(found->second);
 }
 
 const LootTable* LootTables::table(std::string_view id) const {

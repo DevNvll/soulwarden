@@ -55,7 +55,7 @@ no root entity, two components with one slot, or a delayed event with no delay o
 A prefab slice with no Spell component and no PositionInTheWorld component (a waypoint or a rally point of an encounter)
 is not a spell entity: the tool leaves it out with a count.
 
-Output: {"format": 4, "counts": {"spells": N, "slices": N, "spellsWithNoSlice": N, "slicesWithNoSpellComponent": N,
+Output: {"format": 5, "counts": {"spells": N, "slices": N, "spellsWithNoSlice": N, "slicesWithNoSpellComponent": N,
                                  "vitals": N, "vitalsRowsNotInBaseTables": N, "vitalsCellsOfAbsentColumns": N},
 "slices": [{"path": text, "asset": "UUID", "sub": N, "root": "16 hex digits", "interestRadius": meters,
             "spellSlot": N (0: none), "positionSlot": N (0: none), "slots": [[slot, class name, state type], ...],
@@ -82,6 +82,12 @@ Shaman) adds:
                        0.5 s for the mushroom), m_reapplicationDelaySeconds (each next application while the entity is in the
                        volume, 1 s), and m_inheritStatusEffects of the AreaStatusEffectComponent (its server facet: client code
                        0x3FE5B40, 0x3FE6500, 0x3FF2830)
+
+Format 5 (code review of stage 3.4f-D, finding SU-R3) adds:
+
+  each volume          [..., parents]: the names of the parent entities of the entity of the volume, the nearest one first. The
+                       backend takes the activation time and the end of a volume only from the delayed events of its entity and of
+                       these parents: an event of a different entity of the slice does not prove a time
 
 The tool needs only the standard library of Python and the modules of this folder (creature_data.py, slice_ids.py,
 appearance_tables.py, item_catalog.py, abilities.py).
@@ -541,7 +547,7 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
             "vitals": [vitals_slots[0], row, named(death)] if vitals_slots and row else None,
             "autoSpell": auto,
             "volumes": [[named(entity), round(radius_of, 4), active_after(entity), shape, round(shape_radius, 4), round(height, 4),
-                         round(height_of(entity) + center_z, 4), inactive_after(entity)]
+                         round(height_of(entity) + center_z, 4), inactive_after(entity), [named(parent) for parent in list(ancestors(entity))[1:]]]
                         for entity, radius_of, shape, shape_radius, height, center_z in volumes],
             "offenses": [[named(entity), row_of, round(radius_of, 4)] for entity, row_of, radius_of in offenses],
             "detectionEvents": [[named(target), kind] for target, kind in detection_events],
@@ -639,6 +645,11 @@ class AreaSpells:
             raise Failure("the game copy has no asset catalog")
         self._by_path = {path: asset for asset, path in Catalog(catalog).paths.items() if asset[1] == SUB_ID}
 
+    def listed(self, spell: str) -> bool:
+        """@return True for a spell of the list of the proved spells (creature_slices.json, areaSpells): a cast of it whose join breaks stops
+        the creature tool (code review of stage 3.4f-D, finding SU-R4)."""
+        return self.proved is not None and spell.strip().lower() in self.proved
+
     def shape(self, spell: str) -> tuple[dict | None, str]:
         """@return ({"spell", "shape", "table", "row"}, "") for a spell of a supported area shape, or (None, the cause)."""
         key = spell.strip().lower()
@@ -723,7 +734,7 @@ def build_document(sources: Sources) -> dict:
     unknown = [row for row in elsewhere if row.lower() not in {name.lower() for name in VITALS_ROWS_NOT_IN_BASE_TABLES}]
     if unknown:
         raise Failure(f"a spell slice names the vitals row {unknown[0]}, which no base vitals table has")
-    return {"format": 4, "counts": {"spells": len(spells), "slices": len(slices), "spellsWithNoSlice": no_slice,
+    return {"format": 5, "counts": {"spells": len(spells), "slices": len(slices), "spellsWithNoSlice": no_slice,
                                     "slicesWithNoSpellComponent": no_spell_component, "vitals": len(vitals),
                                     "vitalsRowsNotInBaseTables": no_row, "vitalsCellsOfAbsentColumns": no_column},
             "slices": slices, "spells": sorted(spells.values()), "vitals": vitals, "vitalsNotInData": elsewhere}

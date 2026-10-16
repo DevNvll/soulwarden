@@ -234,6 +234,17 @@ public:
         (void)context;
         (void)cause;
     }
+    /**
+     * True: the handler owns the line-of-sight rule of its bounds (stage 3.5b.1: a chest; docs/systems/chests.md), and the base does
+     * not refuse a bound with m_requiresLineOfSight. False (the default): such a bound is refused (`unsupported`).
+     */
+    [[nodiscard]] virtual bool owns_sight() const {
+        return false;
+    }
+    /** True: a use of this handler ends at damage (stage 3.5b.1: the Gather action of the client ends at a hit, game data). */
+    [[nodiscard]] virtual bool ends_at_damage() const {
+        return false;
+    }
 };
 
 /** One object near a character, for a reader (a command). */
@@ -378,6 +389,13 @@ public:
     void damaged(Entity& character);
     /** The world calls it after an accepted position of a character (stage 2.5b): the range of its use. O(1). */
     void moved(Entity& character);
+    /**
+     * @return True when the committed use of a character still passes the checks of its source (stage 3.5b.1: the end of the open of a
+     *         chest): the source, Enabled, the life, the exact position, and the range. False sets `cause`.
+     */
+    [[nodiscard]] bool use_valid(const Entity& character, InteractionEnd& cause) const;
+    /** Ends the committed use of a character with a cause (stage 3.5b.1: a handler of a timed use): its client gets 3746. */
+    void end_use(Entity& character, InteractionEnd cause);
 
     /** The world tick: the spawn rule of the server children (each kSpawnInterval of the world clock). */
     void tick();

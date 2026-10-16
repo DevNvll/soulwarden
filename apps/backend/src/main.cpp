@@ -29,6 +29,7 @@
 #include "gamedata/navigation_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/slice_ids.h"
+#include "gamedata/chest_data.h"
 #include "gamedata/interaction_data.h"
 #include "gamedata/travel_places.h"
 #include "server/http/admin_access.h"
@@ -558,6 +559,20 @@ int main(int argc, char** argv) {
                    "not kept. Make the file with tools/gamedata/interactions.sh",
                    interactionDataPath.c_str(), interactionData.error().c_str());
     }
+    // The chests of the world (stage 3.5b.1): the open of an ordinary chest and its loot. With no file no chest opens.
+    const std::string chestDataPath = (gameDataDirectory / gamedata::kChestDataFile).string();
+    gamedata::ChestData chestData;
+    if (chestData.load(chestDataPath)) {
+        log::write("backend: chest data loaded from %s (%zu chests, %zu ordinary; the reset of an instanced chest %u minutes)",
+                   chestDataPath.c_str(), chestData.chests().size(), chestData.ordinary(), chestData.rules().resetMinutes);
+        if (lootTables.loaded() && lootTables.data().chestRoots.empty()) {
+            log::write("backend: the loot tables have no chest root (a file of format 1): each open of a chest is refused. Make the file "
+                       "again with tools/gamedata/loot.sh");
+        }
+    } else {
+        log::write("backend: no chest data at %s (%s): no chest opens. Make the file with tools/gamedata/chests.sh", chestDataPath.c_str(),
+                   chestData.error().c_str());
+    }
     // The readers of the game data files are done: the memory of the parsed documents (the
     // creature data of the whole world is a file of some megabytes) goes back to the system.
     release_free_memory();
@@ -607,6 +622,7 @@ int main(int argc, char** argv) {
     worldOptions.combatTables = &combatTables;
     worldOptions.travelPlaces = &travelPlaces;
     worldOptions.interactionData = &interactionData;
+    worldOptions.chestData = &chestData;
     worldOptions.lootTables = &lootTables;
     worldOptions.abilityData = &abilityData;
     worldOptions.spellData = &spellData;

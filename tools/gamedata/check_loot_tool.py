@@ -23,6 +23,8 @@ runs the document builder and the writer of the tool (main).
   negative-disparity       a KillExpModifier -2                               status 1, the file stays
   large-disparity          a MaxRewardLevelDelta 1001                         status 1, the file stays
   negative-bucket-odds     the odds -0.2 of a bucket candidate                status 1, the file stays
+  chest-root               a row of the chest variation table names a root    status 1, the file stays
+                           that no table has (stage 3.5b.1)
 The six cases after not-finite are the corrections of the findings F3 and F4 of the code review of stage 3.5a, the
 last three the correction of finding F13 of the code review of stage 3.3a (each value is outside the range of the
 backend, LootTables::check: the tool writes no file that the backend refuses).
@@ -33,7 +35,9 @@ id with no regard to the case; a bucket tag "Level:5" with the range 5 to 10000 
 "Level:49-59-59" (a typing fault of the game data) with the range 49 to 59; an empty odds cell is 1;
 an empty ProgressionCurrencyAmount is null; the flag text "TRULE" (a fact of the game data) is true; a
 variant vitals row has the loot data of its base row; only the tables that a vitals row reaches are in
-the document.
+the document. Format 2 (stage 3.5b.1): the root of each row of the chest variation table Gatherable_LootContainers is a root
+(chestRoots), but Empty and the roots of CHEST_ROOTS_NOT_IN_GAME; a variation table of a different name is not read; the container
+floor of each level; the loot limits.
 
 Usage: check_loot_tool.py WORK_FOLDER [CASE...]     status 0: each case (or each named case) gives its result
 """
@@ -87,6 +91,8 @@ def loot_table_sheet(case: str) -> FakeSheet:
         ["Test_Gear", "OR", "AddToRoll", "", "", "TRUE", "", "", "TestSword", ""],
         ["Test_Gear_Probs", "", "", "", "", "", "", "100000", "40000", ""],
         ["Test_Unused", "OR", "", "", "", "", "", "", "TestUnused", ""],
+        ["Test_ChestRoot", "AND", "AddToRoll", "MinPOIContLevel", "", "TRUE", "", "", "TestOre", ""],
+        ["Test_ChestRoot_Probs", "", "", "", "", "", "", "100", "0", ""],
     ])
 
 
@@ -122,7 +128,17 @@ def sheets(case: str) -> dict:
         lt.EXPERIENCE_TYPE: [FakeSheet("XPLevels", ["Level Number"] + [f"GSLimitT{tier}" for tier in range(1, 6)],
                                        [["0", "100-100", "100-100", "100-100", "100-100", "100-100"],
                                         ["1", "100-120", "100-130", "100-130", "100-130", "100-130"]])],
-        lt.VITALS_LEVEL_TYPE: [FakeSheet("VitalsLevels", ["Level", "AILootGSCeiling"], [["1", "100"], ["2", "120"]])],
+        lt.VITALS_LEVEL_TYPE: [FakeSheet("VitalsLevels", ["Level", "AILootGSCeiling", "ContainerLootGSFloor"],
+                                         [["1", "100", "100"], ["2", "120", "110"]])],
+        # Stage 3.5b.1: the chest variation table (its roots; Empty and a root of CHEST_ROOTS_NOT_IN_GAME are not roots), a variation
+        # table of a different name (not read), and the loot limits (exported).
+        lt.VARIATION_TYPE: [FakeSheet("Gatherable_LootContainers", ["VariantID", "LootTableComponent"],
+                                      [["Abandoned_Test_S", "Test_NoChestTable" if case == "chest-root" else "Test_ChestRoot"],
+                                       ["Quest_Test", "Empty"], ["Season_Test", "SummerMedley_DancefloorBoogie"]]),
+                            FakeSheet("Gatherable_Trees", ["VariantID", "LootTableComponent"], [["Tree_Test", "Test_NoTreeTable"]])],
+        lt.LIMIT_TYPE: [FakeSheet("LootLimits", ["LootLimitID", "CountLimit", "MinLimitSeconds", "MaxLimitSeconds", "LimitExpireSeconds",
+                                                 "MinLimitMult", "MaxLimitMult", "PityTickerOddsMod"],
+                                  [["TestLimit", "10", "", "", "86400", "86400", "86400", "0.2"]])],
         lt.BASE_TYPE: [FakeSheet("BaseVitals_Common", ["VitalsID", "CreatureType", "CanDropLoot", "LootDropChance",
                                                        "IgnoreLootDropModifier", "LootTableId", "LootTags", "NoExpNoCoin",
                                                        "KillEventIdOverride"],
@@ -143,8 +159,13 @@ def valid_values(document: dict) -> list[str]:
     tables = document["tables"]
     master = tables.get("Test_Master")
     common = tables.get("Test_Common")
-    if sorted(tables) != ["Test_Common", "Test_Gear", "Test_Master"]:
+    if sorted(tables) != ["Test_ChestRoot", "Test_Common", "Test_Gear", "Test_Master"]:
         wrong.append(f"the tables {sorted(tables)}")
+    if document.get("format") != 2 or document.get("chestRoots") != ["Test_ChestRoot"] \
+            or document.get("containerFloor") != [[1, 100], [2, 110]] \
+            or document.get("limits") != {"TestLimit": [10, 0.0, 0.0, 86400.0, 86400.0, 86400.0, 0.2]}:
+        wrong.append(f"the format 2 members {document.get('format')} {document.get('chestRoots')} {document.get('containerFloor')} "
+                     f"{document.get('limits')}")
     if master != [1, 1, 1000000, ["GlobalMod"], False, True, 0,
                   [["t", "Test_Common", 0, 1, 1, 0, 0], ["b", "Test_Weapons", 999900, 1, 1, 0, 0]]]:
         wrong.append(f"the master table {master}")
@@ -186,7 +207,7 @@ def main() -> int:
     failures = 0
     cases = ("valid", "unresolved-table", "unresolved-bucket", "base-table", "quantity-text", "reward-levels", "not-finite",
              "variant-base", "event-override", "creature-type", "negative-experience", "negative-factor", "bad-flag",
-             "negative-disparity", "large-disparity", "negative-bucket-odds")
+             "negative-disparity", "large-disparity", "negative-bucket-odds", "chest-root")
     for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")

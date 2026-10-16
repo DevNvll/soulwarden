@@ -295,7 +295,9 @@ and the stop are in [World and sessions](world-and-sessions.md).
   entity with an activation event of its own is active from that event, also when the slice marks it active at the start (the mage
   area: 1 s, the time at which the client shows the area; code review of stage 3.4f-C, finding AR-R5): the server time and the record
   of the client agree. The loader refuses a file of format 4 whose volume time does not agree with the delayed events of its entity
-  (case RAR5). An upright cylinder of the QueryShapeCylinder (the
+  (case RAR5). Format 5 (code review of stage 3.4f-D, finding SU-R3, case RSU3): each volume has the names of the parents of its entity,
+  and only an event of the entity or of a parent proves a time; an event of a different entity of the slice does not (the loader
+  refuses the file). A file of format 4 has no parents: the loader takes each event of the slice, as before. An upright cylinder of the QueryShapeCylinder (the
   mushroom: radius 1.5 m, height 4 m, its middle 0.5 m below the root) or a sphere. A character is in it when its capsule
   touches the volume (`Spells::in_area`). The spell row Radius (3 m) does not change the volume: the slice has no Spell
   component (client code 0x6877580 sets a shape only for a slice with one; static study STATIC-AREAS.md, Q3.2).
@@ -306,7 +308,9 @@ and the stop are in [World and sessions](world-and-sessions.md).
   application; `Spells::leave_area` takes only the rows with this area as the source). An entry again starts with the initial
   delay. Before each tick of a status of a status area, that one area looks at the character (`Spells::holds`; code review of stage
   3.4f-C, finding AR-R2, case RAR2): a character out of its active volume leaves it first, and its status goes with no last tick (the
-  world runs the statuses before the spells). Each step of an area looks only at the characters near it (the position index), each 100 ms or at the next
+  world runs the statuses before the spells). The area looks at the due time of each tick, also of each tick of the catch-up of a late
+  world step: an area whose life (its destroy event) or activity ended at that time holds no character (code review of stage 3.4f-D,
+  finding SU-R7, case RSU7: a mushroom gave one poison tick after its end at 26 s). Each step of an area looks only at the characters near it (the position index), each 100 ms or at the next
   application (a decision of an agent).
 - The damage source of the statuses (client code 0x3FE6500, 0x5C3C930): the area gives each status the creature and its core
   damage at the cast (the damage of its kind and level, `CreatureData::damage`; `DamageSource`). The status system makes the

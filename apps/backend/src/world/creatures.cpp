@@ -440,10 +440,15 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
     WorldClock::time_point end = effect.ends;
     if (same != creature.effects.end()) {
         // The same status again: the later end (StackMax 1 of the six abilities, and of the heals and the buffs of stage 3.4f-D). The ticks
-        // of a heal keep their times: the same row again gives no second tick (a decision of an agent; the rule of a character).
+        // of a heal keep their times: the same row again gives no second tick (a decision of an agent; the rule of a character). A tick
+        // that the old end stopped comes when the new end is later than it (review SU-R1): a tick is in the due list only before the end.
+        const WorldClock::time_point before = same->ends;
         same->ends = std::max(same->ends, effect.ends);
         same->source = effect.source;
         end = same->ends;
+        if (same->nextTick && same->tickRate.count() > 0 && *same->nextTick >= before && *same->nextTick < same->ends) {
+            due(*same->nextTick, entity.id, same->serial);
+        }
     } else {
         CreatureEffect added = effect;
         added.serial = ++m_nextEffect;
@@ -553,6 +558,17 @@ void Creatures::end_effects() {
 void Creatures::sweep(Entity& entity) {
     const WorldClock::time_point now = m_world.clock().now();
     Creature& creature = entity.creature;
+    // The ticks that are due before the end of an effect come before the effect ends: a late world step can take an earlier entry of
+    // the same creature first (review SU-R2). A death ends the ticks.
+    std::vector<std::pair<std::uint64_t, WorldClock::time_point>> pending;
+    for (const CreatureEffect& effect : creature.effects) {
+        if (!creature.dead && effect.ends <= now && effect.nextTick && *effect.nextTick < effect.ends) {
+            pending.emplace_back(effect.serial, *effect.nextTick);
+        }
+    }
+    for (const auto& [serial, at] : pending) {
+        effect_tick(entity, serial, at);
+    }
     bool stunEnded = false;
     bool shownEnded = false;
     std::vector<std::string> onTickEnded;
@@ -625,11 +641,14 @@ void Creatures::effect_tick(Entity& entity, std::uint64_t serial, WorldClock::ti
         effect = find_effect(); // A status of the tick changes the list of the effects.
     }
     if (effect != entity.creature.effects.end()) {
-        if (next < effect->ends && !entity.creature.dead) {
-            effect->nextTick = next;
-            due(next, entity.id, serial);
-        } else {
+        if (entity.creature.dead) {
             effect->nextTick.reset();
+        } else {
+            // The next tick on the cadence stays also after the end (review SU-R1); it is due only before the end.
+            effect->nextTick = next;
+            if (next < effect->ends) {
+                due(next, entity.id, serial);
+            }
         }
     }
 }

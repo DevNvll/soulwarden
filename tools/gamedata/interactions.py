@@ -160,6 +160,10 @@ POSITION_CLASS = uuid.UUID("6c2fc842-f451-4b45-9d7d-a6ee954df025")
 VITALS_CLASS = uuid.UUID("0c848755-1f41-4408-b2be-0a3627674f50")
 SPAWNER_CLASS = uuid.UUID("b52d0d52-99cd-41be-b6f7-d2519c15bf14")
 STATION_ROW_FIELDS = (field_id("CraftingTypes"),)
+# The classes of the elements of an empty m_condition (stage 3.5b.1): the container, the empty condition, and its element. Each chest
+# and each gathering node has such a condition with no text and no value.
+EMPTY_CONDITION_CLASSES = frozenset({uuid.UUID("9d45d855-d194-5c90-a293-c40eaafd7f0e"), uuid.UUID("41996a3d-446a-48a9-ac29-14d89e67594e"),
+                                     uuid.UUID("bebf6d8c-c3da-4812-9277-049d158d8612")})
 
 WORLD_TM = field_id("m_worldTM")
 LOCAL_TM = field_id("m_localTM")
@@ -602,8 +606,12 @@ class Template:
                 requires["progression"] = [progression_id, rank]
         if find_field(component, ONLY_ON_QUEST) is not None and flag_of(find_field(component, ONLY_ON_QUEST), what):
             requires["onlyOnQuest"] = True
+        # An empty condition is no requirement (stage 3.5b.1: each chest of master_lootcontainer and each gathering node has one): its
+        # elements are only of the classes of an empty condition (EMPTY_CONDITION_CLASSES), with no text and no value that is not 0.
+        # A condition of a different class (cf33e3aa-...: the doors of the main story quest) is a requirement.
         condition = find_field(component, CONDITION)
-        if condition is not None and (condition.children or condition.value):
+        if condition is not None and any((node.value is not None and any(node.value))
+                                         or node.type_id not in EMPTY_CONDITION_CLASSES for node in walk(condition)):
             requires["condition"] = True
         tag = text_of(find_field(component, TAG))
         line = find_field(component, LINE_OF_SIGHT)

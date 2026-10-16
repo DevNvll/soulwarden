@@ -191,7 +191,8 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   - The cancels (project rules, the same as a cast): a mark gives nothing when a different action replaced the status action (a stun, a
     knockdown, a command) or when the creature is dead or left (`statusMarksCancelled`). The target of the creature does not matter.
   - When (project rules, decisions of an agent: the task of the behavior tree that starts the action is not in the game files): before
-    the area attack, the shot, and the melee attack, when the creature is ready: its heal (a status of the action with a positive
+    the area attack, the shot, and the melee attack, when the creature is ready and has a target of a fight (a character or a summon:
+    code review of stage 3.4f-D, finding SU-R6; the area attack and the shot keep their player target): its heal (a status of the action with a positive
     HealthModifierPercent or Health) when its health is not above the low-health part of its slice (game data:
     m_lowHealthPercentThreshold of the Vitals component, 0.15 for the Cleric; the input LowHealth of the target curve `healally` uses
     that value), its buff (no heal part) when it does not have the buff; and not when it has a status of the action. Not before

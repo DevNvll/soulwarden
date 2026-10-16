@@ -553,8 +553,9 @@ void Behavior::think(Entity& creature, float seconds) {
         lose_target(creature, "the target is too far");
         return;
     }
-    // A status action of the slice (stage 3.4f-D): its heal at low health, its buff when it does not have it.
-    if (!body.statusActions.empty() && target->kind == EntityKind::player && think_status(creature, *target)) {
+    // A status action of the slice (stage 3.4f-D): its heal at low health, its buff when it does not have it. The target is each target of a
+    // fight, also a summon (code review of stage 3.4f-D, finding SU-R6): the action has no recipient but the creature.
+    if (!body.statusActions.empty() && think_status(creature, *target)) {
         return;
     }
     // An area attack (stage 3.4f-C) at a character: in the CastDistance of its spell, with a free line, when it is ready.

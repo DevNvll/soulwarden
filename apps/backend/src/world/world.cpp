@@ -76,7 +76,8 @@ World::World(const WorldClock& clock,
       m_spells(*this, options.spellData),
       m_projectiles(*this, options.projectileData, options.combatTables),
       m_stamina(*this),
-      m_interactions(*this, options.interactionData) {
+      m_interactions(*this, options.interactionData),
+      m_chests(*this, options.chestData) {
     m_random = options.randomSeed;
 }
 
@@ -138,6 +139,8 @@ void World::tick() {
         m_projectiles.tick();
         // The server children of the placements near the characters (stage 2.5b).
         m_interactions.tick();
+        // The claims of the chests whose reset time came (stage 3.5b.1).
+        m_chests.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -253,6 +256,8 @@ Entity& World::make_entity(const state::Character& character) {
     // expansion of the character before its level window and its mastery tree. After the insert of the entity: the
     // reward item of a DLC pack goes into the bag of the entity.
     m_ownership.entered(entity);
+    // The loot claims of the character on the chests (stage 3.5b.1): its rows, and its LootTracker.
+    m_chests.entered(entity);
     log::write("world: entity %016llx (actor %s) of character %s (%s) at %.2f %.2f %.2f",
                static_cast<unsigned long long>(entity.id),
                actor_text(entity.actor).c_str(),
@@ -274,6 +279,8 @@ void World::remove_entity(EntityId id) {
     // The committed interaction of a character ends with its entity (stage 2.5a: the users of the object).
     if (entity.kind == EntityKind::player) {
         m_interactions.left(entity);
+        // The open of a chest ends, and the claims leave the memory (stage 3.5b.1; the rows stay).
+        m_chests.left(entity);
     }
     // The auras that follow the entity end with it (stage 3.3b-S2b: no aura stays with no attachment).
     if (entity.kind == EntityKind::creature || entity.kind == EntityKind::player) {
@@ -989,6 +996,10 @@ void World::place(Entity& entity, const state::WorldPosition& position, bool est
     // 2.5b, finding ST-R3): only a character with one (O(1)).
     if (entity.kind == EntityKind::player && (entity.interaction || entity.serviceGrant)) {
         m_interactions.moved(entity);
+    }
+    // The LootTracker of the character at a new cell (stage 3.5b.1: the claims near it; O(1) when the cell is the same).
+    if (entity.kind == EntityKind::player) {
+        m_chests.moved(entity);
     }
 }
 

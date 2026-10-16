@@ -399,6 +399,25 @@ inline constexpr float kAdminInteractionRange = 30.0F;
 /** remove_object (stage 2.5b, the development routes only): `entity` (16 hexadecimal digits): a server child goes away. */
 [[nodiscard]] WorldCommand remove_object(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
+// The chest commands (stage 3.5b.1, world/chests.h, server/http/chest_commands.cpp).
+
+/** The chests of the admin state of a character: each chest this near to it (meters, horizontal). */
+inline constexpr float kAdminChestRange = 30.0F;
+
+/**
+ * @return The chests of a character (world thread): its open, its loot claims (the chest, the state, the seconds to the reset, the kept
+ *         roll), each chest that is `radius` or less from it (its kind, its rows, its state or the reason that it is unavailable, its
+ *         claim), and the counts of the system.
+ */
+[[nodiscard]] nlohmann::json chests_view(world::World& world, const std::string& character, float radius);
+/** clear_chest_claim: `chest` (the placement key of a chest). The claim of the character on it goes away (a character not in the world: its row). */
+[[nodiscard]] WorldCommand clear_chest_claim(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * set_chest_reset (a development aid of live check L8; the development routes only): `chest` and `seconds` (1 to 604800). The looted
+ * claim of a character in the world resets after that time, not at its time of the data.
+ */
+[[nodiscard]] WorldCommand set_chest_reset(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+
 /** @return The bag, the equipment, and the coin of a character (world thread), or no value when the store does not have it. */
 [[nodiscard]] std::optional<nlohmann::json> items_view(world::World& world, const std::string& character);
 

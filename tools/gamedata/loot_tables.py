@@ -97,8 +97,22 @@ DISPARITY_TYPE = "LevelDisparityData"
 EVENT_TYPE = "GameEventData"
 EXPERIENCE_TYPE = "ExperienceData"
 VITALS_LEVEL_TYPE = "VitalsLevelData"
+# Stage 3.5b.1: the loot roots of the chests (the loot container variation table) and the loot limits (exported, not used:
+# docs/systems/chests.md).
+VARIATION_TYPE = "VariationData"
+LIMIT_TYPE = "LootLimitData"
 USED_TYPES = (LOOT_TABLE_TYPE, LOOT_BUCKET_TYPE, VARIANT_TYPE, BASE_TYPE, REWARD_TYPE, MODIFIER_TYPE, DISPARITY_TYPE,
-              EVENT_TYPE, EXPERIENCE_TYPE, VITALS_LEVEL_TYPE)
+              EVENT_TYPE, EXPERIENCE_TYPE, VITALS_LEVEL_TYPE, VARIATION_TYPE, LIMIT_TYPE)
+# The loot container variation table of the chests (the variation component of slices/master_lootcontainer.dynamicslice; the chest
+# tool, chests.py): the root of each row. Each chest placement of the main world names a row of it (the census of chests.py). The
+# older table LootContainers names roots that no loot table has (POI_LootLarge and others) and no placement uses: not read.
+CHEST_VARIATION_TABLES = {"Gatherable_LootContainers": "LootTableComponent"}
+# The root of a chest with no loot (a quest or a script chest): no table.
+EMPTY_ROOT = "Empty"
+# Roots of the chest variation table that no loot table of the game has (facts of the game data of the supported build: rows of
+# seasonal and event props, Darkness_StarterPack, LNY_Tribute_Table_Variant_01, Season_05_Trial_Entrance_Dancefloor; no chest
+# placement of the main world names them). A different root with no table stops the tool.
+CHEST_ROOTS_NOT_IN_GAME = frozenset({"DarknessStarterPack", "Halloween_TreatBasket", "SummerMedley_DancefloorBoogie"})
 # The one table of each of these types that the rewards of a kill use (the game has more tables of some types).
 REWARD_TABLE = "Rewards"
 MODIFIER_TABLE = "RewardModifiers"
@@ -328,15 +342,59 @@ def read_rewards(sheets: dict[str, list[Sheet]]) -> dict:
         gear_score.append(ranges)
 
     vitals_levels = one_table(sheets, VITALS_LEVEL_TYPE, VITALS_LEVEL_TABLE)
-    for name in ("Level", "AILootGSCeiling"):
+    for name in ("Level", "AILootGSCeiling", "ContainerLootGSFloor"):
         column(vitals_levels, name)
     ceiling = []
+    floor = []
     for row in range(vitals_levels.row_count):
         what = f"row {row} of the table {VITALS_LEVEL_TABLE}"
-        ceiling.append([int(number_of(vitals_levels.source(row, "Level"), what)),
-                        int(number_of(vitals_levels.source(row, "AILootGSCeiling"), what))])
+        level = int(number_of(vitals_levels.source(row, "Level"), what))
+        ceiling.append([level, int(number_of(vitals_levels.source(row, "AILootGSCeiling"), what))])
+        # The gear score floor of a loot container of a level (stage 3.5b.1; research chests-ground-loot.md, "Loot and gear score").
+        floor.append([level, int(number_of(vitals_levels.source(row, "ContainerLootGSFloor"), what))])
     return {"rewards": rows, "modifiers": modifiers, "disparity": sorted(disparity), "gearScore": gear_score,
-            "lootCeiling": ceiling}
+            "lootCeiling": ceiling, "containerFloor": floor}
+
+
+def read_chest_roots(sheets: dict[str, list[Sheet]]) -> list[str]:
+    """@return The loot roots of the chests (stage 3.5b.1): each root of the loot container variation table, but Empty."""
+    roots: set[str] = set()
+    found = set()
+    for sheet in sheets[VARIATION_TYPE]:
+        root_column = CHEST_VARIATION_TABLES.get(sheet.name)
+        if root_column is None:
+            continue
+        found.add(sheet.name)
+        column(sheet, root_column)
+        for row in range(sheet.row_count):
+            root = sheet.source(row, root_column).strip()
+            if root and root != EMPTY_ROOT:
+                roots.add(root)
+    for name in CHEST_VARIATION_TABLES:
+        if name not in found:
+            raise Failure(f"the game copy has no variation table {name}")
+    return sorted(roots)
+
+
+def read_limits(sheets: dict[str, list[Sheet]]) -> dict:
+    """@return The loot limits of the game (stage 3.5b.1: exported, not used by the backend; docs/systems/chests.md)."""
+    limits = {}
+    for sheet in sheets[LIMIT_TYPE]:
+        for name in ("LootLimitID", "CountLimit", "MinLimitSeconds", "MaxLimitSeconds", "LimitExpireSeconds"):
+            column(sheet, name)
+        for row in range(sheet.row_count):
+            identifier = sheet.source(row, "LootLimitID").strip()
+            if not identifier:
+                continue
+            what = f"the loot limit {identifier}"
+            limits.setdefault(identifier, [int(number_of(sheet.source(row, "CountLimit"), what)),
+                                           rounded(number_of(sheet.source(row, "MinLimitSeconds"), what)),
+                                           rounded(number_of(sheet.source(row, "MaxLimitSeconds"), what)),
+                                           rounded(number_of(sheet.source(row, "LimitExpireSeconds"), what)),
+                                           rounded(number_of(sheet.source(row, "MinLimitMult"), what)),
+                                           rounded(number_of(sheet.source(row, "MaxLimitMult"), what)),
+                                           rounded(number_of(sheet.source(row, "PityTickerOddsMod"), what))])
+    return dict(sorted(limits.items()))
 
 
 def read_vitals(sheets: dict[str, list[Sheet]]) -> tuple[list, dict, dict]:
@@ -541,7 +599,7 @@ def read_loot(sheets: dict[str, list[Sheet]], roots: list[str]) -> tuple[dict, d
 def build_tables(sources: Sources) -> dict:
     credit = read_credit(sources)
     sheets = read_sheets(sources)
-    document = {"format": 1}
+    document = {"format": 2}
     document.update(read_rewards(sheets))
     bases, vitals, vitals_counts = read_vitals(sheets)
     wanted_events = {KILL_EVENT.lower()} | {base[8].lower() for base in bases if base[8]}
@@ -554,8 +612,14 @@ def build_tables(sources: Sources) -> dict:
     absent_types = sorted({base[1] for base in bases if base[1] and base[1] not in document["modifiers"]})
     if absent_types:
         raise Failure("the reward modifiers have no creature type " + ", ".join(absent_types))
-    roots = sorted({base[5] for base in bases if base[5]})
+    chest_roots = read_chest_roots(sheets)
+    roots = sorted({base[5] for base in bases if base[5]} | set(chest_roots))
     tables, buckets, loot_counts = read_loot(sheets, roots)
+    # A chest root of the variation tables with no table (stage 3.5b.1): only the roots of CHEST_ROOTS_NOT_IN_GAME.
+    for root in chest_roots:
+        if root.lower() in loot_counts["unresolved"] and root in CHEST_ROOTS_NOT_IN_GAME:
+            del loot_counts["unresolved"][root.lower()]
+    chest_roots = [root for root in chest_roots if root not in CHEST_ROOTS_NOT_IN_GAME]
     # A vitals row whose table the loot tables do not have, and a reference that does not resolve: the game has no
     # such table. The tool stops: a table that lost a row must not make a file that looks complete.
     if loot_counts["unresolved"]:
@@ -568,11 +632,15 @@ def build_tables(sources: Sources) -> dict:
     document["vitals"] = vitals
     document["tables"] = tables
     document["buckets"] = buckets
+    names = {name.lower(): name for name in tables}
+    document["chestRoots"] = [names[root.lower()] for root in chest_roots]
+    document["limits"] = read_limits(sheets)
     items = {entry[1].lower() for table in tables.values() for entry in table[7] if entry[0] == "i"}
     items |= {candidate[0].lower() for candidate in buckets.values() for candidate in candidate}
     document["counts"] = {"bases": len(bases), "vitals": len(vitals), "basesThatDropLoot": sum(1 for base in bases if base[2] and base[5]),
                           "tables": len(tables), "buckets": len(buckets), "items": len(items),
-                          "noExpNoCoin": sum(1 for base in bases if base[7]), **vitals_counts,
+                          "noExpNoCoin": sum(1 for base in bases if base[7]), "chestRoots": len(chest_roots),
+                          "limits": len(document["limits"]), **vitals_counts,
                           **{key: value for key, value in loot_counts.items() if key != "unresolved"}}
     return document
 

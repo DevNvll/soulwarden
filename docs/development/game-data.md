@@ -272,6 +272,14 @@ backend. The tool of each system is also in the document of that system.
   form, indexes, or counts are not correct, as a whole (cases IR4, SC8), and it reads a file of format 1 with no server child;
   without it the backend makes no station, refuses each request of an interaction, and a read lore page is not kept:
   [Interactions](../systems/interactions.md)).
+- `chest-data.json` (stage 3.5b.1, `tools/gamedata/chests.sh`, [Chests](../systems/chests.md)): each chest placement of the main world
+  (5,519 of the 49 regions): its key (the placement UUID), its managed actor id, its place, its variation row of
+  `Gatherable_LootContainers`, its gatherable row (the open time, the reset values, the restrictions), its loot root, the loot tags and the
+  content level of its territories, and its state: `ordinary` (5,149: a player can open it) or `unavailable` with its reason (370: a lock,
+  a key, a status, a quest; stage 3.5b.3 and 1.8); the rules of the base attributes of a player (the reset of 60 minutes, the count of 60);
+  the census of the gatherable records of the layer metadata; 3.6 MB. The tool stops with no file for a source that is not complete or
+  not consistent (`check_chests_tool.py`, case LC9). The backend refuses a file whose form, keys, gatherables, times, or places are not
+  correct, as a whole; without it no chest opens (the request of a chest gets the refusal of the interaction).
 
 ## Commands
 
@@ -290,6 +298,7 @@ tools/gamedata/spells.sh             # one time: spell entity data for the backe
 tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots; 72 KB, 10 s); needs an Oodle source
 tools/gamedata/weapon-actions.sh     # one time: the attack graphs and the abilities of the melee weapons for the backend (fragments, transitions, strikes, lengths; 0.4 MB, 5 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
+tools/gamedata/chests.sh             # one time: the chests of the world for the backend (placements, gatherable rows, loot roots, territories; 3.6 MB); needs an Oodle source
 tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, the stations, ...; 25 MB, 2 to 4 minutes); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
@@ -297,6 +306,19 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage 3.5b.1 adds `chest-data.json` and changes `loot-tables.json` (format 2), `interaction-data.json` (still format 2), and
+  `spell-data.json` (format 5). `loot-tables.json` format 2: also the loot roots of the chests (`chestRoots`: the LootTableComponent of
+  each row of `Gatherable_LootContainers`, 64), the loot limits (`limits`: LootLimits, 338 rows, exported only: no chest table of this stage
+  has a limit condition), and the container floor of each level (`containerFloor`: ContainerLootGSFloor of VitalsLevels, 80 levels); the
+  tool stops for a chest root with no table, but for the three roots of `CHEST_ROOTS_NOT_IN_GAME`, and the loader refuses a chest root
+  that names no table; a file of format 1 loads, and then a chest has no loot (the backend writes a warning). `interactions.py`: a
+  condition of a bound is a requirement only when its node has a value (a nonzero byte) or a class that is not one of the three empty
+  condition classes (`EMPTY_CONDITION_CLASSES`): before, each chest and each gathering node had a condition requirement, and the backend
+  refused each open; now 20 bounds keep their condition (the doors of quests). `spells.py` format 5 (code review of stage 3.4f-D, finding
+  SU-R3): each volume has the names of the parents of its entity (1,001 volumes have parents); the loader of this stage takes format 4 too
+  (with no check of the parents). `creature_behavior.py` (finding SU-R4): a cast of a spell of the list `areaSpells` with no spell row, no
+  slice asset, or no slice stops the tool; the `creatures.json` of the retail data does not change (the same bytes). Write the four files
+  again with the tools of the stage.
 - Stage 3.4f-D changes `spell-data.json` (still format 4) and `creatures.json` (still format 3). `spells.py`: a volume whose own entity
   has an activation event at the init has the time of the earliest activation of it or of a parent, also when the slice marks it active
   at the start (code review of stage 3.4f-C, finding AR-R5: 11 volumes of the build change, among them the mage area, 0 to 1 s); a size

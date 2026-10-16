@@ -11,6 +11,7 @@
 #include "gamedata/item_catalog.h"
 #include "gamedata/loot_tables.h"
 #include "world/entity.h"
+#include "world/inventory.h"
 #include "world/load_meter.h"
 #include "world/world_clock.h"
 
@@ -70,6 +71,10 @@ inline constexpr const char* kEnemyLevelTag = "enemylevel";
 inline constexpr const char* kContentLevelTag = "mincontlevel";
 inline constexpr const char* kEnemyContentLevelTag = "minenemycontlevel";
 inline constexpr const char* kGlobalModTag = "globalmod";
+/** The numeric tags of a loot container (stage 3.5b.1). */
+inline constexpr const char* kPoiLevelTag = "poilevel";
+inline constexpr const char* kContainerLevelTag = "containerlevel";
+inline constexpr const char* kPoiContentLevelTag = "minpoicontlevel";
 } // namespace reward_rules
 
 /** One item of a roll. */
@@ -83,9 +88,17 @@ struct LootDrop {
 /** What a roll knows: the levels and the tags. */
 struct LootContext {
     std::uint32_t characterLevel{1};
+    /** The level of the creature, or the content level of a loot container (stage 3.5b.1). */
     std::uint32_t creatureLevel{1};
-    /** The loot tags of the creature (its vitals row), in lower case. */
+    /** The loot tags of the creature (its vitals row), or of the territories of a chest. */
     std::vector<std::string> tags;
+    /**
+     * A loot container (a chest, stage 3.5b.1; docs/systems/chests.md): the numeric tags POILevel and ContainerLevel are the content
+     * level (`creatureLevel`), MinPOIContLevel is the lower one of the two levels (as MinContLevel), and the gear score of an item of a
+     * table with UseLevelGS has the container floor of the level (ContainerLootGSFloor) as its smallest value, not the ceiling of a
+     * creature (AILootGSCeiling).
+     */
+    bool container{false};
 };
 
 /** The reward of one character for one kill. */
@@ -155,6 +168,13 @@ public:
      */
     std::vector<LootDrop> roll(const gamedata::LootVitals& vitals, const LootContext& context, bool forced,
                                float creditLoot = 1.0F);
+    /** Rolls a loot table with no outer drop chance (stage 3.5b.1: the root of a chest; `context.container`). */
+    std::vector<LootDrop> roll_root(std::uint32_t table, const LootContext& context);
+    /**
+     * @return The items of a grant for the drops of a roll: an item with perk places gets one instance for each unit, each with its own
+     *         perk roll (stage 1.3b; world/perk_roll.h) at the level of the character; each other item one entry with its quantity.
+     */
+    std::vector<GrantItem> grant_items(const std::vector<LootDrop>& drops, std::uint32_t characterLevel);
 
     /** Development switch: the outer drop chance and the coin chance of the kills of a character pass. */
     void set_forced(const std::string& characterId, bool forced);

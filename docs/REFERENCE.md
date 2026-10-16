@@ -68,8 +68,9 @@ the attributes, the skills, the nodes and the ability bars (`assign_node`,
 `remove_status`), the cast of an ability and the spell entities (`cast_ability`,
 `end_spells`), a shot of the weapon in the hand (`shoot`), and the health of a character, for the
 creatures near it, and for a travel, and the interaction commands (`set_object_enabled` for an object 30 m or less from the
-character, `cancel_interaction`; stage 2.5a). The state of a character has its DLC (member `ownership`, stage 1.1b) and its
-interactions (member `interactions`: its committed interaction and the objects near it, stage 2.5a). The backend
+character, `cancel_interaction`; stage 2.5a), and `clear_chest_claim` (stage 3.5b.1). The state of a character has its DLC (member
+`ownership`, stage 1.1b), its interactions (member `interactions`: its committed interaction and the objects near it, stage 2.5a), and
+its chests (member `chests`: its open, its loot claims, and the chests near it, stage 3.5b.1). The backend
 also answers the entitlement service of the client (the sync and the list of the entitlements of the account, protocol
 notes 2 and 4.29).
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
@@ -130,6 +131,7 @@ tools/gamedata/weapon-actions.sh   # one time: the attack graphs of the melee we
 tools/gamedata/perks.sh            # one time: perk data (perks, buckets, item perk places, consumables, equip load; without it an item has no perk)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
 tools/gamedata/interactions.sh     # one time: the interaction objects of the world (without them each use of an object is refused); 24 MB, 4 minutes; needs an Oodle library
+tools/gamedata/chests.sh           # one time: the chests of the world (without them no chest opens); 3.6 MB; needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
@@ -180,7 +182,9 @@ world changes its rows in the database. For the objects of the world (stage 2.5a
 `interactions CHARACTER [METERS]`, `object CHARACTER KEY on|off`, and `interaction cancel
 CHARACTER`; stage 2.5b: `fixture CHARACTER NAME [DX DY DZ] [--yaw D] [--permission N]` (a
 fixture near a character: `powderKeg`, the timed option Trigger; `campT5`; `camp`) and
-`fixture remove CHARACTER ENTITY`. For a fight: `ignore CHARACTER on|off` (the
+`fixture remove CHARACTER ENTITY`; stage 3.5b.1: `chests CHARACTER [METERS]` (the open, the loot claims, and the chests near a
+character), `chest clear CHARACTER KEY` (remove a loot claim: the chest opens again), and `chest reset CHARACTER KEY SECONDS` (a
+development aid: a looted claim resets after that time, not at the time of the data). For a fight: `ignore CHARACTER on|off` (the
 creatures ignore a character), `heal CHARACTER` (its full health; a dead character lives
 again at its place), `hurt CHARACTER AMOUNT` (its health goes down), and `message CHARACTER
 TYPE HEX` (one message with bytes of the caller to the client of a character). For the
@@ -646,14 +650,24 @@ button on "Confirm").
   animations of a chair, a bed, or a pet are accepted (a chair takes one character). The
   crafting stations of the settlements (stage 2.5b) are at their places: E (Craft) at a station
   opens the crafting screen of the game (a craft does not work yet: stage 3.7). Each other
-  option (storage, gathering, a shop, an inn, a teleport door, a camp) is refused: its system is
-  not there yet. In a development run, `tools/world interactions NAME` lists the objects near a
+  option (storage, a gathering node, a shop, an inn, a teleport door, a camp) is refused: its system is
+  not there yet (the chests: stage 3.5b.1, below). In a development run, `tools/world interactions NAME` lists the objects near a
   character with their state (also the stations and the facts of a station use),
   `tools/world object NAME KEY on|off` hides or shows the prompt of an object,
   `tools/world interaction cancel NAME` ends the interaction of a character, and
   `tools/world fixture NAME powderKeg 0 2 0 --permission 1` puts a powder keg near a character:
   E (Ignite Fuse), held for 5 seconds, completes one time (a count; no explosion)
   ([Interactions](systems/interactions.md)).
+- Chests (stage 3.5b.1). E at an ordinary chest of the world (a supply cache, a provisions crate, an alchemy chest, an elite supply
+  chest: 5,149 chests of the data) starts its open: the ring of the prompt runs the open time of the data (2.5 s; 5 s for an elite
+  chest), and at its end the character gets the loot of the root of the chest (the content level and the loot tags of its territories,
+  the container floor of the gear score), with the loot notice. The chest is then looted for that character only (no prompt) until its
+  reset: 60 minutes, an elite chest 82,800 s (23 hours), on the wall clock (a restart of the backend keeps it). A walk out of the
+  range, a hit, a release of E, a travel, or the death before the end gives nothing. When the bag has no place for the whole loot, no
+  item comes, the roll stays for the next open, and the chest stays closed. A chest with a key, a lock, a quest, or an event (370 chests
+  of the data) has no prompt (stage 3.5b.3). In a development run `tools/world chests NAME [METERS]` lists the claims and the chests
+  near a character, `tools/world chest clear NAME KEY` removes a claim, and `tools/world chest reset NAME KEY SECONDS` makes a looted
+  claim reset sooner ([Chests](systems/chests.md)).
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is

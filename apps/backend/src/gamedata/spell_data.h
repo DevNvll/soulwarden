@@ -116,6 +116,13 @@ struct SpellVolume {
     float height{0.0F};
     float offset{0.0F};
     float inactiveAfter{-1.0F};
+    /**
+     * Format 5 (code review of stage 3.4f-D, finding SU-R3): the names of the parent entities of `entity`, the nearest one first. The
+     * loader takes the times of the volume only from the events of the entity and of these parents. `parentsKnown` false: a file of an
+     * older format (the loader then takes each event of the slice).
+     */
+    std::vector<std::string> parents{};
+    bool parentsKnown{false};
 };
 
 /** One MomentaryOffenseComponent of a spell slice (format 2): its entity, its damage row, and the radius of its sphere. */
@@ -238,9 +245,9 @@ struct SpellSlice {
 /** The data as plain values: the content of the file, and what a test sets. */
 struct SpellTables {
     /**
-     * The format of the file (1: stage 3.3b-S2a, 2: stage 3.3b-S2b, 3: stage 3.3b-M2, 4: stage 3.4f-C). In format 2 each Vitals slot (type
-     * 15) of a slice has its vitals row (code review of stage 1.1b, finding F2): a file with a Vitals slot and no vitals row is refused. A
-     * test sets 2.
+     * The format of the file (1: stage 3.3b-S2a, 2: stage 3.3b-S2b, 3: stage 3.3b-M2, 4: stage 3.4f-C, 5: the parents of a volume, code
+     * review of stage 3.4f-D, finding SU-R3). In format 2 each Vitals slot (type 15) of a slice has its vitals row (code review of stage
+     * 1.1b, finding F2): a file with a Vitals slot and no vitals row is refused. A test sets 2.
      */
     std::uint32_t format{2};
     std::vector<SpellSlice> slices;

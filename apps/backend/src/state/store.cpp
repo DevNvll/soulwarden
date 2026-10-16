@@ -14,7 +14,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 8;
+constexpr int kSchemaVersion = 9;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -189,9 +189,42 @@ CREATE TABLE IF NOT EXISTS entitlement_rewards(
 );
 )sql";
 
+/**
+ * Version 9 (stage 3.5b.1): the loot claims of the chests. `loot_claims` has the claim of a character on a chest (the character id is
+ * the owner key, the object key the placement UUID of the chest): its state (1 Rolled, 2 Looted), its generation, and its times in
+ * Unix milliseconds. `loot_claim_items` has the items of a rolled claim that the character did not get yet (a full bag: the roll is
+ * kept, docs/systems/chests.md).
+ */
+constexpr const char* kMigration9 = R"sql(
+CREATE TABLE IF NOT EXISTS loot_claims(
+    character_id TEXT NOT NULL,
+    object_key TEXT NOT NULL,
+    state INTEGER NOT NULL,
+    generation INTEGER NOT NULL,
+    rolled_at INTEGER NOT NULL,
+    looted_at INTEGER NOT NULL DEFAULT 0,
+    reset_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(character_id, object_key)
+);
+CREATE TABLE IF NOT EXISTS loot_claim_items(
+    character_id TEXT NOT NULL,
+    object_key TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    item_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    gear_score INTEGER,
+    perk1 TEXT NOT NULL DEFAULT '',
+    perk2 TEXT NOT NULL DEFAULT '',
+    perk3 TEXT NOT NULL DEFAULT '',
+    perk4 TEXT NOT NULL DEFAULT '',
+    perk5 TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(character_id, object_key, position)
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
-constexpr const char* kCharacterTables[] = {"items", "currencies", "character_progress", "progressions",
-                                            "ability_nodes", "ability_bars", "achievements", "entitlement_rewards"};
+constexpr const char* kCharacterTables[] = {"items", "currencies", "character_progress", "progressions", "ability_nodes",
+                                            "ability_bars", "achievements", "entitlement_rewards", "loot_claims", "loot_claim_items"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -389,6 +422,13 @@ bool Store::migrate() {
     }
     if (version < 8) {
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration8) || !execute("PRAGMA user_version=8")
+            || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 9) {
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration9) || !execute("PRAGMA user_version=9")
             || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
@@ -948,6 +988,122 @@ bool Store::record_entitlement_reward(const std::string& characterId, const std:
     return insert_texts("INSERT OR IGNORE INTO entitlement_rewards(character_id, alias, granted_date) VALUES(?1,?2,?3)",
                         characterId, {alias}, "", &added)
            && added.size() == 1;
+}
+
+std::vector<LootClaimRow> Store::list_loot_claims(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<LootClaimRow> claims;
+    {
+        Statement statement(m_database,
+                            "SELECT object_key, state, generation, rolled_at, looted_at, reset_at FROM loot_claims WHERE character_id=?1 "
+                            "ORDER BY object_key");
+        statement.bind(1, characterId);
+        while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+            LootClaimRow claim;
+            claim.objectKey = column_text(statement.handle, 0);
+            claim.state = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 1));
+            claim.generation = static_cast<std::uint64_t>(sqlite3_column_int64(statement.handle, 2));
+            claim.rolledAt = sqlite3_column_int64(statement.handle, 3);
+            claim.lootedAt = sqlite3_column_int64(statement.handle, 4);
+            claim.resetAt = sqlite3_column_int64(statement.handle, 5);
+            claims.push_back(std::move(claim));
+        }
+    }
+    Statement statement(m_database,
+                        "SELECT object_key, item_id, quantity, gear_score, perk1, perk2, perk3, perk4, perk5 FROM loot_claim_items "
+                        "WHERE character_id=?1 ORDER BY object_key, position");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        const std::string key = column_text(statement.handle, 0);
+        const auto claim = std::find_if(claims.begin(), claims.end(), [&](const LootClaimRow& row) { return row.objectKey == key; });
+        if (claim == claims.end()) {
+            continue; // An item row with no claim row: not a part of a claim.
+        }
+        ClaimItemRow item;
+        item.itemId = column_text(statement.handle, 1);
+        item.quantity = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 2));
+        if (sqlite3_column_type(statement.handle, 3) != SQLITE_NULL) {
+            item.gearScore = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 3));
+        }
+        for (int place = 0; place < 5; ++place) {
+            item.perks[static_cast<std::size_t>(place)] = column_text(statement.handle, 4 + place);
+        }
+        claim->items.push_back(std::move(item));
+    }
+    return claims;
+}
+
+bool Store::write_loot_claim(const std::string& characterId, const LootClaimRow& claim) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    bool ok = true;
+    {
+        Statement statement(m_database,
+                            "INSERT OR REPLACE INTO loot_claims(character_id, object_key, state, generation, rolled_at, looted_at, reset_at) "
+                            "VALUES(?1,?2,?3,?4,?5,?6,?7)");
+        statement.bind(1, characterId);
+        statement.bind(2, claim.objectKey);
+        sqlite3_bind_int64(statement.handle, 3, claim.state);
+        sqlite3_bind_int64(statement.handle, 4, static_cast<sqlite3_int64>(claim.generation));
+        sqlite3_bind_int64(statement.handle, 5, claim.rolledAt);
+        sqlite3_bind_int64(statement.handle, 6, claim.lootedAt);
+        sqlite3_bind_int64(statement.handle, 7, claim.resetAt);
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    {
+        Statement statement(m_database, "DELETE FROM loot_claim_items WHERE character_id=?1 AND object_key=?2");
+        statement.bind(1, characterId);
+        statement.bind(2, claim.objectKey);
+        ok = ok && sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    for (std::size_t index = 0; index < claim.items.size() && ok; ++index) {
+        const ClaimItemRow& item = claim.items[index];
+        Statement statement(m_database,
+                            "INSERT INTO loot_claim_items(character_id, object_key, position, item_id, quantity, gear_score, perk1, perk2, "
+                            "perk3, perk4, perk5) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)");
+        statement.bind(1, characterId);
+        statement.bind(2, claim.objectKey);
+        sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(index));
+        statement.bind(4, item.itemId);
+        sqlite3_bind_int64(statement.handle, 5, item.quantity);
+        if (item.gearScore) {
+            sqlite3_bind_int64(statement.handle, 6, *item.gearScore);
+        } else {
+            sqlite3_bind_null(statement.handle, 6);
+        }
+        for (int place = 0; place < 5; ++place) {
+            statement.bind(7 + place, item.perks[static_cast<std::size_t>(place)]);
+        }
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    if (!ok) {
+        log::write("store: no write of the loot claim of character %s on %s: %s", characterId.c_str(), claim.objectKey.c_str(),
+                   sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+bool Store::delete_loot_claims(const std::string& characterId, const std::vector<std::string>& objectKeys) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    bool ok = true;
+    for (const std::string& key : objectKeys) {
+        for (const char* sql : {"DELETE FROM loot_claims WHERE character_id=?1 AND object_key=?2",
+                                "DELETE FROM loot_claim_items WHERE character_id=?1 AND object_key=?2"}) {
+            Statement statement(m_database, sql);
+            statement.bind(1, characterId);
+            statement.bind(2, key);
+            ok = ok && sqlite3_step(statement.handle) == SQLITE_DONE;
+        }
+    }
+    if (!ok) {
+        log::write("store: no removal of the loot claims of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
 }
 
 bool Store::write_skills(const std::string& characterId, const SkillRows& rows) {

@@ -46,6 +46,11 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
 
 ## Traps
 
+- The Windows headers of the MinGW build define `near` and `far` as macros: a member or a variable with such a name in a file that a
+  route includes after them does not compile (`SOULWARDEN_BACKEND_TARGET=windows`; stage 3.5b.1: `ChestsView::nearby`). Build the
+  Windows target before a commit of a new header.
+- A new member of a struct that the tests fill by position (`SpellVolume`) needs a default initializer (`{}`), else each such fixture
+  gives the warning `-Wmissing-field-initializers`.
 - Case FT9 has a time limit of 1 s for 1,000 ticks with 50 fights (3.6 ms in one run).
 - `log::Context` keeps a pointer to its text: give it a string in a variable, not a
   temporary (a log line of the rewards had bytes of free memory at its end before this
@@ -111,6 +116,15 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`InteractionBlock`, `InputEntry::interaction`), and the state decoder knows the states 3752 and 2930. IT10 runs
   `tools/gamedata/check_interactions_tool.py`. IT5 adds a trigger to a database file (a refused row); IT8 has a time limit of 300 ms
   for 400,000 lookups and of 2 s for 300 reports with a catalog of 90,008 objects.
+- Stage 3.5b.1 adds the cases LC1 to LC9 (`tests/chest_tests.cpp`: the chest file and the loot tables of format 2, the open and its
+  ends, the context of the roll, the claim in the store and its resets on a synthetic clock with the elite value 82,800 s of the data, two
+  characters on one chest, a refused write and a full bag, the gates, the load, and the check of the chest tool) and RSU1 to RSU7
+  (`tests/review_support_tests.cpp`: the corrections of the code review of stage 3.4f-D, findings SU-R1 to SU-R7; each one fails on the
+  tree of stage 3.4f-D and passes with the correction; RSU4 runs the cases `review-support-*` of `check_creature_tool.py`). The fixture of
+  the LC cases is in `tests/support/chest_fixture.h` (namespace `tests::chests`: made-up chests, gatherables, and loot tables of the form
+  of the game data; `ChestShop`). The state decoder knows the states 81 and 982. LC8 has 100,000 far chest definitions and 50 characters
+  with a limit of 3 s, written in the case before it runs; LC9 runs `tools/gamedata/check_chests_tool.py`. A test host gets chest data
+  with `ServerHost::with_chests`.
 - Stage 3.4f-D adds the cases CRH1 to CRH6 and CRH9 (`tests/creature_support_tests.cpp`: two Clerics that heal themselves with two
   sessions, the cap and a duplicate and the rules of the behavior, the buff of the hound and its hit, the expiry, the dispel, the death
   of the source, a knockdown before the mark, the areas at the caster with the rotation of the caster, the loader of the status actions,

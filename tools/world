@@ -48,6 +48,14 @@ Usage:
   tools/world object CHARACTER KEY on|off       enable or disable an object (KEY: its placement UUID):
                                                 each session near it gets the state; its prompt goes
                                                 away, and a request is refused
+  tools/world chests CHARACTER [METERS]         the chests of a character (stage 3.5b.1): its open, its loot claims (the
+                                                state, the time to the reset, a kept roll), and each chest near it (default
+                                                30 m) with its kind, its open time, and its state or the reason that it is
+                                                unavailable
+  tools/world chest clear CHARACTER KEY         remove the claim of a character on a chest (KEY: the placement UUID): the
+                                                character can open it again
+  tools/world chest reset CHARACTER KEY SECONDS DEVELOPMENT AID (live check L8): the looted claim resets after SECONDS
+                                                (not the rule of the data)
   tools/world interaction cancel CHARACTER      end the committed interaction of a character: its client
                                                 gets the message 3746
   tools/world fixture CHARACTER NAME [DX DY DZ] [--yaw DEGREES] [--permission N]
@@ -388,6 +396,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         document = {"message": body}
     if isinstance(document, dict) and "objectEntities" in document and "objects" in document:
         show_interactions(document)
+    elif isinstance(document, dict) and "trackerEntries" in document and "claims" in document:
+        show_chests(document)
     elif isinstance(document, dict) and "weapons" in document:
         show_progress(document)
     elif isinstance(document, dict) and "entitlements" in document and "achievements" in document:
@@ -715,6 +725,34 @@ def show_interactions(document: dict) -> None:
           f"begins {counts.get('begins', 0)}, ends {counts.get('ends', 0)}; server children {counts.get('serverChildren', 0)} "
           f"(made {counts.get('made', 0)}, removed {counts.get('removed', 0)}); timed uses {counts.get('timed', 0)}, completions "
           f"{counts.get('completions', 0)}")
+
+
+def show_chests(document: dict) -> None:
+    """Prints the chests of a character (stage 3.5b.1): its open, its claims, and the chests near it."""
+    if not document.get("inWorld"):
+        print("the character is not in the world")
+        return
+    if not document.get("data"):
+        print("the backend has no chest data: make the file with tools/gamedata/chests.sh")
+    open_chest = document.get("open")
+    if open_chest:
+        print(f"open: {open_chest['chest']} for {open_chest['seconds']:.1f} s ({open_chest['secondsLeft']:.1f} s left)")
+    for claim in document["claims"]:
+        items = ", ".join(f"{item['quantity']} {item['item']}" for item in claim["items"])
+        when = f"reset in {claim['resetSeconds']:.0f} s" if claim["state"] == "looted" else f"kept roll: {items}"
+        print(f"claim {claim['chest']}  {claim.get('kind', '?'):<9} {claim.get('variant', ''):<24} {claim['state']:<7} {when} "
+              f"(claim {claim['generation']})")
+    for chest in document["near"]:
+        state = "ordinary" if chest["available"] else f"UNAVAILABLE: {chest['reason']}"
+        level = chest["contentLevel"] if chest["contentLevel"] is not None else "-"
+        claim = f"  claim {chest['claim']}" if chest["claim"] else ""
+        print(f"{chest['chest']}  {chest['kind']:<9} {chest['distance']:6.1f} m  {chest['variant']:<24} {chest['gatherable']:<22} "
+              f"{chest['openSeconds']:.1f} s  {chest['root']:<26} tags {','.join(chest['tags']) or '-'} level {level}  {state}{claim}")
+    counts = document.get("counts", {})
+    print(f"{len(document['claims'])} claim(s), {len(document['near'])} chest(s) in {document['radius']:.0f} m, {document['trackerEntries']} "
+          f"LootTracker entries; opens {counts.get('begins', 0)}, completions {counts.get('completions', 0)}, cancels "
+          f"{counts.get('cancels', 0)}, kept rolls {counts.get('kept', 0)}, resets {counts.get('resets', 0)}, refusals "
+          f"{counts.get('refusals', {})}")
 
 
 def fetch(data_dir: Path, path: str) -> dict:
@@ -1310,6 +1348,14 @@ def main() -> None:
         if options["--permission"]:
             query += f"&permission={whole(options['--permission'], 'the permission rule')}"
         request(data_dir, "POST", f"/v1/dev/interactions/fixture?{query}")
+    elif command == "chests" and len(arguments) in (2, 3):
+        radius = f"&radius={arguments[2]}" if len(arguments) == 3 else ""
+        request(data_dir, "GET", f"/v1/dev/chests?character={character_id(data_dir, arguments[1])}{radius}")
+    elif command == "chest" and len(arguments) == 4 and arguments[1] == "clear":
+        request(data_dir, "POST", f"/v1/dev/chests/clear?character={character_id(data_dir, arguments[2])}&chest={arguments[3]}")
+    elif command == "chest" and len(arguments) == 5 and arguments[1] == "reset":
+        request(data_dir, "POST", f"/v1/dev/chests/reset?character={character_id(data_dir, arguments[2])}&chest={arguments[3]}"
+                                  f"&seconds={arguments[4]}")
     elif command == "interaction" and len(arguments) == 3 and arguments[1] == "cancel":
         request(data_dir, "POST", f"/v1/dev/interactions/cancel?character={character_id(data_dir, arguments[2])}")
     elif command == "heal" and len(arguments) == 2:

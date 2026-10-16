@@ -104,7 +104,8 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   player shows it). The attribute state, the three skill states, the cooldown state (stage
   3.3a), the charge state of the heart rune (stage 1.3b, slot 48), the speed table (stage
   3.3b-S2a, slot 43; [Status effects](status-effects.md)), and the Stamina state (stage 3.4f-B,
-  slot 42, type 4297; [Stamina and dodge](stamina-and-dodge.md)) are for the owner only.
+  slot 42, type 4297; [Stamina and dodge](stamina-and-dodge.md)), and the LootTracker state (slot 33, type 982) and the Gathering state
+  (slot 36, type 81) of stage 3.5b.1 ([Chests](chests.md)) are for the owner only.
   The status state of a creature (stage 3.3a) has only the observer view. The status state of
   a player (stage 3.3b-S1, slot 44) has the two views: the owner gets its maps, an observer the
   public statuses ([Status effects](status-effects.md)). The Player state of the owner has the
@@ -187,7 +188,9 @@ tools/world remove NAME              # take that entity out of the world
   bytes)` with a run that works before you look for a fault in a state.
 - One wrong byte in a state fragment makes the read of the bundle fail in the client (game
   log: `Failure during read of ReplicatedStateBundle`), and the other records of that bundle
-  are lost. Make the bytes of `tools/world fragment` with a script, not by hand.
+  are lost. Make the bytes of `tools/world fragment` with a script, not by hand. From stage 3.5b.1 `entity=` of the route of
+  `tools/world fragment` also takes an entity of a level object (made by `tools/world object CHARACTER KEY on`): a probe of a state of a
+  chest object (live check L2 of stage 3.5b.1).
 - `tools/world touch` for a character that a client plays sends each state again but not the
   metadata state: a second metadata state for the own player makes the client close its
   connection and connect again by itself (protocol notes 4.2).

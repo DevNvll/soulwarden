@@ -135,7 +135,9 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
     the one heal path of a creature (`Creatures::heal`: to the maximum, the vitals state for each observer; no heal for a dead
     creature); the first tick at the next tick of the world (DelayInitialTick: one TickRate later), then each TickRate before the end
     (the rule of a character, [Status effects](status-effects.md)); the same row again (StackMax 1) gets the later end and no second
-    tick; the OnTickStatusEffect of the row comes at each tick, and it ends with the effect when the row has no KeepOnTickEffectOnEnd
+    tick, and the ticks keep their cadence: a tick that the old end stopped comes at its time when the new end is later (code review
+    of stage 3.4f-D, finding SU-R1); at its end an effect first gets its ticks that are due before the end, also when a late world step
+    takes an earlier entry of the creature first (finding SU-R2); the OnTickStatusEffect of the row comes at each tick, and it ends with the effect when the row has no KeepOnTickEffectOnEnd
     (game data). A row with no duration is one application now. A negative heal part of a row (a damage over time on a creature) has no
     rule yet;
   - the dispel (game data): a row with RemoveStatusEffects or RemoveStatusEffectCategories ends those effects of the creature first
@@ -211,6 +213,18 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   `.cdf` file: the chunk CompiledBones 0x2000), with the center, the axis, the height, and the radius of its shape (374
   slices; the wolf: the bone `bind_neck_2_jnt`, radius 0.2 m). A slice with no such data has no hit from behind and no
   headshot ([Combat and health](combat-and-health.md)).
+
+## Open points
+
+These rules of the data have no code yet (protocol notes 4.40, "Not known, not done"; the code review of stage 3.4f-D). The status-action start rules
+(the heal at the low-health part, the buff when the creature does not have it, at most each 20 s) and the speed rule (the strongest haste)
+stay project rules: the behavior tree is not in the game files.
+
+- The heal of a different creature: `InqCleric_Rekindle` of the Cleric with its beam (the self heal `InqCleric_Rekindle_Self` is done).
+- The other actions of the data that put statuses on their creature (523 actions of the creature action lists; protocol notes 4.40):
+  only the two actions of the list `statusActions` have a live check.
+- The self-destructs and their rewards, the shield and the block of the officers, grit.
+- The summons and the encounters (part E of stage 3.4f).
 
 ## Commands
 

@@ -340,18 +340,29 @@ void older_schemas(const Options& options) {
         const bool owns = store.grant_entitlements(player.account.personaId, {"Test_Entitlement"}, "test", &added) && added.size() == 1
                           && store.grant_achievements(kCharacterA, {"Test_Achievement"}) && store.record_entitlement_reward(kCharacterA, "Test_Entitlement")
                           && store.list_entitlements(player.account.personaId).size() == 1 && store.list_achievements(kCharacterA).size() == 1;
+        // The tables of schema version 9 (stage 3.5b.1): a loot claim of the character with a kept item.
+        state::LootClaimRow claim;
+        claim.objectKey = "0b1ec700-0000-4000-8000-000000000001";
+        claim.state = 1;
+        claim.generation = 1;
+        claim.items.push_back(state::ClaimItemRow{"TestSword", 1, 210, {"PerkA", "", "", "", ""}});
+        const bool claimed = store.write_loot_claim(kCharacterA, claim) && store.list_loot_claims(kCharacterA).size() == 1
+                             && store.list_loot_claims(kCharacterA)[0].items.size() == 1
+                             && store.list_loot_claims(kCharacterA)[0].items[0].perks[0] == "PerkA";
         const bool deleted = store.delete_character(kCharacterA) == state::DeleteResult::deleted && store.list_items(kCharacterA).empty()
+                             && store.list_loot_claims(kCharacterA).empty()
                              && store.currency(kCharacterA, state::kCurrencyCoin) == 0 && store.progress(kCharacterA).level == 1
                              && store.list_skills(kCharacterA).ranks.empty() && store.list_skills(kCharacterA).nodes.empty()
                              && store.list_skills(kCharacterA).bars.empty() && store.list_achievements(kCharacterA).empty()
                              && store.list_entitlement_rewards(kCharacterA).empty()
                              && store.list_entitlements(player.account.personaId).size() == 1;
-        check(made && opened && schema_version(path) == 8 && kept && owned && written && oldItem && progressed && owns && deleted,
+        check(made && opened && schema_version(path) == 9 && kept && owned && written && oldItem && progressed && owns && claimed && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 8: its character row and its item stay (the item with no perk), its persona has an account, "
+                  + " opens and gets version 9: its character row and its item stay (the item with no perk), its persona has an account, "
                     "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
-                    "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, and the "
-                    "delete of a character removes the rows of the character (the entitlement of the account stays)");
+                    "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, a loot "
+                    "claim with a kept item (stage 3.5b.1), and the delete of a character removes the rows of the character (the "
+                    "entitlement of the account stays)");
     }
 }
 

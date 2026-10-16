@@ -327,8 +327,11 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
         return InteractionVerdict::unknownOption;
     }
     context = InteractionContext{site.index, boundIndex, &object, &bound, option, site.instance, site.generation};
+    // A handler that owns the sight rule of its bounds checks it itself (stage 3.5b.1: a chest).
+    InteractionHandler* const owner = handler_of(object.kind, option->id);
+    const bool sightOwned = owner != nullptr && owner->owns_sight();
     if (!bound.unresolved.empty() || !option->unresolved.empty() || option->statusRules || bound.onlyOnQuest || bound.condition
-        || bound.lineOfSight || bound.arcRequired) {
+        || (bound.lineOfSight && !sightOwned) || bound.arcRequired) {
         return InteractionVerdict::unsupported;
     }
     if (boundState != nullptr && !boundState->enabled) {
@@ -529,10 +532,25 @@ void Interactions::damaged(Entity& character) {
     }
     const gamedata::InteractionOption& option = data()->options()[character.interaction->option];
     // The action InteractionAnimation ends at IfDamaged (game data); a timed use ends at damage (a decision of an agent: the
-    // client continues it, live check L7).
-    if (option.action == kPlayInteractionAnimation || option.delay > 0.0F) {
+    // client continues it, live check L7); a handler whose use ends at damage (stage 3.5b.1: the open of a chest; the action Gather of
+    // the client ends at IfDamagedByPowerLevel, game data).
+    const Site site = site_of(character.interaction->object, character.interaction->instance, character.interaction->generation);
+    const InteractionHandler* handler = site.object != nullptr ? handler_of(site.object->kind, option.id) : nullptr;
+    if (option.action == kPlayInteractionAnimation || option.delay > 0.0F || (handler != nullptr && handler->ends_at_damage())) {
         end(character, InteractionEnd::damage, true);
     }
+}
+
+bool Interactions::use_valid(const Entity& character, InteractionEnd& cause) const {
+    if (!character.interaction) {
+        cause = InteractionEnd::policyFailed;
+        return false;
+    }
+    return still_valid(character, *character.interaction, cause);
+}
+
+void Interactions::end_use(Entity& character, InteractionEnd cause) {
+    end(character, cause, true);
 }
 
 void Interactions::moved(Entity& character) {

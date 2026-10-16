@@ -33,6 +33,7 @@
 #include "world/gear.h"
 #include "world/health.h"
 #include "world/ids.h"
+#include "world/chests.h"
 #include "world/interactions.h"
 #include "world/inventory.h"
 #include "world/load_meter.h"
@@ -273,6 +274,8 @@ struct WorldOptions {
      * interaction (3743 result 2), and the lock of a conversation works as before.
      */
     const gamedata::InteractionData* interactionData{nullptr};
+    /** The chests of the world (game data, stage 3.5b.1). Null or not loaded: no chest opens. */
+    const gamedata::ChestData* chestData{nullptr};
     /** The perk data (game data, stage 1.3b). Null: an item has no perk, and no perk has an effect. */
     const gamedata::PerkData* perkData{nullptr};
     /** The spell entity data (game data, stage 3.3b-S2a). Null or not loaded: a spell entity has its hits and no record. */
@@ -791,6 +794,13 @@ public:
     [[nodiscard]] const Interactions& interactions() const {
         return m_interactions;
     }
+    /** @return The chests (stage 3.5b.1): the open of a chest and the loot claims of each character. */
+    [[nodiscard]] Chests& chests() {
+        return m_chests;
+    }
+    [[nodiscard]] const Chests& chests() const {
+        return m_chests;
+    }
     /** @return The spell entities of the world (stage 3.3b-S2a): the vortex of Gravity Well. */
     [[nodiscard]] Spells& spells() {
         return m_spells;
@@ -915,6 +925,8 @@ private:
     Stamina m_stamina;
     /** The interactions of the characters and the states of the objects (stage 2.5a). */
     Interactions m_interactions;
+    /** The chests and the loot claims (stage 3.5b.1): after the interactions (it registers its handler there). */
+    Chests m_chests;
     Revision m_lastSpell{0};
     Revision m_lastProjectile{0};
 };

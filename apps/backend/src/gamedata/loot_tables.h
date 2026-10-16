@@ -179,6 +179,14 @@ struct LootData {
     std::vector<std::array<std::pair<std::uint32_t, std::uint32_t>, kGearScoreTiers>> gearScore;
     /** Creature level to the largest gear score of a loot item of a creature (AILootGSCeiling). */
     std::unordered_map<std::uint32_t, std::uint32_t> lootCeiling;
+    /**
+     * Stage 3.5b.1 (format 2): a level to the smallest gear score of a loot item of a loot container (ContainerLootGSFloor), the loot
+     * roots of the chests (the loot container variation table: each one is a table of `tables`), and the loot limits of the game
+     * (exported, not used: the counter rules are not proved; docs/systems/chests.md). A file of format 1 has none of them.
+     */
+    std::unordered_map<std::uint32_t, std::uint32_t> containerFloor;
+    std::vector<std::string> chestRoots;
+    std::size_t limits{0};
     std::vector<LootVitals> bases;
     /** Vitals row id in lower case (a base row, or a level variant row) to the index of its base row. */
     std::unordered_map<std::string, std::uint32_t> vitals;
@@ -232,6 +240,10 @@ public:
     [[nodiscard]] std::optional<std::pair<std::uint32_t, std::uint32_t>> gear_score(std::uint32_t level, std::uint32_t tier) const;
     /** @return The largest gear score of a loot item of a creature of a level, or no value. */
     [[nodiscard]] std::optional<std::uint32_t> loot_ceiling(std::uint32_t level) const;
+    /** @return The smallest gear score of a loot item of a loot container of a level (stage 3.5b.1), or no value. */
+    [[nodiscard]] std::optional<std::uint32_t> container_floor(std::uint32_t level) const;
+    /** @return The index of a table (the compare ignores the case of the letters A to Z), or no value. */
+    [[nodiscard]] std::optional<std::uint32_t> table_index(std::string_view id) const;
     /** @return The table with this id (the compare ignores the case of the letters A to Z), or null. */
     [[nodiscard]] const LootTable* table(std::string_view id) const;
     [[nodiscard]] const LootTable& table(std::uint32_t index) const {

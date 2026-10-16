@@ -9,6 +9,7 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
 | Task | Start here |
 | --- | --- |
 | The rewards of a kill: the credit, the experience, the weapon mastery, the loot tables and their roll, the coin, the delivery with the loot notice, the loot switch; the respawn of a creature of a spawn point | Protocol notes 4.21, `apps/backend/src/world/rewards.h` (`reward_rules`, `respawn_time`), `gamedata/loot_tables.h`, `world/inventory.h` (`Inventory::grant`), `world/creatures.h` (`Creatures::hurt`, `respawn_at`), `server/http/loot_commands.cpp`, `tools/gamedata/loot.sh` (`loot_tables.py`, `check_loot_tool.py`), `tools/world loot`, `tools/world roll`, `tools/world creature respawn`, test cases LT1 to LT8, RL1 to RL3, RL8, RL10, RL11 |
+| The roll of a chest: `roll_root`, the context of a container, the container floor | [Chests](chests.md), `world/rewards.h` (`LootContext::container`, `Rewards::roll_root`, `grant_items`), test case LC3 |
 
 ## Rules
 
@@ -46,6 +47,13 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
 - A drop goes into the bag whole when the bag has space for it (finding F11, case RL11). The
   limit of the give command (100,000) is a limit of that command only, not of
   `Inventory::grant`. Only the stack size and the capacity of the bag limit a drop.
+- The roll of a chest (stage 3.5b.1, [Chests](chests.md)): `Rewards::roll_root` rolls a loot root with a context (`LootContext`), and
+  `Rewards::grant_items` makes the items with their perk roll (the path of a kill uses it too). A context of a container
+  (`LootContext::container`) gives the numeric tags `poilevel`, `containerlevel` (the content level of the chest), and `minpoicontlevel`
+  of the conditions, and the gear score of an item of a table with UseLevelGS has the container floor of the level
+  (ContainerLootGSFloor of VitalsLevels, `LootTables::container_floor`) as its low end in place of the ceiling of a creature (game data).
+  `loot-tables.json` format 2 has the chest roots, the loot limits, and the container floors; a file of format 1 loads, and then a chest
+  has no loot table (each open is refused: `noLoot`).
 - The perks of a drop (stage 1.3b, protocol notes 4.23): an item with perk places in the perk
   data gets the perk roll of the client (`world/perk_roll.h`) for each instance, with the level
   of the character that gets it and the gear score of the drop; the swap of the game follows

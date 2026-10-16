@@ -13,7 +13,7 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
 | The objects of the level data: the file, the tool, the ids of the client | `tools/gamedata/interactions.sh`, `tools/gamedata/interactions.py`, `gamedata/interaction_data.h`, `tools/gamedata/check_interactions_tool.py`, [Game data](../development/game-data.md), test cases IT1, IT10 |
 | The state of an object (Enabled, HasInteractors) and the Interactor state of a character | `server/rep/states/interaction_states.cpp`, `World::make_object`, `EntityKind::object`, test cases IT3, IT7 |
 | The lore page: its achievement and the journal | `world/ownership.h` (`Ownership::unlock_achievement`), [DLC and entitlements](dlc-and-entitlements.md) (the achievement state), test case IT5 |
-| A handler of a later stage | `world/interactions.h` (`InteractionHandler`, `Interactions::register_handler`) |
+| A handler of a later stage | `world/interactions.h` (`InteractionHandler`, `Interactions::register_handler`; stage 3.5b.1: `owns_sight`, `ends_at_damage`, `Interactions::use_valid`, `end_use`); the chests: [Chests](chests.md) |
 | The commands: the list, the enable of an object, the cancel | `server/http/interaction_commands.cpp`, `tools/world interactions`, `tools/world object`, `tools/world interaction cancel`, test case IT9 |
 | The server children (stage 2.5b): the stations of a settlement, the template of a slice, the spawn rule, the record of a child | `gamedata/interaction_data.h` (`InteractionTemplate`, `SpawnedPlacement`), `world/interactions.h` (`Interactions::spawn`, `scan`), `World::spawn_object`, `server/rep/states/object_states.cpp`, protocol notes 4.36, test cases SC1, SC2 |
 | A crafting station or a camp: the facts of a use for stage 3.7 | `world/interactions.h` (`StationContext`, `Interactions::station`), test case SC2 |
@@ -40,7 +40,10 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
     action are an option of that bound (game data; the values of the block are claims);
   - a bound with an unresolved name of the data, a status rule, a quest rule, a condition, a line of sight, or an arc is refused
     (a decision of an agent from the research: an object is not open because the backend cannot check a rule of it; no lore page
-    and no person of the data has such a rule);
+    and no person of the data has such a rule); a handler that owns the sight (`InteractionHandler::owns_sight`; stage 3.5b.1: the
+    chests, whose bounds all have a line of sight that the client checks) takes a bound with a line of sight; a condition of the data
+    with no value (one of the three empty condition classes of `interactions.py`) is not a requirement (stage 3.5b.1: each chest and each
+    gathering node had one);
   - the bound is enabled (the server state; live check L2);
   - the character has an exact position (an accepted position report: the research), and the 3D squared distance to the bound
     is not more than `m_interactRangeSq` (game data; client code 0x35C2E60, research K4: equal passes). No margin;
@@ -138,7 +141,9 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   row on the world clock from the accepted request (a decision of an agent from the research: the client timer has no factor 0.6,
   and the rule of the server of the game is not known), checks the use again at the end (the source, Enabled, the life, the exact
   position and the range), and completes it one time (`InteractionHandler::complete`). A failed check ends the use (3746). A
-  release (the block goes away), a 2473, a cancel, a travel, the death, and damage before the end: no completion. The same block in
+  release (the block goes away), a 2473, a cancel, a travel, the death, and damage before the end: no completion. Damage ends a use
+  of a timed option and a use of a handler with `ends_at_damage` (stage 3.5b.1: the open of a chest). A handler with its own timer (the
+  chests) checks the use again with `Interactions::use_valid` and ends it with `end_use` (3746). The same block in
   each report is the same use: the time does not start again. After the completion the client clears its request (live: 5.0 s after
   the press). The handler of the fixture counts the completions (no explosion, no reward). A report with no block that the world takes
   at the full time or later, before the timer (1 ms after the time), completes the use first through the path of the timer and then
@@ -160,7 +165,10 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   starts no use. A use that the world ends (3746: a command, a death, a travel, a respawn) keeps its seen request only until the release
   of the client (an input step with no block or with a different block; code review of stage 3.4f-C, finding AR-R8, case RAR8): an echo
   2473 before the release is late (case IT6), and a cancel after the release belongs to a new attempt (its mark stops the delayed press).
-  An echo that comes after the release gives a mark: a new press in the next 5 input steps then starts no use (a trap of the rule). Source: decisions of an agent with the rules of the carrier (protocol notes 4.7).
+  An echo that comes after the release gives a mark: a new press in the next 5 input steps then starts no use (a trap of the rule). The
+  echo of a use that the world ended also ends the attempt of its block when the session still has that block (code review of stage
+  3.4f-D, finding SU-R5, case RSU5): the next input step with the same block (no step with no block between, the order of INT-R2) is a
+  new request; a block of a different reference stays. Source: decisions of an agent with the rules of the carrier (protocol notes 4.7).
 - The service handoff (stage 2.5b; the base of the shops 5.1 and the transmog 5.6; research Q4): a handler of a later stage gives the
   character of a committed use a service of its source (`grant_service`: the kind, the ids of the offer, the revision, a deadline
   only when the data has one). The grant is a value of the entity (`Entity::serviceGrant`), and only this system changes it. It stays
@@ -184,7 +192,9 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   server children with one key (case SC8), and a template with two components at one slot (its PositionInTheWorld, BuildableController,
   Ownership, Vitals, and Interact slots; code review of stage 2.5b, finding ST-R5, case RY5).
 - A later stage registers a handler for a kind and its options (`Interactions::register_handler`); it does not add an action switch
-  to the session. Its domain (the loot, the gathering, the crafting) owns its state and its transactions.
+  to the session. Its domain (the loot, the gathering, the crafting) owns its state and its transactions. Stage 3.5b.1 registers the
+  chest handler for GatherOption of the kind `gathering` ([Chests](chests.md)): a gathering object that is not a chest of the chest
+  data (a gathering node of stage 3.6) is refused by that handler.
 
 ## Commands
 

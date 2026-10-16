@@ -621,7 +621,8 @@ ItemResult Inventory::take_one(const std::string& characterId,
 ItemResult Inventory::grant(const std::string& characterId,
                             const std::vector<GrantItem>& items,
                             std::uint64_t coin,
-                            std::vector<GrantItem>* lost) {
+                            std::vector<GrantItem>* lost,
+                            bool whole) {
     const std::string what = "grant of " + std::to_string(items.size()) + " item(s) and " + std::to_string(coin / 100) + "."
                              + (coin % 100 < 10 ? "0" : "") + std::to_string(coin % 100) + " coin";
     // The coin of the character after the grant: the wallet limit of the client is the largest value.
@@ -648,6 +649,9 @@ ItemResult Inventory::grant(const std::string& characterId,
                     // size of a stack and at the slots of the bag (code review of stage 3.5a, finding F11).
                     placed = put(carried.bag, *definition, grant.quantity, grant.gearScore, true, sync::kItemGathered, touched.bag,
                                  grant.perks);
+                    if (whole && placed < grant.quantity) {
+                        return ItemError::bagFull; // The whole result or nothing (stage 3.5b.1): the copy is not used.
+                    }
                 }
                 // An item that the catalog does not have, and the part that the bag has no slot for: the
                 // character does not get it (the world has no item on the ground).

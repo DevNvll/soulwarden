@@ -104,6 +104,15 @@ std::optional<std::uint32_t> Rewards::numeric(const std::string& tag, const Loot
     if (name == reward_rules::kGlobalModTag) {
         return 0U; // No global roll modifier in this backend.
     }
+    // A loot container (stage 3.5b.1, a rule of this project from the data: docs/systems/chests.md): the content level of the chest.
+    if (context.container) {
+        if (name == reward_rules::kPoiLevelTag || name == reward_rules::kContainerLevelTag) {
+            return context.creatureLevel;
+        }
+        if (name == reward_rules::kPoiContentLevelTag) {
+            return std::min(context.characterLevel, context.creatureLevel);
+        }
+    }
     return std::nullopt;
 }
 
@@ -131,6 +140,43 @@ std::vector<LootDrop> Rewards::roll(const gamedata::LootVitals& vitals, const Lo
     std::vector<std::uint32_t> path;
     roll_table(*vitals.table, context, Inherited{}, path, drops);
     return drops;
+}
+
+std::vector<LootDrop> Rewards::roll_root(std::uint32_t table, const LootContext& context) {
+    std::vector<LootDrop> drops;
+    if (!has_data() || table >= m_tables->data().tables.size()) {
+        return drops;
+    }
+    ++m_counts.rolls;
+    std::vector<std::uint32_t> path;
+    roll_table(table, context, Inherited{}, path, drops);
+    return drops;
+}
+
+std::vector<GrantItem> Rewards::grant_items(const std::vector<LootDrop>& drops, std::uint32_t characterLevel) {
+    std::vector<GrantItem> grants;
+    grants.reserve(drops.size());
+    const gamedata::PerkData* perks = m_world.perk_data();
+    const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
+    for (const LootDrop& drop : drops) {
+        const gamedata::ItemDefinition* definition = catalog != nullptr ? catalog->find(drop.itemId) : nullptr;
+        if (perks == nullptr || definition == nullptr || !can_roll_perks(*perks, *definition)) {
+            grants.push_back(GrantItem{drop.itemId, drop.quantity, drop.gearScore});
+            continue;
+        }
+        // An item with perk places: each instance gets its own roll (stage 1.3b, I3; world/perk_roll.h).
+        // The gear score of the instance: the rule of the inventory for a loot item (Inventory::new_item).
+        std::uint32_t gearScore = 0;
+        if (definition->maxGearScore != 0) {
+            const std::uint32_t standard = definition->gearScoreOverride != 0 ? definition->gearScoreOverride : definition->minGearScore;
+            gearScore = std::clamp(drop.gearScore.value_or(standard), 1U, std::max(definition->maxGearScore, 1U));
+        }
+        for (std::uint32_t unit = 0; unit < drop.quantity; ++unit) {
+            const PerkIds rolled = roll_perks(*perks, *definition, gearScore, characterLevel, [this] { return m_world.random_unit(); });
+            grants.push_back(GrantItem{drop.itemId, 1, drop.gearScore, rolled});
+        }
+    }
+    return grants;
 }
 
 void Rewards::roll_table(std::uint32_t index, const LootContext& context, Inherited inherited, std::vector<std::uint32_t>& path,
@@ -297,7 +343,14 @@ void Rewards::add_item(const std::string& itemId, std::uint32_t quantity, const 
             if (const auto range = m_tables->gear_score(level, definition->tier)) {
                 low = range->first;
                 high = range->second;
-                if (const auto ceiling = m_tables->loot_ceiling(context.creatureLevel); ceiling && *ceiling != 0) {
+                if (context.container) {
+                    // A loot container (stage 3.5b.1): the container floor of the level is the smallest gear score (research
+                    // chests-ground-loot.md, "Loot and gear score": ContainerLootGSFloor; the creature ceiling does not apply).
+                    if (const auto floor = m_tables->container_floor(level); floor && *floor != 0) {
+                        low = std::max(low, *floor);
+                        high = std::max(high, low);
+                    }
+                } else if (const auto ceiling = m_tables->loot_ceiling(context.creatureLevel); ceiling && *ceiling != 0) {
                     high = std::min(high, *ceiling);
                     low = std::min(low, high);
                 }
@@ -444,29 +497,7 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
         }
         // The items and the coin.
         if (written && (!reward.items.empty() || reward.coin != 0)) {
-            std::vector<GrantItem> grants;
-            grants.reserve(reward.items.size());
-            const gamedata::PerkData* perks = m_world.perk_data();
-            const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
-            for (const LootDrop& drop : reward.items) {
-                const gamedata::ItemDefinition* definition = catalog != nullptr ? catalog->find(drop.itemId) : nullptr;
-                if (perks == nullptr || definition == nullptr || !can_roll_perks(*perks, *definition)) {
-                    grants.push_back(GrantItem{drop.itemId, drop.quantity, drop.gearScore});
-                    continue;
-                }
-                // An item with perk places: each instance gets its own roll (stage 1.3b, I3; world/perk_roll.h).
-                // The gear score of the instance: the rule of the inventory for a loot item (Inventory::new_item).
-                std::uint32_t gearScore = 0;
-                if (definition->maxGearScore != 0) {
-                    const std::uint32_t standard = definition->gearScoreOverride != 0 ? definition->gearScoreOverride : definition->minGearScore;
-                    gearScore = std::clamp(drop.gearScore.value_or(standard), 1U, std::max(definition->maxGearScore, 1U));
-                }
-                for (std::uint32_t unit = 0; unit < drop.quantity; ++unit) {
-                    const PerkIds rolled = roll_perks(*perks, *definition, gearScore, character.progression.level,
-                                                      [this] { return m_world.random_unit(); });
-                    grants.push_back(GrantItem{drop.itemId, 1, drop.gearScore, rolled});
-                }
-            }
+            std::vector<GrantItem> grants = grant_items(reward.items, character.progression.level);
             std::vector<GrantItem> lost;
             const ItemResult given = m_world.inventory().grant(character.characterId, grants, reward.coin, &lost);
             written = given.error != ItemError::storeFailed;

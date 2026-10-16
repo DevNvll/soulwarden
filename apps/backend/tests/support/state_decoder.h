@@ -298,6 +298,27 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         return group == 0 && field == 0 ? 8 : group == 1 && field == 0 ? 1 : -1;
     case 2930: // Interact (stage 2.5a): Enabled (a flag) and HasInteractors (u32); CooldownUpdates is not sent.
         return group == 0 && field == 0 ? 1 : group == 0 && field == 1 ? 4 : -1;
+    case 81: { // Gathering (stage 3.5b.1): group 1, nine fields (status, remaining, speed, num, ref, water ref, active, G, sync ref).
+        static constexpr int kWidths[] = {1, 4, 4, 1, 4, 4, 1, 8, 4};
+        return group == 1 && field < 9 ? kWidths[field] : -1;
+    }
+    case 982: { // LootTracker (stage 3.5b.1): field 0, the full form of the map (changes 0, no version, count, 58-byte entries).
+        if (group != 0 || field != 0) {
+            return -1;
+        }
+        server::hub::Reader reader(rest);
+        if (reader.size() != 0) {
+            return -1;
+        }
+        if (reader.u8() == 1) {
+            reader.size64();
+        }
+        const std::uint32_t count = reader.size();
+        if (!reader.ok()) {
+            return -1;
+        }
+        return static_cast<int>(reader.position() + 58U * count);
+    }
     case 1594: // BuildableController (stage 2.5b): currentState (one byte); the other fields are not sent.
         return group == 0 && field == 0 ? 1 : -1;
     case 3217: // Ownership (stage 2.5b): currentPermissionRule (field 4, one byte); the other fields are not sent.
@@ -373,8 +394,10 @@ inline unsigned group_count(std::uint32_t type) {
     case 1594:
     case 3217:
     case 16:
+    case 982:
         return 1;
     case 3752:
+    case 81:
         return 2;
     case 4236:
         return 4;

@@ -193,6 +193,7 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | The abilities of a player: the press, the aim and its confirm, the cast, the cooldown, the hits, the heals of the life staff, the effects on a creature | [Abilities](docs/systems/abilities.md) |
 | The passive rules of the weapon trees and the perks: the one evaluator, its events, conditions, and effects, the list of the rules that it does not apply | [Passive rules](docs/systems/passive-rules.md) |
 | The rewards of a kill and the respawn of a creature | [Rewards](docs/systems/rewards.md) |
+| The chests of the world: the open and its time, the loot of the root of a chest, the claim of each character, the reset, the LootTracker, the chest data | [Chests](docs/systems/chests.md) |
 | Travel, the travel places, a conversation and the lock of the input | [Travel and conversations](docs/systems/travel-and-conversations.md) |
 | The use of an object of the world: the request and the reply, the checks, the interaction data, the state of an object, the lore pages and the journal, the stations of a settlement and the server children, the timed use, the ends of a use, the service handoff, a handler of a later stage | [Interactions](docs/systems/interactions.md) |
 | The tool window (F8) and the admin interface | [Tool window and admin](docs/systems/tool-window-and-admin.md) |

@@ -1053,15 +1053,15 @@ void Spells::area_step(Entity& spell, Live& live) {
     }
 }
 
-bool Spells::holds(EntityId area, const Entity& character) {
+bool Spells::holds(EntityId area, const Entity& character, WorldClock::time_point at) {
     const auto live = m_live.find(area);
     const Entity* spell = m_world.find(area);
     if (live == m_live.end() || spell == nullptr || live->second.role != SpellRole::statusArea || live->second.areaStatus == nullptr
         || !live->second.areaMembers.contains(character.id)) {
         return true; // Not a member of a status area (its exit or its end took the statuses already).
     }
-    const WorldClock::time_point now = m_world.clock().now();
-    if ((!live->second.activeTo || now < *live->second.activeTo) && !character.life.dead && in_area(*spell, live->second, character)) {
+    if ((!live->second.activeTo || at < *live->second.activeTo) && at < live->second.lifeEnds && !character.life.dead
+        && in_area(*spell, live->second, character)) {
         return true;
     }
     ++m_counts.exitsBeforeTick;

@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 23> codecs{{
+    static constexpr std::array<StateCodec, 25> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -57,6 +57,9 @@ std::span<const StateCodec> player_codecs() {
         {world::ComponentKey::motion, kMovementSlot, kTypeMovementState, encode_observed_motion_state},
         // The committed interaction (stage 2.5a): the owner and each observer (the remote player slice has slot 26 too).
         {world::ComponentKey::interactor, kInteractorSlot, kTypeInteractorState, nullptr, encode_interactor_parts},
+        // The open of a chest (stage 3.5b.1): owner only (the remote player slice has neither component).
+        {world::ComponentKey::lootTracker, kLootTrackerSlot, kTypeLootTrackerState, nullptr, encode_loot_tracker_state, true},
+        {world::ComponentKey::gathering, kGatheringSlot, kTypeGatheringState, nullptr, encode_gathering_state, true},
     }};
     return codecs;
 }

@@ -20,6 +20,8 @@ constexpr std::uint64_t kFormat2 = 2;
 constexpr std::uint64_t kFormat3 = 3;
 /** Format 4 (stage 3.4f-C): the shape of each detection volume, and the delays of each AreaStatusEffectComponent. */
 constexpr std::uint64_t kFormat4 = 4;
+/** Format 5 (code review of stage 3.4f-D, finding SU-R3): also the parent entities of the entity of each detection volume. */
+constexpr std::uint64_t kFormat5 = 5;
 constexpr std::uint32_t kSpellStateType = 2912;
 constexpr std::uint32_t kPositionStateType = 13;
 constexpr std::uint32_t kVitalsStateType = 15;
@@ -104,8 +106,11 @@ bool texts_of(const json& value, std::vector<std::string>& out) {
     return true;
 }
 
-/** The members of format 2 of a slice (stage 3.3b-S2b), of format 3 (stage 3.3b-M2: `areaStatuses`), and of format 4 (stage 3.4f-C). */
-bool read_slice_values(const json& entry, SpellSlice& slice, bool format3, bool format4) {
+/**
+ * The members of format 2 of a slice (stage 3.3b-S2b), of format 3 (stage 3.3b-M2: `areaStatuses`), of format 4 (stage 3.4f-C), and of
+ * format 5 (the parents of a volume).
+ */
+bool read_slice_values(const json& entry, SpellSlice& slice, bool format3, bool format4, bool format5) {
     if (format3) {
         if (!entry.contains("areaStatuses") || !entry["areaStatuses"].is_array()) {
             return false;
@@ -154,7 +159,7 @@ bool read_slice_values(const json& entry, SpellSlice& slice, bool format3, bool 
     }
     for (const json& row : entry["volumes"]) {
         SpellVolume& volume = slice.volumes.emplace_back();
-        if (!row.is_array() || row.size() != (format4 ? 8U : 3U) || !text_of(row[0], volume.entity) || !number_of(row[1], volume.radius)
+        if (!row.is_array() || row.size() != (format5 ? 9U : format4 ? 8U : 3U) || !text_of(row[0], volume.entity) || !number_of(row[1], volume.radius)
             || !number_of(row[2], volume.activeAfter)) {
             return false;
         }
@@ -169,6 +174,13 @@ bool read_slice_values(const json& entry, SpellSlice& slice, bool format3, bool 
                            : shape == "cylinder" ? VolumeShape::cylinder
                            : shape == "none" ? VolumeShape::none
                                              : VolumeShape::other;
+        }
+        if (format5) {
+            // Format 5: the names of the parent entities of the entity of the volume, the nearest one first.
+            if (!texts_of(row[8], volume.parents)) {
+                return false;
+            }
+            volume.parentsKnown = true;
         }
     }
     for (const json& row : entry["offenses"]) {
@@ -193,7 +205,7 @@ bool read_slice_values(const json& entry, SpellSlice& slice, bool format3, bool 
     return true;
 }
 
-bool read_slice(const json& entry, SpellSlice& slice, bool format2, bool format3, bool format4) {
+bool read_slice(const json& entry, SpellSlice& slice, bool format2, bool format3, bool format4, bool format5) {
     if (!entry.is_object() || !entry.contains("path") || !text_of(entry["path"], slice.path) || !entry.contains("asset")
         || !asset_of(entry["asset"], slice.asset) || !entry.contains("sub") || !whole_of(entry["sub"], slice.subId)
         || !entry.contains("root") || !id_of(entry["root"], slice.root) || !entry.contains("interestRadius")
@@ -231,7 +243,7 @@ bool read_slice(const json& entry, SpellSlice& slice, bool format2, bool format3
             return false;
         }
     }
-    return !format2 || read_slice_values(entry, slice, format3, format4);
+    return !format2 || read_slice_values(entry, slice, format3, format4, format5);
 }
 
 bool read_vitals_row(const json& row, SpellVitalsRow& vitals) {
@@ -299,21 +311,22 @@ bool SpellData::load(const std::string& path) {
     }
     const json document = json::parse(input, nullptr, false);
     if (!document.is_object() || !document.contains("format") || !document["format"].is_number_unsigned()
-        || document["format"].get<std::uint64_t>() < kFormat || document["format"].get<std::uint64_t>() > kFormat4) {
-        m_error = "the file is not a JSON object of the format 1, 2, 3, or 4";
+        || document["format"].get<std::uint64_t>() < kFormat || document["format"].get<std::uint64_t>() > kFormat5) {
+        m_error = "the file is not a JSON object of the format 1, 2, 3, 4, or 5";
         return false;
     }
     const bool format2 = document["format"].get<std::uint64_t>() >= kFormat2;
     const bool format3 = document["format"].get<std::uint64_t>() >= kFormat3;
     const bool format4 = document["format"].get<std::uint64_t>() >= kFormat4;
+    const bool format5 = document["format"].get<std::uint64_t>() >= kFormat5;
     if (!document.contains("slices") || !document["slices"].is_array() || !document.contains("spells") || !document["spells"].is_array()) {
         m_error = "the file does not have the lists slices and spells";
         return false;
     }
     SpellTables tables;
-    tables.format = format4 ? 4 : format3 ? 3 : format2 ? 2 : 1;
+    tables.format = format5 ? 5 : format4 ? 4 : format3 ? 3 : format2 ? 2 : 1;
     for (const json& entry : document["slices"]) {
-        if (!read_slice(entry, tables.slices.emplace_back(), format2, format3, format4)) {
+        if (!read_slice(entry, tables.slices.emplace_back(), format2, format3, format4, format5)) {
             m_error = "slice " + std::to_string(tables.slices.size() - 1) + " does not have the form of the tool";
             return false;
         }
@@ -426,13 +439,20 @@ bool SpellData::set(SpellTables tables) {
         // events that the client plays. A volume whose own entity has an activation at the init is not active before it, and its time
         // is the time of an activation at the init (its own, or an earlier one of a parent); a volume of an entity with no such event
         // has the time 0, -1, or the time of an activation of a parent. The same for the end and the deactivations. Else the server
-        // would give the statuses of an area before the client shows it.
-        const auto agrees = [&](float when, std::uint32_t kind, const std::string& entity) {
+        // would give the statuses of an area before the client shows it. Format 5 (code review of stage 3.4f-D, finding SU-R3): only an
+        // event of the entity of the volume or of one of its parents gives a time; an event of a different entity of the slice does not.
+        // A file of format 4 has no parents: the check takes each event of the slice (the tool made the time from the parents).
+        const auto agrees = [&](float when, std::uint32_t kind, const SpellVolume& volume) {
+            const std::string& entity = volume.entity;
             const auto close = [](float a, float b) { return std::fabs(a - b) <= 0.001F; };
             float own = -1.0F;
             bool listed = false;
             for (const SpellEvent& event : slice.events) {
                 if (event.type != kind || !event.onInit) {
+                    continue;
+                }
+                if (volume.parentsKnown && event.target != entity
+                    && std::find(volume.parents.begin(), volume.parents.end(), event.target) == volume.parents.end()) {
                     continue;
                 }
                 const float at = std::max(event.delay, 0.0F);
@@ -451,8 +471,8 @@ bool SpellData::set(SpellTables tables) {
         };
         for (const SpellVolume& volume : slice.volumes) {
             if (error.empty() && tables.format >= 4
-                && (!agrees(volume.activeAfter, spell_event::kActivate, volume.entity)
-                    || !agrees(volume.inactiveAfter, spell_event::kDeactivate, volume.entity))) {
+                && (!agrees(volume.activeAfter, spell_event::kActivate, volume)
+                    || !agrees(volume.inactiveAfter, spell_event::kDeactivate, volume))) {
                 error = name + " has a detection volume whose time does not agree with the delayed events of its entity";
             }
         }

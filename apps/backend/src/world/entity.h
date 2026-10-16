@@ -150,6 +150,64 @@ enum class ComponentKey {
      * its full stamina has no fragment.
      */
     stamina,
+    /**
+     * The Gathering state of a character (stage 3.5b.1, slot 36, type 81; docs/systems/chests.md): the progress of the timed open of a
+     * chest (live check L3: the ring of the prompt). Only the owner gets it (the remote player slice has no slot 36).
+     */
+    gathering,
+    /**
+     * The LootTracker state of a character (stage 3.5b.1, slot 33, type 982): the loot claims of the character on the chests near it
+     * (live check L2: a Looted entry removes the prompt of the chest). Only the owner gets it.
+     */
+    lootTracker,
+};
+
+/**
+ * The Gathering state of a character (stage 3.5b.1; MB::GatheringComponentReplicatedState, type 81, slot 36; research gathering-stage.md
+ * Q2): the values of group 1. The client applies fields 0 to 3 when the field `reference` changes, and fields 6 and 7 when the field
+ * `syncReference` changes (apply 0x4905130): the chest system adds one to both at each change. Live check L3 of stage 3.5b.1: the ring
+ * of the prompt runs `remaining` / `speed` seconds; the status Done (3) and Failure (2) end the gather in the client.
+ */
+struct GatherProgress {
+    /** None 0, Success 1 (the open runs), Failure 2 (a cancel), Done 3 (the completion). */
+    std::uint8_t status{0};
+    /** m_amtRemaining: the time that is left (seconds). */
+    float remaining{0.0F};
+    /** m_gatherEfficiency: the speed of the progress (1: the time of the data). */
+    float speed{1.0F};
+    /** m_numGathering. */
+    std::uint8_t gatherers{0};
+    std::uint32_t reference{0};
+    /** m_isGathering and m_gatherableGDEID (the G of the chest; 0x00000000FFFFFFFF: none). */
+    bool active{false};
+    std::uint64_t target{0x00000000FFFFFFFFULL};
+    std::uint32_t syncReference{0};
+};
+
+/**
+ * One entry of the LootTracker state of a character (stage 3.5b.1; type 982, slot 33, field 0, a map; research chests-ground-loot.md
+ * Q2: the 58-byte entry, readers 0x3727A00 and 0x3727C60, writer 0x375AFA0).
+ */
+struct LootTrackerEntry {
+    /** The actor id of the chest (the key of the map). */
+    std::array<std::uint8_t, 16> actor{};
+    /** InstancedLootState: 0 Initial, 1 Rolled, 2 Looted, 3 RegeneratedForMission, 4 NotOnRequiredQuest, 5 Locked, 6 Unlocked. */
+    std::uint32_t state{0};
+    /** InstancedLootType: 0 POILoot. */
+    std::uint32_t kind{0};
+    /** The reset time and the looted time: server time in microseconds (live check L8: the client does not end a claim at it). */
+    std::uint64_t resetTime{0};
+    std::uint64_t lootedTime{0};
+    bool privileged{false};
+    state::WorldPosition position;
+    std::uint32_t tag{0};
+    std::uint8_t selector{0};
+
+    bool operator==(const LootTrackerEntry& other) const {
+        return actor == other.actor && state == other.state && kind == other.kind && resetTime == other.resetTime
+               && lootedTime == other.lootedTime && privileged == other.privileged && position.x == other.position.x
+               && position.y == other.position.y && position.z == other.position.z && tag == other.tag && selector == other.selector;
+    }
 };
 
 /**
@@ -519,7 +577,8 @@ struct CreatureEffect {
     /**
      * The heal of one tick (stage 3.4f-D): Health plus HealthModifierPercent of the row times the maximum health, times the potency (the
      * self heal of the Cleric: 0.045). The tick comes each `tickRate`, the first one at the next tick of the world (DelayInitialTick: one
-     * TickRate later; the rule of the statuses of a character). 0: no heal.
+     * TickRate later; the rule of the statuses of a character). 0: no heal. `nextTick` keeps the time of the next tick on the cadence
+     * of the effect also after the last tick before the end: a later end (the same row again) queues this tick (review SU-R1).
      */
     float healPart{0.0F};
     float healFixed{0.0F};
@@ -1321,6 +1380,10 @@ struct Entity {
     Revision interactionEnded{0};
     /** The service that a source gave the character (stage 2.5b): a copy of the value of the interaction system. No value: none. */
     std::optional<ServiceGrant> serviceGrant;
+    /** The progress of the open of a chest (stage 3.5b.1): the chest system changes it. */
+    GatherProgress gathering;
+    /** The loot claims of the character on the chests near it (stage 3.5b.1): a copy of the values of the chest system. */
+    std::vector<LootTrackerEntry> lootTracker;
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */
     std::vector<RawFragment> rawFragments;
 

@@ -72,6 +72,8 @@
 //                              the character (the list "interactions" of the state)
 //          cancel_interaction  no argument: the committed interaction of the character ends (stage 2.5a; its client
 //                              gets 3746)
+//          clear_chest_claim   chest (the placement key of a chest): the loot claim of the character on it goes away
+//                              (stage 3.5b.1): the character can open the chest again
 //        remove_creature, set_creature_health, and kill_creature change only a creature of
 //        the list of the character (150 m or less from it), and the character must be in the
 //        world: a different creature gives the reply 404, and nothing changes.
@@ -87,7 +89,8 @@
 // The state of a character that is in the world also has the creatures near it (the member
 // "creatures": each creature that is 150 m or less from the character, the nearest one first),
 // and its interactions (the member "interactions", stage 2.5a: its committed interaction and the
-// objects of the interaction data 30 m or less from it, with their state).
+// objects of the interaction data 30 m or less from it, with their state), and its chests (the member
+// "chests", stage 3.5b.1: its loot claims and the chests 30 m or less from it).
 //
 // Rules of each route:
 // - The request has the token of this start in the header X-Soulwarden-Admin. With no token or
@@ -154,6 +157,8 @@ constexpr NamedCommand kCommands[] = {
     // The interaction commands (stage 2.5a): an object near the character, and its committed interaction.
     {"set_object_enabled", nullptr, commands::set_object_enabled},
     {"cancel_interaction", commands::cancel_interaction},
+    // The chest command (stage 3.5b.1): a claim of the character.
+    {"clear_chest_claim", commands::clear_chest_claim},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
@@ -265,6 +270,8 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 }
                 // The interactions of the character (stage 2.5a): its committed interaction and the objects near it.
                 reply["interactions"] = commands::interactions_view(target, selected, commands::kAdminInteractionRange);
+                // The chests of the character (stage 3.5b.1): its claims and the chests near it.
+                reply["chests"] = commands::chests_view(target, selected, commands::kAdminChestRange);
             }
         }
         return json_reply(200, reply.dump());
