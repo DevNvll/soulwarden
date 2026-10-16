@@ -96,6 +96,13 @@ struct AttackBits {
     bool block{false};
     /** The input of the session is locked (a travel that the client did not confirm; stage 3.4f-B: only the dodge reads it). */
     bool locked{false};
+    /**
+     * The stamina system can start a dodge of the character now (code review of stage 3.4f-B, finding CS-R2; the combat system sets it
+     * from Stamina::can_dodge before the step). A dodge input that the stamina system refuses (an exhausted character: the client sends
+     * the bit also for a press that it refuses, live check LS9) does not end the attack that plays: the visit, its strikes, and its events
+     * stay. True with no stamina system (a test of the sequence alone).
+     */
+    bool dodgeAllowed{true};
 };
 
 /**

@@ -352,8 +352,10 @@ button on "Confirm").
   points: run the tool again. From stage 3.4f-A the file (12.7 MB) also has the ranged attacks of
   each model (225 attacks of 95 models; the backend uses the basic shot FireBow of 20 archer
   models), the 69 projectile slices, and the capsule of a player (protocol notes 4.37): with a file
-  from before, no creature shoots. `--no-attack FILE` writes one line for each kind that does not attack (814
-  kinds from stage 3.4f-A: a kind with the basic shot of an archer attacks). The tool
+  from before, no creature shoots. From stage 3.4f-C the file also has the area attacks of each model
+  (11 attacks of 9 models with 6 spells: the list `areaSpells` of `tools/gamedata/creature_slices.json`; with a file from before
+  no creature casts an area). `--no-attack FILE` writes one line for each kind that does not attack (789
+  kinds from stage 3.4f-C: a kind with the basic shot of an archer, a cast, or an area attack attacks). The tool
   leaves out the spawn points of 50 creature models that the client does not show
   correctly with this backend (1,541 spawn points: the list is in
   `tools/gamedata/creature_slices.json`), and `--report FILE` writes one line for each entry
@@ -500,7 +502,9 @@ button on "Confirm").
   the slices of the game copy, from the same sources as the creature data tool (it needs an
   Oodle source). `tools/gamedata/spells.sh --find TEXT` prints the spells with a text and their
   slice. Without the file the backend starts, and the vortex of Gravity Well has its damage
-  but no picture. From stage 3.3b-S4 the tool stops for a delay that is not a 32-bit number,
+  but no picture. From stage 3.4f-C the file has format 4: the shape, the height, the offset, and the times of each detection
+  volume, and the delays of each area status (the areas of the creatures need it; with a file from before no creature casts an
+  area). From stage 3.3b-S4 the tool stops for a delay that is not a 32-bit number,
   and the backend refuses a file with a delayed event slot that has no event. From stage
   3.3b-S2b the file has the format 2 (the trap slice with its position slot, the health, the
   shots, the detection volume, the offense, and the timelines of a slice, and the rows of the
@@ -582,7 +586,8 @@ button on "Confirm").
   The client shows its own stamina bar (the server copy is the record: the client does not take it). A status with Stamina gives
   stamina (Stamina Recovery 20, Mauler's Stamina 40), and StaminaRate makes the regeneration faster. In a development run `tools/world
   stamina` lists the stamina of each character and its dodge, and `tools/world passives --table stamina` lists the rules of the data
-  with a stamina or dodge part. Not yet: the block and grit; the HUD of a development character shows a maximum of 95 (open).
+  with a stamina or dodge part. From stage 3.4f-C the first record of your character has the Stamina state: the HUD shows the
+  maximum 100 (before: 95, a default of the client). Not yet: the block and grit.
 - Archers (stage 3.4f-A, [Creature behavior](systems/creature-behavior.md), [Projectiles](systems/projectiles.md)).
   An archer of the game data (20 models: the Varangian, Lugdunum, and mercenary archers, the
   skeleton archers, the Dryad archers, the Damned bowmen, and their variants) shoots at your
@@ -607,6 +612,19 @@ button on "Confirm").
   level 17). It casts again 2.5 s after the start of its last cast, walks to 14 m when you are
   farther, and walks back to 11 m when you are nearer than 6 m. A Celestial Mage
   (`Skeleton_Mage:2`) of `tools/world creature spawn` shows it.
+- Areas on the ground (stage 3.4f-C, [Spell entities](systems/spells.md), [Creature behavior](systems/creature-behavior.md),
+  protocol notes 4.39). Six spells of the game data: the poison mushroom of the Dryad shamans (`Dryad_Bomb`: a tell, the cloud
+  at 1 s, 26 s; `AI_Poison_55` each 1 s while you are in the cloud, a tick each 2 s of 2 percent of your maximum health plus 4
+  percent of the damage of the shaman), the purple area of the Ancient Guardian mages (`Mage_Ranged_AOE`: `AI_Snare_6sec` and
+  `AI_Weaken`), and the strikes: the lightning of the Undead shamans (2.5 m, the bolt at 0.9 s), the fire pillar of the
+  Inquisitor clerics, the ground area of the named Damned priests, and the geyser of the Soul Harvesters. A strike hits each
+  character in its area one time; a dodge avoids it. An exit ends the statuses of an area. The death of the caster ends the
+  lightning and the pillar (EndOnCasterDeath of the game data); the mushrooms and the purple area stay to their end. A creature
+  casts its area when you are in the CastDistance of the spell (30 m for the mushroom, 12 m for the lightning), each 10 s (an
+  Undead shaman each 5 s: it walks to 10 m), and shoots or hits between. In a development run `tools/world creature area
+  CREATURE CHARACTER` (route `POST /v1/dev/creatures/area`) starts the next area attack of a creature at once. Not yet: the
+  other area spells of the data (the self-destructs, the shockwave, the shield of the officers, the spells at the caster), the
+  heals and the buffs of a creature.
 - Interactions (stage 2.5a). The client shows the prompt of an object and executes its option
   at the key; the backend checks the request with the interaction data of the game and
   replies. A lore page: E (Read) opens the journal on the page, T (Add To Journal) adds it, and

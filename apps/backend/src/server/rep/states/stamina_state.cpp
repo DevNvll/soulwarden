@@ -20,7 +20,12 @@
 //          multiplier of the regeneration (1 + the StaminaRate of the statuses).
 // observer no fragment (the remote player slice has the component; its observer view is not proved, and a remote player shows no
 //          stamina).
-// The first record of a character with its full stamina and the multipliers 1 has no fragment (the client starts full itself).
+// The first record of the owner always has the fragment (stage 3.4f-C, criterion C-I10). The constructor of the client component
+// (image RVA 0x6719EB0) puts 95 into the server copy (+0xD0, +0xD4) and into the predicted values; the init (0x6869E70) sets only the
+// predicted values to m_initMax (100, slice data). The reconcile of a server movement state (0x68AC2B0, from 0x486D660) copies the
+// server copy into the stamina history, and a rewind copies the history into the predicted values. With no fragment the server copy
+// stays 95/95, and the HUD of the owner showed a maximum of 95 (live trace of stage 3.4f-C: the predicted values 100/100 at the first
+// reconcile, 95/95 at the second). The first record thus gives the server copy the values of the server.
 
 namespace soulwarden::backend::server::rep {
 namespace {
@@ -44,10 +49,6 @@ std::vector<hub::Bytes> encode_stamina_state(const world::Entity& entity, View v
         return {};
     }
     const float regenMultiplier = world::Stamina::regeneration_multiplier(entity);
-    const bool full = entity.vitals.stamina >= entity.vitals.staminaMax && regenMultiplier == 1.0F;
-    if (full && request.since == 0) {
-        return {};
-    }
     const world::WorldClock::time_point now = request.clock != nullptr ? request.clock->now() : world::WorldClock::time_point{};
     float delay = 0.0F;
     if (entity.vitals.stamina < entity.vitals.staminaMax && request.clock != nullptr) {

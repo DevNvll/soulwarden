@@ -161,6 +161,10 @@ bool StaminaData::set(StaminaTables tables) {
         for (const DodgeCancel& cancel : fragment.cancel) {
             correct = correct && in_range(cancel.start) && (!cancel.end || (in_range(*cancel.end) && *cancel.end >= cancel.start))
                       && (!cancel.buffered || cancel.end.has_value());
+            // A next dodge of a window starts at the end of a buffered window and at the start of an instant one: not before the payment
+            // of the dodge that plays (code review of stage 3.4f-B, finding CS-R5: a chain of replacements before the mark paid nothing).
+            const float replaces = cancel.buffered && cancel.end ? *cancel.end : cancel.start;
+            correct = correct && replaces >= fragment.pay;
         }
         if (!correct) {
             return refuse("the times of the dodge fragment " + fragment.name + " do not fit together");

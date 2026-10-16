@@ -154,8 +154,10 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   step for each 1/30 s since it) and 5 steps more (`kEarlyCancelSteps`: an entry is in the five reports of its client). A request of a
   newer datagram whose input step is not later than that is the old entry that the client repeats: no use (finding CR-R4, test case
   RR4). A cancel of a reference that the session took in the last 3 s and that has no use is late (the echo of a use that ended,
-  `m_seenRequests`): it gives no mark (test case IT6). Source: decisions of an agent with the rules of the carrier (protocol notes
-  4.7).
+  `m_seenRequests`): it gives no mark (test case IT6). One cancel for each attempt (code review of stage 3.4f-B, finding CS-R3, test
+  case RZ3): the cancel that ends a use, and the late cancel, take the seen request of the attempt out of `m_seenRequests`. A cancel of
+  the next attempt of the same reference is thus early when its press did not come yet: it gives its mark, and the delayed press
+  starts no use. Source: decisions of an agent with the rules of the carrier (protocol notes 4.7).
 - The service handoff (stage 2.5b; the base of the shops 5.1 and the transmog 5.6; research Q4): a handler of a later stage gives the
   character of a committed use a service of its source (`grant_service`: the kind, the ids of the offer, the revision, a deadline
   only when the data has one). The grant is a value of the entity (`Entity::serviceGrant`), and only this system changes it. It stays

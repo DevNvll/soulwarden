@@ -6,6 +6,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "gamedata/stamina_data.h"
 #include "world/entity.h"
@@ -49,6 +50,18 @@
 namespace soulwarden::backend::world {
 
 class World;
+
+/** The constants of the stamina system that the game data does not give (rules of this project, each with its source). */
+namespace stamina_rules {
+/**
+ * The immune window of an earlier dodge stays this long after its end (code review of stage 3.4f-B, finding CS-R1, a decision of an
+ * agent): the world tests a contact of a flight at its time in the segment of the tick, at most one tick after that time; 1 s is far more
+ * than one tick.
+ */
+inline constexpr std::chrono::milliseconds kPastWindowKeep{1000};
+/** The most kept windows of one character (a bound of the memory; a dodge needs 0.267 s at least before the next one starts). */
+inline constexpr std::size_t kPastWindows = 8;
+} // namespace stamina_rules
 
 /** The answer to a dodge input. */
 enum class DodgeVerdict : std::uint8_t {
@@ -118,10 +131,26 @@ public:
      * input of its session is locked (a travel). The checks and the start are in the header of this file.
      */
     DodgeVerdict dodge(Entity& character, WorldClock::time_point at, bool locked);
-    /** @return True when a dodge of the character makes it immune at `at` (the Invulnerability clip of its fragment, the end not included). */
+    /**
+     * @return True when a dodge input of the character can start a dodge now (the checks of a start: life, lock, load, exhausted, stamina
+     *         above 0). With no stamina data: true (the client plays its dodge, and the server has no rule for it). The attack sequence asks
+     *         it before a dodge ends an attack (code review of stage 3.4f-B, finding CS-R2).
+     */
+    [[nodiscard]] bool can_dodge(const Entity& character, bool locked) const;
+    /**
+     * @return True when a dodge of the character makes it immune at `at` (the Invulnerability clip of its fragment, the end not included).
+     *         The window of an earlier dodge of the character counts too (code review of stage 3.4f-B, finding CS-R1): a buffered next
+     *         dodge that started before the world tested an earlier contact does not end the window of that contact.
+     */
     [[nodiscard]] bool immune(const Entity& character, WorldClock::time_point at) const;
-    /** A creature hit at `at` did not hurt the character: its dodge took it. The counts, the log line, and the passive rules. */
-    void evaded(Entity& character, const Entity& creature, float wouldDeal, const char* what);
+    /** @return The start of the dodge whose immune window has `at`, or no value. */
+    [[nodiscard]] std::optional<WorldClock::time_point> immune_since(const Entity& character, WorldClock::time_point at) const;
+    /**
+     * A creature hit at `at` did not hurt the character: its dodge took it. The counts, the log line, and the passive rules. `at`: the
+     * time of the contact (no value: now).
+     */
+    void evaded(Entity& character, const Entity& creature, float wouldDeal, const char* what,
+                std::optional<WorldClock::time_point> at = std::nullopt);
     /** @return True while a dodge of the character plays (from its start to its mark CanTransition). */
     [[nodiscard]] bool dodging(const Entity& character, WorldClock::time_point at) const;
 
@@ -189,9 +218,20 @@ private:
     void schedule(const std::string& characterId, WorldClock::time_point at);
     void watch(Entity& character);
 
+    /** The immune window of a dodge that a later dodge replaced or that an interruption ended (finding CS-R1). */
+    struct PastWindow {
+        EntityId entity{0};
+        WorldClock::time_point start{};
+        WorldClock::time_point end{};
+    };
+    /** Keeps the immune window of the dodge of a character that ends now, and forgets the windows older than kPastWindowKeep. */
+    void keep_window(const std::string& characterId, const DodgeState& state, WorldClock::time_point end);
+
     World& m_world;
     StaminaCounts m_counts;
     std::map<std::string, DodgeState> m_dodges;
+    /** The immune windows of the earlier dodges of each character (at most kPastWindows, kPastWindowKeep after their end). */
+    std::map<std::string, std::vector<PastWindow>> m_pastWindows;
     /** The characters whose stamina is not full, and the time of their last regeneration step. */
     std::map<std::string, WorldClock::time_point> m_regenerating;
     /** The due work of the dodges: the time and the character. */

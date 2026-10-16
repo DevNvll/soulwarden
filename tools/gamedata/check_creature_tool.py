@@ -144,6 +144,7 @@ class Catalog:
 
 class Behavior:
     ranged_left_out: dict = {}
+    areas_left_out: dict = {}
 
     def __init__(self, *arguments) -> None:
         pass
@@ -169,6 +170,84 @@ def creature_slice(*arguments) -> dict:
             "sub": 2, "root": "1000000000000044", "interestRadius": 60, "movement": 5, "vitals": 9, "marker": 15,
             "slots": [[5, "ActionList", 11], [9, "Vitals", 15], [15, "Marker", 5399]],
             "components": [["1000000000000044", "0000000000000A01", "Root/Vitals"]]}
+
+
+def check_areas() -> int:
+    """The checks of the area export (stage 3.4f-C): the shapes of the spell slices (spells.area_shape), the list of the spells with a live
+    check (spells.AreaSpells), and the joins of a cast (creature_behavior.Behavior.area_cast). @return The number of failures."""
+    import creature_behavior as cb
+    import spells
+    failures = 0
+
+    def report(case: str, passed: bool, detail: str) -> None:
+        nonlocal failures
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
+        failures += 0 if passed else 1
+
+    # The mushroom form: a place slice, an area status of the enemies with a cylinder, a destroy event at the init.
+    mushroom = {"spellSlot": 0, "positionSlot": 1, "offenses": [], "autoSpell": None, "vitals": None,
+                "events": [[2, 26.0, 0, "Destroy", "", True, "Root", True, True], [3, 1.0, 2, "Cloud", "", False, "Root", True, True]],
+                "volumes": [["Cloud", 0.0, 1.0, "cylinder", 1.5, 4.0, -0.5, -1.0]],
+                "areaStatuses": [["Cloud", "Cloud", 0.0, ["Test_Poison"], True, 2, 0.5, 1.0, True]]}
+    # The strike form: a Spell slice, one volume with no shape, active from 0.9 s to 0.95 s.
+    strike = {"spellSlot": 1, "positionSlot": 0, "offenses": [], "autoSpell": None, "vitals": None, "events": [],
+              "volumes": [["Damage", 0.0, 0.9, "none", 0.0, 0.0, 0.0, 0.95]], "areaStatuses": []}
+    enemy = {"TargetTypes": "Enemy"}
+    strike_row = {"TargetTypes": "Enemy", "ShapeTypes": "Sphere", "Radius": "2.5", "DamageTable": "TestShamanTable",
+                  "DamageTableRow": "Test_Strike"}
+    cases = [("area-status", enemy, mushroom, "status"), ("area-strike", strike_row, strike, "strike"),
+             ("area-friends", {"TargetTypes": "Friend"}, mushroom, ""),
+             ("area-no-end", enemy, {**mushroom, "events": mushroom["events"][1:]}, ""),
+             ("area-friend-status", enemy, {**mushroom, "areaStatuses": [mushroom["areaStatuses"][0][:5] + [1, 0.5, 1.0, True]]}, ""),
+             ("area-strike-no-radius", {**strike_row, "Radius": ""}, strike, ""),
+             ("area-strike-offense", strike_row, {**strike, "offenses": [["Damage", "Row", 2.0]]}, ""),
+             ("area-strike-always", strike_row, {**strike, "volumes": [["Damage", 0.0, 0.0, "none", 0.0, 0.0, 0.0, -1.0]]}, "")]
+    for case, cells, entry, expected in cases:
+        shape, cause = spells.area_shape(cells, entry)
+        report(case, shape == expected and (bool(cause) != bool(expected)), f"shape {shape!r}, cause {cause!r}")
+
+    # The list of the spells with a live check (creature_slices.json): a spell of a known shape with no live check makes no area.
+    class Sources:
+        def has(self, path):
+            return True
+
+        def stream(self, path):
+            return []
+
+    for case, proved, expected in (("area-proved", {"test_bomb": "a check"}, "status"), ("area-not-proved", {}, "")):
+        known = spells.AreaSpells(Sources(), proved)
+        known._rows = {"test_bomb": {"SpellID": "Test_Bomb", "TargetTypes": "Enemy", "SpellPrefabPath": "Characters/Test_Bomb"}}
+        known._by_path = {"slices/characters/test_bomb.dynamicslice": (b"x" * 16, 2)}
+        with patch.object(spells, "read_spell_slice", lambda *arguments: mushroom):
+            found, cause = known.shape("Test_Bomb")
+        report(case, (found or {}).get("shape", "") == expected and (bool(cause) != bool(expected)), f"{found}, cause {cause!r}")
+
+    # The joins of a cast: the aim values, the damage row of a strike in the table of the slice.
+    behavior = cb.Behavior.__new__(cb.Behavior)
+    behavior.tables = type("Tables", (), {"types": {"Lightning": (9, "Elemental")}})()
+    known_casts = {"Test_Strike": ({"spell": "Test_Strike", "shape": "strike", "table": "TestShamanTable", "row": "Test_Strike"}, ""),
+                   "Test_Bomb": ({"spell": "Test_Bomb", "shape": "status", "table": "", "row": ""}, "")}
+    behavior.area_spells = type("Spells", (), {"shape": staticmethod(lambda spell: known_casts.get(spell, (None, "no such spell")))})()
+    behavior.areas_left_out = {}
+    rows = {"test_strike": {"ordinal": 1, "table": "TestShamanTable", "id": "Test_Strike", "type": "Lightning", "factor": 0.85,
+                            "added": 0.0, "charge": 0.1}}
+    values = {"SpellName": "Test_Strike", "AIAimAtTarget": "true", "ProjectileSpeed": "100", "AILeadTargetMaxAngle": "20",
+              "AIAimMaxAngle": "45", "AIMissMaxDistance": "2", "UseAllAvailableTargets": "true"}
+    cast, cause = behavior.area_cast(0.933333, values, rows)
+    report("cast-strike", cast is not None and cast["shape"] == "strike" and cast["factor"] == 0.85 and cast["wire"] == 9
+           and cast["lead"] is False and cast["aimSpeed"] == 100.0 and cast["miss"] == [0.0, 2.0] and cast["allTargets"] is True,
+           f"{cast}, cause {cause!r}")
+    other = {"test_strike": {**rows["test_strike"], "table": "OtherTable"}}
+    cast, cause = behavior.area_cast(0.9, values, other)
+    report("cast-other-table", cast is None and "damage table of the slice" in cause, f"cause {cause!r}")
+    cast, cause = behavior.area_cast(None, values, rows)
+    report("cast-nonfinite-time", cast is None and "finite" in cause, f"cause {cause!r}")
+    cast, cause = behavior.area_cast(1.2, {**values, "SpellName": "Test_Bomb", "AILeadTarget": "true", "ProjectileSpeed": "x"}, rows)
+    report("cast-malformed-aim", cast is None and "aim value" in cause, f"cause {cause!r}")
+    cast, cause = behavior.area_cast(1.2, {**values, "SpellName": "Test_Bomb", "AILeadTarget": "true"}, rows)
+    report("cast-status", cast is not None and cast["shape"] == "status" and cast["lead"] is True and "factor" not in cast,
+           f"{cast}, cause {cause!r}")
+    return failures
 
 
 def check_ranged() -> int:
@@ -294,12 +373,14 @@ def check_review_ranged(work: Path) -> int:
             self.paths = {} if state["case"] == "review-missing-asset" else {REVIEW_ASSET: REVIEW_ARROW}
 
     class ReviewBehavior(cb.Behavior):
-        def __init__(self, sources, folder, ranged_attacks, projectile_of) -> None:
+        def __init__(self, sources, folder, ranged_attacks, projectile_of, area_spells=None) -> None:
             self.sources = sources
             self.animations = cb.Animations(sources)
             self.ranged_attacks = ranged_attacks
             self.projectile_of = projectile_of
             self.ranged_left_out = {}
+            self.area_spells = None
+            self.areas_left_out = {}
             self.tables = type("Tables", (), {"types": {"Thrust": (5, "Physical")},
                                               "ammo": {"test_arrow": {"id": "Test_Arrow", "slice": REVIEW_ARROW}}})()
 
@@ -402,6 +483,7 @@ def main() -> int:
             failures += 0 if passed else 1
     failures += check_ranged()
     failures += check_review_ranged(work)
+    failures += check_areas()
     return 1 if failures else 0
 
 

@@ -175,6 +175,14 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   loader refuses a file whose ranged attack names an action with no fragment, a release after the end of its action or with a value
   outside its range, or a projectile slice that the list does not have, and a projectile slice with no asset, no slot, or no speed. A
   file of an older tool has no such member: no creature shoots, and the backend works.
+- The area attacks of a slice (stage 3.4f-C, protocol notes 4.39; game data): `CreatureSlice::areas`, each one an action of the action
+  table with its length and its casts (`gamedata::AreaCast`: the time of the CAGE-CastSpell event, the SpellName, the shape `status`
+  or `strike`, the aim values of the clip `AIAimAtTarget`, `AILeadTarget`, `ProjectileSpeed`, `AILeadTargetMaxAngle`,
+  `AIAimMaxAngle`, `AIMissMinDistance`, `AIMissMaxDistance`, `UseAllAvailableTargets`, and for a strike the damage row of the spell
+  row in the damage table of the slice). A slice with an area attack fights (`CreatureSlice::fights`; the Undead Shaman has no other
+  attack). The loader refuses a file whose area attack names an action with no fragment, a cast after the end of its action or with
+  a value outside its range, and a strike whose damage has no type or a value outside its range. A file of an older tool has no such member: no
+  creature casts an area, and the backend works ([Creature behavior](creature-behavior.md), [Spell entities](spells.md)).
 - The hit facts of a slice (stage 3.3b-S5, protocol notes 4.30): `CreatureSlice::behind`, the two angles of the
   DamageReceiver of the slice (m_isHitFromBehindMinAngle, m_isHitByCritFromBehindMinAngle; the wolf 2.0944 and 2.3562;
   503 slices; the tool stops for an angle field that is not exactly one 32-bit float: a cut field is a fault of the
@@ -189,6 +197,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 
 ```sh
 tools/world creature shoot 2c NAME   # stage 3.4f-A: the creature starts its basic shot at a character now (the behavior rules)
+tools/world creature area 2c NAME    # stage 3.4f-C: the creature starts its next area attack at a character now
 tools/world creatures NAME 60        # the creatures that are 60 m or less from a character (no name: each creature)
 tools/world kinds wolf               # the kinds of the creature data with a text in their id, name, or family
 tools/world creature spawn Wolf_Grey_7 NAME 0 4 0   # a creature of a kind 4 m to the north of a character
@@ -219,8 +228,8 @@ tools/world creature effect 2c knockdown 2                  # a knockdown (or st
   of `objects/characters/`; `tools/gamedata/check_hit_facts_tool.py` checks the reader with made-up sources (test case
   CH9).
 - `tools/gamedata/creatures.sh --no-attack FILE` writes one line for each kind that does not
-  attack, with the cause (814 kinds of the supported build, 8,206 spawn points; 859 before stage 3.4f-A: a kind with the basic shot
-  attacks from then on).
+  attack, with the cause (789 kinds of the supported build, 8,105 spawn points; 859 before stage 3.4f-A: a kind with the basic shot
+  attacks from then on, and from stage 3.4f-C a kind with an area attack).
 - The ranged attacks (stage 3.4f-A, `creature_behavior.py`, `creature_data.py`): each action whose selected variant has a
   CAGE-RangedAttack event, with the joins of each release (the profile of the weapon of the main hand, the attack in the ranged attack
   data with its index: the profiles and then the attacks in the byte order of their names; the slice of the SliceOverride or of the
@@ -229,6 +238,14 @@ tools/world creature effect 2c knockdown 2                  # a knockdown (or st
   no ranged attack of its action, with its cause in the count `rangedLeftOut`. The tool also writes `projectiles` (the projectile slices
   of the releases) and `playerCapsule`, and the counts `slicesWithRangedAttacks` (95), `slicesWithBasicShot` (20), `rangedAttacks` (225),
   `rangedReleases` (459), `projectileSlices` (69). The tool stops with no ranged attack data in the game copy.
+- The area attacks (stage 3.4f-C, `creature_behavior.py`, `creature_data.py`, `spells.py`): each action whose selected variant has a
+  CAGE-CastSpell event of a spell of the enemies (TargetTypes) with a supported shape (`spells.AreaSpells`: a place slice with an area
+  status of the enemies and no offense, or a spell slice with one detection volume that is active between two events and a spell row
+  with a sphere radius), whose spell is in the list `areaSpells` of `tools/gamedata/creature_slices.json` (the spells whose record
+  has a live check; each entry names its check). A cast action of a chain, a reaction, a run, a throw, or a summon is not an area
+  attack. A cast that the tool leaves out has its cause in the count `areasLeftOut`. The counts: `slicesWithAreaAttacks` (9),
+  `areaAttacks` (11), `areaCasts` (15), `areaSpells` (6), `kindsWithAreaAttacks` (70), `spawnPointsWithAreaAttacks` (255). The
+  tool prints the line `area attacks` and one line for each cause.
 - `tools/research/creature_tour.py` is the picture check of the creature slices: `prepare
   GAMEDATA TOUR` makes a game data folder with one kind for each slice, `run TOUR OUT`
   makes one creature of each slice in front of the character of a live run and takes one

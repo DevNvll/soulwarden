@@ -694,6 +694,11 @@ void RepSession::add_creature_record(const world::Entity& entity, Known& known, 
                 fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
             }
             if (codec.key == world::ComponentKey::movement && !(leading && known.sent != 0)) {
+                // The first record of a creature that needs the spawn action: the creature keeps its time, and its shot waits to the end of
+                // the lead of this session (code review of stage 3.4f-B, finding CS-R4).
+                if (known.sent == 0 && entity.creature.spawnAction) {
+                    m_world.creatures().first_record(entity.id);
+                }
                 // The action that the client of this session plays now.
                 known.scope = creature_scope(entity.creature, known.sent == 0).key;
                 // A first record with the spawn action, while a different action plays: that
@@ -1809,8 +1814,14 @@ void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
     const bool ended = m_world.interactions().client_cancel(m_id, cancel->reference);
     const world::WorldClock::time_point now = m_clock.now();
     std::erase_if(m_seenRequests, [&](const auto& seen) { return now >= seen.second; });
-    const bool late = std::any_of(m_seenRequests.begin(), m_seenRequests.end(),
-                                  [&](const auto& seen) { return seen.first == cancel->reference; });
+    const bool late = !ended && std::any_of(m_seenRequests.begin(), m_seenRequests.end(),
+                                            [&](const auto& seen) { return seen.first == cancel->reference; });
+    // One cancel for each attempt (code review of stage 3.4f-B, finding CS-R3): the cancel that ended the use, or the late cancel (the
+    // echo of a use that the server ended), takes the request of the attempt. A cancel of a next attempt of the same reference then finds
+    // no request: it is early, and its mark stops the delayed press of that attempt.
+    if (ended || late) {
+        std::erase_if(m_seenRequests, [&](const auto& seen) { return seen.first == cancel->reference; });
+    }
     if (!ended && !late && m_messageDatagram) {
         // A cancel with no use, and no request of its reference in the last kEarlyCancelKeep: its press can still come in an earlier
         // datagram of a different channel (finding ST-R2), or in a later report that repeats the old entry (finding CR-R4). One mark for

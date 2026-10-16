@@ -163,7 +163,7 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
     if (!how.permanent && seconds <= 0.0F) {
         // A row with no duration: one application now.
         start_cooldown();
-        give(character, row, how.potency, how.source, how.heal, false);
+        give(character, row, how.potency, how.source, how.heal, false, how.damage);
         cast(character, row, how.source);
         return counted(StatusVerdict::instant);
     }
@@ -203,6 +203,10 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
         if (how.heal.healer != 0 || how.heal.base > 0.0F) {
             status.heal = how.heal;
         }
+        // The damage source of the newest application (stage 3.4f-C: a second status area of a different creature gives the row now).
+        if (how.damage.attacker != 0) {
+            status.damage = how.damage;
+        }
         status.serial = m_nextSerial++;
         schedule(character.characterId, status);
         publish(character, state);
@@ -221,6 +225,7 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
     status.hitsLeft = row.stopOnHit;
     status.source = how.source;
     status.heal = how.heal;
+    status.damage = how.damage;
     status.serial = m_nextSerial++;
     status.tray = row.cells.number("ShowInUITray") != 0.0F;
     status.nameplate = row.nameplate;
@@ -259,7 +264,7 @@ void Statuses::schedule(const std::string& characterId, const ActiveStatus& stat
 }
 
 void Statuses::give(Entity& character, const gamedata::StatusRow& row, float amount, const StatusSource& source, const HealSource& heal,
-                    bool tick) {
+                    bool tick, const DamageSource& damage) {
     if (character.life.dead) {
         return;
     }
@@ -299,10 +304,26 @@ void Statuses::give(Entity& character, const gamedata::StatusRow& row, float amo
         request.what = row.id.c_str();
         m_world.health().heal(character, request);
         ++m_counts.abilityHeals;
-    } else if (damageBased != 0.0F) {
-        // A part of the damage of a source with no heal base (no healer: a command; a row with no UseHealScalingValue, whose base is the
-        // core damage of the source: not in this stage): the pulse comes at the time of the data, with no health.
+    } else if (damageBased > 0.0F) {
+        // A heal that is a part of the damage of a source with no heal base (no healer: a command; a row with no UseHealScalingValue):
+        // the pulse comes at the time of the data, with no health.
         ++m_counts.pulsesWithNoHeal;
+    }
+    // The damage of a status (stage 3.4f-C: the poison of a status area of a creature, AI_Poison_55): the negative part of the maximum
+    // health (HealthModifierPercent) and the negative part of the core damage of its source (HealthModifierDamageBased with no
+    // UseHealScalingValue: the damage source of the status), each times the potency and the stacks, as one loss of health
+    // (Health::status_damage). A negative damage-based part with no damage source (a command) gives no loss.
+    float loss = health < 0.0F ? -health : 0.0F;
+    if (damageBased < 0.0F && row.cells.number("UseHealScalingValue") == 0.0F) {
+        if (damage.attacker != 0 && damage.base > 0.0F) {
+            loss += -damageBased * damage.base * amount;
+        } else {
+            ++m_counts.pulsesWithNoHeal;
+        }
+    }
+    if (loss > 0.0F) {
+        ++m_counts.damageTicks;
+        m_world.health().status_damage(character, loss, row, damage);
     }
     const float mana = (row.cells.number("Mana") + row.cells.number("ManaModifierPercent") * character.vitals.manaMax) * amount;
     if (mana != 0.0F) {
@@ -680,10 +701,11 @@ void Statuses::tick() {
         const std::uint64_t serial = status->serial;
         const StatusSource source = status->source;
         const HealSource heal = status->heal;
+        const DamageSource damage = status->damage;
         WorldClock::time_point next = *status->nextTick;
         bool alive = true;
         while (alive && next <= now && (status->permanent || next < status->ends)) {
-            give(*character, *row, amount, source, heal, true);
+            give(*character, *row, amount, source, heal, true, damage);
             ++m_counts.ticks;
             next += milliseconds_of(rate);
             // The heal can change the gear values; the status stays with its number.

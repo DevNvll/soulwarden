@@ -16,6 +16,8 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
 | The statuses with the cells Stamina and StaminaRate, a payment of a fragment | `Statuses::give`, `Gear::refresh`, `Stamina::pay_cost`, test case SM3 |
 | The passive rules of the stamina and of the dodge | `Passives::hit_evaded`, `Passives::hit_taken`, [Passive rules](passive-rules.md), test case SM4, `tools/world passives --table stamina` |
 | A creature hit in a dodge, a shot through a dodge, no immunity for a different character | `Health::creature_hit` (`CreatureHitOutcome`), `Projectiles` (`CreatureFlight::passed`), test cases CRG11, CRG12 |
+| The corrections of the code review of stage 3.4f-B: the window of an earlier dodge (CS-R1), a refused dodge in an attack (CS-R2), a next dodge before the payment (CS-R5) | `Stamina::keep_window`, `Stamina::immune_since`, `Stamina::can_dodge`, `AttackBits::dodgeAllowed`, `gamedata/stamina_data.cpp`, `tools/gamedata/stamina.py`, test cases RZ1, RZ2, RZ5 |
+| The first record of the owner: the Stamina state 100 of 100 (stage 3.4f-C) | `server/rep/states/stamina_state.cpp`, protocol notes 4.38, test cases SM6, T1, T2 |
 | The development list | `tools/world stamina`, the lines `stamina` of `tools/world list` |
 
 ## Rules
@@ -57,13 +59,34 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
   (`Stamina::immune`: 499 ms immune, 500 ms not). A creature hit at a time in the window (`Health::creature_hit` with the time of the
   contact) does no damage, no mark, and no effect (`CreatureHitOutcome::evaded`); the passive rules with OnHitTakenWhileInvulnerable
   get it (`Passives::hit_evaded`). The immunity is of the character of the dodge only (test case CRG12).
+- The window of an earlier dodge (code review of stage 3.4f-B, finding CS-R1; test case RZ1): a dodge that a next dodge replaces, or
+  that ends early (a death, a travel), keeps its immune window for `kPastWindowKeep` (1 s after its end; at most `kPastWindows`, 8,
+  for each character; `Stamina::keep_window`). A contact that the world tests later, at a time in such a window, is evaded
+  (`Stamina::immune_since`): the flight of a shot that the world tests after the start of the buffered next dodge. A rule of this
+  project; a damage that an earlier tick applied stays.
+- A refused dodge in an attack (finding CS-R2; test case RZ2): the combat system asks the stamina system first
+  (`Stamina::can_dodge`: the data, the life, the lock, the load class, the exhausted state, the stamina above 0). Only a dodge that
+  it can accept ends the visit of the attack sequence (`AttackBits::dodgeAllowed`). A refused dodge keeps the attack that plays, its
+  strikes, and its events (the second spin of Whirlwind): the client keeps it too (live check LS9).
+- A next dodge before the payment (finding CS-R5; test case RZ5, the case `replace-before-pay` of `check_stamina_tool.py`): the
+  loader and the tool refuse a dodge fragment whose next dodge starts before its mark PayStaminaCost (the end of a buffered window,
+  the start of an instant window). Else a chain of next dodges never pays (a fault of the data; the retail windows start at 0.267 s
+  and 0.5 s, after the payment at 0.1 s).
 - A creature shot through a dodge flies on: the profiles of the basic attacks of the creatures have
   `m_destroyProjectileOnUnsuccesfulHit` false (research task D). The flight keeps the characters that it passed
   (`CreatureFlight::passed`): it never hits them again, and it can hit a later character or a wall (live proof P2, P3: the shot
   stops at a wall behind the character).
 - The Stamina state (slot 42, type 4297) goes only to the owner (one encoder, `encode_stamina_state`). The client of the owner does
-  not take its value (live checks LS2, LS3): the state is the record of the server copy of the component. The first record of a
-  character with its full stamina and the multipliers 1 has no fragment.
+  not take its value at once (live checks LS2, LS3): the state is the record of the server copy of the component. A rewind of the
+  movement prediction of the client copies the server copy into the predicted values (client code 0x68AC2B0, 0x6917C70, from the
+  handler of a server movement state 0x486D660).
+- The first record of the owner always has the Stamina state (stage 3.4f-C, criterion C-I10; test case SM6), also with the full
+  stamina: 100 of 100, winded 0, the delay 0, the multipliers 1. The constructor of the client component (0x6719EB0) puts 95 into
+  the server copy and into the predicted values; the init (0x6869E70) sets only the predicted values to `m_initMax` (100). With no
+  fragment the server copy stayed 95 of 95, and the reconcile of a server movement state put 95 of 95 into the predicted values: the
+  HUD showed a maximum of 95 (live trace of stage 3.4f-C: the predicted values 100 of 100 at the first reconcile, 95 of 95 at the
+  second). With the fragment the client keeps 100 of 100 (live memory read of the component at +0xB0 and +0xD0; live proof P3: the
+  bar in four equal parts, 10 of 100 after two dodges, 100 of 100 again 6 s later).
 - The StaminaRate of the statuses (`StatusValues::staminaRate`: Holy Ground +0.25) is the key 0x0B of the speed table of the owner
   (the client multiplies its regeneration with it, client code 0x6888790), and the multiplier of the regeneration of the server.
 - The cost of a rule depends on the players: the regeneration looks only at the characters whose stamina is not full
@@ -94,15 +117,19 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
 | The time of a dodge is the world time of its input step; the immune window decides a contact at its time | A rule of this project (research task D) |
 | A shot through a dodge flies on and never hits that character again | Game data (`m_destroyProjectileOnUnsuccesfulHit` false) and a rule of this project for the passed list |
 | A buffered second dodge starts at the end of its window (one for each window); the loader refuses a buffered window with no end | Game data (CAGE-TransitionBuffered) and a rule of this project for the check |
-| The maximum of the server is 100, the client of the development character shows 95 | Game data; the source of the 95 is open (protocol notes 4.38) |
+| The maximum of the server is 100; the client showed 95 before stage 3.4f-C | Game data (100); client code and a live trace (95: the default of the server copy of the client component; protocol notes 4.38) |
+| The first record has the Stamina state | Live trace and memory read of stage 3.4f-C (the cause of the 95) |
+| The window of an earlier dodge (1 s, 8 windows), the check of a dodge before the end of an attack visit | Rules of this project (code review of stage 3.4f-B, findings CS-R1 and CS-R2) |
+| A next dodge must start after the payment | A check of this project for the data (finding CS-R5) |
 
 ## Traps
 
 - The client of the owner keeps its own predicted stamina: a Stamina state with a different value does not change the HUD or the
   dodge rule of the client (live checks LS2, LS3). A test of the server value must read the backend (`tools/world stamina`), not the
   HUD.
-- The client of the development character shows a maximum of 95, not 100 (also with no item; live check LS8). The bar of the HUD is
-  thus about 5 percent different from the server. Do not change the maximum of the server to 95 with no source in the data.
+- Before stage 3.4f-C the client showed a maximum of 95, not 100 (live check LS8): the first record had no Stamina state, and the
+  client default 95 of its server copy came into the prediction. A first record with no Stamina state brings this fault back (test
+  case SM6). The value 95 is a default of the client code, not of the data: do not use it on the server.
 - A timed status with only the cell Stamina must tick (`ticks()` of `world/statuses.cpp`): its gain comes at its first tick (at its
   start, with no DelayInitialTick). A status of 0.1 s with TickRate 0.25 gives its gain one time (Stamina Recovery, Mauler's Stamina).
 - A dodge with no direction key rolls to the rear: in a live test the character can leave the line of a shot before the contact (live

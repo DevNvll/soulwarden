@@ -472,6 +472,12 @@ struct CreatureMind {
     bool retreating{false};
     bool closing{false};
     WorldClock::time_point retreatPauseUntil{};
+    /**
+     * The area attacks of stage 3.4f-C: the time from which the creature can start its next area attack, and the index of its next one
+     * (the usable area attacks of its slice in turn). The action of an area attack plays as the action of a shot (`shooting`).
+     */
+    WorldClock::time_point areaReady{};
+    std::uint32_t nextArea{0};
     /** Steps in sequence in which a different creature stood at the place of the next step of this one. */
     std::uint32_t blockedSteps{0};
 };
@@ -567,6 +573,12 @@ struct Creature {
     float yaw{0.0F};
     /** The time at which the world made the creature, on the world clock: the start of its spawn action. */
     WorldClock::time_point madeAt{};
+    /**
+     * The time of the latest first record of the creature for a session (a slice that needs the spawn action; code review of stage
+     * 3.4f-B, finding CS-R4): that session shows the spawn action, and the action that plays comes kSpawnLead later. The shot and the cast
+     * of the creature wait to the end of that lead (Creatures::first_record).
+     */
+    WorldClock::time_point recordedAt{};
     /** True from the moment at which the health of the creature is 0. A dead creature does not get health again. */
     bool dead{false};
     /** The time of the death, on the world clock: the respawn time of its spawn point starts here (world/creatures.h). */
@@ -760,6 +772,19 @@ struct HealSource {
     bool operator==(const HealSource&) const = default;
 };
 
+/**
+ * The source of the damage of a status (stage 3.4f-C: the poison of the mushroom of a creature): the creature, its core damage at the
+ * application (a snapshot: the damage of its level and kind, gamedata::CreatureData::damage), and its level. A status of the data with a
+ * negative HealthModifierPercent or HealthModifierDamageBased hurts its character at each tick with it (world/statuses.h).
+ */
+struct DamageSource {
+    EntityId attacker{0};
+    float base{0.0F};
+    std::uint32_t level{0};
+
+    bool operator==(const DamageSource&) const = default;
+};
+
 /** The source of a status of a character. The status system removes the statuses of a source together (a gear item). */
 struct StatusSource {
     StatusSourceKind kind{StatusSourceKind::command};
@@ -808,6 +833,8 @@ struct ActiveStatus {
     bool nameplate{false};
     /** Stage 3.3b-S6: the source of the heal of a status with HealthModifierDamageBased (the healer and its heal base at the cast). */
     HealSource heal;
+    /** Stage 3.4f-C: the source of the damage of a status with a negative health term (a creature and its core damage at the application). */
+    DamageSource damage;
 };
 
 /** The cooldown of one consumable item of a character (stage 1.3b): the key of the client is the item id. */
@@ -952,6 +979,13 @@ enum class SpellRole : std::uint8_t {
     shield,
     /** Stage 3.3b-M2: the picture of a spell with no rule of the server (the ground of Mighty Gavel). */
     visual,
+    /**
+     * Stage 3.4f-C: a ground area of a creature whose AreaStatusEffectComponent gives its statuses to the enemies in its volume (the
+     * mushroom of the Dryad Shaman: AI_Poison_55; the area of the Ancient Guardian mage).
+     */
+    statusArea,
+    /** Stage 3.4f-C: a ground area of a creature with a short damage window: one hit of its spell row (the lightning strike of the Undead Shaman). */
+    strike,
 };
 
 /** A trigger of an entity of the slice of a spell (stage 3.3b-S2b): the events of the slice that start at its trigger run from `at`. */

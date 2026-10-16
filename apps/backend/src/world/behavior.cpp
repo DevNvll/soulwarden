@@ -372,6 +372,12 @@ void Behavior::tick() {
         m_releases.erase(m_releases.begin());
         release(pending);
     }
+    // The casts of the area attacks that play (stage 3.4f-C), at their times.
+    while (!m_casts.empty() && m_casts.begin()->first <= now) {
+        const PendingCast pending = m_casts.begin()->second;
+        m_casts.erase(m_casts.begin());
+        cast(pending);
+    }
     if (m_lastStep && now - *m_lastStep < behavior_rules::kStepInterval) {
         return;
     }
@@ -539,6 +545,10 @@ void Behavior::think(Entity& creature, float seconds) {
                                  : (values.combatDistance > 0.0F ? values.combatDistance : behavior_rules::kDefaultCombatSight);
     if (away > farthest) {
         lose_target(creature, "the target is too far");
+        return;
+    }
+    // An area attack (stage 3.4f-C) at a character: in the CastDistance of its spell, with a free line, when it is ready.
+    if (!body.areas.empty() && target->kind == EntityKind::player && think_area(creature, *target, seconds)) {
         return;
     }
     // The basic shot of an archer (stage 3.4f-A) at a character: the band, the release, the walk back. Its melee attack wins in its
@@ -794,6 +804,11 @@ void Behavior::retrace(Entity& creature, float seconds) {
         }
         break;
     }
+}
+
+bool Behavior::spawn_lead_over(const Entity& creature, WorldClock::time_point now) {
+    return !creature.creature.spawnAction
+           || now >= std::max(creature.creature.madeAt, creature.creature.recordedAt) + behavior_rules::kSpawnLead;
 }
 
 bool Behavior::observed(const Entity& creature) const {
@@ -1231,8 +1246,9 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
         mind.closing = false;
         turn_to(creature, target.position);
         // A creature whose slice needs the spawn action waits until each session that saw it come shows the action that plays
-        // (code review of stage 3.4f-A, finding CR-R1).
-        const bool shown = !creature.creature.spawnAction || now >= creature.creature.madeAt + behavior_rules::kSpawnLead;
+        // (code review of stage 3.4f-A, finding CR-R1), also a session whose first record of an old creature is new (code review of
+        // stage 3.4f-B, finding CS-R4).
+        const bool shown = spawn_lead_over(creature, now);
         if (now >= mind.shotReady && shown) {
             start_shot(creature, target, shot);
         }
@@ -1244,13 +1260,20 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
     }
     // Farther than the band, or no free line: the walk to the target on its path, to kShotHold with a free line.
     mind.closing = true;
+    walk_to(creature, target, band.hold, sees, away, seconds);
+    return true;
+}
+
+void Behavior::walk_to(Entity& creature, Entity& target, float hold, bool sees, float away, float seconds) {
+    CreatureMind& mind = creature.creature.mind;
+    const gamedata::CreatureBehavior& values = *creature.creature.body->behavior;
+    const WorldClock::time_point now = m_world.clock().now();
     const float way = values.runSpeed * seconds * creature.creature.speed_factor(now);
     NavStep next = m_world.navigation().next_step(creature.id, creature.position, target.position, way, true);
-    if (next.kind == StepKind::moved && sees && away - way < band.hold) {
-        // The step ends in the band: a shorter step to kShotHold.
+    if (next.kind == StepKind::moved && sees && away - way < hold) {
+        // The step ends in the band: a shorter step to the hold distance.
         m_world.navigation().take_back(creature.id);
-        next = m_world.navigation().next_step(creature.id, creature.position, target.position,
-                                              std::max(away - band.hold, 0.05F), true);
+        next = m_world.navigation().next_step(creature.id, creature.position, target.position, std::max(away - hold, 0.05F), true);
     }
     if (next.kind == StepKind::arrived || next.kind == StepKind::noWay) {
         // The rule of a target with no way (the melee rule): the place nearest to it, a wait, then the way back.
@@ -1259,10 +1282,10 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
             ++m_counts.holds;
         } else if (now >= *mind.holdUntil) {
             no_way(creature, target);
-            return true;
+            return;
         }
         turn_to(creature, target.position);
-        return true;
+        return;
     }
     if (next.kind == StepKind::moved) {
         mind.holdUntil.reset();
@@ -1270,21 +1293,20 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
             m_world.navigation().take_back(creature.id);
             ++m_counts.crowded;
             turn_to(creature, target.position);
-            return true;
+            return;
         }
         creature.creature.yaw = yaw_to(creature.position, next.position);
         mind.sentYaw = creature.creature.yaw;
         m_creatures.move(creature, next.position, Gait::run);
         record_trail(creature);
         ++m_counts.moves;
-        return true;
+        return;
     }
     if (next.kind == StepKind::noGround) {
         mind.walks = false;
         mind.groundKnown = true;
     }
     turn_to(creature, target.position);
-    return true;
 }
 
 void Behavior::start_shot(Entity& creature, Entity& target, std::uint32_t shot) {
@@ -1440,6 +1462,200 @@ void Behavior::release(const PendingRelease& pending) {
         ++m_counts.releases;
     } else {
         ++m_counts.releasesCancelled;
+    }
+}
+
+std::vector<std::uint32_t> Behavior::usable_areas(const gamedata::CreatureSlice& body) const {
+    std::vector<std::uint32_t> usable;
+    for (std::uint32_t index = 0; index < body.areas.size(); ++index) {
+        const gamedata::CreatureAreaAttack& area = body.areas[index];
+        if (std::all_of(area.casts.begin(), area.casts.end(), [&](const gamedata::AreaCast& cast) { return m_world.spells().area_usable(cast); })
+            && m_world.spells().cast_distance(area.casts.front()) > 0.0F) {
+            usable.push_back(index);
+        }
+    }
+    return usable;
+}
+
+bool Behavior::think_area(Entity& creature, Entity& target, float seconds) {
+    CreatureMind& mind = creature.creature.mind;
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    const std::vector<std::uint32_t> usable = usable_areas(body);
+    if (usable.empty()) {
+        return false; // No spell data of the shape of its casts: the other rules decide.
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    // A creature whose only attack is an area attack (the Undead Shaman) keeps its distance by the area rules.
+    const bool only = body.attacks.empty() && !body.basicShot;
+    const std::uint32_t area = usable[mind.nextArea % usable.size()];
+    const float range = m_world.spells().cast_distance(body.areas[area].casts.front());
+    const float away = horizontal_distance(creature.position, target.position);
+    const float rise = std::fabs(creature.position.z - target.position.z);
+    const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position);
+    const float hold = std::max(range - behavior_rules::kAreaHoldMargin, behavior_rules::kNearest);
+    const bool inRange = sees && away <= (mind.closing && only ? hold : range);
+    // The pause after the last attack: the pause of a melee attack (mind.ready), or the repeat of the basic shot (mind.shotReady) when it
+    // ends first. Else the shot of a creature with a basic shot always comes first, and its area attack does not come again (live run
+    // of stage 3.4f-C: a Dryad Shaman shot for 40 s).
+    const bool rested = now >= mind.ready || (body.basicShot && now >= mind.shotReady);
+    if (inRange) {
+        if (now >= mind.areaReady && rested && spawn_lead_over(creature, now)) {
+            mind.closing = false;
+            start_area(creature, target, area);
+            return mind.shooting;
+        }
+        if (only) {
+            mind.closing = false;
+            turn_to(creature, target.position);
+            return true;
+        }
+        return false;
+    }
+    if (!only) {
+        return false;
+    }
+    if (!can_walk(creature) || creature.creature.rooted(now)) {
+        turn_to(creature, target.position);
+        return true;
+    }
+    // Farther than the CastDistance, or no free line: the walk to the target on its path, to kAreaHoldMargin inside the CastDistance.
+    mind.closing = true;
+    walk_to(creature, target, hold, sees, away, seconds);
+    return true;
+}
+
+void Behavior::start_area(Entity& creature, Entity& target, std::uint32_t index) {
+    CreatureMind& mind = creature.creature.mind;
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    const gamedata::CreatureAreaAttack& area = body.areas[index];
+    const WorldClock::time_point now = m_world.clock().now();
+    creature.creature.yaw = yaw_to(creature.position, target.position);
+    mind.sentYaw = creature.creature.yaw;
+    const std::chrono::milliseconds length = milliseconds(area.length);
+    if (!m_creatures.start_action(creature, area.action, length)) {
+        mind.areaReady = now + behavior_rules::kAttackPause;
+        return;
+    }
+    m_world.health().fought(target);
+    if (mind.holdUntil) {
+        mind.holdUntil = now + behavior_rules::kNoWayHold;
+    }
+    // The action plays to its end as the action of a shot (no step, no turn, no other attack in it).
+    mind.shooting = true;
+    mind.attackGeneration = creature.creature.action->generation;
+    mind.attackEnds = now + length;
+    const bool only = body.attacks.empty() && !body.basicShot;
+    mind.areaReady = std::max(now + (only ? behavior_rules::kAreaOnlyRepeat : behavior_rules::kAreaRepeat), mind.attackEnds);
+    ++mind.nextArea;
+    ++mind.attacks;
+    ++m_counts.areaAttacks;
+    for (std::uint32_t cast = 0; cast < area.casts.size(); ++cast) {
+        m_casts.emplace(now + milliseconds(area.casts[cast].time), PendingCast{creature.id, target.id, mind.attackGeneration, index, cast});
+    }
+    log::write("world: creature %016llx (%s) starts the area attack %s at %s (%.1f m, %zu cast(s) of %s from %.2f s, %.2f s)",
+               id_number(creature.id),
+               creature.creature.kind->id.c_str(),
+               body.actions[area.action].name.c_str(),
+               target.name.c_str(),
+               static_cast<double>(horizontal_distance(creature.position, target.position)),
+               area.casts.size(),
+               area.casts.front().spell.c_str(),
+               static_cast<double>(area.casts.front().time),
+               static_cast<double>(area.length));
+}
+
+bool Behavior::command_area(Entity& creature, EntityId target) {
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    Entity* character = fightable(target);
+    const std::vector<std::uint32_t> usable = usable_areas(body);
+    if (creature.creature.dead || usable.empty() || character == nullptr || character->kind != EntityKind::player
+        || creature.creature.held(m_world.clock().now()) || creature.creature.forced) {
+        return false;
+    }
+    CreatureMind& mind = creature.creature.mind;
+    if (mind.mode != CreatureMode::fight || mind.target != character->id) {
+        take_target(creature, *character, "a command area attack", horizontal_distance(creature.position, character->position));
+    }
+    start_area(creature, *character, usable[mind.nextArea % usable.size()]);
+    return mind.shooting;
+}
+
+state::WorldPosition Behavior::area_place(const Entity& creature, const Entity& target, const gamedata::AreaCast& cast) const {
+    // The place of the target at the cast, with its lead (AILeadTarget with ProjectileSpeed: the velocity of the target times the time of
+    // the aim speed over the distance; at most AILeadTargetMaxAngle from the line of the creature to the target, in the plane).
+    state::WorldPosition place = target.position;
+    if (cast.lead && cast.aimSpeed > 0.0F) {
+        const std::array<float, 3> velocity = m_world.velocity_of(target);
+        const float time = horizontal_distance(creature.position, target.position) / cast.aimSpeed;
+        state::WorldPosition lead{target.position.x + velocity[0] * time, target.position.y + velocity[1] * time, target.position.z};
+        const float direct = std::atan2(target.position.y - creature.position.y, target.position.x - creature.position.x);
+        const float wanted = std::atan2(lead.y - creature.position.y, lead.x - creature.position.x);
+        float turn = std::remainder(wanted - direct, 2.0F * kPi);
+        const float limit = cast.leadAngle * kPi / 180.0F;
+        if (std::fabs(turn) > limit) {
+            turn = std::copysign(limit, turn);
+            const float size = horizontal_distance(creature.position, lead);
+            lead = {creature.position.x + std::cos(direct + turn) * size, creature.position.y + std::sin(direct + turn) * size, lead.z};
+        }
+        place = lead;
+    }
+    // At most AIAimMaxAngle from the front of the creature (the creature looks at its target at the start of the action; client code
+    // 0x5C09A20 limits the direction of the aim with the max angles of the clip, and the distance stays).
+    if (cast.aimAngle < 180.0F && horizontal_distance(creature.position, place) > 0.01F) {
+        const float yaw = creature.creature.yaw * kPi / 180.0F;
+        const float front = std::atan2(std::cos(yaw), -std::sin(yaw));
+        const float toward = std::atan2(place.y - creature.position.y, place.x - creature.position.x);
+        const float side = std::remainder(toward - front, 2.0F * kPi);
+        const float limit = cast.aimAngle * kPi / 180.0F;
+        if (std::fabs(side) > limit) {
+            const float size = horizontal_distance(creature.position, place);
+            const float turned = front + std::copysign(limit, side);
+            place = {creature.position.x + std::cos(turned) * size, creature.position.y + std::sin(turned) * size, place.z};
+        }
+    }
+    // At most the CastDistance of the spell row from the creature (horizontal; a decision of an agent: the clamp of the server is not in the
+    // client, STATIC-CAST.md; the target can walk out of the distance in the windup).
+    const float range = m_world.spells().cast_distance(cast);
+    const float away = horizontal_distance(creature.position, place);
+    if (range > 0.0F && away > range) {
+        place = {creature.position.x + (place.x - creature.position.x) / away * range,
+                 creature.position.y + (place.y - creature.position.y) / away * range, place.z};
+    }
+    // On the floor: the floor of the navigation data nearest to the height of the target at that place (the client snaps the picture to
+    // the ground too: the SurfaceAlignmentComponent of the tell).
+    if (const std::optional<float> ground = m_world.navigation().ground_height(place);
+        ground && std::fabs(*ground - target.position.z) < behavior_rules::kContactHeight) {
+        place.z = *ground;
+    }
+    return place;
+}
+
+void Behavior::cast(const PendingCast& pending) {
+    Entity* creature = m_creatures.find(pending.creature);
+    const char* cancelled = nullptr;
+    if (creature == nullptr || creature->creature.dead) {
+        cancelled = "the creature is dead or not in the world";
+    } else if (!creature->creature.mind.shooting || creature->creature.mind.attackGeneration != pending.generation
+               || !creature->creature.action || creature->creature.action->generation != pending.generation) {
+        cancelled = "a different action replaced the area attack";
+    } else if (creature->creature.mind.mode != CreatureMode::fight || creature->creature.mind.target != pending.target) {
+        cancelled = "the creature lost the target of the area attack";
+    }
+    Entity* target = cancelled == nullptr ? fightable(pending.target) : nullptr;
+    if (cancelled == nullptr && (target == nullptr || target->kind != EntityKind::player)) {
+        cancelled = "the target is not there";
+    }
+    if (cancelled != nullptr) {
+        ++m_counts.castsCancelled;
+        log::write("world: no area: the cast of creature %016llx makes no area: %s", id_number(pending.creature), cancelled);
+        return;
+    }
+    const gamedata::AreaCast& data = creature->creature.body->areas[pending.area].casts[pending.cast];
+    const state::WorldPosition place = area_place(*creature, *target, data);
+    if (m_world.spells().make_area(AreaRequest{creature->id, &data, place}) != nullptr) {
+        ++m_counts.casts;
+    } else {
+        ++m_counts.castsCancelled;
     }
 }
 

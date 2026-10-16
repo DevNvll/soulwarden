@@ -108,6 +108,11 @@ struct StatusApply {
      * the cast). A status of a row with no such heal ignores it.
      */
     HealSource heal;
+    /**
+     * Stage 3.4f-C: the source of the damage of a row with a negative health term (a status area of a creature: the creature and its core
+     * damage at the application). A row with no such term ignores it.
+     */
+    DamageSource damage;
 };
 
 /** The values of the statuses of a character, with the limits of the categories (Statuses::values). Parts: 0.2 is 20 percent. */
@@ -159,6 +164,8 @@ struct StatusCounts {
     std::uint64_t dueTaken{0};
     /** The spells of a status that the backend does not have (CastSpell of a row with no rule here). */
     std::uint64_t spellsNotDone{0};
+    /** Stage 3.4f-C: the ticks of a row with a negative health term that hurt their character (a poison of a creature area). */
+    std::uint64_t damageTicks{0};
 };
 
 class Statuses {
@@ -251,7 +258,8 @@ private:
      * The heal and the mana of one application or one tick of a row (stage 3.3b-S6: the one heal path of the health system, with the
      * kind of the source and the heal source of the status). `tick` false: the application.
      */
-    void give(Entity& character, const gamedata::StatusRow& row, float amount, const StatusSource& source, const HealSource& heal, bool tick);
+    void give(Entity& character, const gamedata::StatusRow& row, float amount, const StatusSource& source, const HealSource& heal, bool tick,
+              const DamageSource& damage = {});
     /** @return The factor of the potency of a row on a character from the EffectPotencyMods of its other statuses ("SacredGroundCat=-0.1"). */
     [[nodiscard]] float potency_factor(const Entity& character, const gamedata::StatusRow& row) const;
     /** The due entries of a status: its end and its next tick. */

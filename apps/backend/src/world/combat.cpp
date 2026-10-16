@@ -252,9 +252,12 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
         m_sequences.end(character->characterId, SequenceEnd::death);
         return;
     }
+    // A dodge input ends an attack only when the stamina system can start the dodge (code review of stage 3.4f-B, finding CS-R2).
+    AttackBits checked = bits;
+    checked.dodgeAllowed = m_world.stamina().can_dodge(*character, bits.locked);
     const std::vector<SequenceEvent> events =
-        m_sequences.step(character->characterId, session, inputSequence, input, bits, weapon_key(*character), actions, m_world.clock().now(),
-                         facts_of(*character));
+        m_sequences.step(character->characterId, session, inputSequence, input, checked, weapon_key(*character), actions,
+                         m_world.clock().now(), facts_of(*character));
     // The dodge (stage 3.4f-B): the sequence permits a dodge input at rest, in a cancel window of the fragment of an attack, or at the end
     // of a buffered window; a weapon with no attack graph (a bow, a staff, no weapon) has no fragment that refuses it. The stamina system
     // decides it with its own stamina (world/stamina.h).

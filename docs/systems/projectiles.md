@@ -85,6 +85,9 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   behind it, with the end `absorbed` and no hit. The shooter is the spell entity of a spell projectile or the caster. From stage
   3.4f-A the shots of the archers fly (below): the shield takes them too (the creature is the shooter): before a later character
   and before a wall in the sphere (test case CRG13; live proof P4 of stage 3.4f-B: an arrow of a Varangian Archer).
+  The shield takes only projectiles: a ground area of a creature (the mushroom, a strike; stage 3.4f-C) is not a projectile and goes
+  through it (game data: the body of the slice `spell_projectile_block_maelstrom` has the filter `ProjectileOnly`, and no detection
+  volume and no area status; static study STATIC-AREAS.md, Q4).
 - The head of a creature (stage 3.3b-S5, `head_contact`, protocol notes 4.30). A hit of a projectile is a headshot when the
   line of the projectile at the body meets the head volume of the creature: the line from one radius of the body capsule
   before the point of the hit to one radius of the head volume and the hit tolerance (`projectile_rules::kHitTolerance`,

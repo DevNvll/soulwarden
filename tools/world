@@ -237,6 +237,9 @@ The creatures of the world (protocol notes 4.14):
   tools/world creature shoot CREATURE CHARACTER the creature starts its basic shot (the action FireBow of its
                                                 slice, stage 3.4f-A) at the character now: the release,
                                                 the aim, the flight, and the hit of a shot of the behavior
+  tools/world creature area CREATURE CHARACTER  the creature starts its area attack (an action with the casts of a ground
+                                                area of its slice, stage 3.4f-C: the mushroom of a Dryad Shaman, the
+                                                lightning strike of an Undead Shaman) at the character now
   tools/world creature anchor CREATURE X Y Z    the anchor of a creature in a fight is that place
                                                 (the end of its way back): a test of a way back
                                                 with no path to the anchor
@@ -921,6 +924,9 @@ def creature_command(data_dir: Path, arguments: list[str]) -> None:
                                   f"&action={arguments[2]}{seconds}{tags}")
     elif action == "shoot" and len(arguments) == 3:
         request(data_dir, "POST", f"/v1/dev/creatures/shoot?creature={creature_id(data_dir, arguments[1])}"
+                                  f"&character={character_id(data_dir, arguments[2])}")
+    elif action == "area" and len(arguments) == 3:
+        request(data_dir, "POST", f"/v1/dev/creatures/area?creature={creature_id(data_dir, arguments[1])}"
                                   f"&character={character_id(data_dir, arguments[2])}")
     elif action == "anchor" and len(arguments) == 5:
         x, y, z = numbers(arguments[2:5], 3)

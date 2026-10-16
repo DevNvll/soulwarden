@@ -86,6 +86,31 @@ std::optional<std::pair<float, std::string>> life_trigger(const gamedata::SpellS
     return found;
 }
 
+/** @return The AreaStatusEffectComponent of a slice that gives its statuses to the enemies (m_detectedTargetType 2), or null (stage 3.4f-C). */
+const gamedata::SpellAreaStatus* enemy_area(const gamedata::SpellSlice& slice) {
+    for (const gamedata::SpellAreaStatus& area : slice.areaStatuses) {
+        if (area.targets == 2 && !area.statuses.empty()) {
+            return &area;
+        }
+    }
+    return nullptr;
+}
+
+/** @return The detection volume of a strike (stage 3.4f-C): no shape, active between an activation and a deactivation. Null: none. */
+const gamedata::SpellVolume* strike_volume(const gamedata::SpellSlice& slice) {
+    for (const gamedata::SpellVolume& volume : slice.volumes) {
+        if (volume.shape == gamedata::VolumeShape::none && volume.activeAfter >= 0.0F && volume.inactiveAfter > volume.activeAfter) {
+            return &volume;
+        }
+    }
+    return nullptr;
+}
+
+/** @return The milliseconds of a time of the data (seconds) with no lower bound of 1 ms (a start at 0 s is the start). */
+std::chrono::milliseconds at_time(float seconds) {
+    return std::chrono::milliseconds(static_cast<long long>(std::lround(std::max(seconds, 0.0F) * 1000.0F)));
+}
+
 } // namespace
 
 const char* spell_end_text(SpellEnd cause) {
@@ -124,6 +149,10 @@ const char* spell_role_text(SpellRole role) {
         return "shield";
     case SpellRole::visual:
         return "picture";
+    case SpellRole::statusArea:
+        return "status area";
+    case SpellRole::strike:
+        return "strike";
     }
     return "unknown";
 }
@@ -355,6 +384,12 @@ void Spells::tick() {
             break;
         case DueKind::aura:
             aura_step(*spell, live->second);
+            break;
+        case DueKind::areaStep:
+            area_step(*spell, live->second);
+            break;
+        case DueKind::strikeStep:
+            strike_step(*spell, live->second);
             break;
         }
     }
@@ -775,8 +810,20 @@ bool Spells::end(EntityId id, SpellEnd cause) {
     m_counts.phasesCancelled += cancelled;
     ++m_counts.ended[static_cast<std::size_t>(cause)];
     // An aura takes its statuses back from each friend at its end (ClearOnEnd of the spell row).
-    if (live->second.clearOnEnd && !live->second.statuses.empty()) {
+    if (live->second.role != SpellRole::statusArea && live->second.clearOnEnd && !live->second.statuses.empty()) {
         clear_members(*spell, live->second, {});
+    }
+    // A status area of a creature (stage 3.4f-C): each character in it loses its statuses (m_removeOnExit of the component, ClearOnEnd
+    // of the spell row: the end of the area is the exit of each character).
+    if (live->second.role == SpellRole::statusArea) {
+        const bool take = live->second.clearOnEnd || (live->second.areaStatus != nullptr && live->second.areaStatus->removeOnExit);
+        std::vector<EntityId> members;
+        for (const auto& [member, entry] : live->second.areaMembers) {
+            members.push_back(member);
+        }
+        for (const EntityId member : members) {
+            leave_area(*spell, live->second, member, take);
+        }
     }
     const WorldClock::time_point now = m_world.clock().now();
     log::write("world: spell: %s, entity %016llx, ends after %lld ms: %s%s",
@@ -800,6 +847,274 @@ std::size_t Spells::end_caster(EntityId caster, SpellEnd cause) {
         ended += end(spell, cause) ? 1 : 0;
     }
     return ended;
+}
+
+bool Spells::area_usable(const gamedata::AreaCast& cast) const {
+    const gamedata::SpellSlice* slice = has_data() ? m_data->slice_of(cast.spell) : nullptr;
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::SpellRow* row = abilities != nullptr ? abilities->spell(cast.spell) : nullptr;
+    if (slice == nullptr || row == nullptr) {
+        return false;
+    }
+    if (cast.shape == gamedata::AreaShape::status) {
+        const gamedata::SpellAreaStatus* area = enemy_area(*slice);
+        const gamedata::SpellVolume* volume = area != nullptr ? slice->volume(area->detection) : nullptr;
+        return slice->positionSlot != 0 && volume != nullptr && volume->activeAfter >= 0.0F
+               && ((volume->shape == gamedata::VolumeShape::cylinder && volume->shapeRadius > 0.0F && volume->height > 0.0F)
+                   || (volume->shape == gamedata::VolumeShape::sphere && volume->radius > 0.0F));
+    }
+    return slice->spellSlot != 0 && strike_volume(*slice) != nullptr && row->radius > 0.0F;
+}
+
+float Spells::cast_distance(const gamedata::AreaCast& cast) const {
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::SpellRow* row = abilities != nullptr ? abilities->spell(cast.spell) : nullptr;
+    return row != nullptr ? row->castDistance : 0.0F;
+}
+
+Entity* Spells::make_area(const AreaRequest& request) {
+    Entity* creature = m_world.find(request.creature);
+    if (creature == nullptr || creature->kind != EntityKind::creature || creature->creature.dead || request.cast == nullptr
+        || !valid_position(request.position) || !area_usable(*request.cast)) {
+        return nullptr;
+    }
+    const gamedata::AreaCast& cast = *request.cast;
+    const gamedata::SpellSlice* slice = m_data->slice_of(cast.spell);
+    const gamedata::SpellRow* row = m_world.options().abilityData->spell(cast.spell);
+    const WorldClock::time_point now = m_world.clock().now();
+    SpellBody body;
+    body.spellId = row->id;
+    // The key of the row on the wire (field 0 of the Spell state of a strike): the CRC-32 of the lower-case SpellID.
+    body.key = gamedata::progression_id(body.spellId);
+    body.slice = slice;
+    body.caster = creature->id;
+    body.casterActor = creature->actor;
+    body.started = now;
+    body.role = cast.shape == gamedata::AreaShape::status ? SpellRole::statusArea : SpellRole::strike;
+    // EndOnCasterDeath of the spell row (game data): the lightning strike has it, the mushroom has not.
+    body.endsOnCasterDeath = row->cells.number("EndOnCasterDeath") != 0.0F;
+    // The life: the destroy event of the slice (the mushroom: 26 s), else the Duration of the spell row (the strike: 5 s).
+    const std::optional<float> end = slice->end_delay();
+    body.ends = now + (end ? milliseconds_of(*end) : milliseconds_of(row->duration / 1000.0F));
+    Live live;
+    live.role = body.role;
+    live.lifeEnds = body.ends;
+    live.areaCast = &cast;
+    live.clearOnExit = row->cells.number("ClearOnExit") != 0.0F;
+    live.clearOnEnd = row->cells.number("ClearOnEnd") != 0.0F;
+    if (body.role == SpellRole::statusArea) {
+        live.areaStatus = enemy_area(*slice);
+        live.volume = slice->volume(live.areaStatus->detection);
+        live.statuses = live.areaStatus->statuses;
+    } else {
+        live.volume = strike_volume(*slice);
+        live.strikeRadius = row->radius;
+    }
+    live.activeFrom = now + at_time(live.volume->activeAfter);
+    if (live.volume->inactiveAfter >= 0.0F) {
+        live.activeTo = now + at_time(live.volume->inactiveAfter);
+    }
+    // The damage source of the statuses of the area: the creature and its core damage at the cast (the damage of its level and kind).
+    const gamedata::CreatureData* creatures = m_world.creatures().data();
+    live.damage = DamageSource{creature->id,
+                               creatures != nullptr && creature->creature.kind != nullptr
+                                   ? creatures->damage(*creature->creature.kind, creature->creature.level)
+                                   : 0.0F,
+                               creature->creature.level};
+    const std::string casterName = creature->creature.kind != nullptr ? creature->creature.kind->id : std::string("?");
+    const std::uint32_t level = creature->creature.level;
+    Entity& entity = m_world.make_spell(body, request.position);
+    entity.progression.level = level;
+    const EntityId id = entity.id;
+    m_byCaster[body.caster].push_back(id);
+    schedule(id, body.ends, DueKind::end);
+    schedule(id, std::max(live.activeFrom, now), body.role == SpellRole::statusArea ? DueKind::areaStep : DueKind::strikeStep);
+    m_live[id] = std::move(live);
+    ++m_counts.made;
+    ++m_counts.areasMade;
+    m_counts.largest = std::max(m_counts.largest, m_live.size());
+    log::write("world: spell: %s (%s) of creature %016llx (%s) at %.2f %.2f %.2f, entity %016llx (actor %s): active from %.2f s, the end in "
+               "%lld ms%s",
+               body.spellId.c_str(), spell_role_text(body.role), static_cast<unsigned long long>(body.caster), casterName.c_str(),
+               static_cast<double>(request.position.x), static_cast<double>(request.position.y), static_cast<double>(request.position.z),
+               static_cast<unsigned long long>(id), actor_text(entity.actor).c_str(), static_cast<double>(entity.spell.slice != nullptr
+                                                                                                          ? m_live[id].volume->activeAfter
+                                                                                                          : 0.0F),
+               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(entity.spell.ends - now).count()),
+               entity.spell.endsOnCasterDeath ? ", ends at the death of its caster" : "");
+    return &entity;
+}
+
+bool Spells::in_area(const Entity& spell, const Live& live, const Entity& character) const {
+    if (live.volume == nullptr) {
+        return false;
+    }
+    const gamedata::CreatureData* creatures = m_world.creatures().data();
+    const WorldCapsule capsule =
+        capsule_of(character, creatures != nullptr && creatures->player_capsule() ? &*creatures->player_capsule() : nullptr);
+    const state::WorldPosition center{spell.position.x, spell.position.y, spell.position.z + live.volume->offset};
+    if (live.role == SpellRole::statusArea && live.volume->shape == gamedata::VolumeShape::cylinder) {
+        // An upright cylinder (the QueryShapeCylinder of the volume: the mushroom 1.5 m, 4 m high, its middle 0.5 m below the root): the
+        // capsule of the character (upright) touches it in the plane and in the height.
+        const float half = live.volume->height * 0.5F;
+        const float low = std::min(capsule.a.z, capsule.b.z) - capsule.radius;
+        const float high = std::max(capsule.a.z, capsule.b.z) + capsule.radius;
+        return std::hypot(capsule.a.x - center.x, capsule.a.y - center.y) <= live.volume->shapeRadius + capsule.radius
+               && high >= center.z - half && low <= center.z + half;
+    }
+    // A sphere: the sphere of the volume, or the Radius of the spell row for a volume with no shape (a strike).
+    const float radius = live.role == SpellRole::strike ? live.strikeRadius : live.volume->radius;
+    return capsule_gap(center, capsule) <= radius;
+}
+
+void Spells::area_step(Entity& spell, Live& live) {
+    const WorldClock::time_point now = m_world.clock().now();
+    ++m_counts.areaSteps;
+    if (live.areaStatus == nullptr || live.volume == nullptr) {
+        return;
+    }
+    if (live.activeTo && now >= *live.activeTo) {
+        // The volume is not active any more: each character in it leaves it.
+        std::vector<EntityId> members;
+        for (const auto& [member, entry] : live.areaMembers) {
+            members.push_back(member);
+        }
+        for (const EntityId member : members) {
+            leave_area(spell, live, member, live.areaStatus->removeOnExit);
+        }
+        return;
+    }
+    // The characters in the volume (the position index near the area; a character that lives).
+    const float reach = std::max(live.volume->shapeRadius, live.volume->radius) + live.volume->height + 3.0F;
+    std::set<EntityId> inside;
+    m_world.for_each_near(spell.position, reach, [&](Entity& entity) {
+        ++m_counts.looked;
+        if (entity.kind == EntityKind::player && !entity.life.dead && in_area(spell, live, entity)) {
+            inside.insert(entity.id);
+        }
+    });
+    const StatusSource source{StatusSourceKind::spell, spell.spell.spellId, 0, spell.id};
+    WorldClock::time_point next = now + spell_rules::kAreaStep;
+    for (const EntityId id : inside) {
+        Entity* character = m_world.find(id);
+        if (character == nullptr) {
+            continue;
+        }
+        auto member = live.areaMembers.find(id);
+        if (member == live.areaMembers.end()) {
+            // An entry: the first application m_initialDelaySeconds later (client code 0x3FE5B40).
+            member = live.areaMembers.emplace(id, Live::AreaMember{character->characterId, now + at_time(live.areaStatus->initialDelay), false})
+                         .first;
+            m_areasOf[character->characterId].insert(spell.id);
+        }
+        if (now >= member->second.next) {
+            // ApplyStatusEffects (client code 0x3FE6500): each status of the component, then again m_reapplicationDelaySeconds later.
+            for (const std::string& status : live.statuses) {
+                StatusApply how;
+                how.source = source;
+                how.damage = live.damage;
+                (void)m_world.statuses().apply(*character, status, how);
+            }
+            member->second.applied = true;
+            ++m_counts.areaApplications;
+            member->second.next = live.areaStatus->reapplyDelay > 0.0F ? member->second.next + at_time(live.areaStatus->reapplyDelay)
+                                                                       : live.lifeEnds + std::chrono::hours(1);
+            if (member->second.next <= now) {
+                member->second.next = now + at_time(live.areaStatus->reapplyDelay);
+            }
+        }
+        next = std::min(next, member->second.next);
+    }
+    // An exit: the statuses of the area go (m_removeOnExit; client code 0x3FF2830 cancels the next application too).
+    std::vector<EntityId> left;
+    for (const auto& [member, entry] : live.areaMembers) {
+        if (!inside.contains(member)) {
+            left.push_back(member);
+        }
+    }
+    for (const EntityId member : left) {
+        leave_area(spell, live, member, live.areaStatus->removeOnExit);
+    }
+    next = std::max(next, now + std::chrono::milliseconds(1));
+    if (next < live.lifeEnds && (!live.activeTo || next <= *live.activeTo)) {
+        schedule(spell.id, next, DueKind::areaStep);
+    } else if (live.activeTo && *live.activeTo < live.lifeEnds) {
+        schedule(spell.id, *live.activeTo, DueKind::areaStep);
+    }
+}
+
+void Spells::leave_area(const Entity& spell, Live& live, EntityId member, bool takeStatus) {
+    const auto found = live.areaMembers.find(member);
+    if (found == live.areaMembers.end()) {
+        return;
+    }
+    const std::string characterId = found->second.characterId;
+    const bool applied = found->second.applied;
+    live.areaMembers.erase(found);
+    if (const auto areas = m_areasOf.find(characterId); areas != m_areasOf.end()) {
+        areas->second.erase(spell.id);
+        if (areas->second.empty()) {
+            m_areasOf.erase(areas);
+        }
+    }
+    if (!takeStatus || !applied) {
+        return;
+    }
+    // The status of a row goes when this area gave it last (the source of the status): a second area that gives the row still gives it
+    // again at its next application.
+    const StatusSource source{StatusSourceKind::spell, spell.spell.spellId, 0, spell.id};
+    unsigned ended = 0;
+    for (const std::string& status : live.statuses) {
+        ended += m_world.statuses().remove_row_of(characterId, status, source, StatusEnd::source);
+    }
+    ++m_counts.areaExits;
+    (void)ended;
+}
+
+void Spells::strike_step(Entity& spell, Live& live) {
+    const WorldClock::time_point now = m_world.clock().now();
+    ++m_counts.areaSteps;
+    if (live.areaCast == nullptr || live.volume == nullptr || spell.spell.ending || (live.activeTo && now >= *live.activeTo)) {
+        return;
+    }
+    Entity* creature = m_world.find(spell.spell.caster);
+    if (creature == nullptr || creature->kind != EntityKind::creature) {
+        return; // The caster left the world (the leave ends the spell before this step).
+    }
+    const float reach = live.strikeRadius + projectile_rules::kDefaultHeight + 1.0F;
+    // A wall between the center and the character stops the hit only for a spell row with CheckObstructions (the cell of the game data; the
+    // two rows of this stage do not have it; the server code that reads the bit, row +0x0C bit 0x11, is not in the client: STATIC-CAST.md).
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::SpellRow* row = abilities != nullptr ? abilities->spell(spell.spell.spellId) : nullptr;
+    const bool walls = row != nullptr && row->cells.number("CheckObstructions") != 0.0F;
+    const state::WorldPosition eye{spell.position.x, spell.position.y, spell.position.z + 0.5F};
+    const gamedata::CreatureData* creatures = m_world.creatures().data();
+    std::vector<EntityId> targets;
+    m_world.for_each_near(spell.position, reach, [&](Entity& entity) {
+        ++m_counts.looked;
+        if (entity.kind == EntityKind::player && !entity.life.dead && !live.struck.contains(entity.id) && in_area(spell, live, entity)
+            && (!walls
+                || m_world.navigation().sees(
+                    eye, capsule_center(capsule_of(entity, creatures != nullptr && creatures->player_capsule() ? &*creatures->player_capsule()
+                                                                                                                : nullptr))))) {
+            targets.push_back(entity.id);
+        }
+    });
+    for (const EntityId id : targets) {
+        Entity* target = m_world.find(id);
+        Entity* source = m_world.find(spell.spell.caster);
+        if (target == nullptr || source == nullptr) {
+            continue;
+        }
+        // One hit of the damage row of the spell for each character in the window (the creature rule; the dodge decides it).
+        live.struck.insert(id);
+        ++m_counts.strikeHits;
+        (void)m_world.health().creature_hit(*source, live.areaCast->damage, *target, now);
+    }
+    const WorldClock::time_point next = now + spell_rules::kStrikeStep;
+    if (live.activeTo && next < *live.activeTo && next < live.lifeEnds) {
+        schedule(spell.id, next, DueKind::strikeStep);
+    }
 }
 
 std::optional<float> Spells::absorbs(const state::WorldPosition& from, const state::WorldPosition& to, EntityId shooter) const {
@@ -889,6 +1204,18 @@ void Spells::target_died(EntityId target) {
 }
 
 void Spells::member_left(const Entity& character) {
+    // The status areas of the creatures (stage 3.4f-C): the leave of the world is the exit of the area (m_removeOnExit).
+    if (const auto areas = m_areasOf.find(character.characterId); areas != m_areasOf.end()) {
+        const std::set<EntityId> spells = areas->second;
+        for (const EntityId area : spells) {
+            const auto live = m_live.find(area);
+            const Entity* spell = m_world.find(area);
+            if (live != m_live.end() && spell != nullptr) {
+                leave_area(*spell, live->second, character.id,
+                           live->second.areaStatus == nullptr || live->second.areaStatus->removeOnExit);
+            }
+        }
+    }
     const auto rows = m_auraRows.find(character.characterId);
     if (rows == m_auraRows.end()) {
         return;
@@ -917,6 +1244,16 @@ void Spells::entity_removed(const Entity& spell) {
             remove_member(spell, live->second, member, characterId, false);
         }
         live->second.members.clear();
+    }
+    if (const auto live = m_live.find(spell.id); live != m_live.end()) {
+        for (const auto& [member, entry] : live->second.areaMembers) {
+            if (const auto areas = m_areasOf.find(entry.characterId); areas != m_areasOf.end()) {
+                areas->second.erase(spell.id);
+                if (areas->second.empty()) {
+                    m_areasOf.erase(areas);
+                }
+            }
+        }
     }
     m_live.erase(spell.id);
     m_endCauses.erase(spell.id);

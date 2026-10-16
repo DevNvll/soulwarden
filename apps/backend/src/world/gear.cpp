@@ -32,6 +32,16 @@ bool has_event(const gamedata::CellValues& row) {
     return false;
 }
 
+/**
+ * @return True when a fixed row counts in a load class: no EquipLoadCategory, or the name of the class is in it (the data: Fast, Normal,
+ *         Slow, Overburdened; code review of stage 3.4f-B, finding CS-R6).
+ */
+bool load_allows(const gamedata::CellValues& row, LoadClass load) {
+    constexpr std::string_view kNames[] = {"Fast", "Normal", "Slow", "Overburdened"};
+    const std::string_view loads = row.text("EquipLoadCategory");
+    return loads.empty() || data_rules::list_has(loads, kNames[std::min<std::size_t>(static_cast<std::size_t>(load), 3)]);
+}
+
 /** The weapon slot whose perks of the condition OnActive and OnUnsheathed apply: the slot of the weapon in the hand. */
 std::optional<std::uint32_t> active_slot(const Entity& character) {
     if (character.combat.selectedWeapon != 0 && character.equipment.item(character.combat.selectedWeapon) != nullptr) {
@@ -175,6 +185,20 @@ GearValues Gear::values(const Entity& character) const {
         }
     };
     if (data != nullptr) {
+        // The equip load: the armor items of the slots 0 to 4, each one in whole tenths (live checks I4 and I12: the
+        // client shows 23.25 + 15.5 as 3.8, and the five armor items of the build, 231.57 tenths, as 22.9). It comes before the
+        // fixed perks: a fixed perk with EquipLoadCategory counts only in its load classes (code review of stage 3.4f-B, finding CS-R6).
+        for (std::uint32_t slot = paperdoll::kHead; slot <= paperdoll::kFeet; ++slot) {
+            if (const ItemInstance* item = character.equipment.item(slot)) {
+                values.equipLoad += std::floor(data->item_load(item->itemId));
+            }
+        }
+        const gamedata::EquipLoadData& load = data->tables().equipLoad;
+        const float percent = load.max > 0.0F ? values.equipLoad / load.max * 100.0F : 0.0F;
+        values.load = percent < load.ratioMedium ? LoadClass::light
+                      : percent < load.ratioHeavy ? LoadClass::medium
+                      : percent <= load.ratioOverburdened ? LoadClass::heavy
+                                                         : LoadClass::overburdened;
         values.perks = perks_of(character);
         // The passive ability rows with their stack limit: the largest potencies first.
         std::map<std::string, std::vector<float>> stacked;
@@ -190,7 +214,9 @@ GearValues Gear::values(const Entity& character) const {
             }
             for (const std::string& name : perk.perk->abilities) {
                 const gamedata::CellValues* row = data->ability(name);
-                if (row != nullptr && !has_event(*row)) {
+                // EquipLoadCategory (the names of the load classes of the data: Fast, Normal, Slow, Overburdened): the fixed values of the
+                // row count only in its classes (finding CS-R6: GlobalPerk_Artifact_Set2_HeavyLegs, Fast and Normal).
+                if (row != nullptr && !has_event(*row) && load_allows(*row, values.load)) {
                     stacked[name].push_back(perk.potency);
                 }
             }
@@ -216,19 +242,6 @@ GearValues Gear::values(const Entity& character) const {
                 add_cells(row, potencies[index], true);
             }
         }
-        // The equip load: the armor items of the slots 0 to 4, each one in whole tenths (live checks I4 and I12: the
-        // client shows 23.25 + 15.5 as 3.8, and the five armor items of the build, 231.57 tenths, as 22.9).
-        for (std::uint32_t slot = paperdoll::kHead; slot <= paperdoll::kFeet; ++slot) {
-            if (const ItemInstance* item = character.equipment.item(slot)) {
-                values.equipLoad += std::floor(data->item_load(item->itemId));
-            }
-        }
-        const gamedata::EquipLoadData& load = data->tables().equipLoad;
-        const float percent = load.max > 0.0F ? values.equipLoad / load.max * 100.0F : 0.0F;
-        values.load = percent < load.ratioMedium ? LoadClass::light
-                      : percent < load.ratioHeavy ? LoadClass::medium
-                      : percent <= load.ratioOverburdened ? LoadClass::heavy
-                                                         : LoadClass::overburdened;
     }
     // The statuses of the character (a food, a dust, the status of a heart rune, the status of an affix) are not here:
     // the status system gives their values (Statuses::values), and Gear::refresh adds them one time.

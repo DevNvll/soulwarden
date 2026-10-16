@@ -286,6 +286,8 @@ void World::remove_entity(EntityId id) {
         m_creatures.entity_removed(entity);
         // The projectiles of the creature in the air end with no hit (stage 3.4f-A: the leave of the source).
         m_projectiles.source_left(entity.id);
+        // The ground areas of the creature end with it (stage 3.4f-C: the leave of the caster, the rule of a character).
+        m_spells.caster_left(entity.id);
     } else if (entity.kind == EntityKind::projectile) {
         // A projectile of a creature (stage 3.4f-A): the projectile system ended its flight before the call.
     } else if (entity.kind == EntityKind::probe) {

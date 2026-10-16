@@ -13,6 +13,8 @@ tool (main) with made-up action lists, animation database, data tables, and play
   other-variant        a standing variant pays at 0.2 s                              status 1, the file stays
   no-component         the player slice has no Stamina component                     status 1, the file stays
   exhausted-part       the action Exhausted ends at 0.5 of the maximum               status 1, the file stays
+  replace-before-pay   the windows of a second dodge end at 0.01 s and 0.05 s,       status 1, the file stays (code review of stage
+                       before the mark PayStaminaCost at 0.1 s                       3.4f-B, finding CS-R5)
 
 Usage: check_stamina_tool.py WORK_FOLDER     status 0: each case gives its result
 """
@@ -32,7 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stamina as tool  # noqa: E402
 from appearance_tables import Element, field_id  # noqa: E402
 
-CASES = ("valid", "nonfinite-time", "malformed-time", "missing-cost", "other-variant", "no-component", "exhausted-part")
+CASES = ("valid", "nonfinite-time", "malformed-time", "missing-cost", "other-variant", "no-component", "exhausted-part",
+         "replace-before-pay")
 MARK = "the file of an earlier run\n"
 STATE = {"case": "valid"}
 
@@ -67,10 +70,12 @@ def fragment(tags: str, pay: str = "0.1", transition: str = "0.5") -> str:
         pay = "nan"
     if case == "malformed-time" and tags == "":
         pay = "0.1x"
+    # A window of a second dodge that starts the next dodge before the payment (finding CS-R5): 0.01 s to 0.05 s, then at once from 0.05 s.
+    buffered, instant = ("0.01", "0.04") if case == "replace-before-pay" else ("0.266667", "0.233333")
     return f"""<Fragment Tags="{tags}"><AnimLayer><Blend ExitTime="0"/><Animation name="roll"/></AnimLayer>
 <ProcLayer><Blend ExitTime="{transition}"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="CanTransition"/></ProceduralParams></Procedural></ProcLayer>
-<ProcLayer><Blend ExitTime="0.266667"/><Procedural type="CAGE-TransitionBuffered"><ProceduralParams><Condition value="CanDodgeCancel"/></ProceduralParams></Procedural>
-<Blend ExitTime="0.233333"/><Procedural type="CAGE-TransitionInstant"><ProceduralParams><Condition value="CanDodgeCancel"/></ProceduralParams></Procedural></ProcLayer>
+<ProcLayer><Blend ExitTime="{buffered}"/><Procedural type="CAGE-TransitionBuffered"><ProceduralParams><Condition value="CanDodgeCancel"/></ProceduralParams></Procedural>
+<Blend ExitTime="{instant}"/><Procedural type="CAGE-TransitionInstant"><ProceduralParams><Condition value="CanDodgeCancel"/></ProceduralParams></Procedural></ProcLayer>
 <ProcLayer><Blend ExitTime="{pay}"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="PayStaminaCost"/></ProceduralParams></Procedural></ProcLayer>
 <ProcLayer><Blend ExitTime="0"/><Procedural type="Invulnerability"><ProceduralParams><ShowImmuneOnHit value="true"/></ProceduralParams></Procedural>
 <Blend ExitTime="0.5"/><Procedural type="" contextType=""/></ProcLayer></Fragment>"""

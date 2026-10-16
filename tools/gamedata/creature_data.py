@@ -130,7 +130,7 @@ CATALOG_PATH = "assetcatalog.catalog"
 NAMES_PATH = "localization/en-us/javelindata_vitals.loc.xml"
 # The paths that the tool can need: the index of the pak files keeps only these.
 WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", "sharedassets/", "animations/mannequin/", CATALOG_PATH,
-          NAMES_PATH, "objects/characters/")
+          NAMES_PATH, "objects/characters/", "libs/timeline/")
 # The start place of a new character (meters), and the radius of the default area.
 DEFAULT_CENTER = (8880.0, 4250.0)
 DEFAULT_RADIUS = 800.0
@@ -213,6 +213,19 @@ def read_slice_lists() -> tuple[frozenset[str], dict[str, str]]:
     except (OSError, ValueError, KeyError) as error:
         raise Failure(f"{SLICE_LISTS_PATH.name} (the result of the picture tours) is not there or not correct: {error}") from error
     return frozenset(spawn), {str(path): str(reason) for path, reason in hidden.items()}
+
+
+def read_area_spell_list() -> dict[str, str]:
+    """@return The spells of the ground areas whose slice record has a live check (stage 3.4f-C, the list areaSpells of the slice lists
+    file): the tool writes the area attacks of these spells only (docs/systems/spells.md: a new spell entity needs a live check of its
+    record first)."""
+    try:
+        listed = json.loads(SLICE_LISTS_PATH.read_text(encoding="utf-8"))["areaSpells"]
+        if not isinstance(listed, dict) or not all(isinstance(name, str) and isinstance(proof, str) for name, proof in listed.items()):
+            raise ValueError("the list areaSpells does not have its form")
+    except (OSError, ValueError, KeyError) as error:
+        raise Failure(f"{SLICE_LISTS_PATH.name} has no correct list areaSpells: {error}") from error
+    return {name.lower(): proof for name, proof in listed.items()}
 
 
 REPLICATION_FIELD = field_id("m_replicationIndex")
@@ -1208,7 +1221,10 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 projectile_list.append(entry)
         return projectile_index[path]
 
-    behavior = creature_behavior.Behavior(sources, TABLES_FOLDER, ranged_attacks, projectile_of)
+    # The spells of the casts of the creatures (stage 3.4f-C): the ground areas of the backend (spells.area_shape).
+    import spells as spell_tool  # noqa: E402 (the module imports this one: the import is here, after the load)
+    behavior = creature_behavior.Behavior(sources, TABLES_FOLDER, ranged_attacks, projectile_of,
+                                          spell_tool.AreaSpells(sources, read_area_spell_list()))
     regions = all_region_names(sources) if whole_world else region_names(center, radius)
     counts = {"entries": 0, "inArea": 0, "usual": 0, "creatures": 0}
     left_out: dict[str, int] = {}
@@ -1475,7 +1491,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     quiet_points = 0
 
     def shoots(body: dict) -> bool:
-        return any(body["actions"][attack[0]][0] in creature_behavior.BASIC_RANGED_ACTIONS for attack in body.get("ranged", []))
+        # From stage 3.4f-C an area attack is an attack too (the Undead Shaman: only the lightning strike).
+        return bool(body.get("areas")) or any(body["actions"][attack[0]][0] in creature_behavior.BASIC_RANGED_ACTIONS
+                                              for attack in body.get("ranged", []))
 
     for kind, entry in zip(kind_list, document_kinds):
         bodies = [slices[body] for body, _ in kind["bodies"]]
@@ -1518,6 +1536,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                    "leftOut": dict(sorted(left_out.items()))})
     counts.update(ranged_counts([slices[body] for body in used], points, document_kinds, behavior.ranged_left_out,
                                 projectile_list))
+    counts.update(area_counts([slices[body] for body in used], points, document_kinds, behavior.areas_left_out))
     # The capsule of the character of a player (stage 3.4f-A): the target of a creature shot. No capsule: the backend uses its
     # default capsule.
     player_roots = sources.stream(PLAYER_SLICE)
@@ -1613,6 +1632,18 @@ def ranged_counts(slices: list[dict], points: list[list], kinds: list[dict], lef
             "rangedReleases": releases, "kindsWithRangedAttacks": len(ranged_kinds),
             "spawnPointsWithRangedAttacks": sum(1 for point in points if point[1] in ranged_kinds),
             "projectileSlices": len(projectile_list), "rangedLeftOut": dict(sorted(left_out.items()))}
+
+
+def area_counts(slices: list[dict], points: list[list], kinds: list[dict], left_out: dict[str, int]) -> dict:
+    """@return The counts of the area attacks (stage 3.4f-C) for the output of the tool and the file."""
+    area_slices = {index for index, entry in enumerate(slices) if entry.get("areas")}
+    area_kinds = {index for index, kind in enumerate(kinds) if any(body[0] in area_slices for body in kind["bodies"])}
+    spells = sorted({cast["spell"] for entry in slices for attack in entry.get("areas", []) for cast in attack[2]})
+    return {"slicesWithAreaAttacks": len(area_slices), "areaAttacks": sum(len(entry.get("areas", [])) for entry in slices),
+            "areaCasts": sum(len(attack[2]) for entry in slices for attack in entry.get("areas", [])),
+            "areaSpells": spells, "kindsWithAreaAttacks": len(area_kinds),
+            "spawnPointsWithAreaAttacks": sum(1 for point in points if point[1] in area_kinds),
+            "areasLeftOut": dict(sorted(left_out.items()))}
 
 
 def patrol_counts(routes: list[list], point_routes: list[int | None], points: list[list], kind_list: list[dict],
@@ -1753,6 +1784,11 @@ def main() -> int:
           f"{document.get('playerCapsule', 'none')}")
     for cause, count in counts["rangedLeftOut"].items():
         print(f"  no ranged attack, {cause}: {count}")
+    print(f"  area attacks: {counts['areaAttacks']} of {counts['slicesWithAreaAttacks']} slices ({counts['areaCasts']} casts of "
+          f"{len(counts['areaSpells'])} spells; {counts['kindsWithAreaAttacks']} kinds, {counts['spawnPointsWithAreaAttacks']} spawn "
+          f"points): {', '.join(counts['areaSpells'])}")
+    for cause, count in counts["areasLeftOut"].items():
+        print(f"  no area cast, {cause}: {count}")
     near = counts["spawnPointsAtTerrainHeight"]
     print(f"  spawn points 0.3 m or less from the terrain height: {near['0.3']}; 1.0 m or less: {near['1.0']}")
     policies = counts["routePolicies"]

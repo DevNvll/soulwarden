@@ -203,6 +203,44 @@ bool read_release(const json& cell, RangedRelease& release) {
     return true;
 }
 
+/**
+ * Reads one cast of an area attack (stage 3.4f-C, creature_behavior.py): an object with the values of the CAGE-CastSpell event and, for a
+ * strike, the damage of the row of its spell. A member that is not there or that has a wrong form is a fault of the file.
+ */
+bool read_area_cast(const json& cell, AreaCast& cast) {
+    std::string shape;
+    if (!cell.is_object() || !cell.contains("time") || !read_real(cell["time"], cast.time) || !read_text(cell, "spell", cast.spell)
+        || cast.spell.empty() || !read_text(cell, "shape", shape) || !cell.contains("aimAtTarget") || !cell["aimAtTarget"].is_boolean()
+        || !cell.contains("lead") || !cell["lead"].is_boolean() || !cell.contains("aimSpeed") || !read_real(cell["aimSpeed"], cast.aimSpeed)
+        || !cell.contains("leadAngle") || !read_real(cell["leadAngle"], cast.leadAngle) || !cell.contains("aimAngle")
+        || !read_real(cell["aimAngle"], cast.aimAngle) || !cell.contains("miss") || !cell["miss"].is_array() || cell["miss"].size() != 2
+        || !read_real(cell["miss"][0], cast.missMin) || !read_real(cell["miss"][1], cast.missMax) || !cell.contains("allTargets")
+        || !cell["allTargets"].is_boolean()) {
+        return false;
+    }
+    if (shape == "status") {
+        cast.shape = AreaShape::status;
+    } else if (shape == "strike") {
+        cast.shape = AreaShape::strike;
+        std::uint32_t wire = 0;
+        std::string category;
+        if (!read_text(cell, "row", cast.damage.row) || !cell.contains("factor") || !read_real(cell["factor"], cast.damage.factor)
+            || !cell.contains("added") || !read_real(cell["added"], cast.damage.added) || !read_text(cell, "type", cast.damage.type)
+            || !read_member(cell, "wire", wire) || wire == 0 || wire > 255 || !read_text(cell, "category", category)
+            || !read_category(category, cast.damage.category) || !cell.contains("charge") || !read_real(cell["charge"], cast.damage.hitCharge)) {
+            return false;
+        }
+        cast.damage.wire = static_cast<std::uint8_t>(wire);
+    } else {
+        return false;
+    }
+    cast.aimAtTarget = cell["aimAtTarget"].get<bool>();
+    cast.lead = cell["lead"].get<bool>();
+    cast.allTargets = cell["allTargets"].get<bool>();
+    cast.damage.time = cast.time;
+    return true;
+}
+
 /** Reads one projectile slice [path, asset, sub, root, slot, speed, extra, time for max, [accel], flying, stuck] (stage 3.4f-A). */
 bool read_projectile(const json& row, ProjectileSliceData& projectile) {
     std::string asset;
@@ -424,6 +462,25 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
             slice.ranged.push_back(std::move(attack));
         }
     }
+    // The area attacks (stage 3.4f-C): [action, time, [cast, ...]]. A file of an older tool has no member.
+    if (entry.contains("areas")) {
+        if (!entry["areas"].is_array()) {
+            return false;
+        }
+        for (const json& row : entry["areas"]) {
+            CreatureAreaAttack attack;
+            if (!row.is_array() || row.size() != 3 || !read_number(row[0], attack.action) || !read_real(row[1], attack.length)
+                || !row[2].is_array()) {
+                return false;
+            }
+            for (const json& cell : row[2]) {
+                if (!read_area_cast(cell, attack.casts.emplace_back())) {
+                    return false;
+                }
+            }
+            slice.areas.push_back(std::move(attack));
+        }
+    }
     return true;
 }
 
@@ -541,6 +598,7 @@ void CreatureData::clear() {
     m_projectiles.clear();
     m_playerCapsule.reset();
     m_shootingSlices = 0;
+    m_areaSlices = 0;
     m_routedPoints = 0;
     m_wanderingKinds = 0;
     m_levels.clear();
@@ -767,6 +825,11 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
             slice.caster = true;
         }
         m_shootingSlices += slice.basicShot ? 1 : 0;
+        // The area attacks (stage 3.4f-C): the casts in the sequence of their times.
+        for (CreatureAreaAttack& attack : slice.areas) {
+            std::stable_sort(attack.casts.begin(), attack.casts.end(), [](const AreaCast& a, const AreaCast& b) { return a.time < b.time; });
+        }
+        m_areaSlices += slice.areas.empty() ? 0 : 1;
         slice.spawnAction = slice.spawnActionName.empty() ? std::nullopt : slice.find_action(slice.spawnActionName);
         if (slice.fights()) {
             ++m_fightingSlices;
@@ -925,6 +988,26 @@ bool CreatureData::check() {
             }
             if (!correct) {
                 m_error = "slice " + std::to_string(index) + " has a ranged attack whose action, time, or releases do not fit together";
+                return false;
+            }
+        }
+        // The area attacks (stage 3.4f-C): the action of the attack has a fragment, each cast is in the time of its attack and has values
+        // of their ranges; the damage of a strike has a type. A cast that does not fit is a fault of the file.
+        for (const CreatureAreaAttack& attack : slice.areas) {
+            bool correct = attack.action < slice.actions.size() && slice.actions[attack.action].fragmentIndex >= 0
+                           && std::isfinite(attack.length) && attack.length >= kMinAttackTime && attack.length <= kMaxAttackTime
+                           && !attack.casts.empty();
+            for (const AreaCast& cast : attack.casts) {
+                const auto in_range = [](float value, float limit) { return std::isfinite(value) && value >= 0.0F && value <= limit; };
+                correct = correct && in_range(cast.time, attack.length) && !cast.spell.empty() && in_range(cast.aimSpeed, kMaxProjectileSpeed)
+                          && in_range(cast.leadAngle, 180.0F) && in_range(cast.aimAngle, 180.0F) && in_range(cast.missMin, kMaxSenseDistance)
+                          && in_range(cast.missMax, kMaxSenseDistance)
+                          && (cast.shape != AreaShape::strike
+                              || (in_range(cast.damage.factor, kMaxDamageFactor) && in_range(cast.damage.added, kMaxDamageFactor)
+                                  && in_range(cast.damage.hitCharge, kMaxDamageFactor) && cast.damage.wire != 0 && !cast.damage.type.empty()));
+            }
+            if (!correct) {
+                m_error = "slice " + std::to_string(index) + " has an area attack whose action, time, or casts do not fit together";
                 return false;
             }
         }

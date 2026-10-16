@@ -214,6 +214,17 @@ inline constexpr float kCastNear = 6.0F;
 inline constexpr float kCastMiddle = 11.0F;
 inline constexpr std::chrono::milliseconds kCastRepeat{2500};
 /**
+ * The area attacks (stage 3.4f-C; project rules, decisions of an agent: the game files have the casts of the actions and the CastDistance of
+ * each spell row, and no rule for the choice of an attack or its repeat): a creature casts its area attack at a target in the CastDistance of
+ * the spell row of its first cast (horizontal) with a free line, when it is ready: kAreaRepeat after the start of its last area attack for a
+ * creature with a different attack (the area is a part of its fight), kAreaOnlyRepeat for a creature whose only attack is the area attack
+ * (the Undead Shaman). It also waits for the pause after its last attack: the pause of a melee attack, or the repeat of its basic shot
+ * when that ends first. A creature with only area attacks walks to kAreaHoldMargin inside the CastDistance.
+ */
+inline constexpr std::chrono::milliseconds kAreaRepeat{10000};
+inline constexpr std::chrono::milliseconds kAreaOnlyRepeat{5000};
+inline constexpr float kAreaHoldMargin = 2.0F;
+/**
  * The presentation of the spawn action of a new creature (protocol notes 4.14): a session gives the action that plays this long after a
  * first record with the spawn action (rep_session.cpp). A creature whose slice needs the spawn action starts no shot in this time after
  * its creation (code review of stage 3.4f-A, finding CR-R1: the arrow came before the windup of FireBow in each observer).
@@ -273,6 +284,13 @@ struct BehaviorCounts {
     std::uint64_t releases{0};
     std::uint64_t releasesCancelled{0};
     std::uint64_t retreats{0};
+    /**
+     * The area attacks of stage 3.4f-C: the actions that the creatures started, the casts that made an area, and the casts that made none
+     * (the action was replaced, the creature died, the target was not there, the spell system refused).
+     */
+    std::uint64_t areaAttacks{0};
+    std::uint64_t casts{0};
+    std::uint64_t castsCancelled{0};
 };
 
 /** The aim of a release (stage 3.4f-A, Behavior::aim): the origin and the unit direction of the shot. */
@@ -356,6 +374,18 @@ public:
      */
     bool command_shot(Entity& creature, EntityId target);
     /**
+     * A development command and the tests (stage 3.4f-C): the creature starts its next usable area attack at a character now, with no
+     * distance and no repeat time. The casts and the places are the rules of an area attack of the behavior.
+     * @return False: the creature has no usable area attack, is dead, holds, or the target is not a character that lives.
+     */
+    bool command_area(Entity& creature, EntityId target);
+    /**
+     * @return The place of a cast of a ground area at a target (stage 3.4f-C): the place of the target at the cast (the velocity of the target
+     *         times the time of the aim speed of the cast with its lead flag, at most its lead angle from the line), at most the CastDistance of
+     *         the spell row from the creature, on the floor of the navigation data (the floor nearest to the height of the target).
+     */
+    [[nodiscard]] state::WorldPosition area_place(const Entity& creature, const Entity& target, const gamedata::AreaCast& cast) const;
+    /**
      * @return The aim of a release of a creature at a target (stage 3.4f-A): the origin at the creature, the place of the target and
      *         its velocity (World::velocity_of) for the lead of the data, the fall of the projectile slice, and the angle limits.
      */
@@ -382,6 +412,16 @@ private:
         std::uint16_t generation{0};
         std::uint32_t attack{0};
         std::uint32_t contact{0};
+    };
+
+    /** One cast of an area attack that plays (stage 3.4f-C): the time is the key of the map. */
+    struct PendingCast {
+        EntityId creature{0};
+        EntityId target{0};
+        /** The start count of the action of the area attack: a cast of an action that a different action replaced does nothing. */
+        std::uint16_t generation{0};
+        std::uint32_t area{0};
+        std::uint32_t cast{0};
     };
 
     /** One release of a shot that plays (stage 3.4f-A): the time is the key of the map. */
@@ -414,6 +454,20 @@ private:
     [[nodiscard]] static ShotBand band_of(const gamedata::CreatureSlice& body);
     void start_shot(Entity& creature, Entity& target, std::uint32_t shot);
     void release(const PendingRelease& pending);
+    /**
+     * The area rules of a step of a creature with an area attack and a character as its target (stage 3.4f-C). @return False: the other
+     * rules decide (not ready, not in the CastDistance, or no free line, for a creature with a different attack).
+     */
+    bool think_area(Entity& creature, Entity& target, float seconds);
+    /** @return The indexes of the area attacks of a slice whose casts the spell system can make (Spells::area_usable). */
+    [[nodiscard]] std::vector<std::uint32_t> usable_areas(const gamedata::CreatureSlice& body) const;
+    void start_area(Entity& creature, Entity& target, std::uint32_t area);
+    void cast(const PendingCast& pending);
+    /**
+     * A walk of a creature to its target on its path to `hold` (horizontal, with a free line), with the rules of a target with no way and
+     * of the crowd (the walk of a shot, stage 3.4f-A; of an area attack, stage 3.4f-C).
+     */
+    void walk_to(Entity& creature, Entity& target, float hold, bool sees, float away, float seconds);
     void go_home(Entity& creature, float seconds);
     void start_attack(Entity& creature, Entity& target, std::uint32_t attack);
     /** @return The index of the next attack of a creature: its light attacks in their sequence, and a heavy attack after each `kLightAttacks` of them. */
@@ -445,6 +499,12 @@ private:
     void retrace(Entity& creature, float seconds);
     /** @return True when a session can observe the creature: a character with a session is not farther than the leave distance of its interest. */
     [[nodiscard]] bool observed(const Entity& creature) const;
+    /**
+     * @return True when each session that observes a creature whose slice needs the spawn action shows the action that plays: kSpawnLead
+     *         after its creation and after the latest first record of a session (findings CR-R1 and CS-R4). True for a slice with no
+     *         spawn action.
+     */
+    [[nodiscard]] static bool spawn_lead_over(const Entity& creature, WorldClock::time_point now);
     /** Selects the creatures that roam: the creatures at rest with a route or a wander that a character is near. */
     void select_roamers();
     /** @return True when a creature roams when a character is near: it walks, and it has a route that is not complete, or a wander. */
@@ -473,6 +533,8 @@ private:
     std::multimap<WorldClock::time_point, PendingContact> m_contacts;
     /** The releases of the shots that play (stage 3.4f-A), in the sequence of their times. */
     std::multimap<WorldClock::time_point, PendingRelease> m_releases;
+    /** The casts of the area attacks that play (stage 3.4f-C), in the sequence of their times. */
+    std::multimap<WorldClock::time_point, PendingCast> m_casts;
     /** The characters that the creatures ignore: character ids. */
     std::unordered_set<std::string> m_ignored;
     std::optional<WorldClock::time_point> m_lastStep;

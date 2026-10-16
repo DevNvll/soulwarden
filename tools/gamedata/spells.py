@@ -55,7 +55,7 @@ no root entity, two components with one slot, or a delayed event with no delay o
 A prefab slice with no Spell component and no PositionInTheWorld component (a waypoint or a rally point of an encounter)
 is not a spell entity: the tool leaves it out with a count.
 
-Output: {"format": 3, "counts": {"spells": N, "slices": N, "spellsWithNoSlice": N, "slicesWithNoSpellComponent": N,
+Output: {"format": 4, "counts": {"spells": N, "slices": N, "spellsWithNoSlice": N, "slicesWithNoSpellComponent": N,
                                  "vitals": N, "vitalsRowsNotInBaseTables": N, "vitalsCellsOfAbsentColumns": N},
 "slices": [{"path": text, "asset": "UUID", "sub": N, "root": "16 hex digits", "interestRadius": meters,
             "spellSlot": N (0: none), "positionSlot": N (0: none), "slots": [[slot, class name, state type], ...],
@@ -69,6 +69,19 @@ Output: {"format": 3, "counts": {"spells": N, "slices": N, "spellsWithNoSlice": 
 Format 3 (stage 3.3b-M2) adds for each slice "areaStatuses": [[entity, detection entity, radius of its DetectionVolume, [status, ...],
 removeOnExit, detected target type (1: friends)], ...]: the AreaStatusEffectComponent of a slice (the fortify Status_Upgrade_Greataxe_
 GravityWell_ArmorInWell of the friends in the well of Unyielding, 4 m, taken at the exit).
+
+Format 4 (stage 3.4f-C: the ground areas of the creatures, the mushroom of the Dryad Shaman and the lightning strike of the Undead
+Shaman) adds:
+
+  each volume          [..., shape, height, offset, inactiveAfter]: the shape of its query ("sphere", "cylinder", "box", "capsule",
+                       or "none": a DetectionVolumeComponent with no shape takes the shape of its spell row), the m_Height of a
+                       cylinder (meters), the height of the entity of the volume above the root of the slice (the translation z of its
+                       m_localTM and of its parents, and m_center), and the time from the start at which it is not active any more
+                       (the earliest deactivation at the init of it or of a parent; -1: never)
+  each area status     [..., initialDelay, reapplyDelay, inherit]: m_initialDelaySeconds (the first application after the entry,
+                       0.5 s for the mushroom), m_reapplicationDelaySeconds (each next application while the entity is in the
+                       volume, 1 s), and m_inheritStatusEffects of the AreaStatusEffectComponent (its server facet: client code
+                       0x3FE5B40, 0x3FE6500, 0x3FF2830)
 
 The tool needs only the standard library of Python and the modules of this folder (creature_data.py, slice_ids.py,
 appearance_tables.py, item_catalog.py, abilities.py).
@@ -136,6 +149,9 @@ TIMELINE_ENTRY_CLASS = uuid.UUID("e14cf7d7-9f3b-4aae-a320-a284dffd02ee")  # Time
 LAYER_ASSIGNMENT_CLASS = uuid.UUID("2acd7f8c-9f1a-41f3-b8b9-a64d2fc3bb09")  # LayerEntityAssignment: a layer and its entity
 LAYER_CLASS = uuid.UUID("f99a21ab-f403-4b90-ad52-25ee26c36f25")         # TimelineLayer of a timeline asset
 SPHERE_CLASS = uuid.UUID("7f2ef312-4089-4582-89c5-5d4156daa7fb")        # QueryShapeSphere
+# Format 4 (stage 3.4f-C): the other query shapes of a detection volume (class ids of the image text table).
+SHAPE_CLASSES = {SPHERE_CLASS: "sphere", uuid.UUID("709b11ea-fd56-4fef-b841-7cea549368e6"): "cylinder",
+                 uuid.UUID("c6651a66-23d4-4508-b4ad-180c516655a8"): "box", uuid.UUID("7495c65c-9193-4193-bbb2-de3343b9eb03"): "capsule"}
 # Format 3 (stage 3.3b-M2): the AreaStatusEffectComponent (the fortify of the friends in the well of Unyielding).
 AREA_STATUS_CLASS = uuid.UUID("1d3d6391-52bc-7703-563a-e2c7e674b255")
 # The event type of an activation (m_type of m_eventData): spell_event::kActivate of the backend.
@@ -175,6 +191,13 @@ EFFECT_ID_FIELD = field_id("m_effectId")
 REMOVE_ON_EXIT_FIELD = field_id("m_removeOnExit")
 DETECTION_ENTITY_FIELD = field_id("m_detectionEntity")
 DETECTED_TYPE_FIELD = field_id("m_detectedTargetType")
+INITIAL_DELAY_SECONDS_FIELD = field_id("m_initialDelaySeconds")
+REAPPLY_DELAY_FIELD = field_id("m_reapplicationDelaySeconds")
+INHERIT_FIELD = field_id("m_inheritStatusEffects")
+HEIGHT_FIELD = field_id("m_Height")
+SHAPE_FIELD = field_id("m_shape")
+CENTER_FIELD = field_id("m_center")
+spell_event_deactivate = 3
 
 
 def text_of(element) -> str:
@@ -238,6 +261,28 @@ def sphere_radius(component) -> float:
     return 0.0
 
 
+def volume_shape(component) -> tuple[str, float, float, float]:
+    """@return The query shape of a detection volume (format 4): its name ("none" for a component with no shape), its radius, the
+    m_Height of a cylinder, and the z of m_center."""
+    center = find_field(component, CENTER_FIELD)
+    center_z = struct.unpack(">f", center.value[8:12])[0] if center is not None and center.value and len(center.value) == 12 else 0.0
+    shape = find_field(component, SHAPE_FIELD)
+    for child in walk(shape) if shape is not None else []:
+        name = SHAPE_CLASSES.get(child.type_id)
+        if name is not None:
+            return name, real_of(find_field(child, RADIUS_FIELD)), real_of(find_field(child, HEIGHT_FIELD)), center_z
+    return "none", 0.0, 0.0, center_z
+
+
+def translation_z(component) -> float:
+    """@return The translation z of the m_localTM of a transform component (12 big-endian floats: three axes and the translation)."""
+    transform = find_field(component, LOCAL_TRANSFORM_FIELD)
+    if transform is None or transform.value is None or len(transform.value) != 48:
+        return 0.0
+    value = struct.unpack(">f", transform.value[44:48])[0]
+    return value if math.isfinite(value) else 0.0
+
+
 def asset_hint(element) -> str:
     """@return The path hint of an asset field (the bytes after the asset id, the sub id, and the type: a lower-case path)."""
     if element is None or element.value is None:
@@ -296,10 +341,11 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
             # The outer entity of the file has the slice component: it is not an entity of an instance.
             if listed is None or entity_id is None or any(c.type_id == SLICE_COMPONENT_TYPE for c in listed.children):
                 continue
-            entry = {"name": name, "parent": None, "destroys": False, "offense": "", "active": active}
+            entry = {"name": name, "parent": None, "destroys": False, "offense": "", "active": active, "z": 0.0}
             for component in listed.children:
                 if find_field(component, LOCAL_TRANSFORM_FIELD) is not None:
                     entry["parent"] = id_value(find_field(component, PARENT_FIELD))
+                    entry["z"] = translation_z(component)
                 class_name, state_type = COMPONENT_CLASSES.get(str(component.type_id), ("", 0))
                 if component.type_id == DESTROY_CLASS:
                     entry["destroys"] = True
@@ -309,7 +355,9 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
                     entry["offense"] = entry["offense"] or row
                     offenses.append((entity_id, row, sphere_radius(component)))
                 if component.type_id == VOLUME_CLASS:
-                    volumes.append((entity_id, sphere_radius(component)))
+                    shape, shape_radius, height, center_z = volume_shape(component)
+                    volumes.append((entity_id, shape_radius if shape == "sphere" else sphere_radius(component), shape, shape_radius, height,
+                                    center_z))
                 if component.type_id == AREA_STATUS_CLASS:
                     # The statuses that the friends (or the enemies) in the detection volume of the component get, and lose at their
                     # exit (format 3, stage 3.3b-M2: the fortify in the well of Unyielding).
@@ -318,8 +366,17 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
                     reference = deep(component, DETECTION_ENTITY_FIELD)
                     detection = next((int.from_bytes(child.value, "big") for child in walk(reference)
                                       if child.value is not None and len(child.value) == 8), None) if reference is not None else None
+                    # Format 4 (stage 3.4f-C): the first application after the entry and each next one (client code 0x3FE5B40,
+                    # 0x3FE6500: the server facet schedules ApplyStatusEffects after m_initialDelaySeconds, then again after
+                    # m_reapplicationDelaySeconds). A delay that is not a 32-bit float stops the tool.
+                    what = f"the AreaStatusEffectComponent of {name} in the slice {path}"
+                    initial = deep(component, INITIAL_DELAY_SECONDS_FIELD)
+                    again = deep(component, REAPPLY_DELAY_FIELD)
                     area_statuses.append((entity_id, detection, statuses, number_of(deep(component, REMOVE_ON_EXIT_FIELD)) != 0,
-                                          number_of(deep(component, DETECTED_TYPE_FIELD))))
+                                          number_of(deep(component, DETECTED_TYPE_FIELD)),
+                                          round(required_real(initial, f"m_initialDelaySeconds of {what}"), 4) if initial is not None else 0.0,
+                                          round(required_real(again, f"m_reapplicationDelaySeconds of {what}"), 4) if again is not None else 0.0,
+                                          number_of(deep(component, INHERIT_FIELD)) != 0))
                 if component.type_id == AUTO_SPELL_CLASS:
                     rate = deep(component, DEFAULT_RATE_FIELD)
                     # The times of the rule of a summon are required 32-bit floats (code review of stage 3.3b-S2b, finding
@@ -412,6 +469,16 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
         times = [delay for _, delay, kind, target, _, init, _ in raw_events if kind == spell_event_activate and init and target in chain]
         return round(max(min(times), 0.0), 4) if times else -1.0
 
+    def inactive_after(identifier) -> float:
+        """Format 4: the earliest deactivation at the init of the entity or of a parent (-1: never)."""
+        chain = list(ancestors(identifier))
+        times = [delay for _, delay, kind, target, _, init, _ in raw_events if kind == spell_event_deactivate and init and target in chain]
+        return round(max(min(times), 0.0), 4) if times else -1.0
+
+    def height_of(identifier) -> float:
+        """Format 4: the height of an entity above the root of the slice (the translation z of it and of its parents)."""
+        return sum(entities[entity]["z"] for entity in ancestors(identifier))
+
     resolved = []
     for slot, delay, kind, target, owner, init, trigger in sorted(raw_events):
         entry = entities.get(target)
@@ -441,12 +508,126 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
             "components": components,
             "vitals": [vitals_slots[0], row, named(death)] if vitals_slots and row else None,
             "autoSpell": auto,
-            "volumes": [[named(entity), round(radius_of, 4), active_after(entity)] for entity, radius_of in volumes],
+            "volumes": [[named(entity), round(radius_of, 4), active_after(entity), shape, round(shape_radius, 4), round(height, 4),
+                         round(height_of(entity) + center_z, 4), inactive_after(entity)]
+                        for entity, radius_of, shape, shape_radius, height, center_z in volumes],
             "offenses": [[named(entity), row_of, round(radius_of, 4)] for entity, row_of, radius_of in offenses],
             "detectionEvents": [[named(target), kind] for target, kind in detection_events],
             "timelines": timeline_rows,
-            "areaStatuses": [[named(entity), named(detection), round(next((radius_of for volume, radius_of in volumes if volume == detection), 0.0), 4),
-                              statuses, remove, kind] for entity, detection, statuses, remove, kind in area_statuses if statuses]}
+            "areaStatuses": [[named(entity), named(detection),
+                              round(next((volume[1] for volume in volumes if volume[0] == detection), 0.0), 4),
+                              statuses, remove, kind, initial, again, inherit]
+                             for entity, detection, statuses, remove, kind, initial, again, inherit in area_statuses if statuses]}
+
+
+# The shapes of a ground area of a creature that the backend has (stage 3.4f-C, docs/systems/spells.md; research creature-ranged.md Q4,
+# live check L8 of the stage):
+#   "status"  a slice with no Spell component and a PositionInTheWorld component, whose AreaStatusEffectComponent gives its statuses to
+#             the enemies (m_detectedTargetType 2) in a detection volume with a sphere or a cylinder, and whose delayed event destroys
+#             it (the mushroom of the Dryad Shaman: AI_Poison_55)
+#   "strike"  a slice with a Spell component, no offense, and no area status, whose detection volume has no shape (the sphere of the
+#             Radius of its spell row) and is active between an activation and a deactivation event at the init (the damage window
+#             of the lightning strike of the Undead Shaman, 0.9 s to 0.95 s), and whose spell row has a damage table and a row
+AREA_SHAPES = ("status", "strike")
+
+
+def area_shape(cells: dict, entry: dict) -> tuple[str, str]:
+    """@return The area shape of a spell of a creature ("status" or "strike") and an empty cause, or an empty shape and the cause (the
+    count of the tool). `cells`: the cells of the spell row (SpellData); `entry`: the slice of read_spell_slice."""
+    targets = str(cells.get("TargetTypes", "")).strip().lower()
+    if targets != "enemy":
+        return "", "the spell is not a spell of the enemies of its caster (TargetTypes)"
+    if not entry:
+        return "", "the prefab of the spell has no slice with a Spell or a PositionInTheWorld component"
+    volumes = {volume[0]: volume for volume in entry["volumes"]}
+    ends = any(event[2] == 0 and event[5] and event[7] for event in entry["events"])
+    if entry["spellSlot"] == 0 and entry["positionSlot"] != 0:
+        enemies = [area for area in entry["areaStatuses"] if area[5] == 2 and area[3]]
+        if not enemies or entry["offenses"]:
+            return "", "a place slice with no area status of the enemies, or with an offense"
+        volume = volumes.get(enemies[0][1])
+        if volume is None or volume[3] not in ("sphere", "cylinder") or volume[4] <= 0.0 or volume[2] < 0.0:
+            return "", "the area status of the enemies has no sphere or cylinder that becomes active"
+        if not ends:
+            return "", "the area status slice has no delayed event that destroys it"
+        return "status", ""
+    if entry["spellSlot"] != 0:
+        if entry["offenses"] or entry["areaStatuses"] or entry["autoSpell"] or entry["vitals"]:
+            return "", "a spell slice with an offense, an area status, an AutoSpell, or a Vitals component"
+        windows = [volume for volume in entry["volumes"] if volume[3] == "none" and 0.0 <= volume[2] < volume[7]]
+        if len(windows) != 1 or len(entry["volumes"]) != 1:
+            return "", "a spell slice with no single detection volume that is active between two events"
+        # The column Radius is a text column in some spell tables ("2.5").
+        try:
+            radius = float(str(cells.get("Radius", "")).strip() or "0")
+        except ValueError:
+            radius = 0.0
+        if str(cells.get("ShapeTypes", "")).strip().lower() not in ("", "sphere") or not math.isfinite(radius) or not radius > 0.0:
+            return "", "the spell row of the damage window has no sphere with a radius"
+        if not str(cells.get("DamageTable", "")).strip() or not str(cells.get("DamageTableRow", "")).strip():
+            return "", "the spell row of the damage window has no damage table or no row"
+        return "strike", ""
+    return "", "the spell slice has no Spell and no PositionInTheWorld component"
+
+
+class AreaSpells:
+    """The spells that the creatures cast with a CAGE-CastSpell event of a fragment (stage 3.4f-C; creature_behavior.py): the cells of
+    each spell row (the spell tables, SpellData) and the area shape of its slice (area_shape). The creature tool uses it."""
+
+    COLUMNS = ("TargetTypes", "ShapeTypes", "Radius", "DamageTable", "DamageTableRow", "CastDistance", "CastHeight", "SpellPrefabPath")
+
+    def __init__(self, sources, proved: dict[str, str] | None = None) -> None:
+        """@param proved The lower-case ids of the spells whose slice record has a live check (creature_slices.json, areaSpells). No
+        value: each spell of a supported shape."""
+        self.sources = sources
+        self.proved = proved
+        self._rows: dict[str, dict] | None = None
+        self._by_path: dict[str, tuple[bytes, int]] | None = None
+        self._shapes: dict[str, tuple[dict | None, str]] = {}
+
+    def _read(self) -> None:
+        self._rows = {}
+        for path in self.sources.paths(TABLES_FOLDER, ".datasheet"):
+            data = self.sources.read(path)
+            if data is None or sheet_type(data) != SPELL_TYPE:
+                continue
+            sheet = Sheet(data)
+            if "SpellID" not in sheet.columns:
+                raise Failure(f"the spell table {sheet.name} has no column SpellID")
+            for row in range(sheet.row_count):
+                identifier = str(sheet.cell(row, "SpellID")).strip()
+                if identifier and identifier.lower() not in self._rows:
+                    cells = {"SpellID": identifier}
+                    for column in self.COLUMNS:
+                        if column in sheet.columns:
+                            cells[column] = sheet.source(row, column) if column == "SpellPrefabPath" else sheet.cell(row, column)
+                    self._rows[identifier.lower()] = cells
+        catalog = self.sources.read(CATALOG_PATH)
+        if catalog is None:
+            raise Failure("the game copy has no asset catalog")
+        self._by_path = {path: asset for asset, path in Catalog(catalog).paths.items() if asset[1] == SUB_ID}
+
+    def shape(self, spell: str) -> tuple[dict | None, str]:
+        """@return ({"spell", "shape", "table", "row"}, "") for a spell of a supported area shape, or (None, the cause)."""
+        key = spell.strip().lower()
+        if key not in self._shapes:
+            if self._rows is None:
+                self._read()
+            cells = self._rows.get(key)
+            if cells is None:
+                self._shapes[key] = (None, "the spell tables have no row of the SpellName of the cast")
+                return self._shapes[key]
+            prefab = str(cells.get("SpellPrefabPath", "")).strip()
+            path = slice_path(prefab) if prefab else ""
+            asset = self._by_path.get(path) if path else None
+            roots = self.sources.stream(path) if asset is not None and self.sources.has(path) else None
+            entry = read_spell_slice(path, asset, roots, self.sources) if roots is not None else {}
+            shape, cause = area_shape(cells, entry)
+            if shape and self.proved is not None and key not in self.proved:
+                shape, cause = "", "the record of the spell slice has no live check yet (creature_slices.json, areaSpells)"
+            self._shapes[key] = ({"spell": cells["SpellID"], "shape": shape, "table": str(cells.get("DamageTable", "")).strip(),
+                                  "row": str(cells.get("DamageTableRow", "")).strip()}, "") if shape else (None, cause)
+        return self._shapes[key]
 
 
 def slice_path(prefab: str) -> str:
@@ -510,7 +691,7 @@ def build_document(sources: Sources) -> dict:
     unknown = [row for row in elsewhere if row.lower() not in {name.lower() for name in VITALS_ROWS_NOT_IN_BASE_TABLES}]
     if unknown:
         raise Failure(f"a spell slice names the vitals row {unknown[0]}, which no base vitals table has")
-    return {"format": 3, "counts": {"spells": len(spells), "slices": len(slices), "spellsWithNoSlice": no_slice,
+    return {"format": 4, "counts": {"spells": len(spells), "slices": len(slices), "spellsWithNoSlice": no_slice,
                                     "slicesWithNoSpellComponent": no_spell_component, "vitals": len(vitals),
                                     "vitalsRowsNotInBaseTables": no_row, "vitalsCellsOfAbsentColumns": no_column},
             "slices": slices, "spells": sorted(spells.values()), "vitals": vitals, "vitalsNotInData": elsewhere}

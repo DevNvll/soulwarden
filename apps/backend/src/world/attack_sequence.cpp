@@ -308,12 +308,16 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
             visit->endInput = input;
             continue;
         }
-        // A dodge: at once in a cancel window, at the end of a buffer window.
+        // A dodge: at once in a cancel window, at the end of a buffer window. The stamina system must be able to start it at that time
+        // (finding CS-R2): a refused dodge leaves the attack as it is.
         if (visit->dodgeAt >= 0.0F && t >= visit->dodgeAt - kClockEpsilon) {
-            reset(state, SequenceEnd::dodge, input);
-            return;
+            if (bits.dodgeAllowed) {
+                reset(state, SequenceEnd::dodge, input);
+                return;
+            }
+            visit->dodgeAt = -1.0F;
         }
-        if (bits.dodge) {
+        if (bits.dodge && bits.dodgeAllowed) {
             for (const gamedata::DodgeWindow& window : fragment.dodge) {
                 if (!in_window(t, window.start, window.end)) {
                     continue;

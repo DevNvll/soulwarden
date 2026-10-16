@@ -297,6 +297,20 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage 3.4f-C changes `spell-data.json` (format 4) and `creatures.json` (still format 3). `spell-data.json` format 4: each detection
+  volume has its shape (`sphere`, `cylinder`, `none`, or `other`: the QueryShape of the volume), its shape radius, its height, its
+  offset above the root of the slice, its start, and its end (the earliest deactivation at the init of its entity or of a parent; -1:
+  never); each area status has its initial delay and its reapply delay (`m_initialDelaySeconds`, `m_reapplicationDelaySeconds`). The
+  loader takes the formats 1 to 3 too; then no creature casts an area. The loader refuses a file of format 4 with a volume or an area
+  status whose values are not finite or not in their ranges. `creatures.json`: a slice can have `areas` (its area attacks: the action,
+  its length, and the casts with their times, spells, shapes, clip values, and for a strike the damage row), and the counts
+  `slicesWithAreaAttacks`, `areaAttacks`, `areaCasts`, `areaSpells`, `kindsWithAreaAttacks`, `spawnPointsWithAreaAttacks`,
+  `areasLeftOut`. The creature tool reads the spell tables and the spell slices (`spells.AreaSpells`) and the list `areaSpells` of
+  `tools/gamedata/creature_slices.json` (the spells whose record has a live check: 6); it stops when the list is not correct. Its file
+  of this build has 789 kinds with no attack. `stamina-data.json` is equal to the file of stage 3.4f-B; the tool and the loader now
+  refuse a dodge fragment whose next dodge starts before its payment (code review of stage 3.4f-B, finding CS-R5, case
+  `replace-before-pay` of `check_stamina_tool.py`).
+
 - Stage 3.4f-B adds `stamina-data.json` (`tools/gamedata/stamina.sh`, format 1; 2 KB; needs an Oodle source for the player slice): the
   Stamina component of `slices/player.dynamicslice`, the stamina rows of BaseVitals_Player, StaminaCosts_Player, and the Player row of
   EncumbranceData, the action Dodge of `playeractions_dodge.actionlist` (its fragment and cost id for each load class, the delay of its

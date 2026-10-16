@@ -278,6 +278,52 @@ struct CreatureRangedAttack {
 };
 
 /**
+ * The shapes of a ground area of a creature (stage 3.4f-C; tools/gamedata/spells.py, area_shape). Game data (the shape of the spell
+ * slice), with a live check of each spell slice record (creature_slices.json, areaSpells).
+ */
+enum class AreaShape : std::uint8_t {
+    /** A place slice whose AreaStatusEffectComponent gives its statuses to the enemies in its volume (the mushroom of the Dryad Shaman). */
+    status,
+    /** A spell slice whose detection volume with no shape is active for a short window: one hit of the spell row (the lightning strike). */
+    strike,
+};
+
+/**
+ * One cast of a ground area (stage 3.4f-C): a CAGE-CastSpell event of the fragment of an action of the slice, with the values of the event
+ * (creature_behavior.py). Game data.
+ */
+struct AreaCast {
+    /** The time of the cast from the start of the action, in seconds. */
+    float time{0.0F};
+    /** The spell (SpellName) and the shape of its slice. */
+    std::string spell;
+    AreaShape shape{AreaShape::status};
+    /** AIAimAtTarget, AILeadTarget, ProjectileSpeed (the speed of the aim), AILeadTargetMaxAngle, AIAimMaxAngle (degrees). */
+    bool aimAtTarget{false};
+    bool lead{false};
+    float aimSpeed{0.0F};
+    float leadAngle{0.0F};
+    float aimAngle{0.0F};
+    /** AIMissMinDistance and AIMissMaxDistance (meters). The backend keeps them; no rule uses them (creature-behavior.md). */
+    float missMin{0.0F};
+    float missMax{0.0F};
+    /** UseAllAvailableTargets. The backend keeps it; the cast goes to the target of the creature (creature-behavior.md). */
+    bool allTargets{false};
+    /** A strike: the damage of the row of its spell (the damage table of the slice; its time and reach are 0). */
+    CreatureContact damage;
+};
+
+/** One area attack of a slice (stage 3.4f-C): an action of its action table with one cast or more. */
+struct CreatureAreaAttack {
+    /** Index of the action in CreatureSlice::actions. */
+    std::uint32_t action{0};
+    /** The time of the action, in seconds: the creature starts no other action before its end. */
+    float length{0.0F};
+    /** The casts, in the sequence of their times (the backend sorts them at the load of the data). */
+    std::vector<AreaCast> casts;
+};
+
+/**
  * The basic shot of an archer (stage 3.4f-A, a rule of this project for the scope of the stage): the ranged attack of the action
  * with this name is the one ranged attack that a creature uses (the action FireBow of 20 slices of the supported build: one
  * release, the ammunition of the slice). The other ranged attacks of the data (a charged or a fast shot, the shot of a caster) are
@@ -428,13 +474,16 @@ struct CreatureSlice {
     std::optional<std::uint32_t> basicShot;
     /** True: the basic shot is the cast of a caster (kBasicCastAction, stage 3.4f-B): the band of a caster. */
     bool caster{false};
+    /** The area attacks of the slice (stage 3.4f-C). Empty: a file of an older tool, or the slice has none. */
+    std::vector<CreatureAreaAttack> areas;
 
     /**
      * @return True when a creature with this slice gets a target and attacks it: the slice has a sense, a speed, and an attack (a
-     *         melee attack, or from stage 3.4f-A its basic shot).
+     *         melee attack, or from stage 3.4f-A its basic shot, or from stage 3.4f-C an area attack).
      */
     [[nodiscard]] bool fights() const {
-        return behavior && behavior->sightDistance > 0.0F && behavior->runSpeed > 0.0F && (!attacks.empty() || basicShot.has_value());
+        return behavior && behavior->sightDistance > 0.0F && behavior->runSpeed > 0.0F
+               && (!attacks.empty() || basicShot.has_value() || !areas.empty());
     }
     /** @return The basic shot of the slice, or null. */
     [[nodiscard]] const CreatureRangedAttack* basic_shot() const {
@@ -606,6 +655,10 @@ public:
     [[nodiscard]] std::size_t shooting_slices() const {
         return m_shootingSlices;
     }
+    /** @return The number of slices with an area attack (stage 3.4f-C). */
+    [[nodiscard]] std::size_t area_slices() const {
+        return m_areaSlices;
+    }
     /** @return The route of a spawn point, or null. */
     [[nodiscard]] const PatrolRoute* route_of(const SpawnPoint& point) const {
         return point.route && *point.route < m_routes.size() ? &m_routes[*point.route] : nullptr;
@@ -690,6 +743,7 @@ private:
     std::vector<ProjectileSliceData> m_projectiles;
     std::optional<CreatureCapsule> m_playerCapsule;
     std::size_t m_shootingSlices{0};
+    std::size_t m_areaSlices{0};
     std::size_t m_routedPoints{0};
     std::size_t m_wanderingKinds{0};
     /** Level to the values of the level. */

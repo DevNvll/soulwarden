@@ -368,6 +368,13 @@ def build_data(sources: Sources) -> dict:
     for name, times in fragments.items():
         if not 0.0 <= times["pay"] <= times["canTransition"] or times["immune"][0] != 0.0 or times["immune"][1] <= 0.0:
             raise Failure(f"{PLAYER_ADB}: the times of the dodge fragment {name} do not fit together: {times}")
+        # A next dodge of a window starts at the end of a buffered window and at the start of an instant one: not before the payment of
+        # the dodge that plays (code review of stage 3.4f-B, finding CS-R5: a chain of replacements before the mark paid nothing).
+        for start, end, buffered in times["cancel"]:
+            replaces = end if buffered and end is not None else start
+            if replaces < times["pay"]:
+                raise Failure(f"{PLAYER_ADB}: a dodge window of the fragment {name} starts the next dodge at {replaces:g} s, before the "
+                              f"payment at {times['pay']:g} s")
     dodge["fragments"] = fragments
     dodge["variantsNotUsed"] = not_used
     return {"format": FORMAT, "component": component, "vitals": vitals, "load": load, "dodge": dodge,

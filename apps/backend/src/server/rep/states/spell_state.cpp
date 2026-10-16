@@ -43,6 +43,10 @@
 //   - an activation (the burst): not completed, with a time after the end of the spell: a completed state makes the client
 //     play the burst again at once (live check L4), and the stop of the spell comes first.
 //
+// Stage 3.4f-C (live check L8): a passed activation of an entity with an AreaStatusEffectComponent of the enemies (the cloud of the mushroom
+// of the Dryad Shaman) is completed for a late observer: the client then shows the lasting area at once (with the hold of a burst it shows no cloud). A
+// passed activation of a burst keeps the hold (the bolt of the lightning strike plays again with a completed state).
+//
 // Stage 3.3b-S2b (live checks of the Pylon, the trap, and the Beacon):
 //   - A delayed event that starts at a trigger of its owner entity (m_startDelayOnTrigger, no start at the init: the death chain
 //     of the Pylon, the charge picture of its shots) has no state until the server triggers its owner: then its time runs from
@@ -181,8 +185,14 @@ std::vector<SlotState> encode_delayed_event_states(const world::Entity& entity, 
             const auto due = start + std::chrono::duration_cast<world::WorldClock::time_point::duration>(Seconds(delay));
             remaining = Seconds(due - now).count();
             if (remaining <= 0.0F) {
-                if (event.type == gamedata::spell_event::kActivate) {
-                    // An activation that passed (the burst): the client must not play it again (live check L4).
+                // An activation that passed of an entity with an AreaStatusEffectComponent (stage 3.4f-C: the cloud of the mushroom, a
+                // lasting area): completed, the client activates it at once (live check L8, M4b; the hold of a burst hides it, M4a).
+                const bool lasting = std::any_of(spell.slice->areaStatuses.begin(), spell.slice->areaStatuses.end(), [&](const gamedata::SpellAreaStatus& area) {
+                    return area.targets == 2 && lower_equal(area.entity, event.target);
+                });
+                if (event.type == gamedata::spell_event::kActivate && !lasting) {
+                    // An activation that passed (the burst of the vortex, the bolt of the lightning strike): the client must not play it
+                    // again (live check L4 of stage 3.3b-S2a, live check L8 of stage 3.4f-C, S3a and S3b).
                     remaining = Seconds(spell.ends - now + kHoldAfterEnd).count();
                 } else {
                     remaining = 0.0F;

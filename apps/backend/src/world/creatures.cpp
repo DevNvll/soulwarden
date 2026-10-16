@@ -224,6 +224,9 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         m_forced.stop(*entity);
         // The auras that follow the creature end (code review of stage 3.3b-S2b, finding F3).
         m_world.spells().target_died(entity->id);
+        // The ground areas of the creature whose spell row has EndOnCasterDeath end (stage 3.4f-C, game data: the lightning strike of the
+        // Undead Shaman; the mushroom of the Dryad Shaman has no such cell and stays to its end).
+        m_world.spells().caster_died(entity->id);
         // The death action of the slice: the body falls and stays on the ground. The client
         // starts this action only when the server starts it.
         const gamedata::CreatureSlice& body = *entity->creature.body;
@@ -741,6 +744,13 @@ void Creatures::scan() {
     }
     m_counts.pointsLooked += m_counts.lastScanPoints;
     m_counts.creaturesLooked += m_counts.lastScanCreatures;
+}
+
+void Creatures::first_record(EntityId creature) {
+    Entity* entity = m_world.find(creature);
+    if (entity != nullptr && entity->kind == EntityKind::creature && entity->creature.spawnAction) {
+        entity->creature.recordedAt = m_world.clock().now();
+    }
 }
 
 } // namespace soulwarden::backend::world

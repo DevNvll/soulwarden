@@ -59,7 +59,8 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   - HasGritActive, TargetHasGritActive: the backend has no grit; such a row does not pass (a project rule).
   - TargetVitalsCategory Player does not pass (the target of a hit is a creature); AttackerVitalsCategory must be Player.
   - EquipLoadCategory (stage 3.4f-B): a list of the load classes of the data (Fast, Normal, Slow, Overburdened); the class of the
-    equip load of the character (`GearSummary::loadClass`: light, medium, heavy, overburdened).
+    equip load of the character (`GearSummary::loadClass`: light, medium, heavy, overburdened). From stage 3.4f-C a fixed row (no
+    event) with this condition counts only in its load classes too (finding CS-R6, [Gear and perks](gear-and-perks.md)).
   - MyStaminaPercent is the stamina of the server from stage 3.4f-B ([Stamina and dodge](stamina-and-dodge.md)); before it the
     stamina was always full (a rule with LessThan 100 never passed).
   - DontHaveStatusEffect: the attacker does not have the status.

@@ -60,6 +60,8 @@ std::vector<Case> ranged_cases();
 std::vector<Case> review_station_cases();
 std::vector<Case> ranged_b_cases();
 std::vector<Case> review_ranged_cases();
+std::vector<Case> review_casters_cases();
+std::vector<Case> ranged_c_cases();
 
 std::vector<Case> all_cases() {
     std::vector<Case> cases;
@@ -70,7 +72,7 @@ std::vector<Case> all_cases() {
                               review_corrections_cases(), patrol_cases(), review_patrol_cases(), loot_cases(), ability_cases(), review_loot_cases(), review_scope_cases(), itemization_cases(),
                               review_itemization_cases(), status_cases(), review_status_cases(), spell_cases(), motion_cases(), review_spell_cases(),
                               review_motion_cases(), projectile_cases(), review_projectile_cases(), spell_kind_cases(), review_spells2_cases(),
-                              ownership_cases(), review_dlc_cases(), crit_cases(), passive_cases(), review_crit_cases(), heal_cases(), attack_sequence_cases(), review_heal_cases(), review_combos_cases(), gawh_cases(), review_gawh_cases(), review_wrecking_cases(), interaction_cases(), review_interaction_cases(), station_cases(), ranged_cases(), review_station_cases(), ranged_b_cases(), review_ranged_cases()}) {
+                              ownership_cases(), review_dlc_cases(), crit_cases(), passive_cases(), review_crit_cases(), heal_cases(), attack_sequence_cases(), review_heal_cases(), review_combos_cases(), gawh_cases(), review_gawh_cases(), review_wrecking_cases(), interaction_cases(), review_interaction_cases(), station_cases(), ranged_cases(), review_station_cases(), ranged_b_cases(), review_ranged_cases(), review_casters_cases(), ranged_c_cases()}) {
         cases.insert(cases.end(), group.begin(), group.end());
     }
     return cases;

@@ -75,6 +75,14 @@ release gets its joins (the slice of the creature, its weapons and ammunition, a
     flight), AILeadTargetMaxAngle, AIAimMaxAngle, AIMissMinDistance, AIMissMaxDistance.
 A release with a join that the data does not have makes no ranged attack of its action (the
 count of its cause): the tool does not make a melee attack or a hit with no flight from it.
+
+The ground areas (stage 3.4f-C, research creature-ranged.md Q4, live check L8): each action of the action table whose selected
+variant (the tags of the ranged attacks) has one CAGE-CastSpell event or more (the cast of a spell; its time is the sum of the
+Blend times before it). Each cast names its spell (SpellName), whose row and slice must have an area shape of the backend
+(spells.area_shape: "status", the mushroom of the Dryad Shaman; "strike", the lightning strike of the Undead Shaman), and has the
+aim values of the event (AIAimAtTarget, AILeadTarget, ProjectileSpeed, AILeadTargetMaxAngle, AIAimMaxAngle, AIMissMinDistance,
+AIMissMaxDistance, UseAllAvailableTargets). A "strike" needs the row of its spell in the damage table of the slice (the damage of the
+hit). An action with a cast of a different spell, or with a cast whose join fails, makes no area attack (the count `areasLeftOut`).
 """
 
 from __future__ import annotations
@@ -128,6 +136,8 @@ ROOT_JOINTS = ("", "bind_xform", "xform", "master_root", "root")
 # The ranged attacks (stage 3.4f-A). The paperdoll slots of the AmmoSlot of a clip (client enum PaperdollSlotTypes at image
 # RVA 0x5D19E40; QUICK_SLOT_1 is slot 14: the slices of the skeleton archer have their Arcane_AI_Arrow there).
 RANGED_EVENT = "CAGE-RangedAttack"
+# Stage 3.4f-C: the cast of a spell in a fragment (the ground areas of the creatures).
+CAST_EVENT = "CAGE-CastSpell"
 AMMO_SLOTS = {"PaperdollSlotTypes::ARROW_AMMO_SLOT": 12, "PaperdollSlotTypes::CARTRIDGE_AMMO_SLOT": 13,
               "PaperdollSlotTypes::QUICK_SLOT_1": 14}
 AMMO_TYPE = "AmmoItemDefinitions"
@@ -483,7 +493,7 @@ class Animations:
         for fragment in (listed if listed is not None else []):
             for variant in fragment.findall("Fragment"):
                 tags = {name.lower() for name in tag_names(variant.get("Tags", ""))} | {name.lower() for name in extra_tags}
-                entry = {"tags": tags, "contacts": [], "ranged": [], "end": None}
+                entry = {"tags": tags, "contacts": [], "ranged": [], "casts": [], "end": None}
                 for layer in variant.findall("AnimLayer"):
                     time = 0.0
                     last = None
@@ -512,11 +522,13 @@ class Animations:
                             step = number_of(item.get("ExitTime"))
                             if step > 0.0:
                                 time += step
-                        elif item.tag == "Procedural" and item.get("type") in ("CAGE-Damage", RANGED_EVENT):
+                        elif item.tag == "Procedural" and item.get("type") in ("CAGE-Damage", RANGED_EVENT, CAST_EVENT):
                             parameters = item.find("ProceduralParams")
                             values = {value.tag: value.get("value", "") for value in parameters} if parameters is not None else {}
                             if item.get("type") == "CAGE-Damage":
                                 entry["contacts"].append((time, values))
+                            elif item.get("type") == CAST_EVENT:
+                                entry["casts"].append((None if broken else time, values))
                             else:
                                 entry["ranged"].append((None if broken else time, values))
                 fragments.setdefault(fragment.tag.lower(), []).append(entry)
@@ -588,7 +600,7 @@ def reach_of(parameters: dict) -> float:
 class Behavior:
     """The reader of the behavior data of the slices of one creature file."""
 
-    def __init__(self, sources, tables_folder: str, ranged_attacks: dict | None = None, projectile_of=None) -> None:
+    def __init__(self, sources, tables_folder: str, ranged_attacks: dict | None = None, projectile_of=None, area_spells=None) -> None:
         """@param ranged_attacks The attacks of the ranged attack data (stage 3.4f-A): (lower-case profile, lower-case attack) to
                {"profile", "attack", "index", "hitScan", "range", "radius", "accelDelay"}. None: the file has no ranged attack.
         @param projectile_of A function: the path of a projectile slice to its index in the list "projectiles" of the file, or
@@ -601,6 +613,9 @@ class Behavior:
         self.projectile_of = projectile_of
         # The causes of the ranged attacks that are not in the file, with their counts (a member of the counts of the file).
         self.ranged_left_out: dict[str, int] = {}
+        # Stage 3.4f-C: the spells of the casts (spells.AreaSpells), and the causes of the area attacks that are not in the file.
+        self.area_spells = area_spells
+        self.areas_left_out: dict[str, int] = {}
 
     def release(self, values: dict, references: dict, main_hand: dict | None, rows: dict) -> tuple[dict | None, str]:
         """@return The joins of one release of a ranged attack (see the head of the file), or no value and the cause."""
@@ -756,7 +771,10 @@ class Behavior:
                   if self.ranged_attacks is not None else [])
         if ranged:
             result["ranged"] = ranged
-        if not attacks and not ranged:
+        areas = self.read_areas(actions, databases, ranged_tags, rows) if self.area_spells is not None else []
+        if areas:
+            result["areas"] = areas
+        if not attacks and not ranged and not areas:
             result["noAttack"] = "; ".join(sorted(causes)) or "no action of its action table has a damage event"
         return result
 
@@ -808,3 +826,74 @@ class Behavior:
 
     def count(self, cause: str) -> None:
         self.ranged_left_out[cause] = self.ranged_left_out.get(cause, 0) + 1
+
+    def read_areas(self, actions: list[list], databases: list[str], tags: set[str], rows: dict) -> list[list]:
+        """@return The area attacks of a slice (stage 3.4f-C): [action, length, [cast, ...]], each cast with its "time", "spell", "shape", the
+        aim values, and for a "strike" the damage of the row of its spell (see the head of the file)."""
+        areas = []
+        for index, (name, fragment, fragment_index, _) in enumerate(actions):
+            if fragment_index < 0:
+                continue
+            events = []
+            end = None
+            for position, database in enumerate(databases):
+                variants = self.animations.variants(database).get(fragment.lower(), [])
+                for offhand in (False, True):
+                    variant = select(variants, tags, offhand)
+                    if variant is None:
+                        continue
+                    events.extend(variant["casts"])
+                    if position == 0 and not offhand:
+                        end = variant["end"]
+            if not events:
+                continue
+            if LEFT_OUT_WORDS & set(name.lower().split("_")):
+                self.count_area("a cast action is a part of a chain, a reaction, a run, a throw, or a summon")
+                continue
+            casts = []
+            for time, values in sorted(events, key=lambda event: (event[0] is None, event[0] or 0.0)):
+                cast, cause = self.area_cast(time, values, rows)
+                if cast is None:
+                    self.count_area(cause)
+                    casts = []
+                    break
+                casts.append(cast)
+            if not casts:
+                continue
+            last = casts[-1]["time"]
+            length = end if end is not None and end > last else last + TIME_AFTER_CONTACT
+            areas.append([index, rounded(min(length, LONGEST_ATTACK)), casts])
+        return areas
+
+    def area_cast(self, time: float | None, values: dict, rows: dict) -> tuple[dict | None, str]:
+        """@return The joins of one cast of an area attack (stage 3.4f-C), or no value and the cause."""
+        if time is None:
+            return None, "a cast event has a time that is not a finite number"
+        spell = values.get("SpellName", "").strip()
+        if not spell:
+            return None, "a cast event names no spell"
+        found, cause = self.area_spells.shape(spell)
+        if found is None:
+            return None, cause
+        aim = {name: strict_number(values.get(name)) for name in ("ProjectileSpeed", "AILeadTargetMaxAngle", "AIAimMaxAngle",
+                                                                  "AIMissMinDistance", "AIMissMaxDistance")}
+        if any(value is None for value in aim.values()):
+            return None, "a cast event has an aim value that is not a finite number"
+        cast = {"time": rounded(time), "spell": found["spell"], "shape": found["shape"],
+                "aimAtTarget": values.get("AIAimAtTarget", "").lower() == "true", "lead": values.get("AILeadTarget", "").lower() == "true",
+                "aimSpeed": rounded(aim["ProjectileSpeed"]), "leadAngle": rounded(aim["AILeadTargetMaxAngle"]),
+                "aimAngle": rounded(aim["AIAimMaxAngle"]), "miss": [rounded(aim["AIMissMinDistance"]), rounded(aim["AIMissMaxDistance"])],
+                "allTargets": values.get("UseAllAvailableTargets", "").lower() == "true"}
+        if found["shape"] == "strike":
+            row = rows.get(found["row"].lower())
+            if row is None or row["table"].lower() != found["table"].lower():
+                return None, "the damage row of the spell is not a row of the damage table of the slice"
+            if row["type"] not in self.tables.types:
+                return None, "the damage row of the spell has no damage type"
+            wire, category = self.tables.types[row["type"]]
+            cast.update({"row": row["id"], "factor": rounded(row["factor"]), "added": rounded(row["added"]), "type": row["type"],
+                         "wire": wire, "category": category, "charge": rounded(row["charge"])})
+        return cast, ""
+
+    def count_area(self, cause: str) -> None:
+        self.areas_left_out[cause] = self.areas_left_out.get(cause, 0) + 1

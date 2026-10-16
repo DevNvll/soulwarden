@@ -802,6 +802,60 @@ void shield(const Options& options) {
     }
 }
 
+/** @return The six values of each Stamina state in the records of a client, for each interest (from the message `from` on). */
+std::vector<std::pair<std::uint32_t, std::array<float, 6>>> stamina_records(const FakeClient& client, std::size_t from = 0) {
+    std::vector<std::pair<std::uint32_t, std::array<float, 6>>> found;
+    for (std::size_t index = from; index < client.got.size(); ++index) {
+        if (client.got[index].type != 8) {
+            continue;
+        }
+        for (const Record& record : read_bundle(client.got[index].body).records) {
+            for (const Fragment& fragment : record.fragments) {
+                if (fragment.slot != server::rep::kStaminaSlot || fragment.type != server::rep::kTypeStaminaState) {
+                    continue;
+                }
+                std::array<float, 6> values{};
+                for (unsigned field = 0; field < 6; ++field) {
+                    const auto value = fragment.fields.find({0, field});
+                    values[field] = -1.0F;
+                    if (value != fragment.fields.end()) {
+                        server::hub::Reader reader(value->second);
+                        values[field] = reader.f32();
+                    }
+                }
+                found.emplace_back(record.interest, values);
+            }
+        }
+    }
+    return found;
+}
+
+/**
+ * SM6 (stage 3.4f-C, criterion C-I10): the first record of the owner has the Stamina state with the values of the server, also with
+ * the full stamina. The client constructor puts 95 into the server copy of the component; a reconcile copied it into the predicted
+ * maximum (live trace of stage 3.4f-C), and the HUD showed 95.
+ */
+void first_stamina(const Options&) {
+    Battle battle(true);
+    battle.enter_both();
+    const world::Entity& own = *battle.character();
+    check(own.vitals.stamina == 100.0F && own.vitals.staminaMax == 100.0F, "a world entry: the full stamina 100 of 100");
+    for (FakeClient* client : {&battle.a, &battle.b}) {
+        const auto states = stamina_records(*client);
+        const bool one = states.size() == 1;
+        check(one && states[0].first == 1, std::string(client == &battle.a ? "A" : "B") +
+                                                ": one Stamina state, in the record of its own player (interest 1), none for the other player");
+        if (one) {
+            const auto& v = states[0].second;
+            check(v[0] == 100.0F && v[1] == 100.0F && v[2] == 0.0F && v[3] == 0.0F && v[4] == 1.0F && v[5] == 1.0F,
+                  "the first record: 100 of 100, winded 0, the delay 0, the multipliers 1 (not the client default 95 of 95)");
+        }
+    }
+    const std::size_t fromA = battle.a.got.size();
+    battle.step(3);
+    check(stamina_records(battle.a, fromA).empty(), "a full stamina with no change sends no second Stamina state");
+}
+
 } // namespace
 
 std::vector<Case> ranged_b_cases() {
@@ -812,6 +866,7 @@ std::vector<Case> ranged_b_cases() {
                     "Mauler's Stamina, Shirking Fortification)",
              stamina_rules},
             {"SM5", "stamina (3.4f-B): the tag Dodging of a status action (Guarded Sprint goes in a dodge)", dodging_tag},
+            {"SM6", "stamina (3.4f-C): the first record of the owner has the Stamina state 100 of 100 (two sessions)", first_stamina},
             {"CRB1", "casters (3.4f-B): the cast of a mage, its release, its record, its repeat time, its band", caster},
             {"CRG10", "casters (3.4f-B): two attackers and two targets with two sessions", two_attackers},
             {"CRG11", "dodge (3.4f-B): the input, the payment, the immune window, a duplicate, a buffered dodge, a shot through the dodge, the "

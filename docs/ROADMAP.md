@@ -192,7 +192,7 @@ below is the layout after the port.
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
 | 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b, 3.3b-S5, 3.3b-S6, 3.3b-M1, 3.3b-M2 done | |
-| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done, 3.4f-A done, 3.4f-B done | |
+| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done, 3.4f-A done, 3.4f-B done, 3.4f-C done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
 | 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | | |
@@ -249,7 +249,7 @@ stage with a letter is a part of the system with that number.
 | 12 | 1.1b | The DLC for each player: each account and each character owns the expansion (Rise of the Angry Earth) and the DLC packs of the client data, with no purchase and no setting: the limits of the expansion (level, gear score, trade skills), the flail tree, the content of the expansion (research file `dlc-entitlements.md`) | 3.3b | done (the ownership, the limits, the flail tree, the amulet of a DLC pack; the content of the expansion keeps its own stages) |
 | 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | S5 done (the critical hits, a hit from behind, the headshot of a projectile, and one evaluator of the passive rules of the data); S6 done (one heal path, the heal base of an ability, Divine Embrace, Sacred Ground, the heal pulses of the Beacon, the outgoing and the received heal parts, the number of the owner and the notice of the healer); M1 done (the basic attacks of the eight melee weapons from the attack graph of the data: the light chain with its ender, the partial and the full charge, the fast sub-hits, one hit of each target for each strike; the level part of the heal base; the corrections of the review of S6); M2 done (the abilities of the build of the user are complete: the twelve abilities of the great axe and the war hammer play the fragments of the data with their pulls, pushes, spins, branches, spells, and hit counts, and each node of the two trees acts or is in the list with its cause: grit, block, stamina; the corrections of the review of M1); M2b done (Wrecking Ball hits again: the development character has the build of the user with Breathing Room, and each creature is a homing target and a camera lock target, dataBits 0x03 of its movement state; the corrections of the review of M2; the five findings of the review of M2b, a part of them on the corrections of M2-R1, R6, R7, and R8, are corrected in stage 2.5a: cases RX1 to RX5); the abilities of the build of the user are complete; M3 open |
 | 14 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`): part 2.5a (the objects of the level data and the checked use, the lore pages as the first result) and part 2.5b (the stations of a settlement, the camps, the timed use) | 3.3b | 2.5a done (the request and the reply of the client, the checks of the data, the interaction data of the whole world, the state of an object, the lore pages in the journal of the character, the commands; the corrections of the review of 3.3b-M2b); 2.5b done (the server children: the stations of each settlement at their real places with the forge of each, the prompt and the crafting screen of the client with the Assembly key, the fee flag, the Assembly reference, and the parent settlement of the data in the StationContext; the camp and powder keg fixtures; the timed use on the world clock with one completion; the ends at the removal of the source, the range, and damage; the service handoff base; the corrections of the review of 2.5a); the camp crafting option of the client and the recipes stay open (2.6, 3.7) |
-| 15 | 3.4f | Creatures with ranged attacks and abilities: the archers and the casters of the data shoot and cast (a server projectile with its record for each observer, its hit on a player, a miss behind a wall), the dodge of the player against a projectile, and the stamina model that the dodge needs; project rules where the data is silent (the distance band, the choice of melee or ranged, the repeat time); block, encounter abilities, and summons wait (research file `creature-ranged.md`) | 2.5 | 3.4f-A done (the basic shot of the archers of the data: the ranged attacks in the creature data, the projectile of the server with its record for each observer, its hit on a character at the contact, a miss, a wall; the project rules of the band, the choice, the repeat, and the lead; the corrections of the review of 2.5b); 3.4f-B done (the basic cast of the casters, the stamina model of the server from the game data, the dodge with its payment and its immune window, a shot through a dodge, the shield of Maelstrom on a creature shot in the game, the passive rules of the stamina and of the dodge; the corrections of the review of 3.4f-A); parts C (the areas, the hostile statuses) and D (the heals and the buffs of a creature) open |
+| 15 | 3.4f | Creatures with ranged attacks and abilities: the archers and the casters of the data shoot and cast (a server projectile with its record for each observer, its hit on a player, a miss behind a wall), the dodge of the player against a projectile, and the stamina model that the dodge needs; project rules where the data is silent (the distance band, the choice of melee or ranged, the repeat time); block, encounter abilities, and summons wait (research file `creature-ranged.md`) | 2.5 | 3.4f-A done (the basic shot of the archers of the data: the ranged attacks in the creature data, the projectile of the server with its record for each observer, its hit on a character at the contact, a miss, a wall; the project rules of the band, the choice, the repeat, and the lead; the corrections of the review of 2.5b); 3.4f-B done (the basic cast of the casters, the stamina model of the server from the game data, the dodge with its payment and its immune window, a shot through a dodge, the shield of Maelstrom on a creature shot in the game, the passive rules of the stamina and of the dodge; the corrections of the review of 3.4f-A); 3.4f-C done (the ground areas of six creature spells: the status area with its statuses on the player and the poison damage, the strike with one hit in its window, the ends at the caster; the area attack in the behavior; the maximum 100 of the stamina on the HUD; the corrections of the review of 3.4f-B); part D (the heals and the buffs of a creature) open |
 | 16 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
 | 17 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
 | 18 | 3.6 | Gathering and fishing (research file `gathering-stage.md`) | 2.5 | research |
@@ -1629,8 +1629,39 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   shield of Maelstrom takes an arrow; three dodges empty the stamina, a fourth press is refused,
   and the bar is full 4.4 s later. Not in this part: the areas and the hostile statuses (part C),
   the heals and the buffs of a creature (part D), the block, grit, the summons, and the abilities
-  of an encounter. Open: the maximum 95 of the client of the development character, the red
-  cloud after an avoided ball.
+  of an encounter. Open: the maximum 95 of the client of the development character (closed in
+  stage 3.4f-C), the red cloud after an avoided ball.
+- Stage 3.4f-C (done; protocol notes 4.39; result file
+  `~/Games/soulwarden/work/evidence/creature-areas/implement/RESULT.md`). The ground areas of the
+  creatures and the hostile statuses. Live check L8 first proved the records: the mushroom of the
+  Dryad Shaman needs only the metadata and the PositionInTheWorld state (the tell, the cloud at 1 s,
+  the end of the client at 26 s), the lightning strike of the Undead Shaman needs the Spell state
+  with the caster (the omen, the bolt at 0.9 s); a late observer gets a completed activation of a
+  lasting area and the hold of a burst. The spell data has format 4 (the shapes and the times of
+  the detection volumes, the delays of the area statuses), and the creature data has the area
+  attacks of the spells whose record has a live check (6 spells, 9 slices, 70 kinds, 255 spawn
+  points; 3,059 of the 3,848 kinds attack). A status area gives its statuses 0.5 s after the entry
+  and again each reapply delay (client code of the server facet), takes them at the exit and at
+  its end, and has no line test. The poison ticks take a part of the maximum health and a part of
+  the core damage of the creature (the producer of the client code; the sum, the potency, the
+  stacks, and no armor are project rules), not in the immune window of a dodge. A strike gives each
+  character in its sphere one hit of its damage row in its window (the dodge decides it); a wall
+  only with CheckObstructions. The death of the caster ends an area with EndOnCasterDeath, its
+  leave ends each area. The behavior casts an area before the shot and the melee attack: in the
+  CastDistance with a free line, 10 s after the last one (5 s for a creature with only areas, which
+  walks to 2 m inside the CastDistance), after the pause of the last attack; the place at the
+  target with the lead and the angle limits of the clip. The first record of the owner has the
+  Stamina state: the client default 95 of the server copy no longer comes into the HUD (live trace
+  and memory read). Test cases CRA1 to CRA9 (CRA9: 100 casting creatures and 200 areas near 50
+  characters with the same count of looks for 840 and 32,840 spawn points), SM6, and RZ1 to RZ6
+  (the six findings of the review of stage 3.4f-B, each one failing on the tree of 3.4f-B). Live:
+  three mushrooms with the poison icon and ticks of 242.3, the end of the poison at the exit; a
+  lightning strike with one hit of 121.9, a strike that ends before its bolt at the death of the
+  shaman; a natural fight of a Dryad Shaman with its two area attacks in turn and shots between;
+  the stamina bar of 100. Not in this part: the heals and the buffs of a creature (part D), the
+  summons and the encounters (part E), the block, grit, and the area spells with a new rule (the
+  self-destructs, the shockwave at the caster, the shield of the officers, the spells with
+  CastDistance 0).
 - Test: screenshots of a creature at its spawn point, of a fight, and of its death; the
   health of the player goes down when the creature hits.
 - Risk: no data for the behavior. Then the behavior is a design of this project. Decision

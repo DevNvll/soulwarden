@@ -92,10 +92,11 @@ void two_sessions(const Options&) {
         note("fragments (slot, type) of A: " + order_of(ra));
         check(ra.interest == 1 && rb.interest == 1, "each session uses interest 1 for its own player");
         check(order_of(ra) == "(0,10) (9,3935) (16,11) (41,15) (47,1652) (12,1195) (70,899) (27,129) (62,3183) (60,3786) (61,1755) (65,911) (67,3681) "
+                  "(42,4297) "
                   && order_of(rb) == order_of(ra),
-              "13 fragments in the order metadata 0, player 9, movement 16, vitals 41, mana 47, appearance 12, progression 70, "
-              "attribute 27, paperdoll 62, currency 60, container 61, categorical progression 65, progression points 67 "
-              "(a character with no ability on a bar gets no ability state)");
+              "14 fragments in the order metadata 0, player 9, movement 16, vitals 41, mana 47, appearance 12, progression 70, "
+              "attribute 27, paperdoll 62, currency 60, container 61, categorical progression 65, progression points 67, stamina 42 "
+              "(a character with no ability on a bar gets no ability state; the stamina from stage 3.4f-C, criterion C-I10)");
         const std::string idA = text_of(ra.fragments[1].fields.at({2, 0}), 1);
         const std::string idB = text_of(rb.fragments[1].fields.at({2, 0}), 1);
         const std::string nameA = text_of(ra.fragments[1].fields.at({2, 1}), 0);

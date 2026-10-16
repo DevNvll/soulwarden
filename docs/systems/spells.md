@@ -1,8 +1,8 @@
 # Spell entities
 
 Read this document before a change of a spell entity (the vortex of Gravity Well, stage 3.3b-S2a; the Pylon of the ice
-gauntlet, the trap of the musket, and the Beacon of the life staff, stage 3.3b-S2b), before a new spell entity, and before
-a live test of a spell. The wire contracts are in the protocol notes (section 4.25). The cast that asks for a spell is in
+gauntlet, the trap of the musket, and the Beacon of the life staff, stage 3.3b-S2b; the ground areas of the creatures, stage
+3.4f-C), before a new spell entity, and before a live test of a spell. The wire contracts are in the protocol notes (section 4.25). The cast that asks for a spell is in
 [Abilities](abilities.md); the projectile of a spell is in [Projectiles](projectiles.md); the interest table, the records,
 and the stop are in [World and sessions](world-and-sessions.md).
 
@@ -22,6 +22,7 @@ and the stop are in [World and sessions](world-and-sessions.md).
 | The cost of the spells | the due list of `Spells`, test cases SP7, SB8 |
 | A live check of a slice record before its code: the probe entity | `tools/world probe`, `World::make_probe`, `server/http/dev_routes.cpp` |
 | The spells of stage 3.3b-M2: the shield of Maelstrom, the ground of Mighty Gavel, the fortify of Clear Out, the fortify in the well of Unyielding | `Abilities::cast_spell_at`, `Spells::absorbs`, `Spells::aura_step`, `SpellRequest::areaStatuses`, test cases GH8, GH10, GH11, GH12 |
+| The ground areas of the creatures (stage 3.4f-C): the status area (the mushroom of the Dryad Shaman), the strike (the lightning of the Undead Shaman), their members, their ends | `Spells::make_area` (`AreaRequest`), `Spells::area_step`, `Spells::strike_step`, `Spells::in_area`, `Spells::leave_area`, `Spells::caster_died`, test cases CRA1 to CRA9 |
 
 ## Rules
 
@@ -33,9 +34,10 @@ and the stop are in [World and sessions](world-and-sessions.md).
   clock. It has no character, no account, and no session (rules MP-1 to MP-4).
 - The role (`SpellRole`) selects the rules of the spell: `area` (the vortex of Gravity Well), `summon` (the Pylon), `trap`
   (the trap of the musket), `aura` (the Beacon), and from stage 3.3b-M2 `shield` (the projectile shield of Maelstrom) and
-  `visual` (a picture with no rule of the server: the ground of Mighty Gavel). The abilities system gives the role from the
-  plan of the cast, or from the spell row for a spell of an action, a fragment, or a rule (a decision of an agent: the data
-  has the components, and each role uses the values of its components).
+  `visual` (a picture with no rule of the server: the ground of Mighty Gavel), and from stage 3.4f-C `statusArea` and `strike`
+  (the ground areas of a creature). The abilities system gives the role from the plan of the cast, or from the spell row for a
+  spell of an action, a fragment, or a rule (a decision of an agent: the data has the components, and each role uses the values
+  of its components). The behavior of a creature gives the role of its area cast from the shape of the creature data.
 - The end of an area with no ClearOnEnd takes its rows from its friends and leaves their statuses (code review of stage 3.3b-M2,
   finding M2-R3, `Spells::entity_removed`, case RH3): a later area gives the status again (a second Clear Out with Power Cleaner).
 - The statuses of an area leave a friend at its exit only with ClearOnExit of the spell row, and each friend at the end only
@@ -73,7 +75,11 @@ and the stop are in [World and sessions](world-and-sessions.md).
     state. An event of the init whose target the server triggered is completed: the client triggers that target at once
     (the death chain of the Pylon, the activation of the trap: live check of stage 3.3b-S2b). An event whose time passed: a
     deactivation or a trigger is completed; an activation is not completed and waits until 1 s after the end of the spell
-    (a completed activation plays the burst again: live check L4 of stage 3.3b-S2a).
+    (a completed activation plays the burst again: live check L4 of stage 3.3b-S2a). One exception (stage 3.4f-C): a passed
+    activation of a slice with an area status of the enemies (an AreaStatusEffectComponent with `m_targetType` 2: the
+    cloud of the mushroom) is completed. The client then shows the lasting area at once (live check L8, M4b); with the hold
+    a late observer does not see it (M4a). A passed activation of a strike waits as a burst (S3a; a completed one plays a
+    second bolt that the server did not make, S3b).
 - No Ownership state and no TemporaryAffiliation state: the records show each spell with no such state, and their values
   are not known. Do not make them up.
 - The stop. At its end, at a cancel, and at a command, the world removes the entity (`World::remove_spell`), and each
@@ -262,6 +268,79 @@ and the stop are in [World and sessions](world-and-sessions.md).
 - Live run `heal-live2`: the area at the feet of the caster, a number "+55" each second, the health to its maximum
   (`videos/live2-b-sacred-ground.mp4` in the evidence of the stage).
 
+### The ground areas of the creatures (stage 3.4f-C)
+
+- The two shapes (creature data: the shape of each cast; the spell tool gives it from the slice). A status area
+  (`statusArea`) has a PositionInTheWorld state, no Spell state, and an AreaStatusEffectComponent with the statuses for the
+  enemies (the mushroom `Dryad_Bomb` of the Dryad Shaman, slice `dryad_mushroom_bomb`). A strike (`strike`) has a Spell state
+  and a detection volume with no shape that is active between two delayed events: its damage window (the lightning
+  `Undead_Shaman_Lightning_Strike` of the Undead Shaman, slice `undead_shaman_lightning_strike`). A live check of the record
+  of each spell comes first: the tool writes only the spells of the list `areaSpells` of `tools/gamedata/creature_slices.json`
+  (six spells, section "The area spells" below).
+- The make (`Spells::make_area`, `AreaRequest`). The behavior asks for an area at each cast time of the data
+  ([Creature behavior](creature-behavior.md)). The spell system makes it only when the creature lives, the place is valid,
+  and the slice and the spell row have the values of the shape (`Spells::area_usable`). The entity has the caster, its
+  actor (field 7 of the Spell state of a strike), the key of the row, the level of the creature, and the start of the world
+  clock.
+- The life (game data): the destroy event of the slice (the mushroom: 26 s), else the Duration of the spell row (the strike:
+  5 s). At the end the world removes the entity, and each observer gets the stop (the client also ends the pictures of the
+  mushroom at 26 s by itself: live check L8, M2).
+- The volume of a status area (game data and client code): its detection volume, active from the activation event of its
+  entity (the cloud: 1 s; an entity that is active at the start: 0 s). An upright cylinder of the QueryShapeCylinder (the
+  mushroom: radius 1.5 m, height 4 m, its middle 0.5 m below the root) or a sphere. A character is in it when its capsule
+  touches the volume (`Spells::in_area`). The spell row Radius (3 m) does not change the volume: the slice has no Spell
+  component (client code 0x6877580 sets a shape only for a slice with one; static study STATIC-AREAS.md, Q3.2).
+- The statuses of a status area (client code of the server facet `AreaStatusEffectComponentServerFacet`). A character that
+  comes in gets each status of the component `m_initialDelaySeconds` later (0.5 s; 0x3FE5B40), then again each
+  `m_reapplicationDelaySeconds` (1 s for the mushroom, 2 s for the mage area; ApplyStatusEffects 0x3FE6500). An exit (and the
+  end of the area) takes the statuses that this area gave last (`m_removeOnExit`; 0x3FF2830 also cancels the next
+  application; `Spells::leave_area` takes only the rows with this area as the source). An entry again starts with the initial
+  delay. Each step of an area looks only at the characters near it (the position index), each 100 ms or at the next
+  application (a decision of an agent).
+- The damage source of the statuses (client code 0x3FE6500, 0x5C3C930): the area gives each status the creature and its core
+  damage at the cast (the damage of its kind and level, `CreatureData::damage`; `DamageSource`). The status system makes the
+  ticks ([Status effects](status-effects.md)).
+- No line test for a status area (client code: the enter handler gives the statuses to each entity that the detection volume
+  reports, with no line from the center; STATIC-CAST.md, section 0). A wall does not stop the poison.
+- The strike (game data, a decision of an agent for the count). Its window is the time between the activation and the
+  deactivation of the entity of its detection volume (the lightning: 0.9 s to 0.95 s; the priest area: 1 s to 2 s). In the
+  window, each 25 ms, each character in the sphere of the Radius of the spell row (the lightning: 2.5 m; client code
+  0x6877580 gives a volume with no shape the shape of the row) gets one hit of the damage row of the cast
+  (`Health::creature_hit`, the creature rule; the dodge decides it). A character gets one hit for each strike (a decision of
+  an agent: the client has no rule for the count; the damage window of the data is one short window).
+- A wall stops a strike only for a spell row with CheckObstructions (game data; the six spell rows do not have it; the server
+  code that reads the bit is not in the client: STATIC-CAST.md).
+- The ends at the caster (game data and project rules). The death of the caster ends each of its areas whose spell row has
+  `EndOnCasterDeath` (the lightning and the holy pillar have it; the mushroom and the mage area do not: they stay to their
+  end). The leave of the caster (a removal, the distance rule) ends each of its areas (a decision of an agent: the same rule
+  as each other spell entity). The end takes the statuses of the area (the end is the exit of each character).
+- A character that dies or leaves the world leaves each area (`Spells::member_left`); the death ends its statuses by
+  RemoveOnDeath (the status system).
+- The cost: an area costs work only at its due times (an area step, a strike step, the end), and each step looks only near its
+  place (test case CRA9: 100 casting creatures, 200 areas, a far population of 32,840 spawn points with the same count of
+  looks).
+
+### The area spells (stage 3.4f-C)
+
+| Spell | Shape | Creatures (slices) | Live check | Values (game data) |
+| --- | --- | --- | --- | --- |
+| `Dryad_Bomb` | status | Dryad Shaman (`dryad_shaman`, a world event slice) | L8, video P1, P4 | cylinder 1.5 m × 4 m; `AI_Poison_55`; 0.5 s, then each 1 s; 26 s |
+| `Undead_Shaman_Lightning_Strike` | strike | Undead Shaman | L8, video P2 | 2.5 m; 0.9 s to 0.95 s; 5 s; EndOnCasterDeath |
+| `Mage_Ranged_AOE` | status | Ancient Guardian mage (2 slices) | K1 | sphere 2.5 m; `AI_Snare_6sec`, `AI_Weaken`; 0.5 s, then each 2 s; 26 s |
+| `Inquisitor_Cleric_Holy_Pillar` | strike | Inquisitor Cleric | K2 | 2 m; 0.503 s to 0.533 s; 1.2 s; EndOnCasterDeath |
+| `corrupted_priest_ground_aoe` | strike | Damned Priest (named) | K3 | 3.7 m; 1 s to 2 s; 8 s |
+| `AI_Soulharvester_GeyserFinisher` | strike | Lost Soul Harvester (2 slices) | K4 | 2.9 m; 1 s to 1.2 s; 2.8 s |
+
+The other area casts of the creature data stay out, with their causes (the counts `areasLeftOut` of `creatures.json`). The
+spells of the same data shape that need a new rule:
+
+- `Ghost_Charred_SelfDestruct`, `Invasion_Bomber_SelfDestruct`: the caster dies at the cast (a new rule).
+- `Undead_Officer_ShieldActivate`: a shield of the officer (the block is not in this part).
+- `AI_EvilKnight_Shockwave`: `AIAimAtTarget` false. The client puts the spell at the caster, or at the shot of the ranged
+  attack data of the row (client code 0x679DBB0, 0x5BFBAF0): a new place rule.
+- `Ghost_Plagued_PlagueNova`, `Legion_Signifer_CorruptedBlast`, `Undead_Officer_AnchorSlam`: CastDistance 0 (a spell at the
+  caster: a new place rule).
+
 ## Commands
 
 ```sh
@@ -272,6 +351,7 @@ tools/world spells hurt ENTITY AMOUNT      # a summon or a trap takes damage; th
 tools/world probe NAME ASSET [DX DY DZ] [--sub N] [--radius M] [--fragment SLOT:TYPE:HEX]...   # a probe for a live check
 tools/world probe fragment ENTITY SLOT TYPE HEX   # one more fragment for a probe
 tools/world probe remove ENTITY            # remove a probe: each observer gets the stop
+tools/world creature area CREATURE NAME    # a creature casts its next area attack at a character (stage 3.4f-C)
 tools/gamedata/spells.sh [OUTPUT.json]     # write spell-data.json (default: the game data folder)
 tools/gamedata/spells.sh --find TEXT...    # print the spells with a text and their slice
 ```
@@ -283,8 +363,9 @@ tools/gamedata/spells.sh --find TEXT...    # print the spells with a text and th
 - `tools/world cast` gives the press the checks of a press of a client (the bar, the node, the cooldown, the mana). For a
   character with no client the server throws the projectile of Gravity Well, of the trap, and of the Beacon in the
   direction `--yaw` (degrees from the north to the east).
-- `tools/gamedata/spells.sh` writes `spell-data.json` of format 2 (1,703 spells, 1,058 slices, the base vitals rows that
-  the slices name). A spell row with no slice file, and a slice with no Spell component and no PositionInTheWorld
+- `tools/gamedata/spells.sh` writes `spell-data.json` of format 4 (1,703 spells, 1,058 slices, the base vitals rows that
+  the slices name; format 4 adds the shape, the height, the offset, and the end time of each detection volume, and the
+  initial delay and the reapply delay of each area status: stage 3.4f-C). The backend reads the formats 1 to 4. A spell row with no slice file, and a slice with no Spell component and no PositionInTheWorld
   component, have no record: the counts are in the file. With no file the backend starts: the vortex has its hits and no
   record, and the Pylon, the trap, and the Beacon make no entity.
 
@@ -318,3 +399,10 @@ tools/gamedata/spells.sh --find TEXT...    # print the spells with a text and th
   (`tools/world heal NAME` gives it its life again).
 - The creatures of a test stay where they are: remove them (`tools/world creature remove ID`) before a walk in the same
   street, or they block the character.
+- The status area and the strike need different late-observer rules: a completed activation shows the lasting cloud, and
+  plays the bolt of a strike again (live check L8). Do not use one rule for both.
+- The client ends the pictures of the mushroom at 26 s by itself, also with no stop. A test of the end must read the log
+  of the server, not only the picture.
+- The mushroom stays after the death of its caster (no EndOnCasterDeath): a character that stays in it in a test dies of
+  the poison. Move it out, or remove the area with the caster (the leave ends it).
+- The sight of a Dryad Shaman is 12 m: a shaman 12.1 m from the character takes no target. Spawn a test caster at 10 m.

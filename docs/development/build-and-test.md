@@ -111,6 +111,15 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`InteractionBlock`, `InputEntry::interaction`), and the state decoder knows the states 3752 and 2930. IT10 runs
   `tools/gamedata/check_interactions_tool.py`. IT5 adds a trigger to a database file (a refused row); IT8 has a time limit of 300 ms
   for 400,000 lookups and of 2 s for 300 reports with a catalog of 90,008 objects.
+- Stage 3.4f-C adds the cases CRA1 to CRA9 (`tests/ranged_c_tests.cpp`: the mushroom and its records, the poison and its ticks, the
+  strike, the ends at the caster and the walls, two characters and two areas, the behavior, the loaders, the dodge, the load), SM6
+  (`tests/ranged_b_tests.cpp`: the Stamina state of the first record), and RZ1 to RZ6 (`tests/review_casters_tests.cpp`: the
+  corrections of the code review of stage 3.4f-B, findings CS-R1 to CS-R6; each one fails on the tree of stage 3.4f-B and passes with
+  the correction). The fixture `Areas` is in `tests/support/area_fixture.h` (namespace `tests::area`: the shaman, the striker, the
+  thrower with a shot, the mushroom and the strike slices, the poison row). CRA9 has 50 characters, 50 shamans, 50 strikers, and 200
+  areas or more: 1000 ticks in less than 3 s, with the same count of steps and looks for 840 and 32,840 spawn points. T1, G5, and T2
+  have the Stamina state in the first record (`one_session.hex` written again after the live trace of the stage). The case
+  `replace-before-pay` of `check_stamina_tool.py` (SM1) checks finding CS-R5.
 - Stage 3.4f-B adds the cases SM1 to SM5, CRB1, and CRG10 to CRG13 (`tests/ranged_b_tests.cpp`: the stamina data and path, the
   statuses and the passive rules of the stamina, the tag Dodging, the caster, two attackers and two targets with a late observer, the
   dodge, no immunity for a different character, the shield before a later target and a wall; SM1 runs `check_stamina_tool.py`) and RR1

@@ -280,6 +280,15 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   creature rule), at the time of the contact of the flight, not at the release. The damage mark goes to the owner (its source place is
   the place of the creature), each observer gets the vitals state. The counter of Riposte takes such a hit in its window (its
   absorption), and the counter strikes only a creature in its reach (the reach of a shot is 0).
+- A strike of a creature area (stage 3.4f-C, [Spell entities](spells.md)): the hit of the strike on a character is one damage result of
+  the same function (`Health::creature_hit`) with the damage row of the spell row in the damage table of the slice (the lightning:
+  `UndeadShamanDamageTable/Undead_Shaman_Lightning_Strike`, factor 0.85, Lightning), at the time of the window of the strike. The dodge
+  decides it as a melee hit: in the immune window the strike does no damage (game data: the damage rows of the four strikes have
+  IgnoreInvulnerable 0, and their tables have no column ForceAttackToHit; client code 0x692E4A0). Live proof P2: 121.9 damage for each strike of a level 16 Undead
+  Shaman.
+- The damage of a status tick (stage 3.4f-C, `Health::status_damage`; [Status effects](status-effects.md)): one loss of health with the
+  DamageType of the status row, no armor (a project rule), no damage in the immune window of a dodge (but for IgnoreInvulnerable), and
+  the damage number of the owner. A tick that takes the last health is the death of the character.
 - A creature hit on a character in the window of a counter (Riposte, stage 3.3b-S4): the absorption of the status of the
   window takes the damage, and `Health::creature_hit` gives the hit to `Abilities::countered` after the damage: the
   counter starts one time and hits the attacker ([Forced movement](forced-movement.md)).

@@ -204,6 +204,11 @@ DodgeVerdict Stamina::start_checks(const Entity& character, bool locked) const {
     return DodgeVerdict::accepted;
 }
 
+bool Stamina::can_dodge(const Entity& character, bool locked) const {
+    const DodgeVerdict verdict = start_checks(character, locked);
+    return verdict == DodgeVerdict::accepted || verdict == DodgeVerdict::noData;
+}
+
 DodgeVerdict Stamina::dodge(Entity& character, WorldClock::time_point at, bool locked) {
     const auto found = m_dodges.find(character.characterId);
     if (found != m_dodges.end() && found->second.entity == character.id && found->second.fragment != nullptr) {
@@ -249,6 +254,16 @@ void Stamina::start(Entity& character, WorldClock::time_point at) {
     const gamedata::DodgeFragment* fragment = dodge != nullptr ? data.fragment_of(*dodge) : nullptr;
     if (fragment == nullptr) {
         return;
+    }
+    // A buffered next dodge replaces the dodge that plays: the immune window of that dodge stays for the contacts of its time that the world
+    // did not test yet (code review of stage 3.4f-B, finding CS-R1).
+    if (const auto playing = m_dodges.find(character.characterId); playing != m_dodges.end() && playing->second.fragment != nullptr) {
+        keep_window(character.characterId, playing->second, playing->second.immuneEnd);
+        // A payment that is due and that the tick did not take yet is not lost at the replacement (finding CS-R5).
+        if (!playing->second.paid && at >= playing->second.payAt && playing->second.entity == character.id) {
+            playing->second.paid = true;
+            change(character, -playing->second.cost, "a dodge");
+        }
     }
     DodgeState state;
     state.generation = ++m_generation;
@@ -332,8 +347,39 @@ void Stamina::step_dodge(const std::string& characterId, WorldClock::time_point 
 }
 
 bool Stamina::immune(const Entity& character, WorldClock::time_point at) const {
+    return immune_since(character, at).has_value();
+}
+
+std::optional<WorldClock::time_point> Stamina::immune_since(const Entity& character, WorldClock::time_point at) const {
     const auto found = m_dodges.find(character.characterId);
-    return found != m_dodges.end() && found->second.entity == character.id && at >= found->second.start && at < found->second.immuneEnd;
+    if (found != m_dodges.end() && found->second.entity == character.id && at >= found->second.start && at < found->second.immuneEnd) {
+        return found->second.start;
+    }
+    // The window of an earlier dodge of the same entity (finding CS-R1): the contact time selects the window.
+    if (const auto past = m_pastWindows.find(character.characterId); past != m_pastWindows.end()) {
+        for (const PastWindow& window : past->second) {
+            if (window.entity == character.id && at >= window.start && at < window.end) {
+                return window.start;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+void Stamina::keep_window(const std::string& characterId, const DodgeState& state, WorldClock::time_point end) {
+    std::vector<PastWindow>& windows = m_pastWindows[characterId];
+    const WorldClock::time_point now = m_world.clock().now();
+    std::erase_if(windows, [&](const PastWindow& window) { return window.end + stamina_rules::kPastWindowKeep < now; });
+    const WorldClock::time_point last = std::min(end, state.immuneEnd);
+    if (last > state.start) {
+        windows.push_back(PastWindow{state.entity, state.start, last});
+    }
+    while (windows.size() > stamina_rules::kPastWindows) {
+        windows.erase(windows.begin());
+    }
+    if (windows.empty()) {
+        m_pastWindows.erase(characterId);
+    }
 }
 
 bool Stamina::dodging(const Entity& character, WorldClock::time_point at) const {
@@ -341,10 +387,11 @@ bool Stamina::dodging(const Entity& character, WorldClock::time_point at) const 
     return found != m_dodges.end() && found->second.entity == character.id && at >= found->second.start && at < found->second.transitionAt;
 }
 
-void Stamina::evaded(Entity& character, const Entity& creature, float wouldDeal, const char* what) {
+void Stamina::evaded(Entity& character, const Entity& creature, float wouldDeal, const char* what, std::optional<WorldClock::time_point> at) {
     ++m_counts.evaded;
-    const auto found = m_dodges.find(character.characterId);
-    const float t = found != m_dodges.end() ? seconds_between(found->second.start, m_world.clock().now()) : 0.0F;
+    const WorldClock::time_point when = at.value_or(m_world.clock().now());
+    const std::optional<WorldClock::time_point> since = immune_since(character, when);
+    const float t = since ? seconds_between(*since, when) : 0.0F;
     const std::string mark = log::session_mark(character.owner, character.characterId);
     const log::Context context(mark);
     log::write("world: dodge: %s avoids the hit of creature %016llx (%s, %.1f damage) at %.2f s of its dodge: no damage",
@@ -358,6 +405,7 @@ void Stamina::evaded(Entity& character, const Entity& creature, float wouldDeal,
 
 void Stamina::entered(Entity& character) {
     m_dodges.erase(character.characterId);
+    m_pastWindows.erase(character.characterId);
     m_regenerating.erase(character.characterId);
     character.vitals.staminaMax = maximum(character);
     character.vitals.stamina = character.vitals.staminaMax;
@@ -376,6 +424,8 @@ void Stamina::interrupted(const std::string& characterId, const char* why) {
         ++m_counts.paymentsCancelled;
         log::write("world: dodge: the dodge of character %s ends before its payment: %s", characterId.c_str(), why);
     }
+    // The immune window to now stays for the contacts before the interruption (finding CS-R1).
+    keep_window(characterId, found->second, m_world.clock().now());
     if (Entity* character = m_world.find_character(characterId); character != nullptr && character->id == found->second.entity) {
         // The exit of the action: the regeneration is on again with the delay of its exit.
         const WorldClock::time_point now = m_world.clock().now();
@@ -393,6 +443,7 @@ void Stamina::refilled(Entity& character) {
         return;
     }
     m_dodges.erase(character.characterId);
+    m_pastWindows.erase(character.characterId);
     m_regenerating.erase(character.characterId);
     const bool changed = character.vitals.stamina < maximum(character) || character.vitals.exhausted;
     character.vitals.staminaMax = maximum(character);

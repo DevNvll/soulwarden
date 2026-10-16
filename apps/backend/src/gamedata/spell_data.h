@@ -87,6 +87,18 @@ struct SpellAutoCast {
     std::vector<std::string> exclude;
 };
 
+/** The query shape of a detection volume (format 4, stage 3.4f-C). */
+enum class VolumeShape : std::uint8_t {
+    /** A sphere of `radius` (a file of format 2 or 3 has this shape for each volume). */
+    sphere,
+    /** A cylinder of `shapeRadius` and `height`, upright, its middle at `offset` above the root of the slice (the mushroom). */
+    cylinder,
+    /** No shape: the volume takes the shape of its spell row (ShapeTypes Sphere, Radius: the lightning strike). */
+    none,
+    /** A box or a capsule: no rule of the backend uses it. */
+    other,
+};
+
 /** One DetectionVolumeComponent of a spell slice (format 2). */
 struct SpellVolume {
     std::string entity;
@@ -94,6 +106,16 @@ struct SpellVolume {
     float radius{0.0F};
     /** The time from the start at which the volume is active (seconds; the activation of an entity that is not active at the start). -1: never. */
     float activeAfter{0.0F};
+    /**
+     * Format 4 (stage 3.4f-C): the shape of its query, the radius and the m_Height of a cylinder (meters), the height of its middle above
+     * the root of the slice (the translation of its entity and of its parents, and m_center), and the time from the start at which it is not
+     * active any more (seconds; -1: never).
+     */
+    VolumeShape shape{VolumeShape::sphere};
+    float shapeRadius{0.0F};
+    float height{0.0F};
+    float offset{0.0F};
+    float inactiveAfter{-1.0F};
 };
 
 /** One MomentaryOffenseComponent of a spell slice (format 2): its entity, its damage row, and the radius of its sphere. */
@@ -127,6 +149,15 @@ struct SpellAreaStatus {
     bool removeOnExit{true};
     /** m_detectedTargetType: 1 the friends (the well), 2 the enemies. */
     std::uint32_t targets{0};
+    /**
+     * Format 4 (stage 3.4f-C; client code of AreaStatusEffectComponentServerFacet: the entry handler 0x3FE5B40, ApplyStatusEffects
+     * 0x3FE6500, the exit handler 0x3FF2830): the first application this long after an entry (m_initialDelaySeconds, the mushroom 0.5 s),
+     * each next one this long after the one before while the entity is in the volume (m_reapplicationDelaySeconds, 1 s; 0: none), and
+     * m_inheritStatusEffects.
+     */
+    float initialDelay{0.0F};
+    float reapplyDelay{0.0F};
+    bool inherit{false};
 };
 
 /** A row of the base vitals tables that a spell slice names (format 2). */
@@ -207,8 +238,9 @@ struct SpellSlice {
 /** The data as plain values: the content of the file, and what a test sets. */
 struct SpellTables {
     /**
-     * The format of the file (1: stage 3.3b-S2a, 2: stage 3.3b-S2b). In format 2 each Vitals slot (type 15) of a slice has its
-     * vitals row (code review of stage 1.1b, finding F2): a file with a Vitals slot and no vitals row is refused. A test sets 2.
+     * The format of the file (1: stage 3.3b-S2a, 2: stage 3.3b-S2b, 3: stage 3.3b-M2, 4: stage 3.4f-C). In format 2 each Vitals slot (type
+     * 15) of a slice has its vitals row (code review of stage 1.1b, finding F2): a file with a Vitals slot and no vitals row is refused. A
+     * test sets 2.
      */
     std::uint32_t format{2};
     std::vector<SpellSlice> slices;

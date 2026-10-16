@@ -14,6 +14,7 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 | A fight that a player can play: the 10 s with no target after a travel, the health that comes back, light and heavy attacks of a creature and their pause, creatures that do not stand at one place | Protocol notes 4.19, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/health.h`, `gamedata/creature_data.h` (`kContactGap`, `kHeavyWeight`), test cases PL1 to PL4 |
 | The shot of an archer (stage 3.4f-A): the band, the choice of melee or shot, the windup and the release, the aim and the lead, the repeat time, the walk back, the cancels | Protocol notes 4.37, `apps/backend/src/world/behavior.h` (the rule Shoot, `behavior_rules::kShot*`, `Behavior::aim`, `command_shot`), `world/projectiles.h` (`launch_creature`), `gamedata/creature_data.h` (`RangedRelease`, `kBasicShotAction`), `tools/world creature shoot`, test cases CRG2 to CRG5 |
 | The cast of a caster (stage 3.4f-B): the cast as the basic shot, the band of a caster, its repeat time; the corrections CR-R1 and CR-R2 of the review of stage 3.4f-A | Protocol notes 4.38, `world/behavior.h` (`behavior_rules::kCast*`, `kSpawnLead`, `Behavior::band_of`), `gamedata/creature_data.h` (`kBasicCastAction`, `CreatureSlice::caster`), test cases CRB1, CRG9, CRG10, RR1, RR2 |
+| The area attack of a creature (stage 3.4f-C): the choice, the range, the repeat, the walk of a creature with only area attacks, the casts and their cancels, the place; the correction CS-R4 (the spawn lead for a new observer) | Protocol notes 4.39, `world/behavior.h` (`behavior_rules::kArea*`, `Behavior::think_area`, `start_area`, `cast`, `area_place`, `command_area`, `spawn_lead_over`), `gamedata/creature_data.h` (`CreatureAreaAttack`, `AreaCast`), [Spell entities](spells.md), `tools/world creature area`, test cases CRA6, RZ4 |
 
 ## Rules
 
@@ -178,6 +179,39 @@ protocol notes (sections 4.14, 4.17, and 4.19).
     keep-distance rule; a caster stands nearer than an archer and casts more often): a cast in `kCastFar` (16 m) with a free line; a walk
     to `kCastHold` (14 m) from farther; a walk back to `kCastMiddle` (11 m) from nearer than `kCastNear` (6 m); the next cast
     `kCastRepeat` (2.5 s) after the start of the last one, or at the end of its action when later.
+- The area attack of a creature (stage 3.4f-C, protocol notes 4.39; [Spell entities](spells.md) has the areas). A slice with an area
+  attack of the creature data (an action with a CAGE-CastSpell event of a spell of the list `areaSpells`: the Dryad Shaman, the Undead
+  Shaman, the Ancient Guardian mage, the Inquisitor Cleric, the Damned Priest, the Lost Soul Harvester) casts it at a character. The
+  rules and the source of each one:
+  - The casts (game data): the action of the area attack (`Shaman_Bomb`, 4.03 s, with the tags of the slice) and one cast at the time
+    of each CAGE-CastSpell event of its fragment (the mushroom: 1.2 s, 2.2 s, 3.13 s; the lightning: 0.93 s). The world keeps each cast
+    on the world clock with the generation of the action (`PendingCast`).
+  - The cancels (project rules, the same as a release of a shot): a cast makes no area when a different action replaced the area
+    attack (a stun, a knockdown, a command), when the creature is dead or left, when it lost the target or has a different target,
+    or when the target is not there (`castsCancelled`).
+  - The targets (client code 0x679DBB0 with the clip values `AIAimAtTarget` and `UseAllAvailableTargets`): one spell for each
+    target of the AI. A creature of the backend has one target: one spell for each cast.
+  - The place (client code 0x5C35450, 0x5C09A20, with the values of the clip): the place of the target at the cast; with `AILeadTarget`
+    the lead of its velocity at `ProjectileSpeed` (100 m/s), at most `AILeadTargetMaxAngle` from the direct line; at most
+    `AIAimMaxAngle` (45 degrees) from the front of the creature. Then at most the CastDistance of the spell row from the creature (a
+    decision of an agent: the clamp of the server is not in the client), on the floor of the navigation data. No deliberate miss: the
+    clip has `AIMissMinDistance` and `AIMissMaxDistance` and no chance of a miss (the rule of the shot).
+  - Which attack and when (project rules, decisions of an agent: the game files have the casts and the CastDistance, and no rule for
+    the choice or the repeat). The area attack comes before the shot and the melee attack when it is ready: the target is in the
+    CastDistance of the row of its first cast (horizontal; `kShotHeight` up or down) with a free line; `kAreaRepeat` (10 s) passed
+    since the start of the last area attack of a creature with a different attack (the end of its action when later), or
+    `kAreaOnlyRepeat` (5 s) for a creature with only area attacks (the Undead Shaman); and the pause after its last attack passed (the
+    pause of a melee attack, or the repeat of its basic shot when that ends first). A slice with two area attacks uses them in turn
+    (the Dryad Shaman: `Shaman_Bomb` with three mushrooms, then `AOE_Ranged_Spell` with one). Live proof P4: a Dryad Shaman casts each
+    11.6 s and shoots between.
+  - The walk (a project rule): a creature with only area attacks walks on its path to `kAreaHoldMargin` (2 m) inside the CastDistance
+    (the Undead Shaman: 12 m, to 10 m), and stands and turns to the target there. A creature with a different attack fights with that
+    attack out of the CastDistance.
+  - The required spawn action (code review of stage 3.4f-B, finding CS-R4; test case RZ4): no shot and no area attack before
+    `kSpawnLead` (1.5 s) after the later of the make of the creature and its first record for a session
+    (`Creatures::first_record`, `Creature::recordedAt`). A new observer of an old creature with a spawn action thus sees the windup.
+  - The command `tools/world creature area CREATURE CHARACTER` (`Behavior::command_area`, route `POST /v1/dev/creatures/area`): the
+    creature takes the character as its target and starts its next area attack now, with no range and no repeat time.
 - Two switches for the behavior. `SOULWARDEN_CREATURE_BEHAVIOR=0` (backend option
   `--no-creature-behavior`) turns it off for a start: the creatures stand at their spawn
   points. The command `set_creatures_ignore` (`tools/world ignore`, the mark of the tab
@@ -191,6 +225,7 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 tools/world ignore NAME on           # the creatures ignore a character (off: they attack it again)
 tools/world track 2c 20 --tsv FILE   # the place of a creature each 200 ms for 20 s
 tools/world creature anchor 2c 8585.5 4243.1 173.26   # the anchor of a creature in a fight (a test of a way back with no path)
+tools/world creature area 5e Soulwarden               # the creature casts its next area attack at the character now (stage 3.4f-C)
 ```
 
 - `tools/world` has the commands of stage 3.4b (routes `/v1/dev/world/ignore`, `heal`,
@@ -220,6 +255,12 @@ tools/world creature anchor 2c 8585.5 4243.1 173.26   # the anchor of a creature
   example a ledge).
 
 ## Traps
+
+- The sight of the Dryad Shaman is 12 m (75 degrees to each side): a shaman spawned 12.1 m from the character takes no target. Use
+  10 m (`-10 -1.5 0 --yaw 270` at the place of the default spawn).
+- A creature with a basic shot always had the shot ready before the pause of a melee attack: before the correction of the rest rule
+  (the earlier of the two pauses) a Dryad Shaman cast its area one time and then only shot (live run of stage 3.4f-C; test case
+  CRA6).
 
 - An archer sees a character at the vision distance of its slice (12 m for the Evil Knight and Lost Knight archers, 18 m for the
   Skeleton Archer), and it shoots in 20 m: a character at 15 m in front of a Lost Knight archer is not seen. Hit it, or come nearer.

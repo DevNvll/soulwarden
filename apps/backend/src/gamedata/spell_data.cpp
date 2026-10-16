@@ -18,6 +18,8 @@ constexpr std::uint64_t kFormat = 1;
 constexpr std::uint64_t kFormat2 = 2;
 /** Format 3 (stage 3.3b-M2): also the AreaStatusEffectComponents of each slice (the fortify in the well of Unyielding). */
 constexpr std::uint64_t kFormat3 = 3;
+/** Format 4 (stage 3.4f-C): the shape of each detection volume, and the delays of each AreaStatusEffectComponent. */
+constexpr std::uint64_t kFormat4 = 4;
 constexpr std::uint32_t kSpellStateType = 2912;
 constexpr std::uint32_t kPositionStateType = 13;
 constexpr std::uint32_t kVitalsStateType = 15;
@@ -102,19 +104,24 @@ bool texts_of(const json& value, std::vector<std::string>& out) {
     return true;
 }
 
-/** The members of format 2 of a slice (stage 3.3b-S2b), and of format 3 (stage 3.3b-M2: `areaStatuses`). */
-bool read_slice_values(const json& entry, SpellSlice& slice, bool format3) {
+/** The members of format 2 of a slice (stage 3.3b-S2b), of format 3 (stage 3.3b-M2: `areaStatuses`), and of format 4 (stage 3.4f-C). */
+bool read_slice_values(const json& entry, SpellSlice& slice, bool format3, bool format4) {
     if (format3) {
         if (!entry.contains("areaStatuses") || !entry["areaStatuses"].is_array()) {
             return false;
         }
         for (const json& row : entry["areaStatuses"]) {
             SpellAreaStatus& area = slice.areaStatuses.emplace_back();
-            if (!row.is_array() || row.size() != 6 || !text_of(row[0], area.entity) || !text_of(row[1], area.detection)
+            if (!row.is_array() || row.size() != (format4 ? 9U : 6U) || !text_of(row[0], area.entity) || !text_of(row[1], area.detection)
                 || !number_of(row[2], area.radius) || area.radius < 0.0F || !row[3].is_array() || row[3].empty() || !row[4].is_boolean()
                 || !whole_of(row[5], area.targets)) {
                 return false;
             }
+            // Format 4: m_initialDelaySeconds, m_reapplicationDelaySeconds, m_inheritStatusEffects.
+            if (format4 && (!number_of(row[6], area.initialDelay) || !number_of(row[7], area.reapplyDelay) || !row[8].is_boolean())) {
+                return false;
+            }
+            area.inherit = format4 && row[8].get<bool>();
             for (const json& status : row[3]) {
                 std::string text;
                 if (!text_of(status, text) || text.empty()) {
@@ -147,9 +154,21 @@ bool read_slice_values(const json& entry, SpellSlice& slice, bool format3) {
     }
     for (const json& row : entry["volumes"]) {
         SpellVolume& volume = slice.volumes.emplace_back();
-        if (!row.is_array() || row.size() != 3 || !text_of(row[0], volume.entity) || !number_of(row[1], volume.radius)
+        if (!row.is_array() || row.size() != (format4 ? 8U : 3U) || !text_of(row[0], volume.entity) || !number_of(row[1], volume.radius)
             || !number_of(row[2], volume.activeAfter)) {
             return false;
+        }
+        if (format4) {
+            // Format 4: the shape of the query, its radius and height, the height of its middle, and the end of its activity.
+            std::string shape;
+            if (!text_of(row[3], shape) || !number_of(row[4], volume.shapeRadius) || !number_of(row[5], volume.height)
+                || !number_of(row[6], volume.offset) || !number_of(row[7], volume.inactiveAfter)) {
+                return false;
+            }
+            volume.shape = shape == "sphere" ? VolumeShape::sphere
+                           : shape == "cylinder" ? VolumeShape::cylinder
+                           : shape == "none" ? VolumeShape::none
+                                             : VolumeShape::other;
         }
     }
     for (const json& row : entry["offenses"]) {
@@ -174,7 +193,7 @@ bool read_slice_values(const json& entry, SpellSlice& slice, bool format3) {
     return true;
 }
 
-bool read_slice(const json& entry, SpellSlice& slice, bool format2, bool format3) {
+bool read_slice(const json& entry, SpellSlice& slice, bool format2, bool format3, bool format4) {
     if (!entry.is_object() || !entry.contains("path") || !text_of(entry["path"], slice.path) || !entry.contains("asset")
         || !asset_of(entry["asset"], slice.asset) || !entry.contains("sub") || !whole_of(entry["sub"], slice.subId)
         || !entry.contains("root") || !id_of(entry["root"], slice.root) || !entry.contains("interestRadius")
@@ -212,7 +231,7 @@ bool read_slice(const json& entry, SpellSlice& slice, bool format2, bool format3
             return false;
         }
     }
-    return !format2 || read_slice_values(entry, slice, format3);
+    return !format2 || read_slice_values(entry, slice, format3, format4);
 }
 
 bool read_vitals_row(const json& row, SpellVitalsRow& vitals) {
@@ -280,20 +299,21 @@ bool SpellData::load(const std::string& path) {
     }
     const json document = json::parse(input, nullptr, false);
     if (!document.is_object() || !document.contains("format") || !document["format"].is_number_unsigned()
-        || document["format"].get<std::uint64_t>() < kFormat || document["format"].get<std::uint64_t>() > kFormat3) {
-        m_error = "the file is not a JSON object of the format 1, 2, or 3";
+        || document["format"].get<std::uint64_t>() < kFormat || document["format"].get<std::uint64_t>() > kFormat4) {
+        m_error = "the file is not a JSON object of the format 1, 2, 3, or 4";
         return false;
     }
     const bool format2 = document["format"].get<std::uint64_t>() >= kFormat2;
     const bool format3 = document["format"].get<std::uint64_t>() >= kFormat3;
+    const bool format4 = document["format"].get<std::uint64_t>() >= kFormat4;
     if (!document.contains("slices") || !document["slices"].is_array() || !document.contains("spells") || !document["spells"].is_array()) {
         m_error = "the file does not have the lists slices and spells";
         return false;
     }
     SpellTables tables;
-    tables.format = format3 ? 3 : format2 ? 2 : 1;
+    tables.format = format4 ? 4 : format3 ? 3 : format2 ? 2 : 1;
     for (const json& entry : document["slices"]) {
-        if (!read_slice(entry, tables.slices.emplace_back(), format2, format3)) {
+        if (!read_slice(entry, tables.slices.emplace_back(), format2, format3, format4)) {
             m_error = "slice " + std::to_string(tables.slices.size() - 1) + " does not have the form of the tool";
             return false;
         }
@@ -395,6 +415,16 @@ bool SpellData::set(SpellTables tables) {
         for (const SpellVolume& volume : slice.volumes) {
             if (error.empty() && (!time(volume.radius) || !std::isfinite(volume.activeAfter))) {
                 error = name + " has a detection volume with a radius or a time that is not correct";
+            }
+            // Format 4 (stage 3.4f-C): a radius and a height of a shape are distances, the middle and the end are numbers.
+            if (error.empty()
+                && (!time(volume.shapeRadius) || !time(volume.height) || !std::isfinite(volume.offset) || !std::isfinite(volume.inactiveAfter))) {
+                error = name + " has a detection volume with a shape that is not correct";
+            }
+        }
+        for (const SpellAreaStatus& area : slice.areaStatuses) {
+            if (error.empty() && (!time(area.initialDelay) || !time(area.reapplyDelay))) {
+                error = name + " has an area status with a delay that is not a time";
             }
         }
         for (const SpellOffense& offense : slice.offenses) {

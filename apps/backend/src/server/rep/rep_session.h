@@ -573,7 +573,8 @@ private:
     std::vector<EarlyCancel> m_earlyCancels;
     /**
      * The references of the requests that the session took in the last kEarlyCancelKeep (stage 3.4f-B): a cancel with no use of such a
-     * reference is a late cancel (the echo of a use that ended), not an early one, and it gives no mark.
+     * reference is a late cancel (the echo of a use that ended), not an early one, and it gives no mark. The first cancel of the reference
+     * (matched or late) takes the entry (code review of stage 3.4f-B, finding CS-R3): one entry for each attempt.
      */
     std::vector<std::pair<world::InteractionReference, world::WorldClock::time_point>> m_seenRequests;
     /** Newest input report of the client and the time of the last log line for it. */

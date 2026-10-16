@@ -111,6 +111,7 @@
 //   POST /v1/dev/world/fragment?creature=ID&slot=N&type=N&state=HEX
 //                                                        the fragment command for a creature
 //   POST /v1/dev/creatures/shoot?creature=ID&character=ID  the creature starts its basic shot at the character now (stage 3.4f-A)
+//   POST /v1/dev/creatures/area?creature=ID&character=ID   the creature starts its area attack at the character now (stage 3.4f-C)
 //   POST /v1/dev/creatures/effect?creature=ID&status=NAME[&seconds=N]
 //                                                        a creature takes an effect of the ability
 //                                                        data, or a knockdown or a stagger (stage 3.3a)
@@ -923,6 +924,7 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/creatures/effect", "dev.creatures_effect",
                creature_route(services, commands::give_creature_effect));
     router.add("POST", "", "/v1/dev/creatures/shoot", "dev.creatures_shoot", creature_route(services, commands::creature_shoot));
+    router.add("POST", "", "/v1/dev/creatures/area", "dev.creatures_area", creature_route(services, commands::creature_area));
     router.add("GET", "", "/v1/dev/abilities", "dev.abilities", [&services](const RouteContext& context) {
         service::HttpResponse refusal;
         const auto character = character_of(context, refusal);

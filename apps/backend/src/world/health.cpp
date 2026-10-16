@@ -60,8 +60,9 @@ CreatureHitOutcome Health::creature_hit(Entity& creature, const gamedata::Creatu
     const CreatureDamage damage = m_world.combat().creature_damage(creature, contact, target);
     // The dodge (stage 3.4f-B): a hit in the Invulnerability clip of the dodge fragment of the character does not hurt it (game data:
     // player.adb, 0 to 0.5 s; the time of the contact, the end not included).
-    if (target.kind == EntityKind::player && !target.life.dead && m_world.stamina().immune(target, at.value_or(m_world.clock().now()))) {
-        m_world.stamina().evaded(target, creature, damage.dealt, contact.row.c_str());
+    const WorldClock::time_point when = at.value_or(m_world.clock().now());
+    if (target.kind == EntityKind::player && !target.life.dead && m_world.stamina().immune(target, when)) {
+        m_world.stamina().evaded(target, creature, damage.dealt, contact.row.c_str(), when);
         return CreatureHitOutcome::evaded;
     }
     const HealthResult result = apply(target, damage.dealt);
@@ -107,6 +108,54 @@ CreatureHitOutcome Health::creature_hit(Entity& creature, const gamedata::Creatu
         m_world.died(target.owner, kRespawnTime);
     }
     return CreatureHitOutcome::hurt;
+}
+
+void Health::status_damage(Entity& target, float amount, const gamedata::StatusRow& row, const DamageSource& source) {
+    if (target.kind != EntityKind::player || target.life.dead || !std::isfinite(amount) || !(amount > 0.0F)) {
+        return;
+    }
+    // The immune window of a dodge (stage 3.4f-B): a tick in it does no damage, but for a row with IgnoreInvulnerable (a decision of an
+    // agent with the client code: the damage receiver 0x692E4A0 refuses an attack on an invulnerable target with no IgnoreInvulnerable;
+    // the status row has its own IgnoreInvulnerable, loader 0x44B4430; the tick of the original server is not in the client).
+    if (row.cells.number("IgnoreInvulnerable") == 0.0F && m_world.stamina().immune(target, m_world.clock().now())) {
+        const std::string mark = log::session_mark(target.owner, target.characterId);
+        const log::Context context(mark);
+        log::write("world: dodge: %s takes no damage of %s in the immune window of its dodge (%.1f damage)", target.name.c_str(),
+                   row.id.c_str(), static_cast<double>(amount));
+        return;
+    }
+    const HealthResult result = apply(target, amount);
+    if (result.error != HealthError::none) {
+        return;
+    }
+    // The damage type of the row (DamageType: Nature for AI_Poison_55) on the wire (the combat tables).
+    const std::string_view typeName = row.cells.text("DamageType");
+    std::uint8_t wire = 0;
+    if (const gamedata::CombatTables* tables = m_world.combat().tables()) {
+        for (const gamedata::DamageType& type : tables->data().damageTypes) {
+            if (type.name == typeName) {
+                wire = type.wire;
+            }
+        }
+    }
+    const Entity* attacker = source.attacker != 0 ? m_world.find(source.attacker) : nullptr;
+    const std::string mark = log::session_mark(target.owner, target.characterId);
+    const log::Context context(mark);
+    log::write("world: status: %s takes %.1f damage of the type %s from %s (core damage %.1f of creature %016llx), health %.1f to %.1f%s",
+               target.name.c_str(), static_cast<double>(amount), std::string(typeName).c_str(), row.id.c_str(),
+               static_cast<double>(source.base), static_cast<unsigned long long>(source.attacker), static_cast<double>(result.before),
+               static_cast<double>(result.after), result.died ? ": dead" : "");
+    DamageTaken taken;
+    taken.source = attacker != nullptr ? attacker->id : 0;
+    taken.from = attacker != nullptr ? attacker->position : target.position;
+    taken.type = wire;
+    taken.amount = amount;
+    taken.part = target.vitals.healthMax > 0.0F ? std::min(amount / target.vitals.healthMax, 1.0F) : 1.0F;
+    m_world.damage_taken(target.owner, taken);
+    if (result.died) {
+        log::write("world: character %s (%s) is dead", target.characterId.c_str(), target.name.c_str());
+        m_world.died(target.owner, kRespawnTime);
+    }
 }
 
 void Health::entered(const Entity& character) {

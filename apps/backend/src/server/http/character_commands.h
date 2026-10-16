@@ -318,6 +318,13 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
 [[nodiscard]] WorldCommand creature_shoot(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                           service::HttpResponse& refusal);
 /**
+ * area: `creature` (stage 3.4f-C). A development command: the creature starts its next area attack (an action with the casts of a ground
+ * area of its slice) at the character of the command now, with no distance and no repeat time; the casts, the places, the areas, and their
+ * hits are the rules of the behavior and of the spell system. Only the development routes have it.
+ */
+[[nodiscard]] WorldCommand creature_area(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                         service::HttpResponse& refusal);
+/**
  * anchor: `creature`, and `x`, `y`, `z` (meters). A development command: the anchor of a
  * creature in a fight (the end of its way back, and the first place of its trail) is that
  * place. A test of the way back with no path to the anchor. Only the development routes have it.

@@ -55,6 +55,17 @@
 //   Record.   Each session near the spell gets its record (states/spell_state.cpp): the metadata state, the Spell state (or the
 //             PositionInTheWorld state of a slice with no Spell component), the vitals state of a summon or a trap, and one
 //             delayed event state for each delayed event that started (at the init, or at a trigger of its owner).
+//   Ground area of a creature (stage 3.4f-C). The behavior of a creature asks for it at the time of a cast of its action
+//             (Spells::make_area; the caster is the creature). Two shapes of the data (gamedata::AreaShape):
+//               status area  the volume of the AreaStatusEffectComponent of its slice (a cylinder or a sphere; game data) is active from
+//                            the activation of its entity to the end: a character in it gets the statuses of the component
+//                            m_initialDelaySeconds after its entry and again each m_reapplicationDelaySeconds while it is in it, and loses
+//                            them at its exit and at the end (m_removeOnExit; client code of the server facet 0x3FE5B40, 0x3FE6500,
+//                            0x3FF2830). The status keeps the damage source of the creature (its core damage at the application).
+//               strike       the volume with no shape (the sphere of the Radius of the spell row) is active between its activation and
+//                            its deactivation (0.9 s to 0.95 s): each character in it takes one hit of the damage row of the spell with
+//                            the creature rule (Health::creature_hit: the dodge decides it).
+//             The life: the destroy event of the slice (26 s), else the Duration of the spell row (5 s).
 //   End.      At its end, at a cancel (the leave of the caster; the death of the caster for a spell row with
 //             EndOnCasterDeath; the removal of the entity of its attachment), and at a command, the world removes the entity:
 //             each observer gets the stop.
@@ -85,6 +96,14 @@ inline constexpr std::chrono::milliseconds kSummonLook{250};
 inline constexpr float kShotHeight = 1.2F;
 /** A creature is in an area or a volume when it is not higher or lower than this from its center (meters), as an ability area. */
 inline constexpr float kHeight = 3.0F;
+/**
+ * A status area of a creature looks for the characters in its volume at this interval (stage 3.4f-C, a decision of an agent: the server
+ * facet of the game gets an event at each entry and exit of the physics; a character that runs 8 m/s moves 0.8 m in it). The applications
+ * come at their own times (the initial and the reapplication delay of the data).
+ */
+inline constexpr std::chrono::milliseconds kAreaStep{100};
+/** A strike looks for the characters in its sphere at this interval while its damage window is open (stage 3.4f-C, a decision of an agent). */
+inline constexpr std::chrono::milliseconds kStrikeStep{25};
 } // namespace spell_rules
 
 /** The largest radius of a shield spell that the position index looks for near a segment (stage 3.3b-M2; the row of Maelstrom: 2 m). */
@@ -129,6 +148,16 @@ struct SpellRequest {
      * the aura gives keep it: their ticks heal with it.
      */
     HealSource heal;
+};
+
+/** What the behavior of a creature asks for at a cast of a ground area (stage 3.4f-C). */
+struct AreaRequest {
+    /** The entity of the creature (the caster). */
+    EntityId creature{0};
+    /** The cast of the data (the spell, its shape, the damage of a strike). */
+    const gamedata::AreaCast* cast{nullptr};
+    /** The place of the area (on the floor). */
+    state::WorldPosition position;
 };
 
 /** Why a spell ended. */
@@ -178,6 +207,15 @@ struct SpellCounts {
     std::uint64_t auraRenewed{0};
     /** The entities that the steps of the summons, the traps, and the auras looked at (the position index: the load). */
     std::uint64_t looked{0};
+    /**
+     * Stage 3.4f-C, the ground areas of the creatures: the areas made, the steps of the status areas and of the strikes, the status
+     * applications of the areas (the first one and the next ones), the exits that took a status, and the hits of the strikes.
+     */
+    std::uint64_t areasMade{0};
+    std::uint64_t areaSteps{0};
+    std::uint64_t areaApplications{0};
+    std::uint64_t areaExits{0};
+    std::uint64_t strikeHits{0};
 };
 
 class Spells {
@@ -197,6 +235,20 @@ public:
     Entity* make(const SpellRequest& request);
 
     /**
+     * Makes a ground area of a creature (stage 3.4f-C): the spell of the cast at the place, with the creature as its caster. @return The
+     * entity, or null: the creature is not a creature that lives, the place is not a position of the world, or the backend has no data
+     * of the shape of the spell (area_usable).
+     */
+    Entity* make_area(const AreaRequest& request);
+    /**
+     * @return True when the backend has what a cast of a ground area needs: the slice of its spell (the spell data) with the shape of the
+     *         cast, and the spell row (the ability data). A creature uses only such casts (world/behavior.h).
+     */
+    [[nodiscard]] bool area_usable(const gamedata::AreaCast& cast) const;
+    /** @return The CastDistance of the spell row of a cast (meters), or 0 with no row. */
+    [[nodiscard]] float cast_distance(const gamedata::AreaCast& cast) const;
+
+    /**
      * @return The time of the activation of the target with the damage row `row` on the timeline of a spell (the burst of
      *         Gravity Well: 3 s), from the slice of the spell (game data). No value: no data, or no such event.
      */
@@ -214,7 +266,7 @@ public:
 
     /** The caster left the world: each of its spells ends (SpellEnd::casterLeft). */
     void caster_left(EntityId caster);
-    /** The caster died: each of its spells whose row has EndOnCasterDeath ends. */
+    /** The caster died: each of its spells whose row has EndOnCasterDeath ends (a character, and from stage 3.4f-C a creature). */
     void caster_died(EntityId caster);
     /** An entity left the world (a character, a creature): each aura that follows it ends (SpellEnd::targetLeft). */
     void target_left(EntityId target);
@@ -269,6 +321,10 @@ private:
         detect,
         /** A step of an aura. */
         aura,
+        /** Stage 3.4f-C: a step of a status area of a creature. */
+        areaStep,
+        /** Stage 3.4f-C: a step of the damage window of a strike. */
+        strikeStep,
     };
     /** One entry of the due list. */
     struct Due {
@@ -298,6 +354,26 @@ private:
         /** The statuses leave a friend that leaves the area, and each friend at the end (stage 3.3b-M2: the cells of the spell row). */
         bool clearOnExit{true};
         bool clearOnEnd{true};
+        /**
+         * Stage 3.4f-C, a ground area of a creature: its cast, the component and the volume of a status area (or the volume of a strike),
+         * the radius of the sphere of a strike (the Radius of its spell row), the damage source of its statuses (the creature and its core
+         * damage at the cast), the time from which the volume is active and the time at which it is not, the characters in a status area
+         * (the time of the next application of each one), and the characters that a strike hit.
+         */
+        const gamedata::AreaCast* areaCast{nullptr};
+        const gamedata::SpellAreaStatus* areaStatus{nullptr};
+        const gamedata::SpellVolume* volume{nullptr};
+        float strikeRadius{0.0F};
+        DamageSource damage;
+        WorldClock::time_point activeFrom{};
+        std::optional<WorldClock::time_point> activeTo;
+        struct AreaMember {
+            std::string characterId;
+            WorldClock::time_point next{};
+            bool applied{false};
+        };
+        std::map<EntityId, AreaMember> areaMembers;
+        std::set<EntityId> struck;
     };
 
     void schedule(EntityId spell, WorldClock::time_point at, DueKind kind, std::int32_t phase = 0);
@@ -311,6 +387,13 @@ private:
     void summon_shot(Entity& spell, Live& live);
     void trap_step(Entity& spell, Live& live);
     void aura_step(Entity& spell, Live& live);
+    /** Stage 3.4f-C: one step of a status area of a creature (the entries, the applications, the exits), and one step of a strike. */
+    void area_step(Entity& spell, Live& live);
+    void strike_step(Entity& spell, Live& live);
+    /** @return True when the capsule of a character is in the volume of a ground area of a creature (stage 3.4f-C). */
+    [[nodiscard]] bool in_area(const Entity& spell, const Live& live, const Entity& character) const;
+    /** A character is no member of a status area of a creature any more: its statuses of the area go (m_removeOnExit). */
+    void leave_area(const Entity& spell, Live& live, EntityId member, bool takeStatus);
     /** The friends of the caster of an aura lose its statuses (ClearOnExit, ClearOnEnd). */
     void clear_members(const Entity& spell, Live& live, const std::set<EntityId>& keep);
     /** A friend comes into an aura: the status rows of the aura that it does not have from a different aura. @return True: it has them. */
@@ -344,6 +427,8 @@ private:
     std::unordered_map<std::string, std::map<std::string, AuraRow>> m_auraRows;
     /** The end causes of the spells in their end chain (the log line of the removal). */
     std::unordered_map<EntityId, SpellEnd> m_endCauses;
+    /** The status areas of the creatures that each character is in (stage 3.4f-C): character id to the spells (the leave of the world). */
+    std::unordered_map<std::string, std::set<EntityId>> m_areasOf;
     SpellCounts m_counts;
 };
 

@@ -357,6 +357,12 @@ public:
         return m_behavior;
     }
 
+    /**
+     * A session sends its first record of a creature whose slice needs the spawn action (code review of stage 3.4f-B, finding CS-R4): the
+     * creature keeps the time (Creature::recordedAt). Only the time of the creature changes: no state.
+     */
+    void first_record(EntityId creature);
+
     // For the behavior of the system (world/behavior.h): it is the one caller of these functions.
 
     /**

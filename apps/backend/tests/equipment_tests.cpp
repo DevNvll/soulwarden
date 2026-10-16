@@ -1078,6 +1078,7 @@ void persistence(const Options& options) {
         const GearUpdates first = gear_updates(again);
         follow(doll, again, from);
         check(first.fragments.size() == 1 && first.records[0] == "(0,10) (9,3935) (16,11) (41,15) (47,1652) (12,1195) (70,899) (27,129) (62,3183) (60,3786) (61,1755) (65,911) (67,3681) "
+                  "(42,4297) "
                   && doll.text() == "1:2 5:7 24:1 " && doll.local && !doll.fault && doll.items.at(1).instance == chestId
                   && doll.items.at(1).action == world::sync::kLoad && doll.bits(doll.sheathe) == "24 " && doll.bits(doll.active) == "24 "
                   && log_count("has 1 item(s) in 3 bag slot(s), 3 item(s) in its paperdoll") == 1,

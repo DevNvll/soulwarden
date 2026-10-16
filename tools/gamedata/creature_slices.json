@@ -79,5 +79,13 @@
   "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_anubiuan_horus_10306.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a flame",
   "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_corrupted_swarmer_10223.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a red effect",
   "slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_corruption_heavy_10223.dynamicslice": "an effect and no body and no name plate, also with the spawn action of the slice: a weak red light"
+ },
+ "areaSpells": {
+  "Dryad_Bomb": "live check L8 of stage 3.4f-C: the metadata and the PositionInTheWorld state at slot 1 show the tell, the cloud at 1 s, and its end at 26 s",
+  "Undead_Shaman_Lightning_Strike": "live check L8 of stage 3.4f-C: the metadata and the Spell state at slot 1 with the caster show the omen and the bolt at 0.9 s",
+  "Mage_Ranged_AOE": "live check K1 of stage 3.4f-C: the metadata and the PositionInTheWorld state at slot 1 show the pillar and the purple area; AI_Snare_6sec and AI_Weaken on the HUD, their end at the exit",
+  "Inquisitor_Cleric_Holy_Pillar": "live check K2 of stage 3.4f-C: the Spell state at slot 1 with the caster shows the red ring and the fire pillar; one hit",
+  "corrupted_priest_ground_aoe": "live check K3 of stage 3.4f-C: the Spell state at slot 1 with the caster shows the red ground area; one hit in the window of 1 s",
+  "AI_Soulharvester_GeyserFinisher": "live check K4 of stage 3.4f-C: the Spell state at slot 1 with the caster shows the blue ring and the geyser at 1 s; one hit"
  }
 }

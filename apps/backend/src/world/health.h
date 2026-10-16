@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 
+#include "gamedata/ability_data.h"
 #include "gamedata/creature_data.h"
 #include "world/entity.h"
 #include "world/ids.h"
@@ -147,6 +148,12 @@ public:
      * mark, and no effect of the hit (the Invulnerability clip of the dodge fragment); the passive rules with
      * OnHitTakenWhileInvulnerable get the hit.
      */
+    /**
+     * The damage of a status at its tick (stage 3.4f-C: the poison of a status area of a creature; Statuses::give computes the amount from
+     * the row and its damage source). The health goes down (the death at 0), each observer gets the vitals state, and the owner gets the
+     * damage mark with the damage type of the row and the creature of the source as its source.
+     */
+    void status_damage(Entity& target, float amount, const gamedata::StatusRow& row, const DamageSource& source);
     CreatureHitOutcome creature_hit(Entity& creature, const gamedata::CreatureContact& contact, Entity& target,
                                     std::optional<WorldClock::time_point> at = std::nullopt);
 

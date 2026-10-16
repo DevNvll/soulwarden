@@ -5960,7 +5960,7 @@ CRG9 to CRG13.
 | The Stamina state (`MB::StaminaComponentReplicatedState`, type 4297) at slot 42 of the player slice (component Stamina): one group, six fields, each a 32-bit float, big-endian: 0 cur, 1 max, 2 winded (the time that is left), 3 regen (the delay that is left), 4 multMax, 5 multRegen. The apply function stores the six values in the server copy of the component (+0xD0 to +0xE4) and multMax also in the multiplier of the maximum (+0xC0). It does not set the predicted value (+0xB0): a state with 20 of 100, or with 0, does not change the HUD or the dodge of the owner client. | Live LS2, LS3, LS8; static. | Constructor `0x671A230`, apply `0x683E5D0`, reader `0x2A42F30` |
 | The message 473 (ForceSyncServerStateRemote) sets the predicted values only for a remote player: its handler returns for the local player. | Static. | Handler `0x67A69C0` |
 | The client of the owner predicts its stamina: a dodge pays 45 at 0.1 s of its fragment and sets the delay of the regeneration to 1.0 s; at the mark CanTransition (0.5 s) the delay is 1.0 s again; then 1.111 in each client tick of 1/30 s (33.33 in one second). The value stops at 0 (no debt); at 0 the winded time is 2.0 s; a dodge needs a value above 0 (a dodge at 5 is accepted). A payment of cost 0 (a light attack of the great axe) does not stop the regeneration. The HUD reads the current and the maximum value of the component. | Live LS1, LS4 to LS7 (memory reads of the component). | Stamina change `0x6892480`, HUD `0x691F9B0` |
-| The maximum of the client of the development character is 95 (also with no item equipped); the slice has `m_initMax` 100. A state with max 100 changes only the server copy. | Live LS5, LS8. | — (the source of the 95 is open) |
+| The maximum of the client of the development character was 95 (also with no item equipped); the slice has `m_initMax` 100. Cause (stage 3.4f-C): the constructor of the component puts 95.0 into the predicted values (+0xB0, +0xB4), the server copy (+0xD0, +0xD4), and `m_initMax`; the init sets only the predicted values to `m_initMax` (100). The handler of each server movement state of the local client runs the reconcile of each rewindable: the reconcile of the stamina copies the server copy into the entry of the stamina history of that step, and a rewind copies the entry into the predicted values. A first record with no Stamina state left the server copy at 95/95: the live trace shows the predicted values 100/100 at the first reconcile and 95/95 at the second. The first record of the owner now has the Stamina state (100/100/0/0/1/1); the memory read gives 100/100 at +0xB0 and +0xD0, also after two dodges and the refill. | Live LS5, LS8; live trace and memory read of stage 3.4f-C (run `c-proof2`), live proof P3 of stage 3.4f-C; static (`STATIC-STAMINA-95.md` of the evidence of stage 3.4f-C). | Constructor `0x6719EB0`, init `0x6869E70`, reconcile `0x68AC2B0`, rewind `0x6917C70`, movement state handler `0x486D660`, GetMaxStamina `0x67F45A0` |
 | The component reads the multipliers of its maximum and of its regeneration from the speed table of the owner (StatMultiplierTable, slot 43, 4.24): the keys 0x0B (StaminaRate) and 0x0C (MaxStamina); an absent key is 1.0. The backend sends 0x0B (1 + the StaminaRate of the statuses, times 10000) when it is not 1. | Static; test case SM3 (the bytes). | `0x6888790` |
 | The dodge input: one input step with the bit 322 for each press of the dodge key, also for a press that the client refuses (the fourth press at 0 stamina). | Live LS9. | — |
 | The cast of a Skeleton Mage: the action `Cast_One_Projectile` (ALC state, 4.14) shows the windup (the staff up with a purple light); the Projectile state of 4.37 with the slice `mage_projectile_slow` (asset `F7ECC33B-2C2D-5897-9492-049E8A30462A`, sub 2, slot 1), the attack index 125 (`AI_Mage_Sphere/Basic`), the ammunition key 0 (no ammunition: the slice override of the profile), the damage table key of `SkeletonMageDamageTable` (`CC5D9B49`), the row 0, and the speed 20 m/s flies one purple ball to the character; the collision state stops it there. | Live L6 (a probe), live proof P1 (the backend). | As 4.37 |
@@ -5998,11 +5998,82 @@ hit-taken actions of the player lists (`actionHitStatuses`).
 **Not known, not done** (stage 3.4f-B):
 
 - The source of the maximum 95 of the client of the development character (no item, perk, affix, attribute row, or status of the data
-  gives it). The server uses 100 of the data.
+  gives it). The server uses 100 of the data. Closed in stage 3.4f-C: the default of the server copy of the client component (row
+  above).
 - A red cloud near the line of the shot about 0.2 s after the avoided ball of P2 (an impact effect at the wall, or an effect of the
   client for a hit in the immune window: not proved).
 - The observer view of the Stamina state (no fragment is sent), the MaxStamina key (0x0C: no source in this stage), the block, grit,
   the other casts of the data (a charged or a triple cast), the hostile statuses of a row, the heals and the buffs of a creature.
+
+### 4.39 The ground areas of the creatures: the mushroom, the strike, the statuses of an area (live proof of stage 3.4f-C; static proof for the client code; the rules are project rules with the values of the game data)
+
+Stage 3.4f-C. Research: `~/Games/soulwarden/work/research/creature-ranged.md` (Q4, part C). Live checks, static studies, and the live proof:
+`~/Games/soulwarden/work/evidence/creature-areas/implement/` (`live/LIVE-CHECKS.md`, `static/STATIC-AREAS.md`,
+`static/STATIC-CAST.md`, `static/STATIC-STAMINA-95.md`, `proof/`, `RESULT.md`). Code: `world/spells.h` (`make_area`, `area_step`,
+`strike_step`), `world/behavior.h` (`think_area`, `area_place`), `world/statuses.h`, `world/health.h` (`status_damage`),
+`gamedata/creature_data.h` (`CreatureAreaAttack`, `AreaCast`), `gamedata/spell_data.h` (format 4), `server/rep/states/spell_state.cpp`,
+`tools/gamedata/spells.py` (`AreaSpells`), `tools/gamedata/creature_behavior.py`. Documents: [Spell entities](systems/spells.md),
+[Creature behavior](systems/creature-behavior.md), [Status effects](systems/status-effects.md), [Combat and health](systems/combat-and-health.md).
+Test cases CRA1 to CRA9.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The mushroom (`Dryad_Bomb`, slice `dryad_mushroom_bomb`, asset `377CDC5C-795E-58C4-A055-54A193D80FD7`, sub 2): the metadata state and the PositionInTheWorld state (type 13) at slot 1 are sufficient. The slice has no Spell component. The client plays the tell (`PoisonAOE_Tell`) from the record and the cloud (`PoisionAOE_cloud`) at its activation event (1 s); it ends the pictures at the Destroy event of the slice (26 s) by itself. | Live L8 (M1, M2, M5), live proof P1, P4. | — |
+| The strike (`Undead_Shaman_Lightning_Strike`, slice `undead_shaman_lightning_strike`, asset `66BE4F91-CE70-5C93-A219-333ACD03770A`, sub 2): the metadata state and the Spell state (type 2912) at slot 1 with the key `crc32` of the lower-case SpellID, the place, the identity rotation, no attachment, the caster reference of the creature (field 7), the spawn time, count 0, radius scale 1. The client plays the omen, then the bolt at the activation of the entity `Damage` (0.9 s). No Ownership state and no TemporaryAffiliation state is necessary. | Live L8 (S1), live proof P2. | Spell facet activation `0x6877580` |
+| A late observer of a status area: a passed activation of the cloud is completed; the client then shows the lasting cloud at once. With the hold of a burst (not completed) the late observer sees no cloud. A late observer of a strike: a passed activation waits (the hold); a completed one plays a second bolt. | Live L8 (M4a, M4b, S3a, S3b). | — |
+| The status of an area on the owner: the status state of 4.24 with `AI_Poison_55` (ShowInUITray) shows the icon and its countdown above the health bar; the damage number of a tick has the DamageType of the row (Nature). | Live L8 (P1), live proof P1. | — |
+| Four more spells of the same shapes show correctly with the same records: `Mage_Ranged_AOE` (status, slot 1; `AI_Snare_6sec`, `AI_Weaken`), `Inquisitor_Cleric_Holy_Pillar`, `corrupted_priest_ground_aoe`, `AI_Soulharvester_GeyserFinisher` (strike, slot 1). Their late observer is not checked live (the rule of the shape). | Live K1 to K4 (stage 3.4f-C, run `c-check4`). | — |
+
+**The client code** (static; the server code of the area statuses is partly in the client image, the code of the spell facet of the
+server is not):
+
+| Fact | Client code (image RVA) | Evidence |
+| --- | --- | --- |
+| The clip CAGE-CastSpell calls `MagicComponent::CastSpell` with the clip values (AIAimAtTarget, ProjectileSpeed, AIMissMinDistance, AIMissMaxDistance, AILeadTargetMaxAngle, AIAimMaxAngle, AILeadTarget, UseAllAvailableTargets). With AIAimAtTarget and UseAllAvailableTargets: one spell at the aim point of each target of the AI. With AIAimAtTarget false: at the caster, or at the shot of the ranged attack data. | OnEnter `0x25509B0`, CastSpell `0x679DBB0`, aim point `0x5C35450` | Static (STATIC-CAST.md, 1.1 to 1.5) |
+| The server facet of the spell and the code that makes the spell from the request are not in the client image (the creator slot is a stub). Thus the clamp of the place to CastDistance, the raycast down, CheckObstructions, and the end at the death of the caster are not in the client: they are project rules with the cells of the data. | Stub `0x16A1340`, `0x294860` | Static |
+| The row flags: EndOnCasterDeath bit 0xA, ClearOnExit 0xD, ClearOnEnd 0xE, CheckObstructions 0x11 of the flags at +0x0C of the spell row. | Row reader `0x449EE20` | Static |
+| A spell row with a shape gives the first DetectionVolumeComponent of the slice a query shape (Sphere: the Radius); a slice with no Spell component keeps its authored volume (the mushroom: the cylinder 1.5 m × 4 m). | `0x6877580`, `0x66633A0` | Static |
+| The area statuses: the first application `m_initialDelaySeconds` after the entry, then each `m_reapplicationDelaySeconds`; `m_removeOnExit` takes them at the exit and cancels the next application; the enter handler makes no line test. | Entry `0x3FE5B40`, ApplyStatusEffects `0x3FE6500`, exit `0x3FF2830` | Static |
+| The core damage of a status source: `(attribute part + 1 + level part) × base damage`, one time; for an attacker that is not a player the level part is 0; the area copies the damage of its caster into the source. The vitals test of a status: the damage-based part is `HealthModifierDamageBased × core damage`, plus Health. The tick of the server is not in the client. | `0x5C3C930`, `0x3FE6500`, `0x6892D40`, sign rule `0x449D740` | Static (STATIC-AREAS.md, Q1) |
+| The damage receiver refuses an attack on an invulnerable target with no IgnoreInvulnerable (damage row bit 2) and no ForceAttackToHit. The status row has its own IgnoreInvulnerable (flag 49). The add test of a status has no invulnerability test. | `0x692E4A0`, `0x683F0C0`, loader `0x44B4430`, add test `0x401FB90` | Static (STATIC-AREAS.md, Q2) |
+| The shield of Maelstrom is a body with the filter ProjectileOnly: it does not act on a detection volume. | Body builder `0x169F4F0` | Static and game data (STATIC-AREAS.md, Q4) |
+
+**The data.** `spell-data.json` format 4 (`tools/gamedata/spells.sh`): for each detection volume its shape (sphere, cylinder, none),
+its shape radius, its height, its offset above the root, its start and its end (the activation and the deactivation events of its
+entity or of a parent); for each area status its initial delay and its reapply delay. `creatures.json` (`areas` of a slice): the area
+attacks (6 spells of 9 slices, 70 kinds, 255 spawn points; the list `areaSpells` of `tools/gamedata/creature_slices.json` has the
+spells whose record has a live check).
+
+**The rules** (the source of each rule is in [Spell entities](systems/spells.md), [Creature behavior](systems/creature-behavior.md),
+and [Status effects](systems/status-effects.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The cast | At the times of the CAGE-CastSpell events of the area action; one spell for each cast (one target); the place at the target with the lead and the angle limits, at most CastDistance away, on the floor. Cancels as for a release. |
+| The choice | The area attack before the shot and the melee attack when it is ready: in the CastDistance with a free line; 10 s (5 s for a creature with only area attacks) after the last one; after the pause of the last attack. |
+| The status area | Its volume from its activation; the statuses at the entry plus 0.5 s, then each reapply delay; the exit and the end take them; no line test. |
+| The strike | One hit for each character in the sphere of the Radius of the row in the damage window (the creature hit rule; the dodge decides it); a wall only with CheckObstructions. |
+| The poison tick | `(-HealthModifierPercent × maximum health - HealthModifierDamageBased × core damage) × potency × stacks`, no armor, no damage in the immune window of a dodge. |
+| The ends | The life of the slice or of the row; the death of the caster with EndOnCasterDeath; the leave of the caster. |
+
+**The live proof** (stage 3.4f-C, a development run with the backend of the stage; `proof/` of the evidence folder):
+
+| Check | Result |
+| --- | --- |
+| P1 The mushroom (`p1-mushroom.mp4`) | A Dryad Shaman (level 57) casts `Shaman_Bomb`: three mushrooms at 1.2 s, 2.2 s, 3.13 s; the tell, the cloud at 1 s; the poison icon on the HUD; a tick of 242.3 Nature damage each 2 s; the exit ends the poison; the areas end at 26 s. |
+| P2 The strike (`p2-strike.mp4`) | An Undead Shaman (level 16) casts each 5 s: the omen, the bolt at 0.9 s, one hit of 121.9 Lightning damage for each strike. The death of the shaman 0.4 s after a cast ends that strike before its bolt (EndOnCasterDeath): no bolt, no damage. |
+| P3 The stamina (`p3-stamina-bar.png`) | The first record with the Stamina state: the bar in four equal parts (100), 10 of 100 after two dodges, 100 of 100 again 6 s later (memory read). |
+| P4 A natural fight (`p4-fight.mp4`) | A Dryad Shaman (level 30) with no command: `Shaman_Bomb` (three mushrooms), shots, `AOE_Ranged_Spell` (one mushroom) 12.2 s later, shots, `Shaman_Bomb` again; ticks of 144.2. |
+
+**Not known, not done** (stage 3.4f-C):
+
+- The tick code of the original server: the sum of the terms, the potency, the stacks, and the armor of a tick are project rules.
+- The count of the hits of a strike (one for each character) and the clamp to CastDistance: project rules.
+- The other area spells of the data (the self-destructs, the shield of the officer, the shockwave, the casts with CastDistance 0):
+  their new rules are not in this stage ([Spell entities](systems/spells.md)).
+- The heals and the buffs of a creature (stage 3.4f-D), the summons and the encounters (3.4f-E), the block, and grit.
 
 ## 5. Open items
 

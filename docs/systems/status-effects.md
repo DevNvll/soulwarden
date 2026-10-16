@@ -17,6 +17,7 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 | The speed of a status: the speed table of the player (slot 43, type 1525), the position check | Protocol notes 4.24, `server/rep/states/stat_multiplier_state.cpp`, `Gear::refresh` (`Entity::moveMultiplier`, `sprintMultiplier`), `PositionTrack::set_client_speed`, `client_speed`, test cases SV1 to SV3, RS1, ST9 |
 | The corrections of the code review of stage 3.3b-S1 (F1 to F13) | `apps/backend/tests/review_status_tests.cpp`, test cases RS1 to RS13 |
 | The heal of a status: a fixed heal, a heal over time, a heal of an ability (HealthModifierDamageBased), the heal values (stage 3.3b-S6) | `Statuses::give` (`StatusApply::heal`, `ActiveStatus::heal`), `Statuses::potency_factor`, `Health::heal` ([Combat and health](combat-and-health.md)), test cases HE1, HE4, HE5, HE7 |
+| The damage of a status: the poison of a creature area, its damage source, the ticks, the dodge (stage 3.4f-C) | `Statuses::give` (`StatusApply::damage`, `ActiveStatus::damage`, `DamageSource`), `Health::status_damage`, [Spell entities](spells.md), test cases CRA2, CRA5, CRA8 |
 | The status categories and the caster effect rows of the game data | `tools/gamedata/abilities.sh` (format 4), `gamedata/ability_data.h` (`StatusCategory`, `AbilityRow`), test case ST1 |
 
 ## Rules
@@ -58,6 +59,30 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   stamina change goes through the stamina path ([Stamina and dodge](stamina-and-dodge.md)): Stamina Recovery (`Status_Perk_Amulet_StamOnLow`,
   0.1 s, TickRate 0.25: 20 one time), Mauler's Stamina (`Status_Passive_Greataxe_Mauler_StamVsLowHp`: 40 one time); test cases SM3, SM4.
   Before stage 3.4f-B a row with only Stamina did not tick (no gain).
+- The damage of a status (stage 3.4f-C; the poison `AI_Poison_55` of the mushroom of a Dryad Shaman). A negative
+  HealthModifierPercent and a negative HealthModifierDamageBased with no UseHealScalingValue are damage (client code 0x449D740:
+  a negative value of the three health terms is damage, a positive value is a heal). One tick takes, as one loss of health
+  (`Health::status_damage`): the part of the maximum health (`-HealthModifierPercent × maximum health`) plus the part of the
+  core damage of the source (`-HealthModifierDamageBased × core damage`), times the potency and the stacks. Example of the
+  live proof: `0.02 × 4,869 + 0.04 × 1,169.9 = 144.2` for a Dryad Shaman of level 30. Sources:
+  - The core damage of the source: game data and client code. The producer 0x5C3C930 (`m_cachedCoreDamage`, computed one
+    time) gives `(attribute part + 1) × base damage` for an attacker that is not a player; the area copies the damage of its
+    caster into the source (0x3FE6500). The backend uses the damage of the kind and the level of the creature
+    (`CreatureData::damage`) at the cast, in the `DamageSource` of the area. A status with no damage source (a command) gets
+    no damage-based part.
+  - The sum, the potency, the stacks, and no armor: a project rule (a decision of an agent). The tick code of the original
+    server is not in the client (static study STATIC-AREAS.md, Q1.4); the client test 0x6892D40 adds the damage-based part and
+    Health with no potency. A status with DamageType and no IsTrueDamage could go through the armor of the target; that is not
+    proved, and the backend uses no armor for a tick.
+  - The type of the damage number: the DamageType of the row (`Nature` for the poison) on the wire of the damage number of
+    the owner.
+- A tick in the immune window of a dodge does no damage, but for a row with IgnoreInvulnerable (a decision of an agent with
+  the client code: the damage receiver 0x692E4A0 refuses an attack on an invulnerable target with no IgnoreInvulnerable;
+  the status row has its own flag IgnoreInvulnerable, loader 0x44B4430). The status itself stays: the add test of the client
+  (0x401FB90) has no test of the invulnerability (test case CRA8).
+- The status of an area has the area as its source (`StatusSourceKind::spell`, the entity of the area). The exit of the
+  character and the end of the area take it at once, also with time left ([Spell entities](spells.md)). A second area that
+  gives the same row gives it again at its next application. The death of the character ends it (RemoveOnDeath).
 - A heal of an ability (stage 3.3b-S6): a status with HealthModifierDamageBased (Divine Embrace 1.2 with one tick, Sacred
   Ground and the Beacon 0.16 each 1 s) heals the heal base of its source (`ActiveStatus::heal`, the `HealSource` of the
   cast or of the area: the healer, its weapon, its gear score) times the value, the potency, the stacks, and the potency
@@ -169,6 +194,9 @@ tools/world gear NAME                                # the gear values with the 
 - The log lines: `world: status: NAME gets STATUS (SOURCE), N s, potency P`, `world: status: STATUS of NAME ends: CAUSE`.
 
 ## Traps
+
+- The poison of a mushroom continues after the death of its caster: the area stays to its end of 26 s. A character that stays
+  in the area of a level 30 shaman dies in about 70 s. A test that is not a fight takes the character out of the area.
 
 - The DurationMax of a row also limits a command: `tools/world status NAME Rune_Detonate_Major 60` gives 3 s (its
   DurationMax is 3). Use a row with a longer time for a test of a value (UncategorizedHaste_40pct: 30 s).

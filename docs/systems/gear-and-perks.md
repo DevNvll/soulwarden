@@ -45,6 +45,10 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   affix table: the table of the game has no PhysicalArmor, ElementalArmor, and
   BaseDamageReduction column, so they are optional there (code review of stage 3.3b-S1, finding
   F12, test case RS12).
+  An ability row with no event and the condition EquipLoadCategory counts only in the load classes of its cell (code review of
+  stage 3.4f-B, finding CS-R6, test case RZ6: `GlobalPerk_Artifact_Set2_HeavyLegs`, `Fast,Normal`, gives its MaxHealth 0.2 at the
+  light and the medium load, not at the heavy load). The gear system computes the equip load of the equipment first, then the
+  fixed values (`load_allows` in `world/gear.cpp`).
   An ability row counts IsStackableMax times at most for one character (the largest potency
   first). The statuses on the character (a food, a dust, the status of the heart rune, the status
   of an affix) count through the status system.
