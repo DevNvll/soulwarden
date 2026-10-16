@@ -101,7 +101,9 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
 - The number of the owner (live check L3; protocol notes 4.31): the vitals state of the owner that carries a heal has bit 1
   of healthChangeFlags (`Vitals::healShown`: the world revision of the heal); the client shows a green "+N", N the change of
   its own health. Each heal with a number is its own owner state (code review of stage 3.3b-S6, finding S6-R7, case RW7): the
-  vitals keep the last 8 such heals (`Vitals::healSteps`: the revision, the health before, the health after), and the encoder
+  vitals keep such heals for 2 s on the world clock (`Vitals::healSteps`: the revision, the health before, the health after,
+  the time; `kHealStepKeep`; 512 at most as a bound of the memory: code review of stage 3.3b-M1, finding M1-R8, case RB8: nine
+  life steals of one strike lost the first number with the old limit of 8), and the encoder
   sends, from the health of the last owner state of the session (`Known::ownerHealth`), a state with the health before each heal
   and no bit 1 when the health changed with no number, the state after the heal with bit 1, and a last state with no bit 1 for a
   change with no number after it. The observer view never has bit 1 (live check L3: an observer shows no number). The kinds with a number:
@@ -167,6 +169,28 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   of the reachable graphs are 0), a mana payment goes through the one mana path, and a payment with a condition (the stance of
   the greatsword) is counted only. With no file (or a weapon with no graph: the dagger) the rule of stage 3.2a stays: the light
   or the heavy row of the weapon table, and one hit of a creature in 250 ms.
+- The corrections of the code review of stage 3.3b-M1 (test cases RB1 to RB5; each one fails on the tree of stage 3.3b-M1):
+  - The due time (M1-R1): each visit has the time of the world clock at which its start is due (`AttackVisit::dueAt`): the
+    time of the press that started the attack from rest, and 1/30 s for each input step from that press. The earliest time of a
+    strike counts from it. A client that sends its input numbers faster than 30 in a second does not reach the full charge or a
+    strike before its time.
+  - The release (M1-R2): a step with neither the attack input nor its hold is a release too. The full charge of a charge
+    fragment (the transition with no condition) needs the press or the hold at its step.
+  - The fragment of a visit (M1-R3): a contact that fits only the other fragment of the band selects it only at its hit
+    (`AttackSequences::note_hit`); the first hit of a visit commits its fragment, and a later contact cannot hit with the other one.
+  - The lost reports (M1-R4): the steps of a gap of 90 steps at most get the last hold of the client and no press, release, or
+    dodge. A buffered transition starts its fragment at its due step (the end of its window), also when the step of the report
+    came later.
+  - The end (M1-R5): a visit that ended has no contact more than 2 steps after its end. The loader refuses a strike that starts
+    after the end of a fragment of a known length.
+- The fragments of the abilities (stage 3.3b-M2; [Abilities](abilities.md)): an accepted press of an ability of the great axe
+  or the war hammer starts the fragment of its action as a visit of the sequence with the cast (`AttackSequences::start_ability`).
+  The fragments of one ability keep its cast (the exit of Whirlwind, the uppercut of Charge). A contact of an ability visit is a
+  hit of the abilities system (`Abilities::strike_hit`) with the reach of the shape of its row. The sequence notes a hit (its
+  ledger, the hits of the cast for IfAbilityNumHits, a transition at a collision) only after the hit is accepted. Two strikes
+  can fit one step (the late tolerance of a spin and the start of the next spin): the strike that did not hit the target in the
+  visit comes first. The sequence gives the strikes, the spell casts, and the marks of a fragment of an ability to the abilities
+  system at their times (`SequenceEvent`). The block press (bit 484) is a bit of the step (`AttackBits::block`).
 - The damage of an attack is computed in one function (`Combat::damage`), from the combat
   tables (game data) and the entity of the attacker: the weapon of the item, its gear score,
   the damage row of the light or of the heavy attack, the attributes and the level of the

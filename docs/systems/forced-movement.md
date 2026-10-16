@@ -61,6 +61,12 @@ of a movement in [Navigation](navigation.md), and the position check in [Positio
   Path of Destiny pushes 2 m from the caster (decay 0.9); Shockwave pushes 0.25 m; Charge 0.25 m; the swing of Gravity
   Well 0.5 m. Wrecking Ball and its node Pushback have no impact distance: they move nothing. The basic attacks of the
   great axe and the war hammer push too (GreatAxe_PrimaryAttack: 0.5 m, 1.0 m for a creature).
+- The abilities of stage 3.3b-M2 (game data; [Abilities](abilities.md)): the pull of Reap (the rows of its second strike:
+  `GreatAxe_JudgementsReach_Pull` Y -2.0, `_upgrade` -4.0, `_upgrade2` -6.0, decay 0.8; the `_reduced` rows of Fatal
+  Attraction -1.25, -3.0, -4.5; the `_RP2` rows of Gravity the same distances), with the row of the shape nearest to the
+  creature. The client reports no contact for it: the server tests the shapes (`Abilities::follow_strike`). The push of Clear
+  Out (`Warhammer_Damage_ClearOut`: Y 3.8, decay 0.85; live run of stage 3.3b-M2: 3.80 m in 1.5 s). Whirlwind 0.25 m, Execute
+  1.0 m, Armor Breaker and Mighty Gavel 0.5 m from the caster.
 - The dash of the caster (Charge, `CasterMotion`). The client moves its character itself with the root motion of the
   action (live check L7-C: 13.77 m in 1.0 s with no creature in front, 14.73 m in 1.6 s with the swing; a step of 0.602 m
   in 1/30 s at most). The server gives no second displacement: the owner gets no movement state with a position. The

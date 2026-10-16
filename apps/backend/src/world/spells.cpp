@@ -120,6 +120,10 @@ const char* spell_role_text(SpellRole role) {
         return "trap";
     case SpellRole::aura:
         return "aura";
+    case SpellRole::shield:
+        return "shield";
+    case SpellRole::visual:
+        return "picture";
     }
     return "unknown";
 }
@@ -209,6 +213,11 @@ Entity* Spells::make(const SpellRequest& request) {
     live.role = request.role;
     live.radius = request.radius;
     live.statuses = request.statuses;
+    // The statuses of an area leave a friend that leaves it, and each friend at its end, when the spell row says so (ClearOnExit,
+    // ClearOnEnd; stage 3.3b-M2: the fortify of Clear Out has neither, and its statuses keep their time). An area of a slice component
+    // (the fortify in the well of Unyielding) takes them at the exit and at the end (m_removeOnExit of its AreaStatusEffectComponent).
+    live.clearOnExit = request.areaStatuses || row == nullptr || row->cells.number("ClearOnExit") != 0.0F;
+    live.clearOnEnd = request.areaStatuses || row == nullptr || row->cells.number("ClearOnEnd") != 0.0F;
     live.heal = request.heal;
     live.effects = request.effects;
     live.weapon = request.weapon;
@@ -271,7 +280,8 @@ Entity* Spells::make(const SpellRequest& request) {
         if (volume != nullptr && volume->activeAfter >= 0.0F) {
             schedule(id, now + milliseconds_of(volume->activeAfter), DueKind::detect);
         }
-    } else if (request.role == SpellRole::aura) {
+    } else if (request.role == SpellRole::aura || request.role == SpellRole::shield || !request.statuses.empty()) {
+        // An aura, a shield that follows its caster, and an area with statuses for friends (the well of Unyielding): their steps.
         schedule(id, now, DueKind::aura);
     }
     m_live[id] = std::move(live);
@@ -574,7 +584,9 @@ void Spells::aura_step(Entity& spell, Live& live) {
             ++m_counts.auraGiven;
         }
     }
-    clear_members(spell, live, inside);
+    if (live.clearOnExit) {
+        clear_members(spell, live, inside);
+    }
     renew_members(spell, live);
     if (now + spell_rules::kAuraStep < spell.spell.ends) {
         schedule(spell.id, now + spell_rules::kAuraStep, DueKind::aura);
@@ -595,6 +607,11 @@ bool Spells::give_member(const Entity& spell, const Live& live, Entity& friendly
         StatusApply how;
         how.source = source;
         how.heal = live.heal;
+        // A status with no duration (BaseDuration -1: the fortify in the well of Unyielding, stage 3.3b-M2) stays while the friend is in
+        // the area: the area takes it at the exit and at its end.
+        const gamedata::AbilityData* abilities = m_world.options().abilityData;
+        const gamedata::StatusRow* data = abilities != nullptr ? abilities->status(status) : nullptr;
+        how.permanent = data != nullptr && data->duration <= 0.0F;
         const StatusVerdict verdict = m_world.statuses().apply(friendly, status, how);
         if (verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed) {
             row.auras.insert(spell.id);
@@ -755,7 +772,7 @@ bool Spells::end(EntityId id, SpellEnd cause) {
     m_counts.phasesCancelled += cancelled;
     ++m_counts.ended[static_cast<std::size_t>(cause)];
     // An aura takes its statuses back from each friend at its end (ClearOnEnd of the spell row).
-    if (live->second.role == SpellRole::aura) {
+    if (live->second.clearOnEnd && !live->second.statuses.empty()) {
         clear_members(*spell, live->second, {});
     }
     const WorldClock::time_point now = m_world.clock().now();
@@ -780,6 +797,52 @@ std::size_t Spells::end_caster(EntityId caster, SpellEnd cause) {
         ended += end(spell, cause) ? 1 : 0;
     }
     return ended;
+}
+
+std::optional<float> Spells::absorbs(const state::WorldPosition& from, const state::WorldPosition& to, EntityId shooter) const {
+    const Entity* source = m_world.find(shooter);
+    if (source == nullptr || m_live.empty()) {
+        return std::nullopt;
+    }
+    const float length = distance3(from, to);
+    const state::WorldPosition middle{(from.x + to.x) * 0.5F, (from.y + to.y) * 0.5F, (from.z + to.z) * 0.5F};
+    std::optional<float> first;
+    m_world.for_each_near(middle, length * 0.5F + kShieldReach, [&](Entity& entity) {
+        if (entity.kind != EntityKind::spell || entity.spell.role != SpellRole::shield) {
+            return;
+        }
+        const auto live = m_live.find(entity.id);
+        const Entity* owner = m_world.find(entity.spell.caster);
+        if (live == m_live.end() || owner == nullptr || !m_world.hostile(*owner, *source) || !(live->second.radius > 0.0F)) {
+            return;
+        }
+        // The first point of the segment in the sphere of the shield (its center 1 m above the feet of its owner: CastHeight 1 of the row).
+        const state::WorldPosition center{entity.position.x, entity.position.y, entity.position.z + 1.0F};
+        const float dx = to.x - from.x;
+        const float dy = to.y - from.y;
+        const float dz = to.z - from.z;
+        const float fx = from.x - center.x;
+        const float fy = from.y - center.y;
+        const float fz = from.z - center.z;
+        const float a = dx * dx + dy * dy + dz * dz;
+        const float b = 2.0F * (fx * dx + fy * dy + fz * dz);
+        const float c = fx * fx + fy * fy + fz * fz - live->second.radius * live->second.radius;
+        float t = 0.0F;
+        if (c > 0.0F) {
+            const float d = b * b - 4.0F * a * c;
+            if (a <= 0.0F || d < 0.0F) {
+                return;
+            }
+            t = (-b - std::sqrt(d)) / (2.0F * a);
+            if (t < 0.0F || t > 1.0F) {
+                return;
+            }
+        }
+        if (!first || t < *first) {
+            first = t;
+        }
+    });
+    return first;
 }
 
 void Spells::caster_left(EntityId caster) {

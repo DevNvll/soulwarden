@@ -179,9 +179,15 @@ HealOutcome Health::heal(Entity& target, const HealRequest& request) {
         // The state of the owner after this revision has bit 1 of healthChangeFlags: one number for the gain (live check L3: the same
         // state again gives no second number).
         target.vitals.healShown = revision;
-        target.vitals.healSteps.push_back(Vitals::HealStep{revision, outcome.before, health});
-        if (target.vitals.healSteps.size() > Vitals::kHealSteps) {
-            target.vitals.healSteps.erase(target.vitals.healSteps.begin());
+        // The heals that the owner got (older than the keep time) go; a heal that can still be pending for the owner stays (finding
+        // M1-R8).
+        const WorldClock::time_point now = m_world.clock().now();
+        std::vector<Vitals::HealStep>& steps = target.vitals.healSteps;
+        steps.erase(std::remove_if(steps.begin(), steps.end(), [&](const Vitals::HealStep& step) { return now - step.time > Vitals::kHealStepKeep; }),
+                    steps.end());
+        steps.push_back(Vitals::HealStep{revision, outcome.before, health, now});
+        if (steps.size() > Vitals::kHealSteps) {
+            steps.erase(steps.begin());
         }
         ++m_healCounts.numbers;
     }

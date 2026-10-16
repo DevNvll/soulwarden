@@ -94,6 +94,15 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`HealShop::cast`: the key, then the self cast input or a click). The RV cases use only the interfaces of the tree of
   stage 3.3b-S5, so that the same file proves each finding on that tree. RV1 runs `tools/check_dev_sound.py`, RV10
   `check_ability_tool.py`, and RV12 `check_hit_facts_tool.py`.
+- Stage 3.3b-M2 adds the cases GH1 to GH19 (`tests/gawh_tests.cpp`: the abilities of the great axe and the war hammer) and RB1
+  to RB8 (`tests/review_combos_tests.cpp`: the corrections of the code review of stage 3.3b-M1; each one fails on the tree of
+  stage 3.3b-M1). The attack fixture (`tests/support/attack_fixture.h`, namespace `attack_fixture`) has the world of the cases
+  MB and RB: the axe and the rapier graphs of the data with made-up ids, the wolf, and a client of one report for each step.
+  The fixture of the abilities (`tests/support/gawh_fixture.h`, `GawhShop`) is the shop with the axe and the hammer graphs of
+  format 2 (the form and the times of the fragments of the game data), the rows of the six abilities with their impacts and
+  row statuses, the slices of the spells of an action, and `GawhShop::press`, `step`, `contact_at`. The state decoder of the
+  tests reads the fields 1 and 2 of slot 46 (`progress_wire::ability_value_size`); the bundle decoder needs this to read a
+  record of a character with a hit count.
 - The silence of a development run is the startup setting `-sys_audio_disable 1` of the game (`tools/dev-env.sh`,
   `dev_sound_arguments`; code review of stage 3.3b-S6, finding S6-R1). The file mute of the stages 1.1b to 3.3b-S6
   (`tools/dev_mute.py`, `tools/dev-mute.sh`, `tools/check_dev_mute.py`) is gone: four reviews found a swap of folders that sent

@@ -40,6 +40,40 @@ enum class AttackInput : std::uint8_t {
     notHeld,
     /** Attack_Primary_Released: the release of the attack input (bit 567). */
     released,
+    /**
+     * Format 2 (stage 3.3b-M2): the start of an ability (a condition CanAttack_<ability>): a press of the key of that ability in the
+     * window starts the fragment of the ability (AttackTransition::ability). Not a step of the sequence by itself.
+     */
+    ability,
+    /** Format 2: a transition inside an ability with the condition of the data as terms (AttackTransition::terms). */
+    terms,
+};
+
+/** The kind of one literal of the condition of a transition inside an ability (format 2). */
+enum class LiteralKind : std::uint8_t {
+    /** A learned node of the character (IfAbilityActive). */
+    node,
+    /** An ability row of a perk of an equipped item (IfAbilityActive External). */
+    perk,
+    /** An input of the step: the attack input (attack_primary_virtual), the block press (block_press_virtual). */
+    attack,
+    block,
+    /** A collision of the character (character_collided): the server cannot see it (a contact shows it, Charge). */
+    collided,
+    /** The hits of the ability are fewer than the value (IfAbilityNumHits LessThan). */
+    hits,
+    /** The fragment with this name plays (IfFragmentPlaying). */
+    playing,
+};
+
+struct ConditionLiteral {
+    LiteralKind kind{LiteralKind::node};
+    /** The node or the perk ability (its progression id and its text), the fragment name. */
+    std::uint32_t id{0};
+    std::string text;
+    /** The number of the hits (LiteralKind::hits). */
+    std::uint32_t count{0};
+    bool negated{false};
 };
 
 enum class TransitionKind : std::uint8_t { buffered, instant };
@@ -55,6 +89,11 @@ struct AttackTransition {
     std::string toName;
     /** The name of the condition in the action lists (for the log). */
     std::string condition;
+    /** AttackInput::ability: the ability that the press starts (its id text and its progression id). */
+    std::string ability;
+    std::uint32_t abilityId{0};
+    /** AttackInput::terms: the condition as an OR of ANDs of literals (no term: never; one empty term: always). */
+    std::vector<std::vector<ConditionLiteral>> terms;
 };
 
 /** One damage row of a strike, with the learned nodes (progression ids) that the clip needs and that it must not have. */
@@ -64,6 +103,8 @@ struct StrikeRow {
     std::vector<std::uint32_t> forbids;
     std::vector<std::string> needNames;
     std::vector<std::string> forbidNames;
+    /** Format 2: the index of the shape of the clip of this row in AttackStrike::shapes (the pull of Reap: one row for each capsule). */
+    std::uint32_t shape{0};
 };
 
 /** One shape of a damage clip (the parameters of the clip; the world does not test them). */
@@ -104,6 +145,20 @@ struct DodgeWindow {
     bool buffered{false};
 };
 
+/** A spell that a fragment casts at a time (CAGE-CastSpell, format 2: the ground of Mighty Gavel), with its node conditions. */
+struct FragmentCast {
+    float time{0.0F};
+    std::string spell;
+    std::vector<std::string> needs;
+    std::vector<std::string> forbids;
+};
+
+/** A named mark of a fragment at a time (format 2: the mark of a spell cast of an action, CastGavityWellProjectile). */
+struct FragmentMarker {
+    std::string name;
+    float time{0.0F};
+};
+
 struct AttackFragment {
     std::string name;
     /** The tags of the variant (for the log). */
@@ -116,6 +171,53 @@ struct AttackFragment {
     std::vector<AttackStrike> strikes;
     std::vector<AttackPayment> payments;
     std::vector<DodgeWindow> dodge;
+    /** Format 2: the spell casts and the named marks of the fragment. */
+    std::vector<FragmentCast> casts;
+    std::vector<FragmentMarker> markers;
+};
+
+/**
+ * One ability of the weapon (format 2, stage 3.3b-M2): the action of the ability action list whose cooldown is the ability, its
+ * fragment, the fragments that the action selects by the learned nodes and the perks (ChangeActionFragment: Fatal Attraction, Unending
+ * Winds, the artifact of Whirlwind), and the spells that it casts (CastSpell, with the mark of its condition).
+ */
+struct AbilityAction {
+    struct Selection {
+        std::uint32_t fragment{0};
+        std::string fragmentName;
+        std::vector<std::string> needs;
+        std::vector<std::string> forbids;
+        std::vector<std::string> perks;
+        std::vector<std::string> perkForbids;
+    };
+    struct Cast {
+        std::string spell;
+        std::vector<std::string> needs;
+        std::vector<std::string> forbids;
+        std::vector<std::string> perks;
+        std::vector<std::string> perkForbids;
+        /** The named mark of the condition (the time of the cast), or empty (at the start of the action). */
+        std::string marker;
+    };
+    std::string ability;
+    std::uint32_t abilityId{0};
+    std::string action;
+    std::uint32_t fragment{0};
+    std::string fragmentName;
+    std::vector<Selection> selections;
+    std::vector<Cast> casts;
+};
+
+/**
+ * One use of a learned node in the graph of a weapon (format 2, stage 3.3b-M2; for the list of the passive rules): a row of a strike, a
+ * transition inside an ability, a fragment that an action selects, a spell cast, a grit (ActivateGrit: the backend has no grit), or a
+ * conditional of the movement of an action (the client moves its character with it).
+ */
+struct NodeUse {
+    std::string node;
+    std::uint32_t nodeId{0};
+    std::string use;
+    std::string place;
 };
 
 /** The attack graph of one tag set of a melee weapon. */
@@ -126,9 +228,15 @@ struct WeaponActionSet {
     /** The first fragment (Attack_Start_Charge): an index into `fragments`. */
     std::uint32_t start{0};
     std::vector<AttackFragment> fragments;
+    /** Format 2: the abilities of the weapon. Empty for a file of format 1 (the plans of stage 3.3a keep their contact phases). */
+    std::vector<AbilityAction> abilities;
+    /** Format 2: the uses of the learned nodes in the graph. */
+    std::vector<NodeUse> nodeUses;
 
     /** @return The index of the fragment with this name, or -1. */
     [[nodiscard]] std::int32_t fragment_index(std::string_view name) const;
+    /** @return The ability with this progression id (format 2), or null. */
+    [[nodiscard]] const AbilityAction* ability(std::uint32_t abilityId) const;
 };
 
 struct WeaponActionTables {
@@ -161,6 +269,8 @@ public:
     }
     /** @return The attack graph of a weapon by the tag text of its weapon row (weapon_tag_key), or null. */
     [[nodiscard]] const WeaponActionSet* of_tags(std::string_view tags) const;
+    /** @return Each use of a learned node in the graphs of the weapons (format 2; the progression id of the node). */
+    [[nodiscard]] std::vector<const NodeUse*> uses_of(std::uint32_t node) const;
 
 private:
     WeaponActionTables m_tables;

@@ -609,6 +609,12 @@ public:
      */
     [[nodiscard]] bool friendly(const Entity& a, const Entity& b) const;
     /**
+     * @return True when two entities are enemies (stage 3.3b-M2: the projectile shield of Maelstrom ends the projectiles of an enemy): a
+     *         creature and a character (or a spell of a character). Two characters are no enemies: the backend has no fight of players
+     *         (a decision of an agent).
+     */
+    [[nodiscard]] bool hostile(const Entity& a, const Entity& b) const;
+    /**
      * Test fixture: the two characters are friends (the friend relation of a two-session test of a friendly effect; stage 3.3b-S2b).
      * Stage 3.3b-S6: also the development command `tools/world friends A B` (a development route, only with the harness gate), for a
      * live test of a heal of a friend. A start of the user has no friend pair: a group of one.

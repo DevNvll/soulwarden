@@ -122,6 +122,8 @@ inline constexpr std::chrono::milliseconds kSameAttackTime{250};
  */
 inline constexpr float kMeleeReach = 3.5F;
 inline constexpr float kReachTolerance = 1.5F;
+/** The arm of a character from its position to the joint of the weapon (meters; the reach of the strike of an ability, stage 3.3b-M2). */
+inline constexpr float kArmReach = 1.0F;
 /** The point of a contact is not farther than this from the position of the creature (meters). */
 inline constexpr float kPointRange = 4.0F;
 /**
@@ -479,6 +481,11 @@ struct HitWeapon {
     /** The id text of the ability of the cast ("Ability_WarHammer_WreckingBall"). Empty: an attack or a different hit. */
     std::string ability;
     /**
+     * The fragment of the strike of a cast of the sequence (stage 3.3b-M2: "Ability_WarHammer_BlockBreaker", the condition InSequence of
+     * the row of Armor Breaker). Empty: a hit of a different kind.
+     */
+    std::string fragment{};
+    /**
      * The entity that a creature that the hit hurts takes as its target (stage 3.3b-S2b: the Pylon, OverrideTargetForAiThreat of
      * its spell row). 0: the attacker.
      */
@@ -521,10 +528,25 @@ public:
     void step(SessionId session, std::uint32_t inputSequence, std::uint16_t input, const AttackBits& bits);
     /** Ends the sequence of the basic attacks of a character (an accepted ability, a death, a travel). */
     void end_sequence(const std::string& characterId, SequenceEnd why);
+    /** The sequence of the attacks and of the abilities of the world (stage 3.3b-M2: an accepted press starts the fragment of its ability). */
+    AttackSequences& sequences_of_world() {
+        return m_sequences;
+    }
+    /** @return The facts of a character for the conditions of the transitions inside an ability: its learned nodes and its perks. */
+    [[nodiscard]] AttackFacts facts_of(const Entity& character) const;
+    /**
+     * @return The reach of a strike of an ability (stage 3.3b-M2): the extent of the shape of the row of the character (each shape with no
+     *         row) and the arm (kArmReach), not less than combat_limits::kMeleeReach.
+     */
+    [[nodiscard]] static float strike_reach(const gamedata::AttackStrike& strike, const gamedata::StrikeRow* row = nullptr);
     /** The character left the world: its sequence goes away. */
     void forget_sequence(const std::string& characterId);
     [[nodiscard]] const AttackSequences& sequences() const {
         return m_sequences;
+    }
+    /** @return The weapon actions (game data), or null with none (stage 3.3b-M2: the uses of the nodes for the list of the passive rules). */
+    [[nodiscard]] const gamedata::WeaponActions* weapon_actions() const {
+        return m_actions != nullptr && m_actions->loaded() ? m_actions : nullptr;
     }
     /** @return The attack graph of a weapon (its tags), or null with no weapon actions. */
     [[nodiscard]] const gamedata::WeaponActionSet* actions_of(const gamedata::WeaponRow& weapon) const;

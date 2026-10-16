@@ -1315,6 +1315,7 @@ void RepSession::handle_attacks(const ClientInput& input) {
         bits.hold = step.attackHold;
         bits.release = step.attackRelease;
         bits.dodge = step.dodge;
+        bits.block = step.blockPress;
         m_world.combat().step(m_id, m_attack.sequence(), step.sequence, bits);
         m_projectileItems += step.projectileHits + step.shots;
         if (step.abilityKey != 0) {
@@ -1704,7 +1705,7 @@ void RepSession::development_message(std::uint32_t type, const std::vector<std::
 void RepSession::report_position(const ClientInput& input, carrier::Clock::time_point now, const world::Entity& own) {
     const world::PositionReport report{input.sequence,
                                        state::WorldPosition{input.characterX, input.characterY, input.characterZ},
-                                       input.characterHeight};
+                                       input.characterHeight, input.hasLook ? input.lookYaw : m_input.lookYaw};
     // The world finds the character from the session, checks the report, and keeps the
     // position in the entity. A report that it refuses changes nothing.
     const world::PositionVerdict verdict = m_world.report_position(m_id, report, m_track);

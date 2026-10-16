@@ -87,6 +87,9 @@ inline constexpr float kShotHeight = 1.2F;
 inline constexpr float kHeight = 3.0F;
 } // namespace spell_rules
 
+/** The largest radius of a shield spell that the position index looks for near a segment (stage 3.3b-M2; the row of Maelstrom: 2 m). */
+inline constexpr float kShieldReach = 5.0F;
+
 /** One phase of a cast that a spell runs: its index in the plan of the cast, and its time from the start of the spell. */
 struct SpellPhase {
     std::uint32_t phase{0};
@@ -114,6 +117,8 @@ struct SpellRequest {
     /** An aura: the radius of its area (the Radius of the spell row), and the status rows that the friends in it get (StatusEffects). */
     float radius{0.0F};
     std::vector<std::string> statuses;
+    /** True: `statuses` are the statuses of an AreaStatusEffectComponent of the slice (stage 3.3b-M2: the fortify in the well). */
+    bool areaStatuses{false};
     /** A trap: the status rows that a creature that the trap hits gets (the StatusEffect of the damage row of its offense). */
     std::vector<std::string> effects;
     /** The weapon of the cast: the shots of a summon and the hit of a trap have its damage and its gem. */
@@ -200,6 +205,13 @@ public:
     /** The world calls it in each tick: the phases, the ends, and the steps that are due. */
     void tick();
 
+    /**
+     * @return The part of the segment from `from` to `to` (0 to 1) at which it enters the sphere of a shield of an enemy of the shooter
+     *         (stage 3.3b-M2: the projectile shield of Maelstrom with Absorb, the Radius of its spell row), or no value. The shields near
+     *         the segment only (the position index).
+     */
+    [[nodiscard]] std::optional<float> absorbs(const state::WorldPosition& from, const state::WorldPosition& to, EntityId shooter) const;
+
     /** The caster left the world: each of its spells ends (SpellEnd::casterLeft). */
     void caster_left(EntityId caster);
     /** The caster died: each of its spells whose row has EndOnCasterDeath ends. */
@@ -283,6 +295,9 @@ private:
         HealSource heal;
         /** A summon and a trap: the end of their life on the world clock (the start of the end chain). */
         WorldClock::time_point lifeEnds{};
+        /** The statuses leave a friend that leaves the area, and each friend at the end (stage 3.3b-M2: the cells of the spell row). */
+        bool clearOnExit{true};
+        bool clearOnEnd{true};
     };
 
     void schedule(EntityId spell, WorldClock::time_point at, DueKind kind, std::int32_t phase = 0);

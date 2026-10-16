@@ -90,12 +90,15 @@ inline gamedata::AbilityTables heal_abilities() {
     direct(kDivineSpell, "LifeStaff_TouchOfLife");
     direct("Spell_LifeStaff_DivineEmbrace_ReducedCost", "LifeStaff_TouchOfLife_Mana_Upgrade");
     const std::string sacred = std::string(kSacredStatus) + "," + kSacredPotency;
+    // The cells ClearOnExit and ClearOnEnd of the rows of the game (stage 3.3b-M2: the area takes its statuses back by these cells).
     tables.spells.push_back({kSacredSpell, 3.0F, 5.0F, 25.0F, 0, 0.0F, 12000.0F,
-                             cells({}, {{"StatusEffects", sacred}, {"ManaCost", "LifeStaff_HealingWave"}, {"DamageTableRow", "Lifestaff_SacredGround"},
-                                        {"TargetTypes", "Friend"}})});
+                             cells({{"ClearOnExit", 1.0F}, {"ClearOnEnd", 1.0F}},
+                                   {{"StatusEffects", sacred}, {"ManaCost", "LifeStaff_HealingWave"}, {"DamageTableRow", "Lifestaff_SacredGround"},
+                                    {"TargetTypes", "Friend"}})});
     tables.spells.push_back({"Spell_LifeStaff_SacredGround_Self_Upgrade2", 3.0F, 5.0F, 25.0F, 0, 0.0F, 12000.0F,
-                             cells({}, {{"StatusEffects", sacred + "," + kAnointedStatus}, {"ManaCost", "LifeStaff_HealingWave"},
-                                        {"DamageTableRow", "Lifestaff_SacredGround"}, {"TargetTypes", "Friend"}})});
+                             cells({{"ClearOnExit", 1.0F}, {"ClearOnEnd", 1.0F}},
+                                   {{"StatusEffects", sacred + "," + kAnointedStatus}, {"ManaCost", "LifeStaff_HealingWave"},
+                                    {"DamageTableRow", "Lifestaff_SacredGround"}, {"TargetTypes", "Friend"}})});
     // The active row of Divine Embrace (TargetStatusEffect NotEqual: not a target with the status of its heal), Divine Blessing
     // (OnHealed, TargetHealthPercent 50 with the blank comparator, HealScalingValueMultiplier 0.3), and Desperate Speed (an effect
     // after a heal: not applied).

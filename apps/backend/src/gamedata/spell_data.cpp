@@ -16,6 +16,8 @@ using nlohmann::json;
 /** Format 1 (stage 3.3b-S2a) and format 2 (stage 3.3b-S2b: the values of the Pylon, the trap, and the Beacon). */
 constexpr std::uint64_t kFormat = 1;
 constexpr std::uint64_t kFormat2 = 2;
+/** Format 3 (stage 3.3b-M2): also the AreaStatusEffectComponents of each slice (the fortify in the well of Unyielding). */
+constexpr std::uint64_t kFormat3 = 3;
 constexpr std::uint32_t kSpellStateType = 2912;
 constexpr std::uint32_t kPositionStateType = 13;
 constexpr std::uint32_t kVitalsStateType = 15;
@@ -100,8 +102,29 @@ bool texts_of(const json& value, std::vector<std::string>& out) {
     return true;
 }
 
-/** The members of format 2 of a slice (stage 3.3b-S2b). */
-bool read_slice_values(const json& entry, SpellSlice& slice) {
+/** The members of format 2 of a slice (stage 3.3b-S2b), and of format 3 (stage 3.3b-M2: `areaStatuses`). */
+bool read_slice_values(const json& entry, SpellSlice& slice, bool format3) {
+    if (format3) {
+        if (!entry.contains("areaStatuses") || !entry["areaStatuses"].is_array()) {
+            return false;
+        }
+        for (const json& row : entry["areaStatuses"]) {
+            SpellAreaStatus& area = slice.areaStatuses.emplace_back();
+            if (!row.is_array() || row.size() != 6 || !text_of(row[0], area.entity) || !text_of(row[1], area.detection)
+                || !number_of(row[2], area.radius) || area.radius < 0.0F || !row[3].is_array() || row[3].empty() || !row[4].is_boolean()
+                || !whole_of(row[5], area.targets)) {
+                return false;
+            }
+            for (const json& status : row[3]) {
+                std::string text;
+                if (!text_of(status, text) || text.empty()) {
+                    return false;
+                }
+                area.statuses.push_back(std::move(text));
+            }
+            area.removeOnExit = row[4].get<bool>();
+        }
+    }
     if (!entry.contains("positionSlot") || !whole_of(entry["positionSlot"], slice.positionSlot) || !entry.contains("vitals")
         || !entry.contains("autoSpell") || !entry.contains("volumes") || !entry["volumes"].is_array() || !entry.contains("offenses")
         || !entry["offenses"].is_array() || !entry.contains("detectionEvents") || !entry["detectionEvents"].is_array()
@@ -151,7 +174,7 @@ bool read_slice_values(const json& entry, SpellSlice& slice) {
     return true;
 }
 
-bool read_slice(const json& entry, SpellSlice& slice, bool format2) {
+bool read_slice(const json& entry, SpellSlice& slice, bool format2, bool format3) {
     if (!entry.is_object() || !entry.contains("path") || !text_of(entry["path"], slice.path) || !entry.contains("asset")
         || !asset_of(entry["asset"], slice.asset) || !entry.contains("sub") || !whole_of(entry["sub"], slice.subId)
         || !entry.contains("root") || !id_of(entry["root"], slice.root) || !entry.contains("interestRadius")
@@ -189,7 +212,7 @@ bool read_slice(const json& entry, SpellSlice& slice, bool format2) {
             return false;
         }
     }
-    return !format2 || read_slice_values(entry, slice);
+    return !format2 || read_slice_values(entry, slice, format3);
 }
 
 bool read_vitals_row(const json& row, SpellVitalsRow& vitals) {
@@ -257,19 +280,20 @@ bool SpellData::load(const std::string& path) {
     }
     const json document = json::parse(input, nullptr, false);
     if (!document.is_object() || !document.contains("format") || !document["format"].is_number_unsigned()
-        || (document["format"].get<std::uint64_t>() != kFormat && document["format"].get<std::uint64_t>() != kFormat2)) {
-        m_error = "the file is not a JSON object of the format 1 or 2";
+        || document["format"].get<std::uint64_t>() < kFormat || document["format"].get<std::uint64_t>() > kFormat3) {
+        m_error = "the file is not a JSON object of the format 1, 2, or 3";
         return false;
     }
-    const bool format2 = document["format"].get<std::uint64_t>() == kFormat2;
+    const bool format2 = document["format"].get<std::uint64_t>() >= kFormat2;
+    const bool format3 = document["format"].get<std::uint64_t>() >= kFormat3;
     if (!document.contains("slices") || !document["slices"].is_array() || !document.contains("spells") || !document["spells"].is_array()) {
         m_error = "the file does not have the lists slices and spells";
         return false;
     }
     SpellTables tables;
-    tables.format = format2 ? 2 : 1;
+    tables.format = format3 ? 3 : format2 ? 2 : 1;
     for (const json& entry : document["slices"]) {
-        if (!read_slice(entry, tables.slices.emplace_back(), format2)) {
+        if (!read_slice(entry, tables.slices.emplace_back(), format2, format3)) {
             m_error = "slice " + std::to_string(tables.slices.size() - 1) + " does not have the form of the tool";
             return false;
         }

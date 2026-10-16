@@ -206,8 +206,10 @@ enum class ProjectileEnd : std::uint8_t {
     lifetime,
     /** Its caster left the world or died: it ended with no hit. */
     caster,
+    /** Stage 3.3b-M2: a shield of an enemy of its shooter took it (the projectile shield of Maelstrom with Absorb). */
+    absorbed,
 };
-inline constexpr std::size_t kProjectileEndCount = 6;
+inline constexpr std::size_t kProjectileEndCount = 7;
 
 /** @return A short text for a log line, for example "a wall stopped it". */
 [[nodiscard]] const char* projectile_end_text(ProjectileEnd end);

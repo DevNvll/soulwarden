@@ -14,6 +14,8 @@
 
 #include "gamedata/ability_data.h"
 #include "gamedata/combat_tables.h"
+#include "gamedata/weapon_actions.h"
+#include "world/attack_sequence.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/position_report.h"
@@ -132,6 +134,17 @@ inline constexpr std::int32_t kChargeSwingSequence = 2312;
 inline constexpr float kDashStop = 1.0F;
 /** The observers of a character in the movement of a cast get a new movement state at most each this time. */
 inline constexpr std::chrono::milliseconds kMotionMark{50};
+/**
+ * The largest number of abilities with a hit count of a character (CombatState::abilityHits; stage 3.3b-M2): a bound of the memory and of
+ * the state of the owner (the abilities with TrackHitCount of the weapon trees; a decision of an agent).
+ */
+inline constexpr std::size_t kTrackedAbilities = 16;
+/**
+ * The body of a creature for the shapes of a strike that the server tests itself (the pull of Reap; stage 3.3b-M2): the shape reaches
+ * this much farther (meters), and a creature up to kShapeHeight above or below the caster (a decision of an agent).
+ */
+inline constexpr float kShapeSlack = 0.5F;
+inline constexpr float kShapeHeight = 2.0F;
 } // namespace ability_rules
 
 /** The abilities that this backend has (the build of stage 3.3a): the great axe and the war hammer. */
@@ -151,6 +164,17 @@ enum class AbilityKind : std::uint8_t {
     /** Stage 3.3b-S6: Divine Embrace of the life staff (a direct heal), Sacred Ground of the life staff (an area that heals). */
     divineEmbrace,
     sacredGround,
+    /**
+     * Stage 3.3b-M2: the other abilities of the great axe and the war hammer. Their hits are the strikes of the fragments of the data
+     * (the weapon actions of format 2): Reap (its pull), Execute, Whirlwind (its spins and its exit by the hits), Mighty Gavel, Armor
+     * Breaker, Clear Out (its push).
+     */
+    reap,
+    executioner,
+    whirlwind,
+    mightyGavel,
+    armorBreaker,
+    clearOut,
 };
 
 /** @return The English name of an ability, for a log line ("Wrecking Ball"). */
@@ -358,6 +382,11 @@ struct CastPlan {
     /** The movement of the caster (stage 3.3b-S4). No value: the cast does not move its caster. */
     std::optional<CasterMotion> motion;
     /**
+     * Stage 3.3b-M2: the time from the press to the start of the fragment of the cast (a press in a buffered window of the fragment that
+     * played starts the ability at the end of the window). The timed phases of the plan come this much later.
+     */
+    std::chrono::milliseconds delay{0};
+    /**
      * A counter (stage 3.3b-S4, Riposte): the status row that the cast puts on its caster and that is the window of the
      * counter (Rapier_Riposte_Timer: 1 s, its absorption takes the countered hit). Empty: the cast has no counter.
      */
@@ -366,6 +395,18 @@ struct CastPlan {
     std::optional<SpellPlan> spell;
     /** The direct heal of the cast (stage 3.3b-S6). No value: none. */
     std::optional<HealPlan> heal;
+    /**
+     * Stage 3.3b-M2: the contacts of the cast are the strikes of the fragment of its action in the weapon actions (format 2): the fragment
+     * of the action, or the fragment that the action selects for the nodes and the perks of the character (`fragment`). The sequence of
+     * the character plays it (world/attack_sequence.h): the windows, the hits of each strike, the transitions inside the ability (the exit
+     * of Whirlwind, the uppercut of Charge). False: the contact phases of the plan (a file of format 1).
+     */
+    bool sequence{false};
+    std::uint32_t fragment{0};
+    /** The effects that each hit of a strike of the fragment gives (the knockdown of Wrecking Ball, the slow of Aftershock with an old file). */
+    std::vector<EffectPlan> strikeEffects;
+    /** The spells that the action casts at its start (CastSpell with no mark: the shield of Maelstrom with Absorb). */
+    std::vector<std::string> actionSpells;
     /**
      * Stage 3.3b-S6: the key starts an aim of the client (the action list: Ability_Life_Staff_TouchOfLife, _HealingWave with
      * CastSpellTargeting), and the cast starts at the confirm of the same session (Abilities::confirm). A press of a character with
@@ -419,6 +460,22 @@ struct AbilityCounts {
     /** The keys of an aimed ability that started an aim of the client, and the confirms that started its cast (stage 3.3b-S6). */
     std::uint64_t aims{0};
     std::uint64_t confirms{0};
+    /**
+     * Stage 3.3b-M2: the hits of a strike of a fragment, the creatures that a strike with no damage moved (the pull of Reap), the creatures
+     * that it looked at, the casts that started later than their press (a buffered window of the fragment that played), the spells of a
+     * fragment or of an action, and the casts of a spell of a passive rule.
+     */
+    std::uint64_t strikeHits{0};
+    std::uint64_t follows{0};
+    std::uint64_t followLooked{0};
+    std::uint64_t delayedStarts{0};
+    std::uint64_t fragmentSpells{0};
+    std::uint64_t ruleSpells{0};
+};
+
+/** The check of a strike of a cast (Combat::claim_strike, stage 3.3b-M2). */
+struct AbilityStrike {
+    bool valid{false};
 };
 
 class Abilities {
@@ -495,6 +552,38 @@ public:
 
     /** The world made the entity of a character: it gets the cooldowns of the character. */
     void entered(Entity& character);
+
+    /** @return Whether a cast has a strike of a fragment (stage 3.3b-M2: a cast of the sequence, with its weapon). */
+    [[nodiscard]] AbilityStrike strike_of(std::uint64_t cast) const;
+    /**
+     * A contact of the client fits a strike of the fragment of a cast (Combat::claim_strike, stage 3.3b-M2): the hit with the weapon, the
+     * gem, and the attack of the cast (Combat::strike), the damage row of the strike, the status effect of the row, and the effects of the
+     * plan. @return The result of the hit.
+     */
+    HitResult strike_hit(std::uint64_t cast, const gamedata::AttackFragment& fragment, std::uint32_t strike, std::uint32_t rowIndex,
+                         Entity& attacker, Entity& target);
+    /**
+     * The sequence of a character passed a strike, a spell cast, or a mark of the fragment of a cast (stage 3.3b-M2): a strike with no
+     * damage moves each creature that the cast hit before (the pull of Reap: the client reports no contact for it); a spell cast makes
+     * its spell (the ground of Mighty Gavel); a mark makes the spells of the action with that mark.
+     */
+    void fragment_event(Entity& character, const SequenceEvent& event);
+    /**
+     * A passive rule of a character casts a spell (the cell CastSpell of a rule: Power Cleaner of Clear Out, stage 3.3b-M2): the spell
+     * entity of the spell at the character (a friend area gives its statuses to the friends in its radius).
+     */
+    void rule_spell(Entity& character, std::string_view spell, std::string_view rule);
+    /**
+     * The status effect of a damage row (the column StatusEffect of the combat tables, format 3; stage 3.3b-M2): the root of Gravity on a
+     * pull row. With EffectOnlyOnDamage only after damage above 0. A status with OnEndStatusEffect gives its end status at its end (the
+     * root after its hold), and ApplicationCooldown permits one application for each creature in that time.
+     */
+    void row_effects(Entity& creature, const gamedata::DamageRow& row, float dealt, EntityId source);
+    /**
+     * The hits of a cast for the client (stage 3.3b-M2; CombatState::abilityHits): 0 at the press (`reset`), else one more, for an
+     * ability whose row has TrackHitCount. The owner gets the ability state again.
+     */
+    void count_hit(Entity& character, std::uint32_t ability, bool reset);
 
     /**
      * @return The mana cost of a cast (stage 1.3b, I14; protocol notes 4.23): the ManaCost of the first spell of the plan
@@ -628,6 +717,8 @@ private:
         bool countered{false};
         /** Stage 3.3b-S6: the self cast confirm of an aimed heal (the caster is the target). */
         bool self{false};
+        /** Stage 3.3b-M2: the creatures that a strike of the cast hit (the targets of a strike with no damage after it: the pull of Reap). */
+        std::set<EntityId> struck;
     };
     /** The aim of an aimed ability (stage 3.3b-S6): the press that started it. */
     struct Aim {
@@ -672,9 +763,11 @@ private:
     /**
      * @return The target of a direct heal (stage 3.3b-S6): the nearest friend of the caster (World::friendly; not the caster) that lives,
      *         is in the range of the spell (CastDistance) and in sight (Navigation::sees), and that the ability row permits
-     *         (TargetStatusEffect with NotEqual: not a target with that status); else the caster when the row permits it; else null.
+     *         (TargetStatusEffect with NotEqual: not a target with that status), and that gains health from the heal of `source` (its
+     *         health below its maximum, and the heal base, the outgoing factor, and the received factor above 0: code review of stage
+     *         3.3b-M1, finding M1-R7); else the caster when the row permits it; else null.
      */
-    [[nodiscard]] Entity* heal_target(Entity& caster, const gamedata::SpellRow& spell, std::string_view ability, bool self);
+    [[nodiscard]] Entity* heal_target(Entity& caster, const gamedata::SpellRow& spell, std::string_view ability, bool self, const HealSource& source);
     /** @return The weapon of a cast for a hit (its item, its slot, its row, its gear score, the ability). */
     [[nodiscard]] HitWeapon weapon_of(const Cast& cast) const;
     /**
@@ -723,6 +816,12 @@ private:
     std::map<std::uint64_t, Dash> m_dashes;
     /** The characters in the movement of a cast, with the time of the last mark of the state `motion`. */
     std::map<std::string, WorldClock::time_point> m_motionMarks;
+    /** The end of the ApplicationCooldown of a status of a row on a creature (stage 3.3b-M2: Gravity, 1 s for each target). */
+    std::map<std::pair<EntityId, std::string>, WorldClock::time_point> m_rowCooldowns;
+    /** The spell entity of a spell of the data at a character (an action, a fragment, a passive rule; stage 3.3b-M2). */
+    void cast_spell_at(Entity& character, std::uint64_t cast, std::string_view spell);
+    /** A strike with no damage of a cast at its time (fragment_event): each creature that the cast hit before. */
+    void follow_strike(Cast& cast, Entity& caster, const gamedata::AttackStrike& strike);
 };
 
 } // namespace soulwarden::backend::world

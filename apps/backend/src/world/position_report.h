@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <deque>
 #include <optional>
 
@@ -77,6 +78,8 @@ struct PositionReport {
     state::WorldPosition position;
     /** The height of the position as the 16 bits of the wire (0 = -100 m, 0xFFFF = 1000 m). */
     std::uint16_t height{0};
+    /** The yaw of the camera of the client (stage 3.3b-M2), or not a number when the report has none. */
+    float look{std::numeric_limits<float>::quiet_NaN()};
 };
 
 enum class PositionVerdict : std::uint8_t {

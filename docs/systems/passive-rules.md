@@ -16,6 +16,7 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
 | The list of the rules: what the evaluator applies, and what it does not apply with the cause | `Passives::describe`, `describe_table`, `describe_row`, `server/http/passive_commands.cpp`, `tools/world passives`, test case PS4 |
 | The rule rows of the data and the spell selections of the action data | `tools/gamedata/abilities.py` (format 4), `gamedata/ability_data.h`, [Game data](../development/game-data.md) |
 | The fixed stats of the nodes in the gear values | `Gear::values` ([Gear and perks](gear-and-perks.md)) |
+| The rules of stage 3.3b-M2: a spell of a rule (CastSpell), the box of Blood Lust, the status actions (Guarded Sprint), the row of an ability with InSequence, the uses of a node in the weapon actions | `Passives::apply_effects`, `Passives::around_count` (`tracking_supported`), `action_holds`, `ability_value_rule`, `Passives::describe_row` (`data_use`), test cases GH9, GH10, GH13, GH14, RV9 |
 
 ## Rules
 
@@ -123,24 +124,58 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   tracking spell. The hits of an attack go 10 s after its last hit (`passive_rules::kAttackKeep`). Test case PS6: 50
   characters with their rules in a world of 4,200 creatures, with a time limit.
 
-### The rules of the great axe and the war hammer (stage 3.3b-S5)
+- A spell of a rule (stage 3.3b-M2): the cell CastSpell is an effect after a hit (`Passives::apply_effects`): the abilities
+  system makes the spell at the character (`Abilities::rule_spell`; [Abilities](abilities.md)). Power Cleaner
+  (`Upgrade_WarHammer_ClearOut_FortifyAOE`) casts `WarHammer_Spell_ClearOut_Fortify` at a hit of Clear Out: the fortify of
+  the friends in 6 m (live run of stage 3.3b-M2: `WarHammer_ClearOut_FortifyBuff` for 4 s). DisableCastSpellDurability is a
+  mark (the backend has no durability use).
+- InSequence and InAction (stage 3.3b-M2): a hit passes when the list names the ability of its cast or the fragment of its
+  strike (`HitContext::fragment`). The row of Armor Breaker names the fragment of its action (InSequence
+  `Ability_WarHammer_BlockBreaker`). A row with no event, with InAction or InSequence, a value (ArmorPenetration), and no status
+  gives its values at each hit of its ability (`ability_value_rule`: Armor Breaker ignores 35 % of the armor, the game text); a
+  row with a status and no event stays a rule of its action (Shockwave: the plan gives its stun). Source: game data and game
+  text; a decision of an agent for the form of the rule.
+- The box of a tracking spell (stage 3.3b-M2, `tracking_supported`): Blood Lust (`Ultimate_Greataxe_Reaper`, tracking spell
+  `Spell_Ultimate_Greataxe_Reaper`, ShapeTypes Box, Length 7, Radius 1.25, Height 5). The backend counts the creatures from the
+  character forward to 2 times the Length (the game text "when looking at a foe within 14 m"), the Radius to each side, and the
+  Height up and down, in front of the look of the character (`Entity::look`: the yaw of the camera of the last accepted
+  position report). A decision of an agent from the game text (code review of stage 3.3b-S5, finding F9; test case RV9).
+- The status actions of the action lists (stage 3.3b-M2; `actionStatuses` of `ability-data.json` format 5): an action that
+  gives statuses while its condition holds. Guarded Sprint (`Passive_WarHammer_CrowdCrusher_RangeAbsorbSprint`): the action
+  `Warhammer_Passve_SprintDmgRed` of `playeractions_ability_warhammer` gives `WarHammer_Pass_SprintDmgReduction` (10 percent
+  absorption) while the character has the node, moves (the tags ForwardNav, BackNav, LeftNav, RightNav: `Entity::moving`), does
+  not dodge (Dodging: always false, the backend has no state of it), and has the war hammer in the hand (the tag Warhammer of
+  the MannequinTag of the weapon). The world tick gives the status and takes it when the condition does not hold
+  (`Passives::tick`; test case GH13).
+- The list names the uses of a node in the data of the actions (stage 3.3b-M2, `describe_row`): a row of a strike, a transition
+  inside an ability, a fragment that an action selects, or a spell cast of the weapon actions of format 2 (applied by the data);
+  a grit of an action (ActivateGrit: not applied, the backend has no grit); a conditional of the movement of an action (applied
+  by the client: the position check accepts its speed); a status action; a status that an area of a spell slice gives (the
+  fortify in the well of Unyielding: [Spell entities](spells.md)).
 
-The list of the backend (`tools/world passives --table greataxe`, `--table warhammer`) names each node with what the
-backend does with it. The great axe: 17 of 38 nodes applied (Blood Lust is not applied since the correction F9). The war
-hammer: 22 of 38 nodes applied. The nodes that are not
-applied, and the cause:
+### The rules of the great axe and the war hammer (stage 3.3b-M2)
+
+The list of the backend (`tools/world passives --table greataxe`, `--table warhammer`; the run `m2-list` of stage 3.3b-M2)
+names each node with what the backend does with it. The great axe: 33 of 38 nodes applied (with Unyielding). The war hammer:
+34 of 38 nodes applied. The nodes that are not applied, and the cause (the stamina model, grit, and the block are not in this
+stage):
 
 | Node | Cause |
 | --- | --- |
-| `Ability_Greataxe_Reap`, `Ability_Greataxe_Executioner`, `Ability_Greataxe_Whirlwind`, `Ability_Warhammer_ArmorBreaker`, `Ability_WarHammer_MightyGavel`, `Ability_WarHammer_ClearOut` | Not applied yet: the active ability has no plan in this backend (its later weapon part, M2 or M3). |
-| `Upgrade_Greataxe_Reap_Lifesteal`, `Upgrade_Greataxe_Executioner_CritVsLowHP`, `Upgrade_Greataxe_Whirlwind_DmgWhenFoesNear`, `Upgrade_WarHammer_ArmBreak_Rend`, `Upgrade_WarHammer_ArmBreak_DmgFullHealth`, `Upgrade_WarHammer_Gavel_DmgUnder30pctHP`, `Upgrade_WarHammer_Gavel_Haste`, `Ability_Warhammer_MightyGavel_Upg`, `Upgrade_WarHammer_ClearOut_CDRonHit`, `Upgrade_WarHammer_ClearOut_Haste` | Not applied yet: the ability of the node has no plan. The evaluator has each column of these rows: they act when the plan comes. |
-| `Upgrade_Greataxe_Charge_DmgPerDistance`, `Upgrade_Greataxe_Charge_SwingAttack`, `Upgrade_Greataxe_Reap_RngInc`, `Upgrade_Greataxe_Reap_SpingAttack`, `Upgrade_Greataxe_Executioner_AddGrit`, `Upgrade_Greataxe_Whirlwind_MoreSpins`, `Upgrade_Greataxe_Whirlwind_Speed`, `Passive_Greataxe_Mauler_StamVsLowHp`, `Passive_Greataxe_Mauler_HeavyAddPull`, `Upgrade_WarHammer_ArmBreak_Grit`, `Passive_WarHammer_CrowdCrusher_RangeAbsorbSprint` | Not applied yet: the action data applies it in an action of the client that this backend does not have (M1, M2). |
-| `Upgrade_Greataxe_Maelstorm_AbsorbProjectiles` | Not applied yet: the action data selects a spell of an ability that this backend does not have. |
-| `Upgrade_Greataxe_GravityWell_ArmorInWell` | The plan selects the spell of the node; the fortify of the row has no event (the spell of the data gives it, and the backend does not yet). |
-| `Passive_Greataxe_Reaper_DmgWhenBlocked`, `Passive_Greataxe_Mauler_DmgOnBlock`, `Passive_WarHammer_CrowdCrusher_LessStaminaOnBlock`, `Upgrade_WarHammer_Gavel_StaminaDmg` | No rule in the backend for a block (OnBlockedHit, OnBlockedHitTaken, BlockDamage, BlockDamageReduction). |
-| `Upgrade_WarHammer_ClearOut_FortifyAOE` | No rule in the backend for DisableCastSpellDurability and CastSpell. |
+| `Upgrade_Greataxe_Executioner_AddGrit`, `Upgrade_WarHammer_ArmBreak_Grit` | Grit: the action ActivateGrit of the fragment. The backend has no grit. |
 | `Passive_Greataxe_Mauler_HeavyAddGrit`, `Passive_WarHammer_Juggernaut_HeavyGrit` | The backend has no grit. |
-| `Ultimate_Greataxe_Reaper` | Its tracking spell has the shape Box: the backend counts a sphere only (finding F9). |
+| `Passive_Greataxe_Reaper_DmgWhenBlocked`, `Passive_Greataxe_Mauler_DmgOnBlock`, `Passive_WarHammer_CrowdCrusher_LessStaminaOnBlock`, `Upgrade_WarHammer_Gavel_StaminaDmg` | No rule in the backend for a block (OnBlockedHit, OnBlockedHitTaken, BlockDamage, BlockDamageReduction). |
+| `Passive_Greataxe_Mauler_StamVsLowHp` | An action of the client gives stamina: the backend has no stamina model. |
+
+The nodes of stage 3.3b-M2 and how they act: The Collector (`Upgrade_Greataxe_Reap_RngInc`: the rows and the shapes of the
+strikes of Reap), Fatal Attraction (`Upgrade_Greataxe_Reap_SpingAttack`: the fragment of Reap), Unending Winds
+(`Upgrade_Greataxe_Whirlwind_MoreSpins`: the fragment of Whirlwind and its exits), Gusting Winds (`Upgrade_Greataxe_Whirlwind_Speed`:
+the movement of the client), Frenzied Momentum and Unpredictable Strike (`Upgrade_Greataxe_Charge_DmgPerDistance`,
+`_SwingAttack`: the transitions of Charge), Absorb (`Upgrade_Greataxe_Maelstorm_AbsorbProjectiles`: the shield of the action),
+Gravity (`Passive_Greataxe_Mauler_PullDur`: the rows `_RP2` and their root), Mauler's Pull
+(`Passive_Greataxe_Mauler_HeavyAddPull`: the strike of the heavy attack), Unyielding
+(`Upgrade_Greataxe_GravityWell_ArmorInWell`: the area of the vortex), Power Cleaner (CastSpell), Guarded Sprint (the status
+action), Blood Lust (the box), and the rows of the six abilities (Execute, Armor Breaker, and the upgrades with OnHit).
 
 ### The rules of the life staff (stage 3.3b-S6)
 
@@ -180,6 +215,8 @@ tools/world creature effect ID STATUS 5 # give a creature a status for 5 s (a te
 - A node acts only in a hit with the weapon of its tree: a war hammer node does nothing for a hit of the great axe.
 - The list says "not applied yet" for each node of an ability with no plan, also when the evaluator has each column of the
   row: the hit of that ability does not exist in the backend.
+- The box of Blood Lust follows the look of the camera of the client, not the body: a creature behind the camera does not
+  count also when the body faces it.
 - A status of a rule near the character shows in the HUD of the owner with no time: it has no end while the condition holds.
 - The ability file of a tool from before stage 3.3b-S5 (format 3) has only a part of the rows (497 of 2,025) and no spell
   selections of the action data: the evaluator applies only the rows of the file, and the plans keep the node rules of

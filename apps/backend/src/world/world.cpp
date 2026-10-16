@@ -590,6 +590,14 @@ bool World::friendly(const Entity& a, const Entity& b) const {
     return a.characterId == b.characterId || m_testFriends.contains({a.characterId, b.characterId});
 }
 
+bool World::hostile(const Entity& a, const Entity& b) const {
+    const auto side = [](const Entity& entity) {
+        // 1: a creature; 2: a character or a spell of a character; 0: neither.
+        return entity.kind == EntityKind::creature ? 1 : entity.kind == EntityKind::player || entity.kind == EntityKind::spell ? 2 : 0;
+    };
+    return side(a) != 0 && side(b) != 0 && side(a) != side(b);
+}
+
 void World::set_test_friends(const std::string& characterA, const std::string& characterB) {
     m_testFriends.insert({characterA, characterB});
     m_testFriends.insert({characterB, characterA});
@@ -802,6 +810,9 @@ PositionVerdict World::report_position(SessionId session, const PositionReport& 
         return verdict; // The entity, the index, and the row do not change.
     }
     m_creatures.behavior().client_arrived(*entity); // The client is at the place of its character.
+    if (std::isfinite(report.look)) {
+        entity->look = report.look; // The look of the camera (Blood Lust: the box in front of it).
+    }
     const state::WorldPosition& position = report.position;
     const float moved = std::hypot(position.x - entity->position.x,
                                    position.y - entity->position.y,

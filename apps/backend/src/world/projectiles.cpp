@@ -158,6 +158,8 @@ const char* projectile_end_text(ProjectileEnd end) {
         return "its life time ended";
     case ProjectileEnd::caster:
         return "its caster left the world or died";
+    case ProjectileEnd::absorbed:
+        return "a shield of an enemy took it";
     }
     return "?";
 }
@@ -825,6 +827,14 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
             }
             first = touch;
             struck = id;
+        }
+        // A shield of an enemy of the shooter on the segment (stage 3.3b-M2: the projectile shield of Maelstrom) takes the projectile
+        // before a creature or a wall behind it.
+        if (const std::optional<float> shield = m_world.spells().absorbs(projectile.position, end, projectile.source != 0 ? projectile.source
+                                                                                                                          : projectile.caster);
+            shield && (!first || *shield <= *first) && (!wall || *shield <= *wall)) {
+            finish(projectile, ProjectileEnd::absorbed, along(projectile.position, end, *shield));
+            return ProjectileEnd::absorbed;
         }
         if (first && (!wall || *first <= *wall)) {
             const state::WorldPosition point = along(projectile.position, end, *first);

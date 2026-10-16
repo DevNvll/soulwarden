@@ -135,14 +135,19 @@ struct Vitals {
     /**
      * The last heals with a number (code review of stage 3.3b-S6, finding S6-R7): the world revision, the health before the heal, and the
      * health after it. The vitals state of the owner sends each one as its own state with bit 1 (the number is exactly its gain), and a
-     * change with no number before or after it as a state with no bit 1. At most kHealSteps, the newest last.
+     * change with no number before or after it as a state with no bit 1. The newest last. A heal stays for kHealStepKeep on the world
+     * clock, also when more heals come before the next state of the owner (code review of stage 3.3b-M1, finding M1-R8: nine life
+     * steals of one strike lost the first number with a limit of 8); kHealSteps is a bound of the memory only (the legal work of 2 s:
+     * 64 claims each second of 32 targets at most, and the ticks; a decision of an agent).
      */
     struct HealStep {
         Revision revision{0};
         float from{0.0F};
         float to{0.0F};
+        std::chrono::steady_clock::time_point time{};
     };
-    static constexpr std::size_t kHealSteps = 8;
+    static constexpr std::size_t kHealSteps = 512;
+    static constexpr std::chrono::milliseconds kHealStepKeep{2000};
     std::vector<HealStep> healSteps;
 };
 
@@ -842,6 +847,14 @@ struct CombatState {
      * sheathe bits and the active bits of the paperdoll state do not follow it yet (roadmap 3.1).
      */
     std::uint32_t selectedWeapon{0};
+    /**
+     * The hits of the last cast of each ability whose row has TrackHitCount (stage 3.3b-M2): the ability (the CRC-32 of its id text)
+     * and the count, 255 at most. The abilities system sets them (Abilities: 0 at an accepted press, one more at each accepted hit of
+     * a strike of its fragment), and the ability state of the owner (slot 46, fields hitDataAbilityIds and hitDataNumHits) has them:
+     * the client reads them for the condition IfAbilityNumHits (the exit of Whirlwind with Unending Winds). An ability stays in the
+     * list with the count 0 after its first cast.
+     */
+    std::vector<std::pair<std::uint32_t, std::uint8_t>> abilityHits;
 };
 
 /**
@@ -870,6 +883,13 @@ enum class SpellRole : std::uint8_t {
     trap,
     /** An area that follows its target and gives its statuses to the friends in it (stage 3.3b-S2b: the Beacon of the life staff). */
     aura,
+    /**
+     * Stage 3.3b-M2: a shield that follows its caster and ends each projectile of a hostile shooter in its radius (the projectile shield
+     * of Maelstrom with Absorb: Spell_Upgrade_GreatAxe_Maelstrom_ProjectileConsume).
+     */
+    shield,
+    /** Stage 3.3b-M2: the picture of a spell with no rule of the server (the ground of Mighty Gavel). */
+    visual,
 };
 
 /** A trigger of an entity of the slice of a spell (stage 3.3b-S2b): the events of the slice that start at its trigger run from `at`. */
@@ -1025,6 +1045,11 @@ struct Entity {
     bool positionDirty{false};
     /** True while the character moves: the save rule then needs a larger distance. */
     bool moving{false};
+    /**
+     * The yaw of the camera of the client of a character (radians from north, positive to the left; stage 3.3b-M2: the box of Blood Lust in
+     * front of the look). The world keeps the value of the last accepted report.
+     */
+    float look{0.0F};
     std::optional<state::WorldPosition> savedPosition;
     WorldClock::time_point lastSave{};
 };

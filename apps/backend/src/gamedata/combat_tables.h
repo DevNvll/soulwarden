@@ -97,6 +97,12 @@ struct DamageRow {
     bool noBackstab{false};
     float headFactor{0.0F};
     float critFactor{0.0F};
+    /**
+     * The status effects of a hit of the row (the column StatusEffect; format 3, stage 3.3b-M2: the root of Gravity on the pull rows _RP2),
+     * and EffectOnlyOnDamage (only after a hit with damage above 0). Empty with a file of format 1 or 2.
+     */
+    std::vector<std::string> effects{};
+    bool effectOnlyOnDamage{false};
 };
 
 /** One row of the weapon table. */
@@ -200,6 +206,8 @@ struct CombatData {
      * level of the target) to the part of the damage that the difference adds.
      */
     std::unordered_map<std::int32_t, float> levelDamage;
+    /** True for a file of format 3 (stage 3.3b-M2): the damage rows have their status effects (DamageRow::effects). */
+    bool rowEffects{false};
 };
 
 class CombatTables {
@@ -228,6 +236,10 @@ public:
     }
     [[nodiscard]] const CombatConstants& constants() const {
         return m_data.constants;
+    }
+    /** @return True when the damage rows have their status effects (format 3, stage 3.3b-M2). */
+    [[nodiscard]] bool has_row_effects() const {
+        return m_data.rowEffects;
     }
 
     /** @return The weapon of an item (the compare ignores the case of the letters A to Z), or null for an item with no weapon. */

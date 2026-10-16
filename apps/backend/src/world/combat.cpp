@@ -244,12 +244,21 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
         m_sequences.end(character->characterId, SequenceEnd::death);
         return;
     }
-    const std::vector<const gamedata::AttackPayment*> payments =
-        m_sequences.step(character->characterId, session, inputSequence, input, bits, weapon_key(*character), actions, m_world.clock().now());
+    const std::vector<SequenceEvent> events =
+        m_sequences.step(character->characterId, session, inputSequence, input, bits, weapon_key(*character), actions, m_world.clock().now(),
+                         facts_of(*character));
     // The payments of the fragments (PayStaminaCost, CAGE-PayManaCost). The backend has no stamina model (the stamina rows of the
     // basic attacks of the reachable graphs are 0); a payment with a condition is a rule of a stance (the greatsword, a later
-    // part). A mana payment with a row of the mana table goes through the one mana path.
-    for (const gamedata::AttackPayment* payment : payments) {
+    // part). A mana payment with a row of the mana table goes through the one mana path. The strikes, the spell casts, and the marks of
+    // the fragment of an ability go to the abilities system (stage 3.3b-M2).
+    for (const SequenceEvent& event : events) {
+        if (event.kind != SequenceEvent::Kind::payment) {
+            if (Entity* own = m_world.entity_of(session)) {
+                m_world.abilities().fragment_event(*own, event);
+            }
+            continue;
+        }
+        const gamedata::AttackPayment* payment = &event.fragment->payments[event.index];
         if (!payment->condition.empty()) {
             m_sequences.count_payment(2);
         } else if (!payment->mana) {
@@ -262,6 +271,60 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
             }
         }
     }
+}
+
+AttackFacts Combat::facts_of(const Entity& character) const {
+    AttackFacts facts;
+    const EntityId id = character.id;
+    World* world = &m_world;
+    facts.learned = [world, id](std::uint32_t node) {
+        const Entity* own = world->find(id);
+        if (own == nullptr) {
+            return false;
+        }
+        for (const auto& [pool, nodes] : own->skills.pools) {
+            const auto found = nodes.find(node);
+            if (found != nodes.end() && found->second.level != 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+    facts.perk = [world, id](std::uint32_t perkAbility) {
+        const Entity* own = world->find(id);
+        if (own == nullptr) {
+            return false;
+        }
+        for (const GearPerk& perk : world->gear().perks_of(*own)) {
+            for (const std::string& name : perk.perk->abilities) {
+                if (gamedata::progression_id(name) == perkAbility) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    return facts;
+}
+
+float Combat::strike_reach(const gamedata::AttackStrike& strike, const gamedata::StrikeRow* row) {
+    // The reach of a strike of an ability (stage 3.3b-M2, a decision of an agent): the extent of the shape of the row of the character (all
+    // shapes for a row with no shape) from the joint of the weapon (the offset, the half height of a capsule, the radius; a box: its half
+    // diagonal) and 1 m of the arm, and not less than the reach of a basic attack. Reap: 3.25 m, thus 3.5 m; with The Collector:
+    // 1.5 + 3.0 + 0.75 + 1.0 = 6.25 m (game text: 5 m, and 8 m with The Collector, with the dash of the action).
+    float extent = 0.0F;
+    for (std::size_t index = 0; index < strike.shapes.size(); ++index) {
+        if (row != nullptr && row->shape < strike.shapes.size() && row->shape != index) {
+            continue;
+        }
+        const gamedata::AttackShape& shape = strike.shapes[index];
+        const float offset = std::hypot(shape.offset[0], shape.offset[1], shape.offset[2]);
+        const float size = shape.type.find("Box") != std::string::npos
+                               ? 0.5F * std::hypot(shape.box[0], shape.box[1], shape.box[2])
+                               : shape.halfHeight + shape.radius;
+        extent = std::max(extent, offset + size);
+    }
+    return std::max(combat_limits::kMeleeReach, extent + combat_limits::kArmReach);
 }
 
 void Combat::end_sequence(const std::string& characterId, SequenceEnd why) {
@@ -644,7 +707,7 @@ HitResult Combat::claim_strike(SessionId session, const HitClaim& claim, AttackT
     const WorldClock::time_point now = m_world.clock().now();
     const auto usable = [&](const gamedata::AttackStrike& strike) { return row_for(attacker, strike) != nullptr; };
     const StrikeMatch match =
-        m_sequences.match(attacker.characterId, session, track.sequence(), claim.input, target.id, now, usable);
+        m_sequences.match(attacker.characterId, session, track.sequence(), claim.input, target.id, now, usable, facts_of(attacker));
     switch (match.verdict) {
     case StrikeMatch::Verdict::noVisit:
         return refuse(HitVerdict::noAttack);
@@ -663,14 +726,36 @@ HitResult Combat::claim_strike(SessionId session, const HitClaim& claim, AttackT
     if (!rowIndex) {
         return refuse(HitVerdict::noWeapon);
     }
-    // The distance, with the exact position of the character that the world has, and the point of the contact.
-    if (distance(attacker.position, target.position) > combat_limits::kMeleeReach + combat_limits::kReachTolerance) {
+    // The distance, with the exact position of the character that the world has, and the point of the contact. A strike of an ability
+    // has the reach of the shape of its row (stage 3.3b-M2: Reap reaches 5 m, 8 m with The Collector).
+    const float reach = match.cast != 0 ? strike_reach(*match.strikeData, strikeRow) : combat_limits::kMeleeReach;
+    if (distance(attacker.position, target.position) > reach + combat_limits::kReachTolerance) {
         return refuse(HitVerdict::tooFar);
     }
     if (!valid_position(claim.point) || distance(claim.point, target.position) > combat_limits::kPointRange) {
         return refuse(HitVerdict::badPoint);
     }
-    m_sequences.note_hit(attacker.characterId, match.visit, match.strike, target.id);
+    if (match.cast != 0) {
+        // A strike of the fragment of an ability (stage 3.3b-M2): the abilities system makes the hit with the weapon of the cast.
+        const AbilityStrike ability = m_world.abilities().strike_of(match.cast);
+        if (!ability.valid) {
+            return refuse(HitVerdict::noStrike);
+        }
+        // The sequence notes the hit (its ledger, the hits of the cast, a transition at a collision) only after the hit is accepted: a
+        // refused contact changes nothing.
+        const EntityId targetId = target.id;
+        result = m_world.abilities().strike_hit(match.cast, *match.fragment, match.strike, *rowIndex, attacker, target);
+        result.fragment = match.fragment->name;
+        result.row = m_tables->damage_row(*rowIndex).id;
+        if (result.verdict != HitVerdict::accepted) {
+            return refuse(result.verdict);
+        }
+        m_sequences.note_match(attacker.characterId, match, targetId, now);
+        limits.note_hit(HitLimits::Hit{targetId, now, claim.input, session, track.sequence()});
+        result.verdict = track.counted(HitVerdict::accepted);
+        return result;
+    }
+    m_sequences.note_match(attacker.characterId, match, target.id, now);
     limits.note_hit(HitLimits::Hit{target.id, now, claim.input, session, track.sequence()});
     const gamedata::DamageRow& row = m_tables->damage_row(*rowIndex);
     const AttackKind kind = row.attackType == "Heavy" ? AttackKind::heavy : AttackKind::light;
@@ -712,6 +797,7 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     hit.row = row.id;
     hit.attackType = row.attackType;
     hit.ability = use.ability;
+    hit.fragment = use.fragment;
     hit.table = weapon.mastery.empty() ? 0 : gamedata::progression_id(weapon.mastery);
     // The facts of the hit (stage 3.3b-S5): its attack, its kind, its area, the health of the target before it, a hit from behind
     // (the angles of the DamageReceiver of the slice of the target: game data), and a headshot of a projectile.

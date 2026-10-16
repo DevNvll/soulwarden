@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "core/logging/log.h"
 #include "gamedata/progression_tables.h"
@@ -31,7 +32,55 @@ constexpr AbilityRule kRules[] = {
     {"Ability_Lifestaff_Beacon", AbilityKind::beacon, "Beacon"},
     {"Ability_Lifestaff_DivineEmbrace", AbilityKind::divineEmbrace, "Divine Embrace"},
     {"Ability_Lifestaff_SacredGround", AbilityKind::sacredGround, "Sacred Ground"},
+    {"Ability_Greataxe_Reap", AbilityKind::reap, "Reap"},
+    {"Ability_Greataxe_Executioner", AbilityKind::executioner, "Execute"},
+    {"Ability_Greataxe_Whirlwind", AbilityKind::whirlwind, "Whirlwind"},
+    {"Ability_WarHammer_MightyGavel", AbilityKind::mightyGavel, "Mighty Gavel"},
+    {"Ability_Warhammer_ArmorBreaker", AbilityKind::armorBreaker, "Armor Breaker"},
+    {"Ability_WarHammer_ClearOut", AbilityKind::clearOut, "Clear Out"},
 };
+
+/**
+ * @return True for an ability whose hits are only the strikes of its fragment in the weapon actions (format 2, stage 3.3b-M2): with no
+ *         such data its press is refused (no rule).
+ */
+bool needs_fragments(AbilityKind kind) {
+    switch (kind) {
+    case AbilityKind::reap:
+    case AbilityKind::executioner:
+    case AbilityKind::whirlwind:
+    case AbilityKind::mightyGavel:
+    case AbilityKind::armorBreaker:
+    case AbilityKind::clearOut:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/**
+ * @return True for an ability whose hits are the strikes of its fragment when the weapon actions have its action (stage 3.3b-M2): the abilities
+ *         of the great axe and the war hammer (the build of the user). The abilities of the other weapons (Riposte of the rapier) keep their
+ *         plans until their part checks their fragments live (a decision of an agent: the rapier is not in this part).
+ */
+bool sequence_kind(AbilityKind kind) {
+    switch (kind) {
+    case AbilityKind::charge:
+    case AbilityKind::maelstrom:
+    case AbilityKind::gravityWell:
+    case AbilityKind::wreckingBall:
+    case AbilityKind::shockwave:
+    case AbilityKind::pathOfDestiny:
+        return true;
+    default:
+        return needs_fragments(kind);
+    }
+}
+
+/** @return True when each text of a list is a node that the character has (the conditions of the action data name no tree). */
+bool all_learned(const SkillSet& skills, const std::vector<std::string>& nodes);
+bool none_learned(const SkillSet& skills, const std::vector<std::string>& nodes);
+bool has_learned(const SkillSet& skills, std::uint32_t id);
 
 /** The id text of the ranged attack of the projectile of Gravity Well (the value "attack" of its shot is its CRC-32). */
 /** A cast leaves the table this long after its start when no phase waits (the longest contact window is 3 s). */
@@ -70,6 +119,24 @@ bool learned(const SkillSet& skills, std::string_view node) {
         }
     }
     return false;
+}
+
+bool has_learned(const SkillSet& skills, std::uint32_t id) {
+    for (const auto& [table, nodes] : skills.pools) {
+        const auto found = nodes.find(id);
+        if (found != nodes.end() && found->second.level != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool all_learned(const SkillSet& skills, const std::vector<std::string>& nodes) {
+    return std::all_of(nodes.begin(), nodes.end(), [&](const std::string& node) { return learned(skills, node); });
+}
+
+bool none_learned(const SkillSet& skills, const std::vector<std::string>& nodes) {
+    return std::none_of(nodes.begin(), nodes.end(), [&](const std::string& node) { return learned(skills, node); });
 }
 
 /**
@@ -470,6 +537,18 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         plan.spell = spell;
         break;
     }
+    case AbilityKind::reap:
+    case AbilityKind::executioner:
+    case AbilityKind::whirlwind:
+    case AbilityKind::mightyGavel:
+    case AbilityKind::armorBreaker:
+    case AbilityKind::clearOut:
+        // Stage 3.3b-M2: the hits, the pull of Reap, the spins of Whirlwind and their exit, and the push of Clear Out are the strikes and
+        // the transitions of the fragment of the action in the weapon actions (game data; Abilities::press_entity selects the fragment);
+        // the rules of the nodes are the rows of the ability data (the evaluator of the passive rules); the push and the pull are the
+        // impacts of the damage rows (forced movement). The fragment that plays decides when the client takes a press (the sequence).
+        plan.length = std::chrono::milliseconds(0);
+        break;
     }
     return plan;
 }
@@ -640,6 +719,56 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
             return refuse(CastVerdict::noRule);
         }
     }
+    // The fragment of the action of the ability in the weapon actions (format 2; stage 3.3b-M2): its strikes are the hits of the cast (the
+    // sequence of the character plays it), and its transitions decide when the client takes the press. The action selects its fragment by
+    // the nodes and the perks of the character (ChangeActionFragment: the last selection whose conditions hold, as the action runs them in
+    // their order). The contact phases of the plan (stage 3.3a) go, and their effects are the effects of each strike.
+    const gamedata::WeaponActionSet* graph = m_world.combat().actions_of(*weapon);
+    const gamedata::AbilityAction* entry = graph != nullptr && sequence_kind(planned->kind) ? graph->ability(ability) : nullptr;
+    if (entry != nullptr) {
+        planned->sequence = true;
+        planned->fragment = entry->fragment;
+        const auto perk = m_world.combat().facts_of(*character).perk;
+        const auto perks_hold = [&](const std::vector<std::string>& needs, const std::vector<std::string>& forbids) {
+            return std::all_of(needs.begin(), needs.end(), [&](const std::string& name) { return perk(gamedata::progression_id(name)); })
+                   && std::none_of(forbids.begin(), forbids.end(), [&](const std::string& name) { return perk(gamedata::progression_id(name)); });
+        };
+        for (const gamedata::AbilityAction::Selection& selection : entry->selections) {
+            if (all_learned(character->skills, selection.needs) && none_learned(character->skills, selection.forbids)
+                && perks_hold(selection.perks, selection.perkForbids)) {
+                planned->fragment = selection.fragment;
+            }
+        }
+        const bool rowEffects = m_combat->has_row_effects();
+        for (auto phase = planned->phases.begin(); phase != planned->phases.end();) {
+            if (phase->kind != PhaseKind::contact) {
+                ++phase;
+                continue;
+            }
+            for (const EffectPlan& effect : phase->effects) {
+                // The root of Gravity is the status of the pull rows (_RP2) when the combat tables have the status of each row.
+                if (rowEffects && effect.status == "Status_Passive_GreatAxe_Gravity_Root_Hold") {
+                    continue;
+                }
+                const bool known = std::any_of(planned->strikeEffects.begin(), planned->strikeEffects.end(), [&](const EffectPlan& other) {
+                    return other.status == effect.status && other.power == effect.power;
+                });
+                if (!known) {
+                    planned->strikeEffects.push_back(effect);
+                }
+            }
+            phase = planned->phases.erase(phase);
+        }
+        for (const gamedata::AbilityAction::Cast& cast : entry->casts) {
+            if (cast.marker.empty() && all_learned(character->skills, cast.needs) && none_learned(character->skills, cast.forbids)
+                && perks_hold(cast.perks, cast.perkForbids) && m_data->spell(cast.spell) != nullptr) {
+                planned->actionSpells.push_back(cast.spell);
+            }
+        }
+    } else if (needs_fragments(planned->kind)) {
+        log::write("world: ability: %s needs its fragment in the weapon actions (format 2: tools/gamedata/weapon-actions.sh)", rule->name);
+        return refuse(CastVerdict::noRule);
+    }
     const WorldClock::time_point now = m_world.clock().now();
     CharacterState& state = m_characters[character->characterId];
     // The cooldown of the server, and the cooldown of the client: the client does not play a press in its own cooldown,
@@ -648,7 +777,17 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     if (running != state.cooldowns.end() && (running->second.indefinite || now < running->second.end || now < running->second.clientEnd)) {
         return refuse(CastVerdict::cooldown);
     }
-    if (state.cast) {
+    // A cast of the sequence (stage 3.3b-M2): the fragment that plays decides (the windows of the transitions to the ability, the mark
+    // CanTransition, its end; in the next kAbilityBackSteps steps). Else the length of the plan of a different cast.
+    const bool sequenced = planned->sequence && session != 0;
+    if (sequenced) {
+        const AbilityStart start = m_world.combat().sequences_of_world().start_ability(character->characterId, session, press.sequence, press.input,
+                                                                                      Combat::weapon_key(*character), graph, ability, planned->fragment,
+                                                                                      0, now, true);
+        if (start.verdict == AbilityStart::Verdict::refused) {
+            return refuse(CastVerdict::casting);
+        }
+    } else if (state.cast) {
         const auto playing = m_casts.find(*state.cast);
         if (playing != m_casts.end() && now < playing->second.ends) {
             return refuse(CastVerdict::casting);
@@ -734,12 +873,26 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     state.cast = cast.number;
     const std::uint64_t number = cast.number;
     Cast& stored = m_casts.emplace(number, std::move(cast)).first->second;
+    // The hits of the cast for the client (IfAbilityNumHits, stage 3.3b-M2): 0 at the press.
+    count_hit(*character, stored.ability, true);
+    // The fragment of the cast starts in the sequence (stage 3.3b-M2): at the press, or later in a buffered window of the fragment that
+    // played. The timed phases of the plan come that much later.
+    if (sequenced) {
+        const AbilityStart start = m_world.combat().sequences_of_world().start_ability(character->characterId, session, press.sequence, press.input,
+                                                                                      Combat::weapon_key(*character), graph, ability, stored.plan.fragment,
+                                                                                      number, now);
+        stored.plan.delay = std::chrono::milliseconds(static_cast<long long>(start.delaySteps) * 1000 / ability_rules::kStepsInSecond);
+        if (start.verdict == AbilityStart::Verdict::later) {
+            ++m_counts.delayedStarts;
+        }
+    }
+    const std::chrono::milliseconds delay = stored.plan.delay;
     // The area phases at their times on the world clock.
     for (std::uint32_t index = 0; index < stored.plan.phases.size(); ++index) {
         const PhasePlan& phase = stored.plan.phases[index];
         if (phase.kind == PhaseKind::around) {
             ++stored.pending;
-            m_world.after(phase.at, [this, number, index](World&) { run_area(number, index, {}); });
+            m_world.after(phase.at + delay, [this, number, index](World&) { run_area(number, index, {}); });
         } else if (phase.kind == PhaseKind::path) {
             const gamedata::SpellRow* spell = m_data->spell(phase.spell);
             const std::array<float, 2> ahead = direction_of(stored.yaw);
@@ -749,7 +902,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
                 const float along = spell->castDistance * static_cast<float>(sample + 1);
                 const state::WorldPosition center{stored.place.x + ahead[0] * along, stored.place.y + ahead[1] * along, stored.place.z};
                 ++stored.pending;
-                m_world.after(phase.at + milliseconds(spell->spawnRate / 1000.0F) * sample,
+                m_world.after(phase.at + delay + milliseconds(spell->spawnRate / 1000.0F) * sample,
                               [this, number, index, center](World&) { run_area(number, index, center); });
             }
         }
@@ -758,7 +911,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         // The projectile: the shot of the client throws it. With no shot the server throws it
         // from the place of the caster in the direction of the press.
         ++stored.pending;
-        m_world.after(ability_rules::kThrowTime + kThrowWait, [this, number](World&) {
+        m_world.after(ability_rules::kThrowTime + kThrowWait + delay, [this, number](World&) {
             const auto found = m_casts.find(number);
             if (found == m_casts.end()) {
                 return;
@@ -780,9 +933,9 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         ++stored.pending;
         if (stored.plan.spell->role == SpellRole::summon || (stored.plan.spell->role == SpellRole::aura && stored.plan.spell->projectile.empty())) {
             // A summon, and an area on the ground at the caster (stage 3.3b-S6: Sacred Ground): the spawn at the time of the plan.
-            m_world.after(stored.plan.spell->at, [this, number](World&) { spawn_summon(number); });
+            m_world.after(stored.plan.spell->at + delay, [this, number](World&) { spawn_summon(number); });
         } else {
-            m_world.after(stored.plan.spell->at + kThrowWait, [this, number](World&) {
+            m_world.after(stored.plan.spell->at + kThrowWait + delay, [this, number](World&) {
                 const auto found = m_casts.find(number);
                 if (found == m_casts.end()) {
                     return;
@@ -802,7 +955,16 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     if (stored.plan.heal) {
         // The direct heal at the time of the plan (stage 3.3b-S6): the target, the payment, and the statuses then.
         ++stored.pending;
-        m_world.after(stored.plan.heal->at, [this, number](World&) { cast_heal(number); });
+        m_world.after(stored.plan.heal->at + delay, [this, number](World&) { cast_heal(number); });
+    }
+    // The spells of the action at its start (stage 3.3b-M2: the shield of Maelstrom with Absorb).
+    for (const std::string& spell : stored.plan.actionSpells) {
+        const EntityId casterId = character->id;
+        m_world.after(delay, [this, number, casterId, spell](World&) {
+            if (Entity* caster = m_world.find(casterId); caster != nullptr && !caster->life.dead) {
+                cast_spell_at(*caster, number, spell);
+            }
+        });
     }
     publish(stored.characterId);
     if (cost > 0.0F) {
@@ -818,14 +980,20 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         m_world.statuses().apply(*character, stored.plan.window, how);
     }
     ++m_counts.presses[static_cast<std::size_t>(CastVerdict::accepted)];
-    // The client leaves its basic attack for the action of the ability (stage 3.3b-M1).
-    m_world.combat().end_sequence(character->characterId, SequenceEnd::ability);
-    log::write("world: ability: %s casts %s (place %u of the bar): cooldown %.1f s, %zu phase(s)",
+    // The client leaves its basic attack for the action of the ability (stage 3.3b-M1); a cast of the sequence started its fragment.
+    if (!sequenced) {
+        m_world.combat().end_sequence(character->characterId, SequenceEnd::ability);
+    }
+    log::write("world: ability: %s casts %s (place %u of the bar): cooldown %.1f s, %zu phase(s)%s",
                character->name.c_str(),
                ability_name(stored.plan.kind),
                press.place + 1,
                static_cast<double>(cooldown->time),
-               stored.plan.phases.size());
+               stored.plan.phases.size(),
+               stored.plan.sequence ? (", the fragment " + graph->fragments[stored.plan.fragment].name
+                                        + (delay.count() > 0 ? " in " + std::to_string(delay.count()) + " ms" : std::string()))
+                                          .c_str()
+                                    : "");
     return CastVerdict::accepted;
 }
 
@@ -1092,17 +1260,21 @@ HealSource Abilities::heal_source(const Cast& cast, const Entity& caster, std::s
     return source;
 }
 
-Entity* Abilities::heal_target(Entity& caster, const gamedata::SpellRow& spell, std::string_view ability, bool self) {
+Entity* Abilities::heal_target(Entity& caster, const gamedata::SpellRow& spell, std::string_view ability, bool self, const HealSource& source) {
     // The rule of the ability row (game data): TargetStatusEffect with TargetStatusEffectComparison NotEqual (Divine Embrace: not a target
     // that has the status of its heal).
     const gamedata::AbilityRow* row = m_data->ability_row(ability);
     const std::string_view excluded = row != nullptr && data_rules::same_text(row->cells.text("TargetStatusEffectComparison"), "NotEqual")
                                           ? row->cells.text("TargetStatusEffect")
                                           : std::string_view();
-    // A target that cannot gain health (at its maximum) takes no direct heal (code review of stage 3.3b-S6, finding S6-R3): the choice
-    // goes on to the next friend or to the caster, and with no target the cast heals nobody and pays nothing.
+    // A target that cannot gain health takes no direct heal (code review of stage 3.3b-S6, finding S6-R3; code review of stage 3.3b-M1,
+    // finding M1-R7): its health is at its maximum, or the heal of the cast for it is not above 0 (the heal base of the caster, its
+    // outgoing factor for the target, and the received factor of the target for an ability heal: Disease and the arena debuff can make
+    // it 0). The choice goes on to the next friend or to the caster, and with no target the cast heals nobody and pays nothing.
     const auto permitted = [&](const Entity& target) {
-        return (excluded.empty() || !m_world.statuses().has(target, excluded)) && target.vitals.health < target.vitals.healthMax;
+        return (excluded.empty() || !m_world.statuses().has(target, excluded)) && target.vitals.health < target.vitals.healthMax
+               && source.base > 0.0F && m_world.health().outgoing(caster, target, source) > 0.0F
+               && m_world.health().received(target, HealKind::ability) > 0.0F;
     };
     // The self cast input (the confirm `self_target`, live check of stage 3.3b-S6): the caster, the self form of the spell.
     if (self) {
@@ -1156,7 +1328,8 @@ void Abilities::cast_heal(std::uint64_t number) {
         return;
     }
     const std::string ability = ability_text(cast.ability);
-    Entity* target = heal_target(*caster, *spell, ability, cast.self);
+    const HealSource source = heal_source(cast, *caster, plan.spell);
+    Entity* target = heal_target(*caster, *spell, ability, cast.self, source);
     // The choice of the target and the cost go together (stage 3.3b-S6): no target, or less mana than the cost now: no heal, no payment.
     const float cost = mana_cost_of(*caster, plan.payment);
     if (target == nullptr || (cost > 0.0F && caster->vitals.mana + 0.001F < cost)) {
@@ -1167,7 +1340,7 @@ void Abilities::cast_heal(std::uint64_t number) {
     }
     StatusApply how;
     how.source = StatusSource{StatusSourceKind::ability, ability, 0, caster->id};
-    how.heal = heal_source(cast, *caster, plan.spell);
+    how.heal = source;
     const std::string targetName = target->name;
     const bool self = target->id == caster->id;
     bool given = false;
@@ -1281,6 +1454,25 @@ void Abilities::throw_projectile(Cast& cast, const state::WorldPosition& origin,
     request.caster = cast.caster;
     request.position = landing;
     request.cast = number;
+    // The statuses of the friends in the well (stage 3.3b-M2, Unyielding: the AreaStatusEffectComponent of the slice of the upgraded
+    // vortex gives Status_Upgrade_Greataxe_GravityWell_ArmorInWell to the friends in its detection volume, 4 m, and takes it at their
+    // exit and at the end; game data).
+    if (const gamedata::SpellData* spells = m_world.options().spellData; spells != nullptr && spells->loaded()) {
+        if (const gamedata::SpellSlice* slice = spells->slice_of(vortexPlan->spell)) {
+            for (const gamedata::SpellAreaStatus& area : slice->areaStatuses) {
+                if (area.targets != 1) {
+                    continue;
+                }
+                for (const std::string& status : area.statuses) {
+                    if (m_data->status(status) != nullptr) {
+                        request.statuses.push_back(status);
+                    }
+                }
+                request.radius = std::max(request.radius, area.radius);
+                request.areaStatuses = !request.statuses.empty();
+            }
+        }
+    }
     std::chrono::milliseconds burstAt = cast.plan.phases[burst].at;
     if (const std::optional<std::chrono::milliseconds> data = m_world.spells().activation_time(vortexPlan->spell, cast.plan.phases[burst].row)) {
         burstAt = *data;
@@ -2164,6 +2356,309 @@ void Abilities::reduce_weapon_cooldowns(Entity& character, float part, std::stri
 const std::map<std::uint32_t, AbilityCooldown>* Abilities::cooldowns_of(const std::string& characterId) const {
     const auto state = m_characters.find(characterId);
     return state == m_characters.end() ? nullptr : &state->second.cooldowns;
+}
+
+AbilityStrike Abilities::strike_of(std::uint64_t cast) const {
+    const auto found = m_casts.find(cast);
+    AbilityStrike result;
+    result.valid = found != m_casts.end() && found->second.plan.sequence && has_data();
+    return result;
+}
+
+HitResult Abilities::strike_hit(std::uint64_t number, const gamedata::AttackFragment& fragment, std::uint32_t strike, std::uint32_t rowIndex,
+                                Entity& attacker, Entity& target) {
+    HitResult result;
+    result.verdict = HitVerdict::noStrike;
+    const auto found = m_casts.find(number);
+    const gamedata::WeaponRow* weapon = found != m_casts.end() ? m_combat->weapon_of(found->second.itemId) : nullptr;
+    if (found == m_casts.end() || weapon == nullptr || found->second.caster != attacker.id) {
+        return result;
+    }
+    Cast& cast = found->second;
+    // The hit with the weapon, the gem, and the attack of the cast (the hits of one cast are the hits of one attack: stage 3.3b-S5).
+    const CastConversion conversion{cast.conversionType, cast.conversionPart};
+    HitWeapon use{cast.itemId, cast.slot, weapon, cast.gearScore, ability_text(cast.ability)};
+    use.attack = passive_rules::kAttackCast | cast.number;
+    use.fragment = fragment.name;
+    const std::string what = std::string(ability_name(cast.plan.kind)) + ", " + fragment.name + " " + fragment.strikes[strike].key;
+    const EntityId targetId = target.id;
+    result = m_world.combat().strike(attacker, target, use, rowIndex, 1.0F, what.c_str(), &conversion);
+    if (result.verdict != HitVerdict::accepted) {
+        return result;
+    }
+    cast.struck.insert(targetId);
+    ++m_counts.contactHits;
+    ++m_counts.strikeHits;
+    count_hit(attacker, cast.ability, false);
+    if (Entity* hurt = m_world.creatures().find(targetId); hurt != nullptr && !hurt->creature.dead) {
+        // The status of the row (the root of Gravity on a pull row), and the effects of the plan (the knockdown of Wrecking Ball).
+        row_effects(*hurt, m_combat->damage_row(rowIndex), result.damage.dealt, attacker.id);
+        PhasePlan effects;
+        effects.effects = cast.plan.strikeEffects;
+        if (Entity* again = m_world.creatures().find(targetId); again != nullptr && !again->creature.dead) {
+            give_effects(cast, effects, *again);
+        }
+    }
+    return result;
+}
+
+void Abilities::fragment_event(Entity& character, const SequenceEvent& event) {
+    const auto found = m_casts.find(event.cast);
+    if (found == m_casts.end() || found->second.caster != character.id || event.fragment == nullptr || !has_data()) {
+        return;
+    }
+    Cast& cast = found->second;
+    switch (event.kind) {
+    case SequenceEvent::Kind::payment:
+        return;
+    case SequenceEvent::Kind::strike:
+        if (event.index < event.fragment->strikes.size()) {
+            follow_strike(cast, character, event.fragment->strikes[event.index]);
+        }
+        return;
+    case SequenceEvent::Kind::cast:
+        // A spell cast of the fragment (CAGE-CastSpell: the ground of Mighty Gavel), with its node conditions. Only for the abilities of
+        // this part: the plans of stage 3.3a make the areas of their spells (Shockwave, Path of Destiny) and the throw of Gravity Well.
+        if (event.index < event.fragment->casts.size() && needs_fragments(cast.plan.kind)) {
+            const gamedata::FragmentCast& spell = event.fragment->casts[event.index];
+            if (all_learned(character.skills, spell.needs) && none_learned(character.skills, spell.forbids)) {
+                cast_spell_at(character, cast.number, spell.spell);
+            }
+        }
+        return;
+    case SequenceEvent::Kind::marker:
+        // The spells of the action with this mark (an ability of this part).
+        if (event.index < event.fragment->markers.size()) {
+            const std::string& marker = event.fragment->markers[event.index].name;
+            const ItemInstance* item = Combat::weapon_in_hand(character);
+            const gamedata::WeaponRow* weapon = item != nullptr ? m_combat->weapon_of(item->itemId) : nullptr;
+            const gamedata::WeaponActionSet* graph = weapon != nullptr ? m_world.combat().actions_of(*weapon) : nullptr;
+            const gamedata::AbilityAction* entry = graph != nullptr ? graph->ability(cast.ability) : nullptr;
+            if (entry == nullptr || !needs_fragments(cast.plan.kind)) {
+                return; // A plan of stage 3.3a makes the spells of its marks (the areas, the throw of Gravity Well).
+            }
+            for (const gamedata::AbilityAction::Cast& spell : entry->casts) {
+                if (spell.marker == marker && all_learned(character.skills, spell.needs) && none_learned(character.skills, spell.forbids)) {
+                    cast_spell_at(character, cast.number, spell.spell);
+                }
+            }
+        }
+        return;
+    }
+}
+
+void Abilities::follow_strike(Cast& cast, Entity& caster, const gamedata::AttackStrike& strike) {
+    // A strike whose usable rows do no damage (the pull of Reap: the rows _Pull, _upgrade, _upgrade2 with the damage factor 0, the _RP2
+    // rows with 0.0001): the client reports no contact for it (live check I1 of stage 3.3b-M2), thus the server tests its shapes itself.
+    // It acts on each creature that a strike of the cast hit before, and on each creature in a shape of a usable row in front of the
+    // caster (the capsule along the direction of the press: from its offset minus its half height and its radius to its offset plus them,
+    // its radius to the side, and kShapeSlack for the body of the creature; live run of stage 3.3b-M2: with Fatal Attraction and The
+    // Collector the first strike reaches 3.65 m and the pull 5.35 m). Each one gets the row of the shape nearest to it (the capsules of
+    // the axe at 1.2 m, 2.7 m, and 4.3 m: the farther the creature, the longer its pull), at the time of the strike. A decision of an
+    // agent from the data and the live checks.
+    std::vector<const gamedata::StrikeRow*> rows;
+    for (const gamedata::StrikeRow& row : strike.rows) {
+        if (std::all_of(row.needs.begin(), row.needs.end(), [&](std::uint32_t node) { return has_learned(caster.skills, node); })
+            && std::none_of(row.forbids.begin(), row.forbids.end(), [&](std::uint32_t node) { return has_learned(caster.skills, node); })) {
+            rows.push_back(&row);
+        }
+    }
+    if (rows.empty()) {
+        return;
+    }
+    for (const gamedata::StrikeRow* row : rows) {
+        const std::optional<std::uint32_t> index = m_combat->row_index(row->row);
+        if (!index || m_combat->damage_row(*index).factor > 0.001F) {
+            return; // A strike with damage: the contacts of the client are its hits.
+        }
+    }
+    std::set<EntityId> targets = cast.struck;
+    const std::array<float, 2> ahead = direction_of(cast.yaw);
+    float reach = 0.0F;
+    for (const gamedata::StrikeRow* row : rows) {
+        if (row->shape < strike.shapes.size()) {
+            const gamedata::AttackShape& shape = strike.shapes[row->shape];
+            reach = std::max(reach, shape.offset[2] + shape.halfHeight + shape.radius);
+        }
+    }
+    if (reach > 0.0F) {
+        m_world.for_each_near(caster.position, reach + ability_rules::kShapeSlack, [&](Entity& entity) {
+            if (entity.kind != EntityKind::creature || entity.creature.dead || entity.creature.immune()
+                || std::fabs(entity.position.z - caster.position.z) > ability_rules::kShapeHeight) {
+                return;
+            }
+            const float dx = entity.position.x - caster.position.x;
+            const float dy = entity.position.y - caster.position.y;
+            const float along = dx * ahead[0] + dy * ahead[1];
+            const float side = std::fabs(dx * ahead[1] - dy * ahead[0]);
+            for (const gamedata::StrikeRow* row : rows) {
+                if (row->shape >= strike.shapes.size()) {
+                    continue;
+                }
+                const gamedata::AttackShape& shape = strike.shapes[row->shape];
+                const float extent = shape.halfHeight + shape.radius + ability_rules::kShapeSlack;
+                if (along >= shape.offset[2] - extent && along <= shape.offset[2] + extent
+                    && side <= shape.radius + ability_rules::kShapeSlack) {
+                    // No pull through a wall: the sight from the chest of the caster to the creature (1.5 m and 1 m above the feet).
+                    const state::WorldPosition from{caster.position.x, caster.position.y, caster.position.z + 1.5F};
+                    const state::WorldPosition to{entity.position.x, entity.position.y, entity.position.z + 1.0F};
+                    if (m_world.navigation().sees(from, to)) {
+                        targets.insert(entity.id);
+                    }
+                    return;
+                }
+            }
+        });
+    }
+    for (const EntityId id : targets) {
+        Entity* creature = m_world.creatures().find(id);
+        ++m_counts.followLooked;
+        if (creature == nullptr || creature->creature.dead || creature->creature.immune()) {
+            continue;
+        }
+        const float away = horizontal_distance(caster.position, creature->position);
+        const gamedata::StrikeRow* best = rows.front();
+        float nearest = std::numeric_limits<float>::max();
+        for (const gamedata::StrikeRow* row : rows) {
+            const float along = row->shape < strike.shapes.size() ? strike.shapes[row->shape].offset[2] : 0.0F;
+            if (std::fabs(away - along) < nearest) {
+                nearest = std::fabs(away - along);
+                best = row;
+            }
+        }
+        const std::optional<std::uint32_t> index = m_combat->row_index(best->row);
+        if (!index) {
+            continue;
+        }
+        const gamedata::DamageRow& row = m_combat->damage_row(*index);
+        if (row.impact) {
+            m_world.creatures().impact(*creature, *row.impact, caster.position, caster.position, row.id);
+        }
+        if (Entity* again = m_world.creatures().find(id); again != nullptr && !again->creature.dead) {
+            row_effects(*again, row, row.factor > 0.0F ? row.factor : 0.0F, caster.id);
+        }
+        ++m_counts.follows;
+        log::write("world: ability: %s of %s moves creature %016llx %.1f m away with the row %s", ability_name(cast.plan.kind), caster.name.c_str(),
+                   static_cast<unsigned long long>(id), static_cast<double>(away), row.id.c_str());
+    }
+}
+
+void Abilities::row_effects(Entity& creature, const gamedata::DamageRow& row, float dealt, EntityId source) {
+    if (row.effects.empty() || creature.kind != EntityKind::creature || creature.creature.dead || !has_data()) {
+        return;
+    }
+    if (row.effectOnlyOnDamage && !(dealt > 0.0F)) {
+        return;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    if (m_rowCooldowns.size() > 256) {
+        for (auto entry = m_rowCooldowns.begin(); entry != m_rowCooldowns.end();) {
+            entry = entry->second <= now ? m_rowCooldowns.erase(entry) : std::next(entry);
+        }
+    }
+    for (const std::string& status : row.effects) {
+        const gamedata::StatusRow* data = m_data->status(status);
+        if (data == nullptr) {
+            continue;
+        }
+        // ApplicationCooldown of the status row: one application for each creature in that time (Gravity: 1 s for each target).
+        const float wait = data->cells.number("ApplicationCooldown");
+        const auto key = std::make_pair(creature.id, data->id);
+        if (wait > 0.0F) {
+            const auto until = m_rowCooldowns.find(key);
+            if (until != m_rowCooldowns.end() && now < until->second) {
+                continue;
+            }
+            m_rowCooldowns[key] = now + milliseconds(wait);
+        }
+        const bool given = apply_status(creature, status, source);
+        ++(given ? m_counts.effects : m_counts.effectsRefused);
+        // The end status of the row at its end (OnEndStatusEffect: the root of Gravity after its hold of 0.33 s).
+        const std::string_view after = data->cells.text("OnEndStatusEffect");
+        if (given && !after.empty() && data->duration > 0.0F && m_data->status(after) != nullptr) {
+            const EntityId id = creature.id;
+            const std::string end(after);
+            m_world.after(milliseconds(data->duration), [this, id, end, source](World& world) {
+                if (Entity* again = world.creatures().find(id); again != nullptr && !again->creature.dead) {
+                    ++(apply_status(*again, end, source) ? m_counts.effects : m_counts.effectsRefused);
+                }
+            });
+        }
+    }
+}
+
+void Abilities::count_hit(Entity& character, std::uint32_t ability, bool reset) {
+    // Only an ability whose row has TrackHitCount (game data: Ability_Greataxe_Whirlwind): the client tests its hits with
+    // IfAbilityNumHits (the action list of the great axe).
+    const gamedata::AbilityRow* row = has_data() ? m_data->ability_row(ability_text(ability)) : nullptr;
+    if (row == nullptr || row->cells.number("TrackHitCount") == 0.0F) {
+        return;
+    }
+    auto& hits = character.combat.abilityHits;
+    auto entry = std::find_if(hits.begin(), hits.end(), [&](const auto& item) { return item.first == ability; });
+    if (entry == hits.end()) {
+        if (hits.size() >= ability_rules::kTrackedAbilities) {
+            return;
+        }
+        hits.emplace_back(ability, 0);
+        entry = std::prev(hits.end());
+    }
+    const std::uint8_t count = reset ? 0 : static_cast<std::uint8_t>(std::min(entry->second + 1, 255));
+    if (count == entry->second && !reset) {
+        return;
+    }
+    entry->second = count;
+    m_world.touch(character.id, ComponentKey::abilities);
+}
+
+void Abilities::rule_spell(Entity& character, std::string_view spell, std::string_view rule) {
+    if (!has_data() || m_data->spell(spell) == nullptr || character.life.dead) {
+        return;
+    }
+    ++m_counts.ruleSpells;
+    log::write("world: ability: the rule %.*s of %s casts %.*s", static_cast<int>(rule.size()), rule.data(), character.name.c_str(),
+               static_cast<int>(spell.size()), spell.data());
+    cast_spell_at(character, 0, spell);
+}
+
+void Abilities::cast_spell_at(Entity& character, std::uint64_t cast, std::string_view spellId) {
+    const gamedata::SpellRow* row = has_data() ? m_data->spell(spellId) : nullptr;
+    if (row == nullptr) {
+        return;
+    }
+    // The role of the spell from its row (game data; a decision of an agent): an area for friends with statuses (WarHammer_Spell_ClearOut_
+    // Fortify: its StatusEffects on the friends in its Radius), a shield at its owner with no status (the projectile shield of Maelstrom:
+    // AttachToOwner, TargetTypes Friend), else the picture of the spell (the ground of Mighty Gavel: no offense in its slice).
+    SpellRequest request;
+    request.spellId = row->id;
+    request.caster = character.id;
+    request.cast = cast;
+    request.position = character.position;
+    const bool attach = row->cells.number("AttachToOwner") != 0.0F;
+    const bool friends = data_rules::same_text(row->cells.text("TargetTypes"), "Friend");
+    for (const std::string_view part : data_rules::parts_of(row->cells.text("StatusEffects"))) {
+        if (m_data->status(part) != nullptr) {
+            request.statuses.emplace_back(part);
+        }
+    }
+    request.life = std::chrono::milliseconds(static_cast<long long>(std::lround(std::max(row->duration, 1.0F))));
+    request.radius = row->radius;
+    if (friends && !request.statuses.empty()) {
+        request.role = SpellRole::aura;
+        request.attach = attach ? character.id : 0;
+    } else if (friends && attach) {
+        request.role = SpellRole::shield;
+        request.attach = character.id;
+    } else {
+        request.role = SpellRole::visual;
+        if (const std::optional<float> ground = m_world.navigation().ground_height(request.position);
+            ground && std::fabs(*ground - request.position.z) < 3.0F) {
+            request.position.z = *ground;
+        }
+    }
+    if (m_world.spells().make(request) != nullptr) {
+        ++m_counts.fragmentSpells;
+    }
 }
 
 } // namespace soulwarden::backend::world

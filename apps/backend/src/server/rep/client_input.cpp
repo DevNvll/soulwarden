@@ -86,6 +86,12 @@ constexpr unsigned kActionAim = 126;
 constexpr unsigned kActionSelfTarget = 430;
 /** The dodge input ("dodge": bit 322 of the table of the research combat-actions.md; the left Shift of the default profile; stage 3.3b-M1). */
 constexpr unsigned kActionDodge = 322;
+/**
+ * The block press ("block_press_virtual": bit 484 of the table of the research, combat-actions input-bits.json; the right pointer
+ * button of the default profile; stage 3.3b-M2). The action data of the great axe uses it: the swing of Charge
+ * (Ability_GreatAxe_Charge_Swing) comes on IfInput block_press_virtual.
+ */
+constexpr unsigned kActionBlockPress = 484;
 /** Offsets in a shot item of the second list (reader 0x2A1A590; protocol notes 4.27). */
 constexpr std::size_t kShotPoint = 36;
 constexpr std::size_t kShotReceiver = 92;
@@ -447,6 +453,7 @@ std::optional<ClientInput> read_entry(hub::Reader& reader, EntryBase& base, Inpu
         step.aim = step.aim || has_action(words, index, kActionAim);
         step.selfTarget = step.selfTarget || has_action(words, index, kActionSelfTarget);
         step.dodge = step.dodge || has_action(words, index, kActionDodge);
+        step.blockPress = step.blockPress || has_action(words, index, kActionBlockPress);
     }
     for (float& axis : input.axes) {
         axis = static_cast<float>(reader.u8()) / 256.0F * 2.0F - 1.0F;

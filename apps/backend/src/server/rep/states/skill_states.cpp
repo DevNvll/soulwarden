@@ -59,11 +59,17 @@
 // the numbers of the client. Each one is different from the field before it, thus the facet
 // applies the bars of the server. The client shows the same bar for the two forms (live proof
 // of stage 1.6).
+// Fields 1 and 2 (stage 3.3b-M2), `hitDataNumHits` and `hitDataAbilityIds`: two parallel lists
+// in the full form, the hit count of each ability (u8, field readers of the container at image
+// RVA 0x279DC70) and its id (u32, the CRC-32 of the lower-case id text, reader 0x3779060). The
+// client tests them for the condition IfAbilityNumHits of its action lists (the exit of Whirlwind
+// with Unending Winds: Whirlwind_LessThan_1 to _10). The backend sends them only for a character
+// that cast an ability whose row has TrackHitCount (world/entity.h, CombatState::abilityHits).
 //
 // View     Fields
 // owner    slot 65: the three lists. Slot 67: the four lists. Slot 46: field 0 (no fragment in
 //          the first record of a character with no ability on a bar; two fragments after a bar
-//          request that the backend refused).
+//          request that the backend refused), and the fields 1 and 2 after a tracked cast.
 // observer no fragment.
 
 namespace soulwarden::backend::server::rep {
@@ -86,6 +92,8 @@ constexpr std::size_t kMaxPools = 50;
 constexpr std::size_t kMaxPointEntries = 1000;
 // Slot 46.
 constexpr unsigned kPersistentAbilityData = 0;
+constexpr unsigned kHitDataNumHits = 1;
+constexpr unsigned kHitDataAbilityIds = 2;
 /**
  * The input numbers of the three ability keys of a player ("Ability1" to "Ability3"). The
  * client writes them into each place of its own list (client code at image RVA 0x6870BB0):
@@ -174,7 +182,11 @@ hub::Bytes encode_points(const world::SkillSet& skills, std::uint64_t sequence, 
     return state.finish();
 }
 
-hub::Bytes encode_ability_bars(const world::SkillSet& skills, bool placeNumbers) {
+namespace {
+
+/** The ability state: the bars, and the hit counts of the tracked abilities (null: none) with the stamp of their change. */
+hub::Bytes encode_ability_fields(const world::SkillSet& skills, bool placeNumbers, const std::vector<std::pair<std::uint32_t, std::uint8_t>>* hits,
+                                 std::uint64_t sequence) {
     StateWriter state(kGroups);
     hub::Writer& data = state.field(0, kPersistentAbilityData);
     data.size(static_cast<std::uint32_t>(gamedata::kAbilityTableOrder.size()));
@@ -188,7 +200,33 @@ hub::Bytes encode_ability_bars(const world::SkillSet& skills, bool placeNumbers)
         }
     }
     data.size(0); // No table version: the bar is correct in the live client without one.
+    // The hit counts of the tracked abilities (stage 3.3b-M2).
+    if (hits != nullptr && !hits->empty()) {
+        hub::Writer& counts = state.field(0, kHitDataNumHits);
+        begin_list(counts, sequence, hits->size());
+        for (const auto& [ability, count] : *hits) {
+            counts.u8(count);
+        }
+        hub::Writer& ids = state.field(0, kHitDataAbilityIds);
+        begin_list(ids, sequence, hits->size());
+        for (const auto& [ability, count] : *hits) {
+            ids.u32(ability);
+        }
+    }
     return state.finish();
+}
+
+/** The ability state of a character (its bars and its hit counts). */
+hub::Bytes encode_ability_entity(const world::Entity& entity, bool placeNumbers = false) {
+    const auto changed = entity.changed.find(world::ComponentKey::abilities);
+    const std::uint64_t sequence = changed == entity.changed.end() || changed->second == 0 ? 1 : changed->second;
+    return encode_ability_fields(entity.skills, placeNumbers, &entity.combat.abilityHits, sequence);
+}
+
+} // namespace
+
+hub::Bytes encode_ability_bars(const world::SkillSet& skills, bool placeNumbers) {
+    return encode_ability_fields(skills, placeNumbers, nullptr, 1);
 }
 
 hub::Bytes encode_categorical_state(const world::Entity& entity, View view, const world::WorldClock&) {
@@ -221,9 +259,9 @@ std::vector<hub::Bytes> encode_ability_state(const world::Entity& entity, View v
     // The backend refused a bar request after the last state of this session: the two forms,
     // so that the client applies the bars of the server and not its own bar.
     if (request.since != 0 && entity.skills.barsRefused > request.since) {
-        return {encode_ability_bars(entity.skills, true), encode_ability_bars(entity.skills)};
+        return {encode_ability_entity(entity, true), encode_ability_entity(entity)};
     }
-    return {encode_ability_bars(entity.skills)};
+    return {encode_ability_entity(entity)};
 }
 
 } // namespace soulwarden::backend::server::rep

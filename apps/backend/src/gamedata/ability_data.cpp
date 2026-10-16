@@ -18,6 +18,8 @@ using nlohmann::json;
 constexpr std::uint64_t kFormat = 3;
 /** Format 4 (stage 3.3b-S5): each row of the ability tables of the players, and the action spells and nodes. */
 constexpr std::uint64_t kRulesFormat = 4;
+/** Format 5 (stage 3.3b-M2): also the status actions of the player (Guarded Sprint). */
+constexpr std::uint64_t kActionStatusFormat = 5;
 constexpr std::uint64_t kCostFormat = 2;
 constexpr std::uint64_t kOldFormat = 1;
 
@@ -211,6 +213,37 @@ bool read_action_nodes(const json& row, ActionNodes& nodes) {
     return row.is_array() && row.size() == 2 && text(row, 0, nodes.list) && read_texts(row[1], nodes.nodes) && !nodes.nodes.empty();
 }
 
+bool read_action_status(const json& row, ActionStatus& status) {
+    if (!row.is_array() || row.size() != 4 || !text(row, 0, status.list) || !text(row, 1, status.action) || !row[2].is_array()
+        || !read_texts(row[3], status.statuses) || status.statuses.empty()) {
+        return false;
+    }
+    for (const json& term : row[2]) {
+        if (!term.is_array()) {
+            return false;
+        }
+        std::vector<ActionStatus::Literal> literals;
+        for (const json& item : term) {
+            ActionStatus::Literal literal;
+            std::string kind;
+            if (!item.is_array() || item.size() != 3 || !item[0].is_string() || !item[1].is_string() || !item[2].is_boolean()) {
+                return false;
+            }
+            kind = item[0].get<std::string>();
+            literal.name = item[1].get<std::string>();
+            literal.negated = item[2].get<bool>();
+            if ((kind != "node" && kind != "tag") || literal.name.empty()) {
+                return false;
+            }
+            literal.tag = kind == "tag";
+            literal.id = status_crc(literal.name);
+            literals.push_back(std::move(literal));
+        }
+        status.terms.push_back(std::move(literals));
+    }
+    return !status.terms.empty();
+}
+
 bool read_stat_limit(const json& row, StatLimit& limit) {
     return row.is_array() && row.size() == 3 && text(row, 0, limit.id) && number(row, 1, limit.min) && number(row, 2, limit.max);
 }
@@ -280,8 +313,8 @@ bool AbilityData::load(const std::string& path) {
     }
     const std::uint64_t format =
         document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kRulesFormat && format != kFormat && format != kCostFormat && format != kOldFormat) {
-        m_error = "the file does not have the format 1, 2, 3, or 4";
+    if (format != kActionStatusFormat && format != kRulesFormat && format != kFormat && format != kCostFormat && format != kOldFormat) {
+        m_error = "the file does not have the format 1, 2, 3, 4, or 5";
         return false;
     }
     AbilityTables tables;
@@ -316,6 +349,9 @@ bool AbilityData::load(const std::string& path) {
     if (format >= kRulesFormat
         && (!read_list(document, "actionSpells", read_action_spell, tables.actionSpells, m_error)
             || !read_list(document, "actionNodes", read_action_nodes, tables.actionNodes, m_error))) {
+        return false;
+    }
+    if (format >= kActionStatusFormat && !read_list(document, "actionStatuses", read_action_status, tables.actionStatuses, m_error)) {
         return false;
     }
     return accept(std::move(tables), true);

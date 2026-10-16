@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the spell entity data of the game as one JSON file (stage 3.3b-S2a; format 2: stage 3.3b-S2b).
+"""Write the spell entity data of the game as one JSON file (stage 3.3b-S2a; format 2: stage 3.3b-S2b; format 3: stage 3.3b-M2).
 
 The backend reads this file at its start (protocol notes 4.25). For each spell row of the spell tables of the game with
 a prefab slice, the file has what the backend needs to make the spell as an entity of the world and to send its record:
@@ -55,7 +55,7 @@ no root entity, two components with one slot, or a delayed event with no delay o
 A prefab slice with no Spell component and no PositionInTheWorld component (a waypoint or a rally point of an encounter)
 is not a spell entity: the tool leaves it out with a count.
 
-Output: {"format": 2, "counts": {"spells": N, "slices": N, "spellsWithNoSlice": N, "slicesWithNoSpellComponent": N,
+Output: {"format": 3, "counts": {"spells": N, "slices": N, "spellsWithNoSlice": N, "slicesWithNoSpellComponent": N,
                                  "vitals": N, "vitalsRowsNotInBaseTables": N, "vitalsCellsOfAbsentColumns": N},
 "slices": [{"path": text, "asset": "UUID", "sub": N, "root": "16 hex digits", "interestRadius": meters,
             "spellSlot": N (0: none), "positionSlot": N (0: none), "slots": [[slot, class name, state type], ...],
@@ -63,8 +63,12 @@ Output: {"format": 2, "counts": {"spells": N, "slices": N, "spellsWithNoSlice": 
                         onTrigger], ...],
             "components": [["entity", "component", "name/class"], ...], "vitals": [...] or null,
             "autoSpell": [...] or null, "volumes": [...], "offenses": [...], "detectionEvents": [...],
-            "timelines": [...]}, ...],
+            "timelines": [...], "areaStatuses": [...]}, ...],
 "spells": [[id, slice index], ...], "vitals": [[id, ...], ...]}
+
+Format 3 (stage 3.3b-M2) adds for each slice "areaStatuses": [[entity, detection entity, radius of its DetectionVolume, [status, ...],
+removeOnExit, detected target type (1: friends)], ...]: the AreaStatusEffectComponent of a slice (the fortify Status_Upgrade_Greataxe_
+GravityWell_ArmorInWell of the friends in the well of Unyielding, 4 m, taken at the exit).
 
 The tool needs only the standard library of Python and the modules of this folder (creature_data.py, slice_ids.py,
 appearance_tables.py, item_catalog.py, abilities.py).
@@ -132,6 +136,8 @@ TIMELINE_ENTRY_CLASS = uuid.UUID("e14cf7d7-9f3b-4aae-a320-a284dffd02ee")  # Time
 LAYER_ASSIGNMENT_CLASS = uuid.UUID("2acd7f8c-9f1a-41f3-b8b9-a64d2fc3bb09")  # LayerEntityAssignment: a layer and its entity
 LAYER_CLASS = uuid.UUID("f99a21ab-f403-4b90-ad52-25ee26c36f25")         # TimelineLayer of a timeline asset
 SPHERE_CLASS = uuid.UUID("7f2ef312-4089-4582-89c5-5d4156daa7fb")        # QueryShapeSphere
+# Format 3 (stage 3.3b-M2): the AreaStatusEffectComponent (the fortify of the friends in the well of Unyielding).
+AREA_STATUS_CLASS = uuid.UUID("1d3d6391-52bc-7703-563a-e2c7e674b255")
 # The event type of an activation (m_type of m_eventData): spell_event::kActivate of the backend.
 spell_event_activate = 2
 OFFENSE_CLASS = uuid.UUID("7c7256b3-cad2-4782-a5fd-7edfe8d9e311")
@@ -164,6 +170,11 @@ TIMELINE_ASSET_FIELD = field_id("TimelineAsset")
 LAYER_ID_FIELD = field_id("LayerId")
 START_TIME_FIELD = field_id("StartTime")
 EXCLUDE_TAGS_FIELD = field_id("m_excludeTargetNWTags")
+ADD_STATUSES_FIELD = field_id("m_addStatusEffects")
+EFFECT_ID_FIELD = field_id("m_effectId")
+REMOVE_ON_EXIT_FIELD = field_id("m_removeOnExit")
+DETECTION_ENTITY_FIELD = field_id("m_detectionEntity")
+DETECTED_TYPE_FIELD = field_id("m_detectedTargetType")
 
 
 def text_of(element) -> str:
@@ -273,6 +284,7 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
     offenses: list[tuple] = []
     detection_events: list[tuple] = []
     timelines: list[tuple] = []
+    area_statuses: list[tuple] = []
     radius = 0.0
     for root in roots:
         for element in walk(root):
@@ -298,6 +310,16 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
                     offenses.append((entity_id, row, sphere_radius(component)))
                 if component.type_id == VOLUME_CLASS:
                     volumes.append((entity_id, sphere_radius(component)))
+                if component.type_id == AREA_STATUS_CLASS:
+                    # The statuses that the friends (or the enemies) in the detection volume of the component get, and lose at their
+                    # exit (format 3, stage 3.3b-M2: the fortify in the well of Unyielding).
+                    added = deep(component, ADD_STATUSES_FIELD)
+                    statuses = sorted({text_of(child) for child in walk(added) if child.name == EFFECT_ID_FIELD and text_of(child)}) if added else []
+                    reference = deep(component, DETECTION_ENTITY_FIELD)
+                    detection = next((int.from_bytes(child.value, "big") for child in walk(reference)
+                                      if child.value is not None and len(child.value) == 8), None) if reference is not None else None
+                    area_statuses.append((entity_id, detection, statuses, number_of(deep(component, REMOVE_ON_EXIT_FIELD)) != 0,
+                                          number_of(deep(component, DETECTED_TYPE_FIELD))))
                 if component.type_id == AUTO_SPELL_CLASS:
                     rate = deep(component, DEFAULT_RATE_FIELD)
                     # The times of the rule of a summon are required 32-bit floats (code review of stage 3.3b-S2b, finding
@@ -422,7 +444,9 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
             "volumes": [[named(entity), round(radius_of, 4), active_after(entity)] for entity, radius_of in volumes],
             "offenses": [[named(entity), row_of, round(radius_of, 4)] for entity, row_of, radius_of in offenses],
             "detectionEvents": [[named(target), kind] for target, kind in detection_events],
-            "timelines": timeline_rows}
+            "timelines": timeline_rows,
+            "areaStatuses": [[named(entity), named(detection), round(next((radius_of for volume, radius_of in volumes if volume == detection), 0.0), 4),
+                              statuses, remove, kind] for entity, detection, statuses, remove, kind in area_statuses if statuses]}
 
 
 def slice_path(prefab: str) -> str:
@@ -486,7 +510,7 @@ def build_document(sources: Sources) -> dict:
     unknown = [row for row in elsewhere if row.lower() not in {name.lower() for name in VITALS_ROWS_NOT_IN_BASE_TABLES}]
     if unknown:
         raise Failure(f"a spell slice names the vitals row {unknown[0]}, which no base vitals table has")
-    return {"format": 2, "counts": {"spells": len(spells), "slices": len(slices), "spellsWithNoSlice": no_slice,
+    return {"format": 3, "counts": {"spells": len(spells), "slices": len(slices), "spellsWithNoSlice": no_slice,
                                     "slicesWithNoSpellComponent": no_spell_component, "vitals": len(vitals),
                                     "vitalsRowsNotInBaseTables": no_row, "vitalsCellsOfAbsentColumns": no_column},
             "slices": slices, "spells": sorted(spells.values()), "vitals": vitals, "vitalsNotInData": elsewhere}

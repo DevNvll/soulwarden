@@ -4941,8 +4941,8 @@ list` has the line `abilities`.
   Guarded Sprint, Concussive Impact, Prevailing Spirit, Epitome of Bonk, Exhaustive Attacks
   (no stamina of a creature), Death's Embrace, Greed, Mauler's Fury, Power Through Pain, and
   Absorb (no projectile of a creature is blocked). Critical hits.
-- The counts of the activities of the ability state (slot 46, fields 3 and 4) and a refusal or
-  a correction for a press that the backend refuses.
+- The counts of the activities of the ability state (slot 46, fields 3 and 4: `actionDataCount`, `actionDataAbilityIds`)
+  and a refusal or a correction for a press that the backend refuses. Fields 1 and 2 (the hits of an ability): 4.33.
 - The full status map of an observer (its wall clock) and the status state of the owner (the
   tray of a player): done in stage 3.3b-S1 (4.24), but the owner tray stays empty.
 
@@ -5583,6 +5583,73 @@ the client plays its own attack.
 the greatsword pays 10 in its offense stance); the stances of the greatsword and the oils (FragTags); the length of a fragment
 with two clips of one animation that ends by a different rule (war hammer Attack_Heavy: 44 steps, the rule of the table gives
 51; its instant window to Attack_Start_Charge gives the same next fragment).
+
+### 4.33 The other abilities of the great axe and the war hammer: the fragments of the abilities, the hits of an ability for the client, the block press (live proof of stage 3.3b-M2; the rules are project rules with the values of the game data)
+
+Stage 3.3b-M2. Live checks I1 (run `m2-i1`, the backend of stage 3.3b-M1) and the live proof (runs `m2-live1` to `m2-live5`,
+`m2-wb-baseline`, `m2-list`): `~/Games/soulwarden/work/evidence/abilities-gawh/implement/` (`i1/NOTES.md`, `live/`,
+`RESULT.md`). Code: `world/abilities.h` (`Abilities::press_entity`, `strike_hit`, `fragment_event`, `follow_strike`,
+`count_hit`), `world/attack_sequence.h` (`start_ability`, the terms of a transition), `server/rep/states/skill_states.cpp`
+(slot 46), `server/rep/client_input.cpp` (bit 484), `gamedata/weapon_actions.h` (format 2), `tools/gamedata/weapon_actions.py`.
+Documents: [Abilities](systems/abilities.md), [Passive rules](systems/passive-rules.md), [Spell entities](systems/spells.md).
+Test cases GH1 to GH19.
+
+**The contacts of the abilities** (live check I1; input steps of 1/30 s from the press; the time of the strike of the data):
+
+| Ability (nodes) | Contacts | Data |
+| --- | --- | --- |
+| Reap (The Collector, Fatal Attraction, Gravity) | +9 (atk1, 0.3 s), +32 (atk3, 0.967 s); none for atk2 (the pull) | `Ability_GreatAxe_JudgementsReach_Upgrade` |
+| Execute | +20 (0.667 s) | `Ability_GreatAxe_Executioner` (the base fragment) |
+| Whirlwind (Unending Winds) | +15, +28, +39, +49, and with the hit counts of the server +58, +69, +80 | `Ability_GreatAxe_Whirlwind_Upgrade`: atk1 to atk7 |
+| Armor Breaker | +14 (0.467 s) | `Ability_WarHammer_BlockBreaker` |
+| Mighty Gavel | +18 (0.6 s) | `Ability_WarHammer_MightyGavel` (CAGE-CastSpell `WarHammer_Spell_MightyGavel` at 0.638 s: no message and no shot item of the client) |
+| Clear Out | +23 (0.767 s) | `Ability_WarHammer_ClearOut` |
+| Charge (Frenzied Momentum, Unpredictable Strike) | +12 at a wolf 6 m in front (the uppercut, `GreatAxe_Engage1`); with the block press at 0.23 s: the swing (`GreatAxe_Engage_Swing1`) | `Ability_GreatAxe_Engage`, `_Uppercut`, `_Swing` |
+
+- The pull of Reap (atk2, rows with the damage factor 0 or 0.0001) gives no contact in three casts (live check I1). The server
+  tests its shapes (behavioral proof, run `m2-live4`: the wolf 4.3 m away moved 4.5 m with the row
+  `GreatAxe_JudgementsReach_upgrade2_RP2_reduced`, and it got `Status_Passive_GreatAxe_Gravity_Root` and then `_Root_Hold`).
+- The caster moves in its action (Reap 1.5 m, Mighty Gavel 1.6 m, Clear Out 0.7 m; Whirlwind with Gusting Winds 7.95 m in 1
+  s): the position check refused no report (live check I1).
+- Wrecking Ball gave no contact in the street of the test place (runs `m2-live4` and `m2-wb-baseline` with the backend of stage
+  3.3b-M1: the leap lands at the wolf). Open.
+
+**The hits of an ability for the client** (static proof and live proof). The condition `IfAbilityNumHits` of the action lists
+(`AbilityName`, `NumHits`, `ComparisonType`; reader of the condition 0x2BED200) reads the hit counts of the ability state:
+
+```text
+MB::AbilityComponentReplicatedState, slot 46 (constructor 0x66EA770), group 0
+  field 1  hitDataNumHits     list of u8   (container type 0x80B9790, reader 0x279DC70: the element read 0x87A190)
+  field 2  hitDataAbilityIds  list of u32  (container type 0x821A0C0, reader 0x3779060: the element read 0x87A220)
+  the full list form of 4.13: 00 (no change entries), 01 sequence:size64, count:size, the elements
+```
+
+- The two lists are parallel: the count of the ability with the id at the same place. The id is the CRC-32 of the lower-case
+  ability id text (`Ability_Greataxe_Whirlwind`).
+- Live proof (run `m2-live3`): Whirlwind with Unending Winds and the counts of the server played seven spins with seven hits.
+  With no count (runs `m2-i1` and `m2-live2`) the client left the spin at about 2.0 s also after four accepted hits
+  (`Whirlwind_LessThan_1` at 1.933 s).
+- The server counts the accepted hits of the strikes of the last cast of each ability whose row has TrackHitCount (game data),
+  from 0 at the press. Not known: when the server of the game set the count to 0, and fields 3 and 4.
+
+**The block press** (live proof, run `m2-live4`): the input bit 484 (`block_press_virtual` of the input table; the right
+pointer button) in the window 0.1 s to 0.4 s of the charge of Charge with Unpredictable Strike starts the swing
+(`Ability_GreatAxe_Engage_Swing`; the condition `IfInput block_press_virtual` of the action list). The client then reports its
+contact in the window of the swing.
+
+**The collision of Charge** (live proof): the client starts the uppercut at a collision with a creature (`character_collided`).
+The server sees no collision; the contact of the uppercut strike shows it (the server starts the uppercut at the step of the
+contact).
+
+**The data** (game data; format 2 of `weapon-actions.json`): the start windows CanAttack_<ability> of each fragment; the
+selections of an action (ChangeActionFragment); the CastSpell of an action with the mark of its condition; the CAGE-CastSpell
+clips and the CAGE-Named marks of a fragment; the conditions of the transitions inside an ability. A Blend with ExitTime -1
+starts its clip at the end of the clip before it (the sprint attack of the hatchet; the old rule of the tool gave the length
+-0.6 s).
+
+**Not known, not done**: the removal of a projectile by the shield of Maelstrom (no creature shoots); the picture of the
+ground of Mighty Gavel in the client (the stills of the live run do not show it clearly); the Upgrade fragment of Executioner
+(no action selects it); the stamina, grit, and the block of the nodes of the two trees.
 
 ## 5. Open items
 

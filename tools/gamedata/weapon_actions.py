@@ -46,7 +46,9 @@ A transition with a different condition (an ability, a sprint, a block, an unshe
 The length of a fragment: the end of the last animation clip of its first animation layer. A clip starts at the time of its
 animation given by the StartTime of its Blend (seconds); a clip of the same animation as the clip before it continues the time
 of that animation (live check I1 of stage 3.3b-M1: the first swing of the war hammer, 44 input steps). The clip ends when the
-animation ends, at its speed. A fragment with an animation that the game copy does not have gets the length 0 (not known).
+animation ends, at its speed. A Blend with a negative ExitTime (-1) starts its clip at the end of the clip before it (the
+Mannequin rule; the sprint attack of the hatchet). A fragment whose last clip loops (the flag Loop) has no end of its own, and a
+fragment with an animation that the game copy does not have: the length 0 (not known).
 
 Output: {"format": 1, "counts": {...},
 "weapons": [{"tags": [tag, ...], "files": [body file, base file, attachment file], "start": "Attack_Start_Charge",
@@ -167,9 +169,11 @@ def layer_clips(layer: ElementTree.Element, kind: str) -> list[dict]:
     for node in layer:
         if node.tag == "Blend":
             blend = dict(node.attrib)
-            time += float(blend.get("ExitTime") or 0.0)
+            # A negative ExitTime (-1): the clip starts at the end of the clip before it (fragment_length has the animation lengths).
+            time += max(float(blend.get("ExitTime") or 0.0), 0.0)
         elif node.tag == kind:
-            clip = {"start": time, "blend": blend, "attrib": dict(node.attrib)}
+            clip = {"start": time, "blend": blend, "attrib": dict(node.attrib),
+                    "afterPrevious": float(blend.get("ExitTime") or 0.0) < 0.0}
             if kind == "Procedural":
                 parameters = node.find("ProceduralParams")
                 clip["params"] = {child.tag: child.get("value", "") for child in parameters} if parameters is not None else {}
@@ -261,19 +265,26 @@ def fragment_length(variant: dict, animations: Animations) -> float:
     animation_time = 0.0
     previous_start = 0.0
     previous_speed = 1.0
-    for clip in clips:
+    shift = 0.0
+    for index, clip in enumerate(clips):
         name = clip["attrib"].get("name", "")
         speed = float(clip["attrib"].get("speed") or 1.0)
         length = animations.length(name) if name else None
         if length is None or speed <= 0.0:
             return 0.0
+        if "Loop" in clip["attrib"].get("flags", "").split("+") and index == len(clips) - 1:
+            return 0.0  # The last clip loops: the fragment ends only at a transition.
+        if clip.get("afterPrevious") and index > 0:
+            # ExitTime -1: the clip starts at the end of the clip before it; the later clips move with it.
+            shift = end - clip["start"]
+        start = clip["start"] + shift
         if name == previous_name:
             # The same animation as the clip before: its time continues (live check I1).
-            animation_time += (clip["start"] - previous_start) * previous_speed
+            animation_time += (start - previous_start) * previous_speed
         else:
             animation_time = float(clip["blend"].get("StartTime") or 0.0)
-        end = clip["start"] + max(length - animation_time, 0.0) / speed
-        previous_name, previous_start, previous_speed = name, clip["start"], speed
+        end = start + max(length - animation_time, 0.0) / speed
+        previous_name, previous_start, previous_speed = name, start, speed
     return rounded(end)
 
 
@@ -314,56 +325,262 @@ def node_tests(element: ElementTree.Element, negated: bool, tests: list[tuple[st
     return False
 
 
+# The input of a condition of a transition inside an ability (the input names of the action lists of the player).
+ABILITY_INPUTS = {"attack_primary_virtual": "attack", "block_press_virtual": "block", "character_collided": "collided"}
+# The ability action list of each weapon tag (the hatchet has the tag Axe).
+ABILITY_LISTS = {"sword": "playeractions_ability_sword", "rapier": "playeractions_ability_rapier", "axe": "playeractions_ability_hatchet",
+                 "flail": "playeractions_ability_flail", "spear": "playeractions_ability_spear",
+                 "greataxe": "playeractions_ability_greataxe", "warhammer": "playeractions_ability_warhammer",
+                 "greatsword": "playeractions_ability_greatsword"}
+
+
+def literal_of(element: ElementTree.Element) -> tuple[str, object] | None:
+    """@return One literal of a condition of an ability transition ([kind, value]), or None for a test that the backend has no
+    source for."""
+    if element.tag == "IfAbilityActive":
+        name = element.get("AbilityName", "").strip()
+        if not name:
+            return None
+        return ("perk" if element.get("External", "").lower() == "true" else "node", name)
+    if element.tag == "IfInput":
+        name = ABILITY_INPUTS.get(element.get("InputName", "").strip().lower())
+        return ("input", name) if name else None
+    if element.tag == "IfAbilityNumHits":
+        if element.get("ComparisonType", "").strip() != "LessThan":
+            return None
+        try:
+            return ("hits", int(element.get("NumHits", "")))
+        except ValueError:
+            return None
+    if element.tag == "IfFragmentPlaying":
+        name = element.get("FragmentName", "").strip()
+        return ("playing", name) if name else None
+    if element.tag == "IfWaterDepth":
+        return ("water", "")
+    if element.tag == "IfMannequinMarker":
+        name = element.get("MarkerName", "").strip()
+        return ("marker", name) if name else None
+    return None
+
+
+def dnf(element: ElementTree.Element, negated: bool = False) -> list[list[list]] | None:
+    """@return A condition as an OR of ANDs of literals [kind, value, negated] (no term: never true; one empty term: always true), or
+    None when a test of it has no source in the backend. The backend has no water: a test of the water depth is false."""
+    if element.tag == "Not":
+        children = list(element)
+        return dnf(children[0], not negated) if len(children) == 1 else None
+    if element.tag == "True":
+        return [] if negated else [[]]
+    if element.tag in ("And", "Or"):
+        parts = [dnf(child, negated) for child in element]
+        if any(part is None for part in parts):
+            return None
+        if (element.tag == "And") != negated:
+            terms: list[list[list]] = [[]]
+            for part in parts:
+                terms = [left + right for left in terms for right in part]
+            return terms
+        return [term for part in parts for term in part]
+    literal = literal_of(element)
+    if literal is None:
+        return None
+    kind, value = literal
+    if kind == "water":
+        return [[]] if negated else []
+    return [[[kind, value, negated]]]
+
+
+def condition_terms(name: str, named: dict[str, ElementTree.Element]) -> list[list[list]] | None:
+    """@return The terms of a named condition of the action lists (an empty name: always true), or None (not known)."""
+    if not name:
+        return [[]]
+    element = named.get(name.lower())
+    return dnf(element) if element is not None else None
+
+
+def read_abilities(sources: Sources) -> dict[str, dict]:
+    """@return The actions of the ability action lists (by the action name in lower case): the list, the fragment, the ability of its
+    cooldown (SetCooldownTimer AbilityID; none for a follow-up action), the fragment selections (ChangeActionFragment below an
+    IfThenElse), and the spell casts (CastSpell below an IfThenElse, with the marker of its condition)."""
+    found: dict[str, dict] = {}
+    for path in sources.paths(ACTION_FOLDER, ".actionlist"):
+        list_name = path.rsplit("/", 1)[-1][:-len(".actionlist")]
+        if not list_name.startswith("playeractions_ability_"):
+            continue
+        root = read_xml(sources, path)
+        for action in root.iter("Action"):
+            name = action.get("Name", "")
+            fragment = action.get("FragmentName", "") or name
+            ability = None
+            for timer in action.iter("SetCooldownTimer"):
+                for default in timer.iter("Default"):
+                    ability = ability or default.get("AbilityID", "").strip() or None
+            entry = {"name": name, "fragment": fragment, "ability": ability, "list": list_name, "selections": [], "casts": [],
+                     "selectionsNotExported": 0, "castsNotExported": 0,
+                     # The named conditions of the conditionals of the movement of the action (the speed of Whirlwind with Gusting
+                     # Winds): the client moves its character with them.
+                     "motion": sorted({conditional.get("Name", "") for kind in ("AnimationDrivenMotion", "CameraRelativeMotion")
+                                       for activity in action.iter(kind) for conditional in activity.iter("Conditional")} - {""})}
+            for branch in action.iter("IfThenElse"):
+                condition = branch.find("IfCondition")
+                then = branch.find("ThenActivity")
+                if condition is None or then is None:
+                    continue
+                wrapper = ElementTree.Element("And")
+                wrapper.extend(list(condition))
+                terms = dnf(wrapper)
+                for change in then.iter("ChangeActionFragment"):
+                    for default in change.iter("Default"):
+                        target = default.get("FragmentName", "").strip()
+                        if default.get("UseDefaultFragment", "").lower() == "true" or not target:
+                            continue
+                        selection = node_selection(terms)
+                        if selection is None:
+                            entry["selectionsNotExported"] += 1
+                            continue
+                        entry["selections"].append([target, *selection])
+                for cast in then.iter("CastSpell"):
+                    for default in cast.iter("Default"):
+                        spell = default.get("SpellName", "").strip()
+                        if not spell:
+                            continue
+                        marker = next((element.get("MarkerName", "") for element in condition.iter("IfMannequinMarker")), "")
+                        selection = node_selection(terms, allow_marker=True)
+                        if selection is None:
+                            entry["castsNotExported"] += 1
+                            continue
+                        entry["casts"].append([spell, *selection, marker])
+            found[name.lower()] = entry
+    return found
+
+
+def node_selection(terms: list[list[list]] | None, allow_marker: bool = False) -> list | None:
+    """@return [needs, forbids, perks, perk forbids] of a condition that is one AND of node and perk tests (a test of the playing
+    fragment is left out: it is true at the start of the action), or None."""
+    if terms is None or len(terms) != 1:
+        return None
+    needs, forbids, perks, perk_forbids = [], [], [], []
+    for kind, value, negated in terms[0]:
+        if kind == "node":
+            (forbids if negated else needs).append(value)
+        elif kind == "perk":
+            (perk_forbids if negated else perks).append(value)
+        elif kind == "playing" or (kind == "marker" and allow_marker and not negated):
+            continue
+        else:
+            return None
+    return [sorted(set(needs), key=str.lower), sorted(set(forbids), key=str.lower), sorted(set(perks), key=str.lower),
+            sorted(set(perk_forbids), key=str.lower)]
+
+
 def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: dict, action_fragments: dict[str, str],
                  named: dict[str, ElementTree.Element], animations, not_exported: dict[str, int], clips_not_exported: list[list],
-                 counts: dict) -> list[dict] | None:
-    """@return The fragments of the attack graph of one tag set (from Attack_Start_Charge), or None when the tag set has no
-    Attack_Start_Charge. `body`, `common`, and `attachment` are the fragments of the body file of the weapon, of the common file,
-    and of the attachment file (read_fragments)."""
+                 counts: dict, abilities: dict[str, dict] | None = None) -> tuple[list[dict], list[dict]] | None:
+    """@return The fragments of the attack graph of one tag set and its abilities, or None when the tag set has no
+    Attack_Start_Charge. The graph: from Attack_Start_Charge the basic attacks (the transitions with a condition of a basic attack),
+    and from each ability of the ability action list of the weapon its fragment, the fragments that its action selects, and the
+    fragments of its transitions inside the ability (a condition of the inputs, nodes, perks, and hits that the backend has).
+    `body`, `common`, and `attachment` are the fragments of the body file of the weapon, of the common file, and of the attachment
+    file (read_fragments). `abilities` is read_abilities (None: no ability)."""
     lower = {tag.lower() for tag in tags}
     label = "+".join(tags)
+    abilities = abilities or {}
 
     def body_variant(name: str) -> dict | None:
         return select([body.get(name, []), common.get(name, [])], lower)
 
     if body_variant(START) is None:
         return None
+    weapon_tag = next((tag for tag in BODY_FILES if tag in lower), "")
+    ability_list = ABILITY_LISTS.get(weapon_tag)
+    weapon_abilities = [entry for entry in abilities.values() if entry["list"] == ability_list and entry["ability"]]
+    # The ability actions by name, for the transitions into an ability (CanAttack_<ability>): their target is the fragment of the
+    # action of the ability.
+    ability_actions = {entry["name"].lower(): entry for entry in weapon_abilities}
+    markers_wanted = {cast[5] for entry in weapon_abilities for cast in entry["casts"] if cast[5]}
+
     fragments = []
-    queue = [START]
-    seen = {START}
+    grits: list[list] = []
+    seen: dict[str, str] = {START: "basic"}
+    queue: list[tuple[str, str]] = [(START, "basic")]
+    exported_abilities = []
+    for entry in sorted(weapon_abilities, key=lambda item: item["name"].lower()):
+        if body_variant(entry["fragment"]) is None:
+            continue
+        roots = [entry["fragment"]] + [selection[0] for selection in entry["selections"]]
+        roots = [root for root in roots if body_variant(root) is not None]
+        for root in roots:
+            if root not in seen:
+                seen[root] = "ability"
+                queue.append((root, "ability"))
+        exported_abilities.append({"ability": entry["ability"], "action": entry["name"], "fragment": entry["fragment"],
+                                   "selections": [selection for selection in entry["selections"] if body_variant(selection[0]) is not None],
+                                   "casts": entry["casts"]})
     while queue:
-        name = queue.pop(0)
+        name, mode = queue.pop(0)
         variant = body_variant(name)
         if variant is None:
-            continue
+            # A transition of the graph names a fragment that the animation databases do not have: the sources are not complete (code
+            # review of stage 3.3b-M1, finding M1-R6). The tool writes no file: the old file stays.
+            raise Failure(f"the graph of {label} goes to the fragment {name}, which the animation databases do not have")
         transitions = []
         payments = []
         dodge = []
+        markers = []
         can_transition = None
         for clip in variant["procedural"]:
             kind, params = clip["type"], clip["params"]
-            if kind in ("CAGE-TransitionBuffered", "CAGE-TransitionInstant"):
+            if kind in ("CAGE-TransitionInstant", "CAGE-TransitionBuffered"):
                 condition = params.get("Condition", "").strip()
-                condition_kind = CONDITIONS.get(condition.lower())
-                if condition_kind is None:
-                    # The transition to an ability, a sprint, a block: not a basic attack (an action name of the game can be wrong
-                    # there: Ability_Rapier_Aerial_Lunge_Introa).
-                    not_exported[condition] = not_exported.get(condition, 0) + 1
-                    continue
                 target = params.get("NewFragment", "").strip()
                 action = params.get("NewAction", "").strip()
+                window = ["buffered" if kind.endswith("Buffered") else "instant", rounded(clip["start"]),
+                          None if clip["end"] is None else rounded(clip["end"])]
                 if action:
                     if action.lower() not in action_fragments:
+                        if CONDITIONS.get(condition.lower()) is None:
+                            # A transition of a different kind to an action that no list has (an action name of the game can be wrong
+                            # there: Ability_Rapier_Aerial_Lunge_Introa): not exported.
+                            not_exported[condition or "(none)"] = not_exported.get(condition or "(none)", 0) + 1
+                            continue
                         raise Failure(f"{variant['file']}: the fragment {name} names the action {action}, which no action list has")
+                    starts = ability_actions.get(action.lower())
+                    if starts is not None and condition.lower().startswith("canattack"):
+                        # The start of an ability (its press in this window). An ability whose fragment the animation databases do
+                        # not have for these tags (the evade of the rapier selects its fragment by the direction) is not exported.
+                        if body_variant(starts["fragment"]) is None:
+                            not_exported[condition] = not_exported.get(condition, 0) + 1
+                            continue
+                        transitions.append(window + ["ability", starts["fragment"], condition, starts["ability"]])
+                        if starts["fragment"] not in seen:
+                            seen[starts["fragment"]] = "ability"
+                            queue.append((starts["fragment"], "ability"))
+                        continue
                     target = action_fragments[action.lower()]
-                if not target or not target.startswith("Attack_"):
+                if target.startswith("Attack_"):
+                    condition_kind = CONDITIONS.get(condition.lower())
+                    if condition_kind is None:
+                        # The transition to a sprint, a block, an unsheathe: not a basic attack (an action name of the game can be
+                        # wrong there: Ability_Rapier_Aerial_Lunge_Introa).
+                        not_exported[condition] = not_exported.get(condition, 0) + 1
+                        continue
+                    transitions.append(window + [condition_kind, target, condition, None])
+                    if target not in seen:
+                        seen[target] = "basic"
+                        queue.append((target, "basic"))
+                    continue
+                if mode != "ability" or not target:
                     not_exported[condition or "(none)"] = not_exported.get(condition or "(none)", 0) + 1
                     continue
-                transitions.append(["buffered" if kind.endswith("Buffered") else "instant", rounded(clip["start"]),
-                                    None if clip["end"] is None else rounded(clip["end"]), condition_kind, target, condition])
+                # A transition inside an ability (the exit of Whirlwind, the uppercut of Charge): its condition as terms.
+                terms = condition_terms(condition, named)
+                if terms is None:
+                    not_exported[condition or "(none)"] = not_exported.get(condition or "(none)", 0) + 1
+                    continue
+                transitions.append(window + ["terms", target, condition, terms])
                 if target not in seen:
-                    seen.add(target)
-                    queue.append(target)
+                    seen[target] = "ability"
+                    queue.append((target, "ability"))
             elif kind in ("PayStaminaCost", "CAGE-PayManaCost"):
                 cost = params.get("CostID", "").strip()
                 if cost:
@@ -376,17 +593,42 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
                                   named_clip == "CanDodgeBuffer"])
                 elif named_clip == "CanTransition":
                     can_transition = rounded(clip["start"])
-        # The damage clips of the body and of the attachment of the weapon: one strike for each damage key.
+                elif named_clip in markers_wanted:
+                    markers.append([named_clip, rounded(clip["start"])])
+        # The damage clips of the body and of the attachment of the weapon: one strike for each damage key. Each row of a strike
+        # keeps the index of the shape of its clip (the pull of Reap: three capsules with three rows at three distances).
         strikes: dict[str, dict] = {}
+        casts = []
+        # The grit of the fragment with a node condition (ActivateGrit: Unstoppable Greed, Indomitable): the backend has no grit; the
+        # list of the uses of the nodes names it.
+        for clip in variant["procedural"]:
+            condition = clip["params"].get("Condition", "").strip() if clip["type"] == "ActivateGrit" else ""
+            element = named.get(condition.lower()) if condition else None
+            tests = []
+            if element is not None and node_tests(element, False, tests):
+                for node, negated in tests:
+                    if not negated:
+                        grits.append([node, "grit", name])
         sources_of_damage = [variant]
         attach_variant = select([attachment.get(name, [])], lower)
         if attach_variant is not None:
             sources_of_damage.append(attach_variant)
         for source in sources_of_damage:
             for clip in source["procedural"]:
+                params = clip["params"]
+                if clip["type"] == "CAGE-CastSpell":
+                    spell = params.get("SpellName", "").strip()
+                    tests: list[tuple[str, bool]] = []
+                    condition = params.get("Condition", "").strip()
+                    element = named.get(condition.lower()) if condition else None
+                    if spell and (not condition or (element is not None and node_tests(element, False, tests))):
+                        casts.append([rounded(clip["start"]), spell, sorted({node for node, negated in tests if not negated}, key=str.lower),
+                                      sorted({node for node, negated in tests if negated}, key=str.lower)])
+                    elif spell:
+                        clips_not_exported.append([label, name, "cast", spell, f"the condition {condition} is not an AND of node tests"])
+                    continue
                 if clip["type"] != "CAGE-Damage":
                     continue
-                params = clip["params"]
                 key = params.get("DamageKey", "").strip().lower()
                 row = params.get("DamageTableRow", "").strip()
                 if not row:
@@ -399,7 +641,7 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
                 forbids: list[str] = []
                 if condition:
                     element = named.get(condition.lower())
-                    tests: list[tuple[str, bool]] = []
+                    tests = []
                     if element is None or not node_tests(element, False, tests):
                         clips_not_exported.append([label, name, key, row, f"the condition {condition} is not an AND of node tests"])
                         continue
@@ -409,13 +651,13 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
                 strike = strikes.setdefault(key, {"start": clip["start"], "end": end, "rows": [], "shapes": []})
                 strike["start"] = min(strike["start"], clip["start"])
                 strike["end"] = max(strike["end"], end)
-                entry = [row, needs, forbids]
-                if entry not in strike["rows"]:
-                    strike["rows"].append(entry)
                 shape = [params.get(field, "") if field in ("MeleeAttackShapeCastType", "JointName")
                          else rounded(float(params.get(field) or 0.0)) for field in SHAPE_FIELDS]
                 if shape not in strike["shapes"]:
                     strike["shapes"].append(shape)
+                entry = [row, needs, forbids, strike["shapes"].index(shape)]
+                if entry not in strike["rows"]:
+                    strike["rows"].append(entry)
                 counts["clips"] += 1
         length = fragment_length(variant, animations)
         counts["lengthsNotKnown"] += 1 if length == 0.0 else 0
@@ -423,16 +665,54 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
                           "canTransition": can_transition, "transitions": transitions,
                           "strikes": [[key, rounded(value["start"]), rounded(value["end"]), value["rows"], value["shapes"]]
                                       for key, value in sorted(strikes.items(), key=lambda item: (item[1]["start"], item[0]))],
-                          "payments": payments, "dodge": dodge})
+                          "payments": payments, "dodge": dodge, "casts": casts, "markers": markers})
         counts["transitions"] += len(transitions)
         counts["strikes"] += len(strikes)
         counts["payments"] += len(payments)
-    return fragments
+        counts["casts"] = counts.get("casts", 0) + len(casts)
+    # The uses of the learned nodes in the graph (format 2): [node, use, place]; use: strike (a row of a strike), transition (a term of a
+    # transition inside an ability), selection (a fragment of an action), cast (a spell of an action or of a fragment), grit (ActivateGrit),
+    # motion (a conditional of the movement of an action).
+    uses: list[list] = []
+    def use(node: str, kind: str, place: str) -> None:
+        if [node, kind, place] not in uses:
+            uses.append([node, kind, place])
+    for fragment in fragments:
+        for strike in fragment["strikes"]:
+            for row in strike[3]:
+                for node in row[1] + row[2]:
+                    use(node, "strike", f"{fragment['name']} {strike[0]}")
+        for transition in fragment["transitions"]:
+            if transition[3] == "terms":
+                for term in transition[6]:
+                    for literal in term:
+                        if literal[0] == "node":
+                            use(literal[1], "transition", f"{fragment['name']} -> {transition[4]}")
+        for cast in fragment["casts"]:
+            for node in cast[2] + cast[3]:
+                use(node, "cast", f"{fragment['name']} {cast[1]}")
+    for entry in exported_abilities:
+        for selection in entry["selections"]:
+            for node in selection[1] + selection[2]:
+                use(node, "selection", f"{entry['action']} {selection[0]}")
+        for cast in entry["casts"]:
+            for node in cast[1] + cast[2]:
+                use(node, "cast", f"{entry['action']} {cast[0]}")
+    for node, kind, place in grits:
+        use(node, kind, place)
+    for entry in weapon_abilities:
+        for condition in entry.get("motion", []):
+            for term in condition_terms(condition, named) or []:
+                for kind, value, negated in term:
+                    if kind == "node" and not negated:
+                        use(value, "motion", f"{entry['name']} {condition}")
+    return fragments, exported_abilities, uses
 
 
 def build_data(sources: Sources) -> dict:
     tag_sets = weapon_tag_sets(sources)
     action_fragments, named = read_actions(sources)
+    abilities = read_abilities(sources)
     animations = Animations(sources)
     databases: dict[str, dict[str, list[dict]]] = {}
 
@@ -442,30 +722,45 @@ def build_data(sources: Sources) -> dict:
             if not sources.has(path):
                 raise Failure(f"the game copy has no file {path}")
             databases[path] = read_fragments(sources, path)
+            # An animation database with no fragment is not a source of a graph (finding M1-R6: an empty attachment file gave a graph
+            # with no strike).
+            if not databases[path]:
+                raise Failure(f"{path} has no fragment")
         return databases[path]
 
     not_exported: dict[str, int] = {}
     weapons_not_exported: list[list] = []
     clips_not_exported: list[list] = []
     weapons = []
-    counts = {"weapons": 0, "fragments": 0, "transitions": 0, "strikes": 0, "clips": 0, "payments": 0, "lengthsNotKnown": 0}
+    counts = {"weapons": 0, "fragments": 0, "transitions": 0, "strikes": 0, "clips": 0, "payments": 0, "lengthsNotKnown": 0,
+              "abilities": 0, "casts": 0}
     for tags in tag_sets:
         lower = {tag.lower() for tag in tags}
         base = next(tag for tag in BASE_FILES if tag in lower)
         weapon_tag = next(tag for tag in BODY_FILES if tag in lower)
-        fragments = build_weapon(tags, database(BODY_FILES[weapon_tag], BODY_FOLDER), database(BASE_FILES[base][0], BODY_FOLDER),
-                                 database(BASE_FILES[base][1], ADB_FOLDER), action_fragments, named, animations, not_exported,
-                                 clips_not_exported, counts)
+        built = build_weapon(tags, database(BODY_FILES[weapon_tag], BODY_FOLDER), database(BASE_FILES[base][0], BODY_FOLDER),
+                             database(BASE_FILES[base][1], ADB_FOLDER), action_fragments, named, animations, not_exported,
+                             clips_not_exported, counts, abilities)
+        fragments, weapon_abilities, node_uses = built if built is not None else (None, [], [])
         if fragments is None:
             # A tag set with no attack graph (1H_Melee with the tag of a two-handed weapon: an item of a test of the game).
             weapons_not_exported.append(["+".join(tags), f"no fragment {START}"])
             continue
+        # The graph of a melee weapon is complete: each transition goes to a fragment of the graph, and the graph has a strike (finding
+        # M1-R6). Else the tool writes no file.
+        names = {fragment["name"] for fragment in fragments}
+        missing = sorted({transition[4] for fragment in fragments for transition in fragment["transitions"]} - names)
+        if missing:
+            raise Failure(f"the graph of {'+'.join(tags)} goes to {', '.join(missing)}, which it does not have")
+        if not any(fragment["strikes"] for fragment in fragments):
+            raise Failure(f"the graph of {'+'.join(tags)} has no strike: the attachment database of the weapon is not complete")
         counts["weapons"] += 1
         counts["fragments"] += len(fragments)
+        counts["abilities"] += len(weapon_abilities)
         weapons.append({"tags": list(tags), "files": [BODY_FILES[weapon_tag], BASE_FILES[base][0], BASE_FILES[base][1]], "start": START,
-                        "fragments": fragments})
+                        "fragments": fragments, "abilities": weapon_abilities, "nodeUses": node_uses})
     sources.check_complete()
-    return {"format": 1, "counts": counts, "weapons": weapons,
+    return {"format": 2, "counts": counts, "weapons": weapons,
             "transitionsNotExported": dict(sorted(not_exported.items())), "clipsNotExported": clips_not_exported,
             "weaponsNotExported": weapons_not_exported, "animationsNotFound": sorted(animations.missing, key=str.lower)}
 
@@ -480,11 +775,19 @@ def print_found(data: dict, texts: list[str]) -> None:
         for fragment in weapon["fragments"]:
             print(f"  {fragment['name']} [{fragment['tags']}] length {fragment['length']} canTransition {fragment['canTransition']}")
             for transition in fragment["transitions"]:
-                print(f"    {transition[0]:8s} {transition[1]}..{transition[2]} {transition[3]:8s} -> {transition[4]} ({transition[5]})")
+                extra = f" {transition[6]}" if transition[6] is not None else ""
+                print(f"    {transition[0]:8s} {transition[1]}..{transition[2]} {transition[3]:8s} -> {transition[4]} ({transition[5]}){extra}")
             for strike in fragment["strikes"]:
                 print(f"    strike {strike[0]} {strike[1]}..{strike[2]} rows {strike[3]}")
             for payment in fragment["payments"]:
                 print(f"    payment {payment}")
+            for cast in fragment["casts"]:
+                print(f"    cast {cast}")
+            for marker in fragment["markers"]:
+                print(f"    marker {marker}")
+        for ability in weapon["abilities"]:
+            print(f"  ability {ability['ability']} action {ability['action']} fragment {ability['fragment']} selections "
+                  f"{ability['selections']} casts {ability['casts']}")
 
 
 def main() -> int:
@@ -514,7 +817,8 @@ def main() -> int:
         return 1
     counts = data["counts"]
     print(f"{target}: {counts['weapons']} melee weapon tag sets, {counts['fragments']} fragments, {counts['transitions']} transitions, "
-          f"{counts['strikes']} strikes ({counts['clips']} damage clips), {counts['payments']} payments, "
+          f"{counts['strikes']} strikes ({counts['clips']} damage clips), {counts['payments']} payments, {counts['abilities']} abilities, "
+          f"{counts['casts']} spell casts of a fragment, "
           f"{counts['lengthsNotKnown']} fragments with no known length, {len(data['clipsNotExported'])} clips not exported "
           f"(source: {', '.join(f'{count} from the {name}' for name, count in sorted(sources.used.items()))})")
     return 0

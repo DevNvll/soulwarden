@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace soulwarden::backend::world {
 namespace {
@@ -11,6 +12,11 @@ using attack_rules::kClockEpsilon;
 /** @return The steps from one input number to a later one, or a value above 0x7FFF for an earlier one (16 bits, with wrap). */
 unsigned steps_between(std::uint16_t from, std::uint16_t to) {
     return static_cast<std::uint16_t>(to - from);
+}
+
+/** @return The time of a number of input steps of the client on the world clock (1/30 s each). */
+std::chrono::steady_clock::duration steps_time(unsigned steps) {
+    return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(static_cast<double>(steps) / attack_rules::kStepsInSecond));
 }
 
 /** @return The clock of a visit (seconds) at an input step: (k - s + 1) / 30. */
@@ -36,13 +42,30 @@ bool fits(gamedata::AttackInput wanted, const AttackBits& bits, bool instant) {
     case gamedata::AttackInput::notHeld:
         return !bits.press && !bits.hold;
     case gamedata::AttackInput::released:
-        return bits.release;
+        // A step with neither the attack input nor its hold is a release too (code review of stage 3.3b-M1, finding M1-R2): a client
+        // that stops its hold with no release bit makes the partial heavy attack, not a full charge.
+        return bits.release || (!bits.press && !bits.hold);
+    case gamedata::AttackInput::ability:
+    case gamedata::AttackInput::terms:
+        return false; // The start of an ability is a press (start_ability); the terms are a condition of the data (holds).
     }
     return false;
 }
 
+/** @return The input step at which the clock of a visit that started at `start` has this value (the step k with (k - s + 1) / 30 = clock). */
+std::uint16_t step_at(std::uint16_t start, float clock) {
+    const long steps = std::max(std::lround(clock * attack_rules::kStepsInSecond) - 1L, 0L);
+    return static_cast<std::uint16_t>(start + static_cast<unsigned>(steps));
+}
+
 bool takes_press(gamedata::AttackInput input) {
     return input == gamedata::AttackInput::virtualInput || input == gamedata::AttackInput::press;
+}
+
+/** @return True for a fragment of a charge: it has a transition at the release (Attack_Start_Charge of each weapon). */
+bool charges(const gamedata::AttackFragment& fragment) {
+    return std::any_of(fragment.transitions.begin(), fragment.transitions.end(),
+                       [](const gamedata::AttackTransition& transition) { return transition.input == gamedata::AttackInput::released; });
 }
 
 /** @return The target of the first transition of a fragment with this input whose window has the clock, or -1. */
@@ -91,6 +114,8 @@ const char* sequence_end_text(SequenceEnd end) {
 }
 
 void AttackSequences::reset(State& state, SequenceEnd why, std::uint16_t input) {
+    state.pendingAbility = -1;
+    state.pendingCast = 0;
     if (!state.visits.empty() && !state.visits.back().ended) {
         state.visits.back().ended = true;
         state.visits.back().interrupted = true;
@@ -106,7 +131,7 @@ void AttackSequences::reset(State& state, SequenceEnd why, std::uint16_t input) 
 }
 
 void AttackSequences::start_visit(State& state, std::uint32_t fragment, std::int32_t alternate, std::uint16_t input,
-                                  WorldClock::time_point now) {
+                                  WorldClock::time_point now, WorldClock::time_point due, std::uint64_t cast) {
     if (!state.visits.empty() && !state.visits.back().ended) {
         state.visits.back().ended = true;
         state.visits.back().endInput = input;
@@ -117,6 +142,17 @@ void AttackSequences::start_visit(State& state, std::uint32_t fragment, std::int
     visit.alternate = alternate == static_cast<std::int32_t>(fragment) ? -1 : alternate;
     visit.start = input;
     visit.startedAt = now;
+    visit.dueAt = due;
+    // The fragments of one ability keep its cast (a transition inside the ability: the exit of Whirlwind, the uppercut of Charge).
+    if (cast == 0 && !state.visits.empty() && state.visits.back().cast != 0 && state.actions != nullptr
+        && fragment < state.actions->fragments.size() && state.actions->fragments[fragment].name.rfind("Attack_", 0) != 0) {
+        cast = state.visits.back().cast;
+    }
+    visit.cast = cast;
+    if (cast != 0 && state.hitsCast != cast) {
+        state.hitsCast = cast;
+        state.castHits = 0;
+    }
     state.visits.push_back(visit);
     ++m_counts.visits;
     m_counts.alternates += visit.alternate >= 0 ? 1 : 0;
@@ -130,13 +166,69 @@ void AttackSequences::start_visit(State& state, std::uint32_t fragment, std::int
     }
 }
 
+bool AttackSequences::holds(const State& state, const AttackVisit& visit, const gamedata::AttackTransition& transition, const AttackBits& bits,
+                            bool instant, const AttackFacts& facts) const {
+    if (transition.input != gamedata::AttackInput::terms) {
+        return fits(transition.input, bits, instant);
+    }
+    const std::uint32_t hits = visit.cast != 0 && state.hitsCast == visit.cast ? state.castHits : 0;
+    for (const std::vector<gamedata::ConditionLiteral>& term : transition.terms) {
+        bool all = true;
+        for (const gamedata::ConditionLiteral& literal : term) {
+            bool value = false;
+            switch (literal.kind) {
+            case gamedata::LiteralKind::node:
+                value = facts.learned && facts.learned(literal.id);
+                break;
+            case gamedata::LiteralKind::perk:
+                value = facts.perk && facts.perk(literal.id);
+                break;
+            case gamedata::LiteralKind::attack:
+                value = bits.press || (instant && bits.hold);
+                break;
+            case gamedata::LiteralKind::block:
+                value = bits.block;
+                break;
+            case gamedata::LiteralKind::collided:
+                value = false; // The server does not see a collision of the client: a contact shows it (match).
+                break;
+            case gamedata::LiteralKind::hits:
+                value = hits < literal.count;
+                break;
+            case gamedata::LiteralKind::playing:
+                value = state.actions->fragments[visit.fragment].name == literal.text;
+                break;
+            }
+            if (value == literal.negated) {
+                all = false;
+                break;
+            }
+        }
+        if (all) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void AttackSequences::advance(State& state, std::uint16_t input, const AttackBits& bits, WorldClock::time_point now,
-                              std::vector<const gamedata::AttackPayment*>& payments) {
+                              std::vector<SequenceEvent>& events, const AttackFacts& facts) {
     const gamedata::WeaponActionSet& actions = *state.actions;
     // A press starts one new attack at most (from rest, or in the tail of a fragment); the conditions of the transitions still
     // see the input of the step.
     bool pressUsed = false;
     for (int loop = 0; loop < attack_rules::kTransitionsInStep; ++loop) {
+        // A press of an ability that waited for its step (start_ability): its fragment starts, with its cast (stage 3.3b-M2).
+        if (state.pendingAbility >= 0 && steps_between(state.pendingInput, input) <= 0x7FFF) {
+            const auto fragment = static_cast<std::uint32_t>(state.pendingAbility);
+            const std::uint16_t at = state.pendingInput;
+            const std::uint64_t cast = state.pendingCast;
+            const WorldClock::time_point due = state.pendingDue;
+            state.pendingAbility = -1;
+            state.pendingCast = 0;
+            start_visit(state, fragment, -1, at, now, due, cast);
+            continue;
+        }
         AttackVisit* visit = !state.visits.empty() && !state.visits.back().ended ? &state.visits.back() : nullptr;
         if (visit == nullptr) {
             if (!bits.press || pressUsed) {
@@ -154,14 +246,37 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
                     alternate = press_target(last, t);
                 }
             }
-            start_visit(state, actions.start, alternate, input, now);
+            // The press starts the clock of the attack: each later fragment is due 1/30 s after it for each input step (finding M1-R1).
+            start_visit(state, actions.start, alternate, input, now, now);
             continue;
         }
         const gamedata::AttackFragment& fragment = actions.fragments[visit->fragment];
         const float t = clock_of(*visit, input);
         while (visit->paid < fragment.payments.size() && fragment.payments[visit->paid].time <= t + kClockEpsilon) {
-            payments.push_back(&fragment.payments[visit->paid]);
+            events.push_back(SequenceEvent{SequenceEvent::Kind::payment, visit->cast, visit->number, &fragment,
+                                           static_cast<std::uint32_t>(visit->paid)});
             ++visit->paid;
+        }
+        // The strikes, the spell casts, and the marks of the fragment of an ability that the clock passed (stage 3.3b-M2).
+        if (visit->cast != 0) {
+            for (std::uint32_t index = 0; index < fragment.strikes.size() && index < 64; ++index) {
+                if ((visit->strikesPassed & (1ULL << index)) == 0 && fragment.strikes[index].start <= t + kClockEpsilon) {
+                    visit->strikesPassed |= 1ULL << index;
+                    events.push_back(SequenceEvent{SequenceEvent::Kind::strike, visit->cast, visit->number, &fragment, index});
+                }
+            }
+            for (std::uint32_t index = 0; index < fragment.casts.size() && index < 32; ++index) {
+                if ((visit->castsPassed & (1U << index)) == 0 && fragment.casts[index].time <= t + kClockEpsilon) {
+                    visit->castsPassed |= 1U << index;
+                    events.push_back(SequenceEvent{SequenceEvent::Kind::cast, visit->cast, visit->number, &fragment, index});
+                }
+            }
+            for (std::uint32_t index = 0; index < fragment.markers.size() && index < 32; ++index) {
+                if ((visit->markersPassed & (1U << index)) == 0 && fragment.markers[index].time <= t + kClockEpsilon) {
+                    visit->markersPassed |= 1U << index;
+                    events.push_back(SequenceEvent{SequenceEvent::Kind::marker, visit->cast, visit->number, &fragment, index});
+                }
+            }
         }
         // The end of the animation of the fragment: the character is at rest (a press of this step starts a new attack).
         if (fragment.length > 0.0F && t > fragment.length + kClockEpsilon && visit->pending < 0) {
@@ -196,30 +311,45 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
                 break;
             }
         }
-        // A buffered transition that took a press: its fragment starts at the end of its window.
+        // A buffered transition that took a press: its fragment starts at the end of its window, at its due input step also when the
+        // step of the report came later (code review of stage 3.3b-M1, finding M1-R4: lost reports do not move the clock of the next
+        // fragment). The due step k has the clock (k - s + 1) / 30 = the end of the window.
         if (visit->pending >= 0 && t >= visit->pendingAt - kClockEpsilon) {
             const auto next = static_cast<std::uint32_t>(visit->pending);
+            const long dueSteps = std::max(std::lround(visit->pendingAt * attack_rules::kStepsInSecond) - 1L, 0L);
+            const unsigned atSteps = std::min(static_cast<unsigned>(dueSteps), steps_between(visit->start, input));
+            const auto due = static_cast<std::uint16_t>(visit->start + atSteps);
+            const float dueClock = clock_of(*visit, due);
             std::int32_t alternate = -1;
-            if (fragment.length > 0.0F && std::fabs(t - fragment.length) < attack_rules::kLengthBand && next != actions.start) {
+            if (fragment.length > 0.0F && std::fabs(dueClock - fragment.length) < attack_rules::kLengthBand && next != actions.start) {
                 alternate = static_cast<std::int32_t>(actions.start);
             }
-            start_visit(state, next, alternate, input, now);
+            start_visit(state, next, alternate, due, now, visit->dueAt + steps_time(atSteps));
             continue;
         }
         const gamedata::AttackTransition* taken = nullptr;
         bool laterWindow = false;
         for (const gamedata::AttackTransition& transition : fragment.transitions) {
+            // The start of an ability is a press of its key (start_ability), not an input of a step.
+            if (transition.input == gamedata::AttackInput::ability) {
+                continue;
+            }
             if (takes_press(transition.input) && (transition.end < 0.0F || transition.end > t + kClockEpsilon)) {
                 laterWindow = true;
             }
             if (!in_window(t, transition.start, transition.end)) {
                 continue;
             }
-            if (transition.kind == gamedata::TransitionKind::instant && fits(transition.input, bits, true)) {
+            // The full charge of a charge fragment needs the hold at its step (finding M1-R2): a step with no hold took the release
+            // transition before (fits), and a charge with no hold at its end is no full charge.
+            if (transition.input == gamedata::AttackInput::always && charges(fragment) && !bits.press && !bits.hold) {
+                continue;
+            }
+            if (transition.kind == gamedata::TransitionKind::instant && holds(state, *visit, transition, bits, true, facts)) {
                 taken = &transition;
                 break;
             }
-            if (transition.kind == gamedata::TransitionKind::buffered && visit->pending < 0 && fits(transition.input, bits, false)) {
+            if (transition.kind == gamedata::TransitionKind::buffered && visit->pending < 0 && holds(state, *visit, transition, bits, false, facts)) {
                 visit->pending = static_cast<std::int32_t>(transition.to);
                 visit->pendingAt = transition.end;
             }
@@ -231,12 +361,12 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
                 if (fragment.length > 0.0F && std::fabs(t - fragment.length) < attack_rules::kLengthBand && taken->to != actions.start) {
                     alternate = static_cast<std::int32_t>(actions.start);
                 }
-            } else if (visit->alternate >= 0) {
+            } else if (visit->alternate >= 0 && taken->input != gamedata::AttackInput::terms) {
                 // The same transition of the other fragment of the visit (the charge of the other branch).
                 alternate = follow(actions.fragments[static_cast<std::size_t>(visit->alternate)], taken->input, t);
             }
             pressUsed = pressUsed || takes_press(taken->input);
-            start_visit(state, taken->to, alternate, input, now);
+            start_visit(state, taken->to, alternate, input, now, visit->dueAt + steps_time(steps_between(visit->start, input)));
             continue;
         }
         // A press that no window of the fragment takes, now or later: the tail of the fragment; a new attack from rest.
@@ -249,15 +379,12 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
     }
 }
 
-std::vector<const gamedata::AttackPayment*> AttackSequences::step(const std::string& characterId, SessionId session,
-                                                                  std::uint32_t inputSequence, std::uint16_t input,
-                                                                  const AttackBits& bits, const std::string& weapon,
-                                                                  const gamedata::WeaponActionSet* actions, WorldClock::time_point now) {
-    std::vector<const gamedata::AttackPayment*> payments;
+AttackSequences::State* AttackSequences::state_for(const std::string& characterId, SessionId session, std::uint32_t inputSequence,
+                                                   std::uint16_t input, const std::string& weapon, const gamedata::WeaponActionSet* actions) {
     auto found = m_states.find(characterId);
     if (found == m_states.end()) {
         if (actions == nullptr) {
-            return payments;
+            return nullptr;
         }
         found = m_states.emplace(characterId, State{}).first;
         found->second.session = session;
@@ -281,40 +408,171 @@ std::vector<const gamedata::AttackPayment*> AttackSequences::step(const std::str
         // The visits name fragments of the graph of the old weapon: they go (no contact of the old weapon fits the new one).
         state.visits.clear();
         state.hits.clear();
+        state.pendingAbility = -1;
         state.weapon = weapon;
         state.actions = actions;
     }
+    return &state;
+}
+
+std::vector<SequenceEvent> AttackSequences::step(const std::string& characterId, SessionId session, std::uint32_t inputSequence,
+                                                 std::uint16_t input, const AttackBits& bits, const std::string& weapon,
+                                                 const gamedata::WeaponActionSet* actions, WorldClock::time_point now, const AttackFacts& facts) {
+    std::vector<SequenceEvent> events;
+    State* found = state_for(characterId, session, inputSequence, input, weapon, actions);
+    if (found == nullptr) {
+        return events;
+    }
+    State& state = *found;
+    const bool hadInput = state.hasInput;
+    const std::uint16_t lastInput = state.lastInput;
     state.hasInput = true;
     state.lastInput = input;
     if (state.actions == nullptr) {
-        return payments;
+        return events;
     }
-    advance(state, input, bits, now, payments);
-    return payments;
+    // The steps of a gap (reports that did not come): each one with the last known hold and no press, release, or dodge (code review of
+    // stage 3.3b-M1, finding M1-R4). A missing entry gets no invented press.
+    if (hadInput) {
+        const unsigned gap = steps_between(lastInput, input);
+        if (gap > 1 && gap <= attack_rules::kGapFill) {
+            AttackBits filled;
+            filled.hold = state.holding;
+            for (unsigned missing = 1; missing < gap; ++missing) {
+                advance(state, static_cast<std::uint16_t>(lastInput + missing), filled, now, events, facts);
+            }
+        }
+    }
+    advance(state, input, bits, now, events, facts);
+    state.holding = (bits.press || bits.hold) && !bits.release;
+    return events;
+}
+
+AbilityStart AttackSequences::start_ability(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,
+                                            const std::string& weapon, const gamedata::WeaponActionSet* actions, std::uint32_t ability,
+                                            std::uint32_t fragment, std::uint64_t cast, WorldClock::time_point now, bool dryRun) {
+    AbilityStart result;
+    result.input = input;
+    if (actions == nullptr || fragment >= actions->fragments.size()) {
+        return result;
+    }
+    // The state as a step of this session would have it: a different session, input sequence, or weapon is a state at rest.
+    const auto existing = m_states.find(characterId);
+    const State* current = existing != m_states.end() && existing->second.session == session && existing->second.inputSequence == inputSequence
+                                   && existing->second.weapon == weapon && existing->second.actions == actions
+                               ? &existing->second
+                               : nullptr;
+    const AttackVisit* playing = current != nullptr && !current->visits.empty() && !current->visits.back().ended ? &current->visits.back() : nullptr;
+    std::optional<std::uint16_t> at;
+    if (playing == nullptr) {
+        at = input;
+    } else {
+        // The first step from the press to kAbilityBackSteps after it at which the action of the ability can start in the fragment that
+        // plays (the action lists of the player: the windows CanAttack_<ability>, the mark CanTransition, the end of the fragment).
+        const gamedata::AttackFragment& data = actions->fragments[playing->fragment];
+        const float t = clock_of(*playing, input);
+        const float back = static_cast<float>(attack_rules::kAbilityBackSteps) / attack_rules::kStepsInSecond;
+        const auto consider = [&](std::uint16_t step) {
+            if (steps_between(input, step) <= attack_rules::kAbilityBackSteps
+                && (!at || steps_between(step, *at) <= 0x7FFF)) {
+                at = step;
+            }
+        };
+        for (const gamedata::AttackTransition& transition : data.transitions) {
+            if (transition.input != gamedata::AttackInput::ability || transition.abilityId != ability) {
+                continue;
+            }
+            const bool inside = in_window(t, transition.start, transition.end);
+            const bool ahead = transition.start > t + kClockEpsilon && transition.start - t <= back + kClockEpsilon;
+            if (!inside && !ahead) {
+                continue;
+            }
+            if (transition.kind == gamedata::TransitionKind::instant) {
+                consider(inside ? input : step_at(playing->start, transition.start));
+            } else if (transition.end >= 0.0F) {
+                // A buffered window: the press waits to the end of the window (the press of a later step of the window too).
+                const std::uint16_t end = step_at(playing->start, transition.end);
+                at = !at || steps_between(end, *at) <= 0x7FFF ? std::optional<std::uint16_t>(end) : at;
+            } else {
+                consider(inside ? input : step_at(playing->start, transition.start));
+            }
+        }
+        if (data.canTransition >= 0.0F) {
+            consider(t >= data.canTransition - kClockEpsilon ? input : step_at(playing->start, data.canTransition));
+        }
+        if (data.length > 0.0F) {
+            consider(t > data.length + kClockEpsilon ? input : static_cast<std::uint16_t>(step_at(playing->start, data.length) + 1));
+        }
+    }
+    if (!at) {
+        result.verdict = AbilityStart::Verdict::refused;
+        return result;
+    }
+    result.input = *at;
+    result.delaySteps = steps_between(input, *at);
+    result.verdict = result.delaySteps == 0 ? AbilityStart::Verdict::now : AbilityStart::Verdict::later;
+    if (dryRun) {
+        return result;
+    }
+    State* state = state_for(characterId, session, inputSequence, input, weapon, actions);
+    if (state == nullptr) {
+        return result;
+    }
+    // The due time of the fragment: on the clock of the visit that plays (finding M1-R1), else the press.
+    const WorldClock::time_point due = playing != nullptr ? playing->dueAt + steps_time(steps_between(playing->start, *at)) : now;
+    if (result.delaySteps == 0) {
+        state->pendingAbility = -1;
+        if (!state->visits.empty() && !state->visits.back().ended) {
+            // The ability ends the fragment that plays (as a transition of it: its contacts before the start stay).
+            state->visits.back().ended = true;
+            state->visits.back().endInput = input;
+            ++m_counts.ends[static_cast<std::size_t>(SequenceEnd::ability)];
+        }
+        start_visit(*state, fragment, -1, input, now, due, cast);
+        state->hasInput = true;
+        state->lastInput = input;
+        return result;
+    }
+    state->pendingAbility = static_cast<std::int32_t>(fragment);
+    state->pendingCast = cast;
+    state->pendingInput = *at;
+    state->pendingDue = due;
+    return result;
 }
 
 bool AttackSequences::strike_fits(const State& state, const AttackVisit& visit, std::uint32_t fragment, std::uint16_t input,
                                   WorldClock::time_point now, const std::function<bool(const gamedata::AttackStrike&)>& usable,
-                                  std::uint32_t& strike) const {
+                                  EntityId target, std::uint32_t& strike) const {
     const gamedata::AttackFragment& data = state.actions->fragments[fragment];
     const float t = clock_of(visit, input);
     const float early = attack_rules::kEarlySteps / attack_rules::kStepsInSecond;
     const float late = attack_rules::kLateSteps / attack_rules::kStepsInSecond;
+    // Two strikes can fit one step (the late tolerance of a spin of Whirlwind and the start of the next spin; stage 3.3b-M2): the first
+    // strike that did not hit the target in this visit, else the first one (a second contact of that strike).
+    std::optional<std::uint32_t> taken;
     for (std::uint32_t index = 0; index < data.strikes.size(); ++index) {
         const gamedata::AttackStrike& candidate = data.strikes[index];
         if (t < candidate.start - early - kClockEpsilon || t > candidate.end + late + kClockEpsilon || !usable(candidate)) {
             continue;
         }
         // The world clock: a client that sends its input numbers faster than 30 in a second does not reach a later strike before its
-        // time, and an old input number does not reach a strike long after its time.
-        const auto earliest = visit.startedAt + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(candidate.start - early))
+        // time (the due time of the visit: the press of the attack and 1/30 s for each step since it, finding M1-R1), and an old input
+        // number does not reach a strike long after its time.
+        const auto earliest = visit.dueAt + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(candidate.start - early))
                               - attack_rules::kWorldEarly;
         const auto latest = visit.startedAt + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(candidate.end + late))
                             + std::chrono::milliseconds(500);
         if (now < earliest || now > latest) {
             continue;
         }
-        strike = index;
+        if (state.hits.count({visit.number, index, target}) == 0) {
+            strike = index;
+            return true;
+        }
+        taken = taken ? taken : std::optional<std::uint32_t>(index);
+    }
+    if (taken) {
+        strike = *taken;
         return true;
     }
     return false;
@@ -322,7 +580,7 @@ bool AttackSequences::strike_fits(const State& state, const AttackVisit& visit, 
 
 StrikeMatch AttackSequences::match(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,
                                    EntityId target, WorldClock::time_point now,
-                                   const std::function<bool(const gamedata::AttackStrike&)>& usable) {
+                                   const std::function<bool(const gamedata::AttackStrike&)>& usable, const AttackFacts& facts) {
     StrikeMatch result;
     const auto found = m_states.find(characterId);
     if (found == m_states.end() || found->second.actions == nullptr || found->second.session != session
@@ -334,39 +592,154 @@ StrikeMatch AttackSequences::match(const std::string& characterId, SessionId ses
         if (steps_between(visit->start, input) > 0x7FFF) {
             continue; // The contact is before the visit.
         }
-        // A visit that a dodge, a weapon change, or an ability interrupted has no contact at or after its end.
+        // A visit that a dodge, a weapon change, or an ability interrupted has no contact at or after its end. A visit that ended (its
+        // length, or the start of the next fragment) has no contact more than the late tolerance after its end (code review of stage
+        // 3.3b-M1, finding M1-R5).
         if (visit->interrupted && steps_between(visit->endInput, input) <= 0x7FFF) {
+            continue;
+        }
+        if (visit->ended && steps_between(visit->endInput, input) <= 0x7FFF
+            && static_cast<float>(steps_between(visit->endInput, input)) > attack_rules::kLateSteps) {
             continue;
         }
         result.verdict = StrikeMatch::Verdict::noStrike;
         std::uint32_t strike = 0;
         bool alternate = false;
-        if (!strike_fits(state, *visit, visit->fragment, input, now, usable, strike)) {
-            if (visit->alternate < 0 || !strike_fits(state, *visit, static_cast<std::uint32_t>(visit->alternate), input, now, usable, strike)) {
+        if (!strike_fits(state, *visit, visit->fragment, input, now, usable, target, strike)) {
+            if (visit->alternate < 0
+                || !strike_fits(state, *visit, static_cast<std::uint32_t>(visit->alternate), input, now, usable, target, strike)) {
                 continue;
             }
             alternate = true;
         }
-        if (alternate) {
-            // The contact fits only the other fragment: the client played it (the band at the end of a fragment).
-            const auto other = static_cast<std::uint32_t>(visit->alternate);
-            visit->alternate = static_cast<std::int32_t>(visit->fragment);
-            visit->fragment = other;
-        }
+        // The contact fits only the other fragment: the client played it (the band at the end of a fragment). The visit takes it only
+        // at the hit (note_hit, finding M1-R3).
+        const std::uint32_t chosen = alternate ? static_cast<std::uint32_t>(visit->alternate) : visit->fragment;
         result.visit = visit->number;
-        result.fragment = &state.actions->fragments[visit->fragment];
+        result.fragmentIndex = chosen;
+        result.fragment = &state.actions->fragments[chosen];
         result.strike = strike;
         result.strikeData = &result.fragment->strikes[strike];
+        result.cast = visit->cast;
         result.verdict = state.hits.count({visit->number, strike, target}) != 0 ? StrikeMatch::Verdict::sameStrike : StrikeMatch::Verdict::hit;
         return result;
+    }
+    // A transition of the ability that plays at a collision of the client (Charge: character_collided), which the server does not see
+    // (stage 3.3b-M2): a contact that fits a strike of its next fragment, started at a step in the window of the transition, shows it.
+    // The latest such step is the one of the client (the strike of the uppercut comes 1 step after its start).
+    if (!state.visits.empty() && !state.visits.back().ended && state.visits.back().cast != 0
+        && steps_between(state.visits.back().start, input) <= 0x7FFF) {
+        const AttackVisit& visit = state.visits.back();
+        const gamedata::AttackFragment& data = state.actions->fragments[visit.fragment];
+        for (const gamedata::AttackTransition& transition : data.transitions) {
+            if (transition.input != gamedata::AttackInput::terms) {
+                continue;
+            }
+            // A term with the collision, whose other literals hold with no input of the step.
+            bool collision = false;
+            for (const std::vector<gamedata::ConditionLiteral>& term : transition.terms) {
+                const bool has = std::any_of(term.begin(), term.end(), [](const gamedata::ConditionLiteral& literal) {
+                    return literal.kind == gamedata::LiteralKind::collided && !literal.negated;
+                });
+                if (!has) {
+                    continue;
+                }
+                gamedata::AttackTransition rest = transition;
+                rest.terms = {{}};
+                for (const gamedata::ConditionLiteral& literal : term) {
+                    if (literal.kind != gamedata::LiteralKind::collided) {
+                        rest.terms.front().push_back(literal);
+                    }
+                }
+                collision = collision || holds(state, visit, rest, AttackBits{}, true, facts);
+            }
+            if (!collision) {
+                continue;
+            }
+            const gamedata::AttackFragment& next = state.actions->fragments[transition.to];
+            const unsigned back = std::min(steps_between(visit.start, input), 15U);
+            for (unsigned offset = 0; offset <= back; ++offset) {
+                const auto at = static_cast<std::uint16_t>(input - offset);
+                if (!in_window(clock_of(visit, at), transition.start, transition.end)) {
+                    continue;
+                }
+                AttackVisit trial;
+                trial.fragment = transition.to;
+                trial.start = at;
+                trial.startedAt = now;
+                trial.dueAt = visit.dueAt + steps_time(steps_between(visit.start, at));
+                std::uint32_t strike = 0;
+                if (!strike_fits(state, trial, transition.to, input, now, usable, target, strike)) {
+                    continue;
+                }
+                result.verdict = StrikeMatch::Verdict::hit;
+                result.visit = visit.number;
+                result.fragmentIndex = transition.to;
+                result.fragment = &next;
+                result.strike = strike;
+                result.strikeData = &next.strikes[strike];
+                result.cast = visit.cast;
+                result.lazyFragment = static_cast<std::int32_t>(transition.to);
+                result.lazyStart = at;
+                return result;
+            }
+        }
     }
     return result;
 }
 
-void AttackSequences::note_hit(const std::string& characterId, std::uint32_t visit, std::uint32_t strike, EntityId target) {
+std::uint32_t AttackSequences::note_match(const std::string& characterId, const StrikeMatch& match, EntityId target, WorldClock::time_point now) {
+    const auto found = m_states.find(characterId);
+    if (found == m_states.end()) {
+        return match.visit;
+    }
+    State& state = found->second;
+    std::uint32_t visit = match.visit;
+    if (match.lazyFragment >= 0 && !state.visits.empty() && state.visits.back().number == match.visit && !state.visits.back().ended) {
+        // The transition at the collision: the next fragment starts at the step of the match, with the cast.
+        const AttackVisit& before = state.visits.back();
+        const WorldClock::time_point due = before.dueAt + steps_time(steps_between(before.start, match.lazyStart));
+        const std::uint64_t cast = before.cast;
+        start_visit(state, static_cast<std::uint32_t>(match.lazyFragment), -1, match.lazyStart, now, due, cast);
+        visit = state.visits.back().number;
+    }
+    note_hit(characterId, visit, match.fragmentIndex, match.strike, target);
+    return visit;
+}
+
+std::uint32_t AttackSequences::cast_hits(const std::string& characterId, std::uint64_t cast) const {
+    const auto found = m_states.find(characterId);
+    return found != m_states.end() && cast != 0 && found->second.hitsCast == cast ? found->second.castHits : 0;
+}
+
+const AttackVisit* AttackSequences::newest(const std::string& characterId) const {
+    const auto found = m_states.find(characterId);
+    return found == m_states.end() || found->second.visits.empty() ? nullptr : &found->second.visits.back();
+}
+
+void AttackSequences::note_hit(const std::string& characterId, std::uint32_t visit, std::uint32_t fragment, std::uint32_t strike,
+                               EntityId target) {
     const auto found = m_states.find(characterId);
     if (found == m_states.end()) {
         return;
+    }
+    // The first hit commits the fragment of the visit (finding M1-R3): the other fragment of the band goes. A hit of a cast of an ability
+    // counts for the condition IfAbilityNumHits (the exit of Whirlwind).
+    for (AttackVisit& played : found->second.visits) {
+        if (played.number == visit) {
+            if (played.alternate >= 0 && static_cast<std::uint32_t>(played.alternate) == fragment) {
+                played.fragment = fragment;
+            }
+            played.alternate = -1;
+            if (played.cast != 0) {
+                if (found->second.hitsCast != played.cast) {
+                    found->second.hitsCast = played.cast;
+                    found->second.castHits = 0;
+                }
+                ++found->second.castHits;
+            }
+            break;
+        }
     }
     found->second.hits.insert({visit, strike, target});
     ++m_counts.strikes;

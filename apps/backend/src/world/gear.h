@@ -133,6 +133,8 @@ struct HitContext {
      */
     std::string ability;
     std::uint32_t table{0};
+    /** The fragment of the strike of a cast of the sequence (stage 3.3b-M2; HitWeapon::fragment). Empty: none. */
+    std::string fragment;
     /** The damage that the creature took, and the damage before its defense. */
     float dealt{0.0F};
     float raw{0.0F};

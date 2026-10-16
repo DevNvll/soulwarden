@@ -105,8 +105,12 @@ inline int points_value_size(unsigned group, unsigned field, std::span<const std
     return group == 0 && field < 4 ? list_size(rest, kElements[field], field == 3 ? kMaxPointEntries : kMaxPools) : -1;
 }
 
-/** @return The size of the value of field 0 of the state of slot 46, or -1. */
+/** @return The size of the value of a field of the state of slot 46 (field 0, and fields 1 and 2 of stage 3.3b-M2), or -1. */
 inline int ability_value_size(unsigned group, unsigned field, std::span<const std::uint8_t> rest) {
+    // Fields 1 and 2 (stage 3.3b-M2): hitDataNumHits (a list of u8) and hitDataAbilityIds (a list of u32).
+    if (group == 0 && (field == 1 || field == 2)) {
+        return list_size(rest, field == 1 ? 1 : 4, kMaxListEntries);
+    }
     if (group != 0 || field != 0) {
         return -1;
     }

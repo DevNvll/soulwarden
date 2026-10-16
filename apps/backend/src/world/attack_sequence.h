@@ -72,6 +72,18 @@ inline constexpr int kTransitionsInStep = 6;
  * clock is not a hit (the input numbers are values of the client; the same rule as ability_rules::kPhaseEarly).
  */
 inline constexpr std::chrono::milliseconds kWorldEarly{250};
+/**
+ * The steps of a gap of the input (reports that did not come: a client sends each entry in 5 reports) that the sequence fills with
+ * the last known hold and no press, no release, and no dodge (code review of stage 3.3b-M1, finding M1-R4: a buffered transition
+ * starts at its due step, not at the first step after the gap). A larger gap is not filled (a bound of the work; a decision of an
+ * agent: 3 s).
+ */
+inline constexpr unsigned kGapFill = 90;
+/**
+ * A press of a key of the bar stays valid for this number of input steps (the action lists of the player: IfActiveAbilityMoveName with
+ * BackTicks 20 and UseBacktickInputs): the ability starts at the first step of them at which its action can start (stage 3.3b-M2).
+ */
+inline constexpr unsigned kAbilityBackSteps = 20;
 } // namespace attack_rules
 
 /** The attack bits of one input step of the client. */
@@ -80,6 +92,53 @@ struct AttackBits {
     bool hold{false};
     bool release{false};
     bool dodge{false};
+    /** The block press (block_press_virtual, bit 484; stage 3.3b-M2: the swing of Charge with Unpredictable Strike). */
+    bool block{false};
+};
+
+/**
+ * The facts of a character for the conditions of a transition inside an ability (stage 3.3b-M2): the learned nodes and the ability
+ * rows of its perks. The combat system makes them from the entity.
+ */
+struct AttackFacts {
+    std::function<bool(std::uint32_t node)> learned;
+    std::function<bool(std::uint32_t perkAbility)> perk;
+};
+
+/** Something that a fragment visit passed in a step (stage 3.3b-M2; a payment from stage 3.3b-M1). */
+struct SequenceEvent {
+    enum class Kind : std::uint8_t {
+        /** A payment of the fragment (PayStaminaCost, CAGE-PayManaCost). */
+        payment,
+        /** The start of a strike of an ability (the time of its window): the pull of Reap, which the client does not report. */
+        strike,
+        /** A spell cast of the fragment (CAGE-CastSpell: the ground of Mighty Gavel). */
+        cast,
+        /** A named mark of the fragment (the cast of a spell of the action: CastGavityWellProjectile). */
+        marker,
+    };
+    Kind kind{Kind::payment};
+    /** The cast of the visit (0: a basic attack), the visit number, the fragment, and the index of the item in its list. */
+    std::uint64_t cast{0};
+    std::uint32_t visit{0};
+    const gamedata::AttackFragment* fragment{nullptr};
+    std::uint32_t index{0};
+};
+
+/** Where the fragment of an ability starts after its press (AttackSequences::start_ability). */
+struct AbilityStart {
+    enum class Verdict : std::uint8_t {
+        /** At the step of the press. */
+        now,
+        /** At a later step (the end of a buffered window, the start of an instant window, the mark CanTransition, the end). */
+        later,
+        /** The fragment that plays takes no ability in the next steps: the client does not play the press. */
+        refused,
+    };
+    Verdict verdict{Verdict::now};
+    /** The input step of the start, and its steps after the press. */
+    std::uint16_t input{0};
+    unsigned delaySteps{0};
 };
 
 /** Why a sequence ended (for the counts and the log). */
@@ -94,9 +153,16 @@ struct AttackVisit {
     std::uint32_t fragment{0};
     /** The other fragment of a press in the band of the length (attack_rules::kLengthBand), or -1. */
     std::int32_t alternate{-1};
-    /** The input number of the start, and the time of the world clock at it. */
+    /** The input number of the start, and the time of the world clock at which the session got it. */
     std::uint16_t start{0};
     WorldClock::time_point startedAt{};
+    /**
+     * The time of the world clock at which the start is due on the clock of the client (code review of stage 3.3b-M1, finding M1-R1):
+     * the time at which the session got the press that started the attack from rest, plus 1/30 s for each input step from that press
+     * to this start. A client that sends its input numbers faster than 30 in a second does not reach a later fragment (a full
+     * charge) or a strike before its time.
+     */
+    WorldClock::time_point dueAt{};
     /** True after the next visit started (`interrupted`: an end of the sequence, not a transition) at the input `endInput`. */
     bool ended{false};
     bool interrupted{false};
@@ -108,6 +174,14 @@ struct AttackVisit {
     float dodgeAt{-1.0F};
     /** The payments of the fragment that the visit passed. */
     std::size_t paid{0};
+    /**
+     * Stage 3.3b-M2: the cast of an ability whose fragment this visit plays (Abilities; 0: a basic attack), and the strikes, the
+     * spell casts, and the marks of the fragment that the visit passed (a bit for each one, in the order of the fragment).
+     */
+    std::uint64_t cast{0};
+    std::uint64_t strikesPassed{0};
+    std::uint32_t castsPassed{0};
+    std::uint32_t markersPassed{0};
 };
 
 /** The fragment and the strike of a contact. */
@@ -125,7 +199,17 @@ struct StrikeMatch {
     Verdict verdict{Verdict::noVisit};
     std::uint32_t visit{0};
     const gamedata::AttackFragment* fragment{nullptr};
+    /** The index of the fragment of the match: the fragment of the visit, or its other one (the band at the end of a fragment). */
+    std::uint32_t fragmentIndex{0};
     std::uint32_t strike{0};
+    /** The cast of the visit (an ability; 0: a basic attack). */
+    std::uint64_t cast{0};
+    /**
+     * A transition that the client takes at a collision (Charge: character_collided), which the server does not see: the contact
+     * shows it. The visit takes it at the hit (note_hit): its fragment starts at `lazyStart`. -1: none.
+     */
+    std::int32_t lazyFragment{-1};
+    std::uint16_t lazyStart{0};
     const gamedata::AttackStrike* strikeData{nullptr};
 };
 
@@ -154,8 +238,18 @@ public:
         /** The visits, the newest last. The newest one plays while it is not `ended`. */
         std::deque<AttackVisit> visits;
         std::uint32_t visitCount{0};
+        /** The hold of the attack input at the last step (the hold or the press bit, with no release): the steps of a gap get it (M1-R4). */
+        bool holding{false};
         /** The strike ledger: the visit number, the strike, and the target of each hit (only of the visits of `visits`). */
         std::set<std::tuple<std::uint32_t, std::uint32_t, EntityId>> hits;
+        /** The hits of each cast of an ability (IfAbilityNumHits; stage 3.3b-M2): the cast and its accepted hits. */
+        std::uint64_t hitsCast{0};
+        std::uint32_t castHits{0};
+        /** A press of an ability that starts later (a buffered window): its fragment, its cast, and its input step. */
+        std::int32_t pendingAbility{-1};
+        std::uint64_t pendingCast{0};
+        std::uint16_t pendingInput{0};
+        WorldClock::time_point pendingDue{};
         /** The count of the ends of the sequence. */
         std::uint32_t generation{0};
     };
@@ -166,9 +260,22 @@ public:
      * sequence first. A weapon with no graph (`actions` null) has no sequence.
      * @return The payments that the visits passed in this step (the world pays them).
      */
-    std::vector<const gamedata::AttackPayment*> step(const std::string& characterId, SessionId session, std::uint32_t inputSequence,
-                                                     std::uint16_t input, const AttackBits& bits, const std::string& weapon,
-                                                     const gamedata::WeaponActionSet* actions, WorldClock::time_point now);
+    std::vector<SequenceEvent> step(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,
+                                    const AttackBits& bits, const std::string& weapon, const gamedata::WeaponActionSet* actions,
+                                    WorldClock::time_point now, const AttackFacts& facts = {});
+
+    /**
+     * The press of a key of the bar of a character was accepted (stage 3.3b-M2): the fragment of the ability (the default fragment of
+     * its action or a selection) starts as a visit of the sequence with the cast. At rest it starts at the press. In a fragment that
+     * plays it starts at the first of the next attack_rules::kAbilityBackSteps steps at which the action of the ability can start: in
+     * the window of a transition of the fragment to the ability (an instant window at once, a buffered window at its end), at the mark
+     * CanTransition, or at the end of the fragment. With none, the start is refused (the client does not play the press), and nothing
+     * changes.
+     * @param dryRun True: only the verdict (the checks of a press before its cost and its cooldown).
+     */
+    AbilityStart start_ability(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,
+                               const std::string& weapon, const gamedata::WeaponActionSet* actions, std::uint32_t ability,
+                               std::uint32_t fragment, std::uint64_t cast, WorldClock::time_point now, bool dryRun = false);
 
     /**
      * Finds the visit and the strike of a contact at an input number. `usable` says if a strike has a row for the character (the
@@ -177,9 +284,22 @@ public:
      */
     [[nodiscard]] StrikeMatch match(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,
                                     EntityId target, WorldClock::time_point now,
-                                    const std::function<bool(const gamedata::AttackStrike&)>& usable);
-    /** Notes the hit of a strike on a target (StrikeMatch::visit, strike). */
-    void note_hit(const std::string& characterId, std::uint32_t visit, std::uint32_t strike, EntityId target);
+                                    const std::function<bool(const gamedata::AttackStrike&)>& usable, const AttackFacts& facts = {});
+    /**
+     * Notes the hit of a strike on a target (StrikeMatch::visit, fragmentIndex, strike). The first hit of a visit commits its fragment
+     * (code review of stage 3.3b-M1, finding M1-R3): the other fragment of the band goes, and a later contact cannot hit with it. The
+     * combat system calls it after the other checks of the claim, thus a refused contact changes nothing.
+     */
+    void note_hit(const std::string& characterId, std::uint32_t visit, std::uint32_t fragment, std::uint32_t strike, EntityId target);
+    /**
+     * Notes the hit of a match (note_hit), and first takes its collision transition (StrikeMatch::lazyFragment): the fragment starts at
+     * the step of the match. @return The visit number of the hit.
+     */
+    std::uint32_t note_match(const std::string& characterId, const StrikeMatch& match, EntityId target, WorldClock::time_point now);
+    /** @return The accepted hits of a cast of an ability (the condition IfAbilityNumHits). */
+    [[nodiscard]] std::uint32_t cast_hits(const std::string& characterId, std::uint64_t cast) const;
+    /** @return The newest visit of a character, or null. */
+    [[nodiscard]] const AttackVisit* newest(const std::string& characterId) const;
 
     /** Ends the sequence of a character (a weapon change, an accepted ability, a death, a travel). */
     void end(const std::string& characterId, SequenceEnd why);
@@ -201,12 +321,20 @@ public:
 
 private:
     void reset(State& state, SequenceEnd why, std::uint16_t input);
-    void start_visit(State& state, std::uint32_t fragment, std::int32_t alternate, std::uint16_t input, WorldClock::time_point now);
-    void advance(State& state, std::uint16_t input, const AttackBits& bits, WorldClock::time_point now,
-                 std::vector<const gamedata::AttackPayment*>& payments);
+    void start_visit(State& state, std::uint32_t fragment, std::int32_t alternate, std::uint16_t input, WorldClock::time_point now,
+                     WorldClock::time_point due, std::uint64_t cast = 0);
+    void advance(State& state, std::uint16_t input, const AttackBits& bits, WorldClock::time_point now, std::vector<SequenceEvent>& events,
+                 const AttackFacts& facts);
+    /** @return True when the condition of a transition holds at a step (format 2: the terms with the facts, the hits of the cast). */
+    [[nodiscard]] bool holds(const State& state, const AttackVisit& visit, const gamedata::AttackTransition& transition, const AttackBits& bits,
+                             bool instant, const AttackFacts& facts) const;
+    /** @return The state of a character for a step of a session (made, or reset for a new session, input sequence, or weapon). */
+    State* state_for(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,
+                     const std::string& weapon, const gamedata::WeaponActionSet* actions);
+    /** @return True when a strike of a fragment fits a contact on a target (the strike that did not hit the target first). */
     [[nodiscard]] bool strike_fits(const State& state, const AttackVisit& visit, std::uint32_t fragment, std::uint16_t input,
                                    WorldClock::time_point now, const std::function<bool(const gamedata::AttackStrike&)>& usable,
-                                   std::uint32_t& strike) const;
+                                   EntityId target, std::uint32_t& strike) const;
 
     std::unordered_map<std::string, State> m_states;
     SequenceCounts m_counts;

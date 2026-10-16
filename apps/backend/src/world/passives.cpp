@@ -32,7 +32,9 @@ const std::set<std::string, std::less<>> kMarks = {
     "ActivationCooldown", "SelfApplyStatusEffectDurations", "OtherApplyStatusEffectDurations",
     // Marks of the user interface and of the scope of a rule (the evaluator takes the rules of the tree of the weapon of a hit, and
     // of the weapon in the hand for a rule with no hit): no condition of a hit.
-    "IsGlobalAbility", "EquipWhenUnsheathed", "ExcludeFromGameModes", "SupportsSmartcast", "UISpellForManaCheck"};
+    "IsGlobalAbility", "EquipWhenUnsheathed", "ExcludeFromGameModes", "SupportsSmartcast", "UISpellForManaCheck",
+    // The durability cost of a spell of a rule (stage 3.3b-M2: CastSpell of Power Cleaner): the backend has no durability use.
+    "DisableCastSpellDurability"};
 
 /** The columns of a value of a rule (a fixed stat, or a part of a hit). */
 const std::set<std::string, std::less<>> kValues = {
@@ -54,7 +56,7 @@ const std::set<std::string, std::less<>> kConditions = {
 const std::set<std::string, std::less<>> kEffects = {
     "HealScalingValueMultiplier",
     "BaseDamage", "CritChance", "CritDamage", "ArmorPenetration", "HeadshotDamage", "HitFromBehindDamage", "SelfApplyStatusEffect",
-    "OtherApplyStatusEffect", "DmgPctToHealth", "CooldownTimer", "CDRImmediatelyOptions", "PhysicalArmor", "ElementalArmor",
+    "OtherApplyStatusEffect", "DmgPctToHealth", "CooldownTimer", "CDRImmediatelyOptions", "PhysicalArmor", "ElementalArmor", "CastSpell",
     "MaxHealth", "MaxHealthMod", "BaseDamageReduction", "MODStrength", "MODDexterity", "MODIntelligence", "MODFocus",
     "MODConstitution"};
 
@@ -144,6 +146,17 @@ bool hit_rule(const gamedata::CellValues& cells) {
     return std::any_of(std::begin(kHitConditions), std::end(kHitConditions), [&](const char* column) { return cells.has(column); });
 }
 
+/**
+ * @return True for a row with no event that names its ability (InAction, InSequence) and has a value and no status (stage 3.3b-M2: the row
+ *         of Armor Breaker, ArmorPenetration 0.35; the game text "ignores 35% armor"): its values count at each hit of its ability. A row
+ *         with a status and no event (Shockwave: its stun) stays a rule of its action (the plan gives the status).
+ */
+bool ability_value_rule(const gamedata::CellValues& cells) {
+    return (cells.has("InAction") || cells.has("InSequence")) && cells.text("SelfApplyStatusEffect").empty()
+           && cells.text("OtherApplyStatusEffect").empty()
+           && std::any_of(kValues.begin(), kValues.end(), [&](const std::string& column) { return cells.number(column) != 0.0F; });
+}
+
 /** @return True when the row has a cell of a condition (no fixed stat then). */
 bool has_condition(const gamedata::CellValues& cells) {
     for (const auto& [column, value] : cells.numbers) {
@@ -161,12 +174,50 @@ bool has_condition(const gamedata::CellValues& cells) {
 
 /**
  * @return True when the tracking spell of a rule is a sphere (ShapeTypes Sphere or blank). The data has three tracking spells with
- * the shape Box and a Length (Blood Lust Ultimate_Greataxe_Reaper: 7 m long, the radius 1.25 m): the backend counts only a sphere,
- * and such a rule is not applied (code review of stage 3.3b-S5, finding F9; the place and the facing of the box are not known).
+ * the shape Box and a Length (Blood Lust Ultimate_Greataxe_Reaper: 7 m long, the radius 1.25 m). Stage 3.3b-S5 did not apply them
+ * (code review finding F9); stage 3.3b-M2 counts a box in front of the look (tracking_supported).
  */
 bool sphere_tracking(const gamedata::SpellRow& spell) {
     const std::string_view shape = spell.cells.text("ShapeTypes");
     return shape.empty() || same_text(shape, "Sphere");
+}
+
+/**
+ * @return True when the backend counts the entities of a tracking spell: a sphere, or (stage 3.3b-M2) a box with a Length in front of the
+ *         look of the character (Blood Lust, Ultimate_Greataxe_Reaper: the game text "when looking at a foe within 14 m": the box from the
+ *         character to two times its Length, the Radius at each side, the Height up and down; a decision of an agent from the text).
+ */
+bool tracking_supported(const gamedata::SpellRow& spell) {
+    return sphere_tracking(spell) || (same_text(spell.cells.text("ShapeTypes"), "Box") && spell.cells.number("Length") > 0.0F);
+}
+
+/**
+ * @return True when the condition of a status action of the data holds for a character (stage 3.3b-M2, Guarded Sprint): a node literal
+ *         is a learned node; a tag literal is a tag of the weapon in the hand (its MannequinTag), a tag of the movement (ForwardNav,
+ *         BackNav, LeftNav, RightNav: the character moves, Entity::moving), or a different tag (Dodging; false: the backend has no state of
+ *         it; a decision of an agent).
+ */
+bool action_holds(const gamedata::ActionStatus& action, const Entity& character, const gamedata::WeaponRow* weapon) {
+    const auto literal_true = [&](const gamedata::ActionStatus::Literal& literal) {
+        if (!literal.tag) {
+            for (const auto& [pool, nodes] : character.skills.pools) {
+                const auto found = nodes.find(literal.id);
+                if (found != nodes.end() && found->second.level != 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        for (const char* movement : {"ForwardNav", "BackNav", "LeftNav", "RightNav"}) {
+            if (same_text(literal.name, movement)) {
+                return character.moving;
+            }
+        }
+        return weapon != nullptr && list_has(weapon->tags, literal.name);
+    };
+    return std::any_of(action.terms.begin(), action.terms.end(), [&](const std::vector<gamedata::ActionStatus::Literal>& term) {
+        return std::all_of(term.begin(), term.end(), [&](const gamedata::ActionStatus::Literal& literal) { return literal_true(literal) != literal.negated; });
+    });
 }
 
 std::chrono::milliseconds milliseconds_of(float seconds) {
@@ -310,9 +361,12 @@ bool Passives::conditions_pass(const PassiveRule& rule, const Entity& attacker, 
     if (const std::string_view status = row.text("DontHaveStatusEffect"); !status.empty() && m_world.statuses().has(attacker, status)) {
         return false;
     }
-    // InSequence and InAction: the hit is a hit of the cast of an ability of the list (the action of the ability).
+    // InSequence and InAction: the hit is a hit of the cast of an ability of the list (the action of the ability), or (stage 3.3b-M2) a
+    // hit of a strike of a fragment of the list (Armor Breaker: InSequence Ability_WarHammer_BlockBreaker, the fragment of its action in
+    // the weapon actions; game data).
     for (const char* column : {"InSequence", "InAction"}) {
-        if (const std::string_view sequence = row.text(column); !sequence.empty() && (hit.ability.empty() || !list_has(sequence, hit.ability))) {
+        if (const std::string_view sequence = row.text(column);
+            !sequence.empty() && (hit.ability.empty() || !list_has(sequence, hit.ability)) && (hit.fragment.empty() || !list_has(sequence, hit.fragment))) {
             return false;
         }
     }
@@ -326,7 +380,7 @@ bool Passives::conditions_pass(const PassiveRule& rule, const Entity& attacker, 
     // NumAroundMe: the entities in the tracking spell of the rule (its AbilityId), or the creatures of the area of the hit.
     if (row.has("NumAroundMe")) {
         const gamedata::AbilityData* abilities = m_world.options().abilityData;
-        if (abilities == nullptr || abilities->tracking_spell(rule.id) == nullptr || !sphere_tracking(*abilities->tracking_spell(rule.id))) {
+        if (abilities == nullptr || abilities->tracking_spell(rule.id) == nullptr || !tracking_supported(*abilities->tracking_spell(rule.id))) {
             return false;
         }
         const std::uint32_t count = around_count(row, rule.id, attacker, &hit);
@@ -360,6 +414,24 @@ std::uint32_t Passives::around_count(const gamedata::CellValues& cells, std::str
     // The creatures that live and are not on their way back, in the radius of the spell (and 3 m up or down).
     std::uint32_t count = 0;
     const float height = spell->height > 0.0F ? spell->height : 3.0F;
+    if (!sphere_tracking(*spell)) {
+        // A box in front of the look of the character (stage 3.3b-M2: Blood Lust): forward 0 to 2 x Length, Radius to each side.
+        const float length = 2.0F * spell->cells.number("Length");
+        const float ahead[2] = {-std::sin(character.look), std::cos(character.look)};
+        m_world.for_each_near(character.position, length, [&](Entity& entity) {
+            if (entity.kind != EntityKind::creature || entity.creature.dead || entity.creature.immune()) {
+                return;
+            }
+            const float dx = entity.position.x - character.position.x;
+            const float dy = entity.position.y - character.position.y;
+            const float along = dx * ahead[0] + dy * ahead[1];
+            const float side = std::fabs(dx * ahead[1] - dy * ahead[0]);
+            if (along >= 0.0F && along <= length && side <= spell->radius && std::fabs(entity.position.z - character.position.z) <= height) {
+                ++count;
+            }
+        });
+        return count;
+    }
     m_world.for_each_near(character.position, spell->radius, [&](Entity& entity) {
         if (entity.kind == EntityKind::creature && !entity.creature.dead && !entity.creature.immune()
             && horizontal_distance(entity.position, character.position) <= spell->radius
@@ -488,8 +560,8 @@ HitBonus Passives::before_hit(const Entity& attacker, const Entity& target, cons
             bonus.critDamage += row.number("CritDamage") * rule.potency;
             continue;
         }
-        const bool takes = event == "OnHit" || event == "OnCrit" || (event.empty() && hit_rule(row)) || (event == "OnHeadShot" && hit.head)
-                           || (event == "OnHitBehind" && hit.behind);
+        const bool takes = event == "OnHit" || event == "OnCrit" || (event.empty() && (hit_rule(row) || ability_value_rule(row)))
+                           || (event == "OnHeadShot" && hit.head) || (event == "OnHitBehind" && hit.behind);
         if (!takes || !conditions_pass(rule, attacker, target, hit)) {
             continue;
         }
@@ -558,7 +630,7 @@ void Passives::after_hit(Entity& attacker, Entity& target, const HitContext& hit
                              && std::any_of(kValues.begin(), kValues.end(), [&](const std::string& column) { return row.number(column) != 0.0F; });
         const bool effect = !row.text("OtherApplyStatusEffect").empty() || !row.text("SelfApplyStatusEffect").empty()
                             || row.number("DmgPctToHealth") > 0.0F || (row.number("CooldownTimer") < 0.0F && !row.text("CDRImmediatelyOptions").empty())
-                            || counted;
+                            || !row.text("CastSpell").empty() || counted;
         // A rule with OnCrit and only CritChance changed the roll (before_hit): it has no effect after the hit.
         if (!takes || !effect) {
             continue;
@@ -649,6 +721,12 @@ void Passives::apply_effects(const PassiveRule& rule, Entity& attacker, Entity& 
     if (rule.origin == RuleOrigin::perk) {
         if (const Entity* own = m_world.find(attackerId)) {
             m_world.gear().perk_burst_of(*own, rule.id);
+        }
+    }
+    // CastSpell (stage 3.3b-M2: Power Cleaner of Clear Out casts WarHammer_Spell_ClearOut_Fortify, the fortify of the friends in 6 m).
+    if (const std::string_view spell = row.text("CastSpell"); !spell.empty()) {
+        if (Entity* own = m_world.find(attackerId)) {
+            m_world.abilities().rule_spell(*own, spell, rule.id);
         }
     }
 }
@@ -805,11 +883,20 @@ void Passives::tick() {
         const std::uint32_t table = weapon != nullptr && !weapon->mastery.empty() ? gamedata::progression_id(weapon->mastery) : 0;
         std::set<std::string> wanted;
         std::vector<PassiveRule> around;
+        // The status actions of the data (stage 3.3b-M2: Guarded Sprint gives WarHammer_Pass_SprintDmgReduction while the war hammer is
+        // in the hand and the character moves): their statuses while the condition holds, with the action as the source.
+        std::vector<const gamedata::ActionStatus*> actions;
+        for (const gamedata::ActionStatus& action : abilities->tables().actionStatuses) {
+            if (!character->life.dead && action_holds(action, *character, weapon)) {
+                wanted.insert(action.action);
+                actions.push_back(&action);
+            }
+        }
         for (const PassiveRule& rule : rules_of(*character, table)) {
             const gamedata::CellValues& row = *rule.cells;
             if (!event_of(row).empty() || hit_rule(row) || !row.has("NumAroundMe") || row.text("SelfApplyStatusEffect").empty()
                 || !unknown_columns(row).empty() || abilities->tracking_spell(rule.id) == nullptr
-                || !sphere_tracking(*abilities->tracking_spell(rule.id))) {
+                || !tracking_supported(*abilities->tracking_spell(rule.id))) {
                 continue;
             }
             ++m_counts.aroundLooked;
@@ -845,6 +932,21 @@ void Passives::tick() {
                 }
             }
             state.around.insert(rule.id);
+        }
+        for (const gamedata::ActionStatus* action : actions) {
+            if (state.around.count(action->action) != 0) {
+                continue;
+            }
+            for (const std::string& status : action->statuses) {
+                StatusApply how;
+                how.permanent = true;
+                how.source = StatusSource{StatusSourceKind::ability, action->action, 0, character->id};
+                const StatusVerdict verdict = m_world.statuses().apply(*character, status, how);
+                if (verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed) {
+                    ++m_counts.aroundStatuses;
+                }
+            }
+            state.around.insert(action->action);
         }
     }
 }
@@ -925,14 +1027,65 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
             view.note = "not applied yet: the active ability has no plan in this backend (its later weapon part)";
             return view;
         }
+        if (!anyEvent && ability_value_rule(row)) {
+            view.applied = true;
+            view.note = "the active ability: its plan, and the values of its row at each hit of the ability (the evaluator)";
+            return view;
+        }
         if (!hasEffect || (!anyEvent && !hit_rule(row))) {
             view.applied = true;
             view.note = "the active ability: its plan (stage 3.3a and later) applies its effects";
             return view;
         }
     }
+    // The uses of a node in the data of the actions (stage 3.3b-M2): the weapon actions of format 2 (a row of a strike, a transition inside
+    // an ability, a fragment that an action selects, a spell cast; a grit, which the backend does not have; a conditional of the movement
+    // of an action, which the client applies), and a status action (Guarded Sprint: its statuses while its condition holds). @return True
+    // when the view has its result.
+    const auto data_use = [&]() {
+        if (const gamedata::WeaponActions* weapons = m_world.combat().weapon_actions()) {
+            std::string grit;
+            std::string motion;
+            for (const gamedata::NodeUse* use : weapons->uses_of(gamedata::progression_id(id))) {
+                if (use->use == "grit") {
+                    grit = grit.empty() ? use->place : grit;
+                } else if (use->use == "motion") {
+                    motion = use->place;
+                } else if (!view.applied) {
+                    view.applied = true;
+                    view.note = "applied: the weapon actions data (the " + use->use + " " + use->place + ")";
+                }
+            }
+            if (view.applied) {
+                return true;
+            }
+            if (!motion.empty()) {
+                view.applied = true;
+                view.note = "applied by the client: the conditional of the movement of the action (" + motion + "); the position check accepts its speed";
+                return true;
+            }
+            if (!grit.empty()) {
+                view.note = "not applied: grit (the action ActivateGrit of the fragment " + grit + "): the backend has no grit";
+                return true;
+            }
+        }
+        if (abilities == nullptr) {
+            return false;
+        }
+        for (const gamedata::ActionStatus& action : abilities->tables().actionStatuses) {
+            const bool names = std::any_of(action.terms.begin(), action.terms.end(), [&](const auto& term) {
+                return std::any_of(term.begin(), term.end(), [&](const auto& literal) { return !literal.tag && same_text(literal.name, id); });
+            });
+            if (names) {
+                view.applied = true;
+                view.note = "applied by the evaluator: the status action " + action.action + " of the data (a status while its condition holds)";
+                return true;
+            }
+        }
+        return false;
+    };
     // 2. A node with no cell of an effect: the action data tests it (a rule of an action: Meteoric Crater has the marks OnHit and
-    // InAction and no effect), or it has no effect of its own.
+    // InAction and no effect), the data of the actions uses it, or it has no effect of its own.
     if (!hasEffect && unknown.empty()) {
         if (actionTested) {
             const std::vector<std::string> lists = abilities->action_lists_of(id);
@@ -953,11 +1106,17 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
                 view.applied = true;
                 view.note = "applied: the plan of the ability (stage 3.3a) selects its row, as the action data does";
             }
+            if (!view.applied && data_use()) {
+                return view;
+            }
             if (!view.applied) {
                 view.note = std::string("not applied yet: the action data (") + (lists.empty() ? std::string("?") : lists.front())
                             + (selects ? ") selects a spell of an ability that this backend does not have"
                                        : ") applies it in an action of the client that this backend does not have");
             }
+            return view;
+        }
+        if (data_use()) {
             return view;
         }
         view.note = anyEvent || has_condition(row) ? "not applied: the row has a condition and no effect that the backend has"
@@ -990,10 +1149,34 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
         }
         required = std::string(parent->cells.text("RequiredAbilityId"));
     }
+    // A name of the list is an ability with a plan, or (stage 3.3b-M2) the fragment of the action of such an ability in the weapon
+    // actions (Armor Breaker: Ability_WarHammer_BlockBreaker).
+    const auto planned_name = [&](std::string_view name) {
+        if (Abilities::has_plan(name)) {
+            return true;
+        }
+        const gamedata::WeaponActions* weapons = m_world.combat().weapon_actions();
+        if (weapons == nullptr) {
+            return false;
+        }
+        for (const gamedata::WeaponActionSet& weapon : weapons->tables().weapons) {
+            for (const gamedata::AbilityAction& action : weapon.abilities) {
+                if (!Abilities::has_plan(action.ability)) {
+                    continue;
+                }
+                if (same_text(action.fragmentName, name)
+                    || std::any_of(action.selections.begin(), action.selections.end(),
+                                   [&](const gamedata::AbilityAction::Selection& selection) { return same_text(selection.fragmentName, name); })) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
     for (const char* column : {"InAction", "InSequence"}) {
         if (const std::string_view list = row.text(column); !list.empty()) {
             const std::vector<std::string_view> names = parts_of(list);
-            if (std::none_of(names.begin(), names.end(), [](std::string_view name) { return Abilities::has_plan(name); })) {
+            if (std::none_of(names.begin(), names.end(), planned_name)) {
                 view.note = "not applied yet: its ability " + std::string(list) + " has no plan in this backend";
                 return view;
             }
@@ -1048,9 +1231,9 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
             view.note = "not applied: no tracking spell of the rule in the data";
             return view;
         }
-        if (!sphere_tracking(*spell)) {
+        if (!tracking_supported(*spell)) {
             view.note = "not applied: the tracking spell " + spell->id + " has the shape " + std::string(spell->cells.text("ShapeTypes"))
-                        + " (the backend counts the entities in a sphere only)";
+                        + " (the backend counts the entities in a sphere and in a box with a Length only)";
             return view;
         }
         if (!list_has(spell->cells.text("TargetTypes"), "Enemy") && !(event.empty() && hit_rule(row))) {
@@ -1061,6 +1244,21 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
     // 4. A status with no event and no condition (Unyielding: the fortify of the vortex): the action or the spell of the data gives
     // it; the evaluator does not.
     if (event.empty() && !hit_rule(row) && !row.has("NumAroundMe") && (row.has("SelfApplyStatusEffect") || row.has("OtherApplyStatusEffect"))) {
+        // A status that an area of a spell slice gives to the friends in it (stage 3.3b-M2: Unyielding, the AreaStatusEffectComponent of
+        // the upgraded vortex of Gravity Well; the spell system gives it).
+        if (const gamedata::SpellData* spells = m_world.options().spellData; spells != nullptr && spells->loaded()) {
+            const std::string_view status = row.text("SelfApplyStatusEffect");
+            for (const gamedata::SpellSlice& slice : spells->tables().slices) {
+                for (const gamedata::SpellAreaStatus& area : slice.areaStatuses) {
+                    if (!status.empty() && std::any_of(area.statuses.begin(), area.statuses.end(),
+                                                       [&](const std::string& given) { return same_text(given, status); })) {
+                        view.applied = true;
+                        view.note = "applied: the area of the spell slice " + slice.path + " gives its status to the friends in it";
+                        return view;
+                    }
+                }
+            }
+        }
         view.note = "not applied: a status of the row with no event (the action or the spell of the data gives it)";
         if (actionTested && Abilities::plan_node(id)) {
             view.note = "the plan selects the spell of the node (the action data); " + view.note;
@@ -1068,7 +1266,11 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
         return view;
     }
     view.applied = true;
-    view.note = "applied by the evaluator" + std::string(event.empty() ? (hit_rule(row) ? " (a rule of a hit)" : (row.has("NumAroundMe") ? " (a status while the condition holds)" : " (fixed)")) : " (" + event + ")");
+    view.note = "applied by the evaluator"
+                + std::string(event.empty() ? (hit_rule(row) ? " (a rule of a hit)"
+                                                             : ability_value_rule(row) ? " (the values of the row at each hit of its ability)"
+                                                             : (row.has("NumAroundMe") ? " (a status while the condition holds)" : " (fixed)"))
+                                            : " (" + event + ")");
     return view;
 }
 

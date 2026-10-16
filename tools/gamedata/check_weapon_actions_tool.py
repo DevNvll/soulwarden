@@ -16,6 +16,15 @@ Each case prints "ok NAME: ..." or "FAIL NAME: ...". Status 0: each case passed.
                    the body and of the attachment by their damage key, a clip with a node condition, the payment with its condition,
                    the dodge windows
   refusals         a transition to an action that no action list has, and a damage clip with no row: the tool stops (Failure)
+  abilities        format 2 (stage 3.3b-M2): an ability action list with an action whose cooldown is an ability, a fragment that it
+                   selects by a node and by a perk (the last selection that holds wins in the backend), a spell cast with the mark of its
+                   condition, a transition into the ability from a basic fragment (CanAttack_<ability>), the transitions inside the
+                   ability with their conditions as terms (the hits of IfAbilityNumHits, a node, an input, a collision, the water of the
+                   game: false), a transition with a test that the backend has no source for (not exported), a spell cast of a fragment,
+                   and the shape of each row of a strike
+  incomplete       the whole tool (main) with sources that are not complete (code review of stage 3.3b-M1, finding M1-R6): a graph
+                   that names a fragment that the body file does not have, and an attachment file with no fragment: status 1, and the
+                   old output file stays; the complete sources: status 0 and a new file
 """
 
 from __future__ import annotations
@@ -154,6 +163,19 @@ def main() -> int:
                     f"two clips of one animation: {length} s (the war hammer: 44 input steps); one clip: {charge} s"))
     missing = tool.fragment_length(body["Attack_Primary_Strike2"][0], animations)
     results.append(("length unknown", missing == 0.0 and "test_missing" in animations.missing, f"length {missing}"))
+    # ExitTime -1 (the sprint attack of the hatchet): the clip starts at the end of the clip before it; a last clip that loops has no end.
+    sources.files[tool.BODY_FOLDER + "player_exit.adb"] = (
+        '<AnimDB><FragmentList><Attack_Sprint>'
+        '<Fragment Tags="2H_Melee+TestAxe"><AnimLayer><Blend ExitTime="0" StartTime="0"/><Animation name="test_charge"/>'
+        '<Blend ExitTime="-1" StartTime="0"/><Animation name="test_swing"/></AnimLayer></Fragment>'
+        '<Fragment Tags="1H_Melee+TestAxe"><AnimLayer><Blend ExitTime="0" StartTime="0"/><Animation name="test_charge"/>'
+        '<Blend ExitTime="-1" StartTime="0"/><Animation name="test_swing" flags="Loop"/></AnimLayer></Fragment>'
+        '</Attack_Sprint></FragmentList></AnimDB>').encode()
+    exits = tool.read_fragments(sources, tool.BODY_FOLDER + "player_exit.adb")["Attack_Sprint"]
+    after = tool.fragment_length(exits[0], animations)
+    looped = tool.fragment_length(exits[1], animations)
+    results.append(("length after the clip before", abs(after - round(21 / 30.0 + 55 / 30.0, 6)) < 1e-6 and looped == 0.0,
+                    f"ExitTime -1: {after} s (0.7 s + 1.833 s, not a start at -1 s); a last clip that loops: {looped} (not known)"))
     results.append(("animation file", abs(tool.caf_length(chunk_file(30, 1.0 / 30.0), "x") - 1.0) < 1e-6
                     and and_fails(lambda: tool.caf_length(b"nope" + bytes(20), "x")),
                     "30 frames of 1/30 s: 1 s; a file that is not a chunk file: refused"))
@@ -171,7 +193,8 @@ def main() -> int:
     not_exported: dict[str, int] = {}
     clips: list[list] = []
     counts = {"clips": 0, "lengthsNotKnown": 0, "transitions": 0, "strikes": 0, "payments": 0}
-    graph = tool.build_weapon(("2H_Melee", "TestAxe"), body, common, attachment, action_fragments, named, animations, not_exported, clips, counts)
+    built = tool.build_weapon(("2H_Melee", "TestAxe"), body, common, attachment, action_fragments, named, animations, not_exported, clips, counts)
+    graph = built[0] if built else None
     by_name = {fragment["name"]: fragment for fragment in graph} if graph else {}
     primary = by_name.get("Attack_Primary", {})
     strikes = {strike[0]: strike for strike in primary.get("strikes", [])}
@@ -181,11 +204,12 @@ def main() -> int:
           and by_name["Attack_Start_Charge_C2"]["transitions"][0][4] == "Attack_Primary_Strike2"
           and not_exported == {"CanAttack_Ability_Test": 1}
           and set(strikes) == {"atk1", "atk2"} and strikes["atk1"][1:3] == [0.3, 0.45] and len(strikes["atk1"][4]) == 2
-          and strikes["atk2"][3] == [["Test_Primary_Pull", ["Test_Pull"], ["Test_PullHold"]]]
+          and strikes["atk2"][3] == [["Test_Primary_Pull", ["Test_Pull"], ["Test_PullHold"], 0]]
           and clips == [["2H_Melee+TestAxe", "Attack_Primary", "atk3", "Test_Odd", "the condition TestStateCondition is not an AND of node tests"]]
           and primary["payments"] == [[0.0, "stamina", "Test_Cost", 1.0, "Test_Stance_Active"]]
           and primary["dodge"] == [[0.0, 0.2666, False], [0.2666, 0.6333, True]] and primary["canTransition"] == 0.6333
-          and primary["transitions"][0][:5] == ["buffered", 0.333333, 0.666667, "virtual", "Attack_Start_Charge_C2"])
+          and primary["transitions"][0][:5] == ["buffered", 0.333333, 0.666667, "virtual", "Attack_Start_Charge_C2"]
+          and primary["transitions"][0][6] is None)
     results.append(("graph", ok, f"fragments {list(by_name)}, not exported {not_exported}, strikes {sorted(strikes)}, clips not exported {len(clips)}"))
     results.append(("no graph", tool.build_weapon(("2H_Melee", "Other"), {}, {}, {}, action_fragments, named, animations, {}, [], counts) is None,
                     "a tag set with no Attack_Start_Charge: no graph"))
@@ -203,12 +227,155 @@ def main() -> int:
                                                             animations, {}, [], counts)),
                     "an action that no list has, and a damage clip with no row: the tool stops"))
 
+    results.append(("abilities", *abilities_case()))
+    results.append(("incomplete", *incomplete_sources()))
+
     failures = 0
     for name, passed, detail in results:
         print(f"{'ok' if passed else 'FAIL'} {name}: {detail}")
         failures += 0 if passed else 1
     print(f"weapon actions check: {failures} failed check(s)")
     return 1 if failures else 0
+
+
+ABILITY_BODY = """<AnimDB><FragmentList>
+<Attack_Start_Charge>
+ <Fragment Tags="2H_Melee+GreatAxe"><AnimLayer/>
+  <ProcLayer><Blend ExitTime="0"/><Procedural type="CAGE-TransitionInstant"><ProceduralParams><Condition value="Attack_Heavy_NotHeld"/><NewAction value="Attack_Primary_C1"/></ProceduralParams></Procedural></ProcLayer>
+  <ProcLayer><Blend ExitTime="0.1"/><Procedural type="CAGE-TransitionBuffered"><ProceduralParams><Condition value="CanAttack_Whirlwind"/><NewAction value="Test_Whirlwind"/></ProceduralParams></Procedural>
+   <Blend ExitTime="0.2"/><Procedural type=""><ProceduralParams/></Procedural></ProcLayer>
+ </Fragment>
+</Attack_Start_Charge>
+<Attack_Primary><Fragment Tags="2H_Melee+GreatAxe"><AnimLayer/></Fragment></Attack_Primary>
+<Ability_Test_Whirlwind>
+ <Fragment Tags="2H_Melee+GreatAxe"><AnimLayer/>
+  <ProcLayer><Blend ExitTime="1.9"/><Procedural type="CAGE-TransitionInstant"><ProceduralParams><Condition value="Test_LessThan_1"/><NewFragment value="Ability_Test_Exit"/></ProceduralParams></Procedural>
+   <Blend ExitTime="0.4"/><Procedural type="CAGE-TransitionInstant"><ProceduralParams><Condition value=""/><NewFragment value="Ability_Test_Exit"/></ProceduralParams></Procedural></ProcLayer>
+  <ProcLayer><Blend ExitTime="0.1"/><Procedural type="CAGE-TransitionInstant"><ProceduralParams><Condition value="Test_Hit_Or_Water"/><NewAction value="Test_FollowUp"/></ProceduralParams></Procedural>
+   <Blend ExitTime="0.1"/><Procedural type="CAGE-TransitionInstant"><ProceduralParams><Condition value="Test_Unknown"/><NewFragment value="Ability_Test_Never"/></ProceduralParams></Procedural></ProcLayer>
+  <ProcLayer><Blend ExitTime="0.5"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="Test_SpellMarker"/></ProceduralParams></Procedural></ProcLayer>
+ </Fragment>
+</Ability_Test_Whirlwind>
+<Ability_Test_Whirlwind_Upgrade><Fragment Tags="2H_Melee+GreatAxe"><AnimLayer/></Fragment></Ability_Test_Whirlwind_Upgrade>
+<Ability_Test_Exit><Fragment Tags="2H_Melee+GreatAxe"><AnimLayer/></Fragment></Ability_Test_Exit>
+<Ability_Test_FollowUp><Fragment Tags="2H_Melee+GreatAxe"><AnimLayer/></Fragment></Ability_Test_FollowUp>
+</FragmentList></AnimDB>"""
+
+ABILITY_ATTACHMENT = """<AnimDB><FragmentList>
+<Ability_Test_Whirlwind>
+ <Fragment Tags="2H_Melee+GreatAxe">
+  <ProcLayer><Blend ExitTime="0.5"/><Procedural type="CAGE-Damage"><ProceduralParams><DamageKey value="Atk1"/><DamageTableRow value="Test_Pull_Near"/><OffsetZ value="1.2"/></ProceduralParams></Procedural>
+   <Blend ExitTime="0.1"/><Procedural type=""><ProceduralParams/></Procedural></ProcLayer>
+  <ProcLayer><Blend ExitTime="0.5"/><Procedural type="CAGE-Damage"><ProceduralParams><DamageKey value="Atk1"/><DamageTableRow value="Test_Pull_Far"/><OffsetZ value="4.3"/></ProceduralParams></Procedural>
+   <Blend ExitTime="0.1"/><Procedural type=""><ProceduralParams/></Procedural></ProcLayer>
+  <ProcLayer><Blend ExitTime="0.6"/><Procedural type="CAGE-CastSpell"><ProceduralParams><SpellName value="Test_Ground"/><Condition value=""/></ProceduralParams></Procedural></ProcLayer>
+ </Fragment>
+</Ability_Test_Whirlwind>
+</FragmentList></AnimDB>"""
+
+ABILITY_ACTIONS = """<ActionList>
+<Action Name="Test_Whirlwind" FragmentName="Ability_Test_Whirlwind"><Activities>
+ <IfThenElse><IfCondition><Not><IfExternalCondition ConditionName="Ability_Startup"/></Not></IfCondition><ThenActivity><Group>
+  <SetCooldownTimer><Default AbilityID="Ability_Test_Whirlwind"/></SetCooldownTimer></Group></ThenActivity></IfThenElse>
+ <IfThenElse><IfCondition><And><Not><IfFragmentPlaying FragmentName="Ability_Test_Exit"/></Not><IfAbilityActive AbilityName="Test_MoreSpins"/>
+   <Not><IfAbilityActive AbilityName="Test_ArtifactPerk" External="true"/></Not></And></IfCondition>
+  <ThenActivity><ChangeActionFragment><Default UseDefaultFragment="false" FragmentName="Ability_Test_Whirlwind_Upgrade"/></ChangeActionFragment></ThenActivity></IfThenElse>
+ <IfThenElse><IfCondition><And><IfAbilityActive AbilityName="Test_Shield"/><IfMannequinMarker MarkerName="Test_SpellMarker"/></And></IfCondition>
+  <ThenActivity><CastSpell><Default SpellName="Test_Shield_Spell"/></CastSpell></ThenActivity></IfThenElse>
+</Activities></Action>
+<Action Name="Test_FollowUp" FragmentName="Ability_Test_FollowUp"/>
+<Conditions>
+ <And Name="Test_LessThan_1"><IfAbilityNumHits AbilityName="Ability_Test_Whirlwind" NumHits="1" ComparisonType="LessThan"/></And>
+ <And Name="Test_Hit_Or_Water"><Or><IfInput InputName="character_collided"/><IfWaterDepth Comparison="GreaterThan" WaterDepth="Shallow"/></Or>
+  <Not><IfInput InputName="attack_primary_virtual"/></Not><IfAbilityActive AbilityName="Test_Node"/></And>
+ <And Name="Test_Unknown"><IfHasStatusEffect StatusEffect="Test_Status"/></And>
+</Conditions>
+</ActionList>"""
+
+
+def abilities_case() -> tuple[bool, str]:
+    """Format 2: the ability fragments of a weapon (stage 3.3b-M2) with made-up files."""
+    files = {tool.BODY_FOLDER + "test.adb": ABILITY_BODY.encode(), tool.ADB_FOLDER + "attach.adb": ABILITY_ATTACHMENT.encode(),
+             tool.ACTION_FOLDER + "playeractions_attack.actionlist": ACTIONS.encode(),
+             tool.ACTION_FOLDER + "playeractions_ability_greataxe.actionlist": ABILITY_ACTIONS.encode()}
+    sources = FakeSources(files)
+    body = tool.read_fragments(sources, tool.BODY_FOLDER + "test.adb")
+    attachment = tool.read_fragments(sources, tool.ADB_FOLDER + "attach.adb")
+    action_fragments, named = tool.read_actions(sources)
+    abilities = tool.read_abilities(sources)
+    animations = tool.Animations(sources)
+    not_exported: dict[str, int] = {}
+    counts = {"clips": 0, "lengthsNotKnown": 0, "transitions": 0, "strikes": 0, "payments": 0}
+    built = tool.build_weapon(("2H_Melee", "GreatAxe"), body, {}, attachment, action_fragments, named, animations, not_exported, [], counts,
+                              abilities)
+    if built is None:
+        return False, "no graph"
+    fragments, entries, uses = built
+    by_name = {fragment["name"]: fragment for fragment in fragments}
+    entry = entries[0] if entries else {}
+    whirlwind = by_name.get("Ability_Test_Whirlwind", {})
+    start = by_name.get("Attack_Start_Charge", {})
+    terms = {transition[5]: transition[6] for transition in whirlwind.get("transitions", [])}
+    strike = whirlwind.get("strikes", [[None, 0, 0, [], []]])[0]
+    ok = (entry.get("ability") == "Ability_Test_Whirlwind" and entry.get("fragment") == "Ability_Test_Whirlwind"
+          and entry.get("selections") == [["Ability_Test_Whirlwind_Upgrade", ["Test_MoreSpins"], [], [], ["Test_ArtifactPerk"]]]
+          and entry.get("casts") == [["Test_Shield_Spell", ["Test_Shield"], [], [], [], "Test_SpellMarker"]]
+          and any(t[3] == "ability" and t[4] == "Ability_Test_Whirlwind" and t[6] == "Ability_Test_Whirlwind" for t in start.get("transitions", []))
+          and terms.get("Test_LessThan_1") == [[["hits", 1, False]]] and terms.get("") == [[]]
+          and terms.get("Test_Hit_Or_Water") == [[["input", "collided", False], ["input", "attack", True], ["node", "Test_Node", False]]]
+          and "Test_Unknown" not in terms and not_exported.get("Test_Unknown") == 1
+          and set(by_name) >= {"Ability_Test_Whirlwind", "Ability_Test_Whirlwind_Upgrade", "Ability_Test_Exit", "Ability_Test_FollowUp"}
+          and "Ability_Test_Never" not in by_name
+          and whirlwind.get("markers") == [["Test_SpellMarker", 0.5]] and whirlwind.get("casts") == [[0.6, "Test_Ground", [], []]]
+          and [row[3] for row in strike[3]] == [0, 1] and [shape[8] for shape in strike[4]] == [1.2, 4.3]
+          and ["Test_MoreSpins", "selection", "Test_Whirlwind Ability_Test_Whirlwind_Upgrade"] in uses
+          and ["Test_Node", "transition", "Ability_Test_Whirlwind -> Ability_Test_FollowUp"] in uses
+          and ["Test_Shield", "cast", "Test_Whirlwind Test_Shield_Spell"] in uses)
+    return ok, (f"ability {entry.get('ability')}, selections {entry.get('selections')}, casts {entry.get('casts')}, terms {terms}, "
+                f"not exported {not_exported}, fragments {sorted(by_name)}")
+
+
+def incomplete_sources() -> tuple[bool, str]:
+    """The whole tool with made-up sources (only the source transport and the tag sets are replaced): a missing fragment of the graph
+    and an empty attachment file stop the tool with status 1 and keep the old file; the complete sources write a new file."""
+    import json
+    import os
+    import tempfile
+    body = BODY.replace("TestAxe", "GreatAxe")
+    files = {tool.BODY_FOLDER + "player_greataxe.adb": body.encode(), tool.BODY_FOLDER + "player_2h_melee.adb": COMMON.encode(),
+             tool.ADB_FOLDER + "playermaleanims_2h_meleeattach.adb": ATTACHMENT.replace("TestAxe", "GreatAxe").encode(),
+             tool.ACTION_FOLDER + "playeractions_attack.actionlist": ACTIONS.encode(),
+             tool.ANIMATION_FOLDER + "test/test_swing.caf": chunk_file(55, 1.0 / 30.0),
+             tool.ANIMATION_FOLDER + "test/test_charge.caf": chunk_file(21, 1.0 / 30.0)}
+    parsed = ElementTree.fromstring(body)
+    groups = parsed.find("FragmentList")
+    groups.remove(groups.find("Attack_Primary"))
+    variants = {"complete": dict(files),
+                "missing fragment": {**files, tool.BODY_FOLDER + "player_greataxe.adb": ElementTree.tostring(parsed)},
+                "empty attachment": {**files, tool.ADB_FOLDER + "playermaleanims_2h_meleeattach.adb": b"<AnimDB><FragmentList/></AnimDB>"}}
+    saved = (tool.Sources, tool.weapon_tag_sets, sys.argv, sys.stdout, sys.stderr)
+    details = []
+    passed = True
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            for case, sources in variants.items():
+                target = Path(folder) / "weapon-actions.json"
+                target.write_text("old file\n")
+                tool.Sources = lambda *_, files=sources: FakeSources(dict(files))
+                tool.weapon_tag_sets = lambda _: [("2H_Melee", "GreatAxe")]
+                sys.argv = ["weapon_actions.py", str(target)]
+                with open(os.devnull, "w") as quiet:
+                    sys.stdout, sys.stderr = quiet, quiet
+                    status = tool.main()
+                    sys.stdout, sys.stderr = saved[3], saved[4]
+                text = target.read_text()
+                kept = text == "old file\n"
+                good = (status == 0 and not kept and json.loads(text)["counts"]["strikes"] > 0) if case == "complete" else (status == 1 and kept)
+                passed = passed and good
+                details.append(f"{case}: status {status}, old file {'kept' if kept else 'replaced'}")
+    finally:
+        tool.Sources, tool.weapon_tag_sets, sys.argv, sys.stdout, sys.stderr = saved
+    return passed, "; ".join(details)
 
 
 def and_fails(call) -> bool:

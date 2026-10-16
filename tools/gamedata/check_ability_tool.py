@@ -41,7 +41,8 @@ differences of the game), and each link of a status row resolves (with the named
 The first six cases after valid are the corrections of the findings F11 and F12 of the code review of stage 3.3a
 (a column that is not there is not 0 or false; two rows with one id must agree). The last three are the cost data of
 stage 1.3b (criterion I14). The last three are the caster effect rows and the status categories of stage 3.3b-S1
-(format 3). The values of the valid document: the format 4; the status row with its number among
+(format 3). The values of the valid document: the format 5 (stage 3.3b-M2: the status actions of the player: a status that the action
+applies at its enter and takes at its exit, with its condition of nodes and tags as terms; a tracker that stays is not one); the status row with its number among
 the CRC values of all rows; its other cells (Health 400, TickRate 1, EffectCategories); the spell with its cost id
 "SpecialAttack" (an id that the game itself does not resolve: no cost); the mana cost 25 of a cost id; the cost
 columns of an ability row.
@@ -208,6 +209,14 @@ def action_list(case: str) -> bytes:
             f"<ThenActivity><CastSpell><Default SpellName='{spell}'/></CastSpell></ThenActivity><ElseActivity/></IfThenElse>"
             f"<IfThenElse><IfCondition><IfAbilityActive AbilityName='Upgrade_Test_Big'/></IfCondition><ThenActivity/>"
             f"<ElseActivity><CastSpell><Default SpellName='WarHammer_Spell_Shockwave'/></CastSpell></ElseActivity></IfThenElse>"
+            f"</Activities></Action>"
+            # Format 5 (stage 3.3b-M2): a status action (its status while a node, a movement tag, and the weapon tag hold), and a
+            # tracker that the action does not take back at its exit (not a status of the action).
+            f"<Action Name='Test_Sprint'><ActivationCondition><And><IfAbilityActive AbilityName='Passive_Test_Sprint'/>"
+            f"<Or><IfMannequinTag TagName='ForwardNav'/><IfMannequinTag TagName='BackNav'/></Or><Not><IfMannequinTag TagName='Dodging'/></Not>"
+            f"<IfMannequinTag TagName='Warhammer'/></And></ActivationCondition><Activities><ModifyStatusEffects><Default>"
+            f"<EffectsToApplyOnEnter><EffectId EffectId='WarHammer_Shockwave_Stun'/><EffectId EffectId='PotionHeal'/></EffectsToApplyOnEnter>"
+            f"<EffectsToRemoveOnExit><EffectId EffectId='WarHammer_Shockwave_Stun'/></EffectsToRemoveOnExit></Default></ModifyStatusEffects>"
             f"</Activities></Action></Actions></ActionList>").encode()
 
 
@@ -235,7 +244,7 @@ def valid_values(document: dict, case: str) -> list[str]:
     """@return The values of the valid document that are not correct."""
     wrong = []
     statuses = {row[0]: row for row in document["statusEffects"]}
-    if document["format"] != 4:
+    if document["format"] != 5:
         wrong.append(f"the format {document['format']}")
     potion = statuses.get("PotionHeal")
     if potion is None or potion[9] != {"Health": 400.0, "TickRate": 1.0, "EffectCategories": "SurvivalPotion"}:
@@ -272,8 +281,14 @@ def valid_values(document: dict, case: str) -> list[str]:
                   ["playeractions_ability_test", "Ability_Test_Slam", "WarHammer_Spell_Shockwave", [], ["Upgrade_Test_Big"]]]
     if document.get("actionSpells") != selections:
         wrong.append(f"the action spells {document.get('actionSpells')}")
-    if document.get("actionNodes") != [["playeractions_ability_test", ["Upgrade_Test_Big", "Upgrade_Test_Small", "Upgrade_Test_Tiny"]]]:
+    if document.get("actionNodes") != [["playeractions_ability_test", ["Passive_Test_Sprint", "Upgrade_Test_Big", "Upgrade_Test_Small",
+                                                                       "Upgrade_Test_Tiny"]]]:
         wrong.append(f"the action nodes {document.get('actionNodes')}")
+    sprint = [["node", "Passive_Test_Sprint", False], ["tag", "Dodging", True], ["tag", "Warhammer", False]]
+    if document.get("actionStatuses") != [["playeractions_ability_test", "Test_Sprint",
+                                           [[sprint[0], ["tag", "ForwardNav", False], sprint[1], sprint[2]],
+                                            [sprint[0], ["tag", "BackNav", False], sprint[1], sprint[2]]], ["WarHammer_Shockwave_Stun"]]]:
+        wrong.append(f"the status actions (format 5) {document.get('actionStatuses')}")
     if document["statusCategories"] != [["Buff", {}], ["Haste", {"MoveSpeedMod": 0.4, "SprintSpeedMod": 0.4}]]:
         wrong.append(f"the status categories {document['statusCategories']}")
     if document.get("statMultipliers") != [["MoveSpeedMod", 0.0, 1.5], ["SprintSpeedMod", 0.0, 1.5]]:

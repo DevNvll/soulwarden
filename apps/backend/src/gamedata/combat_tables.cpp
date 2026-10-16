@@ -229,8 +229,8 @@ bool CombatTables::load(const std::string& path) {
     // explicit 0: the row cannot be critical), or null (a blank cell); format 1 (or no format) has a flag that cannot tell a
     // blank cell from an explicit 0.
     std::uint32_t format = 1;
-    if (document.contains("format") && (!read_whole(document["format"], format) || format < 1 || format > 2)) {
-        return fail("the format of the file is not 1 or 2");
+    if (document.contains("format") && (!read_whole(document["format"], format) || format < 1 || format > 3)) {
+        return fail("the format of the file is not 1, 2, or 3");
     }
     CombatData data;
     const json& constants = document["constants"];
@@ -487,6 +487,32 @@ bool CombatTables::load(const std::string& path) {
         if (std::find(seen.begin(), seen.end(), false) != seen.end()) {
             return fail("a damage row has no hit rule");
         }
+    }
+    // The status effects of the damage rows (format 3, stage 3.3b-M2): [[row, [status, ...], effectOnlyOnDamage], ...].
+    if (format >= 3) {
+        if (!document.contains("rowEffects") || !document["rowEffects"].is_array()) {
+            return fail("a file of format 3 has no list \"rowEffects\"");
+        }
+        std::vector<bool> seen(data.damageRows.size(), false);
+        for (const json& entry : document["rowEffects"]) {
+            if (!entry.is_array() || entry.size() != 3 || !entry[0].is_string() || !entry[1].is_array() || entry[1].empty() || !entry[2].is_boolean()) {
+                return fail("a status effect of a damage row does not have the form of the tool");
+            }
+            const auto row = rowIndex.find(lower(entry[0].get<std::string>()));
+            if (row == rowIndex.end() || seen[row->second]) {
+                return fail("the status effect of " + entry[0].get<std::string>() + " names no damage row of the file, or a row two times");
+            }
+            seen[row->second] = true;
+            DamageRow& damage = data.damageRows[row->second];
+            for (const json& status : entry[1]) {
+                if (!status.is_string() || status.get<std::string>().empty()) {
+                    return fail("a status effect of the damage row " + damage.id + " is not a text");
+                }
+                damage.effects.push_back(status.get<std::string>());
+            }
+            damage.effectOnlyOnDamage = entry[2].get<bool>();
+        }
+        data.rowEffects = true;
     }
     // The damage of a level difference: [[difference, part of the damage], ...].
     if (document.contains("levelDamage")) {

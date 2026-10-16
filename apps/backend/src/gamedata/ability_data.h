@@ -149,6 +149,24 @@ struct ActionNodes {
     std::vector<std::string> nodes;
 };
 
+/**
+ * An action of the player that has statuses while it is active (stage 3.3b-M2, file format 5): its activation condition tests a learned
+ * node (Guarded Sprint: Warhammer_Passve_SprintDmgRed gives WarHammer_Pass_SprintDmgReduction while the war hammer is in the hand and the
+ * character moves). The condition is an OR of ANDs of literals: a node (`tag` false) or a mannequin tag (`tag` true).
+ */
+struct ActionStatus {
+    struct Literal {
+        bool tag{false};
+        std::string name;
+        std::uint32_t id{0};
+        bool negated{false};
+    };
+    std::string list;
+    std::string action;
+    std::vector<std::vector<Literal>> terms;
+    std::vector<std::string> statuses;
+};
+
 /** The data as plain values: the content of the file, and what a test sets. */
 struct AbilityTables {
     std::vector<CooldownRow> cooldowns;
@@ -169,6 +187,8 @@ struct AbilityTables {
      */
     std::vector<ActionSpell> actionSpells;
     std::vector<ActionNodes> actionNodes;
+    /** The status actions of the player (stage 3.3b-M2, file format 5; empty for an older file). */
+    std::vector<ActionStatus> actionStatuses;
     /**
      * The number of the rows of the status tables of the game, with each duplicate: the length of the
      * status list of the client. Each status number is below it (code review of stage 3.3a, finding F10).

@@ -188,8 +188,11 @@ inline gamedata::AbilityTables kind_abilities() {
     tables.spells.push_back({"Spell_Ability_Lifestaff_Beacon_Projectile_Upgrade", 0.5F, 0.0F, 10.0F, 0, 0.0F, 5000.0F,
                              cells({}, {{"ManaCost", "LifeStaff_Beacon"}, {"SecondarySpellID", "Spell_Ability_Lifestaff_Beacon_AOE_Upgrade"},
                                         {"TargetTypes", "All"}})});
-    tables.spells.push_back({kBeacon, 3.0F, 0.0F, 0.0F, 0, 0.0F, 10000.0F, cells({}, {{"StatusEffects", statuses}})});
-    tables.spells.push_back({"Spell_Ability_Lifestaff_Beacon_AOE_Upgrade", 4.0F, 0.0F, 0.0F, 0, 0.0F, 10000.0F, cells({}, {{"StatusEffects", statuses}})});
+    // The cells ClearOnExit and ClearOnEnd of the rows of the game (stage 3.3b-M2: the area takes its statuses back by these cells).
+    tables.spells.push_back({kBeacon, 3.0F, 0.0F, 0.0F, 0, 0.0F, 10000.0F,
+                             cells({{"ClearOnExit", 1.0F}, {"ClearOnEnd", 1.0F}}, {{"StatusEffects", statuses}})});
+    tables.spells.push_back({"Spell_Ability_Lifestaff_Beacon_AOE_Upgrade", 4.0F, 0.0F, 0.0F, 0, 0.0F, 10000.0F,
+                             cells({{"ClearOnExit", 1.0F}, {"ClearOnEnd", 1.0F}}, {{"StatusEffects", statuses}})});
     tables.manaCosts.push_back({"IceMagic_IcePylon", kPylonCost});
     tables.manaCosts.push_back({"LifeStaff_Beacon", kBeaconCost});
     return tables;

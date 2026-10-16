@@ -43,7 +43,7 @@ extracted).
                                                   gear score, the limit above which the rate is
                                                   smaller, and the factor of the smaller rate)
 
-Output: {"format": 2,
+Output: {"format": 3,
 "constants": {"levelDamage": N, "gearScoreRate": N, "gearScoreInterval": N, "gearScoreMinimum": N,
 "gearScoreLimit": N, "gearScoreSmallerRate": N},
 "damageTypes": [[name, number, category], ...],
@@ -57,7 +57,10 @@ gearScoreRate, mastery], ...],
 "vitals": {"<vitals row id in lower case>": defense, ...},
 "impacts": [[id, x, y, z, decay, aiX, aiY, aiZ, aiDecay, fromAttacker], ...],
 "criticals": [[weapon id, critChance, critDamageMultiplier], ...],
-"hitRules": [[damage row id, canCrit, noHeadshot, noBackstab, dmgCoefHead, dmgCoefCrit], ...]}.
+"hitRules": [[damage row id, canCrit, noHeadshot, noBackstab, dmgCoefHead, dmgCoefCrit], ...],
+"rowEffects": [[damage row id, [status effect, ...], effectOnlyOnDamage], ...]}.
+Format 3 (stage 3.3b-M2): `rowEffects` has the column StatusEffect of each damage row that has one (a list with a comma), and
+EffectOnlyOnDamage (the status only after a hit with damage): the root of Gravity on the pull rows of the great axe (_RP2).
 Format 2 (code review of stage 3.3b-S5, finding F2): canCrit is true for the cell 1, false for an explicit 0 (the row cannot
 be critical: 42 rows of the game, the burst of Gravity Well, the trap of the musket), and null for a blank cell (an ordinary
 attack row). Format 1 had false for a blank cell and for an explicit 0.
@@ -301,6 +304,7 @@ def build_tables(sources: Sources) -> dict:
     damage_rows = []
     impacts = []
     hit_rules = []
+    row_effects = []
     row_ids: set[str] = set()
     # The rows of the damage table that have no damage type: a weapon can name one, and it then has no damage row.
     typeless: set[str] = set()
@@ -340,6 +344,13 @@ def build_tables(sources: Sources) -> dict:
             flags = [bool(cell(sheet, row, column)) for column in HIT_FLAG_COLUMNS]
             flags[0] = can_crit(sheet, row)
             hit_rules.append([name] + flags + factors)
+            # The status effects of the row (format 3, stage 3.3b-M2). A damage table with no column StatusEffect has none.
+            if "StatusEffect" in sheet.columns:
+                effects = [part.strip() for part in str(cell(sheet, row, "StatusEffect") or "").split(",") if part.strip()]
+                if effects:
+                    raw = cell(sheet, row, "EffectOnlyOnDamage") if "EffectOnlyOnDamage" in sheet.columns else None
+                    only = bool(raw) if isinstance(raw, (int, float)) else str(raw or "").strip().lower() in ("1", "true")
+                    row_effects.append([name, effects, only])
     if not damage_rows:
         raise Failure(f"the game copy has no damage table with the name {DAMAGE_TABLE}")
 
@@ -486,10 +497,10 @@ def build_tables(sources: Sources) -> dict:
             if value != 0.0:
                 level_damage.append([int(difference), value])
 
-    return {"format": 2, "constants": constants, "damageTypes": damage_types, "attributes": attributes,
+    return {"format": 3, "constants": constants, "damageTypes": damage_types, "attributes": attributes,
             "damageRows": damage_rows, "weapons": weapons, "items": items, "defenses": defenses, "vitals": vitals,
             "armor": armor, "levelDamage": sorted(level_damage), "impacts": impacts, "criticals": criticals,
-            "hitRules": hit_rules}
+            "hitRules": hit_rules, "rowEffects": row_effects}
 
 
 def print_found(tables: dict, texts: list[str]) -> None:

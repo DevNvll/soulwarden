@@ -213,7 +213,19 @@ backend. The tool of each system is also in the document of that system.
   window with its end before its start, a strike with no row, two tag sets with one key; the tool stops when a transition of a
   basic attack names an action that no action list has and when a damage clip has no row, and lists the tag sets with no graph,
   the transitions of other conditions, and the clips with a condition that is not an AND of node tests (`check_weapon_actions_tool.py`,
-  case MB9; [Combat and health](../systems/combat-and-health.md)), `travel-places.json` (the spirit shrines and the inns
+  case MB9; [Combat and health](../systems/combat-and-health.md)); from the code review of stage 3.3b-M1 (finding M1-R6) the tool
+  stops with status 1 and keeps the old file when a fragment that the graph reaches is not in the sources, when an animation
+  database is empty, when a transition goes to a fragment that the file does not have, and when a tag set has no strike (case
+  "incomplete" of `check_weapon_actions_tool.py`, RB6); from stage 3.3b-M2 the file has the format 2: the abilities of each
+  weapon (the action of the ability action list with its cooldown, its fragment, the fragments that it selects with
+  ChangeActionFragment and their node and perk conditions, and its spells with CastSpell and the mark of their condition), the
+  start windows of the abilities in each fragment (CanAttack_<ability>), the transitions inside an ability with their condition
+  as terms (a node, a perk, the attack input, the block press, a collision, the hits of the ability, the fragment that plays),
+  the shape of each row of a strike, the spell casts (CAGE-CastSpell) and the named marks of each fragment, and the uses of each
+  node (a row, a transition, a selection, a cast, a grit, a conditional of the movement); 12 tag sets, 208 fragments, 2,574
+  transitions, 243 strikes, 71 abilities, 9 spell casts, 0.4 MB; a clip with ExitTime -1 starts at the end of the clip before it,
+  and a fragment whose last clip loops has the length 0 (not known: the sprint attack of the hatchet had -0.6 s and the backend
+  refused the file; case "length after the clip before"); [Abilities](../systems/abilities.md)), `travel-places.json` (the spirit shrines and the inns
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
@@ -244,7 +256,7 @@ tools/gamedata/abilities.sh          # one time: ability data for the backend (c
 tools/gamedata/perks.sh              # one time: perk data for the backend (perk list, affixes, buckets, item perk places, consumables, equip load, swaps; 6.5 MB)
 tools/gamedata/spells.sh             # one time: spell entity data for the backend (slices, slots, delayed events, the values of format 2; 1.6 MB); needs an Oodle source
 tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots; 72 KB, 10 s); needs an Oodle source
-tools/gamedata/weapon-actions.sh     # one time: the attack graphs of the melee weapons for the backend (fragments, transitions, strikes, lengths; 0.07 MB, 5 s); needs an Oodle source
+tools/gamedata/weapon-actions.sh     # one time: the attack graphs and the abilities of the melee weapons for the backend (fragments, transitions, strikes, lengths; 0.4 MB, 5 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
@@ -252,6 +264,14 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage 3.3b-M2 changes four files. `weapon-actions.json` format 2 (the abilities and their fragments; the backend reads a file of
+  format 1 too, and then the six abilities of stage 3.3b-M2 are refused: `noRule`). `combat-tables.json` format 3 (`rowEffects`:
+  the StatusEffect of each damage row with EffectOnlyOnDamage, `[row, [status, ...], onlyOnDamage]`: the root of Gravity on the
+  pull rows `_RP2`; with an older file no row gives a status, and the plan of Maelstrom keeps its root). `spell-data.json` format
+  3 (`areaStatuses` of each slice: the AreaStatusEffectComponents, `[entity, detection, radius, [status, ...], removeOnExit,
+  targets]`: the fortify in the well of Unyielding). `ability-data.json` format 5 (`actionStatuses`: the actions of the action
+  lists that give statuses while a condition of nodes and tags holds, `[list, action, terms, [status, ...]]`: Guarded Sprint).
+  Write the four files again with their tools. The other files of the tools are equal to the files of stage 3.3b-M1.
 - Stage 3.3b-M1 adds `weapon-actions.json`. The backend of this stage reads no older form of it; with no file it uses the rule of
   stage 3.2a for the melee hits. The other files of the tools are equal to the files of stage 3.3b-S6.
 

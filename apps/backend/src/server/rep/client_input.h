@@ -165,6 +165,8 @@ struct InputStep {
      * stage 3.3b-M1): a dodge window of the fragment of a basic attack ends the attack.
      */
     bool dodge{false};
+    /** The block press came ("block_press_virtual", bit 484; stage 3.3b-M2): a transition of an ability on IfInput block_press_virtual. */
+    bool blockPress{false};
     std::vector<InputContact> contacts;
 };
 

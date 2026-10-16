@@ -78,6 +78,11 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   bounce; the penetration depth of 0.2 m of the bow has no known use). A wall or the ground first: the projectile ends with
   no hit. The damage number goes to the client of the caster; each observer of the creature gets its health and its
   reaction (the common hit path).
+- A shield of an enemy of the shooter (stage 3.3b-M2; [Spell entities](spells.md): the shield of Maelstrom with Absorb). The
+  first point of the segment of a step in the sphere of a shield of an enemy of the shooter (`Spells::absorbs`; a creature and a
+  character are enemies, two characters are not: `World::hostile`) ends the projectile there before a creature or a wall
+  behind it, with the end `absorbed` and no hit. The shooter is the spell entity of a spell projectile or the caster. Today no
+  projectile of a creature exists: a shield ends no projectile in a live game (test case GH11 tests the sphere).
 - The head of a creature (stage 3.3b-S5, `head_contact`, protocol notes 4.30). A hit of a projectile is a headshot when the
   line of the projectile at the body meets the head volume of the creature: the line from one radius of the body capsule
   before the point of the hit to one radius of the head volume and the hit tolerance (`projectile_rules::kHitTolerance`,

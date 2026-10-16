@@ -21,6 +21,7 @@ and the stop are in [World and sessions](world-and-sessions.md).
 | The spell data of the game (the slices, their slots, their events, the values of format 2) | `tools/gamedata/spells.sh` (`spells.py`), `gamedata/spell_data.h`, [Game data](../development/game-data.md), test cases SP1, SP8, SB1, SB10 |
 | The cost of the spells | the due list of `Spells`, test cases SP7, SB8 |
 | A live check of a slice record before its code: the probe entity | `tools/world probe`, `World::make_probe`, `server/http/dev_routes.cpp` |
+| The spells of stage 3.3b-M2: the shield of Maelstrom, the ground of Mighty Gavel, the fortify of Clear Out, the fortify in the well of Unyielding | `Abilities::cast_spell_at`, `Spells::absorbs`, `Spells::aura_step`, `SpellRequest::areaStatuses`, test cases GH8, GH10, GH11, GH12 |
 
 ## Rules
 
@@ -31,8 +32,15 @@ and the stop are in [World and sessions](world-and-sessions.md).
   (the entity, the actor, and the character id), its role, its position, its spell row, and its start and end on the world
   clock. It has no character, no account, and no session (rules MP-1 to MP-4).
 - The role (`SpellRole`) selects the rules of the spell: `area` (the vortex of Gravity Well), `summon` (the Pylon), `trap`
-  (the trap of the musket), `aura` (the Beacon). The abilities system gives the role from the plan of the cast (a decision
-  of an agent: the data has the components, and each role uses the values of its components).
+  (the trap of the musket), `aura` (the Beacon), and from stage 3.3b-M2 `shield` (the projectile shield of Maelstrom) and
+  `visual` (a picture with no rule of the server: the ground of Mighty Gavel). The abilities system gives the role from the
+  plan of the cast, or from the spell row for a spell of an action, a fragment, or a rule (a decision of an agent: the data
+  has the components, and each role uses the values of its components).
+- The statuses of an area leave a friend at its exit only with ClearOnExit of the spell row, and each friend at the end only
+  with ClearOnEnd (stage 3.3b-M2; game data: the Beacon and Sacred Ground have both; the fortify of Clear Out has neither,
+  and its status keeps its 4 s). An area of a slice component (an AreaStatusEffectComponent with m_removeOnExit) takes its
+  statuses at the exit and at the end. A status row with no duration (BaseDuration -1) stays while the friend is in the
+  area (`Spells::give_member`).
 - A summon, a trap, and an aura need the values of their slice (spell data of format 2). With no spell data, or with a file
   of format 1 (a summon with no AutoSpell, a trap with no detection volume), the cast makes no entity: the summon pays
   nothing, and it holds no cooldown (test case SB10). The vortex works with no data (the times of the ability
@@ -76,6 +84,26 @@ and the stop are in [World and sessions](world-and-sessions.md).
 - A new spell entity needs, in this sequence: a live check of its record with a probe (the smallest record, the fields,
   the delayed events, the stop), its rows in the spell data, its request from its system, a test case with two sessions,
   and a live video.
+
+### The spells of stage 3.3b-M2
+
+- The shield of Maelstrom with Absorb (`Spell_Upgrade_GreatAxe_Maelstrom_ProjectileConsume`, role `shield`; the slice
+  `spell_projectile_block_maelstrom`): the action of Maelstrom casts it at its start (a CastSpell of the action with the node
+  condition). It follows its caster for its Duration (1,125 ms). A projectile whose shooter is an enemy of the caster (a
+  creature: `World::hostile`) ends at the first point of its segment in the sphere of the shield (Radius 2 m, its center 1 m
+  above the feet of the caster: CastHeight 1) with the end `absorbed` ([Projectiles](projectiles.md); `Spells::absorbs` looks
+  only at the shields near the segment). The client shows only the spin of the action (live check I1): the shield is an entity
+  of the server. Open: no creature of the backend shoots, thus no removal shows live.
+- The ground of Mighty Gavel (`WarHammer_Spell_MightyGavel`, role `visual`): the fragment of the action casts it at 0.638 s
+  (CAGE-CastSpell) at the caster, on the ground. It has no rule of the server: its slice has no offense, and the hit of the
+  ability is the strike of the fragment. The slice ends it (8 s in the live run).
+- The fortify of Clear Out (`WarHammer_Spell_ClearOut_Fortify`, role `aura`): the rule Power Cleaner casts it at a hit of
+  Clear Out ([Passive rules](passive-rules.md)). It follows its caster for 100 ms and gives `WarHammer_ClearOut_FortifyBuff`
+  (4 s) to each friend in 6 m; the status keeps its time after the end of the spell (no ClearOnExit, no ClearOnEnd).
+- The fortify in the well (Unyielding): the slice of the upgraded vortex has an AreaStatusEffectComponent (spell data of format
+  3: `areaStatuses`; the friends, 4 m, `Status_Upgrade_Greataxe_GravityWell_ArmorInWell`, m_removeOnExit). The vortex gives the
+  status to each friend in 4 m (also the caster), takes it at the exit, and takes it from each friend at its end (test case
+  GH12 with two sessions).
 
 ### The vortex of Gravity Well (area, stage 3.3b-S2a)
 

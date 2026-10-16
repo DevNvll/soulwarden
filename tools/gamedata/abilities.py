@@ -45,7 +45,7 @@ the list of the CRC values of all rows of all status tables, in the unsigned ord
 duplicate (the list of the client: live check L5 of stage 3.3a, 4,517 rows of the supported
 build). A duplicate id has the first position.
 
-Output: {"format": 4, "statusRows": N,
+Output: {"format": 5, "statusRows": N,
 "counts": {"cooldowns": N, "statusEffects": N, "spells": N, "manaCosts": N, "staminaCosts": N, "abilityCosts": N,
 "abilityRows": N, "statusCategories": N, "statMultipliers": N},
 "cooldowns": [[id, time, minTime], ...],
@@ -57,7 +57,14 @@ Output: {"format": 4, "statusRows": N,
 "statMultipliers": [[id, min, max], ...],
 "actionSpells": [[action list, action, spell, [node, ...], [node, ...]], ...],
 "actionNodes": [[action list, [node, ...]], ...],
-"actionSpellsNotExported": [[action list, action, spell, cause], ...]}.
+"actionSpellsNotExported": [[action list, action, spell, cause], ...],
+"actionStatuses": [[action list, action, [[[kind, name, negated], ...], ...], [status, ...]], ...]}.
+Format 5 (stage 3.3b-M2): `actionStatuses` has each action of the player lists that applies statuses while it is active
+(ModifyStatusEffects: EffectsToApplyOnEnter and the same status in EffectsToRemoveOnExit) and whose activation condition tests a
+learned node: the condition as an OR of ANDs of
+literals (kind "node": IfAbilityActive; kind "tag": IfMannequinTag), and the statuses. An action whose condition has a test of a
+different kind is not exported. The backend gives the statuses while the condition holds (Guarded Sprint: the war hammer in the hand
+and a movement).
 `cells` has the other cells of the row that are not empty and not 0 (a number, or a text).
 
 The tool writes no file (status 1) when a table type is not in the game copy, when a table does
@@ -486,6 +493,7 @@ def build_data(sources: Sources) -> dict:
                 if status.lower() not in statuses:
                     raise Failure(f"the ability {entry[0]} names the status {status} ({column}), which the status tables do not have")
     action_spells, action_nodes, action_skipped = read_action_lists(sources, spells)
+    action_statuses = read_action_statuses(sources)
 
     # The status categories (stage 3.3b-S1): the ValueLimits of each category ("MoveSpeedMod:0.4,SprintSpeedMod:0.4").
     categories: dict[str, list] = {}
@@ -522,18 +530,24 @@ def build_data(sources: Sources) -> dict:
 
     if not cooldowns:
         raise Failure("the cooldown tables have no row")
-    data = {"format": 4, "statusRows": len(all_crcs),
+    # A status of an action names a row of the status tables (else the tool stops).
+    for entry in action_statuses:
+        for status in entry[3]:
+            if status.lower() not in statuses:
+                raise Failure(f"the action {entry[1]} of {entry[0]} applies the status {status}, which the status tables do not have")
+    data = {"format": 5, "statusRows": len(all_crcs),
             "counts": {"cooldowns": len(cooldowns), "statusEffects": len(statuses), "spells": len(spells),
                        "manaCosts": len(mana_costs), "staminaCosts": len(stamina_costs), "abilityCosts": len(ability_costs),
                        "abilityRows": len(ability_rows), "statusCategories": len(categories),
                        "statMultipliers": len(multipliers), "actionSpells": len(action_spells),
-                       "actionNodes": len(action_nodes), "actionSpellsNotExported": len(action_skipped)},
+                       "actionNodes": len(action_nodes), "actionSpellsNotExported": len(action_skipped),
+                       "actionStatuses": len(action_statuses)},
             "cooldowns": sorted(cooldowns.values()), "statusEffects": sorted(statuses.values(), key=lambda entry: entry[1]),
             "spells": sorted(spells.values()), "manaCosts": sorted(mana_costs.values()),
             "staminaCosts": sorted(stamina_costs.values()), "abilityCosts": sorted(ability_costs.values()),
             "abilityRows": sorted(ability_rows.values()), "statusCategories": sorted(categories.values()),
             "statMultipliers": sorted(multipliers.values()), "actionSpells": action_spells, "actionNodes": action_nodes,
-            "actionSpellsNotExported": action_skipped}
+            "actionSpellsNotExported": action_skipped, "actionStatuses": action_statuses}
     return data
 
 
@@ -558,6 +572,61 @@ def condition_tests(element, negated: bool, tests: list[tuple[str, bool]]) -> bo
         elif has_test:
             return False
     return True
+
+
+def condition_terms(element, negated: bool = False) -> list | None:
+    """@return An activation condition as an OR of ANDs of literals [kind, name, negated] (kinds: node, tag), or None for a test of a
+    different kind."""
+    if element.tag == "Not":
+        children = list(element)
+        return condition_terms(children[0], not negated) if len(children) == 1 else None
+    if element.tag in ("And", "Or", "ActivationCondition"):
+        parts = [condition_terms(child, negated) for child in element]
+        if any(part is None for part in parts):
+            return None
+        if (element.tag != "Or") != negated:
+            terms: list = [[]]
+            for part in parts:
+                terms = [left + right for left in terms for right in part]
+            return terms
+        return [term for part in parts for term in part]
+    if element.tag == "IfAbilityActive" and element.get("AbilityName", "").strip() and element.get("External", "").lower() != "true":
+        return [[["node", element.get("AbilityName").strip(), negated]]]
+    if element.tag == "IfMannequinTag" and element.get("TagName", "").strip():
+        return [[["tag", element.get("TagName").strip(), negated]]]
+    return None
+
+
+def read_action_statuses(sources: Sources) -> list:
+    """@return The status actions of the player lists (format 5, stage 3.3b-M2): [list, action, terms, statuses] for each action that
+    applies statuses on its enter and whose activation condition tests a learned node (only nodes and mannequin tags)."""
+    found: list = []
+    for path in sources.paths(ACTION_FOLDER, ACTION_SUFFIX):
+        stem = path.rsplit("/", 1)[-1][:-len(ACTION_SUFFIX)]
+        if not stem.startswith(ACTION_PREFIX):
+            continue
+        root = read_xml(sources, path, "the folder of the player actions")
+        if root is None:
+            continue
+        for action in root.iter("Action"):
+            activation = action.find("ActivationCondition")
+            activities = action.find("Activities")
+            if activation is None or activities is None:
+                continue
+            # The statuses of the action while it is active: applied on its enter and removed on its exit (a tracker that stays is
+            # not such a status).
+            applied = {effect.get("EffectId", "").strip() for modify in activities.findall("ModifyStatusEffects")
+                       for enter in modify.iter("EffectsToApplyOnEnter") for effect in enter.iter("EffectId")}
+            removed = {effect.get("EffectId", "").strip() for modify in activities.findall("ModifyStatusEffects")
+                       for leave in modify.iter("EffectsToRemoveOnExit") for effect in leave.iter("EffectId")}
+            statuses = sorted((applied & removed) - {""})
+            if not statuses:
+                continue
+            terms = condition_terms(activation)
+            if not terms or not any(literal[0] == "node" and not literal[2] for term in terms for literal in term):
+                continue
+            found.append([stem, action.get("Name", ""), terms, statuses])
+    return found
 
 
 def read_action_lists(sources: Sources, spells: dict[str, list]) -> tuple[list, list]:

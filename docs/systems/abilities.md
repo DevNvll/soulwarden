@@ -26,6 +26,9 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 | The perks of an ability (Sundering Shockwave, Insatiable Gravity Well, Refreshing Move) | [Gear and perks](gear-and-perks.md), `Abilities::perk_burst`, `Abilities::reduce_weapon_cooldowns`, test case IZ5 |
 | The pull and the push of an ability, the dash of Charge, the counter of Riposte (stage 3.3b-S4) | [Forced movement](forced-movement.md), `CasterMotion`, `Abilities::motion_allowance`, `Abilities::countered`, test cases FM6, CM1, CM2, RC1, RC2 |
 | The heals of the life staff (stage 3.3b-S6): Divine Embrace, Sacred Ground, the aim and its confirm, the target of a heal | `Abilities::plan` (`HealPlan`), `Abilities::confirm`, `Abilities::heal_target`, `Abilities::cast_heal`, `Abilities::heal_source`, [Combat and health](combat-and-health.md) (the heal path), test cases HE1 to HE4, HE11 |
+| The fragment of an ability in the sequence (stage 3.3b-M2): Reap, Execute, Whirlwind, Mighty Gavel, Armor Breaker, Clear Out, and the other abilities of the great axe and the war hammer | `Abilities::press_entity` (`CastPlan::sequence`), `AttackSequences::start_ability`, `Abilities::strike_hit`, `Abilities::fragment_event`, `Abilities::follow_strike`, `Abilities::row_effects`, [Combat and health](combat-and-health.md) (the sequence), test cases GH1 to GH9 |
+| The spells of an action, of a fragment, and of a rule (stage 3.3b-M2): the shield of Maelstrom, the ground of Mighty Gavel, the fortify of Clear Out | `Abilities::cast_spell_at`, `Abilities::rule_spell`, [Spell entities](spells.md), test cases GH8, GH10, GH11 |
+| The hits of a cast for the client (IfAbilityNumHits; the exit of Whirlwind) | `Abilities::count_hit`, `CombatState::abilityHits`, `server/rep/states/skill_states.cpp` (slot 46), protocol notes 4.22, test case GH19 |
 
 ## Rules
 
@@ -61,7 +64,7 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   0. A cost id with no row costs nothing: the client pays nothing for it (static proof). A
   press with less mana than the cost is refused (`noMana`): no cast, no cooldown. An accepted
   cast pays through the one mana path (`Abilities::change_mana`), which the mana potion uses
-  too. The six abilities of the build have no cost: the spells of the war hammer name
+  too. The abilities of the great axe and the war hammer have no cost: the spells of the war hammer name
   `SpecialAttack`, which the mana table does not have, and the spells of the great axe name no
   cost id. The stamina has no model in the backend (the stamina rows of the two weapons are 0).
 - The mana regeneration (stage 1.3b): a spend starts it after `ManaRegenDelay` (0 s), or after
@@ -201,15 +204,72 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   refused (`locked`, case RW8). A click of a different session confirms nothing (rule MP-10). A press with no session
   (`tools/world cast`, a character with no client) casts at once.
 - The target of a direct heal (`Abilities::heal_target`). The self cast: the caster. A click: the nearest friend
-  (`World::friendly`) that lives, can gain health (code review of stage 3.3b-S6, finding S6-R3), is in the range of the spell
+  (`World::friendly`) that lives, can gain health (code review of stage 3.3b-S6, finding S6-R3: its health is below its
+  maximum; code review of stage 3.3b-M1, finding M1-R7, case RB7: the heal base, the outgoing factor, and the received factor of
+  the target are above 0, thus Disease and the arena debuff can make a friend no target), is in the range of the spell
   (CastDistance 25 m), and in sight (chest to chest); with no such friend the caster (the self form of the spell). A caster at its
   full health is no target: no heal and no payment. The data excludes a target that has the status of the heal
   (TargetStatusEffect with NotEqual of the ability row). No target: no heal and no payment. The point of the click is
   not decoded: the nearest friend, not the friend under the aim (a decision of an agent).
 - The heal source of a cast (`Abilities::heal_source`): the healer, its weapon and its gear score, the spell, and the
   ability table. The heal path computes the amount from it ([Combat and health](combat-and-health.md)).
-- An accepted press (a cast, or the aim of an aimed ability) ends the basic attack of the character (stage 3.3b-M1,
-  `Combat::end_sequence`): the client leaves the fragment of its attack for the action of the ability.
+- An accepted press of an ability with no fragment in the sequence (a cast, or the aim of an aimed ability) ends the basic
+  attack of the character (stage 3.3b-M1, `Combat::end_sequence`): the client leaves the fragment of its attack for the
+  action of the ability.
+- The fragment of an ability (stage 3.3b-M2; game data: `weapon-actions.json` of format 2, [Game data](../development/game-data.md)).
+  An ability of the great axe or the war hammer whose weapon has its action in the file plays the fragment of that action in
+  the sequence of the character (`CastPlan::sequence`; world/attack_sequence.h, [Combat and health](combat-and-health.md)):
+  - The hits are the strikes of the fragment: a contact in the window of a strike (one input step early, two late, and the
+    due time on the world clock) is a hit with the row of the clip for the nodes of the character. A creature takes one hit of
+    each strike. The contact phases of the plan go; their effects (the knockdown of Wrecking Ball) come at each hit of a
+    strike. The area phases, the shot, and the spell of the plan stay (Shockwave, Path of Destiny, Gravity Well).
+  - The reach of a strike: the extent of the shape of the row (the offset, the half height, and the radius of a capsule; half
+    the diagonal of a box) and 1 m of the arm, not less than 3.5 m, and the tolerance 1.5 m (`Combat::strike_reach`; a decision
+    of an agent). Reap: 3.5 m; with The Collector 6.25 m (game text: 5 m and 8 m, with the dash of the action).
+  - The fragment: the fragment of the action, or the last selection of the action (ChangeActionFragment) whose nodes and perks
+    the character has: Fatal Attraction (`Ability_GreatAxe_JudgementsReach_Upgrade`), Unending Winds
+    (`Ability_GreatAxe_Whirlwind_Upgrade`), the artifact perk of Whirlwind (`_Upgrade_Artifact`). Executioner plays its base
+    fragment: no action selects `Ability_GreatAxe_Executioner_Upgrade` (live check I1).
+  - The start of the fragment (`AttackSequences::start_ability`): at rest at the press. In a fragment that plays, at the first
+    step in the next 20 steps at which the action of the ability can start: in an instant window of a transition to it at once,
+    in a buffered window at the end of the window, at the mark CanTransition, or at the end of the fragment. With none, the
+    press is refused (`casting`): the client does not play it. The timed phases of the plan come that much later (`CastPlan::delay`).
+  - The transitions inside an ability have the conditions of the action lists as terms: a learned node, a perk ability, the
+    attack input, the block press (`block_press_virtual`, bit 484: the swing of Charge with Unpredictable Strike, live check of
+    stage 3.3b-M2), the hits of the cast (IfAbilityNumHits: the exits of Whirlwind with Unending Winds), and the fragment that
+    plays. A collision of the client (`character_collided`: the uppercut of Charge) is not visible to the server: a contact that
+    fits a strike of the next fragment shows it, and the fragment starts at that step (a hit with the row `GreatAxe_Engage1`,
+    live run of stage 3.3b-M2).
+  - The abilities of the other weapons (Riposte of the rapier) and an ability whose action is not in the file keep the
+    contact phases of their plans. The six abilities of this stage (Reap, Execute, Whirlwind, Mighty Gavel, Armor Breaker,
+    Clear Out) have no plan of their own: with no file of format 2 their press is refused (`noRule`).
+- The pull of Reap (stage 3.3b-M2): a strike whose usable rows do no damage (`_Pull`, `_upgrade`, `_upgrade2` with the factor
+  0; `_RP2` with 0.0001) gets no contact from the client (live check I1). The server tests its shapes at the time of the
+  strike (`Abilities::follow_strike`): each creature that a strike of the cast hit, and each creature in a shape of a usable row
+  in front of the direction of the press (the capsule from its offset minus its half height and its radius to its offset
+  plus them, its radius to each side, and 0.5 m for the body, 2 m up or down) in sight of the caster. Each creature gets the
+  row of the shape nearest to it (1.2 m, 2.7 m, 4.3 m): the impact of the row (1 m, 2 m, 3 m of the test data; 2 m, 4 m, 6 m
+  in the game data) and the status of the row. A decision of an agent from the data and the live checks.
+- The status of a damage row (the column StatusEffect of the combat tables, format 3; `Abilities::row_effects`): the root of
+  Gravity on the pull rows `_RP2` (`Status_Passive_GreatAxe_Gravity_Root`, 0.33 s, then its OnEndStatusEffect
+  `_Root_Hold`, a root of 0.4 s). EffectOnlyOnDamage: only after damage above 0. ApplicationCooldown of the status row: one
+  application for each creature in that time (1 s). The live run of stage 3.3b-M2 showed the two statuses on a wolf.
+- The hits of a cast for the client (stage 3.3b-M2; `Abilities::count_hit`, `CombatState::abilityHits`). For an ability whose
+  row has TrackHitCount (Whirlwind), the press sets the count to 0 and each accepted hit of a strike adds 1. The owner gets
+  them in the ability state (slot 46, fields `hitDataNumHits` and `hitDataAbilityIds`; protocol notes 4.22). The client tests
+  them for IfAbilityNumHits: with no count it leaves the spin of Unending Winds at 1.933 s also after four hits; with the
+  count it plays the seven spins (live proof of stage 3.3b-M2). A refused contact adds nothing.
+- The spells of a cast (stage 3.3b-M2; `Abilities::cast_spell_at`). The action casts a spell with no mark at its start (the
+  shield of Maelstrom with Absorb, `Spell_Upgrade_GreatAxe_Maelstrom_ProjectileConsume`). A fragment casts a spell at its
+  time (CAGE-CastSpell: the ground of Mighty Gavel, `WarHammer_Spell_MightyGavel` at 0.638 s), and an action casts a spell at
+  a mark; both only for the six abilities of this stage (the plans of stage 3.3a make the areas of their spells). The role of
+  the spell comes from its row: a friend area with statuses is an aura, a friend spell at its owner is a shield, each other
+  spell is a picture with no rule of the server ([Spell entities](spells.md)).
+- A rule of a node can cast a spell (CastSpell; [Passive rules](passive-rules.md)): Power Cleaner casts
+  `WarHammer_Spell_ClearOut_Fortify` at a hit of Clear Out (`Abilities::rule_spell`): the fortify of the friends in 6 m.
+- The rows of the abilities (stage 3.3b-M2; [Passive rules](passive-rules.md)): Execute gives BaseDamage 0.5 against a target
+  below 50 % health (its ability row); Armor Breaker gives ArmorPenetration 0.35 at each hit of its fragment (its row has
+  InAction `Ability_WarHammer_ArmorBreaker` and InSequence `Ability_WarHammer_BlockBreaker`, the fragment of its action).
 - A new ability needs, in this sequence: a live check of its keys, its contacts, and its
   shots (protocol notes 4.22: L1, L3, L7), its rule in `Abilities::plan` with the rows and the
   spells of the data, a test case, and a live video. Do not make a message of the server for
@@ -221,6 +281,7 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 tools/world cooldowns NAME           # the cooldowns that run, with the seconds to their end
 tools/world cooldowns NAME reset     # each cooldown of the character ends
 tools/world node NAME greataxe Ability_Greataxe_Charge Upgrade_Greataxe_Maelstorm_Rng   # assign nodes (one point each)
+tools/world node NAME greataxe Upgrade_Greataxe_Charge_DmgPerDistance Upgrade_Greataxe_Charge_SwingAttack   # the swing of Charge
 tools/world bar NAME greataxe 0 Ability_Greataxe_Charge   # put an ability on place 0 (Q) of the bar of a weapon
 tools/world creature effect 2c WarHammer_Shockwave_Stun 5   # give a creature a status effect of the data for 5 s
 tools/world creature effect 2c knockdown                    # a knockdown (2 s) or a stagger (1 s)
@@ -290,3 +351,16 @@ tools/gamedata/abilities.sh          # write ability-data.json to the game data 
 - `tools/gamedata/abilities.sh` with no argument writes into the common game data folder: the
   next start of the user then has the file. For a test, give it an output path and give the
   run its folder with `SOULWARDEN_GAMEDATA_DIR`.
+- The pull of Reap has no contact in the input of the client (stage 3.3b-M2): look for the line "moves creature" of the
+  backend log, not for a hit claim. With Fatal Attraction the first strike reaches 3.65 m (its shape is shorter than the
+  shape of the pull): a wolf at 4.3 m gets the pull with no hit of the first strike.
+- The exit of Whirlwind is a test of the client (IfAbilityNumHits): with no TrackHitCount in the row of Whirlwind (an
+  ability data file of an older tool), the client leaves the spin at 1.933 s although the server accepts each hit.
+- The swing of Charge (Unpredictable Strike) needs the block press between 0.1 s and 0.4 s of the charge:
+  `tools/hx 'key 0x52' 'wait 230' 'mousedown right' 'wait 80' 'mouseup right'` (the key of Charge on place R). The node
+  needs Frenzied Momentum first (`Upgrade_Greataxe_Charge_DmgPerDistance`).
+- Wrecking Ball gave no contact in the street of the test place (the setup of stage 3.3b-M2, a wolf 4 m in front, the body
+  turned to the camera), also with the backend of stage 3.3b-M1: the leap lands at the wolf, and the client reports no
+  contact. Open; stage 3.3a had a contact at 0.8 s in a different place.
+- The time of day of the game changes fast: the street of the test place is dark at some times. Make a video again when it
+  is day.

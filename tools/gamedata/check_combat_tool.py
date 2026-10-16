@@ -120,7 +120,11 @@ class MadeUpSources:
         if mode != "missing-row":
             damage.append({"DamageID": "Heavy", "WeaponCategory": "Sword", "AttackType": "Heavy",
                            "DamageType": "Slsh" if mode == "unknown-type" else "Slash", "DmgCoef": 1.2, "AddDmg": 0.0,
-                           "AttackRuneCharge": 1.604, "HitRuneCharge": 0.401, **heavy_impact, **hit_cells})
+                           "AttackRuneCharge": 1.604, "HitRuneCharge": 0.401, **heavy_impact, **hit_cells,
+                           # The status effects of a row (format 3, stage 3.3b-M2): a list with a comma, only after damage.
+                           "StatusEffect": "Test_Root,Test_Slow", "EffectOnlyOnDamage": True})
+            damage[0]["StatusEffect"] = ""
+            damage[0]["EffectOnlyOnDamage"] = False
             if mode == "no-impact-column":
                 damage[1].pop("ImpactDecayRate_AI")
             if mode == "no-hit-column":
@@ -216,7 +220,7 @@ def main() -> int:
                        and tables["armor"]["ratingExponent"] == 1.2 and tables["levelDamage"] == [[6, 0.2]]
                        and tables["impacts"] == [["Light", 0.0, -1.5, 0.0, 0.8, 0.0, -2.0, 0.0, 0.0, True]]
                        and tables["criticals"] == [["Sword", 0.07, 1.3]]
-                       and tables["format"] == 2
+                       and tables["format"] == 3 and tables["rowEffects"] == [["Heavy", ["Test_Root", "Test_Slow"], True]]
                        and tables["hitRules"] == [["Light", None, False, False, 1.3, 0.0], ["Heavy", False, False, False, 1.3, 0.0]])
         if correct and mode == "known-absent-row":
             correct = json.loads(target.read_text(encoding="utf-8"))["weapons"][0][9] == ""

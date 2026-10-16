@@ -427,9 +427,10 @@ button on "Confirm").
   writes the angles of a hit from behind and the head volume of each creature model (from
   its skeleton): with older files no hit is critical.
 - `tools/gamedata/weapon-actions.sh` makes the weapon actions
-  (`~/.local/share/soulwarden/gamedata/weapon-actions.json`, 0.07 MB, stage 3.3b-M1): the attack graph of each
-  melee weapon of the game (the light chain, the charges, the swings and the thrusts with their damage rows and
-  their times, the dodge windows, the length of each animation; protocol notes 4.32). It reads the weapon
+  (`~/.local/share/soulwarden/gamedata/weapon-actions.json`, 0.4 MB, stage 3.3b-M1, format 2 from stage 3.3b-M2): the attack
+  graph of each melee weapon of the game (the light chain, the charges, the swings and the thrusts with their damage rows and
+  their times, the dodge windows, the length of each animation; protocol notes 4.32), and the abilities of each weapon (the
+  animation of each ability, the animations that its nodes select, its spells, and its branches; protocol notes 4.33). It reads the weapon
   tables, the animation databases, the action lists, and the animation files of the game copy (it needs an
   Oodle library). `--find TEXT` prints the graph of the weapons with a text. Without the file the backend
   starts, and each melee hit uses the light or the heavy row of its weapon.
@@ -638,6 +639,23 @@ button on "Confirm").
   yet: the counter animation of your character, the other abilities of the rapier, the
   abilities of the other weapons, grit, and the perks of an item that change an ability (the
   passive nodes: stage 3.3b-S5).
+- The other abilities of the great axe and the war hammer (stage 3.3b-M2, protocol notes 4.33,
+  `docs/systems/abilities.md`). Reap, Execute, Whirlwind, Armor Breaker, Mighty Gavel, and Clear
+  Out work as the client plays them: each hit is a strike of the animation of the ability in the
+  game data, with its damage row and its time. Reap hits, then pulls the creatures in front of
+  you to you (farther with The Collector; Fatal Attraction adds its spin attack; Gravity roots
+  the pulled creatures). Execute does 1.5 times the damage to a creature below half health.
+  Whirlwind spins four times; with Unending Winds it spins on, to seven spins, while each spin
+  hits. Armor Breaker ignores 35 percent of the armor. Mighty Gavel shows its ground. Clear Out
+  pushes the creatures 3.8 m away; Power Cleaner then gives you and each friend in 6 m a fortify
+  for 4 s. Charge with Unpredictable Strike swings when you press the right button in its run.
+  An ability can start in a swing of a basic attack in the windows of the game data; a press
+  that the swing does not take does nothing. The nodes of the two trees act now, but the nodes
+  that need grit, a block, or stamina: Unyielding (the armor of the friends in the vortex),
+  Absorb (a shield at you in Maelstrom; no creature shoots yet), Blood Lust (a creature in front
+  of your camera in 14 m), and Guarded Sprint (less damage while you run with the war hammer).
+  `tools/gamedata/weapon-actions.sh`, `combat.sh`, `spells.sh`, and `abilities.sh` must make
+  their files again for this stage.
 - Spell abilities (stage 3.3b-S2b, protocol notes 4.28, `docs/systems/spells.md`). With the
   spell data and the projectile data of this stage, the key Q uses Ice Pylon of the ice
   gauntlet, Traps of the musket, and Beacon of the life staff when they are on the bar. The

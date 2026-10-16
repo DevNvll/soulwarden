@@ -326,7 +326,7 @@ void consecutive_damage(const Options&) {
     check(near(second.damage, 0.1F), "the second heavy attack meets it: BaseDamage 0.1 (the first hit counted)");
 }
 
-/** RV9 (F9): Blood Lust (Ultimate_Greataxe_Reaper) with its tracking spell of the shape Box (Length 7). */
+/** RV9 (F9, stage 3.3b-M2): Blood Lust (Ultimate_Greataxe_Reaper) with its tracking spell of the shape Box (Length 7) in front of the look. */
 void box_tracking(const Options&) {
     PassiveShop shop;
     auto tables = passive_tables();
@@ -349,13 +349,26 @@ void box_tracking(const Options&) {
     shop.host.progression.set(progression);
     shop.hold("TestAxe");
     shop.learn(rule);
-    (void)shop.wolf(0, 2);
+    // The walker of the case reports the yaw 1.5708 (the look to the west): the box is from the character to 14 m west, 1.25 m to
+    // each side. The creatures do not come to the character (they ignore it), so that they stay at their places.
+    shop.world().creatures().behavior().set_ignored(kCharacterA, true);
+    (void)shop.wolf(-3, 3); // Beside the box: 3 m to the side of the look.
+    (void)shop.wolf(3, 0);  // Behind the character.
     shop.pass(1);
+    const bool outside = shop.find(buff) != nullptr;
+    world::Entity* ahead = shop.wolf(-4, 0); // In the box: 4 m in front of the look.
+    shop.pass(1);
+    const bool inside = shop.find(buff) != nullptr;
+    shop.world().remove_creature(ahead->id); // A fixture: the creature goes from the world.
+    shop.pass(1);
+    const bool gone = shop.find(buff) == nullptr;
     const world::RuleView view = shop.world().passives().describe_row(rule, &shop.host.abilities.ability_row(rule)->cells, world::RuleOrigin::node);
-    const bool applied = shop.find(buff) != nullptr;
-    note("Blood Lust: listed applied " + std::to_string(view.applied) + " (" + view.note + "), status " + std::to_string(applied));
-    check(!view.applied || applied, "the rule with a box volume is listed as not applied, or it gives the status for the creature in the box");
-    check(!view.applied && view.note.find("Box") != std::string::npos, "the list names the shape Box as the cause");
+    note("Blood Lust: listed applied " + std::to_string(view.applied) + " (" + view.note + "), status with the wolves beside and behind "
+         + std::to_string(outside) + ", with a wolf ahead " + std::to_string(inside) + ", status gone after it " + std::to_string(gone));
+    check(view.applied, "stage 3.3b-M2: the rule with a box volume is listed as applied");
+    check(!outside, "a wolf at the side of the box and a wolf behind the character are not in the box: no status");
+    check(inside, "a wolf 4 m in front of the look is in the box: the status of Blood Lust");
+    check(gone, "the wolf in front goes: the status goes");
 }
 
 /** RV10 (F10): a rule whose target status (OtherApplyStatusEffect) is not a row of the data. */
@@ -408,7 +421,7 @@ std::vector<Case> review_crit_cases() {
             {"RV6", "review of 3.3b-S5, F6: OnHitTaken checks MyHealthPercent before its status and its cooldown", taken_condition},
             {"RV7", "review of 3.3b-S5, F7: a projectile that stops at the body is not a headshot", head_after_body},
             {"RV8", "review of 3.3b-S5, F8: the damage of NumConsecutiveHits comes from the second attack", consecutive_damage},
-            {"RV9", "review of 3.3b-S5, F9: a tracking spell of the shape Box is listed as not applied", box_tracking},
+            {"RV9", "review of 3.3b-S5, F9: a tracking spell of the shape Box counts the creatures in front of the look", box_tracking},
             {"RV10", "review of 3.3b-S5, F10: a missing target-status row is refused (loader and ability tool)", missing_target_status},
             {"RV11", "review of 3.3b-S5, F11: a Pylon with no Vitals component is not made and not paid", no_vitals_component},
             {"RV12", "review of 3.3b-S5, F12: the creature tool stops for a cut angle field (check_hit_facts_tool.py)", cut_angle}};

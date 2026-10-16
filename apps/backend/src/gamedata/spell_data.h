@@ -115,6 +115,20 @@ struct SpellTimeline {
     float destroyAfter{-1.0F};
 };
 
+/**
+ * One AreaStatusEffectComponent of a spell slice (format 3, stage 3.3b-M2): the statuses that the entities of a kind in the detection
+ * volume of the component get, and lose at their exit (the fortify of the friends in the well of Unyielding).
+ */
+struct SpellAreaStatus {
+    std::string entity;
+    std::string detection;
+    float radius{0.0F};
+    std::vector<std::string> statuses;
+    bool removeOnExit{true};
+    /** m_detectedTargetType: 1 the friends (the well), 2 the enemies. */
+    std::uint32_t targets{0};
+};
+
 /** A row of the base vitals tables that a spell slice names (format 2). */
 struct SpellVitalsRow {
     std::string id;
@@ -166,6 +180,8 @@ struct SpellSlice {
     std::vector<SpellOffense> offenses;
     std::vector<SpellDetectionEvent> detectionEvents;
     std::vector<SpellTimeline> timelines;
+    /** Format 3 (stage 3.3b-M2): the AreaStatusEffectComponents. */
+    std::vector<SpellAreaStatus> areaStatuses;
 
     /**
      * @return The delay of the event that starts at the init and whose target destroys the entity group (the end of the

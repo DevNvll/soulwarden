@@ -111,6 +111,11 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   leave of the world). The time of a caster effect is the
   SelfApplyStatusEffectDurations of its ability row (a number, or a list in the sequence of the statuses), else the
   duration of the status row (finding F10, test case RS10).
+- Stage 3.3b-M2: a status action of the action lists (Guarded Sprint: `WarHammer_Pass_SprintDmgReduction` while the character
+  moves with the war hammer in its hand) and the box of Blood Lust are statuses with no end while their condition holds (the
+  same source "ability"; [Passive rules](passive-rules.md)). A status of an area with no duration (BaseDuration -1: the fortify
+  in the well of Unyielding) has no end while the friend is in the area, and the area takes it ([Spell entities](spells.md)).
+  The fortify of Clear Out (`WarHammer_ClearOut_FortifyBuff`, 4 s) comes from the spell of the rule Power Cleaner.
 - The status state of a player (protocol notes 4.24). The owner gets the full map (group 1, field 0) with each status
   on the wire, an empty lightweight map, and an empty tray. An entry of the full map alone gives the HUD icon of a row
   with ShowInUITray, its countdown, its stack count (×2), its visual effect, and its values in the character sheet
