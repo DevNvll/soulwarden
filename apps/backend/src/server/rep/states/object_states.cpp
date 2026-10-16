@@ -41,7 +41,9 @@ constexpr float kHeightMax = 2000.0F;
 constexpr unsigned kCurrentState = 0;
 constexpr unsigned kPermissionRule = 4;
 
-void write_rotation(hub::Writer& writer, std::array<float, 4> q) {
+} // namespace
+
+void write_place_rotation(hub::Writer& writer, std::array<float, 4> q) {
     // A quaternion and its negative are one rotation: the backend sends the form with w not negative (no bit 0x40).
     if (q[3] < 0.0F) {
         for (float& value : q) {
@@ -72,7 +74,10 @@ void write_rotation(hub::Writer& writer, std::array<float, 4> q) {
     }
 }
 
-} // namespace
+std::array<float, 4> yaw_rotation(float yawDegrees) {
+    const float half = yawDegrees * 3.14159265358979F / 360.0F;
+    return {0.0F, 0.0F, std::sin(half), std::cos(half)};
+}
 
 hub::Bytes position_in_the_world_state(const state::WorldPosition& position, const std::array<float, 4>& rotation) {
     StateWriter state(kGroups);
@@ -81,7 +86,7 @@ hub::Bytes position_in_the_world_state(const state::WorldPosition& position, con
     place.u32(std::bit_cast<std::uint32_t>(position.y));
     const float clamped = std::clamp(position.z, kHeightMin, kHeightMax);
     place.u16(static_cast<std::uint16_t>(std::lround((clamped - kHeightMin) / (kHeightMax - kHeightMin) * 65535.0F)));
-    write_rotation(state.field(0, kPlaceRotation), rotation);
+    write_place_rotation(state.field(0, kPlaceRotation), rotation);
     return state.finish();
 }
 

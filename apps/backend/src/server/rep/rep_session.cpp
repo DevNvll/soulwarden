@@ -1457,6 +1457,9 @@ void RepSession::observe_interaction(const InputStep& step) {
         return; // The client sends its request in each input: the same request is no new request.
     }
     m_interactionBlock = step.interaction;
+    // The release of the client: a use that the world ended is over on both sides now (finding AR-R8). A later cancel of its
+    // reference with no use is the cancel of a new attempt (an early cancel), not the echo of the old one.
+    std::erase_if(m_seenRequests, [](const SeenRequest& seen) { return seen.serverEnded; });
     if (!step.interaction) {
         // The client ended its request (the close of the journal of a lore page: live check L1).
         m_world.interactions().request_ended(m_id);
@@ -1488,11 +1491,11 @@ void RepSession::observe_interaction(const InputStep& step) {
         m_earlyCancels.erase(mark);
     }
     // The session took a request of this reference: a later cancel of it with no use is a late cancel (no mark).
-    std::erase_if(m_seenRequests, [&](const auto& seen) { return seen.first == reference || now >= seen.second; });
+    std::erase_if(m_seenRequests, [&](const SeenRequest& seen) { return seen.reference == reference || now >= seen.keep; });
     if (m_seenRequests.size() >= kEarlyCancelMost) {
         m_seenRequests.erase(m_seenRequests.begin());
     }
-    m_seenRequests.emplace_back(reference, now + kEarlyCancelKeep);
+    m_seenRequests.push_back(SeenRequest{reference, now + kEarlyCancelKeep, false});
     world::InteractionRequest request;
     request.object.actor = block.actor;
     request.object.group = block.group;
@@ -1519,11 +1522,18 @@ void RepSession::observe_interaction(const InputStep& step) {
                kTypeInteractionResult, accepted ? 1U : 2U);
 }
 
+void RepSession::server_ended_use() {
+    for (SeenRequest& seen : m_seenRequests) {
+        seen.serverEnded = true;
+    }
+}
+
 void RepSession::interaction_cancelled() {
     // The call comes from the world (a command, the death of the character).
     if (!m_inWorld || m_closing) {
         return;
     }
+    server_ended_use();
     send_message(kTypeCancelCurrentInteraction, cancel_interaction_body(m_observer.own()));
     log::write("rep: the world ended the interaction of the character: message \"cancel current interaction\" (type %u) sent",
                kTypeCancelCurrentInteraction);
@@ -1813,14 +1823,14 @@ void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
     // answer of the client to 3746, changes nothing (research K7).
     const bool ended = m_world.interactions().client_cancel(m_id, cancel->reference);
     const world::WorldClock::time_point now = m_clock.now();
-    std::erase_if(m_seenRequests, [&](const auto& seen) { return now >= seen.second; });
+    std::erase_if(m_seenRequests, [&](const SeenRequest& seen) { return now >= seen.keep; });
     const bool late = !ended && std::any_of(m_seenRequests.begin(), m_seenRequests.end(),
-                                            [&](const auto& seen) { return seen.first == cancel->reference; });
+                                            [&](const SeenRequest& seen) { return seen.reference == cancel->reference; });
     // One cancel for each attempt (code review of stage 3.4f-B, finding CS-R3): the cancel that ended the use, or the late cancel (the
     // echo of a use that the server ended), takes the request of the attempt. A cancel of a next attempt of the same reference then finds
     // no request: it is early, and its mark stops the delayed press of that attempt.
     if (ended || late) {
-        std::erase_if(m_seenRequests, [&](const auto& seen) { return seen.first == cancel->reference; });
+        std::erase_if(m_seenRequests, [&](const SeenRequest& seen) { return seen.reference == cancel->reference; });
     }
     if (!ended && !late && m_messageDatagram) {
         // A cancel with no use, and no request of its reference in the last kEarlyCancelKeep: its press can still come in an earlier
@@ -1850,6 +1860,7 @@ void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
 }
 
 void RepSession::end_input_lock(const char* cause) {
+    server_ended_use();
     // The order of the client: the cancel ends a conversation, whose cutscene then sends its
     // end (the session answers it), and the answer of the cutscene frees the input at once.
     send_message(kTypeCancelCurrentInteraction, cancel_interaction_body(m_observer.own()));

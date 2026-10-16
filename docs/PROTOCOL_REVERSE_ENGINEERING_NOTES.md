@@ -6072,8 +6072,67 @@ and [Status effects](systems/status-effects.md)):
 - The tick code of the original server: the sum of the terms, the potency, the stacks, and the armor of a tick are project rules.
 - The count of the hits of a strike (one for each character) and the clamp to CastDistance: project rules.
 - The other area spells of the data (the self-destructs, the shield of the officer, the shockwave, the casts with CastDistance 0):
-  their new rules are not in this stage ([Spell entities](systems/spells.md)).
-- The heals and the buffs of a creature (stage 3.4f-D), the summons and the encounters (3.4f-E), the block, and grit.
+  their new rules are not in this stage ([Spell entities](systems/spells.md)). Stage 3.4f-D (4.40) adds the shockwave and the three
+  casts with CastDistance 0.
+- The heals and the buffs of a creature (stage 3.4f-D, 4.40), the summons and the encounters (3.4f-E), the block, and grit.
+
+### 4.40 The heals and the buffs of a creature, and the areas at the caster (live proof of stage 3.4f-D; static proof for the client code and the game data; the triggers are project rules)
+
+Stage 3.4f-D. Research: `~/Games/soulwarden/work/research/creature-ranged.md` (Q4, part D). Live checks, static files, and the live
+proof: `~/Games/soulwarden/work/evidence/creature-support/implement/` (`live/LIVE-NOTES.txt`, `static/`, `proof/`, `RESULT.md`). Code:
+`world/creatures.h` (`give_status`, `heal`, the due list of the effects), `world/entity.h` (`CreatureEffect`, `Creature::damage_factor`,
+`speed_factor`), `world/behavior.h` (`think_status`, `place_rule`, `area_range`), `gamedata/creature_data.h` (`CreatureStatusAction`,
+`StatusMark`, `CreatureSlice::lowHealth`), `server/rep/states/spell_state.cpp` (the rotation), `tools/gamedata/creature_behavior.py`
+(`read_status_actions`), `tools/gamedata/creature_data.py` (`marker_statuses`, the low-health part). Documents: [Creatures](systems/creatures.md),
+[Creature behavior](systems/creature-behavior.md), [Spell entities](systems/spells.md). Test cases CRH1 to CRH9.
+
+**The wire contracts** (no new state; live checks D-L1 to D-L3 with the backend of stage 3.4f-C, before the code):
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The heal of a creature is a vitals state (type 15) at the Vitals slot of its slice with the new HealthAmount and `healthChangeFlags` bit 0 (4.14): the bar of the name plate goes up, the same as it goes down. No heal number for an observer. | Live D-L1 (health steps of 4.5 percent by command), live proof P1 (8 ticks of 819.1 of a Cleric). | — |
+| The icon of a heal or a buff of a creature is an entry of the compact map of the status state of the creature (4.22) for a row with ShowInNameplates: `AI_InqCleric_Rekindle` (a white plus with its countdown), `AI_Inquisitor_RampantFlame`, `AI_Evil_Knight_Wolf_Haste` (a runner). The end of the entry takes the icon. | Live D-L1, D-L2, live proof P1 to P3. | — |
+| The actions of the status actions are scope records of the movement state (4.14): `InqCleric_Rekindle_Self` (a red glow on the Cleric), `Howl` (the head up and a white ring on the ground: the variant Evil_Knight). | Live D-L1, D-L2. | — |
+| A strike at the caster (`Ghost_Plagued_PlagueNova`, `Legion_Signifer_CorruptedBlast`, `Undead_Officer_AnchorSlam`, `AI_EvilKnight_Shockwave`): the Spell state at slot 1 with the caster at the place of the caster, and the delayed event of the end of the window (0.5 s, 0.3 s, 0.3 s, 0.2 s). The orange cloud of the nova, the red and black blast, the dust of the slam, the golden wave. The same action with no record shows no cloud (a control). | Live D-L3 (probes), live proof P4, P5. | — |
+| The rotation of a creature area: fields 2 and 4 of the Spell state (and field 1 of the PositionInTheWorld state) have the direction of the caster: the header `03` (x and y are 0) and the u16 of z, for (0, 0, sin(yaw/2), cos(yaw/2)) with w not negative. Before stage 3.4f-D each spell had the identity `07`. The shockwave of the Evil Knight is a wave in one direction. | Live D-L3 (the identity rotation sent the wave along the world axis), case CRH5. | Rotation reader `0x5CEA140` → `0x87B250`; the request rotation `0x676AAF0` |
+
+**The client code and the game data** (static):
+
+| Fact | Source | Evidence |
+| --- | --- | --- |
+| The place of an AI cast: with no ranged attack data in the row (RangedAttackProfile and RangedAttackName), the target loop of UseAllAvailableTargets keeps the place of the caster (the aim point `0x5C35450` runs only with ranged attack data); AIAimAtTarget false: the caster, or a shot of the ranged attack data (`0x5BFBAF0`). The rotation of the request is the rotation of the caster. The four spells of this stage have no ranged attack data; the six of stage 3.4f-C have `AI_Ranged_AOE`. | `0x679DBB0` (read again in stage 3.4f-D), `0x676AAF0` | Static (decompile of `0x679DBB0`; STATIC-CAST.md 1.4, 1.7) |
+| The self heal of the Inquisitor Cleric: the action `InqCleric_Rekindle_Self` (action list `inquisitor_cleric_combat`) puts `AI_InqCleric_Rekindle` on the Cleric itself at the mark `Inquisitor_Cleric_Rekindle_Self` (a CAGE-Named event at 0.633 s of the fragment, `npc_damned_subadb_inquisitor_anims.adb`). The row: 8 s, TickRate 1, HealthModifierPercent 0.045, OnTickStatusEffect `AI_Inquisitor_RampantFlame` with KeepOnTickEffectOnEnd, StackMax 1, ShowInNameplates. The task of the behavior tree that starts the action is not in the game files. | Game data | Static (action list, ADB, status table) |
+| The Howl of the Evil Knight hound: the action `Howl` (action list `wolf_combat`) puts `AI_Evil_Knight_Wolf_Haste` on the hound at the mark `ApplyHaste` (1.2 s, only the variant with the tag Evil_Knight of `npc_wolf_anims.adb`; the Grey Wolf plays the damage variant). The row: 10 s, DMG 0.1 of each damage type (DMGStandard 0.1), MoveSpeedMod 0.2, SprintSpeedMod 0.2, the category Buff, ShowInNameplates. | Game data | Static |
+| `m_lowHealthPercentThreshold` is a field of the Vitals data of a slice (with `m_subscriberUpdateThrottleDuration`; the Cleric 0.15, the hound 0.85); the target curve `healally` has the input LowHealth (a test, with InCombat and TargetAllegiance). | Reflection `0x3B6F550`; `sharedassets/ai/targeting/healally.curveconfiglist` | Static (field read of the slices) |
+| The dispel of a row: RemoveStatusEffects and RemoveStatusEffectCategories (`VoidGauntlet_NullChamber_Nullify_AoE`: Buff; `ResetAI`: ClearOnReset). | Game data | Static (status tables) |
+
+**The rules** (the source of each rule is in [Creatures](systems/creatures.md) and [Creature behavior](systems/creature-behavior.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The status of a creature | One path (`Creatures::give_status`): the effect of the row until its end (the later end for the same row again), the heal of its ticks through `Creatures::heal`, the DMG<type> part of a hit of the creature, the strongest haste times the strongest slow, the icon of a row with ShowInNameplates, the dispel of the row; the effects end at the death of the creature. A due list of the ends and of the ticks. |
+| The status action | Before the other attacks when ready: a heal at the low-health part of the slice or below it, a buff that the creature does not have; 20 s after the start of the last one; the statuses at the marks of the data, on the creature itself; a different action before the mark (a stun, a knockdown) gives none. Project rules: the behavior tree is not in the game files. |
+| The place of a cast | The client rule of `0x679DBB0` with the clip and the row; at the caster: the Radius of the row is the distance of the cast; the rotation of the caster in the record. |
+
+**The live proof** (stage 3.4f-D, `proof/` of the evidence folder):
+
+| Check | Result |
+| --- | --- |
+| P1 A Cleric heals itself (`p1-cleric-heal.mp4`) | A Sentinel Cleric (level 68) at 12 percent in a fight starts `InqCleric_Rekindle_Self`; 8 ticks of 819.1 (4.5 percent of 18,203.1): 2,184 to 8,737; the icons of the heal and of RampantFlame; the heal icon goes at 8 s; Holy Pillar casts between. |
+| P2 The Howl and its hits (`p2-hound-buff.mp4`) | A Vorongard Hound (level 25) howls when it takes the character as its target; the icon of the haste for 10 s; its bite does 32.9 with the buff and 29.9 after its end (1.1 times); it howls again 20.9 s after the first howl. |
+| P3 The dispel (`p3-dispel.mp4`) | `VoidGauntlet_NullChamber_Nullify_AoE` (a command) ends the haste: the icon goes. |
+| P4, P5 Areas at the caster (`p4-plague-nova.mp4`, `p5-shockwave.mp4`) | A Fenwallow Plaguegeist casts the nova at its place 3.2 m from the character: the orange cloud, 526.8 Nature damage; a Vorongard Crusher casts the shockwave at its place: 108.7 Strike damage. |
+
+**Not known, not done** (stage 3.4f-D):
+
+- The behavior tree of the original server (when a creature heals or buffs itself, and its repeat): project rules.
+- The heal of a different creature (`InqCleric_Rekindle` with the beam and the Direct spell `Inquisitor_Cleric_Rekindle` at a friend of the
+  AI, `InqCleric_Rekindle_Area`): the friends of a creature and the records of the beam are not checked; not in this stage.
+- The other actions of the data that put statuses on their creature (523 actions of the creature action lists, `static/` of the
+  evidence folder; for example the potion of the Damned villagers, which also sets the tag Frenzy of other attack variants): only the
+  list `statusActions` (2 actions) has a live check.
+- The self-destructs (`Ghost_Charred_SelfDestruct`, `Invasion_Bomber_SelfDestruct`): the death of the caster is a DamageSelf hit of the
+  fragment, and the rewards of a creature that kills itself have no rule in the data or the client.
 
 ## 5. Open items
 

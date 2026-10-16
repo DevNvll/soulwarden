@@ -505,6 +505,38 @@ WorldCommand creature_area(const std::string& character, const Arguments& argume
     };
 }
 
+WorldCommand creature_status_action(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                    service::HttpResponse& refusal) {
+    const auto id = creature_id(arguments);
+    if (!id) {
+        refusal = message(400, "give creature=ID (a creature with a status action) and, if you want, action=NAME");
+        return {};
+    }
+    std::string action;
+    if (arguments.has("action")) {
+        const auto text = arguments.text("action");
+        if (!text || text->empty() || text->size() > 128) {
+            refusal = message(400, "action=NAME must be the name of an action");
+            return {};
+        }
+        action = *text;
+    }
+    return [character, id = *id, reach, action](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
+        world::Entity* creature = target.creatures().find(id);
+        if (creature == nullptr) {
+            return message(404, "the world has no creature with this id");
+        }
+        if (!target.creatures().behavior().command_status_action(*creature, action)) {
+            return message(400, "the creature starts no status action: it has no such status action, it is dead, or it holds");
+        }
+        log::write("world: command: creature %s starts its status action %s", id_text(id).c_str(), action.empty() ? "(the first)" : action.c_str());
+        return creature_reply(world::CreatureResult{world::CreatureError::none, creature});
+    };
+}
+
 WorldCommand move_creature_anchor(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                   service::HttpResponse& refusal) {
     const auto id = creature_id(arguments);

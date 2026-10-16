@@ -297,6 +297,21 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage 3.4f-D changes `spell-data.json` (still format 4) and `creatures.json` (still format 3). `spells.py`: a volume whose own entity
+  has an activation event at the init has the time of the earliest activation of it or of a parent, also when the slice marks it active
+  at the start (code review of stage 3.4f-C, finding AR-R5: 11 volumes of the build change, among them the mage area, 0 to 1 s); a size
+  field of a shape (the radius of a sphere or a cylinder, the height of a cylinder), m_center, and m_localTM that is there must be a
+  finite 32-bit float of its size (finding AR-R6, cases `area-cut-radius`, `area-cut-height`, `area-cut-center` of
+  `check_spell_tool.py`): else the tool stops and the old file stays. The loader of the backend refuses a file of format 4 whose volume
+  time does not agree with the delayed events of its entity, and the creature areas need format 4 (finding AR-R4). The creature tool
+  stops for a cast of a supported area spell with a malformed event or a broken join (finding AR-R7, cases `review-area-*` of
+  `check_creature_tool.py`), but for the authored cases of the retail data in `AREA_EXCEPTIONS` of `creature_behavior.py` (15: the
+  ghosts with the shared action list of the plague nova, the two Dynasty summoners); `areasLeftOut` has only the casts of spells and
+  actions with no support. `creatures.json` has the area attacks of 10 spells (the list `areaSpells`: the four casts at the caster of
+  stage 3.4f-D added; 22 slices, 177 kinds, 539 spawn points), the status actions (`statusActions` of a slice and the list
+  `statusActions` of `creature_slices.json`: 3 slices, 18 kinds, 91 spawn points), and `lowHealth` (119 slices), with their counts.
+  3,101 of the 3,848 kinds attack (747 do not, 7,997 spawn points). The backend of stage 3.4f-D refuses the `spell-data.json` of stage
+  3.4f-C as a whole (the volume of the mage area): write both files again with the tools of the stage.
 - Stage 3.4f-C changes `spell-data.json` (format 4) and `creatures.json` (still format 3). `spell-data.json` format 4: each detection
   volume has its shape (`sphere`, `cylinder`, `none`, or `other`: the QueryShape of the volume), its shape radius, its height, its
   offset above the root of the slice, its start, and its end (the earliest deactivation at the init of its entity or of a parent; -1:

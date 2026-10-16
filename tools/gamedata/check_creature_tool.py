@@ -233,18 +233,18 @@ def check_areas() -> int:
                             "added": 0.0, "charge": 0.1}}
     values = {"SpellName": "Test_Strike", "AIAimAtTarget": "true", "ProjectileSpeed": "100", "AILeadTargetMaxAngle": "20",
               "AIAimMaxAngle": "45", "AIMissMaxDistance": "2", "UseAllAvailableTargets": "true"}
-    cast, cause = behavior.area_cast(0.933333, values, rows)
+    cast, cause, _ = behavior.area_cast(0.933333, values, rows)
     report("cast-strike", cast is not None and cast["shape"] == "strike" and cast["factor"] == 0.85 and cast["wire"] == 9
            and cast["lead"] is False and cast["aimSpeed"] == 100.0 and cast["miss"] == [0.0, 2.0] and cast["allTargets"] is True,
            f"{cast}, cause {cause!r}")
     other = {"test_strike": {**rows["test_strike"], "table": "OtherTable"}}
-    cast, cause = behavior.area_cast(0.9, values, other)
+    cast, cause, _ = behavior.area_cast(0.9, values, other)
     report("cast-other-table", cast is None and "damage table of the slice" in cause, f"cause {cause!r}")
-    cast, cause = behavior.area_cast(None, values, rows)
+    cast, cause, _ = behavior.area_cast(None, values, rows)
     report("cast-nonfinite-time", cast is None and "finite" in cause, f"cause {cause!r}")
-    cast, cause = behavior.area_cast(1.2, {**values, "SpellName": "Test_Bomb", "AILeadTarget": "true", "ProjectileSpeed": "x"}, rows)
+    cast, cause, _ = behavior.area_cast(1.2, {**values, "SpellName": "Test_Bomb", "AILeadTarget": "true", "ProjectileSpeed": "x"}, rows)
     report("cast-malformed-aim", cast is None and "aim value" in cause, f"cause {cause!r}")
-    cast, cause = behavior.area_cast(1.2, {**values, "SpellName": "Test_Bomb", "AILeadTarget": "true"}, rows)
+    cast, cause, _ = behavior.area_cast(1.2, {**values, "SpellName": "Test_Bomb", "AILeadTarget": "true"}, rows)
     report("cast-status", cast is not None and cast["shape"] == "status" and cast["lead"] is True and "factor" not in cast,
            f"{cast}, cause {cause!r}")
     return failures
@@ -373,7 +373,7 @@ def check_review_ranged(work: Path) -> int:
             self.paths = {} if state["case"] == "review-missing-asset" else {REVIEW_ASSET: REVIEW_ARROW}
 
     class ReviewBehavior(cb.Behavior):
-        def __init__(self, sources, folder, ranged_attacks, projectile_of, area_spells=None) -> None:
+        def __init__(self, sources, folder, ranged_attacks, projectile_of, area_spells=None, status_actions=None) -> None:
             self.sources = sources
             self.animations = cb.Animations(sources)
             self.ranged_attacks = ranged_attacks
@@ -384,7 +384,7 @@ def check_review_ranged(work: Path) -> int:
             self.tables = type("Tables", (), {"types": {"Thrust": (5, "Physical")},
                                               "ammo": {"test_arrow": {"id": "Test_Arrow", "slice": REVIEW_ARROW}}})()
 
-        def read(self, roots, controller, actions, slice_path="") -> dict:
+        def read(self, roots, controller, actions, slice_path="", markers=None) -> dict:
             rows = {} if state["case"] in ("review-missing-row", "review-other-action") else {
                 "test_row": {"ordinal": 0, "table": "TestBowDamageTable", "id": "Test_Row", "type": "Thrust", "factor": 0.35,
                              "added": 0.0, "charge": 0.0}}
@@ -438,6 +438,178 @@ def check_review_ranged(work: Path) -> int:
     return failures
 
 
+def check_status_actions() -> int:
+    """The checks of the status actions (stage 3.4f-D): the marks of an action list (creature_data.marker_statuses), the time of the mark in
+    the selected variant (creature_behavior.Behavior.read_status_actions), and the low-health part of a slice (read_creature_slice).
+    @return The number of failures."""
+    import xml.etree.ElementTree as ElementTree
+    import creature_behavior as cb
+    failures = 0
+
+    def report(case: str, passed: bool, detail: str) -> None:
+        nonlocal failures
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
+        failures += 0 if passed else 1
+
+    action = ElementTree.fromstring(
+        '<Action Name="InqCleric_Rekindle_Self" FragmentName="InqCleric_Rekindle_Self"><Activities>'
+        '<IfThenElse><IfCondition><IfMannequinMarker MarkerName="Rekindle_Self"/></IfCondition><ThenActivity><ModifyStatusEffects>'
+        '<Default><EffectsToApplyOnEnter><EffectId EffectId="Test_Rekindle"/></EffectsToApplyOnEnter></Default></ModifyStatusEffects>'
+        '</ThenActivity></IfThenElse>'
+        '<IfThenElse><IfCondition><And><IfMannequinMarker MarkerName="Other"/><IfMannequinTag TagName="X"/></And></IfCondition>'
+        '<ThenActivity><ModifyStatusEffects><Default><EffectsToApplyOnEnter><EffectId EffectId="Test_Other"/></EffectsToApplyOnEnter>'
+        '</Default></ModifyStatusEffects></ThenActivity></IfThenElse>'
+        '<ModifyStatusEffects><Default><EffectsToRemoveOnExit><EffectId EffectId="Test_Removed"/></EffectsToRemoveOnExit></Default>'
+        '</ModifyStatusEffects></Activities></Action>')
+    linked = cd.marker_statuses(action)
+    report("status-marker", linked == [("Rekindle_Self", ["Test_Rekindle"])],
+           f"{linked} (one IfMannequinMarker with EffectsToApplyOnEnter; not a condition with more parts, not a removal)")
+
+    def database(time: str) -> bytes:
+        return ('<AnimDB><FragmentList><InqCleric_Rekindle_Self><Fragment Tags="Staff"><AnimLayer><Blend ExitTime="0"/>'
+                '<Animation name="cast"/></AnimLayer><ProcLayer>' + f'<Blend ExitTime="{time}"/>'
+                '<Procedural type="CAGE-Named"><ProceduralParams><Name value="Rekindle_Self"/></ProceduralParams></Procedural>'
+                '</ProcLayer></Fragment></InqCleric_Rekindle_Self></FragmentList></AnimDB>').encode()
+
+    for case, time, expected in (("status-action", "0.633333", [[0, 1.53333, [[0.633333, ["Test_Rekindle"]]]]]),
+                                 ("status-action-nonfinite-mark", "nan", None)):
+        class AnimationSources:
+            def read(self, path, time=time):
+                return database(time) if path == "animations/test/cleric.adb" else None
+
+            def has(self, path):
+                return True
+
+        behavior = cb.Behavior.__new__(cb.Behavior)
+        behavior.animations = cb.Animations(AnimationSources())
+        behavior.status_actions = {"inqcleric_rekindle_self": "a check"}
+        behavior.status_left_out = {}
+        actions = [["InqCleric_Rekindle_Self", "InqCleric_Rekindle_Self", 468, False]]
+        try:
+            found = behavior.read_status_actions(actions, ["animations/test/cleric.adb"], {"staff"}, {"InqCleric_Rekindle_Self": linked},
+                                                 "slices/test/cleric.dynamicslice")
+        except cd.Failure as error:
+            found = f"stop: {error}"
+        passed = found == expected if expected is not None else isinstance(found, str) and "not a finite number" in found
+        report(case, passed, f"{found}")
+    behavior.status_left_out = {}
+    found = behavior.read_status_actions(actions, ["animations/test/cleric.adb"], {"staff"}, {}, "slices/test/cleric.dynamicslice")
+    report("status-action-no-mark", found == [] and sum(behavior.status_left_out.values()) == 1,
+           f"{found}, left out {behavior.status_left_out} (a listed action with no status at a mark of its action list)")
+
+    def roots(value: bytes) -> list:
+        transform = node(children=[node(cd.LOCAL_TRANSFORM_FIELD, b""), node(cd.PARENT_FIELD, cd.NO_ENTITY.to_bytes(8, "big"))])
+        vitals = node(children=[node(cd.LOW_HEALTH_FIELD, value)])
+        return [entity(0x44, [transform, vitals])]
+
+    for case, value, expected in (("low-health", struct.pack(">f", 0.15), 0.15), ("low-health-cut", b"\x01", None),
+                                  ("low-health-above-one", struct.pack(">f", 1.5), None)):
+        try:
+            entry = cd.read_creature_slice("slices/test/cleric.dynamicslice", (bytes([0x44]) * 16, 2), roots(value))
+            found = entry.get("lowHealth")
+        except cd.Failure as error:
+            found = f"stop: {error}"
+        passed = found == expected if expected is not None else isinstance(found, str)
+        report(case, passed, f"{found}")
+    return failures
+
+
+REVIEW_AREA_CASES = ("review-area-control", "review-area-nonfinite-time", "review-area-malformed-aim", "review-area-missing-row",
+                     "review-area-unsupported")
+REVIEW_SHAMAN_ADB = "animations/test/shaman.adb"
+
+
+def check_review_areas(work: Path) -> int:
+    """The cases of the finding AR-R7 of the code review of stage 3.4f-C (the writer of the tool with made-up casts): a cast of a supported
+    area spell with a malformed event or a broken join stops the tool, and the file stays; a cast of a spell with no support is a count.
+    @return The number of failures."""
+    import creature_behavior as cb
+    failures = 0
+    state = {"case": REVIEW_AREA_CASES[0]}
+    Sources.case = "none"
+
+    def animation() -> bytes:
+        case = state["case"]
+        time = "nan" if case == "review-area-nonfinite-time" else "1.2"
+        speed = "bad" if case == "review-area-malformed-aim" else "100"
+        spell = "Test_Other" if case == "review-area-unsupported" else "Test_Strike"
+        values = {"SpellName": spell, "AIAimAtTarget": "true", "ProjectileSpeed": speed, "AILeadTargetMaxAngle": "20",
+                  "AIAimMaxAngle": "45", "AIMissMinDistance": "0", "AIMissMaxDistance": "2", "UseAllAvailableTargets": "true"}
+        return ("<AnimDB><FragmentList><Shaman_Bomb><Fragment Tags=\"Bow\"><AnimLayer><Blend ExitTime=\"3.0\"/>"
+                "<Animation name=\"\"/></AnimLayer><ProcLayer>" + f"<Blend ExitTime=\"{time}\"/>"
+                "<Procedural type=\"CAGE-CastSpell\"><ProceduralParams>"
+                + "".join(f"<{key} value=\"{value}\"/>" for key, value in values.items())
+                + "</ProceduralParams></Procedural></ProcLayer></Fragment></Shaman_Bomb></FragmentList></AnimDB>").encode()
+
+    class AreaSources(Sources):
+        def read(self, path: str) -> bytes:
+            return animation() if path == REVIEW_SHAMAN_ADB else super().read(path)
+
+    class KnownSpells:
+        @staticmethod
+        def shape(name):
+            if name == "Test_Strike":
+                return {"spell": "Test_Strike", "shape": "strike", "table": "TestShamanTable", "row": "Test_Strike"}, ""
+            return None, "the record of the spell slice has no live check yet (creature_slices.json, areaSpells)"
+
+    class AreaBehavior(cb.Behavior):
+        def __init__(self, sources, folder, ranged_attacks, projectile_of, area_spells=None, status_actions=None) -> None:
+            self.sources = sources
+            self.animations = cb.Animations(sources)
+            self.area_spells = KnownSpells()
+            self.areas_left_out = {}
+            self.ranged_left_out = {}
+            self.tables = type("Tables", (), {"types": {"Lightning": (9, "Elemental")}})()
+
+        def read(self, roots, controller, actions, slice_path="", markers=None) -> dict:
+            rows = {} if state["case"] == "review-area-missing-row" else {
+                "test_strike": {"ordinal": 0, "table": "TestShamanTable", "id": "Test_Strike", "type": "Lightning", "factor": 0.85,
+                                "added": 0.0, "charge": 0.0}}
+            result = Behavior.read(self)
+            areas = self.read_areas(actions, [REVIEW_SHAMAN_ADB], {"bow"}, rows, slice_path)
+            if areas:
+                result["areas"] = areas
+            return result
+
+    tables = {"variants": {}, "bases": {1: {"id": "Check_Kind", "family": "Wildlife", "creatureType": "Solo", "healthMod": 1.0,
+                                           "damageMod": 1.0, "name": ""}},
+              "categories": {}, "levels": {18: (1000.0, 100.0, 180.0)}, "modifiers": {"Solo": (1.0, 1.0)}}
+    entries = [{"vitals": 1, "category": 0, "level": 18, "position": (1000.0, 1000.0, 50.0), "coatlicue": True, "override": False,
+                "encounter": False}]
+    for case in REVIEW_AREA_CASES:
+        state["case"] = case
+        target = work / f"{case}.json"
+        target.write_text(MARK, encoding="utf-8")
+        replacements = {"Sources": AreaSources, "Catalog": Catalog, "read_tables": lambda _: tables, "read_names": lambda _: {},
+                        "read_slice_lists": lambda: (set(), set()), "read_spawn_entries": lambda _: entries,
+                        "read_creature_slice": creature_slice, "read_ranged_attacks": lambda _: {}, "slice_assets": lambda _: {},
+                        "read_action_table": lambda *arguments: [["Shaman_Bomb", "Shaman_Bomb", 120, False]]}
+        errors = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            for name, value in replacements.items():
+                stack.enter_context(patch.object(cd, name, value))
+            stack.enter_context(patch.object(cd.creature_behavior, "Behavior", AreaBehavior))
+            stack.enter_context(patch.object(cd.height_maps, "Terrain", Terrain))
+            stack.enter_context(patch.object(sys, "argv", ["creature_data.py", str(target)]))
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+                status = cd.main()
+        text = target.read_text(encoding="utf-8")
+        kept = text == MARK
+        document = {} if kept else json.loads(text)
+        areas = sum(len(entry.get("areas", [])) for entry in document.get("slices", []))
+        left_out = document.get("counts", {}).get("areasLeftOut", {})
+        if case == "review-area-control":
+            passed = status == 0 and areas == 1
+        elif case == "review-area-unsupported":
+            passed = status == 0 and areas == 0 and sum(left_out.values()) == 1
+        else:
+            passed = status == 1 and kept and not (work / f"{case}.json.tmp").exists()
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, file {'kept' if kept else 'replaced'}, {areas} area attack(s), "
+              f"left out {left_out} {errors.getvalue().strip()[:160]}")
+        failures += 0 if passed else 1
+    return failures
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
@@ -484,6 +656,8 @@ def main() -> int:
     failures += check_ranged()
     failures += check_review_ranged(work)
     failures += check_areas()
+    failures += check_review_areas(work)
+    failures += check_status_actions()
     return 1 if failures else 0
 
 

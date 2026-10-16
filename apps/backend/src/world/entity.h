@@ -1,13 +1,17 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
+#include "gamedata/ability_data.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/spell_data.h"
 #include "state/creation_data.h"
@@ -478,6 +482,8 @@ struct CreatureMind {
      */
     WorldClock::time_point areaReady{};
     std::uint32_t nextArea{0};
+    /** The status actions of stage 3.4f-D: the time from which the creature can start its next status action (its heal, its buff). */
+    WorldClock::time_point statusReady{};
     /** Steps in sequence in which a different creature stood at the place of the next step of this one. */
     std::uint32_t blockedSteps{0};
 };
@@ -500,10 +506,25 @@ struct CreditEntry {
  * One status effect on a creature (stage 3.3a, world/abilities.h): a stun, a root, a slow, or a
  * weaken of an ability. The values come from the status row of the effect (game data); the
  * creature system keeps the effect until its end on the world clock (Creatures::apply_effect).
+ * Stage 3.4f-D: the heals and the buffs of a creature (a status action of its slice: the self heal of the Inquisitor Cleric, the Howl of
+ * the Evil Knight hound) are effects too: a heal at each tick of the row, the DMG<type> parts of the row, a haste.
  */
 struct CreatureEffect {
     /** The id text of the status row ("WarHammer_Shockwave_Stun"). */
     std::string status;
+    /** The status row (game data; stage 3.4f-D): its typed values (DMG<type>), its categories (a dispel), its tick. Null: none. */
+    const gamedata::StatusRow* row{nullptr};
+    /** The number of the effect in the creature system (stage 3.4f-D): the key of its entries of the due list. */
+    std::uint64_t serial{0};
+    /**
+     * The heal of one tick (stage 3.4f-D): Health plus HealthModifierPercent of the row times the maximum health, times the potency (the
+     * self heal of the Cleric: 0.045). The tick comes each `tickRate`, the first one at the next tick of the world (DelayInitialTick: one
+     * TickRate later; the rule of the statuses of a character). 0: no heal.
+     */
+    float healPart{0.0F};
+    float healFixed{0.0F};
+    std::chrono::milliseconds tickRate{0};
+    std::optional<WorldClock::time_point> nextTick;
     /** The number of the effect on the wire (gamedata::StatusRow::index). */
     std::uint16_t index{0};
     /** True: each observer gets the icon of the effect at the name plate of the creature. */
@@ -514,8 +535,10 @@ struct CreatureEffect {
     bool root{false};
     /** The factor of the speed of the creature (1: no slow). */
     float speed{1.0F};
-    /** The part of the damage of the creature that the effect adds (-0.1: a weaken of 10 percent). */
+    /** The part of the damage of the creature that the effect adds (-0.1: a weaken of 10 percent): DMGStandard of the row. */
     float damage{0.0F};
+    /** True: the row has a DMG<type> part (stage 3.4f-D): the part of a hit is the part of its type (Creature::damage_factor). */
+    bool typedDamage{false};
     /** The part of the armor of the creature that the effect adds (-0.05: a rend of a perk; stage 1.3b). */
     float armor{0.0F};
     /** The effect ends at the next hit that the creature takes (a stun of Shockwave). */
@@ -665,26 +688,28 @@ struct Creature {
         }
         return false;
     }
-    /** @return The factor of the speed of the creature: the strongest slow (a rule of this project). */
+    /**
+     * @return The factor of the speed of the creature: the strongest slow (a rule of this project), times 1 plus the strongest haste (stage
+     *         3.4f-D: the MoveSpeedMod 0.2 of the Howl of the Evil Knight hound; a decision of an agent: one haste counts, as one slow).
+     */
     [[nodiscard]] float speed_factor(WorldClock::time_point now) const {
-        float factor = 1.0F;
-        for (const CreatureEffect& effect : effects) {
-            if (now < effect.ends && effect.speed < factor) {
-                factor = effect.speed;
-            }
-        }
-        return factor < 0.0F ? 0.0F : factor;
-    }
-    /** @return The factor of the damage of the creature: 1 plus the sum of the weakens (not less than 0). */
-    [[nodiscard]] float damage_factor(WorldClock::time_point now) const {
-        float part = 0.0F;
+        float slow = 1.0F;
+        float haste = 1.0F;
         for (const CreatureEffect& effect : effects) {
             if (now < effect.ends) {
-                part += effect.damage;
+                slow = std::min(slow, effect.speed);
+                haste = std::max(haste, effect.speed);
             }
         }
-        return part < -1.0F ? 0.0F : 1.0F + part;
+        return std::max(slow, 0.0F) * haste;
     }
+    /**
+     * @return The factor of the damage of the creature for a hit of a damage type: 1 plus the sum of the parts of its effects, not less than
+     *         0. The part of an effect is the DMG<type> of its row (stage 3.4f-D, the rule of the damage of a character: the DMG part of the
+     *         type of the hit; the Howl of the hound: 0.1 for each type), or the DMGStandard of the row for a row with no DMG part of a type
+     *         (an effect of an ability with only that value). An empty type: DMGStandard (stage 3.3a).
+     */
+    [[nodiscard]] float damage_factor(WorldClock::time_point now, std::string_view type = {}) const;
     /** @return The part of the armor of the creature that its effects add (a rend: -0.05; stage 1.3b). The strongest rend counts. */
     [[nodiscard]] float armor_part(WorldClock::time_point now) const {
         float part = 0.0F;
@@ -696,6 +721,23 @@ struct Creature {
         return part;
     }
 };
+
+inline float Creature::damage_factor(WorldClock::time_point now, std::string_view type) const {
+    float part = 0.0F;
+    for (const CreatureEffect& effect : effects) {
+        if (now >= effect.ends) {
+            continue;
+        }
+        if (effect.row != nullptr && effect.typedDamage && !type.empty() && type != "Standard") {
+            std::string column = "DMG";
+            column += type;
+            part += effect.row->cells.number(column);
+        } else {
+            part += effect.damage;
+        }
+    }
+    return part < -1.0F ? 0.0F : 1.0F + part;
+}
 
 /**
  * The cooldown of one ability of a character (stage 3.3a, world/abilities.h): a value of the
@@ -1026,6 +1068,12 @@ struct SpellBody {
     bool ending{false};
     /** The triggers of the entities of its slice, in their sequence (the death chain of the Pylon, the trigger of the trap). */
     std::vector<SpellTrigger> triggers;
+    /**
+     * Stage 3.4f-D: the rotation of a ground area of a creature, the direction of its caster at the cast (degrees, 0: north; client code
+     * 0x676AAF0: the rotation of the spawn request is the rotation of the caster). The Spell state and the PositionInTheWorld state have
+     * it (the shockwave of the Evil Knight goes to the front of the knight). No value: the identity rotation.
+     */
+    std::optional<float> yaw;
 };
 
 /** The reference of an object in a request of a client (stage 2.5a): its actor id, its G, and the facet target of a bound. */

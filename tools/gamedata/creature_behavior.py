@@ -138,6 +138,8 @@ ROOT_JOINTS = ("", "bind_xform", "xform", "master_root", "root")
 RANGED_EVENT = "CAGE-RangedAttack"
 # Stage 3.4f-C: the cast of a spell in a fragment (the ground areas of the creatures).
 CAST_EVENT = "CAGE-CastSpell"
+# Stage 3.4f-D: a mark of a fragment (the status actions: the action list gives statuses at the mark).
+NAMED_EVENT = "CAGE-Named"
 AMMO_SLOTS = {"PaperdollSlotTypes::ARROW_AMMO_SLOT": 12, "PaperdollSlotTypes::CARTRIDGE_AMMO_SLOT": 13,
               "PaperdollSlotTypes::QUICK_SLOT_1": 14}
 AMMO_TYPE = "AmmoItemDefinitions"
@@ -151,6 +153,57 @@ BASIC_RANGED_ACTIONS = (BASIC_SHOT_ACTION, BASIC_CAST_ACTION)
 # not replace a complete export with fewer attacks), but for these authored cases of the retail data, each with its reason: the slice
 # keeps no such basic attack in the file. Key: (the slice path, the action, the cause). Empty: the retail data has none.
 BASIC_RANGED_EXCEPTIONS: dict[tuple[str, str, str], str] = {}
+# A cast of an area spell of the list (a supported spell: creature_slices.json, areaSpells) with a malformed event or a broken join stops
+# the tool (code review of stage 3.4f-C, finding AR-R7: the cast went to `areasLeftOut`, and an export with status 0 lost the area attack
+# of an area-only creature), but for these authored cases of the retail data, each with its reason: the slice keeps no such area attack.
+# Key: (the slice path, the action, the cause). The count `areasLeftOut` keeps only the casts of spells and actions with no support.
+AREA_EXCEPTIONS: dict[tuple[str, str, str], str] = {
+    ("slices/characters/ghost.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/characters/ghost_charred.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/characters/ghost_frozen.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/characters/ghost_shackled.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/characters/ghost_shackled_boss.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/characters/ghost_shipwrecked.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/characters/seasons/season_04/ghost_s4q2.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/characters/seasons/season_04/ghost_s4q2_charred.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/characters/seasons/season_04/ghost_s4q2_shackled.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_ghost_charred_20325.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_ghost_frozen_20325.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_ghost_shipwrecked_20325.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/worldevents/dunwood/gimmicks/arcanatarot/tarottower_bossfight/worldevent_ai_ghost_starved_20325.dynamicslice", "Spell_Plagued_Plague_Nova",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the ghosts share one action list with the plague nova; only the plagued ghost has its row in its damage table",
+    ("slices/characters/corrupted_dynasty_summoner.dynamicslice", "AOE_Ranged_Spell",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the action list of the summoner has the area cast; its damage table has no row of the spell (stage 3.4f-C: left out)",
+    ("slices/pois/wexvariants/r_+02_+02_ebonscalereach/dynasty_summoner_towerbeam_08qp08_elite.dynamicslice", "AOE_Ranged_Spell",
+     "the damage row of the spell is not a row of the damage table of the slice"):
+        "the action list of the summoner has the area cast; its damage table has no row of the spell (stage 3.4f-C: left out)",
+}
 # An action of a ranged event that is a movement or an attack on a structure is not a ranged attack of the file (a project
 # rule): the backend has no rule for a shot in a walk (WalkBack of the skeleton archer) or for a structure.
 RANGED_LEFT_OUT_WORDS = LEFT_OUT_WORDS | {"walkback", "walk", "move"}
@@ -493,7 +546,7 @@ class Animations:
         for fragment in (listed if listed is not None else []):
             for variant in fragment.findall("Fragment"):
                 tags = {name.lower() for name in tag_names(variant.get("Tags", ""))} | {name.lower() for name in extra_tags}
-                entry = {"tags": tags, "contacts": [], "ranged": [], "casts": [], "end": None}
+                entry = {"tags": tags, "contacts": [], "ranged": [], "casts": [], "named": [], "end": None}
                 for layer in variant.findall("AnimLayer"):
                     time = 0.0
                     last = None
@@ -522,6 +575,12 @@ class Animations:
                             step = number_of(item.get("ExitTime"))
                             if step > 0.0:
                                 time += step
+                        elif item.tag == "Procedural" and item.get("type") == NAMED_EVENT:
+                            # A mark of the fragment (stage 3.4f-D): the action list reads it with IfMannequinMarker.
+                            parameters = item.find("ProceduralParams")
+                            named = parameters.find("Name") if parameters is not None else None
+                            if named is not None and named.get("value"):
+                                entry["named"].append((None if broken else time, named.get("value")))
                         elif item.tag == "Procedural" and item.get("type") in ("CAGE-Damage", RANGED_EVENT, CAST_EVENT):
                             parameters = item.find("ProceduralParams")
                             values = {value.tag: value.get("value", "") for value in parameters} if parameters is not None else {}
@@ -600,7 +659,8 @@ def reach_of(parameters: dict) -> float:
 class Behavior:
     """The reader of the behavior data of the slices of one creature file."""
 
-    def __init__(self, sources, tables_folder: str, ranged_attacks: dict | None = None, projectile_of=None, area_spells=None) -> None:
+    def __init__(self, sources, tables_folder: str, ranged_attacks: dict | None = None, projectile_of=None, area_spells=None,
+                 status_actions: dict | None = None) -> None:
         """@param ranged_attacks The attacks of the ranged attack data (stage 3.4f-A): (lower-case profile, lower-case attack) to
                {"profile", "attack", "index", "hitScan", "range", "radius", "accelDelay"}. None: the file has no ranged attack.
         @param projectile_of A function: the path of a projectile slice to its index in the list "projectiles" of the file, or
@@ -616,6 +676,10 @@ class Behavior:
         # Stage 3.4f-C: the spells of the casts (spells.AreaSpells), and the causes of the area attacks that are not in the file.
         self.area_spells = area_spells
         self.areas_left_out: dict[str, int] = {}
+        # Stage 3.4f-D: the status actions of the list statusActions of creature_slices.json (lower-case action name to its live check),
+        # and the causes of a listed action of a slice that is not a status action of the file.
+        self.status_actions = status_actions
+        self.status_left_out: dict[str, int] = {}
 
     def release(self, values: dict, references: dict, main_hand: dict | None, rows: dict) -> tuple[dict | None, str]:
         """@return The joins of one release of a ranged attack (see the head of the file), or no value and the cause."""
@@ -679,7 +743,7 @@ class Behavior:
             self._tags[path] = TagBits(self.sources, path)
         return self._tags[path]
 
-    def read(self, roots: list, controller_path: str, actions: list[list], slice_path: str = "") -> dict:
+    def read(self, roots: list, controller_path: str, actions: list[list], slice_path: str = "", markers: dict | None = None) -> dict:
         """@return The members of a slice for its behavior: "behavior" (when the slice has the values), "tags" (when
         the slice has a tag), "attacks", and "noAttack" (the cause, for a slice with no attack: not a member of
         the file). `actions` is the action table of the slice."""
@@ -771,9 +835,13 @@ class Behavior:
                   if self.ranged_attacks is not None else [])
         if ranged:
             result["ranged"] = ranged
-        areas = self.read_areas(actions, databases, ranged_tags, rows) if self.area_spells is not None else []
+        areas = self.read_areas(actions, databases, ranged_tags, rows, slice_path) if self.area_spells is not None else []
         if areas:
             result["areas"] = areas
+        status_actions = (self.read_status_actions(actions, databases, ranged_tags, markers or {}, slice_path)
+                          if self.status_actions is not None else [])
+        if status_actions:
+            result["statusActions"] = status_actions
         if not attacks and not ranged and not areas:
             result["noAttack"] = "; ".join(sorted(causes)) or "no action of its action table has a damage event"
         return result
@@ -827,9 +895,10 @@ class Behavior:
     def count(self, cause: str) -> None:
         self.ranged_left_out[cause] = self.ranged_left_out.get(cause, 0) + 1
 
-    def read_areas(self, actions: list[list], databases: list[str], tags: set[str], rows: dict) -> list[list]:
+    def read_areas(self, actions: list[list], databases: list[str], tags: set[str], rows: dict, slice_path: str = "") -> list[list]:
         """@return The area attacks of a slice (stage 3.4f-C): [action, length, [cast, ...]], each cast with its "time", "spell", "shape", the
-        aim values, and for a "strike" the damage of the row of its spell (see the head of the file)."""
+        aim values, and for a "strike" the damage of the row of its spell (see the head of the file). A cast of a supported spell with a
+        malformed event or a broken join stops the tool (finding AR-R7), but for AREA_EXCEPTIONS."""
         areas = []
         for index, (name, fragment, fragment_index, _) in enumerate(actions):
             if fragment_index < 0:
@@ -852,7 +921,16 @@ class Behavior:
                 continue
             casts = []
             for time, values in sorted(events, key=lambda event: (event[0] is None, event[0] or 0.0)):
-                cast, cause = self.area_cast(time, values, rows)
+                cast, cause, broken = self.area_cast(time, values, rows)
+                if cast is None and broken:
+                    reason = AREA_EXCEPTIONS.get((slice_path, name, cause))
+                    if reason is None:
+                        raise Failure(f"{slice_path}: the action {name} casts the supported spell {values.get('SpellName', '').strip()}, "
+                                      f"and {cause} (code review of stage 3.4f-C, finding AR-R7; an authored case of the retail data "
+                                      f"goes into AREA_EXCEPTIONS with its reason)")
+                    self.count_area(f"{cause} (an authored case of the retail data: {reason})")
+                    casts = []
+                    break
                 if cast is None:
                     self.count_area(cause)
                     casts = []
@@ -865,20 +943,21 @@ class Behavior:
             areas.append([index, rounded(min(length, LONGEST_ATTACK)), casts])
         return areas
 
-    def area_cast(self, time: float | None, values: dict, rows: dict) -> tuple[dict | None, str]:
-        """@return The joins of one cast of an area attack (stage 3.4f-C), or no value and the cause."""
-        if time is None:
-            return None, "a cast event has a time that is not a finite number"
+    def area_cast(self, time: float | None, values: dict, rows: dict) -> tuple[dict | None, str, bool]:
+        """@return The joins of one cast of an area attack (stage 3.4f-C), or no value, the cause, and True for a cast of a supported spell
+        (a malformed event or a broken join: finding AR-R7)."""
         spell = values.get("SpellName", "").strip()
         if not spell:
-            return None, "a cast event names no spell"
+            return None, "a cast event names no spell", False
         found, cause = self.area_spells.shape(spell)
         if found is None:
-            return None, cause
+            return None, cause, False
+        if time is None:
+            return None, "a cast event has a time that is not a finite number", True
         aim = {name: strict_number(values.get(name)) for name in ("ProjectileSpeed", "AILeadTargetMaxAngle", "AIAimMaxAngle",
                                                                   "AIMissMinDistance", "AIMissMaxDistance")}
         if any(value is None for value in aim.values()):
-            return None, "a cast event has an aim value that is not a finite number"
+            return None, "a cast event has an aim value that is not a finite number", True
         cast = {"time": rounded(time), "spell": found["spell"], "shape": found["shape"],
                 "aimAtTarget": values.get("AIAimAtTarget", "").lower() == "true", "lead": values.get("AILeadTarget", "").lower() == "true",
                 "aimSpeed": rounded(aim["ProjectileSpeed"]), "leadAngle": rounded(aim["AILeadTargetMaxAngle"]),
@@ -887,13 +966,56 @@ class Behavior:
         if found["shape"] == "strike":
             row = rows.get(found["row"].lower())
             if row is None or row["table"].lower() != found["table"].lower():
-                return None, "the damage row of the spell is not a row of the damage table of the slice"
+                return None, "the damage row of the spell is not a row of the damage table of the slice", True
             if row["type"] not in self.tables.types:
-                return None, "the damage row of the spell has no damage type"
+                return None, "the damage row of the spell has no damage type", True
             wire, category = self.tables.types[row["type"]]
             cast.update({"row": row["id"], "factor": rounded(row["factor"]), "added": rounded(row["added"]), "type": row["type"],
                          "wire": wire, "category": category, "charge": rounded(row["charge"])})
-        return cast, ""
+        return cast, "", False
+
+    def read_status_actions(self, actions: list[list], databases: list[str], tags: set[str], markers: dict, slice_path: str = "") -> list[list]:
+        """@return The status actions of a slice (stage 3.4f-D): [action, length, [[time, [status, ...]], ...]] for each action of the list
+        statusActions whose action list gives statuses at a mark (`markers`: the action name to [(mark, [status, ...])], read_action_table of
+        creature_data.py) and whose selected variant has the CAGE-Named event of the mark (its time). A mark with a time that is not a finite
+        number stops the tool (a listed action: the rule of finding AR-R7)."""
+        found = []
+        for index, (name, fragment, fragment_index, _) in enumerate(actions):
+            if fragment_index < 0 or name.lower() not in self.status_actions:
+                continue
+            links = markers.get(name, [])
+            if not links:
+                self.count_status("the action list of the action gives no status at a mark")
+                continue
+            named = []
+            end = None
+            for position, database in enumerate(databases):
+                variants = self.animations.variants(database).get(fragment.lower(), [])
+                variant = select(variants, tags, False)
+                if variant is None:
+                    continue
+                named.extend(variant["named"])
+                if position == 0:
+                    end = variant["end"]
+            marks = []
+            for mark, statuses in links:
+                times = [time for time, label in named if label == mark]
+                if not times:
+                    continue
+                if any(time is None for time in times):
+                    raise Failure(f"{slice_path}: the mark {mark} of the status action {name} has a time that is not a finite number")
+                marks.append([rounded(min(times)), sorted(statuses)])
+            if not marks:
+                self.count_status("the variant of the fragment of the slice has no CAGE-Named event of the mark of the action list")
+                continue
+            marks.sort(key=lambda entry: entry[0])
+            last = marks[-1][0]
+            length = end if end is not None and end > last else last + TIME_AFTER_CONTACT
+            found.append([index, rounded(min(length, LONGEST_ATTACK)), marks])
+        return found
+
+    def count_status(self, cause: str) -> None:
+        self.status_left_out[cause] = self.status_left_out.get(cause, 0) + 1
 
     def count_area(self, cause: str) -> None:
         self.areas_left_out[cause] = self.areas_left_out.get(cause, 0) + 1

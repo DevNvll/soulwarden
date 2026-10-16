@@ -23,6 +23,7 @@ and the stop are in [World and sessions](world-and-sessions.md).
 | A live check of a slice record before its code: the probe entity | `tools/world probe`, `World::make_probe`, `server/http/dev_routes.cpp` |
 | The spells of stage 3.3b-M2: the shield of Maelstrom, the ground of Mighty Gavel, the fortify of Clear Out, the fortify in the well of Unyielding | `Abilities::cast_spell_at`, `Spells::absorbs`, `Spells::aura_step`, `SpellRequest::areaStatuses`, test cases GH8, GH10, GH11, GH12 |
 | The ground areas of the creatures (stage 3.4f-C): the status area (the mushroom of the Dryad Shaman), the strike (the lightning of the Undead Shaman), their members, their ends | `Spells::make_area` (`AreaRequest`), `Spells::area_step`, `Spells::strike_step`, `Spells::in_area`, `Spells::leave_area`, `Spells::caster_died`, test cases CRA1 to CRA9 |
+| The areas at the caster and the rotation of a creature area (stage 3.4f-D); the corrections AR-R1 to AR-R5 of the review of stage 3.4f-C (a late tick, the exit before a tick, a late strike sample, format 4, the volume times) | `Behavior::place_rule`, `area_range` ([Creature behavior](creature-behavior.md)), `SpellBody::yaw`, `Spells::holds`, `Spells::strike_sample`, `gamedata/spell_data.cpp`, test cases CRH5, RAR1 to RAR5 |
 
 ## Rules
 
@@ -279,14 +280,22 @@ and the stop are in [World and sessions](world-and-sessions.md).
   (six spells, section "The area spells" below).
 - The make (`Spells::make_area`, `AreaRequest`). The behavior asks for an area at each cast time of the data
   ([Creature behavior](creature-behavior.md)). The spell system makes it only when the creature lives, the place is valid,
-  and the slice and the spell row have the values of the shape (`Spells::area_usable`). The entity has the caster, its
-  actor (field 7 of the Spell state of a strike), the key of the row, the level of the creature, and the start of the world
+  and the slice and the spell row have the values of the shape (`Spells::area_usable`; from stage 3.4f-D only with spell data of
+  format 4: code review of stage 3.4f-C, finding AR-R4, case RAR4: a file of format 3 has no application delays). The entity has the
+  caster, its actor (field 7 of the Spell state of a strike), the key of the row, the level of the creature, and the start of the world
   clock.
+- The rotation (stage 3.4f-D; client code 0x676AAF0: the rotation of the spawn request is the rotation of the caster): the entity
+  has the direction of the creature at the cast (`SpellBody::yaw`), and the Spell state (fields 2 and 4) and the PositionInTheWorld
+  state have it (live check D-L3: the shockwave of the Evil Knight is a wave in one direction; case CRH5).
 - The life (game data): the destroy event of the slice (the mushroom: 26 s), else the Duration of the spell row (the strike:
   5 s). At the end the world removes the entity, and each observer gets the stop (the client also ends the pictures of the
   mushroom at 26 s by itself: live check L8, M2).
 - The volume of a status area (game data and client code): its detection volume, active from the activation event of its
-  entity (the cloud: 1 s; an entity that is active at the start: 0 s). An upright cylinder of the QueryShapeCylinder (the
+  entity (the cloud: 1 s; an entity with no activation event of its own that is active at the start: 0 s). From stage 3.4f-D an
+  entity with an activation event of its own is active from that event, also when the slice marks it active at the start (the mage
+  area: 1 s, the time at which the client shows the area; code review of stage 3.4f-C, finding AR-R5): the server time and the record
+  of the client agree. The loader refuses a file of format 4 whose volume time does not agree with the delayed events of its entity
+  (case RAR5). An upright cylinder of the QueryShapeCylinder (the
   mushroom: radius 1.5 m, height 4 m, its middle 0.5 m below the root) or a sphere. A character is in it when its capsule
   touches the volume (`Spells::in_area`). The spell row Radius (3 m) does not change the volume: the slice has no Spell
   component (client code 0x6877580 sets a shape only for a slice with one; static study STATIC-AREAS.md, Q3.2).
@@ -295,7 +304,9 @@ and the stop are in [World and sessions](world-and-sessions.md).
   `m_reapplicationDelaySeconds` (1 s for the mushroom, 2 s for the mage area; ApplyStatusEffects 0x3FE6500). An exit (and the
   end of the area) takes the statuses that this area gave last (`m_removeOnExit`; 0x3FF2830 also cancels the next
   application; `Spells::leave_area` takes only the rows with this area as the source). An entry again starts with the initial
-  delay. Each step of an area looks only at the characters near it (the position index), each 100 ms or at the next
+  delay. Before each tick of a status of a status area, that one area looks at the character (`Spells::holds`; code review of stage
+  3.4f-C, finding AR-R2, case RAR2): a character out of its active volume leaves it first, and its status goes with no last tick (the
+  world runs the statuses before the spells). Each step of an area looks only at the characters near it (the position index), each 100 ms or at the next
   application (a decision of an agent).
 - The damage source of the statuses (client code 0x3FE6500, 0x5C3C930): the area gives each status the creature and its core
   damage at the cast (the damage of its kind and level, `CreatureData::damage`; `DamageSource`). The status system makes the
@@ -303,11 +314,14 @@ and the stop are in [World and sessions](world-and-sessions.md).
 - No line test for a status area (client code: the enter handler gives the statuses to each entity that the detection volume
   reports, with no line from the center; STATIC-CAST.md, section 0). A wall does not stop the poison.
 - The strike (game data, a decision of an agent for the count). Its window is the time between the activation and the
-  deactivation of the entity of its detection volume (the lightning: 0.9 s to 0.95 s; the priest area: 1 s to 2 s). In the
-  window, each 25 ms, each character in the sphere of the Radius of the spell row (the lightning: 2.5 m; client code
-  0x6877580 gives a volume with no shape the shape of the row) gets one hit of the damage row of the cast
-  (`Health::creature_hit`, the creature rule; the dodge decides it). A character gets one hit for each strike (a decision of
-  an agent: the client has no rule for the count; the damage window of the data is one short window).
+  deactivation of the entity of its detection volume (the lightning: 0.9 s to 0.95 s; the priest area: 1 s to 2 s; a strike at the
+  caster: from its start to 0.2 s to 0.5 s). In the window, each 25 ms, each character in the sphere of the Radius of the spell row
+  (the lightning: 2.5 m; client code 0x6877580 gives a volume with no shape the shape of the row) gets one hit of the damage row of
+  the cast (`Health::creature_hit`, the creature rule; the dodge decides it). A character gets one hit for each strike (a decision of
+  an agent: the client has no rule for the count; the damage window of the data is one short window). A sample runs at its due time
+  (code review of stage 3.4f-C, finding AR-R3, case RAR3; `Spells::strike_sample`): a world step that crosses the whole window still
+  makes the first due sample, at most `spell_rules::kStrikeCatchUp` (250 ms, a decision of an agent) late, with each character moved
+  back on its velocity to the time of the sample and the dodge at that time; a later sample is lost (a log line).
 - A wall stops a strike only for a spell row with CheckObstructions (game data; the six spell rows do not have it; the server
   code that reads the bit is not in the client: STATIC-CAST.md).
 - The ends at the caster (game data and project rules). The death of the caster ends each of its areas whose spell row has
@@ -330,16 +344,20 @@ and the stop are in [World and sessions](world-and-sessions.md).
 | `Inquisitor_Cleric_Holy_Pillar` | strike | Inquisitor Cleric | K2 | 2 m; 0.503 s to 0.533 s; 1.2 s; EndOnCasterDeath |
 | `corrupted_priest_ground_aoe` | strike | Damned Priest (named) | K3 | 3.7 m; 1 s to 2 s; 8 s |
 | `AI_Soulharvester_GeyserFinisher` | strike | Lost Soul Harvester (2 slices) | K4 | 2.9 m; 1 s to 1.2 s; 2.8 s |
+| `Ghost_Plagued_PlagueNova` | strike at the caster | Plagued ghost | D-L3, video P4 (stage 3.4f-D) | 4 m; 0 to 0.5 s; 5 s |
+| `Legion_Signifer_CorruptedBlast` | strike at the caster | Corrupted Legion signifer | D-L3 | 3 m; 0 to 0.3 s; 5 s |
+| `Undead_Officer_AnchorSlam` | strike at the caster | Undead officer and drowned sailors (the action table of the slices) | D-L3 | 3.5 m; 0 to 0.3 s; 5 s |
+| `AI_EvilKnight_Shockwave` | strike at the caster, the rotation of the caster | Evil Knight, Lost Knight, and pirate war hammers | D-L3, video P5 | 3 m; 0 to 0.2 s; 2 s (the destroy event); CheckObstructions |
 
-The other area casts of the creature data stay out, with their causes (the counts `areasLeftOut` of `creatures.json`). The
-spells of the same data shape that need a new rule:
+From stage 3.4f-D the creature data has 10 spells (22 slices, 177 kinds, 539 spawn points). The place of the last four: the caster
+(client code 0x679DBB0: no ranged attack data in the row, and AIAimAtTarget false or the target loop of UseAllAvailableTargets;
+[Creature behavior](creature-behavior.md)). The other area casts of the creature data stay out, with their causes (the counts
+`areasLeftOut` of `creatures.json`). The spells of the same data shape that need a new rule:
 
-- `Ghost_Charred_SelfDestruct`, `Invasion_Bomber_SelfDestruct`: the caster dies at the cast (a new rule).
+- `Ghost_Charred_SelfDestruct`, `Invasion_Bomber_SelfDestruct`: the caster dies at the cast. The death is a DamageSelf hit of the
+  fragment (`Spell_Charred_Self_Destruct_Hit_Self` at 4.33 s of the ghost); the rewards of a creature that kills itself (the credit,
+  the loot, the experience) have no rule in the data or the client.
 - `Undead_Officer_ShieldActivate`: a shield of the officer (the block is not in this part).
-- `AI_EvilKnight_Shockwave`: `AIAimAtTarget` false. The client puts the spell at the caster, or at the shot of the ranged
-  attack data of the row (client code 0x679DBB0, 0x5BFBAF0): a new place rule.
-- `Ghost_Plagued_PlagueNova`, `Legion_Signifer_CorruptedBlast`, `Undead_Officer_AnchorSlam`: CastDistance 0 (a spell at the
-  caster: a new place rule).
 
 ## Commands
 
@@ -406,3 +424,7 @@ tools/gamedata/spells.sh --find TEXT...    # print the spells with a text and th
 - The mushroom stays after the death of its caster (no EndOnCasterDeath): a character that stays in it in a test dies of
   the poison. Move it out, or remove the area with the caster (the leave ends it).
 - The sight of a Dryad Shaman is 12 m: a shaman 12.1 m from the character takes no target. Spawn a test caster at 10 m.
+- A late observer of a status area sees the root of its slice again (the purple pillar of the mage area plays at the record of the late
+  observer; live check D-L5): the pillar is not a delayed event of the slice, and no state of the server ends it.
+- The ghosts share one action list with the plague nova: only the plagued ghost has its row in its damage table. The creature tool lists
+  the other ghost slices in `AREA_EXCEPTIONS` (`creature_behavior.py`); a new slice of that form stops the tool until a person adds it.

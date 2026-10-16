@@ -157,7 +157,10 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   `m_seenRequests`): it gives no mark (test case IT6). One cancel for each attempt (code review of stage 3.4f-B, finding CS-R3, test
   case RZ3): the cancel that ends a use, and the late cancel, take the seen request of the attempt out of `m_seenRequests`. A cancel of
   the next attempt of the same reference is thus early when its press did not come yet: it gives its mark, and the delayed press
-  starts no use. Source: decisions of an agent with the rules of the carrier (protocol notes 4.7).
+  starts no use. A use that the world ends (3746: a command, a death, a travel, a respawn) keeps its seen request only until the release
+  of the client (an input step with no block or with a different block; code review of stage 3.4f-C, finding AR-R8, case RAR8): an echo
+  2473 before the release is late (case IT6), and a cancel after the release belongs to a new attempt (its mark stops the delayed press).
+  An echo that comes after the release gives a mark: a new press in the next 5 input steps then starts no use (a trap of the rule). Source: decisions of an agent with the rules of the carrier (protocol notes 4.7).
 - The service handoff (stage 2.5b; the base of the shops 5.1 and the transmog 5.6; research Q4): a handler of a later stage gives the
   character of a committed use a service of its source (`grant_service`: the kind, the ids of the offer, the revision, a deadline
   only when the data has one). The grant is a value of the entity (`Entity::serviceGrant`), and only this system changes it. It stays

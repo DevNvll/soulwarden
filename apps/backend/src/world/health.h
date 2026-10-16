@@ -151,9 +151,12 @@ public:
     /**
      * The damage of a status at its tick (stage 3.4f-C: the poison of a status area of a creature; Statuses::give computes the amount from
      * the row and its damage source). The health goes down (the death at 0), each observer gets the vitals state, and the owner gets the
-     * damage mark with the damage type of the row and the creature of the source as its source.
+     * damage mark with the damage type of the row and the creature of the source as its source. `at`: the due time of the tick; the dodge
+     * decides the damage at this time, not at the time of the world tick that processes it (code review of stage 3.4f-C, finding AR-R1: a
+     * tick that the world processes 30 ms late came after the end of the immune window). No value: now.
      */
-    void status_damage(Entity& target, float amount, const gamedata::StatusRow& row, const DamageSource& source);
+    void status_damage(Entity& target, float amount, const gamedata::StatusRow& row, const DamageSource& source,
+                       std::optional<WorldClock::time_point> at = std::nullopt);
     CreatureHitOutcome creature_hit(Entity& creature, const gamedata::CreatureContact& contact, Entity& target,
                                     std::optional<WorldClock::time_point> at = std::nullopt);
 

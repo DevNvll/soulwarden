@@ -253,34 +253,62 @@ def event_target(event) -> int | None:
     return target
 
 
-def sphere_radius(component) -> float:
+def sized_real(element, what: str, default: float = 0.0) -> float:
+    """@return The 32-bit float of a field that is there (a size of a shape, code review of stage 3.4f-C, finding AR-R6): no field is the
+    default of the format; a field with a different size, or a value that is not finite, stops the tool (a cut field must not become a
+    radius or a height of 0 that turns a supported area off)."""
+    if element is None or element.value is None:
+        return default
+    return required_real(element, what)
+
+
+def sphere_radius(component, what: str = "a sphere") -> float:
     """@return The radius of the first QueryShapeSphere of a component (a detection volume, an offense), or 0."""
     for child in walk(component):
         if child.type_id == SPHERE_CLASS:
-            return real_of(find_field(child, RADIUS_FIELD))
+            return sized_real(find_field(child, RADIUS_FIELD), f"the radius of {what}")
     return 0.0
 
 
-def volume_shape(component) -> tuple[str, float, float, float]:
+def volume_shape(component, what: str = "a detection volume") -> tuple[str, float, float, float]:
     """@return The query shape of a detection volume (format 4): its name ("none" for a component with no shape), its radius, the
-    m_Height of a cylinder, and the z of m_center."""
+    m_Height of a cylinder, and the z of m_center. A size field of a known shape and m_center are checked (finding AR-R6): a cylinder
+    needs its radius and its height, a sphere its radius."""
     center = find_field(component, CENTER_FIELD)
-    center_z = struct.unpack(">f", center.value[8:12])[0] if center is not None and center.value and len(center.value) == 12 else 0.0
+    center_z = 0.0
+    if center is not None and center.value is not None:
+        if len(center.value) != 12:
+            raise Failure(f"m_center of {what} is not three 32-bit floats ({len(center.value)} bytes)")
+        center_z = struct.unpack(">f", center.value[8:12])[0]
+        if not all(math.isfinite(value) for value in struct.unpack(">fff", center.value)):
+            raise Failure(f"m_center of {what} is not a finite point")
     shape = find_field(component, SHAPE_FIELD)
     for child in walk(shape) if shape is not None else []:
         name = SHAPE_CLASSES.get(child.type_id)
         if name is not None:
-            return name, real_of(find_field(child, RADIUS_FIELD)), real_of(find_field(child, HEIGHT_FIELD)), center_z
+            radius_field = find_field(child, RADIUS_FIELD)
+            height_field = find_field(child, HEIGHT_FIELD)
+            if name in ("sphere", "cylinder") and (radius_field is None or radius_field.value is None):
+                raise Failure(f"the {name} of {what} has no radius")
+            if name == "cylinder" and (height_field is None or height_field.value is None):
+                raise Failure(f"the cylinder of {what} has no height")
+            return (name, sized_real(radius_field, f"the radius of the {name} of {what}"),
+                    sized_real(height_field, f"the height of the {name} of {what}"), center_z)
     return "none", 0.0, 0.0, center_z
 
 
-def translation_z(component) -> float:
-    """@return The translation z of the m_localTM of a transform component (12 big-endian floats: three axes and the translation)."""
+def translation_z(component, what: str = "an entity") -> float:
+    """@return The translation z of the m_localTM of a transform component (12 big-endian floats: three axes and the translation). A
+    field of a different size, or a translation that is not finite, stops the tool (finding AR-R6: the height of a volume)."""
     transform = find_field(component, LOCAL_TRANSFORM_FIELD)
-    if transform is None or transform.value is None or len(transform.value) != 48:
+    if transform is None or transform.value is None:
         return 0.0
+    if len(transform.value) != 48:
+        raise Failure(f"m_localTM of {what} is not twelve 32-bit floats ({len(transform.value)} bytes)")
     value = struct.unpack(">f", transform.value[44:48])[0]
-    return value if math.isfinite(value) else 0.0
+    if not math.isfinite(value):
+        raise Failure(f"m_localTM of {what} has a translation that is not finite")
+    return value
 
 
 def asset_hint(element) -> str:
@@ -345,7 +373,7 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
             for component in listed.children:
                 if find_field(component, LOCAL_TRANSFORM_FIELD) is not None:
                     entry["parent"] = id_value(find_field(component, PARENT_FIELD))
-                    entry["z"] = translation_z(component)
+                    entry["z"] = translation_z(component, f"the entity {name} of the slice {path}")
                 class_name, state_type = COMPONENT_CLASSES.get(str(component.type_id), ("", 0))
                 if component.type_id == DESTROY_CLASS:
                     entry["destroys"] = True
@@ -353,11 +381,12 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
                     data = find_field(component, DAMAGE_DATA_FIELD)
                     row = text_of(deep(data, DAMAGE_ENTRY_FIELD) if data is not None else None)
                     entry["offense"] = entry["offense"] or row
-                    offenses.append((entity_id, row, sphere_radius(component)))
+                    offenses.append((entity_id, row, sphere_radius(component, f"the offense of {name} in the slice {path}")))
                 if component.type_id == VOLUME_CLASS:
-                    shape, shape_radius, height, center_z = volume_shape(component)
-                    volumes.append((entity_id, shape_radius if shape == "sphere" else sphere_radius(component), shape, shape_radius, height,
-                                    center_z))
+                    what = f"the detection volume of {name} in the slice {path}"
+                    shape, shape_radius, height, center_z = volume_shape(component, what)
+                    volumes.append((entity_id, shape_radius if shape == "sphere" else sphere_radius(component, what), shape, shape_radius,
+                                    height, center_z))
                 if component.type_id == AREA_STATUS_CLASS:
                     # The statuses that the friends (or the enemies) in the detection volume of the component get, and lose at their
                     # exit (format 3, stage 3.3b-M2: the fortify in the well of Unyielding).
@@ -461,12 +490,15 @@ def read_spell_slice(path: str, asset: tuple[bytes, int], roots: list, sources: 
             identifier = entities[identifier]["parent"]
 
     def active_after(identifier) -> float:
-        """The time from the start at which the entity is active: 0 when it and its parents are active at the start, else
+        """The time from the start at which the entity is active: the earliest activation at the init of it or of a parent when the entity
+        has an activation of its own (code review of stage 3.4f-C, finding AR-R5: the client shows the area at that event, also for an
+        entity that is active at the start in the slice: the mage area); else 0 when it and its parents are active at the start, else
         the earliest activation at the init of it or of a parent (-1: never)."""
         chain = list(ancestors(identifier))
-        if all(entities[entity]["active"] for entity in chain):
-            return 0.0
         times = [delay for _, delay, kind, target, _, init, _ in raw_events if kind == spell_event_activate and init and target in chain]
+        own = any(kind == spell_event_activate and init and target == identifier for _, _, kind, target, _, init, _ in raw_events)
+        if not own and all(entities[entity]["active"] for entity in chain):
+            return 0.0
         return round(max(min(times), 0.0), 4) if times else -1.0
 
     def inactive_after(identifier) -> float:

@@ -216,6 +216,14 @@ struct StateCodec {
  *         with such a state: a server child (stage 2.5b) and a spell with no Spell component (stage 3.3b-S2b).
  */
 [[nodiscard]] hub::Bytes position_in_the_world_state(const state::WorldPosition& position, const std::array<float, 4>& rotation);
+/**
+ * Writes a rotation of the place states (PositionInTheWorld field 1, the Spell state fields 2 and 4: reader 0x5CEA140 -> 0x87B250): one
+ * header byte (bits 0 to 2: x, y, z are 0; bits 3 to 5: x, y, z are 1), then a u16 for each other component of x, y, z; w not negative.
+ * The identity is `07`.
+ */
+void write_place_rotation(hub::Writer& writer, std::array<float, 4> rotation);
+/** @return The rotation (x, y, z, w) of a yaw about the vertical axis (degrees, 0: north, the direction of a creature). */
+[[nodiscard]] std::array<float, 4> yaw_rotation(float yawDegrees);
 /** @return The states of a server child (stage 2.5b, states/object_states.cpp): its place, its BuildableController, its Ownership. */
 [[nodiscard]] hub::Bytes encode_object_place_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_buildable_state(const world::Entity& entity, View view, const world::WorldClock& clock);

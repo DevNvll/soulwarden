@@ -378,6 +378,12 @@ void Behavior::tick() {
         m_casts.erase(m_casts.begin());
         cast(pending);
     }
+    // The marks of the status actions that play (stage 3.4f-D), at their times.
+    while (!m_statusMarks.empty() && m_statusMarks.begin()->first <= now) {
+        const PendingStatus pending = m_statusMarks.begin()->second;
+        m_statusMarks.erase(m_statusMarks.begin());
+        status_mark(pending);
+    }
     if (m_lastStep && now - *m_lastStep < behavior_rules::kStepInterval) {
         return;
     }
@@ -545,6 +551,10 @@ void Behavior::think(Entity& creature, float seconds) {
                                  : (values.combatDistance > 0.0F ? values.combatDistance : behavior_rules::kDefaultCombatSight);
     if (away > farthest) {
         lose_target(creature, "the target is too far");
+        return;
+    }
+    // A status action of the slice (stage 3.4f-D): its heal at low health, its buff when it does not have it.
+    if (!body.statusActions.empty() && target->kind == EntityKind::player && think_status(creature, *target)) {
         return;
     }
     // An area attack (stage 3.4f-C) at a character: in the CastDistance of its spell, with a free line, when it is ready.
@@ -1469,8 +1479,11 @@ std::vector<std::uint32_t> Behavior::usable_areas(const gamedata::CreatureSlice&
     std::vector<std::uint32_t> usable;
     for (std::uint32_t index = 0; index < body.areas.size(); ++index) {
         const gamedata::CreatureAreaAttack& area = body.areas[index];
-        if (std::all_of(area.casts.begin(), area.casts.end(), [&](const gamedata::AreaCast& cast) { return m_world.spells().area_usable(cast); })
-            && m_world.spells().cast_distance(area.casts.front()) > 0.0F) {
+        // Each cast has the data of its shape and a place of the client rule (stage 3.4f-D: a spell at the caster has the Radius of its row as
+        // its distance; before, a spell with CastDistance 0 was left out).
+        if (std::all_of(area.casts.begin(), area.casts.end(), [&](const gamedata::AreaCast& cast) {
+                return m_world.spells().area_usable(cast) && place_rule(cast) != CastPlace::unsupported;
+            }) && area_range(area.casts.front()) > 0.0F) {
             usable.push_back(index);
         }
     }
@@ -1488,7 +1501,7 @@ bool Behavior::think_area(Entity& creature, Entity& target, float seconds) {
     // A creature whose only attack is an area attack (the Undead Shaman) keeps its distance by the area rules.
     const bool only = body.attacks.empty() && !body.basicShot;
     const std::uint32_t area = usable[mind.nextArea % usable.size()];
-    const float range = m_world.spells().cast_distance(body.areas[area].casts.front());
+    const float range = area_range(body.areas[area].casts.front());
     const float away = horizontal_distance(creature.position, target.position);
     const float rise = std::fabs(creature.position.z - target.position.z);
     const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position);
@@ -1580,11 +1593,65 @@ bool Behavior::command_area(Entity& creature, EntityId target) {
     return mind.shooting;
 }
 
+CastPlace Behavior::place_rule(const gamedata::AreaCast& cast) const {
+    // Client code 0x679DBB0 (the AI branch of MagicComponent::CastSpell; STATIC-CAST.md of stage 3.4f-C, read again in stage 3.4f-D): the
+    // ranged attack data comes from RangedAttackProfile and RangedAttackName of the row (0x65F3B70), when both are set. AIAimAtTarget false:
+    // the place of the caster, or a shot of the ranged attack data. AIAimAtTarget with UseAllAvailableTargets: for each target, the aim point
+    // (0x5C35450) only with ranged attack data; with none the place keeps its first value, the place of the caster. AIAimAtTarget alone: the
+    // position of the current target.
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::SpellRow* row = abilities != nullptr ? abilities->spell(cast.spell) : nullptr;
+    const bool ranged = row != nullptr && !row->cells.text("RangedAttackProfile").empty() && !row->cells.text("RangedAttackName").empty();
+    if (!cast.aimAtTarget) {
+        return ranged ? CastPlace::unsupported : CastPlace::caster;
+    }
+    if (cast.allTargets) {
+        return ranged ? CastPlace::aim : CastPlace::caster;
+    }
+    return CastPlace::target;
+}
+
+float Behavior::area_range(const gamedata::AreaCast& cast) const {
+    if (place_rule(cast) != CastPlace::caster) {
+        return m_world.spells().cast_distance(cast);
+    }
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::SpellRow* row = abilities != nullptr ? abilities->spell(cast.spell) : nullptr;
+    return row != nullptr ? row->radius : 0.0F;
+}
+
 state::WorldPosition Behavior::area_place(const Entity& creature, const Entity& target, const gamedata::AreaCast& cast) const {
+    const CastPlace rule = place_rule(cast);
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::SpellRow* row = abilities != nullptr ? abilities->spell(cast.spell) : nullptr;
+    // The offset of the request (client code 0x676AAF0): CharRelPosOffset of the row, turned by the rotation of the caster (x to its right, y
+    // to its front, z up). The spells of the creature data have none (0, 0, 0).
+    const auto offset = [&](state::WorldPosition place) {
+        if (row == nullptr) {
+            return place;
+        }
+        const float right = row->cells.number("CharRelPosOffsetX");
+        const float front = row->cells.number("CharRelPosOffsetY");
+        const float yaw = creature.creature.yaw * kPi / 180.0F;
+        place.x += std::cos(yaw) * right - std::sin(yaw) * front;
+        place.y += std::sin(yaw) * right + std::cos(yaw) * front;
+        place.z += row->cells.number("CharRelPosOffsetZ");
+        return place;
+    };
+    if (rule == CastPlace::caster) {
+        // At the caster, on the floor of the navigation data nearest to its height.
+        state::WorldPosition place = offset(creature.position);
+        if (const std::optional<float> ground = m_world.navigation().ground_height(place);
+            ground && std::fabs(*ground - creature.position.z) < behavior_rules::kContactHeight) {
+            place.z = *ground;
+        }
+        return place;
+    }
     // The place of the target at the cast, with its lead (AILeadTarget with ProjectileSpeed: the velocity of the target times the time of
-    // the aim speed over the distance; at most AILeadTargetMaxAngle from the line of the creature to the target, in the plane).
+    // the aim speed over the distance; at most AILeadTargetMaxAngle from the line of the creature to the target, in the plane). The rule
+    // `target` has no lead and no angle limit (0x665A300: the base position of the record).
     state::WorldPosition place = target.position;
-    if (cast.lead && cast.aimSpeed > 0.0F) {
+    if (rule == CastPlace::aim && cast.lead && cast.aimSpeed > 0.0F) {
         const std::array<float, 3> velocity = m_world.velocity_of(target);
         const float time = horizontal_distance(creature.position, target.position) / cast.aimSpeed;
         state::WorldPosition lead{target.position.x + velocity[0] * time, target.position.y + velocity[1] * time, target.position.z};
@@ -1601,7 +1668,7 @@ state::WorldPosition Behavior::area_place(const Entity& creature, const Entity& 
     }
     // At most AIAimMaxAngle from the front of the creature (the creature looks at its target at the start of the action; client code
     // 0x5C09A20 limits the direction of the aim with the max angles of the clip, and the distance stays).
-    if (cast.aimAngle < 180.0F && horizontal_distance(creature.position, place) > 0.01F) {
+    if (rule == CastPlace::aim && cast.aimAngle < 180.0F && horizontal_distance(creature.position, place) > 0.01F) {
         const float yaw = creature.creature.yaw * kPi / 180.0F;
         const float front = std::atan2(std::cos(yaw), -std::sin(yaw));
         const float toward = std::atan2(place.y - creature.position.y, place.x - creature.position.x);
@@ -1613,6 +1680,7 @@ state::WorldPosition Behavior::area_place(const Entity& creature, const Entity& 
             place = {creature.position.x + std::cos(turned) * size, creature.position.y + std::sin(turned) * size, place.z};
         }
     }
+    place = offset(place);
     // At most the CastDistance of the spell row from the creature (horizontal; a decision of an agent: the clamp of the server is not in the
     // client, STATIC-CAST.md; the target can walk out of the distance in the windup).
     const float range = m_world.spells().cast_distance(cast);
@@ -1654,9 +1722,121 @@ void Behavior::cast(const PendingCast& pending) {
     const state::WorldPosition place = area_place(*creature, *target, data);
     if (m_world.spells().make_area(AreaRequest{creature->id, &data, place}) != nullptr) {
         ++m_counts.casts;
+        m_counts.castsAtCaster += place_rule(data) == CastPlace::caster ? 1U : 0U;
     } else {
         ++m_counts.castsCancelled;
     }
+}
+
+bool Behavior::wants(const Entity& creature, const gamedata::CreatureStatusAction& action) const {
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    if (abilities == nullptr) {
+        return false;
+    }
+    bool heal = false;
+    for (const gamedata::StatusMark& mark : action.marks) {
+        for (const std::string& id : mark.statuses) {
+            const gamedata::StatusRow* row = abilities->status(id);
+            if (row == nullptr) {
+                return false; // A status that the data does not have: no action (its mark would give nothing).
+            }
+            // The creature has the status of the action: no new action (the heal runs, the buff holds).
+            if (std::any_of(creature.creature.effects.begin(), creature.creature.effects.end(),
+                            [&](const CreatureEffect& effect) { return effect.status == row->id; })) {
+                return false;
+            }
+            heal = heal || row->cells.number("HealthModifierPercent") > 0.0F || row->cells.number("Health") > 0.0F;
+        }
+    }
+    if (!heal) {
+        return true; // A buff: the creature fights and does not have it.
+    }
+    // A heal: the health of the creature is at its low-health part (game data of the slice) or below it.
+    const std::optional<float> low = creature.creature.body->lowHealth;
+    return low && creature.vitals.healthMax > 0.0F && creature.vitals.health <= *low * creature.vitals.healthMax;
+}
+
+bool Behavior::think_status(Entity& creature, Entity& target) {
+    CreatureMind& mind = creature.creature.mind;
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    const WorldClock::time_point now = m_world.clock().now();
+    const bool rested = now >= mind.ready || (body.basicShot && now >= mind.shotReady);
+    if (now < mind.statusReady || !rested || !spawn_lead_over(creature, now)) {
+        return false;
+    }
+    for (std::uint32_t index = 0; index < body.statusActions.size(); ++index) {
+        if (wants(creature, body.statusActions[index])) {
+            turn_to(creature, target.position);
+            start_status_action(creature, index);
+            return mind.shooting;
+        }
+    }
+    return false;
+}
+
+void Behavior::start_status_action(Entity& creature, std::uint32_t index) {
+    CreatureMind& mind = creature.creature.mind;
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    const gamedata::CreatureStatusAction& action = body.statusActions[index];
+    const WorldClock::time_point now = m_world.clock().now();
+    const std::chrono::milliseconds length = milliseconds(action.length);
+    if (!m_creatures.start_action(creature, action.action, length)) {
+        mind.statusReady = now + behavior_rules::kAttackPause;
+        return;
+    }
+    // The action plays to its end as the action of a shot (no step, no turn, no other attack in it).
+    mind.shooting = true;
+    mind.attack.reset();
+    mind.attackGeneration = creature.creature.action->generation;
+    mind.attackEnds = now + length;
+    mind.statusReady = std::max(now + behavior_rules::kStatusRepeat, mind.attackEnds);
+    ++m_counts.statusActions;
+    for (std::uint32_t mark = 0; mark < action.marks.size(); ++mark) {
+        m_statusMarks.emplace(now + milliseconds(action.marks[mark].time), PendingStatus{creature.id, mind.attackGeneration, index, mark});
+    }
+    log::write("world: creature %016llx (%s) starts the status action %s (%zu mark(s) from %.2f s, %.2f s; health %.1f of %.1f)",
+               id_number(creature.id), creature.creature.kind->id.c_str(), body.actions[action.action].name.c_str(), action.marks.size(),
+               static_cast<double>(action.marks.front().time), static_cast<double>(action.length), static_cast<double>(creature.vitals.health),
+               static_cast<double>(creature.vitals.healthMax));
+}
+
+void Behavior::status_mark(const PendingStatus& pending) {
+    Entity* creature = m_creatures.find(pending.creature);
+    const char* cancelled = nullptr;
+    if (creature == nullptr || creature->creature.dead) {
+        cancelled = "the creature is dead or not in the world";
+    } else if (!creature->creature.mind.shooting || creature->creature.mind.attackGeneration != pending.generation
+               || !creature->creature.action || creature->creature.action->generation != pending.generation) {
+        cancelled = "a different action replaced the status action";
+    }
+    if (cancelled != nullptr) {
+        ++m_counts.statusMarksCancelled;
+        log::write("world: no status: the mark of creature %016llx gives nothing: %s", id_number(pending.creature), cancelled);
+        return;
+    }
+    const gamedata::StatusMark& mark = creature->creature.body->statusActions[pending.action].marks[pending.mark];
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    bool given = false;
+    for (const std::string& id : mark.statuses) {
+        // The action list of the slice puts the status on the creature itself (ModifyStatusEffects of the action; game data).
+        const gamedata::StatusRow* row = abilities != nullptr ? abilities->status(id) : nullptr;
+        given = (row != nullptr && m_creatures.give_status(*creature, *row, creature->id)) || given;
+    }
+    ++(given ? m_counts.statusMarks : m_counts.statusMarksCancelled);
+}
+
+bool Behavior::command_status_action(Entity& creature, std::string_view action) {
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    if (creature.creature.dead || creature.creature.held(m_world.clock().now()) || creature.creature.forced) {
+        return false;
+    }
+    for (std::uint32_t index = 0; index < body.statusActions.size(); ++index) {
+        if (action.empty() || body.actions[body.statusActions[index].action].name == action) {
+            start_status_action(creature, index);
+            return creature.creature.mind.shooting;
+        }
+    }
+    return false;
 }
 
 } // namespace soulwarden::backend::world

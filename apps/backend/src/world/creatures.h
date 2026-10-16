@@ -1,7 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -199,6 +201,19 @@ struct CreatureCounts {
     std::uint64_t creaturesLooked{0};
     std::size_t lastScanPoints{0};
     std::size_t lastScanCreatures{0};
+    /**
+     * Stage 3.4f-D, the effects of the creatures: the entries of the due list that the world took (an end, a tick), the effects that a
+     * look at the due creatures saw, the ticks of a heal, the heals (and the health that they gave), the effects that a dispel ended, the
+     * statuses that came on a creature, and the rows that a creature did not take (no duration and no instant part).
+     */
+    std::uint64_t effectDueTaken{0};
+    std::uint64_t effectsLooked{0};
+    std::uint64_t effectTicks{0};
+    std::uint64_t heals{0};
+    double healed{0.0};
+    std::uint64_t dispelled{0};
+    std::uint64_t statusesGiven{0};
+    std::uint64_t statusesRefused{0};
 };
 
 class Creatures {
@@ -269,6 +284,27 @@ public:
      * @return False: the creature took no effect.
      */
     bool apply_effect(Entity& entity, const CreatureEffect& effect);
+    /**
+     * A status row of the game data comes on a creature (stage 3.4f-D; the one path of a status of an ability, of a rule, of a spell, of a
+     * status action of the creature, and of a command): the effect of the row (the stun, the root, the speed part, the DMG parts, the
+     * heal of its ticks, its icon) until its end, through apply_effect. A row with RemoveStatusEffects or RemoveStatusEffectCategories
+     * ends the effects of those rows and categories on the creature first (a dispel: the Null Chamber of the void gauntlet removes the
+     * category Buff). A row with no duration and no time is one application now (its heal, its dispel), the rule of the statuses of a
+     * character.
+     * @param time The time of the effect. No value: the BaseDuration of the row.
+     * @return False: the creature took nothing (dead, on its way back, or a row with nothing for a creature).
+     */
+    bool give_status(Entity& entity, const gamedata::StatusRow& row, EntityId source, std::optional<std::chrono::milliseconds> time = std::nullopt);
+    /**
+     * The heal of a creature (stage 3.4f-D, the one heal path of a creature: a tick of a heal effect): the health goes up by the amount, to
+     * its maximum; each session that observes the creature gets the vitals state. A dead creature gets no heal.
+     * @return The health that the creature got.
+     */
+    float heal(Entity& entity, float amount, std::string_view what);
+    /** @return The number of the entries of the due list of the effects (stage 3.4f-D: the load). */
+    [[nodiscard]] std::size_t effect_due_count() const {
+        return m_effectDue.size();
+    }
     /**
      * A knockdown or a stagger of an ability: the creature plays the reaction of the power (its
      * fragment of the slice; the fragment of the action "Reaction" for a slice with no such
@@ -433,8 +469,17 @@ private:
     void set_waiting(std::uint32_t point, bool waiting);
     /** Removes the action of each creature whose action has an end that came. */
     void end_actions();
-    /** Removes each effect whose end came, from the creatures that have effects (m_affected). */
+    /**
+     * The due list of the effects (stage 3.4f-D; before: a look at each creature with an effect in each tick): the ends and the ticks whose
+     * time came. The cost depends on the due entries, not on the creatures with an effect.
+     */
     void end_effects();
+    /** Removes the effects of one creature whose end came (or each effect of a dead creature), and the end of its knockdown. */
+    void sweep(Entity& entity);
+    /** One tick of the heal effect `serial` of a creature, due at `at`. */
+    void effect_tick(Entity& entity, std::uint64_t serial, WorldClock::time_point at);
+    /** Puts an entry into the due list of the effects: a look at the creature (`serial` 0), or a tick of an effect. */
+    void due(WorldClock::time_point at, EntityId creature, std::uint64_t serial);
     /** The stun of a creature ended: its action "Stun" stops, and each observer gets its idle action. */
     void end_stun(Entity& entity);
 
@@ -455,8 +500,16 @@ private:
     std::set<EntityId> m_creatures;
     /** The creatures whose action has an end. */
     std::set<EntityId> m_acting;
-    /** The creatures with an effect or a knockdown of an ability: the end of effects looks only at these. */
-    std::set<EntityId> m_affected;
+    /**
+     * The due list of the effects (stage 3.4f-D): at its time, a look at a creature (its ends: serial 0), or a tick of one effect (its
+     * serial). An old entry (an effect that ended, a renewed end) changes nothing.
+     */
+    struct EffectDue {
+        EntityId creature{0};
+        std::uint64_t serial{0};
+    };
+    std::multimap<WorldClock::time_point, EffectDue> m_effectDue;
+    std::uint64_t m_nextEffect{0};
     CreatureCounts m_counts;
     std::optional<WorldClock::time_point> m_lastScan;
     /** Number of creatures that commands made. It selects the slice of an alias with more than one. */

@@ -1828,18 +1828,10 @@ bool Abilities::apply_status(Entity& creature, std::string_view status, EntityId
     if (row == nullptr || creature.kind != EntityKind::creature) {
         return false;
     }
-    CreatureEffect given;
-    given.status = row->id;
-    given.index = row->index;
-    given.shown = row->nameplate;
-    given.stun = row->stunned;
-    given.root = row->root;
-    given.speed = 1.0F + row->moveSpeed;
-    given.damage = row->damage;
-    given.endsOnHit = row->stopOnHit != 0;
-    given.ends = m_world.clock().now() + milliseconds(seconds ? *seconds : row->duration);
-    given.source = source;
-    return m_world.creatures().apply_effect(creature, given);
+    // The one path of a status on a creature (stage 3.4f-D, Creatures::give_status): the effect of the row, its ticks, its dispel.
+    const std::optional<std::chrono::milliseconds> time =
+        seconds ? std::optional<std::chrono::milliseconds>(milliseconds(*seconds)) : std::nullopt;
+    return m_world.creatures().give_status(creature, *row, source, time);
 }
 
 void Abilities::publish(const std::string& characterId) {

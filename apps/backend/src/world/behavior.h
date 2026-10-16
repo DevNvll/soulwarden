@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 
 #include "gamedata/creature_data.h"
@@ -225,6 +226,14 @@ inline constexpr std::chrono::milliseconds kAreaRepeat{10000};
 inline constexpr std::chrono::milliseconds kAreaOnlyRepeat{5000};
 inline constexpr float kAreaHoldMargin = 2.0F;
 /**
+ * The status actions (stage 3.4f-D; project rules, decisions of an agent: the game files have the actions, their marks, and the statuses, and
+ * the task of the behavior tree that starts an action is not in them). A creature in a fight starts a status action of its slice before its
+ * other attacks when it is ready: its heal (a status with a heal part) when its health is not above the low-health part of its slice (game
+ * data: m_lowHealthPercentThreshold, 0.15 for the Inquisitor Cleric), its buff when it does not have the buff; not before kStatusRepeat after
+ * the start of its last status action, and after the pause of its last attack.
+ */
+inline constexpr std::chrono::milliseconds kStatusRepeat{20000};
+/**
  * The presentation of the spawn action of a new creature (protocol notes 4.14): a session gives the action that plays this long after a
  * first record with the spawn action (rep_session.cpp). A creature whose slice needs the spawn action starts no shot in this time after
  * its creation (code review of stage 3.4f-A, finding CR-R1: the arrow came before the windup of FireBow in each observer).
@@ -291,6 +300,27 @@ struct BehaviorCounts {
     std::uint64_t areaAttacks{0};
     std::uint64_t casts{0};
     std::uint64_t castsCancelled{0};
+    /**
+     * The status actions of stage 3.4f-D: the actions that the creatures started, the marks that gave their statuses, and the marks that
+     * gave none (a different action replaced the status action, the creature died, the data has no such status row).
+     */
+    std::uint64_t statusActions{0};
+    std::uint64_t statusMarks{0};
+    std::uint64_t statusMarksCancelled{0};
+    /** Casts of an area at the place of the caster (stage 3.4f-D: the place rule of the client for a spell with no ranged attack data). */
+    std::uint64_t castsAtCaster{0};
+};
+
+/** Where the client puts the spell of a cast of an AI (stage 3.4f-D, client code 0x679DBB0; Behavior::place_rule). */
+enum class CastPlace : std::uint8_t {
+    /** The aim point of the target (AIAimAtTarget, UseAllAvailableTargets, and the ranged attack data of the spell row: 0x5C35450). */
+    aim,
+    /** The position of the target (AIAimAtTarget with no UseAllAvailableTargets: one record of the current target, no lead). */
+    target,
+    /** The position of the caster (AIAimAtTarget false, or the target loop of UseAllAvailableTargets with no ranged attack data). */
+    caster,
+    /** AIAimAtTarget false with ranged attack data: a shot of the ranged attack data (0x5BFBAF0); the backend has no such rule. */
+    unsupported,
 };
 
 /** The aim of a release (stage 3.4f-A, Behavior::aim): the origin and the unit direction of the shot. */
@@ -385,6 +415,19 @@ public:
      *         the spell row from the creature, on the floor of the navigation data (the floor nearest to the height of the target).
      */
     [[nodiscard]] state::WorldPosition area_place(const Entity& creature, const Entity& target, const gamedata::AreaCast& cast) const;
+    /** @return Where the client puts the spell of a cast (stage 3.4f-D, client code 0x679DBB0 with the values of the clip and of the row). */
+    [[nodiscard]] CastPlace place_rule(const gamedata::AreaCast& cast) const;
+    /**
+     * @return The distance in which a creature casts an area attack (stage 3.4f-D): the CastDistance of the spell row, or the Radius of the
+     *         row for a spell at the caster (its CastDistance is 0: the target must be in the sphere of the spell; a decision of an agent).
+     */
+    [[nodiscard]] float area_range(const gamedata::AreaCast& cast) const;
+    /**
+     * A development command and the tests (stage 3.4f-D): the creature starts a status action of its slice now (the action with the name, or
+     * its first one), with no condition and no repeat time. Its marks give their statuses to the creature (Creatures::give_status).
+     * @return False: the creature has no such status action, is dead, or holds.
+     */
+    bool command_status_action(Entity& creature, std::string_view action);
     /**
      * @return The aim of a release of a creature at a target (stage 3.4f-A): the origin at the creature, the place of the target and
      *         its velocity (World::velocity_of) for the lead of the data, the fall of the projectile slice, and the angle limits.
@@ -422,6 +465,15 @@ private:
         std::uint16_t generation{0};
         std::uint32_t area{0};
         std::uint32_t cast{0};
+    };
+
+    /** One mark of a status action that plays (stage 3.4f-D): the time is the key of the map. */
+    struct PendingStatus {
+        EntityId creature{0};
+        /** The start count of the status action: a mark of an action that a different action replaced does nothing. */
+        std::uint16_t generation{0};
+        std::uint32_t action{0};
+        std::uint32_t mark{0};
     };
 
     /** One release of a shot that plays (stage 3.4f-A): the time is the key of the map. */
@@ -463,6 +515,15 @@ private:
     [[nodiscard]] std::vector<std::uint32_t> usable_areas(const gamedata::CreatureSlice& body) const;
     void start_area(Entity& creature, Entity& target, std::uint32_t area);
     void cast(const PendingCast& pending);
+    /**
+     * The status rules of a step of a creature with a status action (stage 3.4f-D). @return True: the creature started a status action (or
+     * one plays).
+     */
+    bool think_status(Entity& creature, Entity& target);
+    /** @return True when the creature wants this status action now: its heal at low health, or its buff that it does not have. */
+    [[nodiscard]] bool wants(const Entity& creature, const gamedata::CreatureStatusAction& action) const;
+    void start_status_action(Entity& creature, std::uint32_t index);
+    void status_mark(const PendingStatus& pending);
     /**
      * A walk of a creature to its target on its path to `hold` (horizontal, with a free line), with the rules of a target with no way and
      * of the crowd (the walk of a shot, stage 3.4f-A; of an area attack, stage 3.4f-C).
@@ -535,6 +596,8 @@ private:
     std::multimap<WorldClock::time_point, PendingRelease> m_releases;
     /** The casts of the area attacks that play (stage 3.4f-C), in the sequence of their times. */
     std::multimap<WorldClock::time_point, PendingCast> m_casts;
+    /** The marks of the status actions that play (stage 3.4f-D), in the sequence of their times. */
+    std::multimap<WorldClock::time_point, PendingStatus> m_statusMarks;
     /** The characters that the creatures ignore: character ids. */
     std::unordered_set<std::string> m_ignored;
     std::optional<WorldClock::time_point> m_lastStep;

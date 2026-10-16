@@ -422,6 +422,40 @@ bool SpellData::set(SpellTables tables) {
                 error = name + " has a detection volume with a shape that is not correct";
             }
         }
+        // Format 4 (code review of stage 3.4f-C, finding AR-R5): the times of a volume agree with the delayed events of the slice, the
+        // events that the client plays. A volume whose own entity has an activation at the init is not active before it, and its time
+        // is the time of an activation at the init (its own, or an earlier one of a parent); a volume of an entity with no such event
+        // has the time 0, -1, or the time of an activation of a parent. The same for the end and the deactivations. Else the server
+        // would give the statuses of an area before the client shows it.
+        const auto agrees = [&](float when, std::uint32_t kind, const std::string& entity) {
+            const auto close = [](float a, float b) { return std::fabs(a - b) <= 0.001F; };
+            float own = -1.0F;
+            bool listed = false;
+            for (const SpellEvent& event : slice.events) {
+                if (event.type != kind || !event.onInit) {
+                    continue;
+                }
+                const float at = std::max(event.delay, 0.0F);
+                listed = listed || close(at, when);
+                if (event.target == entity) {
+                    own = own < 0.0F ? at : std::min(own, at);
+                }
+            }
+            if (when < 0.0F) {
+                return own < 0.0F;
+            }
+            if (own >= 0.0F) {
+                return listed && when <= own + 0.001F;
+            }
+            return listed || (kind == spell_event::kActivate && close(when, 0.0F));
+        };
+        for (const SpellVolume& volume : slice.volumes) {
+            if (error.empty() && tables.format >= 4
+                && (!agrees(volume.activeAfter, spell_event::kActivate, volume.entity)
+                    || !agrees(volume.inactiveAfter, spell_event::kDeactivate, volume.entity))) {
+                error = name + " has a detection volume whose time does not agree with the delayed events of its entity";
+            }
+        }
         for (const SpellAreaStatus& area : slice.areaStatuses) {
             if (error.empty() && (!time(area.initialDelay) || !time(area.reapplyDelay))) {
                 error = name + " has an area status with a delay that is not a time";

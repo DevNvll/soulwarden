@@ -247,6 +247,8 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         }
         // A dead creature does not walk (start_action ended the locomotion for a death action).
         entity->creature.moving.reset();
+        // Its effects end (RemoveOnDeath of the rows; stage 3.4f-D: its heal has no tick more, its buff ends).
+        sweep(*entity);
     }
     m_world.touch(id, ComponentKey::vitals);
     result.entity = entity;
@@ -292,7 +294,7 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, Ent
                                          [](const CreatureEffect& effect) { return effect.stun && effect.endsOnHit; });
         if (breaks != entity->creature.effects.end()) {
             breaks->ends = m_world.clock().now();
-            end_effects();
+            sweep(*entity);
         }
         // A creature that plays an attack does not stop it for a hit: the reaction would take
         // the action of the attack away, and a player that hits fast would stop each attack. A
@@ -435,14 +437,22 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
     const bool wasHeld = creature.held(now);
     const auto same = std::find_if(creature.effects.begin(), creature.effects.end(),
                                    [&](const CreatureEffect& existing) { return existing.status == effect.status; });
+    WorldClock::time_point end = effect.ends;
     if (same != creature.effects.end()) {
-        // The same status again: the later end (StackMax 1 of the six abilities).
+        // The same status again: the later end (StackMax 1 of the six abilities, and of the heals and the buffs of stage 3.4f-D). The ticks
+        // of a heal keep their times: the same row again gives no second tick (a decision of an agent; the rule of a character).
         same->ends = std::max(same->ends, effect.ends);
         same->source = effect.source;
+        end = same->ends;
     } else {
-        creature.effects.push_back(effect);
+        CreatureEffect added = effect;
+        added.serial = ++m_nextEffect;
+        creature.effects.push_back(added);
+        if (added.nextTick) {
+            due(*added.nextTick, entity.id, added.serial);
+        }
     }
-    m_affected.insert(entity.id);
+    due(end, entity.id, 0);
     if (effect.stun && !wasHeld) {
         // A stun stops the attack that plays (its contacts do nothing: the action is a different
         // one) and the walk. The creature plays the action "Stun" of its slice for the stun. A shot that plays does not fly (stage
@@ -484,7 +494,7 @@ bool Creatures::knock(Entity& entity, unsigned power, std::chrono::milliseconds 
     const WorldClock::time_point end = now + time;
     const bool longer = !creature.knockedUntil || end > *creature.knockedUntil || now >= *creature.knockedUntil;
     creature.knockedUntil = longer ? end : *creature.knockedUntil;
-    m_affected.insert(entity.id);
+    due(*creature.knockedUntil, entity.id, 0);
     // The reaction of the power: the action "Reaction" with the fragment of that power of the
     // slice (r_R4_F for a knockdown), or with the fragment of its action. A slice with no such action plays no
     // reaction: its observers get the scope with no record of the attack that it stopped.
@@ -517,37 +527,225 @@ void Creatures::end_stun(Entity& entity) {
     m_world.touch(entity.id, ComponentKey::movement);
 }
 
+void Creatures::due(WorldClock::time_point at, EntityId creature, std::uint64_t serial) {
+    m_effectDue.emplace(at, EffectDue{creature, serial});
+}
+
 void Creatures::end_effects() {
     const WorldClock::time_point now = m_world.clock().now();
-    for (auto affected = m_affected.begin(); affected != m_affected.end();) {
-        Entity* entity = find(*affected);
+    while (!m_effectDue.empty() && m_effectDue.begin()->first <= now) {
+        const WorldClock::time_point at = m_effectDue.begin()->first;
+        const EffectDue entry = m_effectDue.begin()->second;
+        m_effectDue.erase(m_effectDue.begin());
+        ++m_counts.effectDueTaken;
+        Entity* entity = find(entry.creature);
         if (entity == nullptr) {
-            affected = m_affected.erase(affected);
+            continue; // The creature left the world: its entries are old.
+        }
+        if (entry.serial == 0) {
+            sweep(*entity);
+        } else {
+            effect_tick(*entity, entry.serial, at);
+        }
+    }
+}
+
+void Creatures::sweep(Entity& entity) {
+    const WorldClock::time_point now = m_world.clock().now();
+    Creature& creature = entity.creature;
+    bool stunEnded = false;
+    bool shownEnded = false;
+    std::vector<std::string> onTickEnded;
+    for (auto effect = creature.effects.begin(); effect != creature.effects.end();) {
+        ++m_counts.effectsLooked;
+        if (now < effect->ends && !creature.dead) {
+            ++effect;
             continue;
         }
-        Creature& creature = entity->creature;
-        bool stunEnded = false;
-        bool shownEnded = false;
-        for (auto effect = creature.effects.begin(); effect != creature.effects.end();) {
-            if (now < effect->ends && !creature.dead) {
-                ++effect;
-                continue;
-            }
-            stunEnded = stunEnded || effect->stun;
-            shownEnded = shownEnded || effect->shown;
-            effect = creature.effects.erase(effect);
+        stunEnded = stunEnded || effect->stun;
+        shownEnded = shownEnded || effect->shown;
+        // An effect with an OnTickStatusEffect and no KeepOnTickEffectOnEnd takes the effect of its ticks with it (game data, stage 3.4f-D).
+        if (effect->row != nullptr && !effect->row->cells.text("OnTickStatusEffect").empty()
+            && effect->row->cells.number("KeepOnTickEffectOnEnd") == 0.0F) {
+            onTickEnded.emplace_back(effect->row->cells.text("OnTickStatusEffect"));
         }
-        if (creature.knockedUntil && (now >= *creature.knockedUntil || creature.dead)) {
-            creature.knockedUntil.reset();
+        if (!creature.dead) {
+            log::write("world: effect: %s of creature %016llx (%s) ends", effect->status.c_str(), static_cast<unsigned long long>(entity.id),
+                       creature.kind->id.c_str());
         }
-        if (shownEnded) {
-            m_world.touch(entity->id, ComponentKey::status);
-        }
-        if (stunEnded && !creature.dead && !creature.held(now)) {
-            end_stun(*entity);
-        }
-        affected = creature.effects.empty() && !creature.knockedUntil ? m_affected.erase(affected) : std::next(affected);
+        effect = creature.effects.erase(effect);
     }
+    for (const std::string& status : onTickEnded) {
+        std::erase_if(creature.effects, [&](const CreatureEffect& effect) {
+            const bool ends = effect.status == status;
+            shownEnded = shownEnded || (ends && effect.shown);
+            return ends;
+        });
+    }
+    if (creature.knockedUntil && (now >= *creature.knockedUntil || creature.dead)) {
+        creature.knockedUntil.reset();
+    }
+    if (shownEnded) {
+        m_world.touch(entity.id, ComponentKey::status);
+    }
+    if (stunEnded && !creature.dead && !creature.held(now)) {
+        end_stun(entity);
+    }
+}
+
+void Creatures::effect_tick(Entity& entity, std::uint64_t serial, WorldClock::time_point at) {
+    const WorldClock::time_point now = m_world.clock().now();
+    const auto find_effect = [&]() {
+        return std::find_if(entity.creature.effects.begin(), entity.creature.effects.end(),
+                            [serial](const CreatureEffect& effect) { return effect.serial == serial; });
+    };
+    auto effect = find_effect();
+    if (effect == entity.creature.effects.end() || !effect->nextTick || *effect->nextTick != at || effect->tickRate.count() <= 0) {
+        return; // An old entry: the effect ended, or it has a newer tick.
+    }
+    WorldClock::time_point next = at;
+    while (effect != entity.creature.effects.end() && next <= now && next < effect->ends && !entity.creature.dead) {
+        ++m_counts.effectTicks;
+        const float amount = effect->healFixed + effect->healPart * entity.vitals.healthMax;
+        const std::string status = effect->status;
+        const gamedata::StatusRow* row = effect->row;
+        const EntityId source = effect->source;
+        const std::chrono::milliseconds rate = effect->tickRate;
+        if (amount > 0.0F) {
+            (void)heal(entity, amount, status);
+        }
+        // OnTickStatusEffect of the row at each tick (game data: AI_Inquisitor_RampantFlame of AI_InqCleric_Rekindle).
+        if (row != nullptr && !row->cells.text("OnTickStatusEffect").empty()) {
+            const gamedata::AbilityData* data = m_world.options().abilityData;
+            if (const gamedata::StatusRow* onTick = data != nullptr ? data->status(row->cells.text("OnTickStatusEffect")) : nullptr) {
+                (void)give_status(entity, *onTick, source);
+            }
+        }
+        next += rate;
+        effect = find_effect(); // A status of the tick changes the list of the effects.
+    }
+    if (effect != entity.creature.effects.end()) {
+        if (next < effect->ends && !entity.creature.dead) {
+            effect->nextTick = next;
+            due(next, entity.id, serial);
+        } else {
+            effect->nextTick.reset();
+        }
+    }
+}
+
+float Creatures::heal(Entity& entity, float amount, std::string_view what) {
+    if (entity.kind != EntityKind::creature || entity.creature.dead || !std::isfinite(amount) || !(amount > 0.0F)) {
+        return 0.0F;
+    }
+    const float before = entity.vitals.health;
+    entity.vitals.health = std::min(entity.vitals.health + amount, entity.vitals.healthMax);
+    const float gained = entity.vitals.health - before;
+    ++m_counts.heals;
+    m_counts.healed += gained;
+    if (gained > 0.0F) {
+        m_world.touch(entity.id, ComponentKey::vitals);
+    }
+    log::write("world: heal: creature %016llx (%s) gets %.1f health of %.*s, health %.1f to %.1f of %.1f",
+               static_cast<unsigned long long>(entity.id), entity.creature.kind->id.c_str(), static_cast<double>(gained),
+               static_cast<int>(what.size()), what.data(), static_cast<double>(before), static_cast<double>(entity.vitals.health),
+               static_cast<double>(entity.vitals.healthMax));
+    return gained;
+}
+
+bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, EntityId source, std::optional<std::chrono::milliseconds> time) {
+    Creature& creature = entity.creature;
+    if (entity.kind != EntityKind::creature || creature.dead || creature.immune()) {
+        ++m_counts.statusesRefused;
+        return false;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    // A dispel (game data): RemoveStatusEffects and RemoveStatusEffectCategories of the row end those effects of the creature first (the
+    // Null Chamber of the void gauntlet: the category Buff of the enemies). An effect with a category of the list, or of a row of the list.
+    const auto words = [](std::string_view text) {
+        std::vector<std::string> list;
+        std::string word;
+        for (const char letter : text) {
+            if (letter == '+' || letter == ',' || letter == ' ') {
+                if (!word.empty()) {
+                    list.push_back(word);
+                }
+                word.clear();
+            } else {
+                word += static_cast<char>(std::tolower(static_cast<unsigned char>(letter)));
+            }
+        }
+        if (!word.empty()) {
+            list.push_back(word);
+        }
+        return list;
+    };
+    const std::vector<std::string> removeRows = words(row.cells.text("RemoveStatusEffects"));
+    const std::vector<std::string> removeCategories = words(row.cells.text("RemoveStatusEffectCategories"));
+    if (!removeRows.empty() || !removeCategories.empty()) {
+        bool shownEnded = false;
+        bool stunEnded = false;
+        std::erase_if(creature.effects, [&](const CreatureEffect& effect) {
+            std::string id = effect.status;
+            std::transform(id.begin(), id.end(), id.begin(), [](unsigned char letter) { return static_cast<char>(std::tolower(letter)); });
+            bool ends = std::find(removeRows.begin(), removeRows.end(), id) != removeRows.end();
+            if (!ends && effect.row != nullptr) {
+                for (const std::string& category : words(effect.row->cells.text("EffectCategories"))) {
+                    ends = ends || std::find(removeCategories.begin(), removeCategories.end(), category) != removeCategories.end();
+                }
+            }
+            if (ends) {
+                ++m_counts.dispelled;
+                shownEnded = shownEnded || effect.shown;
+                stunEnded = stunEnded || effect.stun;
+                log::write("world: effect: %s of creature %016llx (%s) ends: a dispel of %s", effect.status.c_str(),
+                           static_cast<unsigned long long>(entity.id), creature.kind->id.c_str(), row.id.c_str());
+            }
+            return ends;
+        });
+        if (shownEnded) {
+            m_world.touch(entity.id, ComponentKey::status);
+        }
+        if (stunEnded && !creature.held(now)) {
+            end_stun(entity);
+        }
+    }
+    CreatureEffect effect;
+    effect.status = row.id;
+    effect.row = &row;
+    effect.index = row.index;
+    effect.shown = row.nameplate;
+    effect.stun = row.stunned;
+    effect.root = row.root;
+    effect.speed = 1.0F + row.moveSpeed;
+    effect.damage = row.damage;
+    effect.typedDamage = std::any_of(row.cells.numbers.begin(), row.cells.numbers.end(),
+                                     [](const auto& cell) { return cell.first.rfind("DMG", 0) == 0; });
+    effect.endsOnHit = row.stopOnHit != 0;
+    effect.source = source;
+    const float rate = row.cells.number("TickRate");
+    effect.healPart = row.cells.number("HealthModifierPercent") > 0.0F ? row.cells.number("HealthModifierPercent") : 0.0F;
+    effect.healFixed = row.cells.number("Health") > 0.0F ? row.cells.number("Health") : 0.0F;
+    const auto lasting = time ? *time : std::chrono::milliseconds(std::lround(row.duration * 1000.0F));
+    if (lasting.count() <= 0) {
+        // No duration: one application now (the rule of a character): the heal, and the dispel above.
+        ++m_counts.statusesGiven;
+        const float amount = effect.healFixed + effect.healPart * entity.vitals.healthMax;
+        if (amount > 0.0F) {
+            (void)heal(entity, amount, row.id);
+        }
+        return true;
+    }
+    effect.ends = now + lasting;
+    if (rate > 0.0F && (effect.healPart > 0.0F || effect.healFixed > 0.0F || !row.cells.text("OnTickStatusEffect").empty())) {
+        // The ticks (the rule of a character, statuses.h): the first one at the next tick of the world, or one TickRate later with
+        // DelayInitialTick; then each TickRate, while it is before the end.
+        effect.tickRate = std::chrono::milliseconds(std::max<long long>(std::lround(rate * 1000.0F), 1));
+        effect.nextTick = row.cells.number("DelayInitialTick") != 0.0F ? now + effect.tickRate : now;
+    }
+    const bool given = apply_effect(entity, effect);
+    ++(given ? m_counts.statusesGiven : m_counts.statusesRefused);
+    return given;
 }
 
 void Creatures::end_actions() {
@@ -628,7 +826,6 @@ void Creatures::entity_removed(const Entity& entity) {
     }
     m_creatures.erase(entity.id);
     m_acting.erase(entity.id);
-    m_affected.erase(entity.id);
     m_behavior.removed(entity);
     m_forced.removed(entity.id);
     if (entity.creature.spawnPoint && m_points[*entity.creature.spawnPoint].entity == entity.id) {

@@ -136,13 +136,17 @@ inline gamedata::AbilityTables area_abilities() {
     std::vector<gamedata::StatusRow> rows = tables.statusEffects;
     rows.push_back(poison_row());
     tables.statusEffects = shop::numbered(std::move(rows));
+    // The two rows have the ranged attack data of the game rows (RangedAttackProfile AI_Ranged_AOE): the client puts the spell at the aim
+    // point of the target (stage 3.4f-D, the place rule of 0x679DBB0).
     tables.spells.push_back({kBombSpell, 3.0F, 5.0F, 30.0F, 0, 0.0F, 25000.0F,
                              shop::cells({{"ClearOnExit", 1.0F}, {"ClearOnEnd", 1.0F}},
-                                         {{"TargetTypes", "Enemy"}, {"DamageTable", "TestShamanDamageTable"}, {"DamageTableRow", "Mushroom"}})});
+                                         {{"TargetTypes", "Enemy"}, {"DamageTable", "TestShamanDamageTable"}, {"DamageTableRow", "Mushroom"},
+                                          {"RangedAttackProfile", "AI_Ranged_AOE"}, {"RangedAttackName", "Basic"}})});
     tables.spells.push_back({kStrikeSpell, kStrikeRadius, 5.0F, 12.0F, 0, 0.0F, 5000.0F,
                              shop::cells({{"EndOnCasterDeath", 1.0F}, {"ClearOnExit", 1.0F}, {"ClearOnEnd", 1.0F}, {"CastHeight", 20.0F}},
                                          {{"TargetTypes", "Enemy"}, {"ShapeTypes", "Sphere"}, {"DamageTable", "TestShamanDamageTable"},
-                                          {"DamageTableRow", "Test_Strike"}})});
+                                          {"DamageTableRow", "Test_Strike"}, {"RangedAttackProfile", "AI_Ranged_AOE"},
+                                          {"RangedAttackName", "AlignSpawnsWithTerrain"}})});
     return tables;
 }
 

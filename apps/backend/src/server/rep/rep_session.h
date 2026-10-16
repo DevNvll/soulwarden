@@ -574,9 +574,18 @@ private:
     /**
      * The references of the requests that the session took in the last kEarlyCancelKeep (stage 3.4f-B): a cancel with no use of such a
      * reference is a late cancel (the echo of a use that ended), not an early one, and it gives no mark. The first cancel of the reference
-     * (matched or late) takes the entry (code review of stage 3.4f-B, finding CS-R3): one entry for each attempt.
+     * (matched or late) takes the entry (code review of stage 3.4f-B, finding CS-R3): one entry for each attempt. An entry whose use the
+     * world ended (3746: a command, a death, a travel) goes at the release of the client (an input step with no block or a different
+     * block; code review of stage 3.4f-C, finding AR-R8): after the release a cancel of the reference belongs to a new attempt.
      */
-    std::vector<std::pair<world::InteractionReference, world::WorldClock::time_point>> m_seenRequests;
+    struct SeenRequest {
+        world::InteractionReference reference;
+        world::WorldClock::time_point keep{};
+        bool serverEnded{false};
+    };
+    std::vector<SeenRequest> m_seenRequests;
+    /** The world ended the use of the character (3746): the seen requests wait for the release of the client (finding AR-R8). */
+    void server_ended_use();
     /** Newest input report of the client and the time of the last log line for it. */
     ClientInput m_input;
     carrier::Clock::time_point m_lastInputLog{};

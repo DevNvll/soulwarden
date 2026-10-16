@@ -10,7 +10,10 @@ backend runs it (case RG5; the case trap-slice: case SB1 of stage 3.3b-S2b). Cod
 AutoSpell (the rule of a summon) with a lifetime of one byte gave the lifetime 0; the cases autospell and
 autospell-lifetime-width check it (case RK12). Code review of stage 1.1b, finding F2: a Vitals component with no row
 reference gave the member vitals null and a paid Pylon with no damage path; the case vitals-no-row checks that the tool keeps
-the old file (case RD2).
+the old file (case RD2). Code review of stage 3.4f-C, finding AR-R6: a radius or a height of a cylinder of one byte gave the size 0, and
+the tool replaced a complete export (the area of a creature then had no volume); the cases area-cut-radius, area-cut-height, and
+area-cut-center check that the tool keeps the old file, and the case area-valid checks the volume of an area with its own activation
+event (finding AR-R5: the time of the volume is the time of that event).
 
 Usage: check_spell_tool.py WORK_FOLDER
 Status 0: each case has the expected result.
@@ -88,10 +91,39 @@ def slice_nodes(delay: bytes, trap: bool = False, lifetime: bytes | None = None,
     return [root, child]
 
 
+def area_nodes(delay: bytes, case: str) -> list[Element]:
+    """@return The nodes of a slice of a status area (the shape of the mushroom: a cylinder 1.5 m by 4 m, its middle 0.5 m below the
+    root, an area status of the enemies with the delays 0.5 s and 1 s) on the child entity `Cloud`, which the delayed event activates at
+    `delay` (the entity is active at the start). `case`: area-cut-radius, area-cut-height, area-cut-center (a field of the wrong size)."""
+    roots = slice_nodes(delay, True)
+    # The event of the area starts at the init (the cloud of the mushroom), not at a trigger (the trap).
+    for node in tool.walk(roots[0]):
+        if node.name == tool.START_ON_INIT_FIELD:
+            node.value = b"\x01"
+        elif node.name == tool.START_ON_TRIGGER_FIELD:
+            node.value = b"\x00"
+    roots[1].children[1].value = b"Cloud"
+    listed = tool.find_field(roots[1], tool.COMPONENTS_FIELD)
+    cylinder = next(key for key, name in tool.SHAPE_CLASSES.items() if name == "cylinder")
+    shape = element(kind=cylinder, children=[
+        element(tool.RADIUS_FIELD, b"\x00" if case == "area-cut-radius" else struct.pack(">f", 1.5)),
+        element(tool.HEIGHT_FIELD, b"\x00" if case == "area-cut-height" else struct.pack(">f", 4.0))])
+    center = struct.pack(">ff", 0.0, 0.0) if case == "area-cut-center" else struct.pack(">fff", 0.0, 0.0, -0.5)
+    volume = component(tool.VOLUME_CLASS, 30, [element(tool.SHAPE_FIELD, children=[shape]), element(tool.CENTER_FIELD, center)])
+    fields = [element(tool.ADD_STATUSES_FIELD, children=[element(tool.EFFECT_ID_FIELD, b"Test_Poison")]),
+              element(tool.DETECTION_ENTITY_FIELD, children=[identifier(tool.ID_FIELD, 200)]),
+              element(tool.REMOVE_ON_EXIT_FIELD, b"\x01"), element(tool.DETECTED_TYPE_FIELD, b"\x02"),
+              element(tool.INHERIT_FIELD, b"\x01"), element(tool.INITIAL_DELAY_SECONDS_FIELD, struct.pack(">f", 0.5)),
+              element(tool.REAPPLY_DELAY_FIELD, struct.pack(">f", 1.0))]
+    listed.children = [volume, component(tool.AREA_STATUS_CLASS, 31, fields)]
+    return roots
+
+
 def run(work: Path, case: str, delay: bytes, lifetime: bytes | None = None) -> tuple[int, str]:
     sheet = FakeSheet("Spells", [{"SpellID": "Test_Spell", "SpellPrefabPath": PREFAB}])
     path = tool.slice_path(PREFAB)
-    roots = slice_nodes(delay, case == "trap-slice", lifetime, case == "vitals-no-row")
+    roots = (area_nodes(delay, case) if case.startswith("area-")
+             else slice_nodes(delay, case == "trap-slice", lifetime, case == "vitals-no-row"))
 
     class Sources:
         used: dict = {}
@@ -168,6 +200,18 @@ def main() -> int:
     passed = status == 1 and text == MARK
     print(f"{'ok  ' if passed else 'FAIL'}  vitals-no-row: status {status}, file {'kept' if text == MARK else 'replaced'}")
     failures += 0 if passed else 1
+    # Findings AR-R5 and AR-R6 of the code review of stage 3.4f-C: the volume of an area has the time of the activation of its own entity
+    # (1 s, also for an entity that is active at the start), and a cut size field of its shape keeps the old file.
+    status, text = run(work, "area-valid", struct.pack(">f", 1.0))
+    entry = json.loads(text)["slices"][0] if status == 0 and text != MARK else {}
+    passed = status == 0 and entry.get("volumes") == [["Cloud", 0.0, 1.0, "cylinder", 1.5, 4.0, -0.5, -1.0]]
+    print(f"{'ok  ' if passed else 'FAIL'}  area-valid: status {status}, volumes {entry.get('volumes')}")
+    failures += 0 if passed else 1
+    for case in ("area-cut-radius", "area-cut-height", "area-cut-center"):
+        status, text = run(work, case, struct.pack(">f", 1.0))
+        passed = status == 1 and text == MARK
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, file {'kept' if text == MARK else 'replaced'}")
+        failures += 0 if passed else 1
     return 1 if failures else 0
 
 

@@ -185,7 +185,7 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | The pull and the push of a hit on a creature, the dash of a caster and its observers, the counter that the server starts | [Forced movement](docs/systems/forced-movement.md) |
 | The shot of a ranged or magic basic attack, its flight on the server, its hit on a creature or a wall, the hit near the muzzle | [Projectiles](docs/systems/projectiles.md) |
 | The level, the attributes, the weapon masteries, the ability bars, the trade skills | [Progression and skills](docs/systems/progression-and-skills.md) |
-| Creatures: the spawn points, the record for a session, the actions, the creature data | [Creatures](docs/systems/creatures.md) |
+| Creatures: the spawn points, the record for a session, the actions, the creature data, the heals and the buffs of a creature (its statuses, its status actions) | [Creatures](docs/systems/creatures.md) |
 | The behavior of a creature: the fight, the way back, patrol and wander | [Creature behavior](docs/systems/creature-behavior.md) |
 | The navigation data, the path search, the terrain heights | [Navigation](docs/systems/navigation.md) |
 | Melee attacks, the damage, the critical hits (the roll, a hit from behind, a headshot), the health and the death of a character, the heals (the one heal path, the heal base, the heal number), the mana | [Combat and health](docs/systems/combat-and-health.md) |

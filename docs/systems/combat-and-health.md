@@ -226,7 +226,10 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   attacker when it is not given; [Forced movement](forced-movement.md)).
   The damage of a creature to a character (`Combat::creature_damage`) is multiplied by the
   weaken of the creature (`Creature::damage_factor`: 1 plus the `DMGStandard` of each of its
-  effects, not below 0).
+  effects, not below 0). From stage 3.4f-D the part of an effect is the DMG<type> of its row for the damage type of the hit (the
+  rule of the damage of a character: Greatsword_Burst_Weaken has DMGStandard -0.1 and -0.15 for each type), or DMGStandard for a row
+  with no typed part; a buff of the creature raises it (the Howl of the Evil Knight hound: 0.1, a bite of 29.9 does 32.9 with it; live
+  proof P2 of stage 3.4f-D, case CRH3). The heal of a creature has its own path ([Creatures](creatures.md), `Creatures::heal`).
 - The gear in the two damage rules (stage 1.3b, protocol notes 4.15, 4.18, and 4.23; the
   rules in [Gear and perks](gear-and-perks.md)): the part of the gear of the attacker, the
   conversion of a gem, the DMG and ABS parts, the armor parts, a rend of the creature, and

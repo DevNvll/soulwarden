@@ -228,7 +228,21 @@ def read_area_spell_list() -> dict[str, str]:
     return {name.lower(): proof for name, proof in listed.items()}
 
 
+def read_status_action_list() -> dict[str, str]:
+    """@return The status actions whose marks and statuses have a live check (stage 3.4f-D, the list statusActions of the slice lists file:
+    the action name to its check): the tool writes the status actions of these actions only. A file with no list: none."""
+    try:
+        listed = json.loads(SLICE_LISTS_PATH.read_text(encoding="utf-8")).get("statusActions", {})
+        if not isinstance(listed, dict) or not all(isinstance(name, str) and isinstance(proof, str) for name, proof in listed.items()):
+            raise ValueError("the list statusActions does not have its form")
+    except (OSError, ValueError) as error:
+        raise Failure(f"{SLICE_LISTS_PATH.name} has no correct list statusActions: {error}") from error
+    return {name.lower(): proof for name, proof in listed.items()}
+
+
 REPLICATION_FIELD = field_id("m_replicationIndex")
+# Stage 3.4f-D: the low-health part of the Vitals component of a slice (the input LowHealth of the target curves of the AI).
+LOW_HEALTH_FIELD = field_id("m_lowHealthPercentThreshold")
 FACET_FIELDS = (field_id("m_clientFacetPtr"), field_id("m_serverFacetPtr"))
 SPAWN_RADIUS_FIELD = field_id("m_sliceSpawnRadius")
 GRID_FIELD = field_id("m_actionGridNew")
@@ -824,7 +838,24 @@ def read_reaction_fragments(sources: Sources, roots: list[Element]) -> list[int]
     return [positions.get(name.lower(), -1) for name in REACTION_FRAGMENTS]
 
 
-def read_action_table(sources: Sources, roots: list[Element]) -> list[list] | None:
+def marker_statuses(action: ElementTree.Element) -> list[tuple[str, list[str]]]:
+    """@return The statuses that an action definition gives to its creature at a mark (stage 3.4f-D): each IfThenElse whose IfCondition is
+    one IfMannequinMarker and whose ThenActivity has ModifyStatusEffects with EffectsToApplyOnEnter: (the MarkerName, [EffectId, ...])."""
+    found = []
+    for branch in action.iter("IfThenElse"):
+        condition = branch.find("IfCondition")
+        then = branch.find("ThenActivity")
+        if condition is None or then is None or len(list(condition)) != 1 or list(condition)[0].tag != "IfMannequinMarker":
+            continue
+        mark = list(condition)[0].get("MarkerName", "")
+        statuses = [effect.get("EffectId", "") for modify in then.iter("ModifyStatusEffects") for listed in modify.iter("EffectsToApplyOnEnter")
+                    for effect in listed.iter("EffectId") if effect.get("EffectId")]
+        if mark and statuses:
+            found.append((mark, statuses))
+    return found
+
+
+def read_action_table(sources: Sources, roots: list[Element], markers: dict | None = None) -> list[list] | None:
     """@return The action table of a creature slice: [action name, fragment name, fragment index, server started]
     for each action, or no value when the slice names no grid file. The position of an action in the list is its
     index on the wire: the scope record of a movement state has the index plus 1. A file that the slice, the
@@ -877,6 +908,11 @@ def read_action_table(sources: Sources, roots: list[Element]) -> list[list] | No
             fragment = action.get("FragmentName", "")
             actions.append([name, fragment, fragments.get(fragment.lower(), -1),
                             action.get("ServerStarted", "").lower() in ("true", "1")])
+            if markers is not None:
+                # Stage 3.4f-D: the statuses of the action at its marks (the status actions of creature_behavior.py).
+                linked = marker_statuses(action)
+                if linked:
+                    markers.setdefault(name, linked)
     return actions
 
 
@@ -1109,6 +1145,17 @@ def read_creature_slice(path: str, asset: tuple[bytes, int], roots: list[Element
     capsule = read_capsule(path, roots)
     if capsule is not None:
         entry["capsule"] = capsule
+    # Stage 3.4f-D: m_lowHealthPercentThreshold of the Vitals component (0.15 for the Inquisitor Cleric). A field that is not one finite 32-bit
+    # float from 0 to 1 stops the tool.
+    for root in roots:
+        found = first(root, LOW_HEALTH_FIELD)
+        if found is None or found.value is None:
+            continue
+        value = struct.unpack(">f", found.value)[0] if len(found.value) == 4 else math.nan
+        if not (math.isfinite(value) and 0.0 <= value <= 1.0):
+            raise Failure(f"{path}: m_lowHealthPercentThreshold is not a part of the maximum health ({found.value.hex()})")
+        entry["lowHealth"] = round(value, 4)
+        break
     return entry
 
 
@@ -1224,7 +1271,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     # The spells of the casts of the creatures (stage 3.4f-C): the ground areas of the backend (spells.area_shape).
     import spells as spell_tool  # noqa: E402 (the module imports this one: the import is here, after the load)
     behavior = creature_behavior.Behavior(sources, TABLES_FOLDER, ranged_attacks, projectile_of,
-                                          spell_tool.AreaSpells(sources, read_area_spell_list()))
+                                          spell_tool.AreaSpells(sources, read_area_spell_list()), read_status_action_list())
     regions = all_region_names(sources) if whole_world else region_names(center, radius)
     counts = {"entries": 0, "inArea": 0, "usual": 0, "creatures": 0}
     left_out: dict[str, int] = {}
@@ -1266,8 +1313,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                 return None
             slice_index[path] = len(slices)
             slices.append(read_creature_slice(path, asset, roots))
+            markers: dict = {}
             try:
-                slices[-1]["actions"] = read_action_table(sources, roots) or []
+                slices[-1]["actions"] = read_action_table(sources, roots, markers) or []
                 reactions = read_reaction_fragments(sources, roots)
                 if reactions is not None and any(index >= 0 for index in reactions):
                     slices[-1]["reactions"] = reactions
@@ -1278,7 +1326,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
             # What the behavior of a creature with this slice needs: its sense and speed values, the
             # tags of its animation fragments, and its attacks.
             try:
-                slices[-1].update(behavior.read(roots, controller_path_of(roots), slices[-1]["actions"], path))
+                slices[-1].update(behavior.read(roots, controller_path_of(roots), slices[-1]["actions"], path, markers))
             except Failure as error:
                 raise Failure(f"the behavior data of {path} is not complete: {error}") from error
         return slice_index[path]
@@ -1537,6 +1585,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     counts.update(ranged_counts([slices[body] for body in used], points, document_kinds, behavior.ranged_left_out,
                                 projectile_list))
     counts.update(area_counts([slices[body] for body in used], points, document_kinds, behavior.areas_left_out))
+    counts.update(status_counts([slices[body] for body in used], points, document_kinds, getattr(behavior, "status_left_out", {})))
     # The capsule of the character of a player (stage 3.4f-A): the target of a creature shot. No capsule: the backend uses its
     # default capsule.
     player_roots = sources.stream(PLAYER_SLICE)
@@ -1644,6 +1693,18 @@ def area_counts(slices: list[dict], points: list[list], kinds: list[dict], left_
             "areaSpells": spells, "kindsWithAreaAttacks": len(area_kinds),
             "spawnPointsWithAreaAttacks": sum(1 for point in points if point[1] in area_kinds),
             "areasLeftOut": dict(sorted(left_out.items()))}
+
+
+def status_counts(slices: list[dict], points: list[list], kinds: list[dict], left_out: dict[str, int]) -> dict:
+    """@return The counts of the status actions (stage 3.4f-D) for the output of the tool and the file."""
+    status_slices = {index for index, entry in enumerate(slices) if entry.get("statusActions")}
+    status_kinds = {index for index, kind in enumerate(kinds) if any(body[0] in status_slices for body in kind["bodies"])}
+    statuses = sorted({status for entry in slices for action in entry.get("statusActions", []) for mark in action[2] for status in mark[1]})
+    return {"slicesWithStatusActions": len(status_slices), "statusActions": sum(len(entry.get("statusActions", [])) for entry in slices),
+            "statusActionStatuses": statuses, "kindsWithStatusActions": len(status_kinds),
+            "spawnPointsWithStatusActions": sum(1 for point in points if point[1] in status_kinds),
+            "slicesWithLowHealth": sum(1 for entry in slices if "lowHealth" in entry),
+            "statusActionsLeftOut": dict(sorted(left_out.items()))}
 
 
 def patrol_counts(routes: list[list], point_routes: list[int | None], points: list[list], kind_list: list[dict],
@@ -1789,6 +1850,11 @@ def main() -> int:
           f"points): {', '.join(counts['areaSpells'])}")
     for cause, count in counts["areasLeftOut"].items():
         print(f"  no area cast, {cause}: {count}")
+    print(f"  status actions: {counts['statusActions']} of {counts['slicesWithStatusActions']} slices ({counts['kindsWithStatusActions']} "
+          f"kinds, {counts['spawnPointsWithStatusActions']} spawn points): {', '.join(counts['statusActionStatuses'])}; slices with a "
+          f"low-health part: {counts['slicesWithLowHealth']}")
+    for cause, count in counts["statusActionsLeftOut"].items():
+        print(f"  no status action, {cause}: {count}")
     near = counts["spawnPointsAtTerrainHeight"]
     print(f"  spawn points 0.3 m or less from the terrain height: {near['0.3']}; 1.0 m or less: {near['1.0']}")
     policies = counts["routePolicies"]

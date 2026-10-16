@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -256,10 +257,11 @@ private:
     void publish(Entity& character, CharacterState& state, bool refresh = true);
     /**
      * The heal and the mana of one application or one tick of a row (stage 3.3b-S6: the one heal path of the health system, with the
-     * kind of the source and the heal source of the status). `tick` false: the application.
+     * kind of the source and the heal source of the status). `tick` false: the application. `at`: the due time of a tick (the dodge decides
+     * its damage at this time: code review of stage 3.4f-C, finding AR-R1); no value: now.
      */
     void give(Entity& character, const gamedata::StatusRow& row, float amount, const StatusSource& source, const HealSource& heal, bool tick,
-              const DamageSource& damage = {});
+              const DamageSource& damage = {}, std::optional<WorldClock::time_point> at = std::nullopt);
     /** @return The factor of the potency of a row on a character from the EffectPotencyMods of its other statuses ("SacredGroundCat=-0.1"). */
     [[nodiscard]] float potency_factor(const Entity& character, const gamedata::StatusRow& row) const;
     /** The due entries of a status: its end and its next tick. */

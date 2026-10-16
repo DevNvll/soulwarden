@@ -241,6 +241,27 @@ bool read_area_cast(const json& cell, AreaCast& cast) {
     return true;
 }
 
+/** Reads one status action [action, time, [[mark time, [status, ...]], ...]] (stage 3.4f-D). */
+bool read_status_action(const json& row, CreatureStatusAction& action) {
+    if (!row.is_array() || row.size() != 3 || !read_number(row[0], action.action) || !read_real(row[1], action.length) || !row[2].is_array()) {
+        return false;
+    }
+    for (const json& cell : row[2]) {
+        StatusMark mark;
+        if (!cell.is_array() || cell.size() != 2 || !read_real(cell[0], mark.time) || !cell[1].is_array() || cell[1].empty()) {
+            return false;
+        }
+        for (const json& status : cell[1]) {
+            if (!status.is_string() || status.get<std::string>().empty()) {
+                return false;
+            }
+            mark.statuses.push_back(status.get<std::string>());
+        }
+        action.marks.push_back(std::move(mark));
+    }
+    return true;
+}
+
 /** Reads one projectile slice [path, asset, sub, root, slot, speed, extra, time for max, [accel], flying, stuck] (stage 3.4f-A). */
 bool read_projectile(const json& row, ProjectileSliceData& projectile) {
     std::string asset;
@@ -481,6 +502,24 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
             slice.areas.push_back(std::move(attack));
         }
     }
+    // The status actions (stage 3.4f-D) and the low-health part of the Vitals component. A file of an older tool has no member.
+    if (entry.contains("statusActions")) {
+        if (!entry["statusActions"].is_array()) {
+            return false;
+        }
+        for (const json& row : entry["statusActions"]) {
+            if (!read_status_action(row, slice.statusActions.emplace_back())) {
+                return false;
+            }
+        }
+    }
+    if (entry.contains("lowHealth")) {
+        float part = 0.0F;
+        if (!read_real(entry["lowHealth"], part)) {
+            return false;
+        }
+        slice.lowHealth = part;
+    }
     return true;
 }
 
@@ -599,6 +638,7 @@ void CreatureData::clear() {
     m_playerCapsule.reset();
     m_shootingSlices = 0;
     m_areaSlices = 0;
+    m_statusActionSlices = 0;
     m_routedPoints = 0;
     m_wanderingKinds = 0;
     m_levels.clear();
@@ -830,6 +870,11 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
             std::stable_sort(attack.casts.begin(), attack.casts.end(), [](const AreaCast& a, const AreaCast& b) { return a.time < b.time; });
         }
         m_areaSlices += slice.areas.empty() ? 0 : 1;
+        // The status actions (stage 3.4f-D): the marks in the sequence of their times.
+        for (CreatureStatusAction& action : slice.statusActions) {
+            std::stable_sort(action.marks.begin(), action.marks.end(), [](const StatusMark& a, const StatusMark& b) { return a.time < b.time; });
+        }
+        m_statusActionSlices += slice.statusActions.empty() ? 0 : 1;
         slice.spawnAction = slice.spawnActionName.empty() ? std::nullopt : slice.find_action(slice.spawnActionName);
         if (slice.fights()) {
             ++m_fightingSlices;
@@ -1010,6 +1055,23 @@ bool CreatureData::check() {
                 m_error = "slice " + std::to_string(index) + " has an area attack whose action, time, or casts do not fit together";
                 return false;
             }
+        }
+        // The status actions (stage 3.4f-D): the action has a fragment, each mark is in the time of its action and names a status; the low-health
+        // part is a part of the maximum health. A value that does not fit is a fault of the file.
+        for (const CreatureStatusAction& action : slice.statusActions) {
+            bool correct = action.action < slice.actions.size() && slice.actions[action.action].fragmentIndex >= 0 && std::isfinite(action.length)
+                           && action.length >= kMinAttackTime && action.length <= kMaxAttackTime && !action.marks.empty();
+            for (const StatusMark& mark : action.marks) {
+                correct = correct && std::isfinite(mark.time) && mark.time >= 0.0F && mark.time <= action.length && !mark.statuses.empty();
+            }
+            if (!correct) {
+                m_error = "slice " + std::to_string(index) + " has a status action whose action, time, or marks do not fit together";
+                return false;
+            }
+        }
+        if (slice.lowHealth && !(std::isfinite(*slice.lowHealth) && *slice.lowHealth >= 0.0F && *slice.lowHealth <= 1.0F)) {
+            m_error = "slice " + std::to_string(index) + " has a low-health part that is not a part of the maximum health";
+            return false;
         }
         // The metadata state of a creature has the asset id of its slice: the null id names no asset.
         if (std::all_of(slice.asset.begin(), slice.asset.end(), [](std::uint8_t byte) { return byte == 0; })) {

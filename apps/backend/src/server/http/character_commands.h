@@ -325,6 +325,13 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
 [[nodiscard]] WorldCommand creature_area(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                          service::HttpResponse& refusal);
 /**
+ * status-action: `creature`, and `action` (a name; no value: the first one) (stage 3.4f-D). A development command: the creature starts a
+ * status action of its slice now (its heal or its buff), with no condition and no repeat time; its marks give their statuses to the
+ * creature (the rules of the behavior and of the creature system). Only the development routes have it.
+ */
+[[nodiscard]] WorldCommand creature_status_action(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                                  service::HttpResponse& refusal);
+/**
  * anchor: `creature`, and `x`, `y`, `z` (meters). A development command: the anchor of a
  * creature in a fight (the end of its way back, and the first place of its trail) is that
  * place. A test of the way back with no path to the anchor. Only the development routes have it.

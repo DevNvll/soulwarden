@@ -131,9 +131,18 @@ hub::Bytes encode_spell_state(const world::Entity& entity, View view, const worl
     StateWriter state(kGroups);
     state.field(0, kRowKey).u32(spell.key);
     write_position(state.field(0, kStartPosition), entity.position);
-    state.field(0, kStartRotation).u8(kIdentityRotation);
+    // The rotation of a creature area (stage 3.4f-D): the direction of the caster at the cast (client code 0x676AAF0). Else the identity.
+    if (spell.yaw) {
+        write_place_rotation(state.field(0, kStartRotation), yaw_rotation(*spell.yaw));
+    } else {
+        state.field(0, kStartRotation).u8(kIdentityRotation);
+    }
     write_position(state.field(0, kChildPosition), entity.position);
-    state.field(0, kChildRotation).u8(kIdentityRotation);
+    if (spell.yaw) {
+        write_place_rotation(state.field(0, kChildRotation), yaw_rotation(*spell.yaw));
+    } else {
+        state.field(0, kChildRotation).u8(kIdentityRotation);
+    }
     write_reference(state.field(0, kPreviousAttachment), nullptr);
     write_reference(state.field(0, kAttachment), spell.attached != 0 ? &spell.attachedActor : nullptr);
     write_reference(state.field(0, kCaster), &spell.casterActor);
@@ -214,7 +223,8 @@ hub::Bytes encode_spell_place_state(const world::Entity& entity, View view, cons
     if (entity.kind != world::EntityKind::spell || entity.spell.slice == nullptr || entity.spell.slice->positionSlot == 0) {
         return {};
     }
-    return position_in_the_world_state(entity.position, {0.0F, 0.0F, 0.0F, 1.0F}); // The rotation (0, 0, 0, 1): `07`.
+    // The rotation (0, 0, 0, 1): `07`; a creature area has the direction of its caster (stage 3.4f-D).
+    return position_in_the_world_state(entity.position, entity.spell.yaw ? yaw_rotation(*entity.spell.yaw) : std::array<float, 4>{0.0F, 0.0F, 0.0F, 1.0F});
 }
 
 std::vector<hub::Bytes> encode_spell_vitals_parts(const world::Entity& entity, View view, const PartsRequest& request) {

@@ -104,6 +104,13 @@ inline constexpr float kHeight = 3.0F;
 inline constexpr std::chrono::milliseconds kAreaStep{100};
 /** A strike looks for the characters in its sphere at this interval while its damage window is open (stage 3.4f-C, a decision of an agent). */
 inline constexpr std::chrono::milliseconds kStrikeStep{25};
+/**
+ * A sample of a strike runs at its due time (code review of stage 3.4f-C, finding AR-R3: a world step from 890 ms to 960 ms crossed the window
+ * 900 ms to 950 ms of the lightning, and the strike hit nobody while the client showed the bolt). A sample that the world processes after the
+ * end of the window is made at its due time when it is at most this late (a bounded catch-up, a decision of an agent): each character is
+ * at its place of that time (its place now less its velocity times the delay). A later sample is lost.
+ */
+inline constexpr std::chrono::milliseconds kStrikeCatchUp{250};
 } // namespace spell_rules
 
 /** The largest radius of a shield spell that the position index looks for near a segment (stage 3.3b-M2; the row of Maelstrom: 2 m). */
@@ -216,6 +223,12 @@ struct SpellCounts {
     std::uint64_t areaApplications{0};
     std::uint64_t areaExits{0};
     std::uint64_t strikeHits{0};
+    /**
+     * Stage 3.4f-D (code review of stage 3.4f-C): the exits that the tick of a status of an area found first (finding AR-R2), and the
+     * samples of a strike that a late world step made at their due time after the end of the window (finding AR-R3).
+     */
+    std::uint64_t exitsBeforeTick{0};
+    std::uint64_t strikeCatchUps{0};
 };
 
 class Spells {
@@ -247,6 +260,13 @@ public:
     [[nodiscard]] bool area_usable(const gamedata::AreaCast& cast) const;
     /** @return The CastDistance of the spell row of a cast (meters), or 0 with no row. */
     [[nodiscard]] float cast_distance(const gamedata::AreaCast& cast) const;
+    /**
+     * A status of a status area of a creature has a tick now (code review of stage 3.4f-C, finding AR-R2: the world runs the statuses
+     * before the spells, and a character that left the cloud took one more tick). The area looks at this one character: a character
+     * that is not in its active volume leaves it now (its statuses go with m_removeOnExit). Only that area: no scan.
+     * @return False: the character left the area.
+     */
+    bool holds(EntityId area, const Entity& character);
 
     /**
      * @return The time of the activation of the target with the damage row `row` on the timeline of a spell (the burst of
@@ -389,9 +409,15 @@ private:
     void aura_step(Entity& spell, Live& live);
     /** Stage 3.4f-C: one step of a status area of a creature (the entries, the applications, the exits), and one step of a strike. */
     void area_step(Entity& spell, Live& live);
-    void strike_step(Entity& spell, Live& live);
-    /** @return True when the capsule of a character is in the volume of a ground area of a creature (stage 3.4f-C). */
-    [[nodiscard]] bool in_area(const Entity& spell, const Live& live, const Entity& character) const;
+    /** `due`: the due time of the sample of the strike (finding AR-R3). */
+    void strike_step(Entity& spell, Live& live, WorldClock::time_point due);
+    /** One sample of a strike at a time of its window (`now`: the time of the world tick): one hit for each character in its sphere. */
+    void strike_sample(Entity& spell, Live& live, WorldClock::time_point sample, WorldClock::time_point now);
+    /**
+     * @return True when the capsule of a character is in the volume of a ground area of a creature (stage 3.4f-C). `back`: the character
+     *         this far back on its velocity (a sample at an earlier time: finding AR-R3).
+     */
+    [[nodiscard]] bool in_area(const Entity& spell, const Live& live, const Entity& character, std::array<float, 3> back = {}) const;
     /** A character is no member of a status area of a creature any more: its statuses of the area go (m_removeOnExit). */
     void leave_area(const Entity& spell, Live& live, EntityId member, bool takeStatus);
     /** The friends of the caster of an aura lose its statuses (ClearOnExit, ClearOnEnd). */

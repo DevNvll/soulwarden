@@ -18,6 +18,8 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 | The corrections of the code review of stage 3.3b-S1 (F1 to F13) | `apps/backend/tests/review_status_tests.cpp`, test cases RS1 to RS13 |
 | The heal of a status: a fixed heal, a heal over time, a heal of an ability (HealthModifierDamageBased), the heal values (stage 3.3b-S6) | `Statuses::give` (`StatusApply::heal`, `ActiveStatus::heal`), `Statuses::potency_factor`, `Health::heal` ([Combat and health](combat-and-health.md)), test cases HE1, HE4, HE5, HE7 |
 | The damage of a status: the poison of a creature area, its damage source, the ticks, the dodge (stage 3.4f-C) | `Statuses::give` (`StatusApply::damage`, `ActiveStatus::damage`, `DamageSource`), `Health::status_damage`, [Spell entities](spells.md), test cases CRA2, CRA5, CRA8 |
+| The corrections AR-R1 and AR-R2 of the review of stage 3.4f-C: the dodge at the due time of a tick, the exit from an area before a tick | `Statuses::tick`, `Statuses::give` (`at`), `Health::status_damage` (`at`), `Spells::holds`, test cases RAR1, RAR2 |
+| The statuses of a creature (stage 3.4f-D: its heals and buffs) | [Creatures](creatures.md) (`Creatures::give_status`) |
 | The status categories and the caster effect rows of the game data | `tools/gamedata/abilities.sh` (format 4), `gamedata/ability_data.h` (`StatusCategory`, `AbilityRow`), test case ST1 |
 
 ## Rules
@@ -79,7 +81,12 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 - A tick in the immune window of a dodge does no damage, but for a row with IgnoreInvulnerable (a decision of an agent with
   the client code: the damage receiver 0x692E4A0 refuses an attack on an invulnerable target with no IgnoreInvulnerable;
   the status row has its own flag IgnoreInvulnerable, loader 0x44B4430). The status itself stays: the add test of the client
-  (0x401FB90) has no test of the invulnerability (test case CRA8).
+  (0x401FB90) has no test of the invulnerability (test case CRA8). The dodge decides a tick at its due time, not at the time of the
+  world tick that processes it (code review of stage 3.4f-C, finding AR-R1, case RAR1: a tick processed 30 ms late came after the end
+  of the immune window and did damage).
+- A tick of a status of a status area of a creature: the source area looks at the character first (`Spells::holds`; finding AR-R2, case
+  RAR2): a character that left the volume leaves the area now, its status goes (m_removeOnExit), and no tick comes. The world runs the
+  statuses before the spells: before this rule a character that walked out took one more tick.
 - The status of an area has the area as its source (`StatusSourceKind::spell`, the entity of the area). The exit of the
   character and the end of the area take it at once, also with time left ([Spell entities](spells.md)). A second area that
   gives the same row gives it again at its next application. The death of the character ends it (RemoveOnDeath).

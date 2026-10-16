@@ -110,14 +110,15 @@ CreatureHitOutcome Health::creature_hit(Entity& creature, const gamedata::Creatu
     return CreatureHitOutcome::hurt;
 }
 
-void Health::status_damage(Entity& target, float amount, const gamedata::StatusRow& row, const DamageSource& source) {
+void Health::status_damage(Entity& target, float amount, const gamedata::StatusRow& row, const DamageSource& source,
+                           std::optional<WorldClock::time_point> at) {
     if (target.kind != EntityKind::player || target.life.dead || !std::isfinite(amount) || !(amount > 0.0F)) {
         return;
     }
     // The immune window of a dodge (stage 3.4f-B): a tick in it does no damage, but for a row with IgnoreInvulnerable (a decision of an
     // agent with the client code: the damage receiver 0x692E4A0 refuses an attack on an invulnerable target with no IgnoreInvulnerable;
     // the status row has its own IgnoreInvulnerable, loader 0x44B4430; the tick of the original server is not in the client).
-    if (row.cells.number("IgnoreInvulnerable") == 0.0F && m_world.stamina().immune(target, m_world.clock().now())) {
+    if (row.cells.number("IgnoreInvulnerable") == 0.0F && m_world.stamina().immune(target, at.value_or(m_world.clock().now()))) {
         const std::string mark = log::session_mark(target.owner, target.characterId);
         const log::Context context(mark);
         log::write("world: dodge: %s takes no damage of %s in the immune window of its dodge (%.1f damage)", target.name.c_str(),

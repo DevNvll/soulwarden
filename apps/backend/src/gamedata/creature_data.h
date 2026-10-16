@@ -324,6 +324,32 @@ struct CreatureAreaAttack {
 };
 
 /**
+ * One mark of a status action (stage 3.4f-D): a CAGE-Named event of the fragment of the action, at which the action list of the slice puts
+ * statuses on the creature itself (an IfThenElse of the action with IfMannequinMarker of the name of the mark, and ModifyStatusEffects with
+ * EffectsToApplyOnEnter). Game data (creature_behavior.py).
+ */
+struct StatusMark {
+    /** The time of the mark from the start of the action, in seconds. */
+    float time{0.0F};
+    /** The ids of the status rows (AI_InqCleric_Rekindle). */
+    std::vector<std::string> statuses;
+};
+
+/**
+ * One status action of a slice (stage 3.4f-D): an action of its action table that puts statuses on the creature itself at its marks (the
+ * self heal InqCleric_Rekindle_Self of the Inquisitor Cleric, the Howl of the Evil Knight hound). Only the actions of the list
+ * `statusActions` of tools/gamedata/creature_slices.json (each with its live check) are in the data.
+ */
+struct CreatureStatusAction {
+    /** Index of the action in CreatureSlice::actions. */
+    std::uint32_t action{0};
+    /** The time of the action, in seconds: the creature starts no other action before its end. */
+    float length{0.0F};
+    /** The marks, in the sequence of their times. */
+    std::vector<StatusMark> marks;
+};
+
+/**
  * The basic shot of an archer (stage 3.4f-A, a rule of this project for the scope of the stage): the ranged attack of the action
  * with this name is the one ranged attack that a creature uses (the action FireBow of 20 slices of the supported build: one
  * release, the ammunition of the slice). The other ranged attacks of the data (a charged or a fast shot, the shot of a caster) are
@@ -476,6 +502,14 @@ struct CreatureSlice {
     bool caster{false};
     /** The area attacks of the slice (stage 3.4f-C). Empty: a file of an older tool, or the slice has none. */
     std::vector<CreatureAreaAttack> areas;
+    /** The status actions of the slice (stage 3.4f-D): its heals and buffs of itself. Empty: a file of an older tool, or none. */
+    std::vector<CreatureStatusAction> statusActions;
+    /**
+     * m_lowHealthPercentThreshold of the Vitals component of the slice (stage 3.4f-D; game data: 0.15 for the Inquisitor Cleric): the part
+     * of the maximum health at which the creature is at low health (the input LowHealth of the target curves of the AI). A heal of a
+     * status action starts at it (world/behavior.h). No value: a file of an older tool, or the slice has no such field.
+     */
+    std::optional<float> lowHealth;
 
     /**
      * @return True when a creature with this slice gets a target and attacks it: the slice has a sense, a speed, and an attack (a
@@ -659,6 +693,10 @@ public:
     [[nodiscard]] std::size_t area_slices() const {
         return m_areaSlices;
     }
+    /** @return The number of slices with a status action (stage 3.4f-D). */
+    [[nodiscard]] std::size_t status_action_slices() const {
+        return m_statusActionSlices;
+    }
     /** @return The route of a spawn point, or null. */
     [[nodiscard]] const PatrolRoute* route_of(const SpawnPoint& point) const {
         return point.route && *point.route < m_routes.size() ? &m_routes[*point.route] : nullptr;
@@ -744,6 +782,7 @@ private:
     std::optional<CreatureCapsule> m_playerCapsule;
     std::size_t m_shootingSlices{0};
     std::size_t m_areaSlices{0};
+    std::size_t m_statusActionSlices{0};
     std::size_t m_routedPoints{0};
     std::size_t m_wanderingKinds{0};
     /** Level to the values of the level. */

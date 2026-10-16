@@ -86,6 +86,14 @@
   "Mage_Ranged_AOE": "live check K1 of stage 3.4f-C: the metadata and the PositionInTheWorld state at slot 1 show the pillar and the purple area; AI_Snare_6sec and AI_Weaken on the HUD, their end at the exit",
   "Inquisitor_Cleric_Holy_Pillar": "live check K2 of stage 3.4f-C: the Spell state at slot 1 with the caster shows the red ring and the fire pillar; one hit",
   "corrupted_priest_ground_aoe": "live check K3 of stage 3.4f-C: the Spell state at slot 1 with the caster shows the red ground area; one hit in the window of 1 s",
-  "AI_Soulharvester_GeyserFinisher": "live check K4 of stage 3.4f-C: the Spell state at slot 1 with the caster shows the blue ring and the geyser at 1 s; one hit"
+  "AI_Soulharvester_GeyserFinisher": "live check K4 of stage 3.4f-C: the Spell state at slot 1 with the caster shows the blue ring and the geyser at 1 s; one hit",
+  "Ghost_Plagued_PlagueNova": "live check D-L3 of stage 3.4f-D: the Spell state at slot 1 with the caster at the place of the ghost shows the orange cloud burst on the ground around it (the action alone shows no cloud); the place of the client rule: at the caster",
+  "Legion_Signifer_CorruptedBlast": "live check D-L3 of stage 3.4f-D: the Spell state at slot 1 with the caster at the place of the signifer shows the red and black burst around it; the place of the client rule: at the caster",
+  "Undead_Officer_AnchorSlam": "live check D-L3 of stage 3.4f-D: the Spell state at slot 1 with the caster at the place of the officer shows the dust of the slam at its feet; the place of the client rule: at the caster",
+  "AI_EvilKnight_Shockwave": "live check D-L3 of stage 3.4f-D: the Spell state at slot 1 with the caster at the place of the knight shows the golden ground wave (directional: the rotation of the caster); the place of the client rule: at the caster"
+ },
+ "statusActions": {
+  "InqCleric_Rekindle_Self": "live check D-L1 of stage 3.4f-D: the action plays on the Inquisitor Cleric, AI_InqCleric_Rekindle shows its icon at the name plate, and the vitals state of the creature moves the health bar of the name plate up",
+  "Howl": "live check D-L2 of stage 3.4f-D: the action plays on the Evil Knight hound (the Evil_Knight variant with the mark ApplyHaste), and AI_Evil_Knight_Wolf_Haste shows its icon at the name plate"
  }
 }

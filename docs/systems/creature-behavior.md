@@ -15,6 +15,7 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 | The shot of an archer (stage 3.4f-A): the band, the choice of melee or shot, the windup and the release, the aim and the lead, the repeat time, the walk back, the cancels | Protocol notes 4.37, `apps/backend/src/world/behavior.h` (the rule Shoot, `behavior_rules::kShot*`, `Behavior::aim`, `command_shot`), `world/projectiles.h` (`launch_creature`), `gamedata/creature_data.h` (`RangedRelease`, `kBasicShotAction`), `tools/world creature shoot`, test cases CRG2 to CRG5 |
 | The cast of a caster (stage 3.4f-B): the cast as the basic shot, the band of a caster, its repeat time; the corrections CR-R1 and CR-R2 of the review of stage 3.4f-A | Protocol notes 4.38, `world/behavior.h` (`behavior_rules::kCast*`, `kSpawnLead`, `Behavior::band_of`), `gamedata/creature_data.h` (`kBasicCastAction`, `CreatureSlice::caster`), test cases CRB1, CRG9, CRG10, RR1, RR2 |
 | The area attack of a creature (stage 3.4f-C): the choice, the range, the repeat, the walk of a creature with only area attacks, the casts and their cancels, the place; the correction CS-R4 (the spawn lead for a new observer) | Protocol notes 4.39, `world/behavior.h` (`behavior_rules::kArea*`, `Behavior::think_area`, `start_area`, `cast`, `area_place`, `command_area`, `spawn_lead_over`), `gamedata/creature_data.h` (`CreatureAreaAttack`, `AreaCast`), [Spell entities](spells.md), `tools/world creature area`, test cases CRA6, RZ4 |
+| The status actions of a creature (stage 3.4f-D): its heal at low health, its buff, the marks and their cancels, the repeat; the place rule of the client for a cast (at the caster, at the target, at the aim point) | Protocol notes 4.40, `world/behavior.h` (`behavior_rules::kStatusRepeat`, `Behavior::think_status`, `wants`, `start_status_action`, `status_mark`, `command_status_action`, `place_rule`, `area_range`), `gamedata/creature_data.h` (`CreatureStatusAction`, `StatusMark`, `CreatureSlice::lowHealth`), [Creatures](creatures.md), `tools/world creature status-action`, test cases CRH1 to CRH5 |
 
 ## Rules
 
@@ -36,8 +37,8 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   each attack starts the time again), attacks it in its reach, and then
   goes back. A creature has one target. From stage 3.4d a wall stops the vision, the attack, each contact of an
   attack, and the way (the navigation data, protocol notes 4.19; a ceiling between two
-  bodies on one vertical line too). A kind with no attack that the data tool can use (814
-  of the 3,848 kinds from stage 3.4f-B; 814 in stage 3.4f-A, 859 before the basic shot) takes no target and takes damage; it patrols or wanders with the roam
+  bodies on one vertical line too). A kind with no attack that the data tool can use (747
+  of the 3,848 kinds from stage 3.4f-D; 789 in stage 3.4f-C, 814 in stages 3.4f-A and 3.4f-B, 859 before the basic shot) takes no target and takes damage; it patrols or wanders with the roam
   data of its spawn point and of its slice, as each other creature (test case RP9).
 - A summon as a target (stage 3.3b-S2b, [Spell entities](spells.md)). A creature that a shot of a summon hurts takes the
   summon as its target (the Pylon: `OverrideTargetForAiThreat` of its spell row; `Behavior::hurt_by` with the threat of the
@@ -179,6 +180,25 @@ protocol notes (sections 4.14, 4.17, and 4.19).
     keep-distance rule; a caster stands nearer than an archer and casts more often): a cast in `kCastFar` (16 m) with a free line; a walk
     to `kCastHold` (14 m) from farther; a walk back to `kCastMiddle` (11 m) from nearer than `kCastNear` (6 m); the next cast
     `kCastRepeat` (2.5 s) after the start of the last one, or at the end of its action when later.
+- The status actions of a creature (stage 3.4f-D, protocol notes 4.40; research `creature-ranged.md` part D). A slice with a status
+  action of the creature data (an action of the list `statusActions` of `tools/gamedata/creature_slices.json` whose action list puts
+  statuses on the creature at a mark of its fragment: the self heal `InqCleric_Rekindle_Self` of the Inquisitor Cleric, the `Howl` of the
+  Evil Knight hound) uses it in its fight. The rules and the source of each one:
+  - The action and the marks (game data): the action of the data with the tags of the slice, and at the time of each mark (the
+    CAGE-Named event of the fragment: 0.633 s for the self heal, 1.2 s for the Howl) the statuses of the mark come on the creature itself
+    (`Creatures::give_status` with the creature as the source; [Creatures](creatures.md)). The world keeps each mark on the world clock
+    with the generation of the action (`PendingStatus`).
+  - The cancels (project rules, the same as a cast): a mark gives nothing when a different action replaced the status action (a stun, a
+    knockdown, a command) or when the creature is dead or left (`statusMarksCancelled`). The target of the creature does not matter.
+  - When (project rules, decisions of an agent: the task of the behavior tree that starts the action is not in the game files): before
+    the area attack, the shot, and the melee attack, when the creature is ready: its heal (a status of the action with a positive
+    HealthModifierPercent or Health) when its health is not above the low-health part of its slice (game data:
+    m_lowHealthPercentThreshold of the Vitals component, 0.15 for the Cleric; the input LowHealth of the target curve `healally` uses
+    that value), its buff (no heal part) when it does not have the buff; and not when it has a status of the action. Not before
+    `kStatusRepeat` (20 s) after the start of its last status action, and after the pause of its last attack (the rule of an area
+    attack). The action plays to its end as a shot (no step, no turn, no other attack).
+  - The command `tools/world creature status-action CREATURE [ACTION]` (`Behavior::command_status_action`, route `POST
+    /v1/dev/creatures/status-action`): the creature starts its status action now, with no condition and no repeat time.
 - The area attack of a creature (stage 3.4f-C, protocol notes 4.39; [Spell entities](spells.md) has the areas). A slice with an area
   attack of the creature data (an action with a CAGE-CastSpell event of a spell of the list `areaSpells`: the Dryad Shaman, the Undead
   Shaman, the Ancient Guardian mage, the Inquisitor Cleric, the Damned Priest, the Lost Soul Harvester) casts it at a character. The
@@ -196,6 +216,15 @@ protocol notes (sections 4.14, 4.17, and 4.19).
     `AIAimMaxAngle` (45 degrees) from the front of the creature. Then at most the CastDistance of the spell row from the creature (a
     decision of an agent: the clamp of the server is not in the client), on the floor of the navigation data. No deliberate miss: the
     clip has `AIMissMinDistance` and `AIMissMaxDistance` and no chance of a miss (the rule of the shot).
+  - The place rule (stage 3.4f-D, client code 0x679DBB0 read again; `Behavior::place_rule`): the aim point above only for a cast with
+    `AIAimAtTarget`, `UseAllAvailableTargets`, and the ranged attack data of the spell row (RangedAttackProfile and RangedAttackName:
+    the six spells of stage 3.4f-C have `AI_Ranged_AOE`). With no ranged attack data the target loop keeps the place of the caster, and
+    with `AIAimAtTarget` false the place is the caster: the plague nova, the corrupted blast, the anchor slam, and the shockwave (their
+    CastDistance is 0). `AIAimAtTarget` alone: the position of the target, no lead. `AIAimAtTarget` false with ranged attack data is a
+    shot of the ranged attack data (0x5BFBAF0): the backend has no such rule, and the area attack is not usable. The offset
+    CharRelPosOffset of the row is turned by the direction of the creature (0x676AAF0; the spells of the data have none). A cast at the
+    caster has the Radius of its row as its distance (`Behavior::area_range`, a decision of an agent: the target must be in the sphere
+    of the spell; the CastDistance of the data is 0).
   - Which attack and when (project rules, decisions of an agent: the game files have the casts and the CastDistance, and no rule for
     the choice or the repeat). The area attack comes before the shot and the melee attack when it is ready: the target is in the
     CastDistance of the row of its first cast (horizontal; `kShotHeight` up or down) with a free line; `kAreaRepeat` (10 s) passed
@@ -226,6 +255,7 @@ tools/world ignore NAME on           # the creatures ignore a character (off: th
 tools/world track 2c 20 --tsv FILE   # the place of a creature each 200 ms for 20 s
 tools/world creature anchor 2c 8585.5 4243.1 173.26   # the anchor of a creature in a fight (a test of a way back with no path)
 tools/world creature area 5e Soulwarden               # the creature casts its next area attack at the character now (stage 3.4f-C)
+tools/world creature status-action 5e Howl            # the creature starts its status action now (stage 3.4f-D: its heal or its buff)
 ```
 
 - `tools/world` has the commands of stage 3.4b (routes `/v1/dev/world/ignore`, `heal`,
@@ -256,6 +286,12 @@ tools/world creature area 5e Soulwarden               # the creature casts its n
 
 ## Traps
 
+- A Cleric heals itself only at 15 percent of its health or below (the low-health part of its slice): set its health
+  (`tools/world creature health ID 12%`) for a test, and turn the ignore value off: the heal is a part of its fight.
+- An Evil Knight hound howls when it takes its target, and again 20 s later when its buff ended; the Grey Wolf has the action `Howl` with a
+  damage event and no buff (the variant of its tags).
+- An undead officer of the data with no melee attack (`Undead_Officer_16`) has only the anchor slam from stage 3.4f-D: it walks to 1.5 m
+  of its target and slams each 5 s.
 - The sight of the Dryad Shaman is 12 m (75 degrees to each side): a shaman spawned 12.1 m from the character takes no target. Use
   10 m (`-10 -1.5 0 --yaw 270` at the place of the default spawn).
 - A creature with a basic shot always had the shot ready before the pause of a melee attack: before the correction of the rest rule

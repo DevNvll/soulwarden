@@ -600,9 +600,10 @@ CreatureDamage Combat::creature_damage(const Entity& creature,
             damage.mitigation = damage.armor / (damage.armor + against);
         }
     }
-    // A weaken of an ability on the creature lowers its damage (stage 3.3a, Creature::damage_factor).
+    // A weaken of an ability on the creature lowers its damage (stage 3.3a, Creature::damage_factor); a buff of the creature raises it (stage
+    // 3.4f-D: the DMG part of the type of the hit, the Howl of the Evil Knight hound).
     damage.dealt = damage.raw * std::max(damage.levelFactor, 0.0F) * std::max(1.0F - damage.mitigation, 0.0F)
-                   * creature.creature.damage_factor(m_world.clock().now());
+                   * creature.creature.damage_factor(m_world.clock().now(), contact.type);
     // The absorption of the damage type (ABS<type>: a ward of a gem or of an amulet) and BaseDamageReduction (stage 1.3b).
     if (const auto absorbed = target.gear.absorption.find(contact.type); absorbed != target.gear.absorption.end()) {
         damage.dealt *= std::max(1.0F - absorbed->second, 0.0F);

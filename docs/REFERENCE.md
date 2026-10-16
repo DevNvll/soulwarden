@@ -354,8 +354,10 @@ button on "Confirm").
   models), the 69 projectile slices, and the capsule of a player (protocol notes 4.37): with a file
   from before, no creature shoots. From stage 3.4f-C the file also has the area attacks of each model
   (11 attacks of 9 models with 6 spells: the list `areaSpells` of `tools/gamedata/creature_slices.json`; with a file from before
-  no creature casts an area). `--no-attack FILE` writes one line for each kind that does not attack (789
-  kinds from stage 3.4f-C: a kind with the basic shot of an archer, a cast, or an area attack attacks). The tool
+  no creature casts an area); from stage 3.4f-D 24 attacks of 22 models with 10 spells, the status actions of 3 models (the self heal
+  of the Inquisitor Cleric, the Howl of the Evil Knight hound: the list `statusActions`), and the low-health part of 119 models (with a
+  file from before no creature heals or buffs itself). `--no-attack FILE` writes one line for each kind that does not attack (747
+  kinds from stage 3.4f-D, 789 in stage 3.4f-C: a kind with the basic shot of an archer, a cast, or an area attack attacks). The tool
   leaves out the spawn points of 50 creature models that the client does not show
   correctly with this backend (1,541 spawn points: the list is in
   `tools/gamedata/creature_slices.json`), and `--report FILE` writes one line for each entry
@@ -504,7 +506,8 @@ button on "Confirm").
   slice. Without the file the backend starts, and the vortex of Gravity Well has its damage
   but no picture. From stage 3.4f-C the file has format 4: the shape, the height, the offset, and the times of each detection
   volume, and the delays of each area status (the areas of the creatures need it; with a file from before no creature casts an
-  area). From stage 3.3b-S4 the tool stops for a delay that is not a 32-bit number,
+  area). From stage 3.4f-D the time of a volume with an activation event of its own is the time of that event (the backend refuses a
+  file of the tool of stage 3.4f-C: write it again). From stage 3.3b-S4 the tool stops for a delay that is not a 32-bit number,
   and the backend refuses a file with a delayed event slot that has no event. From stage
   3.3b-S2b the file has the format 2 (the trap slice with its position slot, the health, the
   shots, the detection volume, the offense, and the timelines of a slice, and the rows of the
@@ -622,9 +625,19 @@ button on "Confirm").
   lightning and the pillar (EndOnCasterDeath of the game data); the mushrooms and the purple area stay to their end. A creature
   casts its area when you are in the CastDistance of the spell (30 m for the mushroom, 12 m for the lightning), each 10 s (an
   Undead shaman each 5 s: it walks to 10 m), and shoots or hits between. In a development run `tools/world creature area
-  CREATURE CHARACTER` (route `POST /v1/dev/creatures/area`) starts the next area attack of a creature at once. Not yet: the
-  other area spells of the data (the self-destructs, the shockwave, the shield of the officers, the spells at the caster), the
-  heals and the buffs of a creature.
+  CREATURE CHARACTER` (route `POST /v1/dev/creatures/area`) starts the next area attack of a creature at once. From stage 3.4f-D four
+  more spells at the caster (protocol notes 4.40): the plague nova of the Plagued ghosts (4 m), the corrupted blast of the signifers,
+  the anchor slam of the undead officers, and the shockwave of the war hammer knights in the direction of the knight; the creature casts
+  one when you are in the Radius of its spell. Not yet: the self-destructs and the shield of the officers.
+- Heals and buffs of the creatures (stage 3.4f-D, [Creatures](systems/creatures.md), [Creature behavior](systems/creature-behavior.md),
+  protocol notes 4.40). The Inquisitor Clerics heal themselves (`InqCleric_Rekindle_Self`: `AI_InqCleric_Rekindle`, 4.5 percent of the
+  maximum health each second for 8 s) when their health is 15 percent or less (the low-health part of their slice in the game data);
+  the Evil Knight hounds howl when they take you as their target (`Howl`: `AI_Evil_Knight_Wolf_Haste`, 10 s, 10 percent more damage, 20
+  percent more speed). Each one at most each 20 s (a rule of this project). The icons show at the name plate of the creature; the heal
+  and the buff end at their time, at the death of the creature, and at a dispel of the data (a row with RemoveStatusEffectCategories,
+  for example the Null Chamber of the void gauntlet). In a development run `tools/world creature status-action CREATURE [ACTION]`
+  (route `POST /v1/dev/creatures/status-action`) starts the action at once, and `tools/world creature effect CREATURE STATUS` gives a
+  status row. Not yet: the heal of a different creature, the other buffs of the data.
 - Interactions (stage 2.5a). The client shows the prompt of an object and executes its option
   at the key; the backend checks the request with the interaction data of the game and
   replies. A lore page: E (Read) opens the journal on the page, T (Add To Journal) adds it, and

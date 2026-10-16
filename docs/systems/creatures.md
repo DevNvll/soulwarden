@@ -13,6 +13,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 | The creature data of the whole world: which entries are in, which slices are out, the spawn action of a slice, the picture check of the slices | Protocol notes 4.14, `tools/gamedata/creature_data.py`, `tools/gamedata/creature_slices.json`, `tools/research/creature_tour.py` |
 | The status effects of an ability on a creature: the stun, the root, the slow, the weaken, the knockdown and the stagger, the status state (the icons at the name plate) | Protocol notes 4.22, [Abilities](abilities.md), `world/creatures.h` (`Creatures::apply_effect`, `knock`), `world/entity.h` (`CreatureEffect`, `Creature::held`, `rooted`, `speed_factor`, `damage_factor`), `server/rep/states/status_state.cpp`, `tools/world creature effect`, test cases AB6 to AB8 |
 | The pull and the push of a hit (stage 3.3b-S4) | [Forced movement](forced-movement.md), `world/forced_motion.h`, `Creatures::impact`, test cases FM2 to FM8 |
+| The heals and the buffs of a creature (stage 3.4f-D): the one path of a status on a creature, the heal of its ticks, the DMG part and the haste, the dispel, the due list of the effects, the status actions and the low-health part of the data | Protocol notes 4.40, `world/creatures.h` (`Creatures::give_status`, `heal`, `end_effects`, `sweep`, `effect_tick`), `world/entity.h` (`CreatureEffect`, `Creature::damage_factor`, `speed_factor`), `gamedata/creature_data.h` (`CreatureStatusAction`, `StatusMark`, `lowHealth`), [Creature behavior](creature-behavior.md), `tools/world creature effect`, `tools/world creature status-action`, test cases CRH1 to CRH9 |
 | The load of the world: the cost of the spawn rule, the time of a tick | `apps/backend/src/world/creatures.h` (`SpawnGrid`), `world/load_meter.h`, `tools/world list` (the line `load:`), test case WS2 |
 
 ## Rules
@@ -125,7 +126,25 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   root, the slow, the weaken, the end at the next hit, the end on the world clock) or a
   knockdown or a stagger (`Creature::knockedUntil`). Only the creature system changes them:
   `Creatures::apply_effect` (the same status again gets the later end) and
-  `Creatures::knock`. A dead creature and a creature on its way back take no effect. A stun
+  `Creatures::knock`. From stage 3.4f-D a status row comes on a creature through one path
+  (`Creatures::give_status`: an ability, a passive rule, a spell, a status action of the creature, a command):
+  - the effect keeps its row: the part of the damage of a hit of the creature is the DMG<type> of the row for the type of the hit
+    (the rule of the damage of a character; the Howl of the hound: 0.1 of each type), or DMGStandard for a row with no typed DMG part;
+    the speed is the strongest slow times 1 plus the strongest haste (MoveSpeedMod 0.2 of the Howl; a decision of an agent);
+  - a heal at each tick (TickRate) of a row with a positive HealthModifierPercent or Health: that part of the maximum health, through
+    the one heal path of a creature (`Creatures::heal`: to the maximum, the vitals state for each observer; no heal for a dead
+    creature); the first tick at the next tick of the world (DelayInitialTick: one TickRate later), then each TickRate before the end
+    (the rule of a character, [Status effects](status-effects.md)); the same row again (StackMax 1) gets the later end and no second
+    tick; the OnTickStatusEffect of the row comes at each tick, and it ends with the effect when the row has no KeepOnTickEffectOnEnd
+    (game data). A row with no duration is one application now. A negative heal part of a row (a damage over time on a creature) has no
+    rule yet;
+  - the dispel (game data): a row with RemoveStatusEffects or RemoveStatusEffectCategories ends those effects of the creature first
+    (the Null Chamber of the void gauntlet: the category Buff; the ability is not in the backend yet, a command applies the row);
+  - the ends: the end of its time, the next hit for a stun of Shockwave, the dispel, and the death of the creature (each effect:
+    RemoveOnDeath of the rows; the source of a status action is the creature itself). The way back gives no new effect (immune).
+    ResetAI of the data (the reset of a creature removes the category ClearOnReset) is not applied: no effect of this stage has it;
+  - the cost: a due list of the ends and the ticks (`end_effects`): a due creature has a look at its effects, a due tick at one
+    effect; no look at each creature with an effect (test case CRH9: 1,000 creatures with a long effect add no look). A dead creature and a creature on its way back take no effect. A stun
   stops the attack that plays and starts the action `Stun` of the slice
   (`CreatureSlice::stunAction`); a knockdown (power 4) or a stagger (power 2) starts the
   action `Reaction` with the reaction fragment of its power (`CreatureSlice::reactions`, the
@@ -208,6 +227,9 @@ tools/world creature reset           # each spawn point that waits makes its cre
 tools/world creature action 2c Spawn 3   # start an action of the action table of its slice (3 s; no time: no end)
 tools/world creature effect 2c WarHammer_Shockwave_Stun 5   # a status effect of the game data for 5 s (no time: the time of its row)
 tools/world creature effect 2c knockdown 2                  # a knockdown (or stagger) for 2 s
+tools/world creature effect 2c AI_InqCleric_Rekindle         # a heal of the data: 4.5 percent of the maximum health each 1 s for 8 s (stage 3.4f-D)
+tools/world creature effect 2c VoidGauntlet_NullChamber_Nullify_AoE   # a dispel of the category Buff (stage 3.4f-D)
+tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status action of the slice now (stage 3.4f-D)
 ```
 
 - `tools/gamedata/creatures.sh` writes `creatures.json` to the game data folder: the spawn
@@ -228,8 +250,8 @@ tools/world creature effect 2c knockdown 2                  # a knockdown (or st
   of `objects/characters/`; `tools/gamedata/check_hit_facts_tool.py` checks the reader with made-up sources (test case
   CH9).
 - `tools/gamedata/creatures.sh --no-attack FILE` writes one line for each kind that does not
-  attack, with the cause (789 kinds of the supported build, 8,105 spawn points; 859 before stage 3.4f-A: a kind with the basic shot
-  attacks from then on, and from stage 3.4f-C a kind with an area attack).
+  attack, with the cause (747 kinds of the supported build, 7,997 spawn points from stage 3.4f-D; 789 in stage 3.4f-C; 859 before
+  stage 3.4f-A: a kind with the basic shot attacks from then on, and from stage 3.4f-C a kind with an area attack).
 - The ranged attacks (stage 3.4f-A, `creature_behavior.py`, `creature_data.py`): each action whose selected variant has a
   CAGE-RangedAttack event, with the joins of each release (the profile of the weapon of the main hand, the attack in the ranged attack
   data with its index: the profiles and then the attacks in the byte order of their names; the slice of the SliceOverride or of the
@@ -246,6 +268,16 @@ tools/world creature effect 2c knockdown 2                  # a knockdown (or st
   attack. A cast that the tool leaves out has its cause in the count `areasLeftOut`. The counts: `slicesWithAreaAttacks` (9),
   `areaAttacks` (11), `areaCasts` (15), `areaSpells` (6), `kindsWithAreaAttacks` (70), `spawnPointsWithAreaAttacks` (255). The
   tool prints the line `area attacks` and one line for each cause.
+- The status actions (stage 3.4f-D, `creature_data.py`, `creature_behavior.py`): each action of the list `statusActions` of
+  `tools/gamedata/creature_slices.json` (each entry names its live check: `InqCleric_Rekindle_Self`, `Howl`) whose action list has an
+  IfThenElse with one IfMannequinMarker and ModifyStatusEffects with EffectsToApplyOnEnter (`marker_statuses`), and whose selected
+  variant has the CAGE-Named event of that mark (its time). The slice has `statusActions` ([action, length, [[time, [status, ...]],
+  ...]]) and `lowHealth` (m_lowHealthPercentThreshold of its Vitals component: 119 slices have the field; a field that is not a 32-bit
+  float from 0 to 1 stops the tool). The counts: `slicesWithStatusActions` (3), `statusActions` (3), `statusActionStatuses`,
+  `kindsWithStatusActions` (18), `spawnPointsWithStatusActions` (91), `slicesWithLowHealth` (119), `statusActionsLeftOut` (16: the
+  slices whose variant of the action has no mark, the Grey Wolves with a Howl of damage). The loader refuses a status action whose action
+  has no fragment, a mark after the end of its action or with no status, and a low-health part out of 0 to 1. A file of an older tool has
+  no such member: no creature heals or buffs itself.
 - `tools/research/creature_tour.py` is the picture check of the creature slices: `prepare
   GAMEDATA TOUR` makes a game data folder with one kind for each slice, `run TOUR OUT`
   makes one creature of each slice in front of the character of a live run and takes one

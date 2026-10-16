@@ -336,6 +336,7 @@ Entity* Spells::make(const SpellRequest& request) {
 void Spells::tick() {
     const WorldClock::time_point now = m_world.clock().now();
     while (!m_due.empty() && m_due.begin()->first <= now) {
+        const WorldClock::time_point at = m_due.begin()->first;
         const Due due = m_due.begin()->second;
         m_due.erase(m_due.begin());
         ++m_counts.dueTaken;
@@ -389,7 +390,7 @@ void Spells::tick() {
             area_step(*spell, live->second);
             break;
         case DueKind::strikeStep:
-            strike_step(*spell, live->second);
+            strike_step(*spell, live->second, at);
             break;
         }
     }
@@ -850,7 +851,9 @@ std::size_t Spells::end_caster(EntityId caster, SpellEnd cause) {
 }
 
 bool Spells::area_usable(const gamedata::AreaCast& cast) const {
-    const gamedata::SpellSlice* slice = has_data() ? m_data->slice_of(cast.spell) : nullptr;
+    // Spell data of format 4 or later (code review of stage 3.4f-C, finding AR-R4): an older file has no shape of a volume and no
+    // application delays of an area status, and its defaults (a sphere, no delay) would make an area with no initial delay.
+    const gamedata::SpellSlice* slice = has_data() && m_data->tables().format >= 4 ? m_data->slice_of(cast.spell) : nullptr;
     const gamedata::AbilityData* abilities = m_world.options().abilityData;
     const gamedata::SpellRow* row = abilities != nullptr ? abilities->spell(cast.spell) : nullptr;
     if (slice == nullptr || row == nullptr) {
@@ -890,6 +893,8 @@ Entity* Spells::make_area(const AreaRequest& request) {
     body.caster = creature->id;
     body.casterActor = creature->actor;
     body.started = now;
+    // The rotation of the request is the rotation of the caster (client code 0x676AAF0; stage 3.4f-D: the shockwave of the Evil Knight).
+    body.yaw = creature->creature.yaw;
     body.role = cast.shape == gamedata::AreaShape::status ? SpellRole::statusArea : SpellRole::strike;
     // EndOnCasterDeath of the spell row (game data): the lightning strike has it, the mushroom has not.
     body.endsOnCasterDeath = row->cells.number("EndOnCasterDeath") != 0.0F;
@@ -945,13 +950,18 @@ Entity* Spells::make_area(const AreaRequest& request) {
     return &entity;
 }
 
-bool Spells::in_area(const Entity& spell, const Live& live, const Entity& character) const {
+bool Spells::in_area(const Entity& spell, const Live& live, const Entity& character, std::array<float, 3> back) const {
     if (live.volume == nullptr) {
         return false;
     }
     const gamedata::CreatureData* creatures = m_world.creatures().data();
-    const WorldCapsule capsule =
+    WorldCapsule capsule =
         capsule_of(character, creatures != nullptr && creatures->player_capsule() ? &*creatures->player_capsule() : nullptr);
+    for (state::WorldPosition* end : {&capsule.a, &capsule.b}) {
+        end->x -= back[0];
+        end->y -= back[1];
+        end->z -= back[2];
+    }
     const state::WorldPosition center{spell.position.x, spell.position.y, spell.position.z + live.volume->offset};
     if (live.role == SpellRole::statusArea && live.volume->shape == gamedata::VolumeShape::cylinder) {
         // An upright cylinder (the QueryShapeCylinder of the volume: the mushroom 1.5 m, 4 m high, its middle 0.5 m below the root): the
@@ -1043,6 +1053,22 @@ void Spells::area_step(Entity& spell, Live& live) {
     }
 }
 
+bool Spells::holds(EntityId area, const Entity& character) {
+    const auto live = m_live.find(area);
+    const Entity* spell = m_world.find(area);
+    if (live == m_live.end() || spell == nullptr || live->second.role != SpellRole::statusArea || live->second.areaStatus == nullptr
+        || !live->second.areaMembers.contains(character.id)) {
+        return true; // Not a member of a status area (its exit or its end took the statuses already).
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    if ((!live->second.activeTo || now < *live->second.activeTo) && !character.life.dead && in_area(*spell, live->second, character)) {
+        return true;
+    }
+    ++m_counts.exitsBeforeTick;
+    leave_area(*spell, live->second, character.id, live->second.areaStatus->removeOnExit);
+    return false;
+}
+
 void Spells::leave_area(const Entity& spell, Live& live, EntityId member, bool takeStatus) {
     const auto found = live.areaMembers.find(member);
     if (found == live.areaMembers.end()) {
@@ -1071,17 +1097,37 @@ void Spells::leave_area(const Entity& spell, Live& live, EntityId member, bool t
     (void)ended;
 }
 
-void Spells::strike_step(Entity& spell, Live& live) {
+void Spells::strike_step(Entity& spell, Live& live, WorldClock::time_point due) {
     const WorldClock::time_point now = m_world.clock().now();
     ++m_counts.areaSteps;
-    if (live.areaCast == nullptr || live.volume == nullptr || spell.spell.ending || (live.activeTo && now >= *live.activeTo)) {
+    // The sample of this step is at its due time, not at the time of the world tick that processes it (code review of stage 3.4f-C, finding
+    // AR-R3): a world step that crosses the whole window still makes the sample of the window.
+    const WorldClock::time_point sample = std::max(due, live.activeFrom);
+    if (live.areaCast == nullptr || live.volume == nullptr || spell.spell.ending || (live.activeTo && sample >= *live.activeTo)) {
         return;
     }
+    if (now - sample > spell_rules::kStrikeCatchUp) {
+        log::write("world: spell: the strike %016llx lost its sample of %.3f s: the world step came %lld ms late",
+                   static_cast<unsigned long long>(spell.id), std::chrono::duration<double>(sample - spell.spell.started).count(),
+                   static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - sample).count()));
+    } else {
+        const bool catchUp = live.activeTo && now >= *live.activeTo;
+        m_counts.strikeCatchUps += catchUp ? 1U : 0U;
+        strike_sample(spell, live, sample, now);
+    }
+    const WorldClock::time_point next = sample + spell_rules::kStrikeStep;
+    if (live.activeTo && next < *live.activeTo && next < live.lifeEnds) {
+        schedule(spell.id, std::max(next, now), DueKind::strikeStep);
+    }
+}
+
+void Spells::strike_sample(Entity& spell, Live& live, WorldClock::time_point sample, WorldClock::time_point now) {
     Entity* creature = m_world.find(spell.spell.caster);
     if (creature == nullptr || creature->kind != EntityKind::creature) {
         return; // The caster left the world (the leave ends the spell before this step).
     }
-    const float reach = live.strikeRadius + projectile_rules::kDefaultHeight + 1.0F;
+    const float late = std::chrono::duration<float>(now - sample).count();
+    const float reach = live.strikeRadius + projectile_rules::kDefaultHeight + 1.0F + late * 10.0F;
     // A wall between the center and the character stops the hit only for a spell row with CheckObstructions (the cell of the game data; the
     // two rows of this stage do not have it; the server code that reads the bit, row +0x0C bit 0x11, is not in the client: STATIC-CAST.md).
     const gamedata::AbilityData* abilities = m_world.options().abilityData;
@@ -1092,13 +1138,28 @@ void Spells::strike_step(Entity& spell, Live& live) {
     std::vector<EntityId> targets;
     m_world.for_each_near(spell.position, reach, [&](Entity& entity) {
         ++m_counts.looked;
-        if (entity.kind == EntityKind::player && !entity.life.dead && !live.struck.contains(entity.id) && in_area(spell, live, entity)
-            && (!walls
-                || m_world.navigation().sees(
-                    eye, capsule_center(capsule_of(entity, creatures != nullptr && creatures->player_capsule() ? &*creatures->player_capsule()
-                                                                                                                : nullptr))))) {
-            targets.push_back(entity.id);
+        if (entity.kind != EntityKind::player || entity.life.dead || live.struck.contains(entity.id)) {
+            return;
         }
+        // The place of the character at the time of the sample: its velocity back from now (0 for a sample in time).
+        std::array<float, 3> back{};
+        if (late > 0.0F) {
+            const std::array<float, 3> velocity = m_world.velocity_of(entity);
+            back = {velocity[0] * late, velocity[1] * late, velocity[2] * late};
+        }
+        if (!in_area(spell, live, entity, back)) {
+            return;
+        }
+        if (walls) {
+            WorldCapsule capsule =
+                capsule_of(entity, creatures != nullptr && creatures->player_capsule() ? &*creatures->player_capsule() : nullptr);
+            state::WorldPosition middle = capsule_center(capsule);
+            middle = {middle.x - back[0], middle.y - back[1], middle.z - back[2]};
+            if (!m_world.navigation().sees(eye, middle)) {
+                return;
+            }
+        }
+        targets.push_back(entity.id);
     });
     for (const EntityId id : targets) {
         Entity* target = m_world.find(id);
@@ -1106,14 +1167,11 @@ void Spells::strike_step(Entity& spell, Live& live) {
         if (target == nullptr || source == nullptr) {
             continue;
         }
-        // One hit of the damage row of the spell for each character in the window (the creature rule; the dodge decides it).
+        // One hit of the damage row of the spell for each character in the window (the creature rule; the dodge decides it at the time of
+        // the sample).
         live.struck.insert(id);
         ++m_counts.strikeHits;
-        (void)m_world.health().creature_hit(*source, live.areaCast->damage, *target, now);
-    }
-    const WorldClock::time_point next = now + spell_rules::kStrikeStep;
-    if (live.activeTo && next < *live.activeTo && next < live.lifeEnds) {
-        schedule(spell.id, next, DueKind::strikeStep);
+        (void)m_world.health().creature_hit(*source, live.areaCast->damage, *target, sample);
     }
 }
 

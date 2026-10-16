@@ -111,6 +111,16 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`InteractionBlock`, `InputEntry::interaction`), and the state decoder knows the states 3752 and 2930. IT10 runs
   `tools/gamedata/check_interactions_tool.py`. IT5 adds a trigger to a database file (a refused row); IT8 has a time limit of 300 ms
   for 400,000 lookups and of 2 s for 300 reports with a catalog of 90,008 objects.
+- Stage 3.4f-D adds the cases CRH1 to CRH6 and CRH9 (`tests/creature_support_tests.cpp`: two Clerics that heal themselves with two
+  sessions, the cap and a duplicate and the rules of the behavior, the buff of the hound and its hit, the expiry, the dispel, the death
+  of the source, a knockdown before the mark, the areas at the caster with the rotation of the caster, the loader of the status actions,
+  the load) and RAR1 to RAR5 and RAR8 (`tests/review_areas_tests.cpp`: the corrections of the code review of stage 3.4f-C, findings AR-R1
+  to AR-R5 and AR-R8; each one fails on the tree of stage 3.4f-C and passes with the correction; AR-R6 and AR-R7 are cases of
+  `check_spell_tool.py` and `check_creature_tool.py`). The fixture `Support` is in `tests/support/support_fixture.h` (namespace
+  `tests::support`: the cleric, the hound, the ghost, and the knight slices with their rows of the game data). CRH9 has 50 characters, 50
+  Clerics that heal, 50 hounds that howl, 1,000 creatures with a long effect, and 32,840 far spawn points: 1000 ticks in less than 3 s,
+  with the same due entries and looks as 840 points and no far effect. The area fixture rows have the ranged attack data of the game rows
+  (the place rule of stage 3.4f-D).
 - Stage 3.4f-C adds the cases CRA1 to CRA9 (`tests/ranged_c_tests.cpp`: the mushroom and its records, the poison and its ticks, the
   strike, the ends at the caster and the walls, two characters and two areas, the behavior, the loaders, the dodge, the load), SM6
   (`tests/ranged_b_tests.cpp`: the Stamina state of the first record), and RZ1 to RZ6 (`tests/review_casters_tests.cpp`: the

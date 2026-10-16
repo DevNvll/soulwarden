@@ -240,6 +240,10 @@ The creatures of the world (protocol notes 4.14):
   tools/world creature area CREATURE CHARACTER  the creature starts its area attack (an action with the casts of a ground
                                                 area of its slice, stage 3.4f-C: the mushroom of a Dryad Shaman, the
                                                 lightning strike of an Undead Shaman) at the character now
+  tools/world creature status-action CREATURE [ACTION]
+                                                the creature starts a status action of its slice now (stage
+                                                3.4f-D: its heal InqCleric_Rekindle_Self, its buff Howl): its
+                                                marks give their statuses to the creature (no condition)
   tools/world creature anchor CREATURE X Y Z    the anchor of a creature in a fight is that place
                                                 (the end of its way back): a test of a way back
                                                 with no path to the anchor
@@ -928,6 +932,11 @@ def creature_command(data_dir: Path, arguments: list[str]) -> None:
     elif action == "area" and len(arguments) == 3:
         request(data_dir, "POST", f"/v1/dev/creatures/area?creature={creature_id(data_dir, arguments[1])}"
                                   f"&character={character_id(data_dir, arguments[2])}")
+    elif action == "status-action" and len(arguments) in (2, 3):
+        if len(arguments) == 3 and not re.fullmatch(r"[A-Za-z0-9_]+", arguments[2]):
+            fail("the action must be a name of the action table of the slice (letters, digits, and _)")
+        named = f"&action={arguments[2]}" if len(arguments) == 3 else ""
+        request(data_dir, "POST", f"/v1/dev/creatures/status-action?creature={creature_id(data_dir, arguments[1])}{named}")
     elif action == "anchor" and len(arguments) == 5:
         x, y, z = numbers(arguments[2:5], 3)
         request(data_dir, "POST", f"/v1/dev/creatures/anchor?creature={creature_id(data_dir, arguments[1])}&x={x}&y={y}&z={z}")

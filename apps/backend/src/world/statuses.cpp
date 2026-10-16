@@ -264,7 +264,7 @@ void Statuses::schedule(const std::string& characterId, const ActiveStatus& stat
 }
 
 void Statuses::give(Entity& character, const gamedata::StatusRow& row, float amount, const StatusSource& source, const HealSource& heal,
-                    bool tick, const DamageSource& damage) {
+                    bool tick, const DamageSource& damage, std::optional<WorldClock::time_point> at) {
     if (character.life.dead) {
         return;
     }
@@ -323,7 +323,7 @@ void Statuses::give(Entity& character, const gamedata::StatusRow& row, float amo
     }
     if (loss > 0.0F) {
         ++m_counts.damageTicks;
-        m_world.health().status_damage(character, loss, row, damage);
+        m_world.health().status_damage(character, loss, row, damage, at);
     }
     const float mana = (row.cells.number("Mana") + row.cells.number("ManaModifierPercent") * character.vitals.manaMax) * amount;
     if (mana != 0.0F) {
@@ -673,8 +673,8 @@ void Statuses::tick() {
         if (state == m_characters.end()) {
             continue;
         }
-        const auto status = std::find_if(state->second.statuses.begin(), state->second.statuses.end(),
-                                         [&](const ActiveStatus& entry) { return entry.serial == due.serial; });
+        auto status = std::find_if(state->second.statuses.begin(), state->second.statuses.end(),
+                                   [&](const ActiveStatus& entry) { return entry.serial == due.serial; });
         if (status == state->second.statuses.end()) {
             continue;
         }
@@ -697,15 +697,30 @@ void Statuses::tick() {
         if (row == nullptr || rate <= 0.0F) {
             continue;
         }
-        const float amount = status->potency * static_cast<float>(status->stacks);
         const std::uint64_t serial = status->serial;
+        if (status->source.kind == StatusSourceKind::spell && status->source.entity != 0
+            && !m_world.spells().holds(status->source.entity, *character)) {
+            // The character left the status area of the source before this tick (code review of stage 3.4f-C, finding AR-R2): the
+            // exit comes first, and its status goes with m_removeOnExit. A status that stays (no m_removeOnExit) has its tick.
+            if (std::none_of(state->second.statuses.begin(), state->second.statuses.end(),
+                             [&](const ActiveStatus& entry) { return entry.serial == serial; })) {
+                continue;
+            }
+        }
+        const auto current = std::find_if(state->second.statuses.begin(), state->second.statuses.end(),
+                                          [&](const ActiveStatus& entry) { return entry.serial == serial; });
+        if (current == state->second.statuses.end() || !current->nextTick || *current->nextTick != at) {
+            continue;
+        }
+        status = current;
+        const float amount = status->potency * static_cast<float>(status->stacks);
         const StatusSource source = status->source;
         const HealSource heal = status->heal;
         const DamageSource damage = status->damage;
         WorldClock::time_point next = *status->nextTick;
         bool alive = true;
         while (alive && next <= now && (status->permanent || next < status->ends)) {
-            give(*character, *row, amount, source, heal, true, damage);
+            give(*character, *row, amount, source, heal, true, damage, next);
             ++m_counts.ticks;
             next += milliseconds_of(rate);
             // The heal can change the gear values; the status stays with its number.
