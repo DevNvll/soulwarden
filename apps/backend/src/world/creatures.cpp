@@ -219,6 +219,8 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
                    entity->creature.kind->id.c_str());
         // A dead creature has no target, and the attack that it plays does no damage.
         m_behavior.died(*entity);
+        // Its shots in the air end with no hit (stage 3.4f-A, a rule of this project: the death of the source ends its flights).
+        m_world.projectiles().source_left(entity->id);
         m_forced.stop(*entity);
         // The auras that follow the creature end (code review of stage 3.3b-S2b, finding F3).
         m_world.spells().target_died(entity->id);
@@ -292,7 +294,8 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, Ent
         // A creature that plays an attack does not stop it for a hit: the reaction would take
         // the action of the attack away, and a player that hits fast would stop each attack. A
         // creature that an effect holds keeps the action of the effect (the stun, the knockdown).
-        if (body.hitAction && !entity->creature.mind.attack && !entity->creature.held(m_world.clock().now())) {
+        if (body.hitAction && !entity->creature.mind.attack && !entity->creature.mind.shooting
+            && !entity->creature.held(m_world.clock().now())) {
             start_action(*entity, *body.hitAction, kReactionTime);
         }
         // The creature takes the attacker as its target, or the threat of the hit (stage 3.3b-S2b: the Pylon that shot it).
@@ -439,8 +442,10 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
     m_affected.insert(entity.id);
     if (effect.stun && !wasHeld) {
         // A stun stops the attack that plays (its contacts do nothing: the action is a different
-        // one) and the walk. The creature plays the action "Stun" of its slice for the stun.
+        // one) and the walk. The creature plays the action "Stun" of its slice for the stun. A shot that plays does not fly (stage
+        // 3.4f-A: its release finds a different action).
         creature.mind.attack.reset();
+        creature.mind.shooting = false;
         if (creature.body->stunAction) {
             start_action(entity, *creature.body->stunAction);
         } else {
@@ -469,6 +474,7 @@ bool Creatures::knock(Entity& entity, unsigned power, std::chrono::milliseconds 
     }
     const WorldClock::time_point now = m_world.clock().now();
     creature.mind.attack.reset();
+    creature.mind.shooting = false;
     // The hold does not depend on the animation data (code review of stage 3.3a, finding F5): a slice with no
     // reaction action is held too. A new knock does not end an earlier one that ends later (finding F6): the
     // creature keeps the later end, and the stronger reaction that plays stays until its own end.

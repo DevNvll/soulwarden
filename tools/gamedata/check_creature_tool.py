@@ -18,6 +18,18 @@ catalog, the vitals tables, the slices, the terrain) are replaced: no file of th
 A case of status 1 must leave the file that was there before: the backend refuses a file with a
 number that is not finite as a whole (code review of stage 3.4e, findings F5 and F6).
 
+The ranged attacks (stage 3.4f-A, test case CRG1), with made-up rows and slices:
+
+  case                 what                                                expected result
+  ranged-dictionary    the attack index of four made-up attacks            the order of the profiles and then of the
+                                                                           attacks, by their case-sensitive bytes
+  ranged-release       the joins of a release (the profile, the ammunition the index, the ammunition key, the table
+                       of the AmmoSlot, the damage table and its row)      key, the row place, the projectile index
+  ranged-override      a release with a SliceOverride                       the slice of the clip, the ammunition key 0
+  ranged-refused       no row, no profile, a hit scan, no ammunition       no release, one cause each
+  ranged-projectile    a projectile slice with and with no Projectile      its asset, root, slot, flight values; no
+                       component                                           entry with no component
+
 Usage: check_creature_tool.py WORK_FOLDER     status 0: each case gives its result
 """
 
@@ -116,6 +128,8 @@ class Catalog:
 
 
 class Behavior:
+    ranged_left_out: dict = {}
+
     def __init__(self, *arguments) -> None:
         pass
 
@@ -142,6 +156,77 @@ def creature_slice(*arguments) -> dict:
             "components": [["1000000000000044", "0000000000000A01", "Root/Vitals"]]}
 
 
+def check_ranged() -> int:
+    """The checks of the ranged export (stage 3.4f-A). @return The number of failures."""
+    import creature_behavior as cb
+    import zlib
+    failures = 0
+
+    def report(case: str, passed: bool, detail: str) -> None:
+        nonlocal failures
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
+        failures += 0 if passed else 1
+
+    rows = [["b_Profile", "x", False, 30.0, 0.1, 30.0, 0.0, 1.0, 0, 0, 0, 0, False, False, [0, 0, -9.8], 0],
+            ["AI_Bow", "Basic", False, 100.0, 0.0, 100.0, 0.2, 0.0, 0, 0, 0, 0, False, False, [0, 0, -9.8], 0],
+            ["AI_Bow", "Arrow_Scan", True, 100.0, 0.0, 100.0, 0.2, 0.0, 0, 0, 0, 0, False, False, [0, 0, -9.8], 0],
+            ["ai_lower", "A", False, 50.0, 0.0, 50.0, 0.0, 0.0, 0, 0, 0, 0, False, False, [0, 0, 0], 0]]
+    dictionary = cd.ranged_dictionary(rows)
+    order = [(entry["profile"], entry["attack"]) for entry in sorted(dictionary.values(), key=lambda entry: entry["index"])]
+    report("ranged-dictionary", order == [("AI_Bow", "Arrow_Scan"), ("AI_Bow", "Basic"), ("ai_lower", "A"), ("b_Profile", "x")],
+           f"{order}")
+
+    class Tables:
+        weapons = {"test_bow": {"tags": ["Bow"], "offhandTags": [], "animations": "", "profile": "AI_Bow"},
+                   "test_club": {"tags": [], "offhandTags": [], "animations": "", "profile": ""}}
+        types = {"Thrust": (5, "Physical")}
+        ammo = {"test_arrow": {"id": "Test_Arrow", "slice": "slices/items/test_arrow.dynamicslice"},
+                "test_noprefab": {"id": "Test_NoPrefab", "slice": ""}}
+
+    behavior = cb.Behavior.__new__(cb.Behavior)
+    behavior.tables = Tables()
+    behavior.ranged_attacks = dictionary
+    behavior.projectile_of = lambda path: {"slices/items/test_arrow.dynamicslice": 3,
+                                           "slices/items/test_override.dynamicslice": 4}.get(path)
+    behavior.ranged_left_out = {}
+    damage = {"test_row": {"ordinal": 2, "table": "TestBowDamageTable", "id": "Test_Row", "type": "Thrust", "ranged": True,
+                           "factor": 0.35, "added": 0.0, "charge": 0.16}}
+    references = {"weapons": {24: "Test_Bow", 12: "Test_Arrow", 13: "Test_NoPrefab"}}
+    clip = {"RangedAttackName": "Basic", "DamageTableRow": "Test_Row", "SliceOverride": "", "UseAmmo": "true",
+            "AmmoSlot": "PaperdollSlotTypes::ARROW_AMMO_SLOT", "AILeadTarget": "true", "ProjectileSpeed": "50",
+            "AILeadTargetMaxAngle": "10", "AIAimMaxAngle": "45", "AIMissMinDistance": "1.5", "AIMissMaxDistance": "3"}
+    main_hand = Tables.weapons["test_bow"]
+    release, cause = behavior.release(clip, references, main_hand, damage)
+    expected = {"index": 1, "ammo": "Test_Arrow", "ammoKey": zlib.crc32(b"test_arrow"), "projectile": 3, "override": False,
+                "table": "TestBowDamageTable", "tableKey": zlib.crc32(b"testbowdamagetable"), "row": "Test_Row", "rowIndex": 2,
+                "wire": 5, "lead": True, "aimSpeed": 50.0, "leadAngle": 10.0, "aimAngle": 45.0, "miss": [1.5, 3.0], "range": 100.0}
+    report("ranged-release", release is not None and all(release.get(key) == value for key, value in expected.items()),
+           f"{release if release is None else {key: release[key] for key in expected}} {cause}")
+    override, _ = behavior.release(dict(clip, SliceOverride="Items/Test_Override", UseAmmo="false"), references, main_hand, damage)
+    report("ranged-override", override is not None and override["projectile"] == 4 and override["ammoKey"] == 0 and override["override"],
+           f"{override if override is None else (override['projectile'], override['ammoKey'], override['override'])}")
+    refusals = [behavior.release(dict(clip, DamageTableRow="Not_A_Row"), references, main_hand, damage)[1],
+                behavior.release(clip, references, Tables.weapons["test_club"], damage)[1],
+                behavior.release(dict(clip, RangedAttackName="Arrow_Scan"), references, main_hand, damage)[1],
+                behavior.release(dict(clip, AmmoSlot="PaperdollSlotTypes::CARTRIDGE_AMMO_SLOT"), references, main_hand, damage)[1],
+                behavior.release(dict(clip, UseAmmo="false"), references, main_hand, damage)[1]]
+    report("ranged-refused", all(refusals) and len(set(refusals)) == 5, f"{refusals}")
+
+    slot_field = node(cd.REPLICATION_FIELD, (1).to_bytes(4, "big"))
+    projectile_component = node(kind=cd.PROJECTILE_CLASS, children=[slot_field])
+    with_component = [entity(0x1234, [projectile_component, node(kind=uuid.uuid4(), children=[
+        node(cd.LOCAL_TRANSFORM_FIELD, b""), node(cd.PARENT_FIELD, cd.NO_ENTITY.to_bytes(8, "big"))])])]
+    flight = ["slices/items/test_arrow.dynamicslice", 50.0, 10.0, 1.5, [0.0, 0.0, -2.0], 1.5, 8.0]
+    found = cd.read_projectile("slices/items/test_arrow.dynamicslice", (bytes([0x61]) * 16, 2), with_component, flight)
+    missing = cd.read_projectile("slices/items/test_arrow.dynamicslice", (bytes([0x61]) * 16, 2),
+                                 [entity(0x1234, [node(kind=uuid.uuid4(), children=[node(cd.LOCAL_TRANSFORM_FIELD, b""),
+                                                                                    node(cd.PARENT_FIELD, cd.NO_ENTITY.to_bytes(8, "big"))])])],
+                                 flight)
+    report("ranged-projectile", found is not None and found[1] == str(uuid.UUID(bytes=bytes([0x61]) * 16)).upper() and found[3] == "0000000000001234"
+           and found[4] == 1 and found[5:] == flight[1:] and missing is None, f"{found} {missing}")
+    return failures
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
@@ -156,6 +241,7 @@ def main() -> int:
     failures = 0
     with contextlib.ExitStack() as stack:
         replacements = {"Sources": Sources, "Catalog": Catalog, "read_tables": lambda _: tables,
+                        "read_ranged_attacks": lambda _: {}, "slice_assets": lambda _: {},
                         "read_names": lambda _: {}, "read_slice_lists": lambda: (set(), set()),
                         "read_spawn_entries": lambda _: entries, "read_creature_slice": creature_slice,
                         "read_action_table": lambda *arguments: [["Move", "Move", 1, False]]}
@@ -184,6 +270,7 @@ def main() -> int:
                 detail = f"status {status}, file {'kept' if text == MARK else 'replaced'}: {errors.getvalue().strip()}"
             print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
             failures += 0 if passed else 1
+    failures += check_ranged()
     return 1 if failures else 0
 
 

@@ -64,6 +64,15 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   slice of its placement or template (case SC1). The client shows a server child only after its
   record (live check L4 of stage 2.5b); the stop of the record removes it in the client, and a
   new interest gives a new full record with one metadata state.
+- A projectile of a creature (stage 3.4f-A, `EntityKind::projectile`, [Projectiles](projectiles.md)): only the projectile system makes
+  it (`World::make_projectile`: an actor of the allocator) and removes it (`World::remove_projectile`); it moves with its flight
+  (`World::place_projectile`: the position index, no state change). Its codecs (`projectile_codecs`): the metadata state of the
+  projectile slice and the Projectile state at the slot of the slice (`encode_projectile_parts`: the launch for a session with no record,
+  the collision at its contact). A new projectile starts the interest scan of each session at once (`World::last_projectile`); a session
+  observes it in the distance of a character while it flies (100 m, it stops it 20 m farther), and an ended one gets no new observer.
+- The velocity of a character (stage 3.4f-A, `World::velocity_of`, a rule of this project): `World::place` keeps a sample of the
+  accepted positions of a character and the velocity over 60 ms or more; it is 0 after 300 ms with no change and for more than 15 m/s (a
+  travel). The lead of a creature shot reads it. The client reports no velocity that the backend reads.
 - A probe can have a given actor id (`ProbeBody::actor`, `tools/world probe ... --actor HEX32`;
   live check L2 of stage 2.5a: the record of a level placement).
 - The first record of a character has the states of the world that it has at the entry: the

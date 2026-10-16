@@ -7,6 +7,7 @@
 
 #include "core/logging/log.h"
 #include "world/creatures.h"
+#include "world/projectiles.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -162,6 +163,8 @@ void Behavior::died(Entity& creature) {
     mind.mode = CreatureMode::rest;
     mind.target = 0;
     mind.attack.reset();
+    mind.shooting = false;
+    mind.retreating = false;
     mind.trail.clear();
     mind.holdUntil.reset();
     if (wasImmune) {
@@ -317,6 +320,7 @@ void Behavior::lose_target(Entity& creature, const char* cause) {
     mind.target = 0;
     mind.mode = CreatureMode::home;
     mind.blockedSteps = 0;
+    mind.retreating = false;
     mind.holdUntil.reset();
     mind.retracing = false;
     // The path to the target is of no use for the way back: without this the creature goes
@@ -357,6 +361,12 @@ void Behavior::tick() {
         const PendingContact pending = m_contacts.begin()->second;
         m_contacts.erase(m_contacts.begin());
         contact(pending);
+    }
+    // The releases of the shots that play (stage 3.4f-A), at their times.
+    while (!m_releases.empty() && m_releases.begin()->first <= now) {
+        const PendingRelease pending = m_releases.begin()->second;
+        m_releases.erase(m_releases.begin());
+        release(pending);
     }
     if (m_lastStep && now - *m_lastStep < behavior_rules::kStepInterval) {
         return;
@@ -485,14 +495,21 @@ void Behavior::think(Entity& creature, float seconds) {
     if (creature.creature.held(now) || creature.creature.forced) {
         return;
     }
-    if (mind.attack) {
-        // An attack plays: the creature stays at its place and keeps its direction to its end.
+    if (mind.attack || mind.shooting) {
+        // An attack or a shot plays: the creature stays at its place and keeps its direction to its end.
         if (now < mind.attackEnds) {
             return;
         }
-        const bool heavy = body.attacks[*mind.attack].heavy;
+        const bool heavy = mind.attack && body.attacks[*mind.attack].heavy;
+        const bool shot = mind.shooting;
         mind.attack.reset();
+        mind.shooting = false;
         mind.ready = now + (heavy ? behavior_rules::kHeavyPause : behavior_rules::kAttackPause);
+        // After a shot its own ready time holds for the next shot (kShotRepeat), and the pause for a melee attack. After a melee attack the
+        // next shot waits for its pause too.
+        if (!shot) {
+            mind.shotReady = std::max(mind.shotReady, mind.ready);
+        }
     }
     Entity* target = fightable(mind.target);
     if (target == nullptr) {
@@ -518,6 +535,15 @@ void Behavior::think(Entity& creature, float seconds) {
                                  : (values.combatDistance > 0.0F ? values.combatDistance : behavior_rules::kDefaultCombatSight);
     if (away > farthest) {
         lose_target(creature, "the target is too far");
+        return;
+    }
+    // The basic shot of an archer (stage 3.4f-A) at a character: the band, the release, the walk back. Its melee attack wins in its
+    // reach (think_shot gives false).
+    if (body.basicShot && target->kind == EntityKind::player && think_shot(creature, *target, *body.basicShot, seconds)) {
+        return;
+    }
+    if (body.attacks.empty()) {
+        turn_to(creature, target->position); // A creature with only a shot and a target that it cannot shoot (a summon).
         return;
     }
     // The next attack of the slice: its light attacks in their sequence, and its heavy attacks between them.
@@ -652,11 +678,12 @@ void Behavior::think(Entity& creature, float seconds) {
 void Behavior::go_home(Entity& creature, float seconds) {
     CreatureMind& mind = creature.creature.mind;
     const WorldClock::time_point now = m_world.clock().now();
-    if (mind.attack) {
+    if (mind.attack || mind.shooting) {
         if (now < mind.attackEnds) {
-            return; // The attack that plays ends first.
+            return; // The attack or the shot that plays ends first.
         }
         mind.attack.reset();
+        mind.shooting = false;
     }
     if (creature.creature.forced) {
         return; // A forced movement that started before the way back ends first (the movement system ends it).
@@ -1125,6 +1152,270 @@ void Behavior::contact(const PendingContact& pending) {
         return;
     }
     m_world.health().creature_hit(*creature, data, *target);
+}
+
+bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, float seconds) {
+    CreatureMind& mind = creature.creature.mind;
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    const gamedata::CreatureBehavior& values = *body.behavior;
+    const WorldClock::time_point now = m_world.clock().now();
+    const float away = horizontal_distance(creature.position, target.position);
+    const float rise = std::fabs(creature.position.z - target.position.z);
+    // The melee attack wins in its reach (research creature-ranged.md Q3, the first option): the next melee attack of the slice.
+    if (!body.attacks.empty()) {
+        const gamedata::CreatureAttack& melee = body.attacks[next_attack(creature.creature)];
+        if (away <= melee.contacts.front().reach + behavior_rules::kContactTolerance && rise <= behavior_rules::kContactHeight) {
+            mind.retreating = false;
+            return false;
+        }
+    }
+    const bool walks = can_walk(creature) && !creature.creature.rooted(now);
+    const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position);
+    const bool inBand = sees && away <= behavior_rules::kShotFar;
+    // The walk back to the middle of the band: on a path, inside the leash, one time in kRetreatPause.
+    if (inBand && walks && !mind.retreating && away < behavior_rules::kShotNear && now >= mind.retreatPauseUntil) {
+        mind.retreating = true;
+        m_world.navigation().forget(creature.id);
+        ++m_counts.retreats;
+        log::write("world: creature %016llx (%s) walks back from %s (%.1f m) to %.0f m for its shot",
+                   id_number(creature.id), creature.creature.kind->id.c_str(), target.name.c_str(), static_cast<double>(away),
+                   static_cast<double>(behavior_rules::kShotMiddle));
+    }
+    if (mind.retreating) {
+        const float size = std::max(away, 0.01F);
+        const state::WorldPosition goal{target.position.x + (creature.position.x - target.position.x) / size * behavior_rules::kShotMiddle,
+                                        target.position.y + (creature.position.y - target.position.y) / size * behavior_rules::kShotMiddle,
+                                        creature.position.z};
+        const bool inLeash = horizontal_distance(goal, mind.anchor) <= leash_of(values);
+        NavStep next;
+        if (inLeash && away < behavior_rules::kShotMiddle - 0.5F && walks) {
+            next = m_world.navigation().next_step(creature.id, creature.position, goal,
+                                                  values.runSpeed * seconds * creature.creature.speed_factor(now), false);
+        } else {
+            next.kind = StepKind::arrived;
+        }
+        if (next.kind == StepKind::moved && taken(creature, next.position) == nullptr) {
+            creature.creature.yaw = yaw_to(creature.position, next.position);
+            mind.sentYaw = creature.creature.yaw;
+            m_creatures.move(creature, next.position, Gait::run);
+            record_trail(creature);
+            ++m_counts.moves;
+            return true;
+        }
+        if (next.kind == StepKind::waiting) {
+            return true;
+        }
+        // At the middle, at the end of the leash, or no path back: the creature shoots from its place, and does not walk back again for
+        // kRetreatPause.
+        mind.retreating = false;
+        mind.retreatPauseUntil = now + behavior_rules::kRetreatPause;
+        m_world.navigation().forget(creature.id);
+    }
+    if (inBand) {
+        turn_to(creature, target.position);
+        if (now >= mind.shotReady) {
+            start_shot(creature, target, shot);
+        }
+        return true;
+    }
+    if (!walks) {
+        turn_to(creature, target.position);
+        return true;
+    }
+    // Farther than the band, or no free line: the walk to the target on its path, to kShotHold with a free line.
+    const float way = values.runSpeed * seconds * creature.creature.speed_factor(now);
+    NavStep next = m_world.navigation().next_step(creature.id, creature.position, target.position, way, true);
+    if (next.kind == StepKind::moved && sees && away - way < behavior_rules::kShotHold) {
+        // The step ends in the band: a shorter step to kShotHold.
+        m_world.navigation().take_back(creature.id);
+        next = m_world.navigation().next_step(creature.id, creature.position, target.position,
+                                              std::max(away - behavior_rules::kShotHold, 0.05F), true);
+    }
+    if (next.kind == StepKind::arrived || next.kind == StepKind::noWay) {
+        // The rule of a target with no way (the melee rule): the place nearest to it, a wait, then the way back.
+        if (!mind.holdUntil) {
+            mind.holdUntil = now + behavior_rules::kNoWayHold;
+            ++m_counts.holds;
+        } else if (now >= *mind.holdUntil) {
+            no_way(creature, target);
+            return true;
+        }
+        turn_to(creature, target.position);
+        return true;
+    }
+    if (next.kind == StepKind::moved) {
+        mind.holdUntil.reset();
+        if (taken(creature, next.position) != nullptr) {
+            m_world.navigation().take_back(creature.id);
+            ++m_counts.crowded;
+            turn_to(creature, target.position);
+            return true;
+        }
+        creature.creature.yaw = yaw_to(creature.position, next.position);
+        mind.sentYaw = creature.creature.yaw;
+        m_creatures.move(creature, next.position, Gait::run);
+        record_trail(creature);
+        ++m_counts.moves;
+        return true;
+    }
+    if (next.kind == StepKind::noGround) {
+        mind.walks = false;
+        mind.groundKnown = true;
+    }
+    turn_to(creature, target.position);
+    return true;
+}
+
+void Behavior::start_shot(Entity& creature, Entity& target, std::uint32_t shot) {
+    CreatureMind& mind = creature.creature.mind;
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    const gamedata::CreatureRangedAttack& attack = body.ranged[shot];
+    const WorldClock::time_point now = m_world.clock().now();
+    // The creature looks at its target for the whole action (the aim angle of the data limits the release, Behavior::aim).
+    creature.creature.yaw = yaw_to(creature.position, target.position);
+    mind.sentYaw = creature.creature.yaw;
+    const std::chrono::milliseconds length = milliseconds(attack.length);
+    if (!m_creatures.start_action(creature, attack.action, length)) {
+        mind.shotReady = now + behavior_rules::kAttackPause;
+        return;
+    }
+    m_world.health().fought(target);
+    if (mind.holdUntil) {
+        mind.holdUntil = now + behavior_rules::kNoWayHold;
+    }
+    mind.shooting = true;
+    mind.attackGeneration = creature.creature.action->generation;
+    mind.attackEnds = now + length;
+    mind.shotReady = std::max(now + behavior_rules::kShotRepeat, mind.attackEnds);
+    ++mind.attacks;
+    ++m_counts.shots;
+    for (std::uint32_t index = 0; index < attack.releases.size(); ++index) {
+        m_releases.emplace(now + milliseconds(attack.releases[index].time),
+                           PendingRelease{creature.id, target.id, mind.attackGeneration, shot, index});
+    }
+    log::write("world: creature %016llx (%s) starts the shot %s at %s (%.1f m, %zu release(s) from %.2f s, %.2f s)",
+               id_number(creature.id),
+               creature.creature.kind->id.c_str(),
+               body.actions[attack.action].name.c_str(),
+               target.name.c_str(),
+               static_cast<double>(horizontal_distance(creature.position, target.position)),
+               attack.releases.size(),
+               static_cast<double>(attack.releases.front().time),
+               static_cast<double>(attack.length));
+}
+
+bool Behavior::command_shot(Entity& creature, EntityId target) {
+    const gamedata::CreatureSlice& body = *creature.creature.body;
+    Entity* character = fightable(target);
+    if (creature.creature.dead || !body.basicShot || character == nullptr || character->kind != EntityKind::player
+        || creature.creature.held(m_world.clock().now()) || creature.creature.forced) {
+        return false;
+    }
+    // The creature takes the character as its target (the step of the behavior then ends the action of the shot, and the fight goes on
+    // by the rules of the behavior).
+    CreatureMind& mind = creature.creature.mind;
+    if (mind.mode != CreatureMode::fight || mind.target != character->id) {
+        take_target(creature, *character, "a command shot", horizontal_distance(creature.position, character->position));
+    }
+    start_shot(creature, *character, *body.basicShot);
+    return mind.shooting;
+}
+
+ShotAim Behavior::aim(const Entity& creature, const Entity& target, const gamedata::RangedRelease& release) const {
+    using Vector = std::array<float, 3>;
+    const auto length = [](const Vector& v) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); };
+    const auto unit = [&](const Vector& v) {
+        const float size = length(v);
+        return size > 1.0e-6F ? Vector{v[0] / size, v[1] / size, v[2] / size} : Vector{0.0F, 0.0F, 0.0F};
+    };
+    const float yaw = creature.creature.yaw * kPi / 180.0F;
+    const Vector front{-std::sin(yaw), std::cos(yaw), 0.0F};
+    ShotAim result;
+    result.origin = {creature.position.x + front[0] * behavior_rules::kMuzzleForward, creature.position.y + front[1] * behavior_rules::kMuzzleForward,
+                     creature.position.z + behavior_rules::kMuzzleHeight};
+    // The point of the aim: the middle of the capsule of the target (the player slice, game data; a decision of this project).
+    const gamedata::CreatureData* data = m_creatures.data();
+    const gamedata::CreatureCapsule* capsule = data != nullptr && data->player_capsule() ? &*data->player_capsule() : nullptr;
+    const float middle = capsule != nullptr ? capsule->radius + capsule->height * 0.5F : 0.9F;
+    state::WorldPosition point{target.position.x, target.position.y, target.position.z + middle};
+    const auto toward = [&](const state::WorldPosition& p) { return Vector{p.x - result.origin.x, p.y - result.origin.y, p.z - result.origin.z}; };
+    const Vector direct = unit(toward(point));
+    // The lead (AILeadTarget of the clip): a constant-velocity intercept with the aim speed of the clip (ProjectileSpeed), at most the
+    // lead angle of the clip (AILeadTargetMaxAngle) from the direct line. The velocity of the target at the release only.
+    if (release.lead && release.aimSpeed > 0.0F) {
+        const Vector velocity = m_world.velocity_of(target);
+        state::WorldPosition lead = point;
+        for (int pass = 0; pass < 3; ++pass) {
+            const float time = length(toward(lead)) / release.aimSpeed;
+            lead = {point.x + velocity[0] * time, point.y + velocity[1] * time, point.z + velocity[2] * time};
+        }
+        const Vector wanted = unit(toward(lead));
+        const float cosine = std::clamp(direct[0] * wanted[0] + direct[1] * wanted[1] + direct[2] * wanted[2], -1.0F, 1.0F);
+        const float angle = std::acos(cosine);
+        const float limit = release.leadAngle * kPi / 180.0F;
+        if (angle > limit && angle > 1.0e-6F) {
+            // The direction at the limit angle from the direct line, in the plane of the two.
+            const Vector side = unit({wanted[0] - direct[0] * cosine, wanted[1] - direct[1] * cosine, wanted[2] - direct[2] * cosine});
+            const Vector capped{direct[0] * std::cos(limit) + side[0] * std::sin(limit), direct[1] * std::cos(limit) + side[1] * std::sin(limit),
+                                direct[2] * std::cos(limit) + side[2] * std::sin(limit)};
+            const float distance = length(toward(lead));
+            lead = {result.origin.x + capped[0] * distance, result.origin.y + capped[1] * distance, result.origin.z + capped[2] * distance};
+        }
+        point = lead;
+    }
+    result.point = point;
+    // The fall of the projectile slice (game data: its acceleration after the delay distance of the attack; live check L2b: the client
+    // flies it so): the aim is higher by the fall in the time of the flight.
+    state::WorldPosition aimed = point;
+    if (data != nullptr && release.projectile < data->projectiles().size()) {
+        const gamedata::ProjectileSliceData& slice = data->projectiles()[release.projectile];
+        const float distance = length(toward(point));
+        const float time = std::max(distance - release.accelDelay, 0.0F) / slice.speed;
+        aimed = {point.x - 0.5F * slice.accel[0] * time * time, point.y - 0.5F * slice.accel[1] * time * time,
+                 point.z - 0.5F * slice.accel[2] * time * time};
+    }
+    Vector direction = unit(toward(aimed));
+    // The aim angle of the clip (AIAimMaxAngle): at most this angle to each side of the front of the creature, in the plane.
+    const float flat = std::hypot(direction[0], direction[1]);
+    if (flat > 1.0e-6F && release.aimAngle < 180.0F) {
+        const float side = std::atan2(front[0] * direction[1] - front[1] * direction[0], front[0] * direction[0] + front[1] * direction[1]);
+        const float limit = release.aimAngle * kPi / 180.0F;
+        if (std::fabs(side) > limit) {
+            const float turned = std::copysign(limit, side);
+            const float x = front[0] * std::cos(turned) - front[1] * std::sin(turned);
+            const float y = front[0] * std::sin(turned) + front[1] * std::cos(turned);
+            direction = {x * flat, y * flat, direction[2]};
+        }
+    }
+    result.direction = unit(direction);
+    return result;
+}
+
+void Behavior::release(const PendingRelease& pending) {
+    Entity* creature = m_creatures.find(pending.creature);
+    const char* cancelled = nullptr;
+    if (creature == nullptr || creature->creature.dead) {
+        cancelled = "the creature is dead or not in the world";
+    } else if (!creature->creature.mind.shooting || creature->creature.mind.attackGeneration != pending.generation
+               || !creature->creature.action || creature->creature.action->generation != pending.generation) {
+        cancelled = "a different action replaced the shot";
+    }
+    Entity* target = cancelled == nullptr ? fightable(pending.target) : nullptr;
+    if (cancelled == nullptr && (target == nullptr || target->kind != EntityKind::player)) {
+        cancelled = "the target is not there";
+    }
+    if (cancelled != nullptr) {
+        ++m_counts.releasesCancelled;
+        log::write("world: no shot: the release of creature %016llx does not fly: %s", id_number(pending.creature), cancelled);
+        return;
+    }
+    const gamedata::RangedRelease& data = creature->creature.body->ranged[pending.attack].releases[pending.release];
+    const ShotAim shot = aim(*creature, *target, data);
+    if (m_world.projectiles().launch_creature(CreatureShot{creature->id, &data, shot.origin, shot.direction, target->id})) {
+        ++m_counts.releases;
+    } else {
+        ++m_counts.releasesCancelled;
+    }
 }
 
 } // namespace soulwarden::backend::world

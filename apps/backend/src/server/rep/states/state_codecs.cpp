@@ -129,8 +129,19 @@ std::span<const StateCodec> object_codecs() {
     return codecs;
 }
 
+std::span<const StateCodec> projectile_codecs() {
+    // The slot of the Projectile state is a value of the projectile slice (game data).
+    static constexpr std::array<StateCodec, 2> codecs{{
+        {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
+        {world::ComponentKey::projectile, 0, kTypeProjectileState, nullptr, encode_projectile_parts, false, projectile_slot},
+    }};
+    return codecs;
+}
+
 std::span<const StateCodec> codecs_of(const world::Entity& entity) {
     switch (entity.kind) {
+    case world::EntityKind::projectile:
+        return projectile_codecs();
     case world::EntityKind::object:
         return object_codecs();
     case world::EntityKind::creature:

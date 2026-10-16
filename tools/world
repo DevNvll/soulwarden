@@ -230,6 +230,9 @@ The creatures of the world (protocol notes 4.14):
                                                 of an action that has an end. --tags: the tag state
                                                 of the fragments for this action (24 hexadecimal
                                                 digits), in the place of the tags of the slice
+  tools/world creature shoot CREATURE CHARACTER the creature starts its basic shot (the action FireBow of its
+                                                slice, stage 3.4f-A) at the character now: the release,
+                                                the aim, the flight, and the hit of a shot of the behavior
   tools/world creature anchor CREATURE X Y Z    the anchor of a creature in a fight is that place
                                                 (the end of its way back): a test of a way back
                                                 with no path to the anchor
@@ -603,6 +606,18 @@ def projectiles_text(projectiles: dict) -> str:
         x, y, z = flying["position"]
         lines.append(f"  projectile {flying['number']}  {flying['attack']} ({flying['row']}) of {flying['caster']}  age {flying['age']:.2f} s, "
                      f"{flying['travelled']:.1f} m  at {x:.2f} {y:.2f} {z:.2f}")
+    creatures = projectiles.get("creatures")
+    if creatures:
+        ends = ", ".join(f"{count} {cause}" for cause, count in creatures["ends"].items()) or "none"
+        lines.append(f"creature shots: {len(creatures['flying'])} in the air, {creatures['holds']} ended ones before their stop; "
+                     f"{creatures['shots']} shots started, {creatures['releases']} releases flew, {creatures['releasesCancelled']} did "
+                     f"not, {creatures['retreats']} walks back; {creatures['launches']} launches ({creatures['refused']} refused); ends: "
+                     f"{ends}; {creatures['damage']} hits with damage, {creatures['steps']} flight steps, {creatures['looked']} "
+                     f"characters looked at, {creatures['wallTests']} wall tests, {creatures['largest']} in the air at one time at most")
+        for flying in creatures["flying"]:
+            x, y, z = flying["position"]
+            lines.append(f"  shot {flying['number']}  {flying['attack']} of creature {flying['creature']} (entity {flying['entity']})  age "
+                         f"{flying['age']:.2f} s, {flying['travelled']:.1f} m  at {x:.2f} {y:.2f} {z:.2f}")
     return "\n".join(lines)
 
 
@@ -878,6 +893,9 @@ def creature_command(data_dir: Path, arguments: list[str]) -> None:
         seconds = f"&seconds={numbers(words, 1)[0]}" if words else ""
         request(data_dir, "POST", f"/v1/dev/creatures/action?creature={creature_id(data_dir, arguments[1])}"
                                   f"&action={arguments[2]}{seconds}{tags}")
+    elif action == "shoot" and len(arguments) == 3:
+        request(data_dir, "POST", f"/v1/dev/creatures/shoot?creature={creature_id(data_dir, arguments[1])}"
+                                  f"&character={character_id(data_dir, arguments[2])}")
     elif action == "anchor" and len(arguments) == 5:
         x, y, z = numbers(arguments[2:5], 3)
         request(data_dir, "POST", f"/v1/dev/creatures/anchor?creature={creature_id(data_dir, arguments[1])}&x={x}&y={y}&z={z}")

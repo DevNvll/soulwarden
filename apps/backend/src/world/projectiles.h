@@ -278,6 +278,74 @@ struct SpellShot {
     std::function<void(const SpellLanding&)> landed;
 };
 
+/**
+ * A shot of a creature (stage 3.4f-A, research creature-ranged.md Q2 and Q5): the release of a ranged attack of its slice. The
+ * behavior gives it at the time of the release (world/behavior.h); the direction is the aim of the release (the lead, the angle limits,
+ * the fall of the slice). The projectile system flies it on the world clock and makes its entity: each session near it gets one record.
+ */
+struct CreatureShot {
+    /** The creature that shoots: the source of each hit, the owner field of the Projectile state. */
+    EntityId creature{0};
+    /** The release of the data: the profile values, the row, the projectile slice, the keys of the state. */
+    const gamedata::RangedRelease* release{nullptr};
+    state::WorldPosition origin;
+    /** A unit vector. */
+    std::array<float, 3> direction{};
+    /** The character that the creature aimed at (a log line only: the shot hits the first character on its line). */
+    EntityId aimedAt{0};
+};
+
+/** How a flight of a creature shot ended (stage 3.4f-A). */
+enum class CreatureShotEnd : std::uint8_t {
+    /** It hit a character: one damage result of the creature rule. */
+    hit,
+    /** A wall or the ground stopped it: no damage. */
+    wall,
+    /** It flew its range or its life time with no contact: no damage (a miss). */
+    range,
+    lifetime,
+    /** Its creature died or left the world in its flight: it ends there, with no damage. */
+    source,
+    /** A shield of an enemy of the creature took it (the projectile shield of Maelstrom): no damage. */
+    absorbed,
+};
+inline constexpr std::size_t kCreatureShotEndCount = 6;
+
+/** @return A short text for a log line, for example "a wall stopped it". */
+[[nodiscard]] const char* creature_shot_end_text(CreatureShotEnd end);
+
+/** The counts of the creature shots (stage 3.4f-A), for the log, the development routes, and the tests. */
+struct CreatureShotCounts {
+    std::uint64_t launches{0};
+    /** Shots that the system refused: no data of the shot, a direction that is not a unit vector, an origin that is not of the world. */
+    std::uint64_t refused{0};
+    std::array<std::uint64_t, kCreatureShotEndCount> ends{};
+    /** Hits that changed the health of a character (a hit on a dead character, or a refused one, does not count). */
+    std::uint64_t damage{0};
+    /** Flight steps, the characters that the steps looked at, the wall tests of the segments, and the most flights at one time. */
+    std::uint64_t steps{0};
+    std::uint64_t looked{0};
+    std::uint64_t wallTests{0};
+    std::size_t largest{0};
+};
+
+/** The constants of the creature shots that the game data does not give (rules of this project, each with its source). */
+namespace creature_shot_rules {
+/**
+ * The record of a shot that hit a character stays this long after its collision state, then the stop: the collision state goes to each
+ * observer in a bundle before the stop (a session sends the stops of a tick before its records). A decision of an agent: live check L2c
+ * shows the arrow stopped at the contact anchor.
+ */
+inline constexpr std::chrono::milliseconds kHitHold{250};
+/**
+ * A shot that a wall or the ground stopped stays at its contact for the stuck life time of its slice (m_stuckLifetime, game data: 8 s
+ * for basic_ai_arrow), at most this long.
+ */
+inline constexpr std::chrono::milliseconds kLongestStuck{10000};
+/** A creature has this many shots in the air at most (a limit of the cost, a decision of an agent): one more is refused. */
+inline constexpr std::size_t kCreatureMost = 8;
+} // namespace creature_shot_rules
+
 /** The capsule of a creature in the world (stage 3.3b-S3): the two ends of its segment and its radius. */
 struct WorldCapsule {
     state::WorldPosition a;
@@ -288,9 +356,10 @@ struct WorldCapsule {
 /**
  * @return The capsule of a creature at its place: the capsule of its slice (gamedata::CreatureCapsule) turned by the
  *         direction of the creature, with its lowest point at the feet of the creature (a decision of this project), or the
- *         default capsule (projectile_rules) for a slice with none.
+ *         default capsule (projectile_rules) for a slice with none. A character: the default capsule, or `player` when given (stage
+ *         3.4f-A: the capsule of the player slice, game data), upright, with its lowest point at its feet.
  */
-[[nodiscard]] WorldCapsule capsule_of(const Entity& creature);
+[[nodiscard]] WorldCapsule capsule_of(const Entity& creature, const gamedata::CreatureCapsule* player = nullptr);
 
 /**
  * @return The head volume of a creature at its place (stage 3.3b-S5): the head capsule of its slice (gamedata::CreatureHead: the
@@ -348,6 +417,43 @@ public:
     void tick();
     /** The entity of a character left the world: its projectiles end with no hit. */
     void caster_left(EntityId caster);
+
+    /**
+     * A shot of a creature (stage 3.4f-A): the release of a ranged attack. The system makes the projectile entity (each session near
+     * it gets its record: the metadata state of the slice and the Projectile state) and flies it on the world clock with the values of
+     * the data: the speed and the acceleration of the slice (the acceleration after the delay distance of the attack), the range of the
+     * attack, and the life time of the slice. Each segment looks at the characters near it (the position index) and at the cells of
+     * the navigation data on it. The first character that lives and that the creatures do not ignore, whose capsule (the capsule of the
+     * player slice) the segment touches with the radius of the attack, takes one hit through the health system (Health::creature_hit
+     * with the row of the release), and the flight ends with the collision state. A wall or the ground first: the collision state and no
+     * hit. The range or the life time: the stop, no hit. The death or the leave of the creature ends its flights with no hit.
+     * @return The number of the flight. No value: refused (no data, a direction that is not a unit vector, a place that is not of the
+     *         world, kCreatureMost shots of the creature in the air).
+     */
+    std::optional<std::uint64_t> launch_creature(const CreatureShot& shot);
+    /** The creature died or left the world (stage 3.4f-A, a rule of this project): its flights end with no hit, and their records stop. */
+    void source_left(EntityId creature);
+    [[nodiscard]] const CreatureShotCounts& creature_counts() const {
+        return m_creatureCounts;
+    }
+    /** @return The number of creature shots in the air, and of ended ones whose record waits for its stop. */
+    [[nodiscard]] std::size_t creature_flights() const {
+        return m_flights.size();
+    }
+    [[nodiscard]] std::size_t creature_holds() const {
+        return m_holds.size();
+    }
+    /** One creature shot in the air, for a development list. */
+    struct FlightView {
+        std::uint64_t number{0};
+        EntityId creature{0};
+        EntityId entity{0};
+        std::string attack;
+        state::WorldPosition position;
+        float travelled{0.0F};
+        std::chrono::milliseconds age{0};
+    };
+    [[nodiscard]] std::vector<FlightView> creature_active() const;
 
     [[nodiscard]] const ProjectileCounts& counts() const {
         return m_counts;
@@ -414,6 +520,25 @@ private:
     HitResult hit(Projectile& projectile, Entity& target, const state::WorldPosition& point, bool head = false);
     void finish(const Projectile& projectile, ProjectileEnd end, const state::WorldPosition& at, EntityId struck = 0);
 
+    /** One creature shot in the air (stage 3.4f-A). */
+    struct CreatureFlight {
+        std::uint64_t number{0};
+        EntityId creature{0};
+        /** The projectile entity of the record. */
+        EntityId entity{0};
+        const gamedata::RangedRelease* release{nullptr};
+        const gamedata::ProjectileSliceData* slice{nullptr};
+        state::WorldPosition position;
+        std::array<float, 3> velocity{};
+        float travelled{0.0F};
+        WorldClock::time_point launched{};
+        WorldClock::time_point at{};
+    };
+    /** Flies one creature shot to `now`. @return True when its flight ended. */
+    bool fly(CreatureFlight& flight, WorldClock::time_point now);
+    /** The end of a creature shot: the counts, the log line, the collision state (a contact), and the time of the stop of its record. */
+    void land(const CreatureFlight& flight, CreatureShotEnd end, const state::WorldPosition& at, EntityId struck = 0);
+
     World& m_world;
     const gamedata::ProjectileData* m_data;
     const gamedata::CombatTables* m_combat;
@@ -423,6 +548,10 @@ private:
     /** The ledger: the key of each launch (character, session, input sequence, press) to the end of its time. */
     std::map<std::tuple<std::string, SessionId, std::uint32_t, std::uint32_t>, WorldClock::time_point> m_ledger;
     std::uint64_t m_next{1};
+    /** The creature shots in the air (stage 3.4f-A), by number, and the projectile entities of ended shots by the time of their stop. */
+    std::map<std::uint64_t, CreatureFlight> m_flights;
+    std::multimap<WorldClock::time_point, EntityId> m_holds;
+    CreatureShotCounts m_creatureCounts;
     /** @return The largest reach of a creature capsule from the place of its creature (meters): a part of the range of a query. */
     float reach();
     float m_reach{0.0F};

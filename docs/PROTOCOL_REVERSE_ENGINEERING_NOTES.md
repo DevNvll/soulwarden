@@ -5862,6 +5862,88 @@ the time of a timed use (the client timer is the Delay Time with no factor 0.6; 
 is 0.6 at 0x7F40084, research K5); the ids of a person that a client spawner makes (the artificer at the forge of Oxboro: its
 conversation is refused); the town state that chooses the station children of the server of the game (m_spawnOnInitialize false).
 
+**The corrections of the code review of stage 2.5b** (made in stage 3.4f-A; test cases RY1 to RY8; project rules):
+
+| Rule | What the backend does |
+| --- | --- |
+| The end of a timed use at its full time (ST-R1) | A report with no block (the client cleared its request after its execution) that the world takes at the full time or later completes the use first, through the path of its timer, then ends it. An end before the time stays a release. |
+| A cancel before a delayed press (ST-R2) | A 2473 that matches no use marks its reference with the sequence number of its carrier datagram (the datagrams of a client have one sequence for all channels). A request of that reference from an earlier datagram starts no use (`rep: interaction request of input N is older than the cancel of its client`). A request of a later datagram ends the mark; the mark ends 3 s after the cancel at the latest (the numbers have 16 bits). |
+| The range of a service grant (ST-R3) | Each accepted position of a character with a grant tests the range of the bound of its source: out of the range, the grant ends (a walk back does not give it back). |
+| A use of one time of a different source (ST-R4) | Each accepted use of a different source ends the grant, also a use of one time (AddLoreToJournal). |
+| The slots of a template (ST-R5) | The loader refuses a template whose PositionInTheWorld, BuildableController, Ownership, or Vitals slot is the slot of a different component or of an Interact bound. |
+| The tool (ST-R6 to ST-R8) | `tools/gamedata/interactions.py` stops (and keeps the old file) for a named placement with no position object with x, y, and z; for a concrete child asset of a PrefabSpawner with no path in the catalog (except the three assets of the retail data that no record of the catalog has: `ASSETS_NOT_IN_GAME`, the spawners Lotus_A, Lotus_B, Lotus_C, five uses); and it keys each placement with one form of its UUID (lower case), so two spellings at two places stop it. |
+
+### 4.37 The projectile of a creature: the Projectile state, its flight, its hit on a character (live proof of stage 3.4f-A; static proof for the client code; the rules are project rules with the values of the game data)
+
+Stage 3.4f-A. Research: `~/Games/soulwarden/work/research/creature-ranged.md` (Q2 with R0, Q3, Q5, the stage plan 3.4f-A, the live
+checks L1 and L2). Live checks and the live proof: `~/Games/soulwarden/work/evidence/creature-ranged/implement/` (`live/LIVE-CHECKS.md`,
+`RESULT.md`). Code: `server/rep/states/projectile_state.cpp`, `world/projectiles.h` (`Projectiles::launch_creature`, `CreatureShot`,
+`creature_shot_rules`), `world/behavior.h` (the rule Shoot, `behavior_rules::kShot*`), `gamedata/creature_data.h` (`RangedRelease`,
+`ProjectileSliceData`, `kBasicShotAction`), `tools/gamedata/creature_behavior.py`, `tools/gamedata/creature_data.py`. Documents:
+[Projectiles](systems/projectiles.md), [Creature behavior](systems/creature-behavior.md). Test cases CRG1 to CRG6, CRG9.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The action of a shot (ALC state type 11, the scope record of a creature, 4.14) alone shows the windup of the creature (FireBow: the bow up, the draw, the release pose) and no arrow. | Live L1 (`live/l1-action-only.mp4`). | Apply `0x2A2BC20` |
+| A projectile of the server is an entity of its own: the metadata state (slot 0: the asset of the projectile slice, sub id 2; `basic_ai_arrow` `6158a382-90e5-5f05-ba91-4fd8991c1c5c`, an actor of the allocator) and the Projectile state (`MB::ProjectileReplicatedState`, type 16) at the slot of the Projectile component of the slice (game data: 1 for `basic_ai_arrow`, 2 for `arcane_ai_arrow`). One group, twenty fields, chained masks. The client flies the arrow from the anchor with the velocity; one arrow shows, with its trail. The metadata and the Projectile state in one first record work. | Live L2b, L2f; static (research R0). | Constructor `0x6715370`, apply `0x683D750` -> `0x68D5B60`, `0x68D66F0` (first), `0x68D6CF0` (later) |
+| The launch state: field 0 the anchor (x f32, y f32, z u16 over -100 to 2000), 2 the velocity (three half floats, m/s), 4 the time anchor (u64, the server time in microseconds: the world clock), 5 the start of the acceleration (u16 ms: 0), 9 the flags (0), 10 the owner (u64, the entity id of the creature), 11 the attack index (size code: the place of the attack in all attacks of all profiles of the ranged attack data, profiles and then attacks in the byte order of their names: `AI_Bow/Basic` 7, `AI_Bow/Basic_Arcane` 8), 13 the ammunition key (size code: the CRC-32 of the lower-case AmmoID; `arrow_ai` `869C80AA`; 0 with no ammunition), 14 the damage table key (u32: the CRC-32 of the lower-case unique name of the damage table; `HumanBowDamageTable` `910CFA8A`), 15 the row (u16: the place of the row among the rows with a DamageID; `Damned_2H_Ranged_Bow` 0). 51 bytes. The other fields keep their constructor values (no height delta, no gravity override, no bounce, no weapon effect, no pierce, no magnet). | Live L2e (the reduced state flies as the full state of 71 bytes, L2c); static R0. | Size code reader `0x87B5C0`, attack lookup `0x5C52550`, row cache `0x677CEC0` |
+| The acceleration of the flight is the acceleration of the slice (`basic_ai_arrow` 0, 0, -2), not the predicted acceleration of the profile (-9.8): a slow arrow of 12 m/s falls 1.4 m in 0.95 s. The gravity override 0 is no override. | Live L2b. | Motion `0x695CCC0` |
+| The collision state: fields 0 (the contact place), 4 (its time), 7 (the hit entity: `00000000FFFFFFFF`, none), 8 (the hit volume: 0), 9 (the flags: 0x01, collided). The client stops the arrow at the contact and its trail fades; with no such state the arrow flies on. | Live L2c, L2d. | `0x6781820` (the collided bit holds the anchor), remote tick `0x689A710` |
+| The stop of the record in the flight ends the arrow at its place. | Live L2g. | — |
+| The size code of the client: each tail of the two-, three-, four-, and five-byte forms is little-endian (the five-byte form reads one little-endian u32 and shifts it by 3). The fixtures of the research wrote the five-byte tail big-endian; `hub::Writer::size` and the live checks use little-endian. | Static (Ghidra read of `0x87B5C0` in this stage); live L2. | `0x87B5C0` |
+
+**The data** (`creatures.json` of format 3 with three new members, `tools/gamedata/creatures.sh`): each slice can have `ranged` (the
+ranged attacks: an action, its time, and its releases with their joins), the file has `projectiles` (each projectile slice: the asset,
+the root, the slot of the Projectile component, the flight values) and `playerCapsule` (the capsule of the CharacterComponent of
+`slices/player.dynamicslice`: radius 0.41 m, segment 0.8 m). The values of this build: 225 ranged attacks of 95 slices (459 releases),
+69 projectile slices; the basic shot FireBow in 20 slices (the Evil Knight archer: index 7, `HumanBowDamageTable`, row 0, `Arrow_AI`,
+`basic_ai_arrow` slot 1, release at 1.333 s; the Skeleton Archer: index 8, `SkeletonArcherDamageTable`, row 2, `Arcane_AI_Arrow`,
+`arcane_ai_arrow` slot 2, 1.333 s; the Dryad Archer: index 7, `FeralArcherDamageTable`, row 0, `basic_ai_arrow_dryad`, 0.65 s). A file
+of an older tool has none of the members: no creature shoots, and the backend works.
+
+**The rules** (project rules with the values of the game data; the source of each rule is in [Creature behavior](systems/creature-behavior.md)
+and [Projectiles](systems/projectiles.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The attack | The basic shot of an archer: the ranged attack of the action FireBow of the slice (one release, the ammunition of the slice). The other ranged attacks of the data wait. |
+| The band and the choice | The melee attack wins in its reach; the shot in 20 m with a free line; a walk to 18 m from farther; a walk back to 14 m from nearer than 8 m on a path in the leash, one time in 6 s. |
+| The release | At the time of the release of the data from the start of the action, when the action is still the action of the shot, the creature lives, and the target is there. The aim at the release: the middle of the capsule of the target, the lead with the velocity of the target (AILeadTarget, ProjectileSpeed, at most AILeadTargetMaxAngle), the fall of the slice, at most AIAimMaxAngle from the front. |
+| The repeat | The next shot 3 s after the start of the last one, or at the end of its action when later. |
+| The flight and the hit | On the world clock in steps of 1/30 s with the speed and the acceleration of the slice, the range of the attack, the life time of the slice. The first character on the segment (alive, not ignored; the capsule of the player slice, the radius of the attack) takes one damage result of the creature rule (`Health::creature_hit` with the row of the release). A wall or the ground first: no damage. |
+| The record | One entity for each shot: the launch state for a session with no record of it (also in the flight: the time anchor of the release), the collision state at a contact, the stop 0.25 s after a hit, after the stuck life time of the slice (8 s) at a wall, at once at the end of the range or of the life time, and at the death or the leave of the creature (no damage). A session that comes near after the end gets no record. |
+| The load | The flights look only at the characters near each segment and at the cells of the segment; 8 shots of a creature in the air at most (case CRG9: 200 flights, 50 archers, 1,000 ticks in 14 ms; no change with 32,000 far points). |
+
+**The live proof** (stage 3.4f-A, a development run with the backend of the stage; `proof/` of the evidence folder; night light):
+
+| Check | Result |
+| --- | --- |
+| P1 The hit (`p1-hit.mp4`) | A Varangian Archer (`Evil_Knight_Bow_17`, a kind of the start area: 8 spawn points 250 m to 500 m from the default spawn) at 10 m: the windup, the release 1.33 s after the start of the action, one arrow with its trail, the health of the character goes down only at the contact (65 damage for each hit, the HUD 4,869 to 4,804), the next shot 3.1 s later. |
+| P2 The miss (`p2-miss.mp4`) | At 18 m the character goes to the side at the release: the arrow flies past it, 28.1 m, and the ground stops it. No damage. |
+| P3 The wall (`p3-wall.mp4`) | A shot at a second character behind the brick wall: the arrow stops at the wall after 6.0 m and stays in it for some seconds. No damage. The archer then walks to find a free line. |
+| P4 The view of a second character (`p4-observer.mp4`) | The development character looks at a shot at a different character: each arrow flies and stops at it, and its health bar gets shorter after each hit (four hits, 250.1 damage each). |
+| P5 The arcane arrow (`p5-arcane.mp4`) | An Ancient Guardian Archer (`Skeleton_Archer:4`): `arcane_ai_arrow` at slot 2 flies with its purple trail; 393.0 damage of the type Arcane for each hit. |
+| P6 The Dryad Archer (`p6-dryad.mp4`) | A Bronzeroot Archer (`Dryad_Archer_31`): the release 0.65 s after the start of the action, `basic_ai_arrow_dryad`; in the frames the arrow leaves at the end of the draw of the bow (frames of about 0.05 s to 0.15 s). |
+
+**The commands** (development routes): `tools/world creature shoot CREATURE CHARACTER` (`POST /v1/dev/creatures/shoot`: the basic shot
+now), the lines `creature shots` of `tools/world projectiles` and `tools/world list`.
+
+**Not known, not done** (stage 3.4f-A):
+
+- The impact effect at a character (the arrow stops at the character, and the stop of the record 0.25 s later removes it; no effect
+  of a hit on the body shows in the night runs), the meaning of the contacted entity and of the hit volume (field 7, 8), the bits 0x02
+  and 0x04 of the flags, the use of `m_extraSpeed` and `m_timeForMaxSpeed`.
+- The other ranged attacks of the data (the charged and the fast shots, the shots of the casters), the dodge and the block of a
+  character, the miss distribution of the clips (`AIMissMinDistance`, `AIMissMaxDistance`: kept, not used), the hostile statuses of a
+  row (AI_Rend of the charged shot of the skeleton archer), a shot at a summon (a creature with no melee attack takes a summon as its
+  target, turns to it, and does not attack it; it loses it at the end of the summon).
+- The tags of the fragments of the Skeleton Archer and the Dryad Archer: the tool selects their FireBow variant with the default tags
+  of the slice (`m_defaultTags`: Bow+Skeleton+Bowman, Bow+Dryad+Bowman); the backend sends the weapon tags (as for the melee attacks).
+  The release time of the Dryad Archer (0.65 s) is a time of that variant; the live proof P6 shows no early or late arrow (a check to
+  about 0.1 s, at night).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are
@@ -5899,9 +5981,10 @@ conversation is refused); the town state that chooses the station children of th
     a queue on a narrow way, the objects of spawners that are off at the start (doors, gates
     of a fort) are not in the data, and 1,207 spawn points of kinds that fight are on no free
     floor of the data (their creatures do not leave their place).
-  - 859 of the 3,848 kinds have no attack that the tool can use (8,612 spawn points): they
-    do not attack, and a kind of them with roam data patrols or wanders (stage 3.4e). No
-    group aggression, no ranged attack, no magic, no ability, and no flee behavior.
+  - 814 of the 3,848 kinds have no attack that the tool can use (8,206 spawn points; 859 and
+    8,612 before stage 3.4f-A): they do not attack, and a kind of them with roam data patrols
+    or wanders (stage 3.4e). No group aggression, no ranged attack other than the basic shot
+    of an archer (stage 3.4f-A, 4.37), no magic, no ability, and no flee behavior.
   - The reach of an attack of a creature is a project value, and the sequence and the pause
     of its attacks are project rules (4.19). The backend does not move a creature in an
     attack (the client moves the body in some attacks).

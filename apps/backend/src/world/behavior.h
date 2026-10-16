@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <map>
@@ -70,6 +71,19 @@
 //           "invulnerable"), and at the anchor it has its full health. A way back with no path
 //           follows the places of the way out (the trail) back; a creature jumps to its anchor
 //           only when no session can observe it.
+//   Shoot.  (stage 3.4f-A) A creature whose slice has the basic shot of an archer (gamedata::kBasicShotAction: the action FireBow
+//           with its release, game data) shoots a character in a band of distances: in kShotFar or less, with a free line, it stands,
+//           turns to the target, and starts the action of the shot when it is ready (kShotRepeat from the start of its last shot, or
+//           the end of that action when later); farther, or with no free line, it walks to the target until kShotHold with a free
+//           line; nearer than kShotNear it walks back to kShotMiddle on a path inside its leash, at most one time in kRetreatPause
+//           (with no such path it shoots from its place). Its melee attack wins in its reach: a target in the reach of the next melee
+//           attack of the slice gets the melee attack. The action plays to its end (no other attack, no step, no turn in it). At the
+//           time of the release of the data the shot flies (world/projectiles.h) in the direction of the aim: the place of the target
+//           at the release and, with the lead flag of the data, its velocity (a constant-velocity intercept with the aim speed of the
+//           data, at most the lead angle of the data from the direct line), then the fall of the slice, and at most the aim angle of
+//           the data from the front of the creature. The direction does not follow the target later. A shot whose action a different
+//           action replaced (a stun, a knockdown, a command), whose creature died, or whose target is not there at the release, does
+//           not fly. These are rules of this project with the values of the game data (protocol notes 4.37, creature-behavior.md).
 //   Roam.   A creature at rest with a patrol route (the spawner of its spawn point has one, game
 //           data) walks from waypoint to waypoint with the ambient speed of its slice and the
 //           walk action of its slice, waits at each waypoint for a time of its range (and plays
@@ -170,6 +184,31 @@ inline constexpr std::chrono::milliseconds kWanderWaitLongest{12000};
 inline constexpr unsigned kWanderTries = 6;
 /** A creature that found no way to a waypoint or to a place of its wander waits this long before its next goal. */
 inline constexpr std::chrono::milliseconds kRoamNoWayPause{3000};
+/**
+ * The band of an archer (stage 3.4f-A; project rules: research creature-ranged.md Q3, the first option, because the game files have no
+ * keep-distance rule and no behavior tree): it shoots a target in kShotFar or less (meters, horizontal) with a free line; a creature that
+ * walks to a target for its shot stops at kShotHold (2 m in the band: the target can move some steps with no new walk); nearer than
+ * kShotNear it walks back to kShotMiddle.
+ */
+inline constexpr float kShotFar = 20.0F;
+inline constexpr float kShotHold = 18.0F;
+inline constexpr float kShotNear = 8.0F;
+inline constexpr float kShotMiddle = 14.0F;
+/** A shot needs the target this near in height (meters): the height limit of the vision of a creature. */
+inline constexpr float kShotHeight = kSenseHeight;
+/**
+ * The next shot of a creature: this long after the start of its last shot, or at the end of the action of that shot when later
+ * (research Q3, the first option: the completion offsets of the action lists are not a repeat time of the original).
+ */
+inline constexpr std::chrono::milliseconds kShotRepeat{3000};
+/** A creature that walked back (or found no way back) does not walk back again for this time (a decision of an agent: no endless kite). */
+inline constexpr std::chrono::milliseconds kRetreatPause{6000};
+/**
+ * The origin of a shot: this high above the feet of the creature and this far in front of it (meters; a decision of an agent: the data
+ * has the joint of the bow, and the backend has no animated body; live check L2: the arrow leaves the bow of the archer).
+ */
+inline constexpr float kMuzzleHeight = 1.5F;
+inline constexpr float kMuzzleForward = 0.6F;
 } // namespace behavior_rules
 
 /** Counts of the behavior, for the log and for the tests. */
@@ -210,6 +249,22 @@ struct BehaviorCounts {
     std::uint64_t jumps{0};
     /** Hits that a creature on its way back did not take. */
     std::uint64_t immuneHits{0};
+    /**
+     * The shots of stage 3.4f-A: the actions of a shot that the creatures started, the releases that flew, the releases that did not
+     * fly (the action was replaced, the creature died, the target was not there, the projectile system refused), and the walks back.
+     */
+    std::uint64_t shots{0};
+    std::uint64_t releases{0};
+    std::uint64_t releasesCancelled{0};
+    std::uint64_t retreats{0};
+};
+
+/** The aim of a release (stage 3.4f-A, Behavior::aim): the origin and the unit direction of the shot. */
+struct ShotAim {
+    state::WorldPosition origin;
+    std::array<float, 3> direction{};
+    /** The point that the creature aimed at (after the lead, before the fall of the slice), for a log line and a test. */
+    state::WorldPosition point;
 };
 
 class Behavior {
@@ -278,6 +333,17 @@ public:
      * place (the next step searches again), and a creature in a fight keeps the new place in its trail.
      */
     void moved_by_force(Entity& creature);
+    /**
+     * A development command and the tests (stage 3.4f-A): the creature starts its basic shot at a character now, with no band and no
+     * repeat time. The release, the aim, and the flight are the rules of a shot of the behavior.
+     * @return False: the creature has no basic shot, is dead, holds, or the target is not a character that lives.
+     */
+    bool command_shot(Entity& creature, EntityId target);
+    /**
+     * @return The aim of a release of a creature at a target (stage 3.4f-A): the origin at the creature, the place of the target and
+     *         its velocity (World::velocity_of) for the lead of the data, the fall of the projectile slice, and the angle limits.
+     */
+    [[nodiscard]] ShotAim aim(const Entity& creature, const Entity& target, const gamedata::RangedRelease& release) const;
     /** A hit of a character did not hurt a creature on its way back (the combat system): for the counts. */
     void immune_hit() {
         ++m_counts.immuneHits;
@@ -302,9 +368,26 @@ private:
         std::uint32_t contact{0};
     };
 
+    /** One release of a shot that plays (stage 3.4f-A): the time is the key of the map. */
+    struct PendingRelease {
+        EntityId creature{0};
+        EntityId target{0};
+        /** The start count of the action of the shot: a release of an action that a different action replaced does nothing. */
+        std::uint16_t generation{0};
+        std::uint32_t attack{0};
+        std::uint32_t release{0};
+    };
+
     void step(float seconds);
     void sense();
     void think(Entity& creature, float seconds);
+    /**
+     * The shot rules of a step of a creature with a basic shot and a character as its target (stage 3.4f-A).
+     * @return False: the melee rules decide (the target is in the reach of the next melee attack).
+     */
+    bool think_shot(Entity& creature, Entity& target, std::uint32_t shot, float seconds);
+    void start_shot(Entity& creature, Entity& target, std::uint32_t shot);
+    void release(const PendingRelease& pending);
     void go_home(Entity& creature, float seconds);
     void start_attack(Entity& creature, Entity& target, std::uint32_t attack);
     /** @return The index of the next attack of a creature: its light attacks in their sequence, and a heavy attack after each `kLightAttacks` of them. */
@@ -362,6 +445,8 @@ private:
     std::optional<WorldClock::time_point> m_lastRoamScan;
     /** The contacts of the attacks that play, in the sequence of their times. */
     std::multimap<WorldClock::time_point, PendingContact> m_contacts;
+    /** The releases of the shots that play (stage 3.4f-A), in the sequence of their times. */
+    std::multimap<WorldClock::time_point, PendingRelease> m_releases;
     /** The characters that the creatures ignore: character ids. */
     std::unordered_set<std::string> m_ignored;
     std::optional<WorldClock::time_point> m_lastStep;

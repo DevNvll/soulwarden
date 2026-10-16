@@ -286,7 +286,8 @@ RepSession::RepSession(std::uint32_t id, Send send, world::World& world, Session
       m_cameraDistance(kCameraBehind),
       m_knownBehind(kCameraBehind) {}
 
-void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> data) {
+void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> data, std::optional<std::uint16_t> datagram) {
+    m_messageDatagram = datagram;
     std::span<const std::uint8_t> payload;
     if (!hub::decode_frame(data, payload)) {
         log::write("rep: frame on channel %u (%zu bytes) has a bad size or checksum", channel, data.size());
@@ -450,9 +451,10 @@ void RepSession::check_route(std::span<const std::uint8_t> route,
         fault("the entity field is not the entity group id of the route");
         return;
     }
-    if (entity->kind == world::EntityKind::probe || entity->kind == world::EntityKind::spell) {
+    if (entity->kind == world::EntityKind::probe || entity->kind == world::EntityKind::spell
+        || entity->kind == world::EntityKind::projectile) {
         ++m_counts.unknownTargets;
-        fault("the target is a component of a spell or a probe entity (no message of the client for it is known)");
+        fault("the target is a component of a spell, a probe, or a projectile entity (no message of the client for it is known)");
         return;
     }
     if (entity->kind == world::EntityKind::creature) {
@@ -649,7 +651,7 @@ void RepSession::replicate(carrier::Clock::time_point now) {
         if (entity->kind == world::EntityKind::creature) {
             add_creature_record(*entity, *m_observer.find(id), batch);
         } else if (entity->kind == world::EntityKind::spell || entity->kind == world::EntityKind::probe
-                   || entity->kind == world::EntityKind::object) {
+                   || entity->kind == world::EntityKind::object || entity->kind == world::EntityKind::projectile) {
             add_observer_record(*entity, *m_observer.find(id), batch);
         } else {
             send_record(*entity, *m_observer.find(id), now);
@@ -871,11 +873,13 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     // no wait for the interval.
     const bool scan = (m_cameraSeen || waitEnded)
                       && (now - m_lastInterestScan >= kInterestInterval || m_world.last_travel() > m_interestTravel
-                          || m_world.last_spell() > m_interestSpell || (m_creaturesWaited && !creaturesWait));
+                          || m_world.last_spell() > m_interestSpell || m_world.last_projectile() > m_interestProjectile
+                          || (m_creaturesWaited && !creaturesWait));
     if (scan) {
         m_lastInterestScan = now;
         m_interestTravel = m_world.last_travel();
         m_interestSpell = m_world.last_spell();
+        m_interestProjectile = m_world.last_projectile();
         for (const auto& [id, known] : m_observer.known()) {
             const world::Entity* entity = m_world.find(id);
             if (id == own.id || entity == nullptr) {
@@ -962,6 +966,25 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
         }
         if (entity.kind == world::EntityKind::object) {
             return; // The objects come from the grid of the interaction system (below): the distance of their nearest bound.
+        }
+        if (entity.kind == world::EntityKind::projectile) {
+            // A projectile of a creature in the air (stage 3.4f-A): its record has the launch with its time anchor, thus a session that
+            // comes near in the flight gets it at its place of now (the client flies it from the anchor). An ended one gets no record.
+            if (!entity.shot.ended && distance <= m_world.interest_enter(entity)) {
+                const std::uint32_t interest = m_observer.add(entity.id);
+                if (interest != 0) {
+                    log::write("rep: projectile %016llx (flight %llu of creature %016llx) comes into the interest table (interest %u, "
+                               "%.1f m, age %lld ms)",
+                               static_cast<unsigned long long>(entity.id),
+                               static_cast<unsigned long long>(entity.shot.number),
+                               static_cast<unsigned long long>(entity.shot.source),
+                               interest,
+                               static_cast<double>(distance),
+                               static_cast<long long>(
+                                   std::chrono::duration_cast<std::chrono::milliseconds>(m_clock.now() - entity.shot.launched).count()));
+                }
+            }
+            return;
         }
         if (entity.kind == world::EntityKind::probe) {
             // Development aid (tools/world probe): an entity of a slice with the fragments of a command.
@@ -1433,6 +1456,26 @@ void RepSession::observe_interaction(const InputStep& step) {
         return;
     }
     const InputInteraction& block = *step.interaction;
+    // A press of a datagram before an early cancel of its reference (code review of stage 2.5b, finding ST-R2): the client released it
+    // before the server got it. No use, and no reply: the request is old. A datagram after the cancel ends the mark.
+    if (m_earlyCancel && m_clock.now() >= m_earlyCancel->ends) {
+        m_earlyCancel.reset();
+    }
+    if (m_earlyCancel && m_messageDatagram) {
+        const auto before = static_cast<std::int16_t>(static_cast<std::uint16_t>(*m_messageDatagram - m_earlyCancel->datagram)) < 0;
+        const world::InteractionReference reference{block.actor, block.group, block.target};
+        if (before && reference == m_earlyCancel->reference) {
+            log::write("rep: interaction request of input %u is older than the cancel of its client (datagram %u before %u): no use",
+                       static_cast<unsigned>(step.sequence), static_cast<unsigned>(*m_messageDatagram),
+                       static_cast<unsigned>(m_earlyCancel->datagram));
+            // The attempt ended with the cancel: the same block in a later datagram is a new press (as after a matched cancel).
+            m_interactionBlock.reset();
+            return;
+        }
+        if (!before) {
+            m_earlyCancel.reset();
+        }
+    }
     world::InteractionRequest request;
     request.object.actor = block.actor;
     request.object.group = block.group;
@@ -1752,6 +1795,10 @@ void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
     // The world ends the committed interaction of the character when the reference is its reference: a late cancel, or the
     // answer of the client to 3746, changes nothing (research K7).
     const bool ended = m_world.interactions().client_cancel(m_id, cancel->reference);
+    if (!ended && m_messageDatagram) {
+        // A cancel with no use: its press can still come in an earlier datagram of a different channel (finding ST-R2).
+        m_earlyCancel = EarlyCancel{cancel->reference, *m_messageDatagram, m_clock.now() + kEarlyCancelKeep};
+    }
     if (ended) {
         // The attempt of this block ended: a later input step with the same block is a new request (code review of stage 2.5a,
         // finding INT-R2: a new press of the same object with no report of an absent block between). The input numbers of the

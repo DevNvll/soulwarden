@@ -8,6 +8,9 @@
 #include <utility>
 
 #include "server/http/router.h"
+#include "world/behavior.h"
+#include "world/creatures.h"
+#include "world/projectiles.h"
 
 namespace soulwarden::backend::server::http::commands {
 namespace {
@@ -443,8 +446,47 @@ json projectiles_json(world::World& target) {
             ends[world::projectile_end_text(static_cast<world::ProjectileEnd>(end))] = counts.ends[end];
         }
     }
+    // The shots of the creatures (stage 3.4f-A).
+    const auto id_text = [](world::EntityId id) {
+        char text[17];
+        std::snprintf(text, sizeof(text), "%016llx", static_cast<unsigned long long>(id));
+        return std::string(text);
+    };
+    json creatureFlying = json::array();
+    for (const world::Projectiles::FlightView& view : target.projectiles().creature_active()) {
+        creatureFlying.push_back({{"number", view.number},
+                                  {"creature", id_text(view.creature)},
+                                  {"entity", id_text(view.entity)},
+                                  {"attack", view.attack},
+                                  {"travelled", view.travelled},
+                                  {"age", view.age.count() / 1000.0},
+                                  {"position", {view.position.x, view.position.y, view.position.z}}});
+    }
+    const world::CreatureShotCounts& shotCounts = target.projectiles().creature_counts();
+    json creatureEnds = json::object();
+    for (std::size_t end = 0; end < world::kCreatureShotEndCount; ++end) {
+        if (shotCounts.ends[end] != 0) {
+            creatureEnds[world::creature_shot_end_text(static_cast<world::CreatureShotEnd>(end))] = shotCounts.ends[end];
+        }
+    }
+    const world::BehaviorCounts& behavior = target.creatures().behavior().counts();
+    const json creatures{{"flying", creatureFlying},
+                         {"holds", target.projectiles().creature_holds()},
+                         {"shots", behavior.shots},
+                         {"releases", behavior.releases},
+                         {"releasesCancelled", behavior.releasesCancelled},
+                         {"retreats", behavior.retreats},
+                         {"launches", shotCounts.launches},
+                         {"refused", shotCounts.refused},
+                         {"ends", creatureEnds},
+                         {"damage", shotCounts.damage},
+                         {"steps", shotCounts.steps},
+                         {"looked", shotCounts.looked},
+                         {"wallTests", shotCounts.wallTests},
+                         {"largest", shotCounts.largest}};
     const world::NavigationCounts& navigation = target.navigation().counts();
     return json{{"data", target.projectiles().has_data()},
+                {"creatures", creatures},
                 {"flying", flying},
                 {"shots", shots},
                 {"ends", ends},

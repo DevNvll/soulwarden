@@ -47,6 +47,9 @@ constexpr float kMaxDamageFactor = 1000000.0F;
  * 1e9 * 1e6 * 1e6 is 1e21, far below the largest number of 32 bits (3.4e38).
  */
 constexpr float kMaxLevelValue = 1.0e9F;
+/** The largest speed of a projectile and of the aim of a ranged attack (m/s), and the largest place of a damage row (stage 3.4f-A). */
+constexpr float kMaxProjectileSpeed = 10000.0F;
+constexpr std::uint32_t kMaxRowIndex = 65534;
 /** The shortest attack: one millisecond, the step of the world clock of an attack. */
 constexpr float kMinAttackTime = 0.001F;
 /** Limits of a position of the world, in meters (the same as world/position_index.h). */
@@ -142,6 +145,79 @@ bool read_asset(const std::string& text, std::array<std::uint8_t, 16>& asset) {
     return true;
 }
 
+/** Reads a capsule [radius, height, [axis], [offset]] (a slice of a creature, the player slice of stage 3.4f-A). */
+bool read_capsule(const json& values, CreatureCapsule& capsule) {
+    const auto vector = [](const json& value, std::array<float, 3>& out) {
+        return value.is_array() && value.size() == 3 && read_real(value[0], out[0]) && read_real(value[1], out[1])
+               && read_real(value[2], out[2]);
+    };
+    return values.is_array() && values.size() == 4 && read_real(values[0], capsule.radius) && read_real(values[1], capsule.height)
+           && vector(values[2], capsule.axis) && vector(values[3], capsule.offset) && capsule.radius > 0.0F && capsule.height >= 0.0F;
+}
+
+/** Reads the damage category of a row ("Physical", "Elemental", "True"). */
+bool read_category(const std::string& text, DamageCategory& category) {
+    if (text == "Physical") {
+        category = DamageCategory::physical;
+    } else if (text == "Elemental") {
+        category = DamageCategory::elemental;
+    } else if (text == "True") {
+        category = DamageCategory::direct;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Reads one release of a ranged attack (stage 3.4f-A, creature_behavior.py): an object with the joins of the release. A member that
+ * is not there or that has a wrong form is a fault of the file.
+ */
+bool read_release(const json& cell, RangedRelease& release) {
+    std::uint32_t wire = 0;
+    std::string category;
+    if (!cell.is_object() || !cell.contains("time") || !read_real(cell["time"], release.time) || !read_text(cell, "profile", release.profile)
+        || !read_text(cell, "attack", release.attack) || !read_member(cell, "index", release.attackIndex)
+        || !read_text(cell, "ammo", release.ammo) || !read_member(cell, "ammoKey", release.ammoKey)
+        || !read_member(cell, "projectile", release.projectile) || !cell.contains("override") || !cell["override"].is_boolean()
+        || !read_text(cell, "table", release.table) || !read_member(cell, "tableKey", release.tableKey)
+        || !read_text(cell, "row", release.damage.row) || !read_member(cell, "rowIndex", release.rowIndex)
+        || !cell.contains("factor") || !read_real(cell["factor"], release.damage.factor) || !cell.contains("added")
+        || !read_real(cell["added"], release.damage.added) || !read_text(cell, "type", release.damage.type)
+        || !read_member(cell, "wire", wire) || wire == 0 || wire > 255 || !read_text(cell, "category", category)
+        || !read_category(category, release.damage.category) || !cell.contains("charge")
+        || !read_real(cell["charge"], release.damage.hitCharge) || !cell.contains("lead") || !cell["lead"].is_boolean()
+        || !cell.contains("aimSpeed") || !read_real(cell["aimSpeed"], release.aimSpeed) || !cell.contains("leadAngle")
+        || !read_real(cell["leadAngle"], release.leadAngle) || !cell.contains("aimAngle") || !read_real(cell["aimAngle"], release.aimAngle)
+        || !cell.contains("miss") || !cell["miss"].is_array() || cell["miss"].size() != 2 || !read_real(cell["miss"][0], release.missMin)
+        || !read_real(cell["miss"][1], release.missMax) || !cell.contains("range") || !read_real(cell["range"], release.range)
+        || !cell.contains("radius") || !read_real(cell["radius"], release.radius) || !cell.contains("accelDelay")
+        || !read_real(cell["accelDelay"], release.accelDelay)) {
+        return false;
+    }
+    release.sliceOverride = cell["override"].get<bool>();
+    release.lead = cell["lead"].get<bool>();
+    release.damage.wire = static_cast<std::uint8_t>(wire);
+    release.damage.time = release.time;
+    return true;
+}
+
+/** Reads one projectile slice [path, asset, sub, root, slot, speed, extra, time for max, [accel], flying, stuck] (stage 3.4f-A). */
+bool read_projectile(const json& row, ProjectileSliceData& projectile) {
+    std::string asset;
+    if (!row.is_array() || row.size() != 11 || !row[0].is_string() || !row[1].is_string() || !read_number(row[2], projectile.subId)
+        || !read_id(row[3], projectile.root) || !read_number(row[4], projectile.slot) || !read_real(row[5], projectile.speed)
+        || !read_real(row[6], projectile.extraSpeed) || !read_real(row[7], projectile.timeForMaxSpeed) || !row[8].is_array()
+        || row[8].size() != 3 || !read_real(row[8][0], projectile.accel[0]) || !read_real(row[8][1], projectile.accel[1])
+        || !read_real(row[8][2], projectile.accel[2]) || !read_real(row[9], projectile.flyingLifetime)
+        || !read_real(row[10], projectile.stuckLifetime)) {
+        return false;
+    }
+    projectile.path = row[0].get<std::string>();
+    asset = row[1].get<std::string>();
+    return read_asset(asset, projectile.asset);
+}
+
 bool read_slice(const json& entry, CreatureSlice& slice) {
     std::string asset;
     float radius = 0.0F;
@@ -226,15 +302,8 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
     }
     // The capsule of the character (stage 3.3b-S3): a member of a slice that has one. A member with a wrong form is a fault.
     if (entry.contains("capsule")) {
-        const json& values = entry["capsule"];
         CreatureCapsule capsule;
-        const auto vector = [](const json& value, std::array<float, 3>& out) {
-            return value.is_array() && value.size() == 3 && read_real(value[0], out[0]) && read_real(value[1], out[1])
-                   && read_real(value[2], out[2]);
-        };
-        if (!values.is_array() || values.size() != 4 || !read_real(values[0], capsule.radius) || !read_real(values[1], capsule.height)
-            || !vector(values[2], capsule.axis) || !vector(values[3], capsule.offset) || !(capsule.radius > 0.0F)
-            || !(capsule.height >= 0.0F)) {
+        if (!read_capsule(entry["capsule"], capsule)) {
             return false;
         }
         slice.capsule = capsule;
@@ -324,14 +393,7 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
                     || !cell[7].is_string() || (cell.size() == 9 && (!read_real(cell[8], contact.hitCharge) || contact.hitCharge < 0.0F))) {
                     return false;
                 }
-                const std::string category = cell[6].get<std::string>();
-                if (category == "Physical") {
-                    contact.category = DamageCategory::physical;
-                } else if (category == "Elemental") {
-                    contact.category = DamageCategory::elemental;
-                } else if (category == "True") {
-                    contact.category = DamageCategory::direct;
-                } else {
+                if (!read_category(cell[6].get<std::string>(), contact.category)) {
                     return false;
                 }
                 contact.type = cell[4].get<std::string>();
@@ -340,6 +402,25 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
                 attack.contacts.push_back(std::move(contact));
             }
             slice.attacks.push_back(std::move(attack));
+        }
+    }
+    // The ranged attacks (stage 3.4f-A): [action, time, [release, ...]]. A file of an older tool has no member.
+    if (entry.contains("ranged")) {
+        if (!entry["ranged"].is_array()) {
+            return false;
+        }
+        for (const json& row : entry["ranged"]) {
+            CreatureRangedAttack attack;
+            if (!row.is_array() || row.size() != 3 || !read_number(row[0], attack.action) || !read_real(row[1], attack.length)
+                || !row[2].is_array()) {
+                return false;
+            }
+            for (const json& cell : row[2]) {
+                if (!read_release(cell, attack.releases.emplace_back())) {
+                    return false;
+                }
+            }
+            slice.ranged.push_back(std::move(attack));
         }
     }
     return true;
@@ -456,6 +537,9 @@ void CreatureData::clear() {
     m_kinds.clear();
     m_spawnPoints.clear();
     m_routes.clear();
+    m_projectiles.clear();
+    m_playerCapsule.reset();
+    m_shootingSlices = 0;
     m_routedPoints = 0;
     m_wanderingKinds = 0;
     m_levels.clear();
@@ -558,7 +642,32 @@ bool CreatureData::load(const std::string& path) {
             return false;
         }
     }
-    return set_full(std::move(slices), std::move(kinds), std::move(points), std::move(levels), std::move(routes));
+    // The projectile slices of the ranged attacks and the capsule of the character of a player (stage 3.4f-A): members of a file
+    // of a newer tool. A member with a wrong form is a fault of the file.
+    std::vector<ProjectileSliceData> projectiles;
+    if (document.contains("projectiles")) {
+        if (!list("projectiles")) {
+            m_error = "the member projectiles is not a list";
+            return false;
+        }
+        for (const json& row : document["projectiles"]) {
+            if (!read_projectile(row, projectiles.emplace_back())) {
+                m_error = "projectile slice " + std::to_string(projectiles.size() - 1) + " does not have each value";
+                return false;
+            }
+        }
+    }
+    std::optional<CreatureCapsule> playerCapsule;
+    if (document.contains("playerCapsule")) {
+        CreatureCapsule capsule;
+        if (!read_capsule(document["playerCapsule"], capsule)) {
+            m_error = "the member playerCapsule is not [radius, height, [axis], [offset]]";
+            return false;
+        }
+        playerCapsule = capsule;
+    }
+    return set_full(std::move(slices), std::move(kinds), std::move(points), std::move(levels), std::move(routes), std::move(projectiles),
+                    playerCapsule);
 }
 
 bool CreatureData::set(std::vector<CreatureSlice> slices,
@@ -576,12 +685,16 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
                             std::vector<CreatureKind> kinds,
                             std::vector<SpawnPoint> spawnPoints,
                             std::vector<CreatureLevel> levels,
-                            std::vector<PatrolRoute> routes) {
+                            std::vector<PatrolRoute> routes,
+                            std::vector<ProjectileSliceData> projectiles,
+                            std::optional<CreatureCapsule> playerCapsule) {
     clear();
     m_slices = std::move(slices);
     m_kinds = std::move(kinds);
     m_spawnPoints = std::move(spawnPoints);
     m_routes = std::move(routes);
+    m_projectiles = std::move(projectiles);
+    m_playerCapsule = playerCapsule;
     for (const CreatureLevel& level : levels) {
         m_levels[level.level] = level;
     }
@@ -632,6 +745,17 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
             attack.heavy = attack.weight > kHeavyWeight && attack.weight > lightest * kHeavyRatio;
             (attack.heavy ? slice.heavyAttacks : slice.lightAttacks).push_back(index);
         }
+        // The ranged attacks (stage 3.4f-A): the releases in the sequence of their times, and the basic shot (kBasicShotAction).
+        slice.basicShot.reset();
+        for (std::uint32_t index = 0; index < slice.ranged.size(); ++index) {
+            CreatureRangedAttack& attack = slice.ranged[index];
+            std::stable_sort(attack.releases.begin(), attack.releases.end(),
+                             [](const RangedRelease& a, const RangedRelease& b) { return a.time < b.time; });
+            if (!slice.basicShot && slice.actions[attack.action].name == kBasicShotAction) {
+                slice.basicShot = index;
+            }
+        }
+        m_shootingSlices += slice.basicShot ? 1 : 0;
         slice.spawnAction = slice.spawnActionName.empty() ? std::nullopt : slice.find_action(slice.spawnActionName);
         if (slice.fights()) {
             ++m_fightingSlices;
@@ -685,6 +809,25 @@ bool CreatureData::check() {
         }
         lowestHealth = std::min(lowestHealth, health);
         highestHealth = std::max(highestHealth, health);
+    }
+    // The projectile slices (stage 3.4f-A): an asset, a slot of the Projectile component, a speed, and a life time of their ranges.
+    for (std::size_t index = 0; index < m_projectiles.size(); ++index) {
+        const ProjectileSliceData& projectile = m_projectiles[index];
+        const auto finite = [](float value, float limit) { return std::isfinite(value) && std::abs(value) <= limit; };
+        if (std::all_of(projectile.asset.begin(), projectile.asset.end(), [](std::uint8_t byte) { return byte == 0; })
+            || projectile.slot == 0 || projectile.slot > kMaxSlot || !(projectile.speed > 0.0F) || !finite(projectile.speed, kMaxProjectileSpeed)
+            || !finite(projectile.extraSpeed, kMaxProjectileSpeed) || !finite(projectile.timeForMaxSpeed, kMaxAttackTime)
+            || !finite(projectile.accel[0], kMaxProjectileSpeed) || !finite(projectile.accel[1], kMaxProjectileSpeed)
+            || !finite(projectile.accel[2], kMaxProjectileSpeed) || !(projectile.flyingLifetime > 0.0F)
+            || !finite(projectile.flyingLifetime, kMaxAttackTime) || !(projectile.stuckLifetime >= 0.0F)
+            || !finite(projectile.stuckLifetime, kMaxAttackTime)) {
+            m_error = "projectile slice " + std::to_string(index) + " has no asset, no slot, or a flight value that is not of its range";
+            return false;
+        }
+    }
+    if (m_playerCapsule && (!(m_playerCapsule->radius <= kMaxReach) || !(m_playerCapsule->height <= kMaxReach))) {
+        m_error = "the capsule of the character of a player is larger than the limit";
+        return false;
     }
     for (std::size_t index = 0; index < m_slices.size(); ++index) {
         const CreatureSlice& slice = m_slices[index];
@@ -744,6 +887,28 @@ bool CreatureData::check() {
             if (!correct) {
                 m_error = "slice " + std::to_string(index)
                           + " has an attack whose action, time, or contacts do not fit together";
+                return false;
+            }
+        }
+        // The ranged attacks (stage 3.4f-A): the action of the attack has a fragment, each release is in the time of its attack,
+        // names a projectile slice of the file, and has values of their ranges. A release that does not fit is a fault of the file.
+        for (const CreatureRangedAttack& attack : slice.ranged) {
+            bool correct = attack.action < slice.actions.size() && slice.actions[attack.action].fragmentIndex >= 0
+                           && std::isfinite(attack.length) && attack.length >= kMinAttackTime && attack.length <= kMaxAttackTime
+                           && !attack.releases.empty();
+            for (const RangedRelease& release : attack.releases) {
+                const auto in_range = [](float value, float limit) { return std::isfinite(value) && value >= 0.0F && value <= limit; };
+                correct = correct && in_range(release.time, attack.length) && release.projectile < m_projectiles.size()
+                          && in_range(release.damage.factor, kMaxDamageFactor) && in_range(release.damage.added, kMaxDamageFactor)
+                          && in_range(release.damage.hitCharge, kMaxDamageFactor) && release.damage.wire != 0 && !release.damage.type.empty()
+                          && in_range(release.aimSpeed, kMaxProjectileSpeed) && in_range(release.leadAngle, 180.0F)
+                          && in_range(release.aimAngle, 180.0F) && in_range(release.missMin, kMaxSenseDistance)
+                          && in_range(release.missMax, kMaxSenseDistance) && release.range > 0.0F && in_range(release.range, kMaxSenseDistance)
+                          && in_range(release.radius, kMaxReach) && in_range(release.accelDelay, kMaxSenseDistance)
+                          && release.rowIndex <= kMaxRowIndex;
+            }
+            if (!correct) {
+                m_error = "slice " + std::to_string(index) + " has a ranged attack whose action, time, or releases do not fit together";
                 return false;
             }
         }

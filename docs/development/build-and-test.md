@@ -111,6 +111,14 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`InteractionBlock`, `InputEntry::interaction`), and the state decoder knows the states 3752 and 2930. IT10 runs
   `tools/gamedata/check_interactions_tool.py`. IT5 adds a trigger to a database file (a refused row); IT8 has a time limit of 300 ms
   for 400,000 lookups and of 2 s for 300 reports with a catalog of 90,008 objects.
+- Stage 3.4f-A adds the cases CRG1 to CRG6 and CRG9 (`tests/ranged_tests.cpp`: the archer; its fixture `Range` is the shop with the
+  archer slice, its basic shot, the arrow slice, and the capsule of the player slice; CRG1 runs `check_creature_tool.py` and reads its
+  ranged cases; CRG9 has a time limit of 3 s for 1,000 ticks with 50 archers and 200 flights) and RY1 to RY8
+  (`tests/review_stations_tests.cpp`: the corrections of the code review of stage 2.5b, findings ST-R1 to ST-R8; each one fails on the
+  tree of stage 2.5b and passes with the correction; RY6 to RY8 run `check_interactions_tool.py --review-stations`). The fixture of the
+  SC cases moved to `tests/support/station_fixture.h` (namespace `tests::stations`). The state decoder knows the Projectile state
+  (type 16). Case RP5 counts its seven patrol cases of `check_creature_tool.py` by name (the check has the ranged cases too). Case SC5
+  has the corrected range rule of the service grant (finding ST-R3: the walk ends the grant, `noGrant`).
 - Stage 2.5b adds the cases SC1 to SC9 (`tests/station_tests.cpp`: the server children, the StationContext, the timed use, the ends
   of a use, the service handoff, two sessions, the load, the loader of format 2, the fixture commands) and IR1 to IR5
   (`tests/review_interaction_tests.cpp`: the corrections of the code review of stage 2.5a, findings INT-R1 to INT-R6; each one fails

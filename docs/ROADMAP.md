@@ -192,7 +192,7 @@ below is the layout after the port.
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
 | 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b, 3.3b-S5, 3.3b-S6, 3.3b-M1, 3.3b-M2 done | |
-| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
+| 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done, 3.4f-A done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
 | 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | | |
@@ -249,7 +249,7 @@ stage with a letter is a part of the system with that number.
 | 12 | 1.1b | The DLC for each player: each account and each character owns the expansion (Rise of the Angry Earth) and the DLC packs of the client data, with no purchase and no setting: the limits of the expansion (level, gear score, trade skills), the flail tree, the content of the expansion (research file `dlc-entitlements.md`) | 3.3b | done (the ownership, the limits, the flail tree, the amulet of a DLC pack; the content of the expansion keeps its own stages) |
 | 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | S5 done (the critical hits, a hit from behind, the headshot of a projectile, and one evaluator of the passive rules of the data); S6 done (one heal path, the heal base of an ability, Divine Embrace, Sacred Ground, the heal pulses of the Beacon, the outgoing and the received heal parts, the number of the owner and the notice of the healer); M1 done (the basic attacks of the eight melee weapons from the attack graph of the data: the light chain with its ender, the partial and the full charge, the fast sub-hits, one hit of each target for each strike; the level part of the heal base; the corrections of the review of S6); M2 done (the abilities of the build of the user are complete: the twelve abilities of the great axe and the war hammer play the fragments of the data with their pulls, pushes, spins, branches, spells, and hit counts, and each node of the two trees acts or is in the list with its cause: grit, block, stamina; the corrections of the review of M1); M2b done (Wrecking Ball hits again: the development character has the build of the user with Breathing Room, and each creature is a homing target and a camera lock target, dataBits 0x03 of its movement state; the corrections of the review of M2; the five findings of the review of M2b, a part of them on the corrections of M2-R1, R6, R7, and R8, are corrected in stage 2.5a: cases RX1 to RX5); the abilities of the build of the user are complete; M3 open |
 | 14 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`): part 2.5a (the objects of the level data and the checked use, the lore pages as the first result) and part 2.5b (the stations of a settlement, the camps, the timed use) | 3.3b | 2.5a done (the request and the reply of the client, the checks of the data, the interaction data of the whole world, the state of an object, the lore pages in the journal of the character, the commands; the corrections of the review of 3.3b-M2b); 2.5b done (the server children: the stations of each settlement at their real places with the forge of each, the prompt and the crafting screen of the client with the Assembly key, the fee flag, the Assembly reference, and the parent settlement of the data in the StationContext; the camp and powder keg fixtures; the timed use on the world clock with one completion; the ends at the removal of the source, the range, and damage; the service handoff base; the corrections of the review of 2.5a); the camp crafting option of the client and the recipes stay open (2.6, 3.7) |
-| 15 | 3.4f | Creatures with ranged attacks and abilities: the archers and the casters of the data shoot and cast (a server projectile with its record for each observer, its hit on a player, a miss behind a wall), the dodge of the player against a projectile, and the stamina model that the dodge needs; project rules where the data is silent (the distance band, the choice of melee or ranged, the repeat time); block, encounter abilities, and summons wait (research file `creature-ranged.md`) | 2.5 | research |
+| 15 | 3.4f | Creatures with ranged attacks and abilities: the archers and the casters of the data shoot and cast (a server projectile with its record for each observer, its hit on a player, a miss behind a wall), the dodge of the player against a projectile, and the stamina model that the dodge needs; project rules where the data is silent (the distance band, the choice of melee or ranged, the repeat time); block, encounter abilities, and summons wait (research file `creature-ranged.md`) | 2.5 | 3.4f-A done (the basic shot of the archers of the data: the ranged attacks in the creature data, the projectile of the server with its record for each observer, its hit on a character at the contact, a miss, a wall; the project rules of the band, the choice, the repeat, and the lead; the corrections of the review of 2.5b); parts B (the casters, the dodge, the stamina), C (the areas, the hostile statuses), and D (the heals and the buffs of a creature) open |
 | 16 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
 | 17 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
 | 18 | 3.6 | Gathering and fishing (research file `gathering-stage.md`) | 2.5 | research |
@@ -1581,6 +1581,30 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   effect in the client. For stage 3.5a: the death and the anchor are in `world/behavior.cpp`
   (`died`, `take_target`); a creature that comes again at its spawn point starts its patrol
   at the first waypoint.
+- Stage 3.4f-A (done; protocol notes 4.37; result file
+  `~/Games/soulwarden/work/evidence/creature-ranged/implement/RESULT.md`). The first creature
+  that shoots. The creature data tool keeps the ranged attacks of each slice (225 attacks of 95
+  slices, 459 releases, with the attack index, the ammunition, the projectile slice, and the
+  damage row of each release), the 69 projectile slices, and the capsule of a player; the
+  backend uses the basic shot FireBow of 20 archer slices, so 3,034 of the 3,848 kinds attack
+  (814 do not). A shot is an entity of its own with the Projectile state (type 16: the launch
+  form of 51 bytes and the collision form, live checks L1 and L2), and it flies on the world
+  clock with the speed, the acceleration, the range, and the life time of the data. The first
+  character on its segment takes one damage result of the creature rule; a wall or the ground
+  stops it with no damage. The project rules of the behavior (research `creature-ranged.md`
+  Q3): the melee attack wins in its reach, the shot in 20 m with a free line, a walk to 18 m
+  from farther, a walk back to 14 m from nearer than 8 m one time in 6 s, the next shot 3 s
+  after the start of the last one, and the lead of the data with the velocity of the target.
+  Test cases CRG1 to CRG6 and CRG9 (1,000 ticks with 50 archers and 200 flights near 50
+  characters need about 15 ms; the same work with 840 and with 32,840 spawn points). Live: a
+  Varangian Archer of the start area hits the character (65 damage at the contact), misses a
+  character that steps to the side, stops at a brick wall, and a second character sees the
+  shots at a different character; the arcane arrow of a skeleton archer and the shot of a
+  Dryad archer (0.65 s) fly too. The stage also corrected the eight findings of the review of
+  stage 2.5b (cases RY1 to RY8). Not in this part: the casters, the dodge, and the stamina
+  (part B), the areas and the hostile statuses (part C), the heals and the buffs of a creature
+  (part D), the block, the summons, and the abilities of an encounter. Open: the impact effect
+  at a character, the miss distribution of the data, a live check in daylight.
 - Test: screenshots of a creature at its spawn point, of a fight, and of its death; the
   health of the player goes down when the creature hits.
 - Risk: no data for the behavior. Then the behavior is a design of this project. Decision

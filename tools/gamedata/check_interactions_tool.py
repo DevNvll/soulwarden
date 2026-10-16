@@ -19,9 +19,12 @@ compares the status and the output file of each case:
   - the cases of the code review of stage 2.5a (--review, case IR5): a layer with no list Capitals, a named slice with an asset id of
     a wrong form, one placement id with two different placements, and two referenced achievements of one bit stop the tool; an
     equal copy of a placement does not.
-The test program of the backend runs it (cases IT10, IR5).
+  - the cases of the code review of stage 2.5b (--review-stations, cases RY6 to RY8): a named placement with no position, with a
+    list as its position, or with no z (finding ST-R6), a station or a forge child whose concrete slice asset the catalog does not
+    have (ST-R7), and one placement id in two spellings of its UUID at two places (ST-R8) stop the tool and keep the old file.
+The test program of the backend runs it (cases IT10, IR5, RY6 to RY8).
 
-Usage: check_interactions_tool.py [WORK_FOLDER] [--review]
+Usage: check_interactions_tool.py [WORK_FOLDER] [--review | --review-stations]
 Status 0: each case has the expected result.
 """
 
@@ -227,6 +230,15 @@ class MadeUpSources:
             placements.append(dict(placements[0], worldPosition={"x": 1500.0, "y": 2000.0, "z": 50.0}))
         if mode == "equal-placement":
             placements.append(dict(placements[0]))
+        # The cases of the code review of stage 2.5b (--review-stations): the settlement is the last placement.
+        if mode == "missing-placement-position":
+            del placements[-1]["worldPosition"]
+        if mode == "placement-position-list":
+            placements[-1]["worldPosition"] = []
+        if mode == "missing-placement-axis":
+            placements[-1]["worldPosition"] = {"x": 1040.0, "y": 2000.0}
+        if mode == "case-variant-station":
+            placements.append(dict(placements[-1], id=SETTLEMENT_ID.upper(), worldPosition={"x": 1540.0, "y": 2000.0, "z": 50.0}))
         page_options = ["ReadLore", "AddLoreToJournal"] + (["NoSuchOption"] if mode == "unknown-option" else [])
         self.slices = {
             PAGE_SLICE: page_slice(mode, page_options, lore="00_No_Row" if mode == "unknown-lore" else "00_Test_Title_01"),
@@ -292,6 +304,16 @@ class MadeUpSources:
             raise tool.Failure(f"{len(self.absent)} file(s) of the game copy have no source (first: {self.absent[0]})")
 
 
+# The cases of the code review of stage 2.5b (--review-stations, cases RY6 to RY8).
+STATION_REVIEW_CASES = [
+    ("valid", True, "control: a complete source with the station of the settlement"),
+    ("missing-placement-position", False, "a named placement with no position (finding ST-R6)"),
+    ("placement-position-list", False, "a named placement with a list as its position (finding ST-R6)"),
+    ("missing-placement-axis", False, "a named placement with no z in its position (finding ST-R6)"),
+    ("missing-station-asset-join", False, "a station child whose concrete slice asset the catalog does not have (finding ST-R7)"),
+    ("missing-forge-asset-join", False, "a forge child whose concrete slice asset the catalog does not have (finding ST-R7)"),
+    ("case-variant-station", False, "one settlement id in two spellings of its UUID at two places (finding ST-R8)"),
+]
 # Each case: the mode, True when the tool must write its file, and the text of the line.
 CASES = [
     ("valid", True, "a complete source: the page and the person; no object for a plot and for a slice with no Interact"),
@@ -375,16 +397,24 @@ def check_station(document: dict, resolved: bool = True) -> bool:
 
 def main() -> int:
     review = "--review" in sys.argv[1:]
+    stations = "--review-stations" in sys.argv[1:]
     folders = [argument for argument in sys.argv[1:] if not argument.startswith("--")]
     work = Path(folders[0]) if folders else Path(tempfile.mkdtemp(prefix="soulwarden-interactions-tool-"))
     work.mkdir(parents=True, exist_ok=True)
     tool.Sources = MadeUpSources
-    assets = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE}
+    every = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE}
+    assets = dict(every)
     tool.Catalog = lambda data: SimpleNamespace(path=lambda asset: assets.get(asset), paths=assets)
     tool.FIXTURES = {"powderKeg": KEG_SLICE}
     failures = 0
-    for mode, writes, what in REVIEW_CASES if review else CASES:
+    for mode, writes, what in STATION_REVIEW_CASES if stations else REVIEW_CASES if review else CASES:
         MadeUpSources.mode = mode
+        assets.clear()
+        assets.update(every)
+        if mode == "missing-station-asset-join":
+            del assets[STATION_ASSET]
+        if mode == "missing-forge-asset-join":
+            del assets[VISUAL_ASSET]
         target = work / f"interactions-tool-check-{mode}.json"
         # An old complete file at the place of the output: a refused source must keep it (finding INT-R5).
         old = '{"oldExport": true}\n'
@@ -399,7 +429,7 @@ def main() -> int:
         correct = (status == 0 and written) if writes else (status == 1 and not written)
         if correct and mode == "valid":
             # The control of --review needs only the objects of stage 2.5a: the same check runs on the tree of stage 2.5a.
-            correct = len(document["objects"]) == 2 if review else check_valid(document)
+            correct = len(document["objects"]) == 2 if review else check_station(document) if stations else check_valid(document)
         elif correct and mode == "unknown-option":
             bound = next(entry for entry in document["objects"] if entry["key"] == PAGE_ID)["bounds"][0]
             correct = bound.get("unknownOptions") == ["NoSuchOption"] and len(bound["options"]) == 2 and "option NoSuchOption" in document["unresolved"]

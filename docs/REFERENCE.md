@@ -349,8 +349,11 @@ button on "Confirm").
   spawn point. From stage 3.4e the file (12.4 MB) also has the patrol route of each spawn
   point that has one (19,814 spawn points) and the walk speed and the wander values of each
   model (protocol notes 4.14). With a file from before, the creatures stand at their spawn
-  points: run the tool again. `--no-attack FILE` writes one line for each kind that does not attack (859
-  kinds). The tool
+  points: run the tool again. From stage 3.4f-A the file (12.7 MB) also has the ranged attacks of
+  each model (225 attacks of 95 models; the backend uses the basic shot FireBow of 20 archer
+  models), the 69 projectile slices, and the capsule of a player (protocol notes 4.37): with a file
+  from before, no creature shoots. `--no-attack FILE` writes one line for each kind that does not attack (814
+  kinds from stage 3.4f-A: a kind with the basic shot of an archer attacks). The tool
   leaves out the spawn points of 50 creature models that the client does not show
   correctly with this backend (1,541 spawn points: the list is in
   `tools/gamedata/creature_slices.json`), and `--report FILE` writes one line for each entry
@@ -404,7 +407,11 @@ button on "Confirm").
   4.36, [Interactions](systems/interactions.md)). `--region NAME` and `--radius METERS` write a
   smaller file, `--list KIND` prints the objects of a kind (`--list spawned`: the server
   children). Without the file the backend starts, makes no station, and refuses each use of an
-  object: a talk with a person then closes at once, and a read lore page is not kept.
+  object: a talk with a person then closes at once, and a read lore page is not kept. From stage
+  3.4f-A the tool stops (and keeps the file that is there) for a placement of a named object with
+  no complete position, for a station or a forge child whose slice asset the catalog does not
+  have, and for one placement id in two spellings; the loader of the backend refuses a template
+  with two components at one slot (code review of stage 2.5b).
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -517,8 +524,8 @@ button on "Confirm").
   for a wolf), runs to it, and attacks it. A creature that you hit attacks you too. It goes
   back to its place when you are dead or too far, or at the end of its leash (70 m for a
   wolf), and it has its full health there. The rules are rules of this project (protocol
-  notes 4.17): the game files have the values of a creature and not its behavior. 859 of
-  the 3,848 kinds have no attack that the tool can use: they do not attack you, and a kind
+  notes 4.17): the game files have the values of a creature and not its behavior. 814 of
+  the 3,848 kinds have no attack that the tool can use (stage 3.4f-A): they do not attack you, and a kind
   of them with a patrol route or wander values patrols or wanders as each other creature.
 - Paths. With the navigation data of stage 3.4d (protocol notes 4.19) a creature goes around
   walls and rocks, up stairs, on the floors of buildings and ruins, and through shallow
@@ -560,6 +567,21 @@ button on "Confirm").
   with its full health (with no travel places: at the place of its death). A character is
   never dead after a login. Not yet: blocks, dodges, and the respawn points of the game
   (camps, houses).
+- Archers (stage 3.4f-A, [Creature behavior](systems/creature-behavior.md), [Projectiles](systems/projectiles.md)).
+  An archer of the game data (20 models: the Varangian, Lugdunum, and mercenary archers, the
+  skeleton archers, the Dryad archers, the Damned bowmen, and their variants) shoots at your
+  character in 20 m with a free line: you see the draw of the bow, the release at the time of
+  the game data (1.33 s; 0.65 s for a Dryad archer), and one arrow that flies with its trail.
+  Your health goes down only when the arrow touches your character; an arrow that misses, or that
+  a wall or the ground stops, does nothing. The archer aims at the place where you will be (the
+  lead of the game data), so a step to the side at the release makes it miss. It shoots again 3 s
+  after the start of its last shot, walks to 18 m when you are farther or behind a wall, walks back
+  to 14 m one time in 6 s when you are nearer than 8 m, and uses its melee attack when you are in
+  its reach. Other players see the same arrows. The Varangian archers near the start place (about
+  450 m to the west of the default spawn) and the skeleton archers (300 m to the west) show it.
+  Not yet: the other shots of the data (a charged, a fast, or a triple shot), the casters, a dodge
+  or a block of an arrow. In a development run `tools/world creature shoot CREATURE CHARACTER`
+  starts a shot, and `tools/world projectiles` lists the flights.
 - Interactions (stage 2.5a). The client shows the prompt of an object and executes its option
   at the key; the backend checks the request with the interaction data of the game and
   replies. A lore page: E (Read) opens the journal on the page, T (Add To Journal) adds it, and
@@ -705,7 +727,7 @@ button on "Confirm").
   An ability can start in a swing of a basic attack in the windows of the game data; a press
   that the swing does not take does nothing. The nodes of the two trees act now, but the nodes
   that need grit, a block, or stamina: Unyielding (the armor of the friends in the vortex),
-  Absorb (a shield at you in Maelstrom; no creature shoots yet), Blood Lust (a creature in front
+  Absorb (a shield at you in Maelstrom: from stage 3.4f-A its rule takes the arrow of an archer too; not yet checked in the game), Blood Lust (a creature in front
   of your camera in 14 m), and Guarded Sprint (less damage while you run with the war hammer).
   `tools/gamedata/weapon-actions.sh`, `combat.sh`, `spells.sh`, and `abilities.sh` must make
   their files again for this stage.

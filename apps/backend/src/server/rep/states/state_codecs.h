@@ -59,6 +59,7 @@ inline constexpr std::uint32_t kTypeInteractorState = 3752;     // MB::Interacto
 inline constexpr std::uint32_t kTypeInteractState = 2930;       // MB::InteractReplicatedState (stage 2.5a)
 inline constexpr std::uint32_t kTypeBuildableState = 1594;      // MB::BuildableControllerReplicatedState (stage 2.5b)
 inline constexpr std::uint32_t kTypeOwnershipState = 3217;      // MB::OwnershipComponentReplicatedState (stage 2.5b)
+inline constexpr std::uint32_t kTypeProjectileState = 16;       // MB::ProjectileReplicatedState (stage 3.4f-A)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -189,12 +190,24 @@ struct StateCodec {
  *         slot 0: none).
  */
 [[nodiscard]] std::span<const StateCodec> object_codecs();
+/**
+ * @return The codecs of a projectile entity of a creature (stage 3.4f-A): the metadata state (the projectile slice) and the Projectile
+ *         state at the slot of the Projectile component of the slice (game data). Only the observer view.
+ */
+[[nodiscard]] std::span<const StateCodec> projectile_codecs();
 /** @return The codecs of an entity of each kind. */
 [[nodiscard]] std::span<const StateCodec> codecs_of(const world::Entity& entity);
 /** @return The slot of the state of a codec for an entity. 0 for a state that is not the metadata state: no fragment. */
 [[nodiscard]] std::uint32_t slot_of(const StateCodec& codec, const world::Entity& entity);
 
 [[nodiscard]] hub::Bytes encode_metadata_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The Projectile state of a projectile entity (states/projectile_state.cpp, type 16, stage 3.4f-A): for a session with no record
+ *         the launch (and the collision when the flight ended), for a session that has the launch the collision at the end.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_projectile_parts(const world::Entity& entity, View view, const PartsRequest& request);
+/** @return The slot of the Projectile component of the slice of a projectile entity (game data). 0: none. */
+[[nodiscard]] std::uint32_t projectile_slot(const world::Entity& entity);
 /**
  * @return The PositionInTheWorld state (type 13; states/object_states.cpp): the place and the rotation. One encoder for each entity
  *         with such a state: a server child (stage 2.5b) and a spell with no Spell component (stage 3.3b-S2b).

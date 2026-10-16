@@ -51,6 +51,12 @@ enum class EntityKind {
      * makes it when the state of the object first differs from the level data, and keeps it while the backend runs.
      */
     object,
+    /**
+     * A projectile of a creature in the air (stage 3.4f-A, world/projectiles.h): the shot of an archer. The projectile system makes it
+     * at the release of the shot, each session near it gets its record (the metadata state of the projectile slice and the Projectile
+     * state, type 16), and it goes away at the end of the flight. It has no character, no account, and no session.
+     */
+    projectile,
 };
 
 /** The component states of an entity that the replication layer sends. Each system adds its keys. */
@@ -128,6 +134,12 @@ enum class ComponentKey {
     buildable,
     /** The Ownership state of a server child (stage 2.5b, type 3217): the permission rule (live checks L5, L6). */
     ownership,
+    /**
+     * The Projectile state of a projectile entity (stage 3.4f-A, type 16, the slot of the Projectile component of its slice): the
+     * launch (the place, the velocity, the time, the owner, the attack, the ammunition, the damage table and row), and at its end the
+     * collision (the contact, its time, the collided bit).
+     */
+    projectile,
 };
 
 /**
@@ -435,6 +447,15 @@ struct CreatureMind {
     std::uint32_t attacks{0};
     /** The direction of the creature in the last movement state that the behavior marked. */
     float sentYaw{0.0F};
+    /**
+     * The shot of stage 3.4f-A: true while the action of its basic shot plays (its generation and its end are attackGeneration and
+     * attackEnds), the time from which it can start its next shot, its walk back to the middle of its band, and the time before it walks
+     * back again.
+     */
+    bool shooting{false};
+    WorldClock::time_point shotReady{};
+    bool retreating{false};
+    WorldClock::time_point retreatPauseUntil{};
     /** Steps in sequence in which a different creature stood at the place of the next step of this one. */
     std::uint32_t blockedSteps{0};
 };
@@ -1060,6 +1081,37 @@ struct ProbeBody {
     std::optional<ActorId> actor;
 };
 
+/**
+ * The body of a projectile entity (stage 3.4f-A, EntityKind::projectile): what its Projectile state has (research creature-ranged.md
+ * R0, live checks L1 and L2). The projectile system sets it; the encoder of the state reads it.
+ */
+struct ProjectileBody {
+    /** The projectile slice (game data: the asset, the sub id, the slot of the Projectile component). Never null for an entity. */
+    const gamedata::ProjectileSliceData* slice{nullptr};
+    /** The number of the flight in the projectile system (a log line, the development list). */
+    std::uint64_t number{0};
+    /** The creature that shot it: the owner field of the state (its entity id). */
+    EntityId source{0};
+    /** The attack index, the ammunition key, the damage table key, and the row of the release (RangedRelease). */
+    std::uint32_t attackIndex{0};
+    std::uint32_t ammoKey{0};
+    std::uint32_t tableKey{0};
+    std::uint16_t rowIndex{0};
+    /** The launch: the place, the velocity (m/s), and the time on the world clock (the time anchor of the state). */
+    state::WorldPosition origin;
+    std::array<float, 3> velocity{};
+    WorldClock::time_point launched{};
+    /**
+     * The end of the flight at a contact (a character, a wall or the ground, a shield): the contact place and its time. The record then
+     * has the collision state (the collided bit 0x01). No value: in the air, or an end with no contact (the range, the life time, the
+     * end of the source).
+     */
+    std::optional<state::WorldPosition> contact;
+    WorldClock::time_point contactAt{};
+    /** True after the end of the flight: no new session observes it, and the projectile system removes it at its hold time. */
+    bool ended{false};
+};
+
 struct Entity {
     /** Entity group id: the first 8 bytes of the actor id. Key of the entity table. */
     EntityId id{0};
@@ -1078,6 +1130,8 @@ struct Entity {
     ProbeBody probe;
     /** Objects (stage 2.5a): the object of the interaction data and the state of its bounds. */
     ObjectBody object;
+    /** Projectiles of a creature (stage 3.4f-A): the launch and the end of the flight. */
+    ProjectileBody shot;
     /** The session of the client that plays this character. 0: no session. */
     SessionId owner{0};
 
@@ -1180,6 +1234,14 @@ struct Entity {
      * front of the look). The world keeps the value of the last accepted report.
      */
     float look{0.0F};
+    /**
+     * The velocity of a character from its accepted positions (stage 3.4f-A: the lead of a creature shot; World::velocity_of): the
+     * place and the time of the last sample, and the velocity from the sample before it (m/s).
+     */
+    state::WorldPosition velocitySample;
+    WorldClock::time_point velocitySampleAt{};
+    std::array<float, 3> velocity{};
+    WorldClock::time_point velocityAt{};
     std::optional<state::WorldPosition> savedPosition;
     WorldClock::time_point lastSave{};
 };

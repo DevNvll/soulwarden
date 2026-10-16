@@ -273,6 +273,11 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
 - ArmorPenetration of a rule (stage 3.3b-S5): the part of the mitigation of the target that the hit does not meet. The
   defense factor is the mitigation times (1 plus the armor part of the target) times (1 minus the penetration, 0 to 1).
   Source: game data (the cell of the rule); the place in the formula is a decision of an agent.
+- A shot of a creature (stage 3.4f-A, [Projectiles](projectiles.md)): the hit of the projectile on a character is one damage result of
+  the same function (`Health::creature_hit`) with the row of the release (its factor, its added damage, its type: the damage of the
+  creature rule), at the time of the contact of the flight, not at the release. The damage mark goes to the owner (its source place is
+  the place of the creature), each observer gets the vitals state. The counter of Riposte takes such a hit in its window (its
+  absorption), and the counter strikes only a creature in its reach (the reach of a shot is 0).
 - A creature hit on a character in the window of a counter (Riposte, stage 3.3b-S4): the absorption of the status of the
   window takes the damage, and `Health::creature_hit` gives the hit to `Abilities::countered` after the damage: the
   counter starts one time and hits the attacker ([Forced movement](forced-movement.md)).

@@ -165,6 +165,16 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   the wolf: 0.7 m, 0.9 m, the axis of its body). The projectile system turns it by the direction of the creature and puts
   its lowest point at the feet ([Projectiles](projectiles.md)). The posed hit volumes of the slice (the bones in an
   animation) are not in the data.
+- The ranged attacks of a slice (stage 3.4f-A, protocol notes 4.37; game data): `CreatureSlice::ranged`, each one an action of the
+  action table with its releases (`gamedata::RangedRelease`: the time of the CAGE-RangedAttack event, the profile and the attack with
+  its index on the wire, the ammunition and its key, the projectile slice, the damage table key and the place of the row, the damage
+  values of the row, and the aim values of the clip), and `CreatureSlice::basicShot`: the ranged attack of the action FireBow
+  (`gamedata::kBasicShotAction`), the one that a creature uses ([Creature behavior](creature-behavior.md)). A slice with a basic shot and
+  no melee attack fights (`CreatureSlice::fights`). The projectile slices are in `CreatureData::projectiles` (the asset, the root, the
+  slot of the Projectile component, the flight values), and the capsule of the player slice in `CreatureData::player_capsule`. The
+  loader refuses a file whose ranged attack names an action with no fragment, a release after the end of its action or with a value
+  outside its range, or a projectile slice that the list does not have, and a projectile slice with no asset, no slot, or no speed. A
+  file of an older tool has no such member: no creature shoots, and the backend works.
 - The hit facts of a slice (stage 3.3b-S5, protocol notes 4.30): `CreatureSlice::behind`, the two angles of the
   DamageReceiver of the slice (m_isHitFromBehindMinAngle, m_isHitByCritFromBehindMinAngle; the wolf 2.0944 and 2.3562;
   503 slices; the tool stops for an angle field that is not exactly one 32-bit float: a cut field is a fault of the
@@ -178,6 +188,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 ## Commands
 
 ```sh
+tools/world creature shoot 2c NAME   # stage 3.4f-A: the creature starts its basic shot at a character now (the behavior rules)
 tools/world creatures NAME 60        # the creatures that are 60 m or less from a character (no name: each creature)
 tools/world kinds wolf               # the kinds of the creature data with a text in their id, name, or family
 tools/world creature spawn Wolf_Grey_7 NAME 0 4 0   # a creature of a kind 4 m to the north of a character
@@ -208,7 +219,16 @@ tools/world creature effect 2c knockdown 2                  # a knockdown (or st
   of `objects/characters/`; `tools/gamedata/check_hit_facts_tool.py` checks the reader with made-up sources (test case
   CH9).
 - `tools/gamedata/creatures.sh --no-attack FILE` writes one line for each kind that does not
-  attack, with the cause (859 kinds of the supported build).
+  attack, with the cause (814 kinds of the supported build, 8,206 spawn points; 859 before stage 3.4f-A: a kind with the basic shot
+  attacks from then on).
+- The ranged attacks (stage 3.4f-A, `creature_behavior.py`, `creature_data.py`): each action whose selected variant has a
+  CAGE-RangedAttack event, with the joins of each release (the profile of the weapon of the main hand, the attack in the ranged attack
+  data with its index: the profiles and then the attacks in the byte order of their names; the slice of the SliceOverride or of the
+  ammunition in the AmmoSlot of the slice; the unique name of the damage table and the place of the row). The variant of a ranged attack
+  has the tags of the weapons and the default tags of the slice (`m_defaultTags`). A release with a join that the data does not have makes
+  no ranged attack of its action, with its cause in the count `rangedLeftOut`. The tool also writes `projectiles` (the projectile slices
+  of the releases) and `playerCapsule`, and the counts `slicesWithRangedAttacks` (95), `slicesWithBasicShot` (20), `rangedAttacks` (225),
+  `rangedReleases` (459), `projectileSlices` (69). The tool stops with no ranged attack data in the game copy.
 - `tools/research/creature_tour.py` is the picture check of the creature slices: `prepare
   GAMEDATA TOUR` makes a game data folder with one kind for each slice, `run TOUR OUT`
   makes one creature of each slice in front of the character of a live run and takes one

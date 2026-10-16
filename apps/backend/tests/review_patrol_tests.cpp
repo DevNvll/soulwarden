@@ -186,9 +186,15 @@ void creature_tool(const Options& options) {
     std::ifstream log(output);
     unsigned correct = 0;
     unsigned wrong = 0;
+    // The seven patrol cases of the check (the check has the ranged cases of stage 3.4f-A too: case CRG1 reads them).
+    static const char* const kPatrolCases[] = {"none", "valid", "empty", "missing-reference", "missing-waypoint", "nonfinite-position",
+                                               "nonfinite-basis"};
     for (std::string line; std::getline(log, line);) {
         note(line.substr(0, 200));
-        correct += line.rfind("ok  ", 0) == 0 ? 1 : 0;
+        const std::string name = line.size() > 6 ? line.substr(6, line.find(':') == std::string::npos ? std::string::npos : line.find(':') - 6)
+                                                 : std::string();
+        const bool patrol = std::find(std::begin(kPatrolCases), std::end(kPatrolCases), name) != std::end(kPatrolCases);
+        correct += patrol && line.rfind("ok  ", 0) == 0 ? 1 : 0;
         wrong += line.rfind("FAIL", 0) == 0 ? 1 : 0;
     }
     check(status == 0 && correct == 7 && wrong == 0,

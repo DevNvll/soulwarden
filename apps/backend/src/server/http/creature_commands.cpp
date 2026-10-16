@@ -456,6 +456,31 @@ WorldCommand play_creature_action(const std::string& character, const Arguments&
     };
 }
 
+WorldCommand creature_shoot(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                            service::HttpResponse& refusal) {
+    const auto id = creature_id(arguments);
+    if (!id) {
+        refusal = message(400, "give creature=ID (a creature with a basic shot) and character=ID (its target)");
+        return {};
+    }
+    return [character, id = *id, reach](world::World& target) {
+        if (const auto refused = out_of_reach(target, character, id, reach)) {
+            return *refused;
+        }
+        world::Entity* creature = target.creatures().find(id);
+        const world::Entity* aimed = target.find_character(character);
+        if (creature == nullptr || aimed == nullptr) {
+            return message(404, "the world has no creature with this id, or the character is not in the world");
+        }
+        if (!target.creatures().behavior().command_shot(*creature, aimed->id)) {
+            return message(400, "the creature does not shoot: it has no basic shot, it is dead, it holds, or the character is dead or "
+                                "ignored");
+        }
+        log::write("world: command: creature %s shoots at %s", id_text(id).c_str(), character.c_str());
+        return creature_reply(world::CreatureResult{world::CreatureError::none, creature});
+    };
+}
+
 WorldCommand move_creature_anchor(const std::string& character, const Arguments& arguments, CreatureReach reach,
                                   service::HttpResponse& refusal) {
     const auto id = creature_id(arguments);

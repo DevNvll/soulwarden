@@ -98,6 +98,24 @@ std::string what_of(const gamedata::ShotRule& rule) {
 
 } // namespace
 
+const char* creature_shot_end_text(CreatureShotEnd end) {
+    switch (end) {
+    case CreatureShotEnd::hit:
+        return "it hit a character";
+    case CreatureShotEnd::wall:
+        return "a wall or the ground stopped it";
+    case CreatureShotEnd::range:
+        return "it flew its range";
+    case CreatureShotEnd::lifetime:
+        return "its life time ended";
+    case CreatureShotEnd::source:
+        return "its creature died or left the world";
+    case CreatureShotEnd::absorbed:
+        return "a shield of an enemy took it";
+    }
+    return "?";
+}
+
 const char* shot_verdict_text(ShotVerdict verdict) {
     switch (verdict) {
     case ShotVerdict::accepted:
@@ -164,10 +182,13 @@ const char* projectile_end_text(ProjectileEnd end) {
     return "?";
 }
 
-WorldCapsule capsule_of(const Entity& creature) {
+WorldCapsule capsule_of(const Entity& creature, const gamedata::CreatureCapsule* player) {
     gamedata::CreatureCapsule capsule;
     capsule.radius = projectile_rules::kDefaultRadius;
     capsule.height = projectile_rules::kDefaultHeight;
+    if (creature.kind != EntityKind::creature && player != nullptr) {
+        capsule = *player; // The capsule of the player slice (stage 3.4f-A, game data): upright, its axis and its offset are not used.
+    }
     if (creature.kind != EntityKind::creature) {
         // A character (stage 3.3b-S2b: a target of the Beacon): the default capsule, upright at its feet.
         const float half = capsule.height * 0.5F;
@@ -867,8 +888,257 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
     return std::nullopt;
 }
 
+std::optional<std::uint64_t> Projectiles::launch_creature(const CreatureShot& shot) {
+    const Entity* creature = m_world.creatures().find(shot.creature);
+    const gamedata::CreatureData* data = m_world.creatures().data();
+    const float size = std::hypot(shot.direction[0], shot.direction[1], shot.direction[2]);
+    if (creature == nullptr || creature->creature.dead || data == nullptr || shot.release == nullptr
+        || shot.release->projectile >= data->projectiles().size() || !valid_position(shot.origin) || !std::isfinite(size)
+        || std::fabs(size - 1.0F) > projectile_rules::kUnitTolerance) {
+        ++m_creatureCounts.refused;
+        return std::nullopt;
+    }
+    const std::size_t flying = static_cast<std::size_t>(
+        std::count_if(m_flights.begin(), m_flights.end(), [&](const auto& entry) { return entry.second.creature == shot.creature; }));
+    if (flying >= creature_shot_rules::kCreatureMost) {
+        ++m_creatureCounts.refused;
+        return std::nullopt;
+    }
+    const gamedata::RangedRelease& release = *shot.release;
+    const gamedata::ProjectileSliceData& slice = data->projectiles()[release.projectile];
+    const WorldClock::time_point now = m_world.clock().now();
+    CreatureFlight flight;
+    flight.number = m_next++;
+    flight.creature = shot.creature;
+    flight.release = &release;
+    flight.slice = &slice;
+    flight.position = shot.origin;
+    flight.velocity = {shot.direction[0] / size * slice.speed, shot.direction[1] / size * slice.speed, shot.direction[2] / size * slice.speed};
+    flight.launched = now;
+    flight.at = now;
+    // The record of the shot: one entity, one Projectile state for each observer (the launch, research R0 and live check L2e: the place,
+    // the velocity, the time anchor, the flags 0, the owner, the attack, the ammunition, the damage table, and the row).
+    ProjectileBody body;
+    body.slice = &slice;
+    body.number = flight.number;
+    body.source = shot.creature;
+    body.attackIndex = release.attackIndex;
+    body.ammoKey = release.ammoKey;
+    body.tableKey = release.tableKey;
+    body.rowIndex = static_cast<std::uint16_t>(release.rowIndex);
+    body.origin = shot.origin;
+    body.velocity = flight.velocity;
+    body.launched = now;
+    flight.entity = m_world.make_projectile(body, shot.origin).id;
+    ++m_creatureCounts.launches;
+    const Entity* aimed = shot.aimedAt != 0 ? m_world.find(shot.aimedAt) : nullptr;
+    log::write("world: projectile %llu: creature %016llx (%s) shoots %s/%s (row %s, %s) at %s from %.2f %.2f %.2f to %.3f %.3f %.3f at "
+               "%.0f m/s",
+               static_cast<unsigned long long>(flight.number),
+               static_cast<unsigned long long>(creature->id),
+               creature->creature.kind->id.c_str(),
+               release.profile.c_str(),
+               release.attack.c_str(),
+               release.damage.row.c_str(),
+               slice.path.c_str(),
+               aimed != nullptr ? aimed->name.c_str() : "no character",
+               shot.origin.x,
+               shot.origin.y,
+               shot.origin.z,
+               shot.direction[0] / size,
+               shot.direction[1] / size,
+               shot.direction[2] / size,
+               static_cast<double>(slice.speed));
+    const std::uint64_t number = flight.number;
+    m_flights.emplace(number, flight);
+    m_creatureCounts.largest = std::max(m_creatureCounts.largest, m_flights.size());
+    return number;
+}
+
+void Projectiles::land(const CreatureFlight& flight, CreatureShotEnd end, const state::WorldPosition& at, EntityId struck) {
+    ++m_creatureCounts.ends[static_cast<std::size_t>(end)];
+    const WorldClock::time_point now = m_world.clock().now();
+    std::chrono::milliseconds hold{0};
+    if (Entity* entity = m_world.find(flight.entity); entity != nullptr && entity->kind == EntityKind::projectile) {
+        entity->shot.ended = true;
+        // A contact: the collision state (the contact place, its time, the collided bit; live checks L2c and L2e), then the stop. A
+        // wall keeps the arrow at its contact for the stuck life time of the slice (game data); a hit and a shield for kHitHold.
+        if (end == CreatureShotEnd::hit || end == CreatureShotEnd::wall || end == CreatureShotEnd::absorbed) {
+            entity->shot.contact = at;
+            entity->shot.contactAt = flight.at;
+            m_world.place_projectile(*entity, at);
+            m_world.touch(entity->id, ComponentKey::projectile);
+            hold = end == CreatureShotEnd::wall
+                       ? std::min(std::chrono::milliseconds(static_cast<long long>(std::max(flight.slice->stuckLifetime, 0.0F) * 1000.0F)),
+                                  creature_shot_rules::kLongestStuck)
+                       : creature_shot_rules::kHitHold;
+            hold = std::max(hold, creature_shot_rules::kHitHold);
+        }
+        m_holds.emplace(now + hold, entity->id);
+    }
+    const Entity* creature = m_world.find(flight.creature);
+    const Entity* target = struck != 0 ? m_world.find(struck) : nullptr;
+    log::write("world: projectile %llu of creature %016llx (%s) ends after %.1f m and %lld ms at %.2f %.2f %.2f: %s%s%s",
+               static_cast<unsigned long long>(flight.number),
+               static_cast<unsigned long long>(flight.creature),
+               creature != nullptr && creature->kind == EntityKind::creature ? creature->creature.kind->id.c_str() : "a creature that left",
+               static_cast<double>(flight.travelled + distance3(flight.position, at)),
+               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(flight.at - flight.launched).count()),
+               at.x,
+               at.y,
+               at.z,
+               creature_shot_end_text(end),
+               target != nullptr ? ": " : "",
+               target != nullptr ? target->name.c_str() : "");
+}
+
+bool Projectiles::fly(CreatureFlight& flight, WorldClock::time_point now) {
+    const gamedata::RangedRelease& release = *flight.release;
+    const gamedata::ProjectileSliceData& slice = *flight.slice;
+    const gamedata::CreatureData* data = m_world.creatures().data();
+    const gamedata::CreatureCapsule* body = data != nullptr && data->player_capsule() ? &*data->player_capsule() : nullptr;
+    // The reach of the capsule of a character from its feet: a part of the range of the query of a segment.
+    const float reach = body != nullptr ? body->height * 0.5F + body->radius * 2.0F : projectile_rules::kDefaultHeight * 0.5F
+                                                                                        + projectile_rules::kDefaultRadius * 2.0F;
+    while (flight.at < now) {
+        const Entity* creature = m_world.find(flight.creature);
+        if (creature == nullptr || creature->kind != EntityKind::creature || creature->creature.dead) {
+            land(flight, CreatureShotEnd::source, flight.position);
+            return true;
+        }
+        ++m_creatureCounts.steps;
+        const auto step = std::min<WorldClock::time_point::duration>(now - flight.at, projectile_rules::kStep);
+        const float seconds = std::chrono::duration<float>(step).count();
+        const float age = std::chrono::duration<float>(flight.at - flight.launched).count();
+        // The acceleration of the slice after the delay distance of the attack (client code 0x695CCC0; live check L2b: the client
+        // flies the arrow with the acceleration of the slice, not with the predicted acceleration of the profile).
+        const Vector acceleration = flight.travelled >= release.accelDelay ? slice.accel : Vector{0.0F, 0.0F, 0.0F};
+        const state::WorldPosition next{flight.position.x + (flight.velocity[0] + acceleration[0] * seconds * 0.5F) * seconds,
+                                        flight.position.y + (flight.velocity[1] + acceleration[1] * seconds * 0.5F) * seconds,
+                                        flight.position.z + (flight.velocity[2] + acceleration[2] * seconds * 0.5F) * seconds};
+        const float segment = distance3(flight.position, next);
+        float part = 1.0F;
+        std::optional<CreatureShotEnd> limit;
+        if (release.range > 0.0F && flight.travelled + segment >= release.range) {
+            part = segment > 0.0F ? std::clamp((release.range - flight.travelled) / segment, 0.0F, 1.0F) : 0.0F;
+            limit = CreatureShotEnd::range;
+        }
+        if (slice.flyingLifetime > 0.0F && age + seconds >= slice.flyingLifetime) {
+            const float timePart = seconds > 0.0F ? std::clamp((slice.flyingLifetime - age) / seconds, 0.0F, 1.0F) : 0.0F;
+            if (timePart < part) {
+                part = timePart;
+                limit = CreatureShotEnd::lifetime;
+            }
+        }
+        const state::WorldPosition end = along(flight.position, next, part);
+        // A wall or the ground on the segment, and the first character whose capsule the segment touches (the characters near the
+        // segment: the position index; no tolerance: a shot of a creature has the radius of its attack only, a rule of this project).
+        ++m_creatureCounts.wallTests;
+        const std::optional<float> wall = m_world.navigation().line_stop(flight.position, end);
+        const state::WorldPosition middle = along(flight.position, end, 0.5F);
+        const float range = distance3(flight.position, end) * 0.5F + reach + release.radius;
+        std::vector<EntityId> candidates;
+        m_world.for_each_near(middle, range, [&](Entity& entity) {
+            if (entity.kind == EntityKind::player && !entity.life.dead && !m_world.creatures().behavior().ignores(entity.characterId)) {
+                candidates.push_back(entity.id);
+            }
+        });
+        std::optional<float> first;
+        EntityId struck = 0;
+        for (const EntityId id : candidates) {
+            ++m_creatureCounts.looked;
+            const Entity* character = m_world.find(id);
+            if (character == nullptr) {
+                continue;
+            }
+            const WorldCapsule capsule = capsule_of(*character, body);
+            const std::optional<float> touch = sweep(flight.position, end, capsule, release.radius);
+            if (!touch || (first && *touch >= *first)) {
+                continue;
+            }
+            first = touch;
+            struck = id;
+        }
+        // A shield of an enemy of the creature on the segment (stage 3.3b-M2: the projectile shield of Maelstrom) takes the shot before a
+        // character or a wall behind it.
+        if (const std::optional<float> shield = m_world.spells().absorbs(flight.position, end, flight.creature);
+            shield && (!first || *shield <= *first) && (!wall || *shield <= *wall)) {
+            land(flight, CreatureShotEnd::absorbed, along(flight.position, end, *shield));
+            return true;
+        }
+        if (first && (!wall || *first <= *wall)) {
+            const state::WorldPosition point = along(flight.position, end, *first);
+            flight.at += std::chrono::duration_cast<WorldClock::time_point::duration>(step * static_cast<double>(*first));
+            if (Entity* target = m_world.find(struck); target != nullptr && creature != nullptr) {
+                const float before = target->vitals.health;
+                // One damage result of the creature rule with the row of the release (Health::creature_hit: the damage of the level and
+                // of the kind of the creature, the factor of the row, the level difference, the armor; the damage mark of the owner).
+                m_world.health().creature_hit(*m_world.find(flight.creature), release.damage, *target);
+                if (target->vitals.health < before) {
+                    ++m_creatureCounts.damage;
+                }
+            }
+            land(flight, CreatureShotEnd::hit, point, struck);
+            return true;
+        }
+        if (wall) {
+            flight.at += std::chrono::duration_cast<WorldClock::time_point::duration>(step * static_cast<double>(*wall));
+            land(flight, CreatureShotEnd::wall, along(flight.position, end, *wall));
+            return true;
+        }
+        if (limit) {
+            land(flight, *limit, end);
+            return true;
+        }
+        flight.travelled += segment;
+        flight.position = next;
+        flight.velocity = {flight.velocity[0] + acceleration[0] * seconds, flight.velocity[1] + acceleration[1] * seconds,
+                           flight.velocity[2] + acceleration[2] * seconds};
+        flight.at += step;
+        if (!valid_position(flight.position)) {
+            land(flight, CreatureShotEnd::range, flight.position);
+            return true;
+        }
+        if (Entity* entity = m_world.find(flight.entity)) {
+            m_world.place_projectile(*entity, flight.position);
+        }
+    }
+    return false;
+}
+
+void Projectiles::source_left(EntityId creature) {
+    for (auto entry = m_flights.begin(); entry != m_flights.end();) {
+        if (entry->second.creature == creature) {
+            land(entry->second, CreatureShotEnd::source, entry->second.position);
+            entry = m_flights.erase(entry);
+        } else {
+            ++entry;
+        }
+    }
+}
+
+std::vector<Projectiles::FlightView> Projectiles::creature_active() const {
+    std::vector<FlightView> views;
+    const WorldClock::time_point now = m_world.clock().now();
+    for (const auto& [number, flight] : m_flights) {
+        views.push_back(FlightView{number, flight.creature, flight.entity, flight.release->profile + "/" + flight.release->attack,
+                                   flight.position, flight.travelled,
+                                   std::chrono::duration_cast<std::chrono::milliseconds>(now - flight.launched)});
+    }
+    return views;
+}
+
 void Projectiles::tick() {
     const WorldClock::time_point now = m_world.clock().now();
+    // The creature shots (stage 3.4f-A): the flights, then the stop of the records whose hold ended.
+    for (auto entry = m_flights.begin(); entry != m_flights.end();) {
+        entry = fly(entry->second, now) ? m_flights.erase(entry) : std::next(entry);
+    }
+    while (!m_holds.empty() && m_holds.begin()->first <= now) {
+        const EntityId id = m_holds.begin()->second;
+        m_holds.erase(m_holds.begin());
+        m_world.remove_projectile(id);
+    }
     for (auto entry = m_active.begin(); entry != m_active.end();) {
         entry = advance(entry->second, now) ? m_active.erase(entry) : std::next(entry);
     }

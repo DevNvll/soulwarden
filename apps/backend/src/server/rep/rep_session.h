@@ -129,7 +129,11 @@ public:
     RepSession& operator=(const RepSession&) = delete;
 
     /** Handles one complete carrier message from the client. */
-    void on_message(std::uint8_t channel, std::span<const std::uint8_t> data);
+    /**
+     * @param datagram The sequence number of the datagram of the client that carried the message (the carrier, one sequence for all
+     *        channels). No value: not known (the order rule of an early cancel then does not apply).
+     */
+    void on_message(std::uint8_t channel, std::span<const std::uint8_t> data, std::optional<std::uint16_t> datagram = std::nullopt);
 
     /** Sends the state records that are due when the client is in the world. */
     void tick(carrier::Clock::time_point now);
@@ -476,6 +480,8 @@ private:
     world::Revision m_interestTravel{0};
     /** The world revision of the last new spell entity for which this session compared its interest distances (stage 3.3b-S2a). */
     world::Revision m_interestSpell{0};
+    /** The world revision of the last new projectile entity for which this session compared its interest distances (stage 3.4f-A). */
+    world::Revision m_interestProjectile{0};
     /** The number of spell entities whose first record this session sent, and the largest number in its interest table. */
     std::uint64_t m_spellRecords{0};
     /**
@@ -535,6 +541,22 @@ private:
 
     /** The interaction block of the last new input step of the client (the transport history of the requests). No value: none. */
     std::optional<InputInteraction> m_interactionBlock;
+    /** The datagram of the message that the session handles now (on_message). No value: not known. */
+    std::optional<std::uint16_t> m_messageDatagram;
+    /**
+     * A cancel (2473) of the client that matched no use of the character (code review of stage 2.5b, finding ST-R2): the reference and
+     * the datagram that carried it. A request for that reference from an earlier datagram (a press that the client made before the
+     * cancel, delivered late on its channel) starts no use. The first input of a later datagram ends the mark.
+     */
+    struct EarlyCancel {
+        world::InteractionReference reference;
+        std::uint16_t datagram{0};
+        /** The mark ends at this time (kEarlyCancelKeep after the cancel): the datagram numbers have 16 bits. */
+        world::WorldClock::time_point ends{};
+    };
+    /** An early cancel stays this long (a decision of an agent: a press later than this behind its cancel is not a press of the client). */
+    static constexpr std::chrono::milliseconds kEarlyCancelKeep{3000};
+    std::optional<EarlyCancel> m_earlyCancel;
     /** Newest input report of the client and the time of the last log line for it. */
     ClientInput m_input;
     carrier::Clock::time_point m_lastInputLog{};

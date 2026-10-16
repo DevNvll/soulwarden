@@ -280,6 +280,10 @@ void World::remove_entity(EntityId id) {
                    static_cast<unsigned long long>(entity.id),
                    entity.creature.kind->id.c_str());
         m_creatures.entity_removed(entity);
+        // The projectiles of the creature in the air end with no hit (stage 3.4f-A: the leave of the source).
+        m_projectiles.source_left(entity.id);
+    } else if (entity.kind == EntityKind::projectile) {
+        // A projectile of a creature (stage 3.4f-A): the projectile system ended its flight before the call.
     } else if (entity.kind == EntityKind::probe) {
         log::write("world: DEVELOPMENT COMMAND: probe entity %016llx removed", static_cast<unsigned long long>(entity.id));
     } else if (entity.kind == EntityKind::object) {
@@ -584,6 +588,46 @@ Entity& World::make_spell(const SpellBody& body, const state::WorldPosition& pos
     return entity;
 }
 
+Entity& World::make_projectile(const ProjectileBody& body, const state::WorldPosition& position) {
+    const ActorId actor = m_ids.next(ActorKind::otherEntity);
+    Entity& entity = m_entities[entity_group_id(actor)];
+    entity.id = entity_group_id(actor);
+    entity.actor = actor;
+    entity.kind = EntityKind::projectile;
+    entity.shot = body;
+    entity.name = "projectile";
+    entity.position = position;
+    const Revision revision = ++m_revision;
+    entity.positionRevision = revision;
+    entity.changed[ComponentKey::metadata] = revision;
+    entity.changed[ComponentKey::projectile] = revision;
+    m_lastProjectile = revision;
+    m_index.insert(entity.id, entity.position);
+    return entity;
+}
+
+void World::remove_projectile(EntityId id) {
+    const Entity* entity = find(id);
+    if (entity != nullptr && entity->kind == EntityKind::projectile) {
+        remove_entity(id);
+    }
+}
+
+void World::place_projectile(Entity& entity, const state::WorldPosition& position) {
+    if (entity.kind != EntityKind::projectile || !valid_position(position)) {
+        return;
+    }
+    m_index.move(entity.id, entity.position, position);
+    entity.position = position;
+}
+
+std::array<float, 3> World::velocity_of(const Entity& entity) const {
+    if (entity.kind != EntityKind::player || m_clock.now() - entity.velocityAt > kVelocityKeep) {
+        return {0.0F, 0.0F, 0.0F};
+    }
+    return entity.velocity;
+}
+
 void World::remove_spell(EntityId id) {
     const Entity* entity = find(id);
     if (entity != nullptr && entity->kind == EntityKind::spell) {
@@ -678,6 +722,11 @@ bool World::remove_probe(EntityId id) {
 }
 
 float World::interest_enter(const Entity& entity) const {
+    if (entity.kind == EntityKind::projectile) {
+        // A projectile of a creature (stage 3.4f-A, a rule of this project): the distance of a character, while it flies. A session
+        // that comes near after its end gets no record of it.
+        return entity.shot.ended ? 0.0F : m_options.interestEnter;
+    }
     if (entity.kind == EntityKind::probe) {
         return std::min(entity.probe.interestRadius, m_options.interestEnter);
     }
@@ -694,6 +743,9 @@ float World::interest_enter(const Entity& entity) const {
 }
 
 float World::interest_leave(const Entity& entity) const {
+    if (entity.kind == EntityKind::projectile) {
+        return m_options.interestEnter + m_options.creatureInterestMargin;
+    }
     if (entity.kind == EntityKind::probe || entity.kind == EntityKind::spell) {
         return interest_enter(entity) + m_options.creatureInterestMargin;
     }
@@ -897,6 +949,25 @@ PositionVerdict World::report_position(SessionId session, const PositionReport& 
 }
 
 void World::place(Entity& entity, const state::WorldPosition& position, bool estimated, bool moving) {
+    // The velocity of a character (stage 3.4f-A, velocity_of): the change of the place since the sample, over kVelocitySample at least.
+    if (entity.kind == EntityKind::player) {
+        const WorldClock::time_point now = m_clock.now();
+        const auto passed = now - entity.velocitySampleAt;
+        if (entity.velocitySampleAt == WorldClock::time_point{} || passed > kVelocityKeep) {
+            entity.velocity = {0.0F, 0.0F, 0.0F};
+            entity.velocitySample = position;
+            entity.velocitySampleAt = now;
+        } else if (passed >= kVelocitySample) {
+            const float seconds = std::chrono::duration<float>(passed).count();
+            std::array<float, 3> velocity{(position.x - entity.velocitySample.x) / seconds, (position.y - entity.velocitySample.y) / seconds,
+                                          (position.z - entity.velocitySample.z) / seconds};
+            const float speed = std::sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
+            entity.velocity = std::isfinite(speed) && speed <= kVelocityLargest ? velocity : std::array<float, 3>{0.0F, 0.0F, 0.0F};
+            entity.velocitySample = position;
+            entity.velocitySampleAt = now;
+            entity.velocityAt = now;
+        }
+    }
     m_index.move(entity.id, entity.position, position);
     entity.position = position;
     entity.positionEstimated = estimated;
@@ -904,8 +975,9 @@ void World::place(Entity& entity, const state::WorldPosition& position, bool est
     entity.moving = moving;
     entity.positionDirty = true;
     m_dirtyPositions.insert(entity.id);
-    // The range of the committed interaction of the character (stage 2.5b): only a character with one (O(1)).
-    if (entity.kind == EntityKind::player && entity.interaction) {
+    // The range of the committed interaction of the character (stage 2.5b) and of the source of its service grant (code review of stage
+    // 2.5b, finding ST-R3): only a character with one (O(1)).
+    if (entity.kind == EntityKind::player && (entity.interaction || entity.serviceGrant)) {
         m_interactions.moved(entity);
     }
 }

@@ -652,6 +652,30 @@ public:
     [[nodiscard]] Revision last_spell() const {
         return m_lastSpell;
     }
+    /**
+     * Makes the entity of a projectile of a creature (stage 3.4f-A). Only the projectile system calls it (world/projectiles.h). Its actor
+     * id comes from the id allocator; the sessions near it look for it in the same tick (last_projectile: a flight lives some tenths of
+     * a second, and a record that waits for the interval of the interest scan comes when the arrow is far along its path: live check
+     * L2a). The caller checks the position (valid_position).
+     */
+    Entity& make_projectile(const ProjectileBody& body, const state::WorldPosition& position);
+    /** Removes the entity of a projectile: each session that observes it sends the stop. Only the projectile system calls it. */
+    void remove_projectile(EntityId id);
+    /** Moves the entity of a projectile to its place in the flight (the position index, the interest). No state change. */
+    void place_projectile(Entity& entity, const state::WorldPosition& position);
+    /** @return The world revision of the last new projectile entity (stage 3.4f-A): a session looks for it at once. */
+    [[nodiscard]] Revision last_projectile() const {
+        return m_lastProjectile;
+    }
+    /**
+     * @return The velocity of a character (stage 3.4f-A: the lead of a creature shot), from its accepted positions (World::place): the
+     *         change of the place over at least kVelocitySample, 0 when the last change is older than kVelocityKeep or faster than
+     *         kVelocityLargest (a travel). A rule of this project: the client reports no velocity that the backend reads.
+     */
+    [[nodiscard]] std::array<float, 3> velocity_of(const Entity& entity) const;
+    static constexpr std::chrono::milliseconds kVelocitySample{60};
+    static constexpr std::chrono::milliseconds kVelocityKeep{300};
+    static constexpr float kVelocityLargest = 15.0F;
 
     /** @return The distance at which a session starts to observe an entity (WorldOptions). */
     [[nodiscard]] float interest_enter(const Entity& entity) const;
@@ -877,6 +901,7 @@ private:
     /** The interactions of the characters and the states of the objects (stage 2.5a). */
     Interactions m_interactions;
     Revision m_lastSpell{0};
+    Revision m_lastProjectile{0};
 };
 
 template <class Result>

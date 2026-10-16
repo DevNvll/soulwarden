@@ -43,6 +43,16 @@ hub::Bytes encode_metadata_state(const world::Entity& entity, View view, const w
         state.field(0, kGdeRef).raw(entity.actor.bytes);
         return state.finish();
     }
+    if (entity.kind == world::EntityKind::projectile) {
+        // A projectile of a creature (stage 3.4f-A): its projectile slice (game data: basic_ai_arrow, sub id 2) and the actor id of its
+        // entity (live check L2f: the metadata and the Projectile state in one first record show one arrow).
+        if (entity.shot.slice != nullptr) {
+            state.field(0, kAssetId).raw(entity.shot.slice->asset);
+            state.field(0, kAssetId).u32(entity.shot.slice->subId);
+        }
+        state.field(0, kGdeRef).raw(entity.actor.bytes);
+        return state.finish();
+    }
     if (entity.kind == world::EntityKind::probe) {
         // Development aid: the slice of a command (tools/world probe).
         state.field(0, kAssetId).raw(entity.probe.asset);

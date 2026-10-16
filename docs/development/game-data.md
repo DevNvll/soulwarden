@@ -264,7 +264,11 @@ backend. The tool of each system is also in the document of that system.
   slice, and the template children such as the forge of a station), and the fixtures (powderKeg, campT5, camp); 25 MB, about 2 to
   4 minutes; the tool stops with no file for a source that is not complete or not consistent (`check_interactions_tool.py`, cases
   IT10 and IR5: also a layer with no list Capitals, a named slice with an asset id of a wrong form, one placement id with two
-  different placements, two referenced achievements of one bit, and a fixture with no source); the backend refuses a file whose
+  different placements, two referenced achievements of one bit, and a fixture with no source; from the code review of stage 2.5b, cases
+  RY6 to RY8 with `--review-stations`: a named placement with no position object with x, y, and z, a concrete child asset of a
+  PrefabSpawner with no path in the catalog, and one placement id in two spellings of its UUID at two places; each placement key is the
+  lower-case form of its UUID; the three child assets of the retail data that no record of the catalog has, `ASSETS_NOT_IN_GAME`, are
+  left out with their own cause); the backend refuses a file whose
   form, indexes, or counts are not correct, as a whole (cases IR4, SC8), and it reads a file of format 1 with no server child;
   without it the backend makes no station, refuses each request of an interaction, and a read lore page is not kept:
   [Interactions](../systems/interactions.md)).
@@ -291,6 +295,14 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 ```
 
 ## Traps
+
+- Stage 3.4f-A changes `creatures.json` (still format 3): each slice can have `ranged` (its ranged attacks with their releases and
+  joins), and the file has `projectiles` (the projectile slices: the asset, the root, the slot of the Projectile component, the flight
+  values) and `playerCapsule` (the capsule of the player slice). The backend of this stage reads a file of the tool of stage 3.3b-S5 to
+  2.5b too: then no creature shoots. The tool reads the ranged attack data (`rangedattackdatabase.radb`), the ammunition table, and the
+  default tags of each slice; it stops with no ranged attack data. `interaction-data.json` of the corrected tool (code review of stage
+  2.5b) is equal to the file of stage 2.5b, except the counts of the left-out children (`excluded`: the five uses of the three assets
+  that no record of the catalog has have their own cause).
 
 - Stage 2.5a adds `interaction-data.json`. With no file the backend works as before for the other systems: each request of an
   interaction is refused (a conversation then closes at once: make the file). The other files of the tools are equal to the files

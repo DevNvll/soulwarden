@@ -55,6 +55,26 @@ The reach of a contact is a project value: the game has the shape of the contact
 the animated body, and the tool does not animate a body. For a shape at the root of the body
 the reach is the far end of the shape plus a margin. For a shape at a different joint (an arm,
 a weapon) it is one constant.
+
+The ranged attacks (stage 3.4f-A, research creature-ranged.md Q2, R0, and Q5): each action of the
+action table whose selected variant has one CAGE-RangedAttack event or more (the release of a
+projectile; its time is the sum of the Blend times before it, as for a damage event). Each
+release gets its joins (the slice of the creature, its weapons and ammunition, and the tables):
+  - the profile: RangedAttackProfile of the weapon of the main hand (WeaponItemDefinitions), and
+    the attack: the RangedAttackName of the event in that profile of the ranged attack data. The
+    index of the attack on the wire is its place in the list of all attacks of all profiles, the
+    profiles and then the attacks of a profile in the order of their names (case-sensitive bytes:
+    client code 0x5BF9F30; the caller gives the list);
+  - the projectile slice: the SliceOverride of the event, or (UseAmmo) the AmmoPrefabPath of the
+    ammunition in the AmmoSlot of the slice (AmmoItemDefinitions); the ammunition key is the
+    CRC-32 of the lower-case AmmoID (0 with an override or with no ammunition);
+  - the damage table: the unique name of the damage table of the slice and its CRC-32 of the
+    lower-case name, and the row: its place among the rows with a DamageID (client code 0x677CEC0)
+    and its values (the factor, the added damage, the type, the rune charge);
+  - the aim values of the event: AILeadTarget, ProjectileSpeed (a speed for the aim, not of the
+    flight), AILeadTargetMaxAngle, AIAimMaxAngle, AIMissMinDistance, AIMissMaxDistance.
+A release with a join that the data does not have makes no ranged attack of its action (the
+count of its cause): the tool does not make a melee attack or a hit with no flight from it.
 """
 
 from __future__ import annotations
@@ -63,6 +83,7 @@ import math
 import struct
 import sys
 import xml.etree.ElementTree as ElementTree
+import zlib
 from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
@@ -87,6 +108,7 @@ VISION_DISTANCE_FIELD = field_id("m_visionDistance")
 NAV_TYPE_FIELD = field_id("m_navConfigType")
 MAX_SPEED_FIELD = field_id("m_maxSpeed")
 NAME_FIELD = field_id("m_name")
+DEFAULT_TAGS_FIELD = field_id("m_defaultTags")
 VALUE_FIELD = field_id("m_value")
 
 # The slots of the weapons of a creature: the slot numbers of the paperdoll.
@@ -103,6 +125,18 @@ REACH_AT_JOINT = 2.2
 REACH_SMALLEST = 1.5
 REACH_LARGEST = 6.0
 ROOT_JOINTS = ("", "bind_xform", "xform", "master_root", "root")
+# The ranged attacks (stage 3.4f-A). The paperdoll slots of the AmmoSlot of a clip (client enum PaperdollSlotTypes at image
+# RVA 0x5D19E40; QUICK_SLOT_1 is slot 14: the slices of the skeleton archer have their Arcane_AI_Arrow there).
+RANGED_EVENT = "CAGE-RangedAttack"
+AMMO_SLOTS = {"PaperdollSlotTypes::ARROW_AMMO_SLOT": 12, "PaperdollSlotTypes::CARTRIDGE_AMMO_SLOT": 13,
+              "PaperdollSlotTypes::QUICK_SLOT_1": 14}
+AMMO_TYPE = "AmmoItemDefinitions"
+# The basic shot of an archer (stage 3.4f-A, a project rule of the backend: gamedata::kBasicShotAction): the one ranged attack that
+# a creature uses in this stage. The other ranged attacks of the file (a charged or a fast shot, a cast) wait for later stages.
+BASIC_SHOT_ACTION = "FireBow"
+# An action of a ranged event that is a movement or an attack on a structure is not a ranged attack of the file (a project
+# rule): the backend has no rule for a shot in a walk (WalkBack of the skeleton archer) or for a structure.
+RANGED_LEFT_OUT_WORDS = LEFT_OUT_WORDS | {"walkback", "walk", "move"}
 # The time of an attack whose animation has no end time in the database: its last contact plus this (seconds).
 TIME_AFTER_CONTACT = 0.9
 LONGEST_ATTACK = 12.0
@@ -137,6 +171,14 @@ def child(element, wanted: int):
 
 def game_path(name: str) -> str:
     return name.replace("\\", "/").lower().lstrip("/")
+
+
+def slice_path(prefab: str) -> str:
+    """@return The slice file of a prefab path of a table ("Items/Weapons/Basic_AI_Arrow")."""
+    path = game_path(prefab)
+    if not path.startswith("slices/"):
+        path = "slices/" + path
+    return path if path.endswith(".dynamicslice") else path + ".dynamicslice"
 
 
 def rounded(value: float) -> float:
@@ -209,6 +251,16 @@ def read_behavior(roots: list) -> dict | None:
             "wanderFlag": flags.get("Enable_Wander")}
 
 
+def read_default_tags(roots: list) -> set[str]:
+    """@return The lower-case default fragment tags of a slice (the texts below its field m_defaultTags; stage 3.4f-A)."""
+    tags: set[str] = set()
+    for root in roots:
+        for node in walk(root):
+            if node.name == DEFAULT_TAGS_FIELD:
+                tags.update(text(entry).lower() for entry in walk(node) if entry is not node and text(entry))
+    return tags
+
+
 def read_references(roots: list) -> dict:
     """@return What a slice names for its attacks: {"animations": path, "damageTable": path, "weapons": {slot: item id}}."""
     animations = ""
@@ -237,10 +289,12 @@ class Tables:
         self.sources = sources
         self.weapons: dict[str, dict] = {}
         self.types: dict[str, tuple[int, str]] = {}
+        # The ammunition (stage 3.4f-A): the lower-case AmmoID to its AmmoID and the slice of its AmmoPrefabPath.
+        self.ammo: dict[str, dict] = {}
         self._damage: dict[str, dict | None] = {}
         for path in sources.paths(tables_folder, ".datasheet"):
             name = path.rsplit("/", 1)[-1]
-            if "itemdefinitions_weapons" not in name and "damagetypes" not in name:
+            if "itemdefinitions_weapons" not in name and "damagetypes" not in name and "itemdefinitions_ammo" not in name:
                 continue
             data = sources.read(path)
             if data is None:
@@ -250,10 +304,17 @@ class Tables:
                 sheet = Sheet(data)
                 for row in range(sheet.row_count):
                     if kind == WEAPON_TYPE:
+                        profile = str(sheet.cell(row, "RangedAttackProfile")) if "RangedAttackProfile" in sheet.columns else ""
                         self.weapons.setdefault(str(sheet.cell(row, "WeaponID")).lower(), {
                             "tags": tag_names(str(sheet.cell(row, "MannequinTag"))),
                             "offhandTags": tag_names(str(sheet.cell(row, "OffHandMannequinTag"))),
-                            "animations": game_path(str(sheet.cell(row, "AnimDbPath")))})
+                            "animations": game_path(str(sheet.cell(row, "AnimDbPath"))),
+                            "profile": profile.strip()})
+                    elif kind == AMMO_TYPE:
+                        ammo = str(sheet.cell(row, "AmmoID")).strip()
+                        prefab = str(sheet.cell(row, "AmmoPrefabPath")).strip() if "AmmoPrefabPath" in sheet.columns else ""
+                        if ammo:
+                            self.ammo.setdefault(ammo.lower(), {"id": ammo, "slice": slice_path(prefab) if prefab else ""})
                     elif kind == DAMAGE_TYPE_TYPE:
                         wire = sheet.cell(row, "IntID")
                         if str(sheet.cell(row, "TypeID")) and isinstance(wire, float) and 0 < wire < 256:
@@ -263,6 +324,8 @@ class Tables:
                 raise Failure(f"{path}: the table did not parse: {error}") from error
         if not self.weapons or not self.types:
             raise Failure("the game copy has no weapon table or no damage type table")
+        if not self.ammo:
+            raise Failure("the game copy has no ammunition table (AmmoItemDefinitions)")
 
     def damage_rows(self, path: str) -> dict | None:
         """@return The rows of one damage table by their lower-case name, or no value for a table that is not there."""
@@ -274,12 +337,21 @@ class Tables:
                     try:
                         sheet = Sheet(data)
                         rows = {}
+                        # The unique name of the table (its header, not the file name) and the place of each row among the
+                        # rows with a DamageID (stage 3.4f-A: the client finds a row of a server projectile by this place).
+                        table = {"name": sheet.name, "next": 0}
                         for row in range(sheet.row_count):
                             factor, added = sheet.cell(row, "DmgCoef"), sheet.cell(row, "AddDmg")
                             # The heart rune charge that a player gets who takes the hit (stage 1.3b). A table
                             # with no such column gives no charge.
                             charge = sheet.cell(row, "HitRuneCharge") if "HitRuneCharge" in sheet.columns else 0.0
-                            rows.setdefault(str(sheet.cell(row, "DamageID")).lower(), {
+                            identifier = str(sheet.cell(row, "DamageID"))
+                            ordinal = table["next"]
+                            if identifier:
+                                table["next"] += 1
+                            rows.setdefault(identifier.lower(), {
+                                "ordinal": ordinal,
+                                "table": table["name"],
                                 "charge": charge if isinstance(charge, float) and math.isfinite(charge) and charge > 0.0 else 0.0,
                                 "id": str(sheet.cell(row, "DamageID")),
                                 "type": str(sheet.cell(row, "DamageType")),
@@ -404,7 +476,7 @@ class Animations:
         for fragment in (listed if listed is not None else []):
             for variant in fragment.findall("Fragment"):
                 tags = {name.lower() for name in tag_names(variant.get("Tags", ""))} | {name.lower() for name in extra_tags}
-                entry = {"tags": tags, "contacts": [], "end": None}
+                entry = {"tags": tags, "contacts": [], "ranged": [], "end": None}
                 for layer in variant.findall("AnimLayer"):
                     time = 0.0
                     last = None
@@ -428,10 +500,10 @@ class Animations:
                             step = number_of(item.get("ExitTime"))
                             if step > 0.0:
                                 time += step
-                        elif item.tag == "Procedural" and item.get("type") == "CAGE-Damage":
+                        elif item.tag == "Procedural" and item.get("type") in ("CAGE-Damage", RANGED_EVENT):
                             parameters = item.find("ProceduralParams")
                             values = {value.tag: value.get("value", "") for value in parameters} if parameters is not None else {}
-                            entry["contacts"].append((time, values))
+                            entry["contacts" if item.get("type") == "CAGE-Damage" else "ranged"].append((time, values))
                 fragments.setdefault(fragment.tag.lower(), []).append(entry)
         included = root.find("SubADBs")
         for sub in (included.iter("SubADB") if included is not None else []):
@@ -489,11 +561,65 @@ def reach_of(parameters: dict) -> float:
 class Behavior:
     """The reader of the behavior data of the slices of one creature file."""
 
-    def __init__(self, sources, tables_folder: str) -> None:
+    def __init__(self, sources, tables_folder: str, ranged_attacks: dict | None = None, projectile_of=None) -> None:
+        """@param ranged_attacks The attacks of the ranged attack data (stage 3.4f-A): (lower-case profile, lower-case attack) to
+               {"profile", "attack", "index", "hitScan", "range", "radius", "accelDelay"}. None: the file has no ranged attack.
+        @param projectile_of A function: the path of a projectile slice to its index in the list "projectiles" of the file, or
+               None for a slice with no asset, no Projectile component, or no flight values."""
         self.sources = sources
         self.tables = Tables(sources, tables_folder)
         self.animations = Animations(sources)
         self._tags: dict[str, TagBits] = {}
+        self.ranged_attacks = ranged_attacks
+        self.projectile_of = projectile_of
+        # The causes of the ranged attacks that are not in the file, with their counts (a member of the counts of the file).
+        self.ranged_left_out: dict[str, int] = {}
+
+    def release(self, values: dict, references: dict, main_hand: dict | None, rows: dict) -> tuple[dict | None, str]:
+        """@return The joins of one release of a ranged attack (see the head of the file), or no value and the cause."""
+        row = rows.get(values.get("DamageTableRow", "").lower())
+        if row is None:
+            return None, "a ranged attack names a damage row that the damage table of the slice does not have"
+        if row["type"] not in self.tables.types:
+            return None, "a ranged attack has a damage row with no damage type"
+        profile = main_hand["profile"] if main_hand is not None else ""
+        if not profile:
+            return None, "the weapon of the main hand has no ranged attack profile"
+        attack = self.ranged_attacks.get((profile.lower(), values.get("RangedAttackName", "").lower()))
+        if attack is None:
+            return None, "the profile of the weapon has no attack with the RangedAttackName of the clip"
+        if attack["hitScan"]:
+            return None, "the attack of the profile is a hit scan"
+        override = values.get("SliceOverride", "").strip()
+        ammo_id = ""
+        if override:
+            path = slice_path(override)
+        elif values.get("UseAmmo", "").lower() == "true":
+            slot = AMMO_SLOTS.get(values.get("AmmoSlot", ""))
+            item = references["weapons"].get(slot, "") if slot is not None else ""
+            ammo = self.tables.ammo.get(item.lower()) if item else None
+            if ammo is None or not ammo["slice"]:
+                return None, "the ammunition of the AmmoSlot of the clip is not in the slice or has no prefab"
+            path, ammo_id = ammo["slice"], ammo["id"]
+        else:
+            return None, "the clip uses no ammunition and names no slice"
+        projectile = self.projectile_of(path) if self.projectile_of is not None else None
+        if projectile is None:
+            return None, "the projectile slice has no asset, no Projectile component, or no flight values"
+
+        def number(name: str) -> float:
+            return rounded(number_of(values.get(name)))
+
+        wire, category = self.tables.types[row["type"]]
+        return {"profile": attack["profile"], "attack": attack["attack"], "index": attack["index"], "ammo": ammo_id,
+                "ammoKey": zlib.crc32(ammo_id.lower().encode()) if ammo_id else 0, "projectile": projectile,
+                "override": bool(override), "table": row["table"], "tableKey": zlib.crc32(row["table"].lower().encode()),
+                "row": row["id"], "rowIndex": row["ordinal"], "factor": rounded(row["factor"]), "added": rounded(row["added"]),
+                "type": row["type"], "wire": wire, "category": category, "charge": rounded(row["charge"]),
+                "lead": values.get("AILeadTarget", "").lower() == "true", "aimSpeed": number("ProjectileSpeed"),
+                "leadAngle": number("AILeadTargetMaxAngle"), "aimAngle": number("AIAimMaxAngle"),
+                "miss": [number("AIMissMinDistance"), number("AIMissMaxDistance")], "range": attack["range"],
+                "radius": attack["radius"], "accelDelay": attack["accelDelay"]}, ""
 
     def tag_bits(self, controller_path: str) -> TagBits | None:
         controller = read_xml(self.sources, controller_path, "the action list component of a slice")
@@ -589,6 +715,56 @@ class Behavior:
             attacks.append([index, rounded(min(length, LONGEST_ATTACK)), contacts])
         if attacks:
             result["attacks"] = attacks
-        else:
+        # The variant of a ranged attack: the tags of the weapons and the default tags of the slice (stage 3.4f-A, research
+        # creature-ranged.md Q1: the skeleton archer plays Bow+Skeleton+Bowman, the dryad archer Bow+Dryad+Bowman). The melee
+        # attacks keep the tags of the weapons (their selection has the live proof of stage 3.4b).
+        ranged_tags = tags | read_default_tags(roots)
+        ranged = (self.read_ranged(actions, databases, ranged_tags, references, main_hand, rows)
+                  if self.ranged_attacks is not None else [])
+        if ranged:
+            result["ranged"] = ranged
+        if not attacks and not ranged:
             result["noAttack"] = "; ".join(sorted(causes)) or "no action of its action table has a damage event"
         return result
+
+    def read_ranged(self, actions: list[list], databases: list[str], tags: set[str], references: dict, main_hand: dict | None,
+                    rows: dict) -> list[list]:
+        """@return The ranged attacks of a slice (stage 3.4f-A): [action, time, [release, ...]], a release with its "time"."""
+        ranged = []
+        for index, (name, fragment, fragment_index, _) in enumerate(actions):
+            if fragment_index < 0:
+                continue
+            events = []
+            end = None
+            for position, database in enumerate(databases):
+                variants = self.animations.variants(database).get(fragment.lower(), [])
+                for offhand in (False, True):
+                    variant = select(variants, tags, offhand)
+                    if variant is None:
+                        continue
+                    events.extend(variant["ranged"])
+                    if position == 0 and not offhand:
+                        end = variant["end"]
+            if not events:
+                continue
+            words = set(name.lower().split("_"))
+            if RANGED_LEFT_OUT_WORDS & words or any(word in name.lower() for word in ("walkback", "move")):
+                self.count("a ranged action is a part of a chain, a reaction, a movement, or an attack on a structure")
+                continue
+            releases = []
+            for time, values in sorted(events, key=lambda event: event[0]):
+                release, cause = self.release(values, references, main_hand, rows)
+                if release is None:
+                    self.count(cause)
+                    releases = []
+                    break
+                releases.append({"time": rounded(time), **release})
+            if not releases:
+                continue
+            last = releases[-1]["time"]
+            length = end if end is not None and end > last else last + TIME_AFTER_CONTACT
+            ranged.append([index, rounded(min(length, LONGEST_ATTACK)), releases])
+        return ranged
+
+    def count(self, cause: str) -> None:
+        self.ranged_left_out[cause] = self.ranged_left_out.get(cause, 0) + 1

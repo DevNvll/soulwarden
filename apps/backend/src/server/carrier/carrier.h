@@ -61,6 +61,14 @@ public:
     [[nodiscard]] State state() const {
         return m_state;
     }
+    /**
+     * @return The sequence number of the datagram of the client that carried the message of the delivery that runs now (the last chunk
+     *         of a message in chunks). The datagrams of the client have one sequence for all channels: the order in which the client
+     *         sent two messages of different channels (code review of stage 2.5b, finding ST-R2).
+     */
+    [[nodiscard]] std::uint16_t delivered_datagram() const {
+        return m_deliveredDatagram;
+    }
 
 private:
     struct Message {
@@ -70,6 +78,8 @@ private:
         std::uint16_t chunks{1};
         std::uint16_t sequence{};
         std::uint16_t reliableSequence{};
+        /** The sequence number of the datagram that carried the message. */
+        std::uint16_t datagram{};
         Bytes data;
     };
 
@@ -94,6 +104,7 @@ private:
     State m_state{State::connecting};
 
     std::uint16_t m_datagramSequence{0};
+    std::uint16_t m_deliveredDatagram{0};
     std::uint16_t m_sendSequence[kChannelCount];
     std::uint16_t m_sendReliableSequence[kChannelCount];
     std::uint16_t m_receivedSequence[kChannelCount];

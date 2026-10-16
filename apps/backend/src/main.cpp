@@ -375,6 +375,17 @@ int main(int argc, char** argv) {
                        creatureData.fighting_points(),
                        creatureData.spawn_points().size());
         }
+        // The ranged attacks (stage 3.4f-A): the archers shoot with their basic shot.
+        if (creatureData.projectiles().empty()) {
+            log::write("backend: the creature data has no ranged attacks (a file of a tool from before stage 3.4f-A): no creature "
+                       "shoots. Make the file again with tools/gamedata/creatures.sh");
+        } else {
+            log::write("backend: creature ranged data: %zu slices with the basic shot %s, %zu projectile slices, %s",
+                       creatureData.shooting_slices(),
+                       gamedata::kBasicShotAction,
+                       creatureData.projectiles().size(),
+                       creatureData.player_capsule() ? "the capsule of the player slice" : "no capsule of the player slice (the default capsule)");
+        }
         // The patrol and wander data (stage 3.4e): a creature roams only near a character.
         if (creatureData.routes().empty() && creatureData.wandering_kinds() == 0) {
             log::write("backend: the creature data has no patrol routes and no wander values (a file of a tool from before "

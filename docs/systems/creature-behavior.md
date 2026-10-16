@@ -12,6 +12,7 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 | The behavior of a creature: the sense, the way to a player, the attack and its contact test, the way back, the behavior data of a slice, the two switches | Protocol notes 4.17 and 4.19, `apps/backend/src/world/behavior.h`, `world/navigation.h`, `world/creatures.h`, `gamedata/creature_data.h`, `tools/gamedata/creature_behavior.py`, `tools/world ignore`, test cases FT1 to FT14 |
 | Patrol and wander of a creature: the routes of the spawn points, the wander values, the walk out of a fight, which creatures roam, the anchor of a fight, the reset (immune, the trail back), the wait at the place nearest to a target with no way | Protocol notes 4.14, 4.17, and 4.5, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/navigation.h` (`next_step` with `nearest`), `gamedata/creature_data.h` (`PatrolRoute`), `server/rep/states/vitals_state.cpp`, `tools/gamedata/creature_data.py` (`read_patrol`, `world_route`, `check_creature_tool.py`), `tools/world creatures`, `tools/world creature anchor`, test cases PT1 to PT10 and RP1 to RP9 |
 | A fight that a player can play: the 10 s with no target after a travel, the health that comes back, light and heavy attacks of a creature and their pause, creatures that do not stand at one place | Protocol notes 4.19, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/health.h`, `gamedata/creature_data.h` (`kContactGap`, `kHeavyWeight`), test cases PL1 to PL4 |
+| The shot of an archer (stage 3.4f-A): the band, the choice of melee or shot, the windup and the release, the aim and the lead, the repeat time, the walk back, the cancels | Protocol notes 4.37, `apps/backend/src/world/behavior.h` (the rule Shoot, `behavior_rules::kShot*`, `Behavior::aim`, `command_shot`), `world/projectiles.h` (`launch_creature`), `gamedata/creature_data.h` (`RangedRelease`, `kBasicShotAction`), `tools/world creature shoot`, test cases CRG2 to CRG5 |
 
 ## Rules
 
@@ -33,8 +34,8 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   each attack starts the time again), attacks it in its reach, and then
   goes back. A creature has one target. From stage 3.4d a wall stops the vision, the attack, each contact of an
   attack, and the way (the navigation data, protocol notes 4.19; a ceiling between two
-  bodies on one vertical line too). A kind with no attack that the data tool can use (859
-  of the 3,848 kinds) takes no target and takes damage; it patrols or wanders with the roam
+  bodies on one vertical line too). A kind with no attack that the data tool can use (814
+  of the 3,848 kinds from stage 3.4f-A; 859 before the basic shot) takes no target and takes damage; it patrols or wanders with the roam
   data of its spawn point and of its slice, as each other creature (test case RP9).
 - A summon as a target (stage 3.3b-S2b, [Spell entities](spells.md)). A creature that a shot of a summon hurts takes the
   summon as its target (the Pylon: `OverrideTargetForAiThreat` of its spell row; `Behavior::hurt_by` with the threat of the
@@ -115,6 +116,46 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   none) after 10 steps of waiting, also in the last steps of its way. A new rule of the
   behavior keeps the cost rule: no scan of each creature
   of the world.
+- The shot of an archer (stage 3.4f-A, protocol notes 4.37; research `creature-ranged.md`). A creature whose slice has the basic shot
+  (the ranged attack of the action FireBow of its action table, `gamedata::kBasicShotAction`; 20 slices: the Evil Knight, Lost Knight,
+  and Lost Mercenary archers, the Skeleton Archers, the Dryad Archers, the Damned Bowmen, and their variants) fights a character with
+  it. The rules and the source of each one:
+  - Which attack (a decision of an agent, the scope of the stage): the basic shot only; the other ranged attacks of the data (a charged,
+    a fast, a triple shot, a cast) are in the data and wait for later parts. A creature with no melee attack and the basic shot fights
+    too (the Dryad Archers); one with neither takes no target. The shot is only at a character: a creature with no melee attack that
+    takes a summon as its target (the rule of the summon above) turns to it, does not attack it, and loses it at the end of the summon.
+  - The band (a project rule, research Q3 option 1: the game files have no keep-distance rule and no behavior tree): a target in
+    `kShotFar` (20 m, horizontal) with a free line (the vision line of the navigation data) and in `kShotHeight` (12 m) gets the shot; a
+    creature farther, or with no free line, walks on its path to `kShotHold` (18 m: 2 m of the band for a target that moves some steps);
+    a creature nearer than `kShotNear` (8 m) walks back to `kShotMiddle` (14 m) on a path, when the place is in its leash, at most one
+    time in `kRetreatPause` (6 s); with no such path it shoots from its place. Reason: a fight that the player can drive (an archer that
+    stands still at each distance cannot be pushed back), with no endless kite (the pause), in the 100 m range of the profile.
+  - Melee or shot (a project rule, research Q3 option 1): the melee attack of the slice wins when the target is in the reach of its next
+    melee attack (the reach of the data and `kContactTolerance`); the shot in the band. The choice holds for one action: an action plays
+    to its end with no step, no turn, and no other attack (a hit plays no reaction while a shot plays, as for an attack).
+  - The windup and the release (game data): the action of the shot (FireBow with the tags of the slice, its time from the animation data:
+    2.47 s for the Evil Knight archer) and the release at the time of its CAGE-RangedAttack event (1.333 s; 0.65 s for the Dryad Archer).
+    The world keeps each release on the world clock with the generation of its action (`PendingRelease`). The release flies only when the
+    action is still the action of the shot (a stun, a knockdown, or a command replaced it: no shot, research A5), the creature lives (its
+    death before the release: no shot), and the target is there (its death or its leave: no shot). These ends are rules of this project
+    (research A6).
+  - The aim (a decision of an agent with the values of the data): the origin `kMuzzleHeight` (1.5 m) above the feet and `kMuzzleForward`
+    (0.6 m) in front of the creature (live check L2: the arrow leaves the bow); the point: the middle of the capsule of the target (the
+    capsule of the player slice, game data). The lead (research Q3 option 1, with the values of the clip): with `AILeadTarget`, a
+    constant-velocity intercept of the velocity of the target at the release (`World::velocity_of`: the accepted positions of the last
+    60 ms or more; 0 after 300 ms with no change) with the aim speed of the clip (`ProjectileSpeed`, 50 m/s), at most
+    `AILeadTargetMaxAngle` (10 degrees) from the direct line. Then the fall: the aim is higher by the fall of the acceleration of the
+    slice in the time of the flight (live check L2b: the client flies the arrow with the acceleration of the slice). At most
+    `AIAimMaxAngle` (45 degrees) to each side of the front of the creature (the creature looks at the target at the start of the action).
+    The direction stays: the shot does not follow the target. No deliberate miss: the data has `AIMissMinDistance` and
+    `AIMissMaxDistance` (1.5 m to 3 m) with no chance of a miss, thus the backend keeps the values and uses none (a miss with each shot
+    would hit nothing).
+  - The repeat (a project rule, research Q3 option 1): the next shot `kShotRepeat` (3 s) after the start of the last shot, or at the end
+    of its action when later; a melee attack keeps its pause (1.5 s, 2.5 s), and a shot waits for that pause after a melee attack.
+  - The flight and the hit: [Projectiles](projectiles.md) (the creature shots). The shot hits the first character on its line, not only
+    the target.
+  - The command `tools/world creature shoot CREATURE CHARACTER` (`Behavior::command_shot`): the creature takes the character as its target
+    and starts its shot now, with no band and no repeat time (a test of a wall, a far target, an observer).
 - Two switches for the behavior. `SOULWARDEN_CREATURE_BEHAVIOR=0` (backend option
   `--no-creature-behavior`) turns it off for a start: the creatures stand at their spawn
   points. The command `set_creatures_ignore` (`tools/world ignore`, the mark of the tab
@@ -157,6 +198,11 @@ tools/world creature anchor 2c 8585.5 4243.1 173.26   # the anchor of a creature
   example a ledge).
 
 ## Traps
+
+- An archer sees a character at the vision distance of its slice (12 m for the Evil Knight and Lost Knight archers, 18 m for the
+  Skeleton Archer), and it shoots in 20 m: a character at 15 m in front of a Lost Knight archer is not seen. Hit it, or come nearer.
+- A creature of a spawn point near the archer (a wolf, a Risen) attacks the character too: for a clean video remove them
+  (`tools/world creature remove ID`; the points wait until `tools/world creature reset`).
 
 - Each creature that sees the character attacks it, also in a test of a different system:
   the character can die while a test waits. Turn the ignore value on first

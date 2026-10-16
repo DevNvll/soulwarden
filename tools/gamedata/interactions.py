@@ -221,7 +221,14 @@ KIND_ORDER = {name: index for index, (name, _) in enumerate(KINDS)}
 
 STATION_OPTIONS = ("OpenCraftingOption", "OpenCraftingOptionLevel60", "BindToCampOption", "BindToCampOption_17DW")
 
+# The slice assets of PrefabSpawner children of the retail data that no record of the asset catalog of the game has (stage 2.5b,
+# code review finding ST-R7: the full catalog of build 1.400.6031.6004151 has 1,595,260 records and none of these ids; the spawners
+# Lotus_A, Lotus_B, and Lotus_C of an enclave of r_+04_+02, five uses). The client cannot make them either: they are not server
+# children. Each other concrete asset with no path stops the tool (a broken join).
+ASSETS_NOT_IN_GAME = frozenset({uuid.UUID("5f3bb00e-2549-523f-9063-98c2c3c132d0"), uuid.UUID("3e227128-6334-5dd2-8929-c12b15a6aadf"),
+                                uuid.UUID("e21df46d-ebfc-57db-82c7-52233ca4ded3")})
 CAUSE_SPAWNER = "a child of a PrefabSpawner that is not a station or a camp, or that the client makes: a later stage"
+CAUSE_NOT_IN_GAME = "a child of a PrefabSpawner whose slice asset no record of the asset catalog of the game has (ASSETS_NOT_IN_GAME)"
 CAUSE_ALIAS = "a child of a PrefabSpawner with an alias asset and no slice asset: not read"
 CAUSE_CHILD_NO_PLACE = "a child of a station or a camp slice with no PositionInTheWorld component: the client cannot place it"
 CAUSE_DISTRIBUTION = "a record of a distribution file: not read (stage 3.6)"
@@ -665,6 +672,25 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     def exclude(cause: str, count: int = 1) -> None:
         excluded[cause] = excluded.get(cause, 0) + count
 
+    def child_slice(spawner: dict, what: str) -> str | None:
+        """@return The slice of the child of a PrefabSpawner that the server makes, or nothing (with its count) for a child that the
+        tool does not read: an alias asset. A concrete slice asset that the catalog does not have stops the tool (code review of stage
+        2.5b, finding ST-R7: a station or its forge left the file with no error)."""
+        child_path = catalog.path(spawner["asset"]) if spawner["asset"] is not None else None
+        if child_path is not None:
+            return child_path
+        if spawner["alias"]:
+            exclude(CAUSE_ALIAS)
+            return None
+        if spawner["asset"] is not None and spawner["asset"][0] != bytes(16):
+            if uuid.UUID(bytes=spawner["asset"][0]) in ASSETS_NOT_IN_GAME:
+                exclude(CAUSE_NOT_IN_GAME)
+                return None
+            raise Failure(f"{what}: the PrefabSpawner {spawner.get('name', '')} names the slice asset "
+                          f"{uuid.UUID(bytes=spawner['asset'][0])}:{spawner['asset'][1]}, and the catalog of the game has no path of it")
+        exclude(CAUSE_SPAWNER)
+        return None
+
     def achievement(identifier: str, what: str) -> int | None:
         """@return The index of an achievement in "achievements", or no value for an id with no row (unresolved)."""
         lower = identifier.lower()
@@ -796,9 +822,8 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
             # The children that the server makes with the child (the forge of a station: live check L4 of stage 2.5b).
             if spawner["client"] or not spawner["onInit"]:
                 continue
-            child_path = catalog.path(spawner["asset"]) if spawner["asset"] is not None else None
+            child_path = child_slice(spawner, f"the template {slice_path}")
             if child_path is None:
-                exclude(CAUSE_ALIAS if spawner["alias"] else CAUSE_SPAWNER)
                 continue
             child = load_template(child_path, child=True)
             if child.slots["position"] == 0 or depth >= 3:
@@ -829,20 +854,29 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 if not isinstance(placement, dict):
                     raise Failure(f"{layer}: a placement is not an object")
                 counts["placements"] += 1
-                where = placement.get("worldPosition") or {}
+                slice_name = str(placement.get("sliceName") or "")
+                asset_text = str(placement.get("sliceAssetId") or "")
+                plot = not slice_name.strip() or "<plot>" in slice_name.lower()
+                # The position: an object with three finite numbers (code review of stage 2.5b, finding ST-R6: a missing position, a
+                # list, or a missing axis became 0). A named placement with no such position is an incomplete source; a plot with
+                # none is not an object.
+                where = placement.get("worldPosition")
+                if not isinstance(where, dict) or any(axis not in where for axis in "xyz"):
+                    if plot:
+                        exclude(CAUSE_PLOT)
+                        continue
+                    raise Failure(f"{layer}: the placement {placement.get('id')} of the slice {slice_name} has no position with x, y, "
+                                  f"and z")
                 try:
-                    position = {axis: float(where.get(axis, 0.0)) for axis in "xyz"}
-                except (TypeError, ValueError, AttributeError) as error:
+                    position = {axis: float(where[axis]) for axis in "xyz"}
+                except (TypeError, ValueError) as error:
                     raise Failure(f"{layer}: a placement has a position that is not a number") from error
                 if not all(math.isfinite(value) for value in position.values()):
                     raise Failure(f"{layer}: the placement {placement.get('id')} has a position that is not finite")
                 if center is not None and radius is not None \
                         and math.hypot(position["x"] - center[0], position["y"] - center[1]) > radius:
                     continue
-                slice_name = str(placement.get("sliceName") or "")
-                asset_text = str(placement.get("sliceAssetId") or "")
                 asset = asset_of(placement)
-                plot = not slice_name.strip() or "<plot>" in slice_name.lower()
                 if plot and (asset is None or asset[0] == bytes(16)):
                     exclude(CAUSE_PLOT)
                     continue
@@ -862,6 +896,9 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 identifier = str(placement.get("id", ""))
                 try:
                     actor = actor_of(identifier)
+                    # One form of the UUID for each key and each compare (code review of stage 2.5b, finding ST-R8: two spellings of
+                    # one id were two keys, and the backend refused the file).
+                    identifier = str(uuid.UUID(identifier))
                 except ValueError as error:
                     raise Failure(f"{layer}: the placement id {identifier!r} is not a UUID") from error
                 # One placement id in two layers: only an equal copy is one placement (finding INT-R6).
@@ -879,9 +916,8 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                     if spawner["client"]:
                         exclude(CAUSE_SPAWNER)
                         continue
-                    child_path = catalog.path(spawner["asset"]) if spawner["asset"] is not None else None
+                    child_path = child_slice(spawner, f"{layer}: the placement {identifier}")
                     if child_path is None:
-                        exclude(CAUSE_ALIAS if spawner["alias"] else CAUSE_SPAWNER)
                         continue
                     child = load_template(child_path)
                     if not child.is_station():

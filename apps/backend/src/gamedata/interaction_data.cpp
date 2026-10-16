@@ -668,6 +668,22 @@ bool InteractionData::set(std::vector<InteractionOption> options,
             }
             spread = std::max(spread, std::hypot(bound.position.x, bound.position.y));
         }
+        // One component for each slot of a slice (code review of stage 2.5b, finding ST-R5): the PositionInTheWorld, BuildableController,
+        // Ownership, and Vitals slots and the slot of each Interact bound are different (0: the slice has no such component).
+        std::vector<std::uint32_t> used;
+        for (const std::uint32_t slot : {entry.positionSlot, entry.buildableSlot, entry.ownershipSlot, entry.vitalsSlot}) {
+            if (slot != 0) {
+                used.push_back(slot);
+            }
+        }
+        for (const InteractionBound& bound : entry.bounds) {
+            used.push_back(bound.slot);
+        }
+        std::sort(used.begin(), used.end());
+        if (std::adjacent_find(used.begin(), used.end()) != used.end()) {
+            m_error = "two components of the template " + entry.slice + " have the same slot";
+            return false;
+        }
         for (const TemplateChild& child : entry.children) {
             if (child.templateIndex >= templates.size() || child.templateIndex == index) {
                 m_error = "a child of the template " + entry.slice + " names no other template";

@@ -20,6 +20,7 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 | A shot of the server for a character with no client | `Projectiles::launch_character`, `commands::shoot`, `tools/world shoot` |
 | The projectile of an ability: the toss of the trap, the Beacon, the shots of the Pylon | `Projectiles::launch_spell` (`SpellShot`, `SpellLanding`), `Abilities::takes_shot`, `Abilities::throw_spell`, `Spells::summon_shot`, [Spell entities](spells.md), test cases SB3, SB5, SB6, SB9 |
 | The corrections of the code review of stage 3.3b-S3 (F1 to F8) | `tests/review_projectile_tests.cpp`, test cases RJ1 to RJ8 |
+| The shot of a creature (stage 3.4f-A): the projectile entity and its record, the flight, the hit on a character, the ends, the holds, the limits | Protocol notes 4.37, `world/projectiles.h` (`Projectiles::launch_creature`, `CreatureShot`, `CreatureShotEnd`, `creature_shot_rules`), `server/rep/states/projectile_state.cpp`, `World::make_projectile`, test cases CRG3 to CRG6, CRG9 |
 
 ## Rules
 
@@ -81,10 +82,9 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 - A shield of an enemy of the shooter (stage 3.3b-M2; [Spell entities](spells.md): the shield of Maelstrom with Absorb). The
   first point of the segment of a step in the sphere of a shield of an enemy of the shooter (`Spells::absorbs`; a creature and a
   character are enemies, two characters are not: `World::hostile`) ends the projectile there before a creature or a wall
-  behind it, with the end `absorbed` and no hit. The shooter is the spell entity of a spell projectile or the caster. Today no
-  projectile of a creature exists: a shield ends no projectile in a live game (test case GH11 tests the sphere). The cause (stage
-  3.3b-M2b): the creature data tool keeps only the melee damage events of an attack (an attack with a ranged row is left out), and
-  the projectile system flies only the shots of a player and of a spell. A shooting creature needs its own stage.
+  behind it, with the end `absorbed` and no hit. The shooter is the spell entity of a spell projectile or the caster. From stage
+  3.4f-A the shots of the archers fly (below): the shield takes them too (the creature is the shooter); the live check of the
+  absorption is part 3.4f-B.
 - The head of a creature (stage 3.3b-S5, `head_contact`, protocol notes 4.30). A hit of a projectile is a headshot when the
   line of the projectile at the body meets the head volume of the creature: the line from one radius of the body capsule
   before the point of the hit to one radius of the head volume and the hit tolerance (`projectile_rules::kHitTolerance`,
@@ -128,6 +128,45 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 - With no projectile data (no file, a file that is not complete) the backend starts, and each shot is refused (`no
   projectile data`). The loader refuses a number that is not a finite 32-bit float (finding F8, test case RJ8).
 
+### The shot of a creature (stage 3.4f-A)
+
+- The behavior gives the release of a shot ([Creature behavior](creature-behavior.md): the basic shot of an archer) to the projectile
+  system (`Projectiles::launch_creature`, `CreatureShot`: the creature, the release of the data, the origin, the unit direction). The
+  release has its joins in the creature data (`gamedata::RangedRelease`: the profile and the attack, the index of the attack, the
+  ammunition key, the damage table key and the row, the range, the radius, and the acceleration delay of the attack; the projectile
+  slice `gamedata::ProjectileSliceData`: the asset, the slot of the Projectile component, the speed, the acceleration, the life times).
+- The record (protocol notes 4.37; live checks L1, L2): the projectile is an entity of the world (`EntityKind::projectile`,
+  `ProjectileBody`, `World::make_projectile`: an actor of the allocator; rule MP-4). Its codecs (`projectile_codecs`) give each session
+  the metadata state of the slice and the Projectile state (type 16) at the slot of the slice: the launch for a session with no record of
+  it, the collision state at its contact. A new projectile starts the interest scan of each session at once (`World::last_projectile`):
+  a record that waits for the interval of the scan comes when the arrow is far along (live check L2a). A session observes it in the
+  distance of a character (100 m) while it flies, and stops it 20 m farther; a session that comes near in the flight gets the launch with
+  its time anchor (its client flies it from there); an ended projectile gets no new observer. One encoder: each observer gets the same
+  bytes (rule MP-2).
+- The flight (game data; live check L2b): on the world clock in steps of 1/30 s, `p += (v + a dt / 2) dt`, `v += a dt` with the speed of
+  the slice (`m_baseSpeed`, 50 m/s for `basic_ai_arrow`) and its acceleration (`m_accel`, (0, 0, -2)) from the acceleration delay of the
+  attack on (0 m for `AI_Bow/Basic`). The flight ends at the range of the attack (`m_maxRange`, 100 m) or at the life time of the slice
+  (`m_flyingLifetime`, 1.5 s: 75 m), whichever comes first. `m_extraSpeed` and `m_timeForMaxSpeed` are kept and not used (their use is not
+  known).
+- The hit (a project rule): each segment looks at the characters near it (the position index: half the segment, the reach of the capsule
+  of a character, and the radius of the attack) and at the cells of the navigation data on it (`Navigation::line_stop`). The first
+  character that lives and that the creatures do not ignore, whose capsule the segment touches with the radius of the attack (0 m for
+  `AI_Bow/Basic`; no hit tolerance: a shot of a creature does not get the tolerance of the network delay that a shot of a player gets),
+  takes one damage result: `Health::creature_hit` with the row of the release (the damage of the level and of the kind of the creature,
+  the factor of the row, the level difference, the armor; the damage mark of the owner, the vitals of each observer). The capsule of a
+  character is the capsule of the CharacterComponent of the player slice (game data: radius 0.41 m, segment 0.8 m, its lowest point at
+  the feet; the default capsule with a file of an older tool). The shot hits the first character on its line, not only the target (case
+  CRG4). A wall or the ground first: no damage. A shield of an enemy of the creature first: the end `absorbed`.
+- The ends (rules of this project, research A6): a hit, a wall, a shield: the collision state, and the stop of the record after
+  `creature_shot_rules::kHitHold` (0.25 s: the collision state goes out before the stop) or, at a wall, after the stuck life time of the
+  slice (`m_stuckLifetime`, 8 s, at most 10 s: the arrow stays in the wall). The range or the life time: the stop at once (no contact).
+  The death or the leave of the creature in the flight: the stop at once, no damage (`Projectiles::source_left`; the same rule as for a
+  player). The death or the leave of the target in the flight: the shot flies on (it can hit a different character on its line).
+- The limits and the cost: 8 shots of a creature in the air at most (`kCreatureMost`, a limit of the cost); a direction that is not a
+  unit vector or a place that is not of the world is refused. The tick looks only at the shots in the air and at the holds (case CRG9:
+  32,840 far spawn points, 50 characters, 50 archers, 200 flights, 1,000 ticks in about 14 ms; the same steps, looks, and wall tests with
+  840 points).
+
 ### The projectile of an ability (stage 3.3b-S2b)
 
 - A shot rule of the data with the 11th value true is the projectile spell of an ability (the toss of the trap, the
@@ -149,6 +188,7 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 ```sh
 tools/world shoot NAME [--yaw DEGREES] [--pitch DEGREES] [--heavy]   # a shot of the server for a character (also with no client)
 tools/world projectiles              # the projectiles in the air, the shots by verdict, the ends by cause, the work
+tools/world creature shoot ID NAME   # stage 3.4f-A: the creature starts its basic shot at the character now
 tools/world list                     # the line "projectiles"
 tools/gamedata/projectiles.sh [OUT.json]   # write projectile-data.json (default: the game data folder)
 tools/gamedata/projectiles.sh --find TEXT...   # print the attacks, the shots, and the weapons with a text
@@ -164,6 +204,11 @@ tools/gamedata/projectiles.sh --find TEXT...   # print the attacks, the shots, a
   (`rep: shot refused (CAUSE)`), and the counts at the end of the session (`rep: shots of the session`).
 
 ## Traps
+
+- A creature shot shows in the client only with its record (the Projectile state): a shot of a player has no record (its owner sees its
+  own projectile, its observers only the hit). Do not compare the two.
+- A first record that comes later than its time anchor puts the arrow at its place of now: with a record 0.5 s late an arrow of 50 m/s
+  is 25 m along (live check L2a). The interest scan of each session runs at once for a new projectile for this cause.
 
 - The capture folder of a session is full after about 6 minutes in the world: a shot after that is not in the captures.
   Leave the world and enter it again for a new folder (`tools/scenarios/leave.sh`, then the Play button).

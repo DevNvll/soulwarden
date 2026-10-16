@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -59,6 +60,10 @@
 //   POST /v1/dev/world/probe/remove?entity=ID            remove a probe entity: each observer gets the stop
 //   POST /v1/dev/world/fragment?entity=ID&slot=N&type=N&state=HEX
 //                                                        the fragment command for a probe entity
+//                                                        (stage 3.4f-A: in the state of a probe or of a
+//                                                        fragment, each 8 bytes 7E7E7E7E7E7E7E7E become the
+//                                                        server time in microseconds, u64 big-endian, at the
+//                                                        task of the world: the time anchor of a live check)
 //   POST /v1/dev/world/friends?character=ID&friend=ID     the two characters are friends (the test fixture of a heal of
 //                                                        a friend, stage 3.3b-S6)
 //   GET  /v1/dev/heals?character=ID[&target=ID]          the heal base, the outgoing and received factors, the friends,
@@ -105,6 +110,7 @@
 //                                                        its creature again in N s
 //   POST /v1/dev/world/fragment?creature=ID&slot=N&type=N&state=HEX
 //                                                        the fragment command for a creature
+//   POST /v1/dev/creatures/shoot?creature=ID&character=ID  the creature starts its basic shot at the character now (stage 3.4f-A)
 //   POST /v1/dev/creatures/effect?creature=ID&status=NAME[&seconds=N]
 //                                                        a creature takes an effect of the ability
 //                                                        data, or a knockdown or a stagger (stage 3.3a)
@@ -162,6 +168,8 @@ const char* kind_text(world::EntityKind kind) {
         return "spell";
     case world::EntityKind::object:
         return "object";
+    case world::EntityKind::projectile:
+        return "projectile";
     case world::EntityKind::player:
         break;
     }
@@ -456,6 +464,26 @@ service::HttpResponse touch_entity(const Services& services, const RouteContext&
     });
 }
 
+/**
+ * Development aid of a live check (stage 3.4f-A, L2: the first Projectile state): each 8 bytes 7E7E7E7E7E7E7E7E of a state
+ * become the server time of the world clock in microseconds (u64, big-endian), at the task of the world. A time anchor of a
+ * state is then the time of its record, with no delay of the command.
+ */
+void stamp_server_time(std::vector<std::uint8_t>& state, const world::WorldClock& clock) {
+    static constexpr std::uint8_t kMark = 0x7E;
+    static constexpr std::size_t kSize = 8;
+    const std::uint64_t now = clock.server_time_ns() / 1000;
+    for (std::size_t index = 0; index + kSize <= state.size(); ++index) {
+        if (std::all_of(state.begin() + static_cast<std::ptrdiff_t>(index), state.begin() + static_cast<std::ptrdiff_t>(index + kSize),
+                        [](std::uint8_t byte) { return byte == kMark; })) {
+            for (std::size_t part = 0; part < kSize; ++part) {
+                state[index + part] = static_cast<std::uint8_t>(now >> (8 * (kSize - 1 - part)));
+            }
+            index += kSize - 1;
+        }
+    }
+}
+
 service::HttpResponse raw_fragment(const Services& services, const RouteContext& context) {
     const service::HttpRequest& request = context.request;
     if (!request.host.empty()) {
@@ -502,7 +530,9 @@ service::HttpResponse raw_fragment(const Services& services, const RouteContext&
             return message(404, isCreature ? "the world has no creature with this id" : "the character is not in the world");
         }
         log::write("dev: fragment for character %s: slot %u, type %u, %zu bytes", character.c_str(), slot, type, state.size());
-        target.set_raw_fragment(entity->id, slot, type, state);
+        std::vector<std::uint8_t> stamped = state;
+        stamp_server_time(stamped, target.clock());
+        target.set_raw_fragment(entity->id, slot, type, std::move(stamped));
         return message(200, "fragment set");
     });
 }
@@ -582,6 +612,9 @@ service::HttpResponse make_probe(const Services& services, const RouteContext& c
         }
         const state::WorldPosition position{reference->position.x + offset0, reference->position.y + offset1,
                                             reference->position.z + offset2};
+        for (world::RawFragment& fragment : fragments) {
+            stamp_server_time(fragment.state, target.clock());
+        }
         const world::Entity* probe = target.make_probe(body, position, std::move(fragments));
         if (probe == nullptr) {
             return message(400, "the position is not a position of the world, or the actor id is the id of an entity");
@@ -887,6 +920,7 @@ void register_dev_routes(Router& router, const Services& services) {
                creature_route(services, commands::play_creature_action));
     router.add("POST", "", "/v1/dev/creatures/effect", "dev.creatures_effect",
                creature_route(services, commands::give_creature_effect));
+    router.add("POST", "", "/v1/dev/creatures/shoot", "dev.creatures_shoot", creature_route(services, commands::creature_shoot));
     router.add("GET", "", "/v1/dev/abilities", "dev.abilities", [&services](const RouteContext& context) {
         service::HttpResponse refusal;
         const auto character = character_of(context, refusal);

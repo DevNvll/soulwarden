@@ -206,6 +206,85 @@ struct CreatureHead {
     float radius{0.0F};
 };
 
+/**
+ * One projectile slice of the ranged attacks (stage 3.4f-A, the list "projectiles" of the file; research creature-ranged.md Q2
+ * and R0, live checks L1 and L2): what a server projectile of a creature needs for its record and its flight. Game data.
+ */
+struct ProjectileSliceData {
+    /** Path of the slice in the game files. For a log line only. */
+    std::string path;
+    /** Asset id and sub id of the slice: the metadata state of the projectile entity has them. */
+    std::array<std::uint8_t, 16> asset{};
+    std::uint32_t subId{0};
+    /** Id of the root entity of the slice file. */
+    std::uint64_t root{0};
+    /** Slot of the Projectile component of the slice (its m_replicationIndex): the Projectile state (type 16) goes there. */
+    std::uint32_t slot{0};
+    /** The flight values of the Projectile component: m_baseSpeed (m/s), m_extraSpeed, m_timeForMaxSpeed, m_accel (m/s²). */
+    float speed{0.0F};
+    float extraSpeed{0.0F};
+    float timeForMaxSpeed{0.0F};
+    std::array<float, 3> accel{};
+    /** m_flyingLifetime: the end of a flight with no hit (seconds); m_stuckLifetime: the time of a stuck projectile. */
+    float flyingLifetime{0.0F};
+    float stuckLifetime{0.0F};
+};
+
+/**
+ * One release of a ranged attack (stage 3.4f-A): the CAGE-RangedAttack event of the fragment of its action, with its joins
+ * (creature_behavior.py). Game data.
+ */
+struct RangedRelease {
+    /** The time of the release from the start of the action, in seconds. */
+    float time{0.0F};
+    /** The profile and the attack of the ranged attack data (names for a log line), and the index of the attack on the wire. */
+    std::string profile;
+    std::string attack;
+    std::uint32_t attackIndex{0};
+    /** The ammunition (its AmmoID, empty with none) and the ammunition key on the wire (the CRC-32 of its lower-case AmmoID; 0: none). */
+    std::string ammo;
+    std::uint32_t ammoKey{0};
+    /** Index into CreatureData::projectiles. True: the slice of the clip (SliceOverride), not the slice of the ammunition. */
+    std::uint32_t projectile{0};
+    bool sliceOverride{false};
+    /** The damage table of the slice (its unique name and its key on the wire) and the place of the row among its rows. */
+    std::string table;
+    std::uint32_t tableKey{0};
+    std::uint32_t rowIndex{0};
+    /** The damage of the release: the row (the factor, the added damage, the type, the rune charge). Its time and reach are 0. */
+    CreatureContact damage;
+    /** The aim values of the clip: AILeadTarget, ProjectileSpeed (the speed of the aim), AILeadTargetMaxAngle, AIAimMaxAngle (degrees). */
+    bool lead{false};
+    float aimSpeed{0.0F};
+    float leadAngle{0.0F};
+    float aimAngle{0.0F};
+    /** AIMissMinDistance and AIMissMaxDistance (meters). The backend keeps them; no rule uses them (creature-behavior.md). */
+    float missMin{0.0F};
+    float missMax{0.0F};
+    /** The values of the attack of the profile: m_maxRange, m_projectileRadius, m_projectileAccelDelayDist (meters). */
+    float range{0.0F};
+    float radius{0.0F};
+    float accelDelay{0.0F};
+};
+
+/** One ranged attack of a slice (stage 3.4f-A): an action of its action table with one release or more. */
+struct CreatureRangedAttack {
+    /** Index of the action in CreatureSlice::actions. */
+    std::uint32_t action{0};
+    /** The time of the action, in seconds: the creature starts no other action before its end. */
+    float length{0.0F};
+    /** The releases, in the sequence of their times (the backend sorts them at the load of the data). */
+    std::vector<RangedRelease> releases;
+};
+
+/**
+ * The basic shot of an archer (stage 3.4f-A, a rule of this project for the scope of the stage): the ranged attack of the action
+ * with this name is the one ranged attack that a creature uses (the action FireBow of 20 slices of the supported build: one
+ * release, the ammunition of the slice). The other ranged attacks of the data (a charged or a fast shot, the shot of a caster) are
+ * in the data, and no creature uses them yet. The tool has the same name (creature_behavior.py, BASIC_SHOT_ACTION).
+ */
+inline constexpr const char* kBasicShotAction = "FireBow";
+
 /** One slice of a creature. */
 struct CreatureSlice {
     /** One component of the slice that has a facet: a target of a client message (protocol notes 4.2). */
@@ -332,10 +411,21 @@ struct CreatureSlice {
     /** The indexes of its attacks that are not heavy, and of its heavy attacks, in the sequence of the data. */
     std::vector<std::uint32_t> lightAttacks;
     std::vector<std::uint32_t> heavyAttacks;
+    /** The ranged attacks of the slice (stage 3.4f-A). Empty: a file of an older tool, or the slice has none. */
+    std::vector<CreatureRangedAttack> ranged;
+    /** The index in `ranged` of its basic shot (kBasicShotAction; the backend sets it at the load of the data). No value: none. */
+    std::optional<std::uint32_t> basicShot;
 
-    /** @return True when a creature with this slice gets a target and attacks it: the slice has a sense, a speed, and an attack. */
+    /**
+     * @return True when a creature with this slice gets a target and attacks it: the slice has a sense, a speed, and an attack (a
+     *         melee attack, or from stage 3.4f-A its basic shot).
+     */
     [[nodiscard]] bool fights() const {
-        return behavior && behavior->sightDistance > 0.0F && behavior->runSpeed > 0.0F && !attacks.empty();
+        return behavior && behavior->sightDistance > 0.0F && behavior->runSpeed > 0.0F && (!attacks.empty() || basicShot.has_value());
+    }
+    /** @return The basic shot of the slice, or null. */
+    [[nodiscard]] const CreatureRangedAttack* basic_shot() const {
+        return basicShot && *basicShot < ranged.size() ? &ranged[*basicShot] : nullptr;
     }
 
     /** @return The index of the action with this name that has a fragment, or no value. */
@@ -456,12 +546,17 @@ public:
                            std::vector<CreatureKind> kinds,
                            std::vector<SpawnPoint> spawnPoints,
                            std::vector<std::pair<std::uint32_t, float>> levels);
-    /** The same, with the damage and the gear score of each level. */
+    /**
+     * The same, with the damage and the gear score of each level, the routes, the projectile slices of the ranged attacks, and the
+     * capsule of the character of a player (stage 3.4f-A).
+     */
     [[nodiscard]] bool set_full(std::vector<CreatureSlice> slices,
                                 std::vector<CreatureKind> kinds,
                                 std::vector<SpawnPoint> spawnPoints,
                                 std::vector<CreatureLevel> levels,
-                                std::vector<PatrolRoute> routes = {});
+                                std::vector<PatrolRoute> routes = {},
+                                std::vector<ProjectileSliceData> projectiles = {},
+                                std::optional<CreatureCapsule> playerCapsule = std::nullopt);
 
     [[nodiscard]] bool loaded() const {
         return !m_kinds.empty();
@@ -482,6 +577,21 @@ public:
     /** @return The patrol routes of the spawn points (SpawnPoint::route). */
     [[nodiscard]] const std::vector<PatrolRoute>& routes() const {
         return m_routes;
+    }
+    /** @return The projectile slices of the ranged attacks (stage 3.4f-A; RangedRelease::projectile). */
+    [[nodiscard]] const std::vector<ProjectileSliceData>& projectiles() const {
+        return m_projectiles;
+    }
+    /**
+     * @return The capsule of the character of a player (the CharacterComponent of slices/player.dynamicslice, game data; stage
+     *         3.4f-A: the body that a creature shot hits). No value: a file of an older tool.
+     */
+    [[nodiscard]] const std::optional<CreatureCapsule>& player_capsule() const {
+        return m_playerCapsule;
+    }
+    /** @return The number of slices with a basic shot (stage 3.4f-A). */
+    [[nodiscard]] std::size_t shooting_slices() const {
+        return m_shootingSlices;
     }
     /** @return The route of a spawn point, or null. */
     [[nodiscard]] const PatrolRoute* route_of(const SpawnPoint& point) const {
@@ -564,6 +674,9 @@ private:
     std::vector<CreatureKind> m_kinds;
     std::vector<SpawnPoint> m_spawnPoints;
     std::vector<PatrolRoute> m_routes;
+    std::vector<ProjectileSliceData> m_projectiles;
+    std::optional<CreatureCapsule> m_playerCapsule;
+    std::size_t m_shootingSlices{0};
     std::size_t m_routedPoints{0};
     std::size_t m_wanderingKinds{0};
     /** Level to the values of the level. */

@@ -157,6 +157,7 @@ void Connection::receive(std::span<const std::uint8_t> datagram) {
         }
         message.reliableSequence = previousReliable[channel];
         message.connecting = (messageFlags & kFlagConnecting) != 0;
+        message.datagram = sequence;
         const auto data = reader.bytes(size);
         if (reader.overrun || size == 0) {
             break;
@@ -210,6 +211,7 @@ void Connection::release_received() {
                 if (channel == kSystemChannel) {
                     handle_system(message.data);
                 } else {
+                    m_deliveredDatagram = message.datagram;
                     m_deliver(channel, message.data);
                 }
                 continue;
@@ -237,11 +239,13 @@ void Connection::release_received() {
             Bytes payload;
             std::uint16_t lastSequence = 0;
             std::uint16_t lastReliable = 0;
+            std::uint16_t lastDatagram = 0;
             for (std::size_t index = 0; index < chunks; ++index) {
                 Message& part = queue.front();
                 payload.insert(payload.end(), part.data.begin(), part.data.end());
                 lastSequence = part.sequence;
                 lastReliable = part.reliableSequence;
+                lastDatagram = part.datagram;
                 queue.pop_front();
             }
             m_receivedSequence[channel] = lastSequence;
@@ -249,6 +253,7 @@ void Connection::release_received() {
             if (channel == kSystemChannel) {
                 handle_system(payload);
             } else {
+                m_deliveredDatagram = lastDatagram;
                 m_deliver(channel, payload);
             }
         }

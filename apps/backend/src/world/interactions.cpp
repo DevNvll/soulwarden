@@ -438,12 +438,13 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
             publish(context.objectIndex);
         }
         m_world.touch(character->id, ComponentKey::interactor);
-        // A use of a different source ends the service grant of the character (research Q4: one source grant).
-        if (character->serviceGrant
-            && (character->serviceGrant->object != active.object || character->serviceGrant->instance != active.instance
-                || character->serviceGrant->generation != active.generation)) {
-            end_grant(*character, "a use of a different source");
-        }
+    }
+    // A use of a different source ends the service grant of the character (research Q4: one source grant), also a use of one time
+    // (code review of stage 2.5b, finding ST-R4: the lore page of a different object kept the grant of a person). Only an accepted use.
+    if (character->serviceGrant
+        && (character->serviceGrant->object != context.objectIndex || character->serviceGrant->instance != context.instance
+            || character->serviceGrant->generation != context.generation)) {
+        end_grant(*character, "a use of a different source");
     }
     log::write("world: interaction of character %s: %s at the %s %s (%s, %.2f m, %s): accepted, %s%s", character->characterId.c_str(),
                context.option->name.c_str(), gamedata::interaction_kind_text(context.object->kind), context.object->key.c_str(),
@@ -466,9 +467,21 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
 
 void Interactions::request_ended(SessionId session) {
     Entity* character = m_world.entity_of(session);
-    if (character != nullptr && character->interaction) {
-        end(*character, InteractionEnd::clientEnd, false);
+    if (character == nullptr || !character->interaction) {
+        return;
     }
+    // A timed use that the client ends at its full time or later completes first, through the path of its timer (code review of stage
+    // 2.5b, finding ST-R1: the client clears its request after its execution; the timer comes 1 ms after the time, and a report that
+    // the world takes before the timer ended the use with no completion). An end before the time is a release: no completion.
+    const ActiveInteraction& active = *character->interaction;
+    if (active.due && !active.completed && m_world.clock().now() >= *active.due) {
+        const std::uint64_t serial = active.serial;
+        timed_due(character->characterId, serial);
+        if (!character->interaction || character->interaction->serial != serial) {
+            return; // The checks at the end ended the use (a source that went away, a disabled object).
+        }
+    }
+    end(*character, InteractionEnd::clientEnd, false);
 }
 
 bool Interactions::client_cancel(SessionId session, const InteractionReference& reference) {
@@ -523,7 +536,21 @@ void Interactions::damaged(Entity& character) {
 }
 
 void Interactions::moved(Entity& character) {
-    if (!character.interaction || character.positionEstimated) {
+    if (character.positionEstimated) {
+        return;
+    }
+    // The range of the source of a service grant (code review of stage 2.5b, finding ST-R3: a walk out of the range and back kept the
+    // grant): one lookup of the source of the character, no scan.
+    if (character.serviceGrant) {
+        const ServiceGrant& grant = *character.serviceGrant;
+        const Site site = site_of(grant.object, grant.instance, grant.generation);
+        if (site.object == nullptr || grant.bound >= site.object->bounds.size()) {
+            end_grant(character, "the source went away");
+        } else if (distance_sq(character.position, site.object->bounds[grant.bound].position) > site.object->bounds[grant.bound].rangeSq) {
+            end_grant(character, "the character left the range of the source");
+        }
+    }
+    if (!character.interaction) {
         return;
     }
     const ActiveInteraction& active = *character.interaction;

@@ -140,15 +140,24 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   position and the range), and completes it one time (`InteractionHandler::complete`). A failed check ends the use (3746). A
   release (the block goes away), a 2473, a cancel, a travel, the death, and damage before the end: no completion. The same block in
   each report is the same use: the time does not start again. After the completion the client clears its request (live: 5.0 s after
-  the press). The handler of the fixture counts the completions (no explosion, no reward).
+  the press). The handler of the fixture counts the completions (no explosion, no reward). A report with no block that the world takes
+  at the full time or later, before the timer (1 ms after the time), completes the use first through the path of the timer and then
+  ends it (code review of stage 2.5b, finding ST-R1, case RY1); an end before the time is a release.
+- A cancel before its press (code review of stage 2.5b, finding ST-R2, case RY2): the press (an input report) and its release (2473) go
+  on different carrier channels, and a press can come after its 2473. A 2473 that matches no use marks its reference with the sequence
+  number of its datagram (`carrier::Connection::delivered_datagram`: one sequence for all channels of a client); a request of that
+  reference from an earlier datagram starts no use (`RepSession::m_earlyCancel`). A request of a later datagram ends the mark, and the
+  mark ends 3 s after the cancel (a decision of an agent: the numbers have 16 bits).
 - The service handoff (stage 2.5b; the base of the shops 5.1 and the transmog 5.6; research Q4): a handler of a later stage gives the
   character of a committed use a service of its source (`grant_service`: the kind, the ids of the offer, the revision, a deadline
   only when the data has one). The grant is a value of the entity (`Entity::serviceGrant`), and only this system changes it. It stays
   after the end of the use (the 2473 of a conversation), so that a later operation with no source in its message (a purchase 3741)
   can check it: `require_service` passes for the same world entry (the entity), the same source and generation, the source near
-  (the 3D range of its bound), the service, and an id of the offer. A use of a different source, the removal of the source, the
-  range, the death, a travel, the leave, an expired deadline, and `close_service` end it. No fixed time limit: the option data has
-  none (research). Two characters at one source have two grants.
+  (the 3D range of its bound), the service, and an id of the offer. An accepted use of a different source (also a use of one time:
+  code review of stage 2.5b, finding ST-R4, case RY4), the removal of the source, the range (each accepted position of the character
+  tests the range of its source: a walk out of it ends the grant, and a walk back does not give it back; finding ST-R3, case RY3), the
+  death, a travel, the leave, an expired deadline, and `close_service` end it. No fixed time limit: the option data has none
+  (research). Two characters at one source have two grants.
 - The cost depends on the requests and on the objects near the players, not on the size of the world (rule MP-8; cases IT8, SC7): a
   request finds its bound in the reference map of the data (a hash) or in the map of the server children (by G), the list near a
   character looks only at the cells of 64 m near it, the spawn rule looks at the cells of the grid of the children near each
@@ -159,7 +168,8 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
 - The loader refuses a file as a whole when a part is not complete or not consistent: also two achievements with one bit, an
   achievement with no id, a bit above the limit of the achievement state (finding INT-R4, case IR4), a cycle of template children, a
   child with no template, a rotation that is not a unit, a template with no PositionInTheWorld slot, a fixture with no bound, and two
-  server children with one key (case SC8).
+  server children with one key (case SC8), and a template with two components at one slot (its PositionInTheWorld, BuildableController,
+  Ownership, Vitals, and Interact slots; code review of stage 2.5b, finding ST-R5, case RY5).
 - A later stage registers a handler for a kind and its options (`Interactions::register_handler`); it does not add an action switch
   to the session. Its domain (the loot, the gathering, the crafting) owns its state and its transactions.
 

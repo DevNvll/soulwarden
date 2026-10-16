@@ -180,7 +180,14 @@ COMPONENT_CLASSES = {
     "579d9f45-aa85-4407-ae43-b0c058a60e5a": ("StatMultiplierTable", 1525),
     "32f0711b-235e-43ee-9687-253ae1fcd68a": ("ReactionTracking", 1927),
     "171fa882-c8af-41df-bd19-09cbbfeb1c1c": ("TemporaryAffiliation", 3563),
+    # The Projectile component of a projectile slice (stage 3.4f-A, research creature-ranged.md Q2: its state type 16).
+    "5637158a-9ae1-41a7-a5c0-d07a76116eaf": ("Projectile", 16),
 }
+PROJECTILE_CLASS = uuid.UUID("5637158a-9ae1-41a7-a5c0-d07a76116eaf")
+# The slice of the character of a player (stage 3.4f-A: the capsule of the target of a creature shot).
+PLAYER_SLICE = "slices/player.dynamicslice"
+# The sub id of the asset of a slice in the catalog (the slices of a projectile have it).
+SLICE_SUB_ID = 2
 MOVEMENT, VITALS, MARKER = "ActionList", "Vitals", "Marker"
 
 # The result of the picture tours of the slices (tools/research/creature_tour.py, stages 3.4a
@@ -1173,7 +1180,27 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     whole_world = radius is None
     center = center or DEFAULT_CENTER
     needs_spawn_action, not_shown = read_slice_lists()
-    behavior = creature_behavior.Behavior(sources, TABLES_FOLDER)
+    # The ranged attacks (stage 3.4f-A): the attacks of the ranged attack data with their index on the wire, and the slices of
+    # the projectiles.
+    ranged_attacks = read_ranged_attacks(sources)
+    projectile_list: list[list] = []
+    projectile_index: dict[str, int | None] = {}
+    by_path = slice_assets(catalog)
+
+    def projectile_of(path: str) -> int | None:
+        if path not in projectile_index:
+            entry = None
+            asset = by_path.get(path)
+            roots = sources.stream(path) if asset is not None and sources.has(path) else None
+            if roots is not None:
+                entry = read_projectile(path, asset, roots, flight_of(path, roots))
+            projectile_index[path] = None
+            if entry is not None:
+                projectile_index[path] = len(projectile_list)
+                projectile_list.append(entry)
+        return projectile_index[path]
+
+    behavior = creature_behavior.Behavior(sources, TABLES_FOLDER, ranged_attacks, projectile_of)
     regions = all_region_names(sources) if whole_world else region_names(center, radius)
     counts = {"entries": 0, "inArea": 0, "usual": 0, "creatures": 0}
     left_out: dict[str, int] = {}
@@ -1434,12 +1461,17 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     counts["slicesWithHead"] = sum(1 for body in used if "head" in slices[body])
     counts["headsWithNoSkeleton"] = hit_counts.get("noSkeleton", 0)
     counts["headsWithOtherShape"] = hit_counts.get("headOtherShape", 0)
-    # A kind attacks when one of its slices has an attack and the values for the way to a target.
+    # A kind attacks when one of its slices has an attack (a melee attack, or from stage 3.4f-A the basic shot of the backend:
+    # creature_behavior.BASIC_SHOT_ACTION) and the values for the way to a target.
     quiet = 0
     quiet_points = 0
+
+    def shoots(body: dict) -> bool:
+        return any(body["actions"][attack[0]][0] == creature_behavior.BASIC_SHOT_ACTION for attack in body.get("ranged", []))
+
     for kind, entry in zip(kind_list, document_kinds):
         bodies = [slices[body] for body, _ in kind["bodies"]]
-        if any(body.get("attacks") and body.get("behavior", {}).get("speed", [0, 0])[1] > 0 for body in bodies):
+        if any((body.get("attacks") or shoots(body)) and body.get("behavior", {}).get("speed", [0, 0])[1] > 0 for body in bodies):
             continue
         quiet += 1
         quiet_points += entry["points"]
@@ -1476,14 +1508,103 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     counts["routesLeftOut"] = dict(sorted(route_left_out.items()))
     counts.update({"spawnPoints": len(points), "kinds": len(document_kinds), "slices": len(used),
                    "leftOut": dict(sorted(left_out.items()))})
+    counts.update(ranged_counts([slices[body] for body in used], points, document_kinds, behavior.ranged_left_out,
+                                projectile_list))
+    # The capsule of the character of a player (stage 3.4f-A): the target of a creature shot. No capsule: the backend uses its
+    # default capsule.
+    player_roots = sources.stream(PLAYER_SLICE)
+    player_capsule = read_capsule(PLAYER_SLICE, player_roots) if player_roots is not None else None
     # The whole world: the radius 0, and the center has no meaning.
-    return {"format": 3, "world": WORLD, "center": list(center), "radius": 0.0 if whole_world else radius,
-            "regions": regions,
-            "counts": counts,
-            "levels": [[level, health, damage, gear_score]
-                       for level, (health, damage, gear_score) in sorted(tables["levels"].items())],
-            "slices": [slices[body] for body in used], "kinds": document_kinds, "spawnPoints": points,
-            "routes": routes}
+    document = {"format": 3, "world": WORLD, "center": list(center), "radius": 0.0 if whole_world else radius,
+                "regions": regions,
+                "counts": counts,
+                "levels": [[level, health, damage, gear_score]
+                           for level, (health, damage, gear_score) in sorted(tables["levels"].items())],
+                "slices": [slices[body] for body in used], "kinds": document_kinds, "spawnPoints": points,
+                "routes": routes, "projectiles": projectile_list}
+    if player_capsule is not None:
+        document["playerCapsule"] = player_capsule
+    return document
+
+
+def read_ranged_attacks(sources: Sources) -> dict:
+    """@return The dictionary of the attacks of the ranged attack data of the game copy (ranged_dictionary). The tool stops when the
+    game copy has no ranged attack data: a file with no ranged attack must not replace a file that has them."""
+    import projectiles as projectile_tool  # noqa: E402 (the module imports this one: the import is here, after the load)
+    radb = sources.stream(projectile_tool.RADB_PATH)
+    sources.check_complete()
+    if radb is None:
+        raise Failure(f"the game copy has no {projectile_tool.RADB_PATH}")
+    return ranged_dictionary(projectile_tool.read_attacks(radb))
+
+
+def slice_assets(catalog: Catalog) -> dict[str, tuple[bytes, int]]:
+    """@return The asset of each slice path of the catalog with the sub id of a slice (the projectile slices, stage 3.4f-A)."""
+    return {path: asset for asset, path in catalog.paths.items() if asset[1] == SLICE_SUB_ID}
+
+
+def flight_of(path: str, roots: list[Element]) -> list | None:
+    """@return The flight values of the Projectile component of a slice (projectiles.read_projectile_slice), or nothing."""
+    import projectiles as projectile_tool  # noqa: E402
+    return projectile_tool.read_projectile_slice(path, roots)
+
+
+def ranged_dictionary(rows: list[list]) -> dict:
+    """@return The attacks of the ranged attack data (the rows of projectiles.read_attacks) by (lower-case profile, lower-case
+    attack), with the index of each attack on the wire (stage 3.4f-A, client code 0x5BF9F30): the profiles in the order of their
+    names, and the attacks of each profile in the order of their names, as case-sensitive bytes (the keys of two maps of the
+    client)."""
+    ordered = sorted(rows, key=lambda row: (row[0].encode("utf-8"), row[1].encode("utf-8")))
+    dictionary = {}
+    for index, row in enumerate(ordered):
+        dictionary.setdefault((row[0].lower(), row[1].lower()), {
+            "profile": row[0], "attack": row[1], "index": index, "hitScan": row[2], "range": row[3], "radius": row[4],
+            "accelDelay": row[7]})
+    return dictionary
+
+
+def read_projectile(path: str, asset: tuple[bytes, int], roots: list[Element], flight: list | None) -> list | None:
+    """@return One projectile slice of the file (stage 3.4f-A): [path, asset, sub, root, slot of the Projectile component,
+    baseSpeed, extraSpeed, timeForMaxSpeed, [acceleration], flyingLifetime, stuckLifetime], or nothing for a slice with no
+    Projectile component with a slot, or with no flight values (the slice cannot be a server projectile)."""
+    if flight is None:
+        return None
+    slot = 0
+    entities: list[tuple[int, int | None]] = []
+    for root in roots:
+        for element in walk(root):
+            if element.type_id != ENTITY_TYPE:
+                continue
+            listed = next((child for child in element.children if child.name == COMPONENTS_FIELD), None)
+            entity_id = next((id_value(child) for child in element.children if child.name == ID_FIELD), None)
+            if listed is None or entity_id is None or any(c.type_id == SLICE_COMPONENT_TYPE for c in listed.children):
+                continue
+            parent = None
+            for component in listed.children:
+                if find_field(component, LOCAL_TRANSFORM_FIELD) is not None:
+                    parent = id_value(find_field(component, PARENT_FIELD))
+                if component.type_id == PROJECTILE_CLASS and slot == 0:
+                    slot = number(find_field(component, REPLICATION_FIELD))
+            entities.append((entity_id, parent))
+    roots_found = [entity for entity, parent in entities if parent == NO_ENTITY]
+    if slot == 0 or not roots_found:
+        return None
+    return [path, str(uuid.UUID(bytes=asset[0])).upper(), asset[1], f"{roots_found[-1]:016X}", slot, *flight[1:]]
+
+
+def ranged_counts(slices: list[dict], points: list[list], kinds: list[dict], left_out: dict[str, int],
+                  projectile_list: list[list]) -> dict:
+    """@return The counts of the ranged attacks (stage 3.4f-A) for the output of the tool and the file."""
+    ranged_slices = {index for index, entry in enumerate(slices) if entry.get("ranged")}
+    ranged_kinds = {index for index, kind in enumerate(kinds) if any(body[0] in ranged_slices for body in kind["bodies"])}
+    releases = sum(len(attack[2]) for entry in slices for attack in entry.get("ranged", []))
+    basic = sum(1 for entry in slices if any(entry["actions"][attack[0]][0] == creature_behavior.BASIC_SHOT_ACTION
+                                             for attack in entry.get("ranged", [])))
+    return {"slicesWithRangedAttacks": len(ranged_slices), "slicesWithBasicShot": basic,
+            "rangedAttacks": sum(len(entry.get("ranged", [])) for entry in slices),
+            "rangedReleases": releases, "kindsWithRangedAttacks": len(ranged_kinds),
+            "spawnPointsWithRangedAttacks": sum(1 for point in points if point[1] in ranged_kinds),
+            "projectileSlices": len(projectile_list), "rangedLeftOut": dict(sorted(left_out.items()))}
 
 
 def patrol_counts(routes: list[list], point_routes: list[int | None], points: list[list], kind_list: list[dict],
@@ -1617,6 +1738,13 @@ def main() -> int:
           f"with animation tags: {counts['slicesWithTags']}")
     print(f"  kinds that do not attack: {counts['kindsWithNoAttack']} of {counts['kinds']} "
           f"({counts['spawnPointsWithNoAttack']} spawn points; --no-attack FILE lists them)")
+    print(f"  ranged attacks: {counts['rangedAttacks']} of {counts['slicesWithRangedAttacks']} slices ({counts['rangedReleases']} "
+          f"releases, {counts['projectileSlices']} projectile slices; {counts['kindsWithRangedAttacks']} kinds, "
+          f"{counts['spawnPointsWithRangedAttacks']} spawn points); slices with the basic shot "
+          f"{creature_behavior.BASIC_SHOT_ACTION}: {counts['slicesWithBasicShot']}; player capsule: "
+          f"{document.get('playerCapsule', 'none')}")
+    for cause, count in counts["rangedLeftOut"].items():
+        print(f"  no ranged attack, {cause}: {count}")
     near = counts["spawnPointsAtTerrainHeight"]
     print(f"  spawn points 0.3 m or less from the terrain height: {near['0.3']}; 1.0 m or less: {near['1.0']}")
     policies = counts["routePolicies"]

@@ -300,6 +300,48 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         return group == 0 && field == 0 ? 1 : -1;
     case 3217: // Ownership (stage 2.5b): currentPermissionRule (field 4, one byte); the other fields are not sent.
         return group == 0 && field == 4 ? 1 : -1;
+    case 16: { // Projectile (stage 3.4f-A): the twenty fields of the research (the fields 11 and 13 are size codes).
+        if (group != 0) {
+            return -1;
+        }
+        const auto code = [&]() -> int {
+            if (rest.empty()) {
+                return -1;
+            }
+            const std::uint8_t first = rest[0];
+            return first < 0x80 ? 1 : first < 0xC0 ? 2 : first < 0xE0 ? 3 : first < 0xF0 ? 4 : 5;
+        };
+        switch (field) {
+        case 0:
+            return 10;
+        case 1:
+        case 3:
+        case 5:
+        case 6:
+        case 15:
+            return 2;
+        case 2:
+        case 18:
+            return 6;
+        case 4:
+        case 7:
+        case 10:
+        case 17:
+            return 8;
+        case 8:
+        case 9:
+        case 19:
+            return 1;
+        case 11:
+        case 13:
+            return code();
+        case 12:
+        case 14:
+            return 4;
+        default:
+            return -1;
+        }
+    }
     default:
         return -1;
     }
@@ -327,6 +369,7 @@ inline unsigned group_count(std::uint32_t type) {
     case 2930:
     case 1594:
     case 3217:
+    case 16:
         return 1;
     case 3752:
         return 2;

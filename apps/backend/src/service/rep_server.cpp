@@ -225,7 +225,8 @@ void RepServer::on_message(Client& client, std::uint8_t channel, std::span<const
     if (m_options.messageTap) {
         m_options.messageTap(client.id, channel, data);
     }
-    client.session->on_message(channel, data);
+    // The datagram of the message (code review of stage 2.5b, finding ST-R2): the order of the messages of different channels.
+    client.session->on_message(channel, data, client.connection->delivered_datagram());
 }
 
 void RepServer::on_disconnected(PeerId peer) {
