@@ -790,7 +790,7 @@ StatusValues Statuses::values(const Entity& character) const {
         }
         for (const char* column : {"MaxHealthMod", "PhysicalArmor", "ElementalArmor", "BaseDamageReduction", "SprintSpeedMod",
                                    "CritChanceModifier", "CritDamageModifier", "HealMod", "ConsumableHealMod", "NonConsumableHealMod",
-                                   "DmgPctToHealthHealMod", "HealScalingValueMultiplier", "StaminaRate"}) {
+                                   "DmgPctToHealthHealMod", "HealScalingValueMultiplier", "StaminaRate", "MaxMana", "ManaRate"}) {
             add(*row, column, row->cells.number(column) * factor);
         }
         add(*row, "MoveSpeedMod", row->moveSpeed * factor);
@@ -815,6 +815,9 @@ StatusValues Statuses::values(const Entity& character) const {
         values.attributes[type] = value(kAttributeColumns[type]);
     }
     values.maxHealth = value("MaxHealthMod");
+    // The mana parts (stage 3.5b.2): MaxMana and ManaRate (Clarity2 +0.2, a food, the regeneration of a camp).
+    values.maxMana = value("MaxMana");
+    values.manaRate = value("ManaRate");
     values.physicalArmor = value("PhysicalArmor");
     values.elementalArmor = value("ElementalArmor");
     values.damageReduction = value("BaseDamageReduction");

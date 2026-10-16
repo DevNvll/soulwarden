@@ -46,7 +46,10 @@ hub::Bytes encode_mana_state(const world::Entity& entity, View view, const world
     }
     StateWriter state(kGroups);
     state.field(0, kCurrent).f32(entity.vitals.mana);
-    state.field(0, kMaximum).f32(entity.vitals.manaMax);
+    // The base maximum (ManaMax of the base vitals, stage 3.5b.2): the client multiplies the maximum of its first mana state with its own
+    // MaxMana parts (stat 0x31; live check of the final run of stage 3.5b.2: a first state with 110 gave the client 121, and the meter
+    // stayed at 91 percent at full mana). The current value is the value with the parts (110 of the client maximum 110).
+    state.field(0, kMaximum).f32(entity.vitals.manaBase);
     state.field(0, kRegenerationDelay).f32(delay);
     state.field(0, kRegenerationRate).f32(rate);
     return state.finish();

@@ -203,6 +203,27 @@ struct InteractionTemplate {
     std::vector<TemplateChild> children;
 };
 
+/**
+ * A loot container that the server makes (stage 3.5b.2, docs/systems/loot-bags.md; `lootContainers` of format 3): the personal bag of a
+ * kill (AILoot) and of a discard. The values come from its slice (tools/gamedata/interactions.py; research chests-ground-loot.md Q3, K7).
+ */
+struct LootContainer {
+    /** The template of the slice (the record and the ids of a server child). */
+    std::uint32_t templateIndex{0};
+    /** m_instancedLootType of its InstancedLoot component: 1 (AILoot). */
+    std::uint32_t kind{1};
+    /** The slot of its LootDrop component (the LootDrop state, type 2027). */
+    std::uint32_t lootDropSlot{0};
+    /** The lifetime (s): the DelayedEvent that starts at the init and ends the slice (KillSelfDelay, 180 s in the supported build). */
+    float lifetime{0.0F};
+    /** The end after the last item (s): the DelayedEvent of m_completelyLootedEvents (FastKillSelfDelay, 1.25 s). */
+    float emptyLifetime{0.0F};
+    /** The hide of the owner after Looted (s): the DelayedEvent of m_lootedEvents (HideMeshDelay, 1.5 s); the client runs it. */
+    float hideDelay{0.0F};
+    /** The number of the rarity particles of the slice (m_rarityParticleEntityRef, 5): the selector of a LootTracker entry is below it. */
+    std::uint32_t rarityParticles{0};
+};
+
 /** A server child of a placement (stage 2.5b): a station of a settlement, a camp of a permanent camp. */
 struct SpawnedPlacement {
     /** The durable key: the placement UUID and the entity id of the spawner ("UUID/ENTITY"). */
@@ -291,6 +312,17 @@ public:
     }
     /** @return The template of a fixture name ("powderKeg"), or no value. */
     [[nodiscard]] std::optional<std::uint32_t> fixture(std::string_view name) const;
+    /**
+     * Sets the loot containers (stage 3.5b.2; the loader calls it for a file of format 3, a test with no file). Each one must name a
+     * template with a bound, have the type AILoot, a LootDrop slot, a lifetime above 0, and a finite end time not below 0.
+     * @return False (no change) when one is not correct.
+     */
+    [[nodiscard]] bool set_loot_containers(std::map<std::string, LootContainer> containers);
+    /** @return The loot container of a name ("personal"), or null (a file of format 1 or 2: no loot bag). */
+    [[nodiscard]] const LootContainer* loot_container(std::string_view name) const;
+    [[nodiscard]] const std::map<std::string, LootContainer>& loot_containers() const {
+        return m_lootContainers;
+    }
     /** @return The largest horizontal distance of a bound or of a child from the origin of a template (meters). */
     [[nodiscard]] float template_spread(std::uint32_t templateIndex) const;
 
@@ -341,6 +373,7 @@ private:
     std::vector<InteractionTemplate> m_templates;
     std::vector<SpawnedPlacement> m_spawned;
     std::map<std::string, std::uint32_t> m_fixtures;
+    std::map<std::string, LootContainer> m_lootContainers;
     std::vector<float> m_templateSpread;
     std::unordered_map<std::int64_t, std::vector<std::uint32_t>> m_spawnedCells;
     std::string m_error;

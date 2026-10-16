@@ -37,6 +37,10 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   that names the entity of a different character changes nothing and gets no reply.
 - The lock of an item protects it from a request of a client that takes it away from the
   character (the drop). It does not stop an equip, and a development command has no lock rule.
+- The drop of a player (stage 3.5b.2; [Loot bags](loot-bags.md)): 1838 (a stack of the bag) and 826 (an item of the paperdoll) put
+  the item instances into a new Discarded bag at the feet of the character, private to it, in one transaction with the bag rows; the
+  character can take them back until the end of the bag (180 s). A whole stack keeps its instance id; a part of a stack gets a new id.
+  An equipped item refreshes the gear. With no loot container in the interaction data (format 2) 1838 removes the items, as before.
 - A new character gets the items of its archetype (the backstory table of the game, in the
   item catalog): the inventory module makes the rows (`world::start_items`), and the store
   writes them in the transaction that inserts the character. The backstory table also has
@@ -135,7 +139,7 @@ tools/world equipment NAME           # the equipment of a character
   sections `662 296`. A pointer move to a cell shows its tooltip after 1 s (move in two or
   three steps: `'move 650 185' 'wait 200' 'move 662 193'`). A click on a cell opens the
   action menu (entry "Lock" at `760 336` for the first cell). A drag of a cell to `1103 325`
-  (the area "Drop items", which shows only in a drag) drops the full stack: `'drag 837 193
+  (the area "Drop items", which shows only in a drag) drops the full stack into a Discarded bag at the feet: `'drag 837 193
   1103 325 1200'`. A drag to the character at the left is an equip try. The sections and
   their sequence depend on the items: take a screenshot before you use a position.
 - The bag of an entity keeps its empty slots until the character leaves the world (`tools/world

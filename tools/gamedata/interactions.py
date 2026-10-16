@@ -50,6 +50,12 @@ record of the server. The file has these children of a placement:
     transform of the spawner entity.
   - "fixtures": the slices of the development fixtures (FIXTURES: the powder keg with the timed option Trigger, the player camp
     CampT5, the camp of a permanent camp): a development command of the backend makes them near a character (live checks L5, L6).
+  - "lootContainers" (format 3, stage 3.5b.2): the slice of each loot container that the server makes (LOOT_CONTAINERS: "personal",
+    the personal bag of a kill and of a discard, slices/instanced_loot_container.dynamicslice; research chests-ground-loot.md Q3): its
+    template, the InstancedLoot type (1, AILoot), the slot of its LootDrop component, the lifetime (the DelayedEvent that starts at the
+    init and whose event ends the slice: KillSelfDelay, 180 s), the end after the last item (the DelayedEvent that m_completelyLootedEvents
+    starts: FastKillSelfDelay, 1.25 s), the hide of the owner after Looted (the DelayedEvent of m_lootedEvents: HideMeshDelay, 1.5 s, a
+    value of the client), the count of the rarity particles, and each DelayedEvent of the slice.
 What the file does not have, with the count of each cause in "excluded" (a later stage reads them):
   - The other children of a PrefabSpawner (a person of a quest swap, a trading post, a building): a later stage.
   - The records of the distribution files of a region (the gathering nodes of the terrain): stage 3.6.
@@ -68,7 +74,10 @@ The tool stops with status 1 and one message, and writes no file, when:
   - two bounds have the same reference (G and target) with different content, or one placement id has two placements with a
     different slice, position, rotation, or asset id (finding INT-R6: only equal copies are one placement);
   - two rows of the achievement table have one AchievementIndex (finding INT-R4: one journal bit for two pages);
-  - a fixture slice has no source, no PositionInTheWorld component, or no Interact bound.
+  - a fixture slice has no source, no PositionInTheWorld component, or no Interact bound;
+  - a loot container slice has no source, no bound with TakeAllOption and OpenStorageOption, no InstancedLoot of the type AILoot, no
+    LootDrop with m_isInstancedLoot, no player-unique Storage, or not exactly one DelayedEvent for its lifetime, its end after the last
+    item, and the hide after Looted (stage 3.5b.2).
 A name of the data with no row does not stop the tool: a required achievement such as
 `*17_MSQ_Quest_18020_LynetteDungeonKey`, a lore id with no lore row or no achievement index, and an option name with no
 row of the user interface database (the placeholder `None` of some lore slices). A bound with an unresolved requirement
@@ -80,7 +89,7 @@ names: a stop for them would give no file at all.
 tools/gamedata/check_interactions_tool.py is the check of these rules, with made-up sources.
 
 Output (one line of JSON):
-  {"format": 2, "world": TEXT, "counts": {...}, "excluded": {CAUSE: N, ...},
+  {"format": 3, "world": TEXT, "counts": {...}, "excluded": {CAUSE: N, ...},
    "templates": [{"slice", "asset", "sub", "kind", "root", "slots": {"position", "buildable", "ownership", "vitals"},
                   "buildableState", "permissionRule", "assembly": {"key", "fee", "entity", "component", "resolved"} or null,
                   "bounds": [{as the bounds of an object, with "entity" (the Interact entity of the slice), "position" in the
@@ -88,6 +97,8 @@ Output (one line of JSON):
                   "children": [{"template", "position", "rotation"}, ...]}, ...],
    "spawned": [{"key", "parent", "parentActor", "parentSlice", "spawner", "template", "region", "position", "rotation"}, ...],
    "fixtures": {NAME: template index, ...},
+   "lootContainers": {NAME: {"template", "kind", "lootDropSlot", "lifetime", "emptyLifetime", "hideDelay", "rarityParticles",
+                             "delays": [{"name", "slot", "seconds", "onInit", "onTrigger"}, ...]}, ...},
    "options": [{"name", "id", "action", "committed", "delay", "hold", "instantCancel", "cooldown", "maxUsage",
                 "inactive", "requiredLevel", "requiredItem", "requiredItemCount", "requiredCurrency",
                 "requiredAchievement", "statusRules"}, ...],
@@ -136,7 +147,7 @@ from slice_ids import (BASE_CLASS_FIELDS, COMPONENTS_FIELD, ENTITY_TYPE, ID_FIEL
                        Element, component_id, find_field, id_value)
 
 OUTPUT_NAME = "interaction-data.json"
-FORMAT = 2
+FORMAT = 3
 UI_DATABASE = "sharedassets/genericassets/ui/uidatabase.uidb"
 CRAFTING_STATIONS = "sharedassets/genericassets/craftingstations.craftstationdb"
 WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", UI_DATABASE, CRAFTING_STATIONS, CATALOG_PATH)
@@ -145,6 +156,11 @@ FIXTURES = {
     "powderKeg": "slices/structures/deployables/deployable_powderkeg.dynamicslice",
     "campT5": "slices/structures/camps/defaultcamps/campt5.dynamicslice",
     "camp": "slices/structures/camps/permanentcamp_master.dynamicslice",
+}
+# The loot containers (stage 3.5b.2, research chests-ground-loot.md Q3): the slice of the personal loot bag of a kill (AILoot) and of
+# the discard of a player. The server makes it; only its eligible characters get its record (live check L5 of stage 3.5b.2).
+LOOT_CONTAINERS = {
+    "personal": "slices/instanced_loot_container.dynamicslice",
 }
 LORE_TABLE_TYPE = "LoreData"
 ACHIEVEMENT_TABLE_TYPE = "AchievementData"
@@ -159,6 +175,11 @@ OWNERSHIP_CLASS = uuid.UUID("2a333c23-a549-bc11-1a9a-ae905170f2f6")
 POSITION_CLASS = uuid.UUID("6c2fc842-f451-4b45-9d7d-a6ee954df025")
 VITALS_CLASS = uuid.UUID("0c848755-1f41-4408-b2be-0a3627674f50")
 SPAWNER_CLASS = uuid.UUID("b52d0d52-99cd-41be-b6f7-d2519c15bf14")
+# The classes of the parts of a loot container (stage 3.5b.2; research chests-ground-loot.md Q3, K6, K7).
+INSTANCED_LOOT_CLASS = uuid.UUID("4fda5200-13f8-4f21-af8c-19706e74758f")
+LOOT_DROP_CLASS = uuid.UUID("de250033-8ed6-4a2f-bdc8-8cd8ebeee9db")
+DELAYED_EVENT_CLASS = uuid.UUID("d353f7e8-4266-f749-19a1-aa2c3841fbca")
+STORAGE_CLASS = uuid.UUID("f09b20f4-6a64-477e-9690-a099ee1bf746")
 STATION_ROW_FIELDS = (field_id("CraftingTypes"),)
 # The classes of the elements of an empty m_condition (stage 3.5b.1): the container, the empty condition, and its element. Each chest
 # and each gathering node has such a condition with no text and no value.
@@ -195,6 +216,20 @@ INITIAL_PERMISSION = field_id("m_initialPermissionRule")
 CLIENT_AUTHORITY = field_id("m_isClientAuthoratative")
 SPAWN_ON_INIT = field_id("m_spawnOnInitialize")
 ALIAS_ASSET = field_id("m_aliasAsset")
+INSTANCED_LOOT_TYPE = field_id("m_instancedLootType")
+LOOTED_EVENTS = field_id("m_lootedEvents")
+COMPLETELY_LOOTED_EVENTS = field_id("m_completelyLootedEvents")
+RARITY_PARTICLES = field_id("m_rarityParticleEntityRef")
+EVENT_ENTITY = field_id("m_entityRef")
+IS_INSTANCED_LOOT = field_id("m_isInstancedLoot")
+START_ON_INIT = field_id("m_startDelayOnInit")
+START_ON_TRIGGER = field_id("m_startDelayOnTrigger")
+DELAY_SECONDS = field_id("m_timeDelaySeconds")
+DELAY_OVERRIDE = field_id("m_timeDelaySecondsOverrideConfig")
+EVENT_DATA = field_id("m_eventData")
+UNIQUE_STORAGE = field_id("m_isPlayerUniqueStorage")
+# The entity of a slice whose event ends the slice (the event target of KillSelfDelay and FastKillSelfDelay of the personal bag).
+KILL_SELF_ENTITY = "KillSelf"
 
 # The fields of an option row of the user interface database.
 ROW_FIELDS = {name: field_id(name) for name in (
@@ -210,7 +245,7 @@ ROW_FIELDS = {name: field_id(name) for name in (
 KINDS = (
     ("ReadLore", "lorePage"), ("AddLoreToJournal", "lorePage"),
     ("OpenConversation", "npc"), ("OpenMissionBoardOption", "npc"),
-    ("OpenStorageOption", "storage"), ("OpenTradingPostOption", "tradingPost"),
+    ("TakeAllOption", "lootDrop"), ("OpenStorageOption", "storage"), ("OpenTradingPostOption", "tradingPost"),
     ("OpenMap", "shrine"),
     # A camp has OpenCraftingOption too (permanentcamp_master, CampT5): the camp option comes first (stage 2.5b).
     ("BindToCampOption", "camp"), ("BindToCampOption_17DW", "camp"),
@@ -487,6 +522,12 @@ class Template:
         self.permission_rule = -1
         self.assembly: dict | None = None
         self.matrices: dict[int, tuple[float, ...]] = {}
+        # The parts of a loot container (stage 3.5b.2): the InstancedLoot, LootDrop, Storage, and DelayedEvent components.
+        self.instanced: dict | None = None
+        self.loot_drop: dict | None = None
+        self.unique_storage = False
+        self.delays: list[dict] = []
+        self.entity_names: dict[int, str] = {}
         entities: dict[int, dict] = {}
         interacts: list[tuple[int, Element]] = []
         for root in roots:
@@ -512,6 +553,7 @@ class Template:
                         info["lore"] = text_of(lore)
                     self._read_parts(path, name, entity_id, component)
                 entities[entity_id] = info
+        self.entity_names = {identifier: info["name"] for identifier, info in entities.items()}
         roots_of_slice = [identifier for identifier, info in entities.items() if info["parent"] == NO_ENTITY]
         if (interacts or self.spawner_list) and not roots_of_slice:
             raise Failure(f"{path}: the slice has no root entity (an entity whose transform has no parent)")
@@ -547,6 +589,8 @@ class Template:
                 raise Failure(f"{what}: the Assembly component has no component id")
             self.assembly = {"key": text_of(entry), "fee": flag_of(fee, f"{what}: m_chargeCraftingFee") if fee is not None else False,
                              "entity": entity_id, "component": identifier}
+        if component.type_id in (INSTANCED_LOOT_CLASS, LOOT_DROP_CLASS, DELAYED_EVENT_CLASS, STORAGE_CLASS):
+            self._read_loot_part(what, entity_id, name, component)
         if component.type_id == SPAWNER_CLASS or find_field(component, SLICE_ASSET) is not None:
             authority = find_field(component, CLIENT_AUTHORITY)
             on_init = find_field(component, SPAWN_ON_INIT)
@@ -556,6 +600,81 @@ class Template:
                 "alias": asset_id(alias) is not None,
                 "client": flag_of(authority, f"{what}: m_isClientAuthoratative") if authority is not None else False,
                 "onInit": flag_of(on_init, f"{what}: m_spawnOnInitialize") if on_init is not None else False})
+
+    def _read_loot_part(self, what: str, entity_id: int, name: str, component: Element) -> None:
+        """Reads a part of a loot container (stage 3.5b.2): the fields are in the component or in its facets."""
+
+        def field(wanted: int) -> Element | None:
+            return next((node for node in walk(component) if node.name == wanted), None)
+
+        def events(element: Element | None) -> list[int]:
+            targets = []
+            for entry in element.children if element is not None else []:
+                reference = child_of(entry, EVENT_ENTITY)
+                target = id_value(next((node for node in walk(reference) if node.value is not None and len(node.value) == 8), None)) \
+                    if reference is not None else None
+                if target is not None:
+                    targets.append(target)
+            return targets
+
+        if component.type_id == INSTANCED_LOOT_CLASS and self.instanced is None:
+            kind = field(INSTANCED_LOOT_TYPE)
+            particles = field(RARITY_PARTICLES)
+            self.instanced = {"kind": whole_of(kind, 4, f"{what}: m_instancedLootType") if kind is not None else -1,
+                              "looted": events(field(LOOTED_EVENTS)), "completelyLooted": events(field(COMPLETELY_LOOTED_EVENTS)),
+                              "particles": len(particles.children) if particles is not None else 0}
+        elif component.type_id == LOOT_DROP_CLASS and self.loot_drop is None:
+            instanced = field(IS_INSTANCED_LOOT)
+            self.loot_drop = {"slot": self._slot(component, what),
+                              "instanced": flag_of(instanced, f"{what}: m_isInstancedLoot") if instanced is not None else False}
+        elif component.type_id == STORAGE_CLASS:
+            unique = field(UNIQUE_STORAGE)
+            self.unique_storage = self.unique_storage or (unique is not None and flag_of(unique, f"{what}: m_isPlayerUniqueStorage"))
+        elif component.type_id == DELAYED_EVENT_CLASS:
+            on_init, on_trigger, seconds, override = field(START_ON_INIT), field(START_ON_TRIGGER), field(DELAY_SECONDS), field(DELAY_OVERRIDE)
+            if seconds is None:
+                raise Failure(f"{what}: the DelayedEvent component has no m_timeDelaySeconds")
+            data = field(EVENT_DATA)
+            reference = child_of(data, EVENT_ENTITY) if data is not None else None
+            target = id_value(next((node for node in walk(reference) if node.value is not None and len(node.value) == 8), None)) \
+                if reference is not None else None
+            self.delays.append({"entity": entity_id, "name": name, "slot": self._slot(component, what),
+                                "onInit": flag_of(on_init, f"{what}: m_startDelayOnInit") if on_init is not None else False,
+                                "onTrigger": flag_of(on_trigger, f"{what}: m_startDelayOnTrigger") if on_trigger is not None else False,
+                                "seconds": real_of(seconds, f"{what}: m_timeDelaySeconds"), "override": text_of(override),
+                                "target": target})
+
+    def loot_container(self) -> dict:
+        """@return The loot values of a personal loot container (stage 3.5b.2), or a Failure when the slice does not have them all."""
+        what = f"the loot container {self.path}"
+        if self.instanced is None or self.loot_drop is None:
+            raise Failure(f"{what} has no InstancedLoot or no LootDrop component")
+        if self.instanced["kind"] != 1 or not self.loot_drop["instanced"] or not self.unique_storage:
+            raise Failure(f"{what} is not a personal bag: the loot type is not AILoot (1), m_isInstancedLoot is false, or it has no "
+                          f"player-unique Storage")
+        by_entity = {delay["entity"]: delay for delay in self.delays}
+        kill_self = {identifier for identifier, name in self.entity_names.items() if name == KILL_SELF_ENTITY}
+        # The lifetime: the delayed event that starts at the init and ends the slice (KillSelfDelay, 180 s; research K7). A config
+        # override name is not proof of an override (the shared bag): the personal bag must have none.
+        lives = [delay for delay in self.delays if delay["onInit"] and delay["target"] in kill_self]
+        if len(lives) != 1 or lives[0]["override"] or not lives[0]["seconds"] > 0:
+            raise Failure(f"{what} has not one delayed event that starts at the init and ends the slice, with no override")
+        # The end after the last item: the delayed event that m_completelyLootedEvents of the server facet starts (FastKillSelfDelay).
+        empties = [by_entity[target] for target in self.instanced["completelyLooted"] if target in by_entity
+                   and by_entity[target]["target"] in kill_self]
+        if len(empties) != 1 or empties[0]["seconds"] < 0:
+            raise Failure(f"{what}: m_completelyLootedEvents does not start one delayed event that ends the slice")
+        # The hide of the owner after Looted (HideMeshDelay; the client runs it): the delayed event that m_lootedEvents starts.
+        hides = [by_entity[target] for target in self.instanced["looted"] if target in by_entity]
+        if len(hides) != 1:
+            raise Failure(f"{what}: m_lootedEvents does not start one delayed event")
+        if self.loot_drop["slot"] == 0 or self.slots["position"] == 0:
+            raise Failure(f"{what} has no slot of its LootDrop or PositionInTheWorld component")
+        return {"kind": self.instanced["kind"], "lootDropSlot": self.loot_drop["slot"], "lifetime": round(lives[0]["seconds"], 4),
+                "emptyLifetime": round(empties[0]["seconds"], 4), "hideDelay": round(hides[0]["seconds"], 4),
+                "rarityParticles": self.instanced["particles"],
+                "delays": [{"name": delay["name"], "slot": delay["slot"], "seconds": round(delay["seconds"], 4), "onInit": delay["onInit"],
+                            "onTrigger": delay["onTrigger"]} for delay in self.delays]}
 
     def option_names(self) -> set[str]:
         return {name for bound in self.bounds for _, names in bound["options"] for name in names}
@@ -969,6 +1088,15 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
         if template_list[index]["slots"]["position"] == 0 or not template_list[index]["bounds"]:
             raise Failure(f"the fixture {name} ({fixture_path}) has no PositionInTheWorld component or no Interact bound")
         fixtures[name] = index
+    loot_containers: dict[str, dict] = {}
+    for name, container_path in LOOT_CONTAINERS.items():
+        if not sources.has(container_path):
+            raise Failure(f"the loot container {name} ({container_path}) has no source in the game copy")
+        index = template_entry(container_path, None)
+        options_of = {option_list[entry[0]]["name"] for bound in template_list[index]["bounds"] for entry in bound["options"]}
+        if template_list[index]["kind"] != "lootDrop" or not {"TakeAllOption", "OpenStorageOption"} <= options_of:
+            raise Failure(f"the loot container {name} ({container_path}) has no bound with TakeAllOption and OpenStorageOption")
+        loot_containers[name] = {"template": index, **load_template(container_path, child=True).loot_container()}
     sources.check_complete()
     exclude(CAUSE_DISTRIBUTION, 0)
     # One journal bit for two achievements: the journal cannot tell the pages apart (finding INT-R4).
@@ -983,6 +1111,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     counts["templates"] = len(template_list)
     counts["spawned"] = len(spawned)
     counts["fixtures"] = len(fixtures)
+    counts["lootContainers"] = len(loot_containers)
     counts["byKind"] = dict(sorted(counts["byKind"].items()))
     counts["byOption"] = dict(sorted(counts["byOption"].items()))
     counts["spawnedByKey"] = {}
@@ -996,7 +1125,7 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
     counts["unresolvedNames"] = len(unresolved)
     return {"format": FORMAT, "world": WORLD, "counts": counts, "excluded": dict(sorted(excluded.items())),
             "unresolved": dict(sorted(unresolved.items())), "options": option_list, "achievements": achievement_list,
-            "templates": template_list, "spawned": spawned, "fixtures": fixtures, "objects": objects}
+            "templates": template_list, "spawned": spawned, "fixtures": fixtures, "lootContainers": loot_containers, "objects": objects}
 
 
 def main() -> int:

@@ -130,11 +130,24 @@ hub::Bytes encode_item(const world::ItemInstance* item, std::uint32_t slot, std:
 }
 
 std::vector<hub::Bytes> encode_container_state(const world::Entity& entity, View view, const PartsRequest& request) {
-    std::vector<hub::Bytes> parts;
     if (view != View::owner) {
+        return {};
+    }
+    return encode_bag_parts(entity.bag, request, false);
+}
+
+std::vector<hub::Bytes> encode_selected_container_state(const world::Entity& entity, View view, const PartsRequest& request) {
+    if (view != View::owner) {
+        return {};
+    }
+    return encode_bag_parts(entity.selectedContainer, request, true);
+}
+
+std::vector<hub::Bytes> encode_bag_parts(const world::Bag& bag, const PartsRequest& request, bool skipEmptyFirst) {
+    std::vector<hub::Bytes> parts;
+    if (skipEmptyFirst && request.since == 0 && bag.slots.empty()) {
         return parts;
     }
-    const world::Bag& bag = entity.bag;
     const std::size_t budget = std::max<std::size_t>(request.budget, kStateOverhead + 1);
     std::vector<std::pair<std::uint32_t, hub::Bytes>> entries;
     if (request.since == 0 || request.since < bag.reset) {

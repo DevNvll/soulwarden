@@ -306,6 +306,24 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage 3.5b.2 changes `interaction-data.json` (format 3), `progression-tables.json` (still format 2), and `chest-data.json` (still
+  format 1), and the loaders of `chest-data.json` and `loot-tables.json`. `interactions.py` format 3: also the member `lootContainers`
+  with the personal loot container (`personal`: the template of `slices/instanced_loot_container.dynamicslice`, the kind 1 AILoot, the
+  LootDrop slot 6, the lifetime 180 s (KillSelfDelay at the init), the end after the last item 1.25 s (FastKillSelfDelay at
+  completelyLooted), the hide delay 1.5 s, 5 rarity particles) and the option TakeAllOption of the kind `lootDrop`; the tool stops when
+  the slice is not AILoot, not instanced, has no Storage unique for a player, or has not exactly one KillSelfDelay of the init and one
+  end of completelyLooted (`check_interactions_tool.py`: cases bag-missing, bag-no-lifetime, bag-shared). A file of format 2 loads: then
+  the backend has no loot bag (the items of a kill go into the bag of the character). `progression_tables.py`: also the threshold
+  abilities of each attribute (`attributes.abilities`: for example `focus` [[25, [Foc_Bonus_25_1, Foc_Bonus_25_2]], ...], 8 thresholds
+  for each attribute; `check_progression_tool.py`: cases attribute-thresholds and no-equip-abilities); a file with no such member loads
+  (no mana bonus). `chests.py` (code review of stage 3.5b.1): the record of a chest must have the gatherable row of the variation
+  (CRC-32; finding CH-R7), each TerritoryDefinition table of the game data gives the territories (the points of interest and the arenas
+  too: 1,228 chests get the LootTags of their point of interest; finding CH-R6), and the tool stops for a chest that can be ordinary with
+  no record (finding CH-R5), for two records of one row at a chest with different content, and for a territory with no row
+  (`check_chests_tool.py`: cases missing-metadata, missing-territory, wrong-record-first, record-conflict). The loaders: the chest file
+  must have one chest for each actor (finding CH-R4), and a loot file of format 2 must have a container floor for each level of its gear
+  score ranges (finding CH-R8; the retail file has 80 floor rows for 70 levels). Write the three files again with the tools of the
+  stage.
 - Stage 3.5b.1 adds `chest-data.json` and changes `loot-tables.json` (format 2), `interaction-data.json` (still format 2), and
   `spell-data.json` (format 5). `loot-tables.json` format 2: also the loot roots of the chests (`chestRoots`: the LootTableComponent of
   each row of `Gatherable_LootContainers`, 64), the loot limits (`limits`: LootLimits, 338 rows, exported only: no chest table of this stage

@@ -128,6 +128,8 @@
 //                                                        a fixture of the interaction data near a character (stage 2.5b)
 //   GET  /v1/dev/chests?character=ID[&radius=N]          the chests of a character (stage 3.5b.1): its open, its loot claims,
 //                                                        the chests near it (default 30 m, 2000 m at most), the counts
+//   GET  /v1/dev/lootbags?character=ID                   the loot bags of a character (stage 3.5b.2): its open bag, each bag in
+//                                                        which it has a part (the items of its own part), the counts
 //   POST /v1/dev/chests/clear?character=ID&chest=KEY     remove the claim of a character on a chest
 //   POST /v1/dev/chests/reset?character=ID&chest=KEY&seconds=N
 //                                                        DEVELOPMENT AID (live check L8): the looted claim resets after N s
@@ -981,6 +983,17 @@ void register_dev_routes(Router& router, const Services& services) {
         }
         return in_world(services, [character = *character, radius = radius.value_or(30.0F)](world::World& target) {
             return json_reply(200, commands::chests_view(target, character, radius).dump());
+        });
+    });
+    // The loot bags of a character (stage 3.5b.2): its open bag and its parts.
+    router.add("GET", "", "/v1/dev/lootbags", "dev.lootbags", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        return in_world(services, [character = *character](world::World& target) {
+            return json_reply(200, commands::loot_bags_view(target, character).dump());
         });
     });
     router.add("POST", "", "/v1/dev/chests/clear", "dev.chests_clear", command_route(services, commands::clear_chest_claim));

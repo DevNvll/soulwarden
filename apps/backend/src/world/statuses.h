@@ -142,6 +142,12 @@ struct StatusValues {
     float healOutgoing{0.0F};
     /** The StaminaRate part (stage 3.4f-B): the regeneration of the stamina is (1 + this part) times its rate. */
     float staminaRate{0.0F};
+    /**
+     * The mana parts (stage 3.5b.2, the mana of the client): MaxMana (the maximum is (1 + the parts) times the base) and ManaRate (the
+     * regeneration is (1 + the parts) times the base rate).
+     */
+    float maxMana{0.0F};
+    float manaRate{0.0F};
 };
 
 /** Counts of the status system, for the log, `tools/world list`, and the tests. */

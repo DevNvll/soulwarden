@@ -52,6 +52,9 @@ Usage:
                                                 state, the time to the reset, a kept roll), and each chest near it (default
                                                 30 m) with its kind, its open time, and its state or the reason that it is
                                                 unavailable
+  tools/world bags CHARACTER                    the loot bags of a character (stage 3.5b.2): its open bag and each bag in which
+                                                it has a part (kill or discarded, the source, the distance, the seconds to its
+                                                end, the items of its own part), and the counts
   tools/world chest clear CHARACTER KEY         remove the claim of a character on a chest (KEY: the placement UUID): the
                                                 character can open it again
   tools/world chest reset CHARACTER KEY SECONDS DEVELOPMENT AID (live check L8): the looted claim resets after SECONDS
@@ -398,6 +401,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         show_interactions(document)
     elif isinstance(document, dict) and "trackerEntries" in document and "claims" in document:
         show_chests(document)
+    elif isinstance(document, dict) and "lootContainer" in document and "bags" in document:
+        show_bags(document)
     elif isinstance(document, dict) and "weapons" in document:
         show_progress(document)
     elif isinstance(document, dict) and "entitlements" in document and "achievements" in document:
@@ -725,6 +730,26 @@ def show_interactions(document: dict) -> None:
           f"begins {counts.get('begins', 0)}, ends {counts.get('ends', 0)}; server children {counts.get('serverChildren', 0)} "
           f"(made {counts.get('made', 0)}, removed {counts.get('removed', 0)}); timed uses {counts.get('timed', 0)}, completions "
           f"{counts.get('completions', 0)}")
+
+
+def show_bags(document: dict) -> None:
+    """Prints the loot bags of a character (stage 3.5b.2): its open bag and the items of its own part of each bag."""
+    if not document.get("inWorld"):
+        print("the character is not in the world")
+    if not document.get("lootContainer"):
+        print("the backend has no personal loot container (interaction data of format 3): the items of a kill go into the bag")
+    if document.get("open"):
+        print(f"open: {document['open']}")
+    for bag in document["bags"]:
+        items = ", ".join(f"{item['quantity']} {item['item']}" + (f" (gear score {item['gearScore']})" if item['gearScore'] else "")
+                          + (" bound" if item["bound"] else "") for item in bag["items"]) or "no item (Looted)"
+        x, y, z = bag["position"]
+        print(f"{bag['bag']}  {bag['kind']:<9} {bag['source']:<20} {bag['distance']:6.1f} m  {x:.2f} {y:.2f} {z:.2f}  "
+              f"{bag['secondsLeft']:6.1f} s left{'  (empty: ends soon)' if bag['emptied'] else ''}  {bag['receivers']} receiver(s)  {items}")
+    counts = document["counts"]
+    print(f"{len(document['bags'])} bag(s) of the character; the world has {counts['bagsInWorld']} bag(s); bags {counts['bags']}, "
+          f"discards {counts['discards']}, takes {counts['takes']} ({counts['itemsTaken']} items), gives {counts['itemsGiven']}, "
+          f"ended {counts['expired']} (time) and {counts['emptied']} (empty), refusals {counts['refusals'] or 'none'}")
 
 
 def show_chests(document: dict) -> None:
@@ -1348,6 +1373,8 @@ def main() -> None:
         if options["--permission"]:
             query += f"&permission={whole(options['--permission'], 'the permission rule')}"
         request(data_dir, "POST", f"/v1/dev/interactions/fixture?{query}")
+    elif command == "bags" and len(arguments) == 2:
+        request(data_dir, "GET", f"/v1/dev/lootbags?character={character_id(data_dir, arguments[1])}")
     elif command == "chests" and len(arguments) in (2, 3):
         radius = f"&radius={arguments[2]}" if len(arguments) == 3 else ""
         request(data_dir, "GET", f"/v1/dev/chests?character={character_id(data_dir, arguments[1])}{radius}")

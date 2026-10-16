@@ -17,6 +17,8 @@ using nlohmann::json;
 /** The forms of the file that this code reads (tools/gamedata/interactions.py): 1 (stage 2.5a), 2 (stage 2.5b: the server children). */
 constexpr std::uint64_t kFormatLevel = 1;
 constexpr std::uint64_t kFormat = 2;
+/** Format 3 (stage 3.5b.2): format 2 and the member lootContainers. */
+constexpr std::uint64_t kFormatContainers = 3;
 
 constexpr std::pair<const char*, InteractionKind> kKindTexts[] = {
     {"lorePage", InteractionKind::lorePage},
@@ -471,8 +473,8 @@ bool InteractionData::load(const std::string& path) {
         return false;
     }
     const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kFormatLevel && format != kFormat) {
-        m_error = "the file does not have the format 1 or 2";
+    if (format != kFormatLevel && format != kFormat && format != kFormatContainers) {
+        m_error = "the file does not have the format 1, 2, or 3";
         return false;
     }
     for (const char* list : {"options", "achievements", "objects"}) {
@@ -510,7 +512,8 @@ bool InteractionData::load(const std::string& path) {
     std::vector<InteractionTemplate> templates;
     std::vector<SpawnedPlacement> spawned;
     std::map<std::string, std::uint32_t> fixtures;
-    if (format == kFormat) {
+    std::map<std::string, LootContainer> containers;
+    if (format >= kFormat) {
         for (const char* list : {"templates", "spawned"}) {
             if (!document.contains(list) || !document[list].is_array()) {
                 m_error = std::string("the file does not have the list ") + list;
@@ -541,6 +544,43 @@ bool InteractionData::load(const std::string& path) {
             fixtures[name] = index.get<std::uint32_t>();
         }
     }
+    // Format 3 (stage 3.5b.2): the loot containers.
+    if (format == kFormatContainers) {
+        if (!document.contains("lootContainers") || !document["lootContainers"].is_object()) {
+            m_error = "the file does not have the member lootContainers";
+            return false;
+        }
+        for (const auto& [name, entry] : document["lootContainers"].items()) {
+            LootContainer value;
+            std::uint64_t number = 0;
+            if (!entry.is_object() || !reader.unsigned_number(entry, "template", 0xFFFFFFFFULL, number)) {
+                m_error = "the loot container " + name + " has no template";
+                return false;
+            }
+            value.templateIndex = static_cast<std::uint32_t>(number);
+            if (!reader.unsigned_number(entry, "kind", 0xFFFFFFFFULL, number)) {
+                m_error = "the loot container " + name + " has no kind";
+                return false;
+            }
+            value.kind = static_cast<std::uint32_t>(number);
+            if (!reader.unsigned_number(entry, "lootDropSlot", 4095, number)) {
+                m_error = "the loot container " + name + " has no LootDrop slot";
+                return false;
+            }
+            value.lootDropSlot = static_cast<std::uint32_t>(number);
+            if (!reader.unsigned_number(entry, "rarityParticles", 255, number)) {
+                m_error = "the loot container " + name + " has no count of rarity particles";
+                return false;
+            }
+            value.rarityParticles = static_cast<std::uint32_t>(number);
+            if (!reader.real(entry, "lifetime", value.lifetime) || !reader.real(entry, "emptyLifetime", value.emptyLifetime)
+                || !reader.real(entry, "hideDelay", value.hideDelay)) {
+                m_error = "the loot container " + name + " has no lifetime, emptyLifetime, or hideDelay";
+                return false;
+            }
+            containers[name] = value;
+        }
+    }
     // The counts of the tool: a file that lost a part of a list is not complete.
     if (document.contains("counts")) {
         const json& counts = document["counts"];
@@ -550,8 +590,11 @@ bool InteractionData::load(const std::string& path) {
         }
         std::vector<std::pair<const char*, std::size_t>> expected = {
             {"objects", objects.size()}, {"bounds", bounds}, {"options", options.size()}, {"achievements", achievements.size()}};
-        if (format == kFormat) {
+        if (format >= kFormat) {
             expected.insert(expected.end(), {{"templates", templates.size()}, {"spawned", spawned.size()}, {"fixtures", fixtures.size()}});
+        }
+        if (format == kFormatContainers) {
+            expected.push_back({"lootContainers", containers.size()});
         }
         for (const auto& [key, size] : expected) {
             if (!counts.is_object() || !counts.contains(key) || !counts[key].is_number_unsigned() || counts[key].get<std::uint64_t>() != size) {
@@ -560,8 +603,17 @@ bool InteractionData::load(const std::string& path) {
             }
         }
     }
-    return set(std::move(options), std::move(achievements), std::move(objects), std::move(templates), std::move(spawned),
-               std::move(fixtures));
+    if (!set(std::move(options), std::move(achievements), std::move(objects), std::move(templates), std::move(spawned),
+             std::move(fixtures))) {
+        return false;
+    }
+    if (!set_loot_containers(std::move(containers))) {
+        const std::string cause = m_error;
+        *this = InteractionData{};
+        m_error = cause;
+        return false;
+    }
+    return true;
 }
 
 bool InteractionData::set(std::vector<InteractionOption> options,
@@ -745,6 +797,30 @@ bool InteractionData::set(std::vector<InteractionOption> options,
     data.m_fixtures = std::move(fixtures);
     *this = std::move(data);
     return true;
+}
+
+bool InteractionData::set_loot_containers(std::map<std::string, LootContainer> containers) {
+    // Each container names a template with a bound of the kind lootDrop (TakeAllOption, OpenStorageOption), the type AILoot (1), a
+    // LootDrop slot, a lifetime above 0, an end time not below 0, and a rarity count (the selector of an entry is below it). A file
+    // that does not fit is refused as a whole.
+    for (const auto& [name, container] : containers) {
+        const bool times = std::isfinite(container.lifetime) && container.lifetime > 0.0F && std::isfinite(container.emptyLifetime)
+                           && container.emptyLifetime >= 0.0F && std::isfinite(container.hideDelay) && container.hideDelay >= 0.0F;
+        if (container.templateIndex >= m_templates.size() || m_templates[container.templateIndex].bounds.empty()
+            || m_templates[container.templateIndex].kind != InteractionKind::lootDrop || m_templates[container.templateIndex].positionSlot == 0
+            || container.kind != 1 || container.lootDropSlot == 0 || container.rarityParticles == 0 || !times) {
+            m_error = "the loot container " + name + " has no template of the kind lootDrop with a bound and a place, not the type AILoot, "
+                      "no LootDrop slot, no rarity particle, or a time that is not correct";
+            return false;
+        }
+    }
+    m_lootContainers = std::move(containers);
+    return true;
+}
+
+const LootContainer* InteractionData::loot_container(std::string_view name) const {
+    const auto found = m_lootContainers.find(std::string(name));
+    return found == m_lootContainers.end() ? nullptr : &found->second;
 }
 
 std::optional<std::uint32_t> InteractionData::fixture(std::string_view name) const {

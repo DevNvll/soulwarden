@@ -51,6 +51,14 @@ public:
     [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context) override {
         return m_chests.begin(character, context);
     }
+    /** The open time of the gatherable row (code review of stage 3.5b.1, finding CH-R2): the timed use of the base. */
+    [[nodiscard]] float use_time(const Entity& character, const InteractionContext& context) const override {
+        (void)context;
+        return m_chests.open_seconds(character);
+    }
+    void complete(Entity& character, const InteractionContext& context) override {
+        m_chests.complete(character, context);
+    }
     void end(Entity& character, const InteractionContext& context, InteractionEnd cause) override {
         m_chests.ended(character, context, cause);
     }
@@ -314,14 +322,14 @@ InteractionVerdict Chests::begin(Entity& character, const InteractionContext& co
     }
     const gamedata::ChestGatherable& gatherable = *m_data->gatherable_of(chest);
     const auto time = std::chrono::duration_cast<WorldClock::time_point::duration>(std::chrono::duration<float>(gatherable.openSeconds));
+    // The time of the open is the time of the timed use of the base (use_time; code review of stage 3.5b.1, finding CH-R2): its timer,
+    // its checks again, and the completion of a release at or after the time (finding ST-R1). The chest has no timer of its own.
     ChestOpen open;
     open.chest = *index;
-    open.token = ++m_token;
+    open.seconds = gatherable.openSeconds;
     open.started = now;
     open.due = now + time;
     own.open = open;
-    m_world.after(std::chrono::duration_cast<std::chrono::milliseconds>(time) + chest_rules::kTimerMargin,
-                  [this, characterId = character.characterId, token = open.token](World&) { complete(characterId, token); });
     set_gather(character, kGatherSuccess, gatherable.openSeconds, true, context.object->group);
     ++m_counts.begins;
     const std::string mark = log::session_mark(character.owner, character.characterId);
@@ -368,33 +376,25 @@ void Chests::set_gather(Entity& character, std::uint8_t status, float remaining,
     m_world.touch(character.id, ComponentKey::gathering);
 }
 
-void Chests::complete(const std::string& characterId, std::uint64_t token) {
-    Entity* character = m_world.find_character(characterId);
+float Chests::open_seconds(const Entity& character) const {
+    const auto found = m_own.find(character.characterId);
+    return found != m_own.end() && found->second.open ? found->second.open->seconds : 0.0F;
+}
+
+void Chests::complete(Entity& entity, const InteractionContext& context) {
+    Entity* character = &entity;
+    const std::string& characterId = entity.characterId;
     const auto found = m_own.find(characterId);
-    if (character == nullptr || found == m_own.end() || !found->second.open || found->second.open->token != token) {
-        return; // The open ended before its time.
+    const std::optional<std::uint32_t> openChest = chest_of(context);
+    if (found == m_own.end() || !found->second.open || !openChest || *openChest != found->second.open->chest) {
+        return; // No open of this chest (a different use).
     }
+    // The base checked the use again before this call (the source, the life, the exact position, the range: still_valid).
     Own& own = found->second;
     const std::uint32_t index = own.open->chest;
     const gamedata::ChestDefinition& chest = m_data->chests()[index];
     const std::string mark = log::session_mark(character->owner, character->characterId);
     const log::Context logContext(mark);
-    // The checks of the base again (the source, the life, the exact position, the range), on the use of this chest.
-    InteractionEnd cause = InteractionEnd::policyFailed;
-    const gamedata::InteractionData* objects = m_world.interactions().data();
-    const bool onChest = character->interaction && character->interaction->instance == 0 && objects != nullptr
-                         && character->interaction->object < objects->objects().size()
-                         && lower_ascii(objects->objects()[character->interaction->object].key) == lower_ascii(chest.key);
-    if (!onChest || !m_world.interactions().use_valid(*character, cause)) {
-        log::write("world: chests: the open of %s by character %s fails at its end: %s", chest.key.c_str(), characterId.c_str(),
-                   onChest ? interaction_end_text(cause) : "the use of the chest ended");
-        ++m_counts.cancels;
-        fail_open(*character, own);
-        if (onChest) {
-            m_world.interactions().end_use(*character, cause);
-        }
-        return;
-    }
     const std::string claimKey = lower_ascii(chest.key);
     auto existing = own.claims.find(claimKey);
     if (existing != own.claims.end() && existing->second.state == ClaimState::looted) {
@@ -429,13 +429,15 @@ void Chests::complete(const std::string& characterId, std::uint64_t token) {
     const Wallet walletBefore = character->wallet;
     state::Store::Batch batch(m_world.store());
     bool written = batch.open();
-    std::vector<GrantItem> lost;
     ItemResult given;
     if (written && !items.empty()) {
-        given = m_world.inventory().grant(characterId, items, 0, &lost, true);
+        given = m_world.inventory().grant(characterId, items, 0, nullptr, true);
         written = given.error != ItemError::storeFailed;
     }
-    const bool full = given.error == ItemError::bagFull;
+    // A full bag, or an item of the roll that the catalog does not have (finding CH-R3): no change, and the claim keeps the complete
+    // roll (Rolled). A later open gives it when the bag has place and the catalog has each item.
+    const bool unresolved = given.error == ItemError::unknownItem || given.error == ItemError::noItemType;
+    const bool full = given.error == ItemError::bagFull || unresolved;
     if (full) {
         next.state = ClaimState::rolled;
         next.items = items;
@@ -469,9 +471,9 @@ void Chests::complete(const std::string& characterId, std::uint64_t token) {
     own.claims[claimKey] = next;
     if (full) {
         ++m_counts.kept;
-        log::write("world: chests: the bag of character %s has no place for the roll of %s (%s): the roll stays in its claim, the chest "
-                   "stays closed",
-                   characterId.c_str(), chest.key.c_str(), item_list(items).c_str());
+        log::write("world: chests: %s character %s for the roll of %s (%s): the roll stays in its claim, the chest stays closed",
+                   unresolved ? "the item catalog has no item of the roll of" : "the bag has no place for", characterId.c_str(),
+                   chest.key.c_str(), item_list(items).c_str());
         set_gather(*character, kGatherFailure, 0.0F, false, kNoTarget);
         refresh_tracker(*character, own);
         m_world.interactions().end_use(*character, InteractionEnd::policyFailed);
@@ -479,12 +481,11 @@ void Chests::complete(const std::string& characterId, std::uint64_t token) {
     }
     m_due.emplace(next.reset, DueReset{characterId, chest.key, next.generation});
     ++m_counts.completions;
-    m_counts.itemsGiven += items.size() - std::min(items.size(), lost.size());
+    m_counts.itemsGiven += items.size();
     set_gather(*character, kGatherDone, 0.0F, false, kNoTarget);
     refresh_tracker(*character, own);
-    log::write("world: chests: character %s opened the %s chest %s: %s%s; the reset in %.0f s (claim %llu)", characterId.c_str(),
+    log::write("world: chests: character %s opened the %s chest %s: %s; the reset in %.0f s (claim %llu)", characterId.c_str(),
                gamedata::chest_kind_text(chest.kind), chest.key.c_str(), item_list(items).c_str(),
-               lost.empty() ? "" : " (an item that the catalog does not have is not given)",
                std::chrono::duration<double>(next.reset - now).count(), static_cast<unsigned long long>(next.generation));
 }
 

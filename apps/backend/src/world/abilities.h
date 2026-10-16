@@ -622,6 +622,12 @@ public:
      */
     void change_mana(Entity& character, float amount, const char* what);
     /**
+     * The maximum or the regeneration factor of the mana of a character changed (stage 3.5b.2, the progress system: the MaxMana and
+     * ManaRate parts): the regeneration goes on with the new rate (the base rate of the data times Vitals::manaRateFactor), and the mana
+     * state of the owner changes.
+     */
+    void mana_changed(Entity& character);
+    /**
      * A shorter cooldown of each ability of the bar of the weapon in the hand (stage 1.3b: Refreshing Move, CooldownTimer
      * with CDRImmediatelyOptions ActiveWeapon): `part` of the cooldown of the data, not below the minimum end and not
      * below now. The end of the client cooldown changes the same.

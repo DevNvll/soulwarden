@@ -422,9 +422,12 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
         active.serial = ++m_serial;
         active.instance = context.instance;
         active.generation = context.generation;
-        // A timed use (stage 2.5b): the full Delay Time of the option row on the world clock (live check L6: the client timer).
-        if (context.option->delay > 0.0F) {
-            const auto delay = std::chrono::duration_cast<WorldClock::time_point::duration>(std::chrono::duration<float>(context.option->delay));
+        // A timed use (stage 2.5b): the full Delay Time of the option row on the world clock (live check L6: the client timer). A handler
+        // with its own time (the open of a chest; code review of stage 3.5b.1, finding CH-R2) gives it: the same timed use of the base.
+        const float handlerTime = handler->use_time(*character, context);
+        const float useTime = handlerTime > 0.0F ? handlerTime : context.option->delay;
+        if (useTime > 0.0F) {
+            const auto delay = std::chrono::duration_cast<WorldClock::time_point::duration>(std::chrono::duration<float>(useTime));
             active.due = active.started + delay;
             ++m_timed;
             m_world.after(std::chrono::duration_cast<std::chrono::milliseconds>(delay) + std::chrono::milliseconds(1),
@@ -453,7 +456,12 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
                context.option->name.c_str(), gamedata::interaction_kind_text(context.object->kind), context.object->key.c_str(),
                context.object->slice.c_str(), static_cast<double>(distance), handler->name(),
                committed ? "committed: it stays until its end" : "one time",
-               context.option->delay > 0.0F ? (", timed: it completes after " + std::to_string(context.option->delay) + " s").c_str() : "");
+               character->interaction && character->interaction->due
+                   ? (", timed: it completes after "
+                      + std::to_string(std::chrono::duration<double>(*character->interaction->due - character->interaction->started).count())
+                      + " s")
+                         .c_str()
+                   : "");
     if (committed && context.object->assembly) {
         if (const std::optional<StationContext> station = this->station(*character)) {
             log::write("world: station of the interaction: key %s%s, fee %s, Assembly entity %s target %s, object %s generation %llu, "
@@ -465,6 +473,8 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
                        station->parentKey.empty() ? "none" : station->parentKey.c_str());
         }
     }
+    // The handler after the base registered the use (stage 3.5b.2: the Take All of a loot bag).
+    handler->started(*character, context);
     return InteractionVerdict::accepted;
 }
 
@@ -646,12 +656,13 @@ void Interactions::timed_due(const std::string& characterId, std::uint64_t seria
     if (site.instance != 0) {
         completions = ++m_instances.at(site.instance).completions;
     }
+    // The time of the use (the Delay Time of the option, or the time of the handler: finding CH-R2). The handler can end the use.
+    const double seconds = std::chrono::duration<double>(m_world.clock().now() - active.started).count();
+    log::write("world: timed interaction of character %s: %s at the object %s completed after %.1f s (completion %u of the object)",
+               character->characterId.c_str(), option.name.c_str(), site.object->key.c_str(), seconds, completions);
     if (InteractionHandler* handler = handler_of(site.object->kind, option.id)) {
         handler->complete(*character, context);
     }
-    log::write("world: timed interaction of character %s: %s at the object %s completed after %.1f s (completion %u of the object)",
-               character->characterId.c_str(), option.name.c_str(), site.object->key.c_str(), static_cast<double>(option.delay),
-               completions);
 }
 
 bool Interactions::still_valid(const Entity& character, const ActiveInteraction& active, InteractionEnd& cause) const {
@@ -771,6 +782,21 @@ void Interactions::publish(Instance& instance) {
     if (changed) {
         m_world.touch(entity->id, ComponentKey::interact);
     }
+}
+
+Interactions::SpawnedContainer Interactions::spawn_container(std::uint32_t templateIndex, const state::WorldPosition& place, float yawDegrees,
+                                                            const std::string& key) {
+    SpawnedContainer result;
+    if (!std::isfinite(yawDegrees)) {
+        return result;
+    }
+    const float half = yawDegrees * 3.14159265358979F / 360.0F;
+    const gamedata::Rotation rotation{0.0F, 0.0F, std::sin(half), std::cos(half)};
+    result.entity = spawn(templateIndex, place, rotation, key, -1, 0, "", {}, "", -1, 0);
+    if (result.entity != nullptr) {
+        result.generation = m_instances.at(result.entity->id).generation;
+    }
+    return result;
 }
 
 Entity* Interactions::spawn(std::uint32_t templateIndex, const state::WorldPosition& place, const gamedata::Rotation& rotation,

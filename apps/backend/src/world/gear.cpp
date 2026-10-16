@@ -169,6 +169,9 @@ GearValues Gear::values(const Entity& character) const {
         if (ability) {
             values.baseDamage += cells.number("BaseDamage") * potency;
             values.damageReduction += cells.number("BaseDamageReduction") * potency;
+            // The mana parts of a fixed ability row (stage 3.5b.2: Global_Ring_MaxMana, MaxMana 0.1).
+            values.maxMana += cells.number("MaxMana") * potency;
+            values.manaRate += cells.number("ManaRate") * potency;
         }
         values.physicalArmor += cells.number("PhysicalArmor") * potency;
         values.elementalArmor += cells.number("ElementalArmor") * potency;
@@ -299,6 +302,9 @@ void Gear::refresh(Entity& character) {
     const bool bonusChanged = bonus != character.attributes.bonus;
     character.attributes.bonus = bonus;
     character.gear.healthPart = values.maxHealth;
+    // The mana parts of the perks and of the statuses (stage 3.5b.2); the progress system adds the parts of the attribute thresholds.
+    character.gear.manaPart = values.maxMana + status.maxMana;
+    character.gear.manaRatePart = values.manaRate + status.manaRate;
     character.gear.baseDamage = values.baseDamage;
     character.gear.damage = values.damage;
     character.gear.physicalArmor = values.physicalArmor;

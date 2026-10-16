@@ -313,6 +313,14 @@ private:
     void handle_client_input(std::span<const std::uint8_t> body);
     /** The requests of the client for its bag (server/rep/item_requests.h). */
     void handle_drop_items(std::span<const std::uint8_t> body);
+    /** Stage 3.5b.2 (world/loot_bags.h): Take All (2939), the take of an item (2942), a give into a bag (2801), a paperdoll drop (826). */
+    void handle_bag_request(std::uint32_t type, std::span<const std::uint8_t> body);
+    void handle_paperdoll_drop(std::span<const std::uint8_t> body);
+    /**
+     * @return True when a reference names the selected Container of the character of the session: its actor, its group, and (with the
+     *         ids of the player slice) the facet target of the Container component of the entity GlobalStorage (live check L5).
+     */
+    [[nodiscard]] bool own_container(const world::Entity& own, const world::InteractionReference& reference, std::uint32_t type);
     void handle_set_lock_state(std::span<const std::uint8_t> body);
     /**
      * The requests of the client for its equipment: equip, unequip, and the swap of two slots
@@ -546,7 +554,8 @@ private:
     /**
      * A cancel (2473) of the client that matched no use of the character (code review of stage 2.5b, finding ST-R2): the reference and
      * the datagram that carried it. A request for that reference from an earlier datagram (a press that the client made before the
-     * cancel, delivered late on its channel) starts no use. The first input of a later datagram ends the mark.
+     * cancel, delivered late on its channel) starts no use. The first input of a later datagram ends the mark. A matched cancel and a
+     * late cancel get a mark with no step (code review of stage 3.5b.1, finding CH-R1): only the datagram rule.
      */
     struct EarlyCancel {
         world::InteractionReference reference;

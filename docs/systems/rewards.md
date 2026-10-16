@@ -30,7 +30,12 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
   `Inventory::grant`, in one transaction, with the cause `sync::kItemGathered` (1, the loot
   notice of the HUD). The roll of a loot table follows the rules of the roller of the client
   with the generator of the world only (`World::random_unit`). A full bag: an item with no
-  free slot is not given, and the coin and the experience are. The loot switch
+  free slot is not given, and the coin and the experience are. Since stage 3.5b.2 the items go
+  into the part of the character in a personal loot bag at the place of the creature (one bag
+  for each kill, a part for each character with the credit; `LootBags::stage_part` writes the
+  rows of the part in the transaction of the reward), and only the coin goes through
+  `Inventory::grant` ([Loot bags](loot-bags.md)); with no loot container in the interaction
+  data (format 2) the items go into the bag of the character as before. The loot switch
   (`Rewards::set_forced`, `tools/world loot`, the admin command `set_force_loot`) is a value
   of the world with the character id as its key, until the backend stops. A new reward of a
   kill (the territory standing, the Azoth) goes into `Rewards::killed` and through the system

@@ -17,9 +17,16 @@ the tool (main).
   reset-order           MaxRespawnRate is below MinRespawnRate                     status 1, the file stays
   record-position       a metadata record has a position that is not 3 numbers     status 1, the file stays
   no-reset-rule         the base attributes have no instanced chest reset          status 1, the file stays
+  missing-metadata      the source has no metadata file of the layer (CH-R5)       status 1, the file stays
+  missing-territory     a record names a territory with no row (CH-R6)             status 1, the file stays
+  wrong-record-first    a record of a different gatherable row at the encounter    status 0; the encounter chest keeps its record:
+                        chest, first in the file (CH-R7)                           unavailable (encounter), its root
+  record-conflict       two records of the gatherable row of the supply chest at   status 1, the file stays
+                        its place with different territories (CH-R7)
 
 The values of the valid document: the census (10 kind-0 records at 9 places: 8 joined to a chest (two records at the place of one
-chest), 1 to a different placement, 1 to none, with its flag IsVariantOverride; a record of kind 4 is not kind 0); the state of each chest: the supply chest ordinary (the
+chest: the second is the record of a different gatherable row), 1 to a different placement, 1 to none, with its flag
+IsVariantOverride; a record of kind 4 is not kind 0); the state of each chest: the supply chest ordinary (the
 loot tags of its territories, the content level of its area, the actor id of the UUID rule), the elite chest ordinary (the map
 marker is not a lock), the lock placement unavailable (lockSlice), the glyph chest unavailable (lock), the key chest unavailable
 (item), the quest chest unavailable (quest: a task of the quest data names its gatherable row), the encounter chest unavailable
@@ -94,7 +101,7 @@ class FakeSources:
     def paths(self, prefix: str, suffix: str) -> list[str]:
         if suffix == ".capitals.json" and LAYER.startswith(prefix):
             return [LAYER + ".capitals.json"]
-        if suffix == ".metadata" and LAYER.startswith(prefix):
+        if suffix == ".metadata" and LAYER.startswith(prefix) and self.case != "missing-metadata":
             return [LAYER + ".metadata"]
         return []
 
@@ -132,10 +139,15 @@ class FakeSources:
                    record("LootMediumT1", (160.0, 200.0, 30.0), [4], encounter=1),
                    record("Broccoli", (170.0, 200.0, 30.0), [4], root="Empty"),
                    record("LootMediumT1", (900.0, 900.0, 30.0), [4], override=1),
-                   record("LootMediumT1", (100.0, 200.0, 30.0), [4], kind=4)]
-        # The quest chest: the same place as a second kind-0 record of the supply place (7 places for 8 records).
+                   record("LootMediumT1_Quest", (100.0, 200.0, 30.0), [4], kind=4)]
+        # The quest chest: the same place as a second kind-0 record of the supply place (7 places for 8 records). The second record
+        # at the supply place is the record of a different gatherable row: the chest does not use it (finding CH-R7).
         records.append(record("MSQ_Test_Chest", (150.0, 200.0, 30.0), [4], root="ContainerLootLarge"))
-        records.insert(7, record("LootMediumT1", (100.0, 200.0, 30.0), [4], override=1))
+        records.insert(7, record("LootMediumT1_Other", (100.0, 200.0, 30.0), [4], override=1))
+        if self.case == "wrong-record-first":
+            records.insert(0, record("Unrelated_Gatherable", (160.0, 200.0, 30.0), [4], root="ContainerLootCookingSmall"))
+        if self.case == "record-conflict":
+            records.append(record("LootMediumT1", (100.0, 200.0, 30.0), [5]))
         return [element(None, None, [element(field_id("GatherableLocations"), None, records)])]
 
     def check_complete(self) -> None:
@@ -181,6 +193,8 @@ def fake_tables(case: str):
     tables.gatherable_crc = {zlib.crc32(name.lower().encode()): name for name in tables.gatherables}
     tables.territories = {4: {"tags": ["Everfall"], "level": None}, 9027: {"tags": [], "level": 12}, 5: {"tags": ["Reekwater"], "level": 60},
                           16: {"tags": ["Brimstone"], "level": 65}, 10: {"tags": ["CutlassKeys"], "level": 60}}
+    if case == "missing-territory":
+        del tables.territories[9027]
     tables.conflicts = {"LootMediumT1"} if case == "gatherable-conflict" else set()
     tables.quest_named = {"msq_test_chest"}
     return tables
@@ -224,7 +238,8 @@ def main() -> int:
     work.mkdir(parents=True, exist_ok=True)
     failures = 0
     cases = ("valid", "no-capitals", "chest-no-position", "placement-twice", "unknown-gatherable", "gatherable-conflict", "open-zero",
-             "reset-order", "record-position", "no-reset-rule")
+             "reset-order", "record-position", "no-reset-rule", "missing-metadata", "missing-territory", "wrong-record-first",
+             "record-conflict")
     for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")
@@ -239,6 +254,13 @@ def main() -> int:
             wrong = valid_values(json.loads(text)) if status == 0 and text != MARK else [f"no document: {errors.getvalue().strip()}"]
             passed = status == 0 and not wrong
             detail = f"status {status}" + (f", not correct: {'; '.join(wrong)}" if wrong else ", each value is correct")
+        elif case == "wrong-record-first":
+            entry = None
+            if status == 0 and text != MARK:
+                entry = next((chest for chest in json.loads(text)["chests"] if chest["key"] == IDS["encounter"]), None)
+            passed = entry is not None and entry["state"] == "unavailable" and entry["root"] == "ContainerLootSmallLeveled" \
+                and entry["flags"].get("encounter") == 1
+            detail = f"status {status}, the encounter chest: " + (f"{entry['state']}, root {entry['root']}" if entry else "none")
         else:
             passed = status == 1 and text == MARK and not (work / f"{case}.json.tmp").exists()
             detail = f"status {status}, file {'kept' if text == MARK else 'replaced'}: {errors.getvalue().strip()}"

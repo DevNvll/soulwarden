@@ -47,6 +47,17 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   4.5. Stage 1.3b: each change of the mana goes through one path (`Abilities::change_mana`:
   a cost, a potion), and the regeneration of the data runs after a spend
   ([Abilities](abilities.md)).
+- The mana maximum and the regeneration (stage 3.5b.2, a task of the orchestrator; protocol notes 4.5; test case MN1): the maximum is
+  the base mana of the progression tables (ManaMax of the row Player, 100) times 1 plus the MaxMana parts of the threshold abilities
+  of the attributes (`attributes.abilities` of `progression-tables.json`: Focus 100 gives `Foc_Bonus_100_1`, MaxMana 0.1 and ManaRate
+  0.2), the perks, and the effects; the regeneration is the base rate (2) times 1 plus the ManaRate parts (`Vitals::manaRateFactor`)
+  [game data]. A change of the maximum keeps the part of the current value, as the client does [client code 0x676B310]. The client
+  computes the same maximum itself: its meter is the current value of the state over its own maximum, and it takes the base of that
+  maximum from the maximum field of the first mana state [live check of the final run: a first state with 110 gave the client 121, and
+  the meter stayed at 91 percent at full mana]. Thus the current value has the parts (110 of 110) and the maximum field of the mana
+  state and ManaMax of the vitals state have the base (`Vitals::manaBase`, 100) [live check]. With no threshold rows (an older
+  progression file) the maximum is the base: the client then has 110 with Focus 100 or more, and the meter shows 91 percent at full
+  mana (the fault that the user saw before stage 3.5b.2).
 - The heals (stage 3.3b-S6; before: `Health::heal_amount` of stage 1.3b). Each heal of a character goes through one function
   (`Health::heal`): an ability (a status with HealthModifierDamageBased: Divine Embrace, the pulses of the Beacon and of Sacred
   Ground), a potion, a food, a dust, a status of the gear, and a life steal (DmgPctToHealth). A heal has a kind
@@ -345,7 +356,11 @@ tools/world list                     # the line "basic attacks": the sequences, 
   creature on the other side of the yard wall of the start settlement (7 tries, 0
   contacts).
 - The blue bar below the crosshair is the mana meter: it shows when the client has no mana
-  state, and it goes away at 100 percent.
+  state, and it goes away at 100 percent of the maximum of the client (not of the state).
+- A change of the maximum of the client keeps a full meter full (the client scales the current value): the meter shows a wrong
+  maximum only after the next mana state. Probe the maximum with `tools/world fragment NAME 47 1652 010f<current><base>0000000000000000`
+  (a value under the maximum shows the bar).
+- The meter does not move during the regeneration: it changes at the next mana state (the full value).
 - A sword attack gives a contact at 1.8 m or less, a spear attack only at 2.0 m or more:
   select the sword (`tools/hx 'key 0x31'`) for a test of a hit at 1.5 m.
 - A click with the left pointer button in the world is an attack: each attack moves the

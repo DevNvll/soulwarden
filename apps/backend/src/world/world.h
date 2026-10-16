@@ -34,6 +34,7 @@
 #include "world/health.h"
 #include "world/ids.h"
 #include "world/chests.h"
+#include "world/loot_bags.h"
 #include "world/interactions.h"
 #include "world/inventory.h"
 #include "world/load_meter.h"
@@ -801,6 +802,13 @@ public:
     [[nodiscard]] const Chests& chests() const {
         return m_chests;
     }
+    /** @return The personal loot bags (stage 3.5b.2): the bag of a kill and of a discard, its parts, the pickups. */
+    [[nodiscard]] LootBags& loot_bags() {
+        return m_lootBags;
+    }
+    [[nodiscard]] const LootBags& loot_bags() const {
+        return m_lootBags;
+    }
     /** @return The spell entities of the world (stage 3.3b-S2a): the vortex of Gravity Well. */
     [[nodiscard]] Spells& spells() {
         return m_spells;
@@ -927,6 +935,8 @@ private:
     Interactions m_interactions;
     /** The chests and the loot claims (stage 3.5b.1): after the interactions (it registers its handler there). */
     Chests m_chests;
+    /** The personal loot bags (stage 3.5b.2): after the interaction system (its handler and its server children). */
+    LootBags m_lootBags;
     Revision m_lastSpell{0};
     Revision m_lastProjectile{0};
 };

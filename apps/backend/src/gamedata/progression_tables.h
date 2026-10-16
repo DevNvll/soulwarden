@@ -157,6 +157,12 @@ inline constexpr std::uint32_t kLargestRank = 0xFFFF;
 /** @return True when the ranks of a row are valid for each largest rank that it has (maxRank, and expansionMaxRank when it is not 0). */
 [[nodiscard]] bool valid_rank_caps(const ProgressionRow& row);
 
+/** One threshold of an attribute (stage 3.5b.2): a character with the attribute at `value` or above has these abilities (EquipAbilities). */
+struct AttributeThreshold {
+    std::uint32_t value{0};
+    std::vector<std::string> abilities;
+};
+
 /** The content of the tables, for a load and for a test. */
 struct ProgressionData {
     /** The largest level of a player with no expansion (the row "None"), as the screen shows it. */
@@ -177,6 +183,11 @@ struct ProgressionData {
     float manaRegenRate{0.0F};
     float manaRegenDelay{0.0F};
     float manaRegenDelayOnEmpty{0.0F};
+    /**
+     * The threshold abilities of each attribute (stage 3.5b.2, `attributes.abilities` of the file; the names "strength", "dexterity",
+     * "intelligence", "focus", "constitution"), in the sequence of their values. Empty in an older file: no threshold ability.
+     */
+    std::map<std::string, std::vector<AttributeThreshold>> attributeAbilities;
     std::vector<ProgressionRow> progressions;
     std::vector<AbilityNode> nodes;
     /**

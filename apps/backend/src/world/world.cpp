@@ -77,7 +77,8 @@ World::World(const WorldClock& clock,
       m_projectiles(*this, options.projectileData, options.combatTables),
       m_stamina(*this),
       m_interactions(*this, options.interactionData),
-      m_chests(*this, options.chestData) {
+      m_chests(*this, options.chestData),
+      m_lootBags(*this) {
     m_random = options.randomSeed;
 }
 
@@ -141,6 +142,8 @@ void World::tick() {
         m_interactions.tick();
         // The claims of the chests whose reset time came (stage 3.5b.1).
         m_chests.tick();
+        // The bags of the store at the first tick, and the bags whose end came (stage 3.5b.2).
+        m_lootBags.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -258,6 +261,8 @@ Entity& World::make_entity(const state::Character& character) {
     m_ownership.entered(entity);
     // The loot claims of the character on the chests (stage 3.5b.1): its rows, and its LootTracker.
     m_chests.entered(entity);
+    // The states of the loot bags of the character (stage 3.5b.2): its LootTracker entries and its storage map.
+    m_lootBags.entered(entity);
     log::write("world: entity %016llx (actor %s) of character %s (%s) at %.2f %.2f %.2f",
                static_cast<unsigned long long>(entity.id),
                actor_text(entity.actor).c_str(),
@@ -281,6 +286,7 @@ void World::remove_entity(EntityId id) {
         m_interactions.left(entity);
         // The open of a chest ends, and the claims leave the memory (stage 3.5b.1; the rows stay).
         m_chests.left(entity);
+        m_lootBags.left(entity);
     }
     // The auras that follow the entity end with it (stage 3.3b-S2b: no aura stays with no attachment).
     if (entity.kind == EntityKind::creature || entity.kind == EntityKind::player) {

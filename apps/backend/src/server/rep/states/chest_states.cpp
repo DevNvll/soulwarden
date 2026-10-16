@@ -27,8 +27,9 @@
 // the client does not end a claim at its reset time in any tried unit, the server sends the map with no entry at the reset.
 //
 // View     Fragments
-// owner    the full map of the claims near the character (world/chests.h), at each change, also the empty map after a change. No
-//          fragment in the first record of a character with no claim near it.
+// owner    the full map of the claims near the character (world/chests.h) and of its loot bags (stage 3.5b.2, world/loot_bags.h: Rolled,
+//          Looted, the kind AILoot 1 or Discarded 5, the selector of the rarity), at each change, also the empty map after a change. No
+//          fragment in the first record of a character with no claim near it and no bag.
 // observer no fragment.
 
 namespace soulwarden::backend::server::rep {
@@ -63,15 +64,18 @@ std::vector<hub::Bytes> encode_gathering_state(const world::Entity& entity, View
 
 std::vector<hub::Bytes> encode_loot_tracker_state(const world::Entity& entity, View view, const PartsRequest& request) {
     std::vector<hub::Bytes> parts;
-    if (view != View::owner || (request.since == 0 && entity.lootTracker.empty())) {
+    if (view != View::owner || (request.since == 0 && entity.lootTracker.empty() && entity.bagTracker.empty())) {
         return parts;
     }
+    // One map: the claims of the chests (world/chests.h) and the entries of the loot bags (stage 3.5b.2, world/loot_bags.h).
+    std::vector<world::LootTrackerEntry> entries = entity.lootTracker;
+    entries.insert(entries.end(), entity.bagTracker.begin(), entity.bagTracker.end());
     StateWriter state(kTrackerGroups);
     hub::Writer& map = state.field(0, 0);
     map.size(0); // No change entries: the full form.
     map.u8(0);   // No version.
-    map.size(static_cast<std::uint32_t>(entity.lootTracker.size()));
-    for (const world::LootTrackerEntry& entry : entity.lootTracker) {
+    map.size(static_cast<std::uint32_t>(entries.size()));
+    for (const world::LootTrackerEntry& entry : entries) {
         map.raw(entry.actor);
         map.u32(entry.state);
         map.u32(entry.kind);

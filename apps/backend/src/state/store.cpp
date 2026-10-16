@@ -14,7 +14,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 9;
+constexpr int kSchemaVersion = 10;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -222,9 +222,51 @@ CREATE TABLE IF NOT EXISTS loot_claim_items(
 );
 )sql";
 
+/**
+ * Version 10 (stage 3.5b.2): the loot bags. `loot_bags` has the part of a bag of each receiver (the character id is the owner key, the bag
+ * key the durable id of the bag): its kind (1 AILoot, 5 Discarded), its source, its place, the rarity of the part, and its times in Unix
+ * milliseconds. `loot_bag_items` has the item instances of the part (the instance id, the item, the quantity, the gear score, the
+ * durability, the flags, the order counter, the perks), in the sequence of the list. A part with no item row: the receiver took each item.
+ */
+constexpr const char* kMigration10 = R"sql(
+CREATE TABLE IF NOT EXISTS loot_bags(
+    character_id TEXT NOT NULL,
+    bag_key TEXT NOT NULL,
+    kind INTEGER NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    position_x REAL NOT NULL,
+    position_y REAL NOT NULL,
+    position_z REAL NOT NULL,
+    rarity INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY(character_id, bag_key)
+);
+CREATE TABLE IF NOT EXISTS loot_bag_items(
+    character_id TEXT NOT NULL,
+    bag_key TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    instance_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    gear_score INTEGER NOT NULL DEFAULT 0,
+    durability INTEGER NOT NULL DEFAULT 0,
+    max_durability INTEGER NOT NULL DEFAULT 0,
+    flags INTEGER NOT NULL DEFAULT 0,
+    chrono INTEGER NOT NULL DEFAULT 0,
+    perk1 TEXT NOT NULL DEFAULT '',
+    perk2 TEXT NOT NULL DEFAULT '',
+    perk3 TEXT NOT NULL DEFAULT '',
+    perk4 TEXT NOT NULL DEFAULT '',
+    perk5 TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(character_id, bag_key, position)
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
-constexpr const char* kCharacterTables[] = {"items", "currencies", "character_progress", "progressions", "ability_nodes",
-                                            "ability_bars", "achievements", "entitlement_rewards", "loot_claims", "loot_claim_items"};
+constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
+                                            "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
+                                            "loot_claims",   "loot_claim_items",    "loot_bags",          "loot_bag_items"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -429,6 +471,13 @@ bool Store::migrate() {
     }
     if (version < 9) {
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration9) || !execute("PRAGMA user_version=9")
+            || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 10) {
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration10) || !execute("PRAGMA user_version=10")
             || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
@@ -1102,6 +1151,132 @@ bool Store::delete_loot_claims(const std::string& characterId, const std::vector
     }
     if (!ok) {
         log::write("store: no removal of the loot claims of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::vector<std::pair<std::string, LootBagRow>> Store::list_loot_bags() {
+    std::lock_guard lock(m_mutex);
+    std::vector<std::pair<std::string, LootBagRow>> bags;
+    {
+        Statement statement(m_database,
+                            "SELECT character_id, bag_key, kind, source, position_x, position_y, position_z, rarity, created_at, expires_at "
+                            "FROM loot_bags ORDER BY bag_key, character_id");
+        while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+            LootBagRow bag;
+            const std::string character = column_text(statement.handle, 0);
+            bag.bagKey = column_text(statement.handle, 1);
+            bag.kind = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 2));
+            bag.source = column_text(statement.handle, 3);
+            bag.position = WorldPosition{static_cast<float>(sqlite3_column_double(statement.handle, 4)),
+                                         static_cast<float>(sqlite3_column_double(statement.handle, 5)),
+                                         static_cast<float>(sqlite3_column_double(statement.handle, 6))};
+            bag.rarity = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 7));
+            bag.createdAt = sqlite3_column_int64(statement.handle, 8);
+            bag.expiresAt = sqlite3_column_int64(statement.handle, 9);
+            bags.emplace_back(character, std::move(bag));
+        }
+    }
+    Statement statement(m_database,
+                        "SELECT character_id, bag_key, position, instance_id, item_id, quantity, gear_score, durability, max_durability, "
+                        "flags, chrono, perk1, perk2, perk3, perk4, perk5 FROM loot_bag_items ORDER BY bag_key, character_id, position");
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        const std::string character = column_text(statement.handle, 0);
+        const std::string key = column_text(statement.handle, 1);
+        const auto bag = std::find_if(bags.begin(), bags.end(), [&](const auto& part) {
+            return part.first == character && part.second.bagKey == key;
+        });
+        if (bag == bags.end()) {
+            continue; // An item row with no bag row: not a part of a bag.
+        }
+        ItemRow item;
+        item.slot = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 2));
+        item.instanceId = column_text(statement.handle, 3);
+        item.itemId = column_text(statement.handle, 4);
+        item.quantity = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 5));
+        item.gearScore = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 6));
+        item.durability = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 7));
+        item.maxDurability = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 8));
+        item.flags = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 9));
+        item.chrono = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 10));
+        for (int place = 0; place < 5; ++place) {
+            item.perks[static_cast<std::size_t>(place)] = column_text(statement.handle, 11 + place);
+        }
+        bag->second.items.push_back(std::move(item));
+    }
+    return bags;
+}
+
+bool Store::write_loot_bag(const std::string& characterId, const LootBagRow& bag) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    bool ok = true;
+    {
+        Statement statement(m_database,
+                            "INSERT OR REPLACE INTO loot_bags(character_id, bag_key, kind, source, position_x, position_y, position_z, rarity, "
+                            "created_at, expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)");
+        statement.bind(1, characterId);
+        statement.bind(2, bag.bagKey);
+        sqlite3_bind_int64(statement.handle, 3, bag.kind);
+        statement.bind(4, bag.source);
+        sqlite3_bind_double(statement.handle, 5, bag.position.x);
+        sqlite3_bind_double(statement.handle, 6, bag.position.y);
+        sqlite3_bind_double(statement.handle, 7, bag.position.z);
+        sqlite3_bind_int64(statement.handle, 8, bag.rarity);
+        sqlite3_bind_int64(statement.handle, 9, bag.createdAt);
+        sqlite3_bind_int64(statement.handle, 10, bag.expiresAt);
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    {
+        Statement statement(m_database, "DELETE FROM loot_bag_items WHERE character_id=?1 AND bag_key=?2");
+        statement.bind(1, characterId);
+        statement.bind(2, bag.bagKey);
+        ok = ok && sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    for (std::size_t index = 0; index < bag.items.size() && ok; ++index) {
+        const ItemRow& item = bag.items[index];
+        Statement statement(m_database,
+                            "INSERT INTO loot_bag_items(character_id, bag_key, position, instance_id, item_id, quantity, gear_score, durability, "
+                            "max_durability, flags, chrono, perk1, perk2, perk3, perk4, perk5) "
+                            "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)");
+        statement.bind(1, characterId);
+        statement.bind(2, bag.bagKey);
+        sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(index));
+        statement.bind(4, item.instanceId);
+        statement.bind(5, item.itemId);
+        sqlite3_bind_int64(statement.handle, 6, item.quantity);
+        sqlite3_bind_int64(statement.handle, 7, item.gearScore);
+        sqlite3_bind_int64(statement.handle, 8, item.durability);
+        sqlite3_bind_int64(statement.handle, 9, item.maxDurability);
+        sqlite3_bind_int64(statement.handle, 10, item.flags);
+        sqlite3_bind_int64(statement.handle, 11, item.chrono);
+        for (int place = 0; place < 5; ++place) {
+            statement.bind(12 + place, item.perks[static_cast<std::size_t>(place)]);
+        }
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    if (!ok) {
+        log::write("store: no write of the loot bag %s of character %s: %s", bag.bagKey.c_str(), characterId.c_str(),
+                   sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+bool Store::delete_loot_bag(const std::string& bagKey) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    bool ok = true;
+    for (const char* sql : {"DELETE FROM loot_bags WHERE bag_key=?1", "DELETE FROM loot_bag_items WHERE bag_key=?1"}) {
+        Statement statement(m_database, sql);
+        statement.bind(1, bagKey);
+        ok = ok && sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    if (!ok) {
+        log::write("store: no removal of the loot bag %s: %s", bagKey.c_str(), sqlite3_errmsg(m_database));
     }
     return end_write(ok);
 }

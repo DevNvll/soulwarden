@@ -122,10 +122,49 @@ Vitals Progress::vitals_of(const Sheet& sheet, const Vitals& old) const {
         vitals.staminaMax = static_cast<float>(data.baseStamina);
     }
     if (data.baseMana != 0) {
-        vitals.mana = scale(old.mana, old.manaMax, static_cast<float>(data.baseMana));
-        vitals.manaMax = static_cast<float>(data.baseMana);
+        // The mana of the client (stage 3.5b.2, live check of the mana meter): the maximum is the base times 1 plus the MaxMana parts of
+        // the threshold abilities, the perks, and the effects (the client computes the same maximum from the ManaMax of the vitals state
+        // and its stat MaxMana, 0x676B310, and ignores the maximum of the mana state), and the regeneration is the base rate times 1 plus
+        // the ManaRate parts. The amount keeps its part of the maximum (the client does the same at a change of its maximum).
+        const auto [maxMana, manaRate] = threshold_mana(sheet);
+        const float maximum = static_cast<float>(data.baseMana) * std::max(1.0F + sheet.manaPart + maxMana, 0.0F);
+        vitals.mana = scale(old.mana, old.manaMax, maximum);
+        vitals.manaMax = maximum;
+        vitals.manaBase = static_cast<float>(data.baseMana);
+        vitals.manaRateFactor = std::max(1.0F + sheet.manaRatePart + manaRate, 0.0F);
     }
     return vitals;
+}
+
+std::pair<float, float> Progress::threshold_mana(const Sheet& sheet) const {
+    std::pair<float, float> parts{0.0F, 0.0F};
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    if (tables() == nullptr || abilities == nullptr || !abilities->loaded()) {
+        return parts;
+    }
+    static constexpr std::array<std::pair<unsigned, const char*>, attribute::kCount> kNames{
+        {{attribute::kStrength, "strength"}, {attribute::kDexterity, "dexterity"}, {attribute::kIntelligence, "intelligence"},
+         {attribute::kFocus, "focus"}, {attribute::kConstitution, "constitution"}}};
+    const auto& thresholds = tables()->data().attributeAbilities;
+    for (const auto& [type, name] : kNames) {
+        const auto found = thresholds.find(name);
+        if (found == thresholds.end()) {
+            continue;
+        }
+        const std::uint32_t value = sheet.attributes.value(type);
+        for (const gamedata::AttributeThreshold& threshold : found->second) {
+            if (threshold.value > value) {
+                break;
+            }
+            for (const std::string& id : threshold.abilities) {
+                if (const gamedata::AbilityRow* row = abilities->ability_row(id)) {
+                    parts.first += row->cells.number("MaxMana");
+                    parts.second += row->cells.number("ManaRate");
+                }
+            }
+        }
+    }
+    return parts;
 }
 
 Progress::Sheet Progress::read_sheet(const std::string& characterId, bool log) const {
@@ -168,10 +207,19 @@ void Progress::refresh_vitals(Entity& entity) {
     sheet.progression = entity.progression;
     sheet.attributes = entity.attributes;
     sheet.healthPart = entity.gear.healthPart;
+    sheet.manaPart = entity.gear.manaPart;
+    sheet.manaRatePart = entity.gear.manaRatePart;
     const Vitals vitals = vitals_of(sheet, entity.vitals);
-    if (vitals.healthMax != entity.vitals.healthMax || vitals.health != entity.vitals.health) {
+    const bool health = vitals.healthMax != entity.vitals.healthMax || vitals.health != entity.vitals.health;
+    const bool mana = vitals.manaMax != entity.vitals.manaMax || vitals.mana != entity.vitals.mana
+                      || vitals.manaRateFactor != entity.vitals.manaRateFactor;
+    if (health || mana) {
         entity.vitals = vitals;
         m_world.touch(entity.id, ComponentKey::vitals);
+    }
+    if (mana) {
+        // The mana state and the regeneration of the one mana path (world/abilities.h: the new maximum or rate).
+        m_world.abilities().mana_changed(entity);
     }
 }
 
@@ -211,6 +259,8 @@ ProgressResult Progress::change(const std::string& characterId, const char* what
         sheet.progression = entity->progression;
         sheet.attributes = entity->attributes;
         sheet.healthPart = entity->gear.healthPart;
+        sheet.manaPart = entity->gear.manaPart;
+        sheet.manaRatePart = entity->gear.manaRatePart;
         result.inWorld = true;
     } else if (m_store.find_character(characterId)) {
         sheet = read_sheet(characterId, false);
@@ -271,12 +321,16 @@ ProgressResult Progress::change(const std::string& characterId, const char* what
         if (vitals.healthMax != entity->vitals.healthMax || vitals.health != entity->vitals.health) {
             m_world.touch(entity->id, ComponentKey::vitals);
         }
-        if (vitals.manaMax != entity->vitals.manaMax || vitals.mana != entity->vitals.mana) {
+        const bool manaChanged = vitals.manaMax != entity->vitals.manaMax || vitals.mana != entity->vitals.mana
+                                 || vitals.manaRateFactor != entity->vitals.manaRateFactor;
+        if (manaChanged) {
             // The vitals state has the mana too: the two states keep the same values.
             m_world.touch(entity->id, ComponentKey::vitals);
-            m_world.touch(entity->id, ComponentKey::mana);
         }
         entity->vitals = vitals;
+        if (manaChanged) {
+            m_world.abilities().mana_changed(*entity);
+        }
         entity->progression = sheet.progression;
         entity->attributes = sheet.attributes;
     }

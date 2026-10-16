@@ -223,6 +223,24 @@ public:
      * @return `accepted`, or `refused` when the domain refuses (it changed nothing).
      */
     [[nodiscard]] virtual InteractionVerdict begin(Entity& character, const InteractionContext& context) = 0;
+    /**
+     * The base registered an accepted use (stage 3.5b.2): a committed use is the interaction of the character now, so the handler can end
+     * it (end_use). One call for each accepted use, after begin. The loot bags take the items of Take All here.
+     */
+    virtual void started(Entity& character, const InteractionContext& context) {
+        (void)character;
+        (void)context;
+    }
+    /**
+     * @return The time of a use of this handler (seconds; code review of stage 3.5b.1, finding CH-R2: the open of a chest), or 0: the
+     *         Delay Time of the option. A use with a time is a timed use of the base: the timer, complete() after the checks again, and
+     *         the completion before the end of a late release (finding ST-R1). Called after begin accepted it.
+     */
+    [[nodiscard]] virtual float use_time(const Entity& character, const InteractionContext& context) const {
+        (void)character;
+        (void)context;
+        return 0.0F;
+    }
     /** A timed use reached its end, and the checks again passed (stage 2.5b): one call for each use. */
     virtual void complete(Entity& character, const InteractionContext& context) {
         (void)character;
@@ -419,6 +437,17 @@ public:
      * 3746), each grant of it ends, and each session that observes it gets the stop. @return False: no server child with this id.
      */
     bool remove_object(EntityId entity);
+
+    /** A server child of a loot container (stage 3.5b.2): its entity and its generation. Null entity: not made. */
+    struct SpawnedContainer {
+        Entity* entity{nullptr};
+        std::uint64_t generation{0};
+    };
+    /**
+     * Makes a server child of a template at a place (stage 3.5b.2: a loot bag of world/loot_bags.h): the record and the ids of a server
+     * child, its bounds, its uses. It stays until remove_object. `key`: its durable key (the key of the bag).
+     */
+    SpawnedContainer spawn_container(std::uint32_t templateIndex, const state::WorldPosition& place, float yawDegrees, const std::string& key);
 
     /** @return The interactions of a character and the objects that are `radius` or less from it (horizontal). */
     [[nodiscard]] InteractionsView view(const std::string& characterId, float radius) const;

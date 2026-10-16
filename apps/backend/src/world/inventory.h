@@ -135,6 +135,9 @@ struct Holdings {
     bool inWorld{false};
 };
 
+/** @return A new item instance id: 16 random bytes, not all zero (stage 3.5b.2: the part of a stack that a pickup moves). */
+[[nodiscard]] InstanceId make_instance_id();
+
 /** Largest coin amount (hundredths): the wallet limit of the client (`javelin.wallet-cap-player`). */
 inline constexpr std::uint64_t kWalletLimit = 100000000;
 /** Largest quantity of one give command. */
@@ -187,13 +190,45 @@ public:
      * coin are given. The coin is not more than the wallet limit. A gear score of an item is the
      * gear score of the roll (not below 1, and not above the largest gear score of the item).
      * @param whole True (the open of a chest, stage 3.5b.1): when the bag has no place for the whole quantity of an item of the
-     *        catalog, nothing changes (ItemError::bagFull). An item that the catalog does not have is not given, as before.
+     *        catalog, nothing changes (ItemError::bagFull). An item that the catalog does not have (or with no item type) also changes
+     *        nothing (ItemError::unknownItem or noItemType; code review of stage 3.5b.1, finding CH-R3): the caller keeps the roll.
      */
     ItemResult grant(const std::string& characterId,
                      const std::vector<GrantItem>& items,
                      std::uint64_t coin,
                      std::vector<GrantItem>* lost = nullptr,
                      bool whole = false);
+
+    /**
+     * @return The item instances of the items of a loot roll (stage 3.5b.2: the part of a personal loot bag; docs/systems/loot-bags.md):
+     *         for each item of the catalog stacks of its stack size, each a new instance with the values of a loot item of a grant (the
+     *         instance id, the gear score of the roll, the durability, the bind flag of BindOnPickup, the perks). The instance is made one
+     *         time: a pickup moves it. An item that the catalog does not have (or with no item type) is not made: it goes into `unknown`.
+     */
+    [[nodiscard]] std::vector<ItemInstance> make_instances(const std::vector<GrantItem>& items, std::vector<GrantItem>* unknown = nullptr) const;
+
+    /**
+     * Puts item instances of a source (a loot bag, stage 3.5b.2) into the bag of a character: each one goes first into the stacks of the
+     * same item that are not full (same_stack: the item, the bind flag, the perks), then into empty slots. A new stack keeps the instance
+     * id when the source keeps nothing of the instance, else it gets a new one; the gear score, the durability, the flags, and the perks
+     * stay. The part that has no place stays with the source (a full bag takes what fits). Each changed slot has the cause ItemGathered
+     * (the loot notice). One transaction of the rows (in a batch: a savepoint).
+     * @param taken Gets, for each instance of `items`, the quantity that the bag took (0 to its quantity).
+     */
+    ItemResult receive(const std::string& characterId, const std::vector<ItemInstance>& items, std::vector<std::uint32_t>& taken);
+
+    /**
+     * Takes the quantities of a drop request out of the bag for a discard (stage 3.5b.2): the rules of `drop` (each entry names the
+     * instance of its slot, a locked item stays, one wrong entry refuses the whole request). A whole stack leaves with its instance id; a
+     * part of a stack leaves as a new instance (the rest keeps the id). One transaction of the rows (in a batch: a savepoint).
+     * @param out Gets the instances that left the bag.
+     */
+    ItemResult release(const std::string& characterId, const std::vector<DropEntry>& entries, std::vector<ItemInstance>& out);
+    /** The same for the stack with this instance id, wherever it is in the bag (a give to a loot bag, request 2801). */
+    ItemResult release_instance(const std::string& characterId, const InstanceId& instance, std::uint32_t quantity,
+                                std::vector<ItemInstance>& out);
+    /** The same for the item of a slot of the paperdoll (the drop of an equipped item, request 826): the full quantity of the slot. */
+    ItemResult release_equipped(const std::string& characterId, std::uint32_t slot, std::uint32_t quantity, std::vector<ItemInstance>& out);
 
     /** Removes a quantity from the item of a slot. No quantity: the full stack. */
     ItemResult remove(const std::string& characterId, std::uint32_t slot, std::optional<std::uint32_t> quantity = {});

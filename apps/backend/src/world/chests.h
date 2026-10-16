@@ -79,8 +79,6 @@ inline constexpr std::uint32_t kLooted = 2;
 inline constexpr std::uint32_t kLocked = 5;
 /** The LootTracker state of an unavailable chest near a character (live check L9). */
 inline constexpr std::uint32_t kUnavailableState = kLocked;
-/** A timer of an open comes this much after its time (the rule of the timed use of stage 2.5b). */
-inline constexpr std::chrono::milliseconds kTimerMargin{1};
 /** A reset that the store did not write comes again after this time. */
 inline constexpr std::chrono::seconds kResetRetry{10};
 /** The development override of a reset: from 1 s to the largest reset of the data (a week). */
@@ -112,7 +110,8 @@ struct ChestClaim {
 /** The open of a chest by a character (the time of the open runs). */
 struct ChestOpen {
     std::uint32_t chest{0};
-    std::uint64_t token{0};
+    /** The open time of the gatherable row of the chest (seconds): the time of the timed use of the base (finding CH-R2). */
+    float seconds{0.0F};
     WorldClock::time_point started{};
     WorldClock::time_point due{};
 };
@@ -216,8 +215,15 @@ public:
 
     /** The handler of GatherOption (world/interactions.h): an accepted use of a chest begins its open. */
     [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context);
+    /**
+     * The handler: the timed use of the base reached the end of the open, and the checks of the base again passed (code review of
+     * stage 3.5b.1, finding CH-R2: the timer of the base, thus a release at or after the time completes first). The roll and the grant.
+     */
+    void complete(Entity& character, const InteractionContext& context);
     /** The handler: the use of a chest ends (before its completion: a cancel). */
     void ended(Entity& character, const InteractionContext& context, InteractionEnd cause);
+    /** @return The open time of the open of a character (the time of the timed use of the base), or 0: no open. */
+    [[nodiscard]] float open_seconds(const Entity& character) const;
 
     /** @return The open, the claims, and the chests that are `radius` or less from a character (a command). */
     [[nodiscard]] ChestsView view(const std::string& characterId, float radius) const;
@@ -260,8 +266,6 @@ private:
     };
 
     [[nodiscard]] InteractionVerdict refuse(ChestRefusal refusal, const Entity& character, const std::string& key, const char* detail);
-    /** The timer of an open: the end of its time. */
-    void complete(const std::string& characterId, std::uint64_t token);
     /** The open of a character ends with no completion: the Gathering state Failure. */
     void fail_open(Entity& character, Own& own);
     void set_gather(Entity& character, std::uint8_t status, float remaining, bool active, std::uint64_t target);
@@ -278,7 +282,6 @@ private:
     std::unique_ptr<InteractionHandler> m_handler;
     std::unordered_map<std::string, Own> m_own;
     std::multimap<WorldClock::time_point, DueReset> m_due;
-    std::uint64_t m_token{0};
     ChestCounts m_counts;
 };
 

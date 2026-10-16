@@ -185,6 +185,26 @@ struct LootClaimRow {
     std::vector<ClaimItemRow> items;
 };
 
+/**
+ * The part of a loot bag of one receiver (stage 3.5b.2, tables `loot_bags` and `loot_bag_items`; docs/systems/loot-bags.md). The character
+ * id is the owner key; the bag key is the durable id of the bag (a UUID), the same for each receiver of one bag. The times are Unix
+ * milliseconds (the wall clock: the end of a bag goes on while the backend is off). A row with no item: the receiver took each item.
+ */
+struct LootBagRow {
+    std::string bagKey;
+    /** InstancedLootType of the client: 1 AILoot (the items of a kill), 5 Discarded (the drop of a player). */
+    std::uint32_t kind{1};
+    /** The kind of the creature of a kill, or "discard". For a reader of the database and the log. */
+    std::string source;
+    WorldPosition position;
+    /** The rarity of the bag for this receiver (the selector of its LootTracker entry). */
+    std::uint32_t rarity{0};
+    std::int64_t createdAt{0};
+    std::int64_t expiresAt{0};
+    /** The item instances of the receiver in the bag, in their sequence (`slot` is the place in the list; `container` is not used). */
+    std::vector<ItemRow> items;
+};
+
 /** Durable player state in one SQLite database. One writer connection, serialized by a mutex. */
 class Store {
 public:
@@ -352,6 +372,16 @@ public:
     [[nodiscard]] bool write_loot_claim(const std::string& characterId, const LootClaimRow& claim);
     /** Removes the loot claims of a character on these objects (a reset), with their items. @return False: no change. */
     [[nodiscard]] bool delete_loot_claims(const std::string& characterId, const std::vector<std::string>& objectKeys);
+    /** @return The parts of each loot bag (stage 3.5b.2) with their items: (character id, part), in the sequence of the bag keys. */
+    [[nodiscard]] std::vector<std::pair<std::string, LootBagRow>> list_loot_bags();
+    /**
+     * Writes the part of a loot bag of a character: the row and its items replace the rows of the same bag key of the character (in a
+     * batch: a savepoint of its transaction; the items of the bag of the character and the bag commit together).
+     * @return False when the database did not accept the change. Then no row changed.
+     */
+    [[nodiscard]] bool write_loot_bag(const std::string& characterId, const LootBagRow& bag);
+    /** Removes each part of a loot bag (the end of the bag), with its items. @return False: no change. */
+    [[nodiscard]] bool delete_loot_bag(const std::string& bagKey);
 
 private:
     /** @return The first column of each row of a query with one parameter (the owner key). */

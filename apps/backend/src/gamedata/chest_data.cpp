@@ -1,7 +1,9 @@
 #include "gamedata/chest_data.h"
 
+#include <array>
 #include <cmath>
 #include <fstream>
+#include <map>
 
 #include <nlohmann/json.hpp>
 
@@ -266,6 +268,9 @@ bool ChestData::set(ChestRules rules, std::vector<ChestGatherable> gatherables, 
         }
     }
     std::unordered_map<std::string, std::uint32_t> byKey;
+    // The actor of a chest is its key in the LootTracker of the client (code review of stage 3.5b.1, finding CH-R4): one chest for
+    // each actor, or the map of the client hides a different chest.
+    std::map<std::array<std::uint8_t, 16>, std::uint32_t> byActor;
     std::unordered_map<std::int64_t, std::vector<std::uint32_t>> cells;
     std::size_t ordinary = 0;
     for (std::uint32_t index = 0; index < chests.size(); ++index) {
@@ -276,6 +281,9 @@ bool ChestData::set(ChestRules rules, std::vector<ChestGatherable> gatherables, 
         }
         if (!byKey.emplace(lower_ascii(chest.key), index).second) {
             return refuse(where + " is in the file two times");
+        }
+        if (const auto [other, added] = byActor.emplace(chest.actor, index); !added) {
+            return refuse(where + " has the actor of the chest " + chests[other->second].key + ": one chest for each actor");
         }
         if (chest.gatherable >= static_cast<std::int32_t>(gatherables.size())) {
             return refuse(where + " names a gatherable row that the data does not have");

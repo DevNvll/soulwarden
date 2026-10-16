@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 25> codecs{{
+    static constexpr std::array<StateCodec, 27> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -60,6 +60,9 @@ std::span<const StateCodec> player_codecs() {
         // The open of a chest (stage 3.5b.1): owner only (the remote player slice has neither component).
         {world::ComponentKey::lootTracker, kLootTrackerSlot, kTypeLootTrackerState, nullptr, encode_loot_tracker_state, true},
         {world::ComponentKey::gathering, kGatheringSlot, kTypeGatheringState, nullptr, encode_gathering_state, true},
+        // The loot bags (stage 3.5b.2): owner only (the remote player slice has no storage component).
+        {world::ComponentKey::selectedContainer, kSelectedContainerSlot, kTypeContainerState, nullptr, encode_selected_container_state, true},
+        {world::ComponentKey::globalStorage, kGlobalStorageSlot, kTypeGlobalStorageState, nullptr, encode_global_storage_state, true},
     }};
     return codecs;
 }
@@ -121,12 +124,18 @@ std::uint32_t object_ownership_slot(const world::Entity& entity) {
     return entity.object.ownershipSlot;
 }
 
+std::uint32_t object_loot_drop_slot(const world::Entity& entity) {
+    return entity.object.lootDropSlot;
+}
+
 std::span<const StateCodec> object_codecs() {
     // The slot of each state is a value of the slice of the object (game data): one Interact fragment for each bound. A level object
     // has no place state, no BuildableController state, and no Ownership state (slot 0): the client has them from its level data.
-    static constexpr std::array<StateCodec, 5> codecs{{
+    static constexpr std::array<StateCodec, 6> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::buildable, 0, kTypeBuildableState, encode_buildable_state, nullptr, false, object_buildable_slot},
+        // The LootDrop state of a loot bag (stage 3.5b.2): the rarity (the slot of its slice; 0: not a bag).
+        {world::ComponentKey::lootDrop, 0, kTypeLootDropState, encode_loot_drop_state, nullptr, false, object_loot_drop_slot},
         {world::ComponentKey::objectPlace, 0, kTypePositionInTheWorldState, encode_object_place_state, nullptr, false, object_place_slot},
         {world::ComponentKey::ownership, 0, kTypeOwnershipState, encode_ownership_state, nullptr, false, object_ownership_slot},
         {world::ComponentKey::interact, 0, kTypeInteractState, nullptr, nullptr, false, nullptr, encode_interact_states},

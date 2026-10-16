@@ -339,6 +339,16 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_set_lock_state(body);
         break;
+    case kTypeTakeAllItems:
+    case kTypeTakeItem:
+    case kTypeGiveItem:
+        check_route(route, type, body, firstOfType);
+        handle_bag_request(type, body);
+        break;
+    case kTypePaperdollDropItem:
+        check_route(route, type, body, firstOfType);
+        handle_paperdoll_drop(body);
+        break;
     case kTypeEquipItem:
         check_route(route, type, body, firstOfType);
         handle_equip_item(body);
@@ -1024,6 +1034,11 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
     // client keeps the last state of a stopped record of a level object: live check L2 of stage 2.5a).
     m_world.interactions().for_each_entity_near(own.position, m_world.options().interestEnter, [&](world::Entity& entity) {
         if (m_observer.find(entity.id) != nullptr) {
+            return;
+        }
+        // A private object (stage 3.5b.2: a loot bag): only its eligible characters observe it (live check L5; MP-3).
+        const std::vector<std::string>& viewers = entity.object.viewers;
+        if (!viewers.empty() && std::find(viewers.begin(), viewers.end(), own.characterId) == viewers.end()) {
             return;
         }
         const float distance = m_world.interactions().distance_to(entity, own.position);
@@ -1837,12 +1852,14 @@ void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
     if (ended || late) {
         std::erase_if(m_seenRequests, [&](const SeenRequest& seen) { return seen.reference == cancel->reference; });
     }
-    if (!ended && !late && m_messageDatagram) {
+    if (m_messageDatagram) {
         // A cancel with no use, and no request of its reference in the last kEarlyCancelKeep: its press can still come in an earlier
         // datagram of a different channel (finding ST-R2), or in a later report that repeats the old entry (finding CR-R4). One mark for
-        // each reference (finding CR-R3). A cancel of a reference that the session took is late (an echo of a use that ended): no mark.
+        // each reference (finding CR-R3). A matched cancel and a late cancel (the echo of a use that ended) get a mark with only the
+        // datagram of the cancel (code review of stage 3.5b.1, finding CH-R1): a delayed report of the held block that the client made
+        // before the cancel starts no new use. A later datagram with the block is a new press (finding SU-R5, case RSU5).
         EarlyCancel mark{cancel->reference, *m_messageDatagram, 0, false, now + kEarlyCancelKeep};
-        if (const std::optional<std::uint16_t> client = m_attack.estimate(now)) {
+        if (const std::optional<std::uint16_t> client = m_attack.estimate(now); client && !ended && !late) {
             mark.step = static_cast<std::uint16_t>(*client + kEarlyCancelSteps);
             mark.hasStep = true;
         }
@@ -2036,12 +2053,87 @@ void RepSession::handle_drop_items(std::span<const std::uint8_t> body) {
                    static_cast<unsigned long long>(request->call.entity));
         return;
     }
+    // Stage 3.5b.2: the items go into a private Discarded bag at the feet of the character (world/loot_bags.h). With no personal container
+    // in the interaction data the items are gone (the rule of stage 1.3).
+    if (m_world.loot_bags().container() != nullptr) {
+        const world::BagResult bag = m_world.loot_bags().discard(own->characterId, request->entries);
+        log::write("rep: drop request (type %u, %zu entr%s): %s%s%s", kTypeDropInventoryItems, request->entries.size(),
+                   request->entries.size() == 1 ? "y" : "ies", bag.ok() ? "the Discarded bag " : world::bag_refusal_text(bag.refusal),
+                   bag.ok() ? bag.bag.c_str() : "", bag.itemError != world::ItemError::none ? (std::string(": ") + world::item_error_text(bag.itemError)).c_str() : "");
+        return;
+    }
     const world::ItemResult result = m_world.inventory().drop(own->characterId, request->entries);
     log::write("rep: drop request (type %u, %zu entr%s): %s",
                kTypeDropInventoryItems,
                request->entries.size(),
                request->entries.size() == 1 ? "y" : "ies",
                result.ok() ? "done" : world::item_error_text(result.error));
+}
+
+bool RepSession::own_container(const world::Entity& own, const world::InteractionReference& reference, std::uint32_t type) {
+    bool valid = reference.actor == own.actor.bytes && reference.group == own.id;
+    if (valid && m_options.playerSlice != nullptr && m_options.playerSlice->loaded()) {
+        // The Container component of the entity GlobalStorage of the player slice (research storage.md K1; slot 76).
+        const gamedata::SliceIds::Component* component = m_options.playerSlice->find_named("GlobalStorage/91b8850b-3bdf-1d1f-16bb-4b7cb8ddc4e1");
+        valid = component != nullptr && m_options.playerSlice->target(own.id, *component) == reference.target;
+    }
+    if (!valid) {
+        log::write("rep: loot bag request (type %u) names the container %016llx %016llx, which is not the selected Container of the character "
+                   "of the session: no change",
+                   type, static_cast<unsigned long long>(reference.group), static_cast<unsigned long long>(reference.target));
+    }
+    return valid;
+}
+
+void RepSession::handle_bag_request(std::uint32_t type, std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_bag_request(body, type != kTypeTakeAllItems);
+    const char* name = type == kTypeTakeAllItems ? "Take All" : type == kTypeTakeItem ? "the take of an item" : "a give into a bag";
+    if (!request) {
+        log::write("rep: %s (type %u, %zu bytes) does not have the form of the request: no change", name, type, body.size());
+        return;
+    }
+    if (!own_call(*own, request->call, type, name) || !own_container(*own, request->container, type)) {
+        return;
+    }
+    // The world finds the character from the session and its open bag from its committed interaction (MP-5): the bag is never a value
+    // of the request.
+    world::BagResult result;
+    if (type == kTypeTakeAllItems) {
+        result = m_world.loot_bags().take_all(own->characterId, request->container);
+    } else if (type == kTypeTakeItem) {
+        result = m_world.loot_bags().take_item(own->characterId, request->container, request->instance, request->quantity);
+    } else {
+        result = m_world.loot_bags().give_item(own->characterId, request->container, request->instance, request->quantity);
+    }
+    log::write("rep: %s (type %u): %s, %u moved, %u left with the source", name, type,
+               result.ok() ? "done" : world::bag_refusal_text(result.refusal), result.moved, result.left);
+}
+
+void RepSession::handle_paperdoll_drop(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const auto request = read_paperdoll_drop_request(body);
+    if (!request) {
+        log::write("rep: paperdoll drop (type %u, %zu bytes) does not have the form of the request: no change", kTypePaperdollDropItem,
+                   body.size());
+        return;
+    }
+    if (!own_call(*own, request->call, kTypePaperdollDropItem, "paperdoll drop")) {
+        return;
+    }
+    if (m_world.loot_bags().container() == nullptr) {
+        log::write("rep: paperdoll drop (type %u): no personal loot container in the interaction data: no change", kTypePaperdollDropItem);
+        return;
+    }
+    const world::BagResult bag = m_world.loot_bags().discard_equipped(own->characterId, request->slot, request->quantity);
+    log::write("rep: paperdoll drop (type %u, slot %u, quantity %u): %s%s", kTypePaperdollDropItem, request->slot, request->quantity,
+               bag.ok() ? "the Discarded bag " : world::bag_refusal_text(bag.refusal), bag.ok() ? bag.bag.c_str() : "");
 }
 
 void RepSession::handle_set_lock_state(std::span<const std::uint8_t> body) {

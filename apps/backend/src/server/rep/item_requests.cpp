@@ -59,6 +59,39 @@ std::optional<DropRequest> read_drop_request(std::span<const std::uint8_t> body)
     return request;
 }
 
+std::optional<BagRequest> read_bag_request(std::span<const std::uint8_t> body, bool item) {
+    hub::Reader reader(body);
+    BagRequest request;
+    request.call = read_call(reader);
+    const auto actor = reader.raw(request.container.actor.size());
+    if (actor.size() == request.container.actor.size()) {
+        std::copy(actor.begin(), actor.end(), request.container.actor.begin());
+    }
+    request.container.group = reader.u64();
+    request.container.target = reader.u64();
+    if (item) {
+        request.instance = read_instance(reader);
+        request.quantity = reader.u32();
+    }
+    // The client sends a quantity of 1 to 10,000 (its check 0x2D93E30); a body with more or fewer bytes is not the request.
+    if (!reader.ok() || reader.left() != 0 || (item && request.quantity > kHighestQuantity)) {
+        return std::nullopt;
+    }
+    return request;
+}
+
+std::optional<PaperdollDropRequest> read_paperdoll_drop_request(std::span<const std::uint8_t> body) {
+    hub::Reader reader(body);
+    PaperdollDropRequest request;
+    request.call = read_call(reader);
+    request.slot = reader.u32();
+    request.quantity = reader.u32();
+    if (!reader.ok() || reader.left() != 0 || request.slot > kHighestPaperdollSlot || request.quantity > kHighestQuantity) {
+        return std::nullopt;
+    }
+    return request;
+}
+
 std::optional<ComponentCall> read_component_call(std::span<const std::uint8_t> body) {
     hub::Reader reader(body);
     const ComponentCall call = read_call(reader);

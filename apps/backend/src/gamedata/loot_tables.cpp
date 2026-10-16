@@ -410,6 +410,14 @@ bool LootTables::load(const std::string& path) {
             }
             data.containerFloor[level] = floor;
         }
+        // The roll of a chest uses the floor of each level of the gear score ranges (world/rewards.cpp: the lower one of the character
+        // level and the content level). A level with no floor row gives weaker gear (code review of stage 3.5b.1, finding CH-R8): the
+        // whole file is refused. Format 1 has no chest data: no such check.
+        for (std::uint32_t level = 1; level <= data.gearScore.size(); ++level) {
+            if (!data.containerFloor.contains(level)) {
+                return fail("the container floors have no row for the level " + std::to_string(level) + " of the gear score ranges");
+            }
+        }
         for (const json& root : document["chestRoots"]) {
             if (!root.is_string() || root.get<std::string>().empty()) {
                 return fail("a chest root is not a text");

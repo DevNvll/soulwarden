@@ -161,7 +161,9 @@ hub::Bytes player_vitals(const world::Entity& entity, View view, bool life, bool
     state.field(0, kStaminaTickRate).u16(kNoTickRate);
     if (view == View::owner) {
         state.field(kManaGroup, kManaAmount).f32(vitals.mana);
-        state.field(kManaGroup, kManaMax).f32(vitals.manaMax);
+        // The base maximum (stage 3.5b.2): the client multiplies it with its own MaxMana parts. The maximum with the parts gave the
+        // client a larger maximum (110 x 1.1 = 121: the meter at 91 percent at full mana; live check of the final run of stage 3.5b.2).
+        state.field(kManaGroup, kManaMax).f32(vitals.manaBase);
         state.field(kManaGroup, kManaTickRate).u16(kNoTickRate);
     }
     return state.finish();

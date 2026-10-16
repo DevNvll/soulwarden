@@ -338,7 +338,7 @@ void encoder_views(const Options&) {
         return fields_text(decode_state(codec.type, codec.encode(entity, view, clock)));
     };
     const std::span<const StateCodec> codecs = player_codecs();
-    check(codecs.size() == 25 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
+    check(codecs.size() == 27 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
               && codecs[2].slot == 16 && codecs[2].type == 11 && codecs[3].slot == 41 && codecs[3].type == 15
               && codecs[4].slot == 47 && codecs[4].type == 1652 && codecs[5].slot == 12 && codecs[5].type == 1195
               && codecs[6].slot == 19 && codecs[6].type == 3133 && codecs[7].slot == 66 && codecs[7].type == 3210
@@ -352,7 +352,10 @@ void encoder_views(const Options&) {
               && codecs[21].slot == 16 && codecs[21].type == 11 && codecs[21].key == world::ComponentKey::motion
               && codecs[22].slot == 26 && codecs[22].type == 3752 && !codecs[22].ownerOnly
               && codecs[23].slot == 33 && codecs[23].type == 982 && codecs[23].key == world::ComponentKey::lootTracker && codecs[23].ownerOnly
-              && codecs[24].slot == 36 && codecs[24].type == 81 && codecs[24].key == world::ComponentKey::gathering && codecs[24].ownerOnly,
+              && codecs[24].slot == 36 && codecs[24].type == 81 && codecs[24].key == world::ComponentKey::gathering && codecs[24].ownerOnly
+              && codecs[25].slot == 76 && codecs[25].type == 1755 && codecs[25].key == world::ComponentKey::selectedContainer
+              && codecs[25].ownerOnly && codecs[26].slot == 77 && codecs[26].type == 2938
+              && codecs[26].key == world::ComponentKey::globalStorage && codecs[26].ownerOnly,
           "one encoder for each component state: metadata (0, 10), player (9, 3935), movement (16, 11), vitals (41, 15), "
           "mana (47, 1652, user test 1), appearance (12, 1195), from stage 1.1b the entitlements (19, 3133) and the "
           "achievements (66, 3210) before the level, from stage 1.3 progression (70, 899), currency (60, 3786), "
@@ -362,7 +365,8 @@ void encoder_views(const Options&) {
           "status effects (44, 4236), from stage 3.3b-S2a the speed table (43, 1525), from stage 3.4f-B the stamina (42, 4297, "
           "owner only), from stage 3.3b-S4 the movement "
           "of a dash for the observers (16, 11), from stage 2.5a the Interactor (26, 3752, owner and observers), and from stage 3.5b.1 "
-          "the LootTracker (33, 982) and the Gathering state (36, 81), owner only");
+          "the LootTracker (33, 982) and the Gathering state (36, 81), owner only, and from stage 3.5b.2 the selected Container (76, "
+          "1755) and the GlobalStorage map (77, 2938), owner only");
     check(!codecs[0].ownerOnly && !codecs[1].ownerOnly && !codecs[2].ownerOnly && !codecs[3].ownerOnly
               && codecs[4].ownerOnly && !codecs[5].ownerOnly && codecs[6].ownerOnly && codecs[7].ownerOnly && !codecs[8].ownerOnly
               && codecs[9].ownerOnly && !codecs[10].ownerOnly && codecs[11].ownerOnly && codecs[12].ownerOnly && codecs[13].ownerOnly

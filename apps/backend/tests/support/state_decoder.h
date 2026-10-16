@@ -319,6 +319,32 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         }
         return static_cast<int>(reader.position() + 58U * count);
     }
+    case 2938: { // GlobalStorage (stage 3.5b.2): field 0, the full map of an actor (16 bytes) to an item vector (count, items).
+        if (group != 0 || field != 0) {
+            return -1;
+        }
+        server::hub::Reader reader(rest);
+        if (reader.size() != 0) {
+            return -1;
+        }
+        if (reader.u8() == 1) {
+            reader.size64();
+        }
+        const std::uint32_t keys = reader.size();
+        for (std::uint32_t key = 0; key < keys && reader.ok(); ++key) {
+            reader.raw(16);
+            const std::uint32_t items = reader.size();
+            for (std::uint32_t item = 0; item < items && reader.ok(); ++item) {
+                WireItem value;
+                if (!read_item(reader, value)) {
+                    return -1;
+                }
+            }
+        }
+        return reader.ok() ? static_cast<int>(reader.position()) : -1;
+    }
+    case 2027: // LootDrop (stage 3.5b.2): m_rarityLevel u32.
+        return group == 0 && field == 0 ? 4 : -1;
     case 1594: // BuildableController (stage 2.5b): currentState (one byte); the other fields are not sent.
         return group == 0 && field == 0 ? 1 : -1;
     case 3217: // Ownership (stage 2.5b): currentPermissionRule (field 4, one byte); the other fields are not sent.
@@ -395,6 +421,8 @@ inline unsigned group_count(std::uint32_t type) {
     case 3217:
     case 16:
     case 982:
+    case 2938:
+    case 2027:
         return 1;
     case 3752:
     case 81:

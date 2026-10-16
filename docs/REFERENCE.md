@@ -70,7 +70,8 @@ the attributes, the skills, the nodes and the ability bars (`assign_node`,
 creatures near it, and for a travel, and the interaction commands (`set_object_enabled` for an object 30 m or less from the
 character, `cancel_interaction`; stage 2.5a), and `clear_chest_claim` (stage 3.5b.1). The state of a character has its DLC (member
 `ownership`, stage 1.1b), its interactions (member `interactions`: its committed interaction and the objects near it, stage 2.5a), and
-its chests (member `chests`: its open, its loot claims, and the chests near it, stage 3.5b.1). The backend
+its chests (member `chests`: its open, its loot claims, and the chests near it, stage 3.5b.1), and its loot bags (member `lootBags`:
+its open bag and its bags, stage 3.5b.2). The backend
 also answers the entitlement service of the client (the sync and the list of the entitlements of the account, protocol
 notes 2 and 4.29).
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
@@ -184,7 +185,8 @@ CHARACTER`; stage 2.5b: `fixture CHARACTER NAME [DX DY DZ] [--yaw D] [--permissi
 fixture near a character: `powderKeg`, the timed option Trigger; `campT5`; `camp`) and
 `fixture remove CHARACTER ENTITY`; stage 3.5b.1: `chests CHARACTER [METERS]` (the open, the loot claims, and the chests near a
 character), `chest clear CHARACTER KEY` (remove a loot claim: the chest opens again), and `chest reset CHARACTER KEY SECONDS` (a
-development aid: a looted claim resets after that time, not at the time of the data). For a fight: `ignore CHARACTER on|off` (the
+development aid: a looted claim resets after that time, not at the time of the data); stage 3.5b.2: `bags CHARACTER` (the open bag
+and each bag with a part of the character, with its items and its end). For a fight: `ignore CHARACTER on|off` (the
 creatures ignore a character), `heal CHARACTER` (its full health; a dead character lives
 again at its place), `hurt CHARACTER AMOUNT` (its health goes down), and `message CHARACTER
 TYPE HEX` (one message with bytes of the caller to the client of a character). For the
@@ -667,7 +669,19 @@ button on "Confirm").
   item comes, the roll stays for the next open, and the chest stays closed. A chest with a key, a lock, a quest, or an event (370 chests
   of the data) has no prompt (stage 3.5b.3). In a development run `tools/world chests NAME [METERS]` lists the claims and the chests
   near a character, `tools/world chest clear NAME KEY` removes a claim, and `tools/world chest reset NAME KEY SECONDS` makes a looted
-  claim reset sooner ([Chests](systems/chests.md)).
+  claim reset sooner ([Chests](systems/chests.md)). Since stage 3.5b.2 the open is a timed use of the interaction base, a roll with an
+  item that the item catalog does not have stays in its claim, and the chests of a point of interest have its loot tags.
+- Loot bags (stage 3.5b.2). The items of a kill go into a personal loot bag at the place of the creature (the experience, the mastery,
+  and the coin at the kill). Only the characters with the credit of the kill see the bag, and each one has its own part. E takes all
+  that fits; T (or Tab near the bag) opens the panel: LSHIFT and a click take one stack, LCTRL and a click a part of a stack, Take All
+  takes all that fits; a drag of an item of the bag into the open panel gives it back to the bag. A drag of an item (of the bag or of
+  the paperdoll) to "Drop items" puts it into a Discarded bag at the feet, private to the character. A bag ends 180 s after it came,
+  or 1.25 s after its last item (the times of the game data); the rows keep the bags and their item instances over a restart. With
+  an `interaction-data.json` from before stage 3.5b.2 the items of a kill go into the bag of the character and a drop removes the
+  items, as before. In a development run `tools/world bags NAME` lists the bags of a character ([Loot bags](systems/loot-bags.md)).
+- Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
+  abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar
+  of the HUD goes away at full mana ([Combat and health](systems/combat-and-health.md)).
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is

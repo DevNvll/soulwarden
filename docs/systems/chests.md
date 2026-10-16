@@ -15,6 +15,7 @@ the cancels) is in [Interactions](interactions.md), the roll of a loot table in 
 | The loot roots of the chests and the container floor (`loot-tables.json` format 2) | `gamedata/loot_tables.h` (`chestRoots`, `limits`, `container_floor`), `tools/gamedata/loot_tables.py`, test case LT8 |
 | The commands | `server/http/chest_commands.cpp`, `server/http/character_commands.h`, `tools/world chests`, `tools/world chest clear`, `tools/world chest reset` |
 | The load | Test case LC8 (100,000 far chest definitions, 50 characters) |
+| The corrections of the code review of stage 3.5b.1 (CH-R1 to CH-R8) | Test cases RCH1 to RCH6 (`tests/review_chests_tests.cpp`), the cases `missing-metadata`, `missing-territory`, `wrong-record-first`, `record-conflict` of `check_chests_tool.py` |
 
 ## Rules
 
@@ -23,12 +24,17 @@ The source of each rule is in brackets: game data, client code, live check (the 
 
 - The kinds of stage 3.5b (decision of the user): 3.5b.1 is the ordinary chests of the world (supply, provision, alchemy, the ordinary
   elite chests); 3.5b.2 the personal loot bag of a creature (the AILoot bag) and the discard of a player; 3.5b.3 the special locks, the
-  keys, and the chests of quests and events, after their predicates exist (after stages 3.6 and 1.8). The items of a kill stay as in
-  stage 3.5a until 3.5b.2.
+  keys, and the chests of quests and events, after their predicates exist (after stages 3.6 and 1.8). Since 3.5b.2 the items of a kill
+  go into a personal loot bag ([Loot bags](loot-bags.md)).
 - A chest is a placement of the main world whose variant name is a row of the variation table `Gatherable_LootContainers` (the slice
   `master_lootcontainer`) [game data]. The row names the gatherable row (the open time, the reset values, the restrictions) and the loot
-  root [game data]. The record of the layer metadata (GatherableLocations) of the same layer 0.06 m or less from the placement gives the
-  territories of the chest [game data; research K1]. The tool `chests.py` writes each chest with its state: `ordinary` or
+  root [game data]. The record of the layer metadata (GatherableLocations) of the same layer 0.06 m or less from the placement, whose
+  GatherableId is the CRC-32 of the gatherable row of the variation, gives the territories of the chest [game data; research K1; code
+  review of stage 3.5b.1, finding CH-R7: a record of a different row at the same place is not the record of the chest]. The LootTags and
+  the level of a territory come from each TerritoryDefinition table of the game data (the territories, the areas, the points of
+  interest, the arenas) [game data; finding CH-R6]. The tool stops, and keeps the earlier file, when a chest that can be ordinary has no
+  record (finding CH-R5), when two records of its row at the chest have different content, or when a record names a territory with no
+  row [decision of an agent]. The tool `chests.py` writes each chest with its state: `ordinary` or
   `unavailable` with its reason [game data]. The reasons: a placement of the lock slice `master_lootlock` (a script lock of an event), a
   lock slice of the variation row that is not the map marker, a gatherable row that needs an item (a key), a tool, a trade skill rank,
   a status effect, a song, a faction, a cost, OpenAfterGathering or IsFFARestricted, a gatherable of a quest, a record of an encounter or
@@ -45,12 +51,15 @@ The source of each rule is in brackets: game data, client code, live check (the 
   handler owns the sight (`InteractionHandler::owns_sight`), and the server checks only the 3D range [decision of an agent].
 - The open time: the BaseGatherTime of the gatherable row (2.5 s for a supply chest, 5 s for an elite chest) [game data]. The Gathering
   state of the owner gets Success, the remaining time, the speed 1 (field 2), the count 1, the target G of the chest, and new reference
-  counters; the client shows the progress ring of the prompt for remaining / speed seconds [live check L3]. A timer of the world counts
-  the same time from the accepted request, plus 1 ms [stage 2.5b].
+  counters; the client shows the progress ring of the prompt for remaining / speed seconds [live check L3]. The open is a timed use of
+  the base with this time (`InteractionHandler::use_time`; code review of stage 3.5b.1, finding CH-R2): its timer of the world (the time
+  plus 1 ms), the checks again, and the completion of a release at or after the time before its end (finding ST-R1) [stage 2.5b].
 - The ends before the time give no item and the Gathering state Failure: the release of the client (2473), a walk out of the range, a
   travel, the death, and damage of the character (the action Gather of the client ends at a hit: `playeractions_gather.actionlist`,
   IfDamagedByPowerLevel 0 or more) [game data; live check L4]. A new press after a cancel starts a new open with the full time [live
-  check L4]. The same block in each input report is one open [stage 2.5a].
+  check L4]. The same block in each input report is one open [stage 2.5a]. A delayed input report of the held block that the client made
+  before a cancel (or before the echo of a server end) starts no new open: the session keeps the datagram of each cancel (code review of
+  stage 3.5b.1, finding CH-R1; [Interactions](interactions.md)).
 - At the end of the time the base checks the use again (the source, the life, the exact position, the range) [stage 2.5b]. The roll:
   the root of the chest with the roller of stage 3.5a [client code 0x368B070]; its context: the level of the character, the content
   level (the largest AIVariantLevelOverride of the territories of the chest, else the level of the character) for the numeric tags
@@ -66,12 +75,17 @@ The source of each rule is in brackets: game data, client code, live check (the 
   so the backend checks no weight [game data]. When the bag (500 slots) has no place for the whole result, no item goes into the bag,
   the roll stays in the claim (the state Rolled with its items), the chest stays closed (the prompt stays), and the use ends (3746). The
   next open gives the kept items, with no new roll. No item is lost. No client notice for a full bag was found: the loot notice does not
-  come.
+  come. An item of the roll that the item catalog does not have (or with no item type) has the same rule: no item, and the claim keeps
+  the complete roll (Rolled) until the catalog has each item [code review of stage 3.5b.1, finding CH-R3; decision of an agent].
 - The reset [game data]: the MinRespawnRate to MaxRespawnRate of the gatherable row when it is above 0 (the ordinary elite chests:
   82,800 s), else the reset of an instanced chest of the base attributes of a player (`Instanced Loot Chest Reset Time Mins`: 60 minutes).
   The client does not end a claim at its reset time [live check L8]: the backend ends it (an entry of the due list), removes the row,
   and sends the map with no entry. The row has the reset time on the wall clock: a restart keeps the remaining time, and the time goes
   on while the backend is off [decision of an agent]. A claim whose reset came while the character was away goes at its next entry.
+- The chest file has one chest for each actor: the loader refuses a file with two chest keys of one actor (the actor is the key of the
+  LootTracker of the client: a repeated actor hides a different chest) [code review of stage 3.5b.1, finding CH-R4]. The loot file of
+  format 2 must have a container floor for each level of its gear score ranges: else the loader refuses it (a level with no floor gave
+  weaker gear) [finding CH-R8].
 - The claims are values of the world with the character id as their key (MP-1): each character has its own claims on one chest, and
   only the owner gets its Gathering state and its LootTracker [research; live check L2]. A second session of the character gives no
   second open [stage 2.5a].
@@ -88,7 +102,8 @@ The source of each rule is in brackets: game data, client code, live check (the 
   `SOULWARDEN_HARNESS=1`): a looted claim resets after 1 s to a week. It is not a rule of the product (live check L8).
 - Not in this stage: the loot limits of the data (`LootLimits`: exported, but no chest table has a limit condition), the HWMMult and the
   LootBiasing of the roller, the umbral currency and the territory standing of the event `Gather_LootContainer_EliteChest` (15 and 5 in
-  the data: the backend has no such systems yet), the personal loot bag (3.5b.2), the locks, keys, quests, and events (3.5b.3).
+  the data: the backend has no such systems yet), the locks, keys, quests, and events (3.5b.3). The personal loot bag of stage 3.5b.2 is
+  in [Loot bags](loot-bags.md).
 
 ## Commands
 
@@ -126,3 +141,6 @@ The admin interface has the command `clear_chest_claim` and the member `chests` 
   block one time (live check L4), which the session takes as a new press (rule INT-R2); its release ends it 30 ms later with no item.
 - A chest behind a glyph gate (the variation rows with a lock slice) shows the prompt "X" in the client also with no Locked entry: the
   client knows the gate. A chest of a quest shows no prompt and no light of the loot with the Locked entry.
+- A `chest-data.json` of stage 3.5b.1 has only the LootTags of the territories and the areas: 1,228 chests have no tag of their point
+  of interest (for example `EPOI`, `Corrupted`, `Elite`), and 48 lock chests have the record of a different row. Write the file again
+  with `tools/gamedata/chests.sh` (stage 3.5b.2).

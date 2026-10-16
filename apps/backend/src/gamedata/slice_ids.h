@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Ids of the faceted components of the player slice (slices/player.dynamicslice). With them
@@ -57,6 +58,8 @@ public:
      *         null when the slice has no such component.
      */
     [[nodiscard]] const Component* find(std::uint64_t group, std::uint64_t target) const;
+    /** @return The component with this name of the tool ("ENTITY/CLASS-UUID"), or null (stage 3.5b.2: the selected Container). */
+    [[nodiscard]] const Component* find_named(std::string_view name) const;
 
 private:
     std::uint64_t m_root{0};

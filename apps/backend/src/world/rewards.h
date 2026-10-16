@@ -47,9 +47,11 @@
 // - The loot: CanDropLoot and a loot table; the outer drop chance is LootDropChance times the loot
 //   factor of the creature type (not with IgnoreLootDropModifier) times the credit modifier. The
 //   loot table is rolled with the rules of the roller of the client (image RVA 0x368B070, loot.md
-//   1.3 and 1.4) and the generator of the world (World::random_unit). The items and the coin go to
-//   the character in one transaction of the inventory system (Inventory::grant), with the cause
-//   "ItemGathered" (1): the client shows its loot notice.
+//   1.3 and 1.4) and the generator of the world (World::random_unit). Stage 3.5b.2: the items go into
+//   the part of the character of the personal loot bag of the kill (world/loot_bags.h; the pickup
+//   gives the loot notice), the coin into its wallet, in the transaction of the reward. With no
+//   personal container in the interaction data, the items and the coin go to the character in one
+//   transaction of the inventory system (Inventory::grant), with the cause "ItemGathered" (1).
 // - A development switch (the debug message DebugSetForceDropAILoot of the client): for a
 //   character with the switch on, the outer drop chance and the coin chance pass.
 //
@@ -112,6 +114,8 @@ struct KillReward {
     std::vector<LootDrop> items;
     /** Items of the roll that the inventory did not give: the bag had no free slot, or the catalog has no such item. */
     std::uint32_t itemsLost{0};
+    /** Stage 3.5b.2: the stacks of the roll that went into the part of the character of the personal loot bag of the kill. */
+    std::uint32_t itemsInBag{0};
     bool lootGate{false};
 };
 
@@ -130,6 +134,8 @@ struct RewardCounts {
     std::uint64_t tableVisits{0};
     std::uint64_t items{0};
     std::uint64_t itemsLost{0};
+    /** Stage 3.5b.2: the stacks that went into the personal loot bags of the kills. */
+    std::uint64_t itemsInBags{0};
     /** Rewards of a character that the store did not write: no part of them was given (finding F1 of the review of stage 3.5a). */
     std::uint64_t refused{0};
     /** A table that a roll visited a second time in its own path (the guard of the client). */

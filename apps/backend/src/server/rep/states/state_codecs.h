@@ -63,6 +63,8 @@ inline constexpr std::uint32_t kTypeProjectileState = 16;       // MB::Projectil
 inline constexpr std::uint32_t kTypeStaminaState = 4297;        // MB::StaminaComponentReplicatedState (stage 3.4f-B)
 inline constexpr std::uint32_t kTypeGatheringState = 81;        // MB::GatheringComponentReplicatedState (stage 3.5b.1)
 inline constexpr std::uint32_t kTypeLootTrackerState = 982;     // MB::LootTrackerComponentReplicatedState (stage 3.5b.1)
+inline constexpr std::uint32_t kTypeGlobalStorageState = 2938;  // MB::GlobalStorageComponentReplicatedState (stage 3.5b.2)
+inline constexpr std::uint32_t kTypeLootDropState = 2027;       // MB::LootDropReplicatedState (stage 3.5b.2)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -107,6 +109,12 @@ inline constexpr std::uint32_t kInteractorSlot = 26;
 /** The components LootTracker and Gathering of the player slice (stage 3.5b.1; research chests-ground-loot.md Q2, gathering-stage.md Q2). */
 inline constexpr std::uint32_t kLootTrackerSlot = 33;
 inline constexpr std::uint32_t kGatheringSlot = 36;
+/**
+ * The components Container and GlobalStorage of the entity "GlobalStorage" of the player slice (stage 3.5b.2; research storage.md K1): the
+ * selected Container (the panel of an open loot bag) and the map of the items of each loot bag of the character.
+ */
+inline constexpr std::uint32_t kSelectedContainerSlot = 76;
+inline constexpr std::uint32_t kGlobalStorageSlot = 77;
 
 enum class View {
     owner,
@@ -355,6 +363,20 @@ void write_place_rotation(hub::Writer& writer, std::array<float, 4> rotation);
  *         changed. No fragment for the observer view.
  */
 [[nodiscard]] std::vector<hub::Bytes> encode_container_state(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The fragments of a container state (type 1755) of a vector of slots (states/container_state.cpp): the bag (slot 61) and the
+ *         selected Container (slot 76, stage 3.5b.2). `skipEmptyFirst`: no fragment for a session with no record when the vector is empty.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_bag_parts(const world::Bag& bag, const PartsRequest& request, bool skipEmptyFirst);
+/** @return The selected Container of a character (stage 3.5b.2, slot 76): the items of the loot bag that it opened. Owner only. */
+[[nodiscard]] std::vector<hub::Bytes> encode_selected_container_state(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The GlobalStorage state of a character (stage 3.5b.2, slot 77, type 2938; states/loot_bag_states.cpp): field 0, the full map of
+ *         the actor of each of its loot bags to its items. Owner only; no fragment in the first record of a character with no bag.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_global_storage_state(const world::Entity& entity, View view, const PartsRequest& request);
+/** @return The LootDrop state of a loot bag (stage 3.5b.2, type 2027): m_rarityLevel. Observer view (the bag has no owner). */
+[[nodiscard]] hub::Bytes encode_loot_drop_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 
 /**
  * @return The fragments of the equipment (states/paperdoll_state.cpp): for a session with no

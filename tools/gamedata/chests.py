@@ -24,11 +24,13 @@ The chain of one chest (all files are in the pak files of the game copy; researc
   4. The layer metadata file (LAYER.metadata, the list GatherableLocations) has one record for each gatherable of the layer:
      GatherableId (the CRC-32 of the lower-case gatherable id), LootTableId, WorldPosition, TerritoryIds, InstancedLootType (0
      POILoot, 4 Quest, ...), SpawnedByCoatlicue, HasVariant, IsVariantOverride, IsEncounter. A record and a placement are one chest
-     when they are in the same layer and 0.06 m or less apart (research K1). The region metadata files repeat the layer records:
-     the tool reads only the layer files.
-  5. A territory id of a record is a row of the territory definitions (TerritoryDefinition tables:
-     javelindata_territorydefinitions, javelindata_areadefinitions): LootTags (the loot tags of the territory, for example
-     "Everfall") and AIVariantLevelOverride (the creature level of an area). The tags of a chest are the LootTags of its
+     when they are in the same layer, 0.06 m or less apart (research K1), and the GatherableId of the record is the CRC-32 of the
+     gatherable row of the variation (code review of stage 3.5b.1, finding CH-R7: a different record at the same place is not the
+     record of the chest). The region metadata files repeat the layer records: the tool reads only the layer files.
+  5. A territory id of a record is a row of a TerritoryDefinition table (each table of this type: the territories, the areas, the
+     points of interest of pointofinterestdefinitions/, the arenas, ...; code review of stage 3.5b.1, finding CH-R6: the records
+     name the ids of the points of interest, whose rows have LootTags such as "EPOI"): LootTags (the loot tags of the territory, for
+     example "Everfall") and AIVariantLevelOverride (the creature level of an area). The tags of a chest are the LootTags of its
      territories; its content level is the largest AIVariantLevelOverride of its territories (a rule of this project from the data:
      docs/systems/chests.md, "Rules").
   6. The managed actor id of the placement is the UUID rule of interactions.py (actor_of).
@@ -54,7 +56,13 @@ The tool stops with status 1 and one message, and writes no file, when:
     attributes of a player have no "Instanced Loot Chest Reset Time Mins" (or 0) or no "Max Instanced Loot Chest Count";
   - two rows of one variation table or of the territory tables have one id and different content, or the gatherable row of a
     chest has two rows with different content (two rows of a gatherable that no chest names do not stop the tool: the quest
-    gatherables of the game have such rows).
+    gatherables of the game have such rows);
+  - a chest that can be ordinary has no record of its gatherable row in the metadata of its layer (code review of stage 3.5b.1,
+    finding CH-R5: a layer metadata file that the source does not have, or a record that is not there; the backend cannot check
+    the gate of the record, such as IsEncounter), or two records of its gatherable row at the chest have different content
+    (finding CH-R7);
+  - a record of a chest names a territory id that no TerritoryDefinition table has (finding CH-R6: its LootTags and its level are
+    not known).
 tools/gamedata/check_chests_tool.py is the check of these rules, with made-up sources.
 
 Output (one line of JSON):
@@ -105,8 +113,9 @@ COUNT_FIELD = "Max Instanced Loot Chest Count"
 VARIATION_TYPE = "VariationData"
 GATHERABLE_TYPE = "GatherableData"
 TERRITORY_TYPE = "TerritoryDefinition"
-# The territory tables of a chest record (research Q1): the territories and the areas. Other tables of this type (the invasions)
-# have no LootTags and are not territories of a gatherable record.
+# The territory tables of a chest record (research Q1): the territories and the areas need the column LootTags. The tool reads each
+# other table of this type too (code review of stage 3.5b.1, finding CH-R6: the records name the points of interest of
+# pointofinterestdefinitions/ and the arenas); a table with no LootTags gives no tag (the invasions).
 TERRITORY_FILES = ("javelindata_territorydefinitions.datasheet", "javelindata_areadefinitions.datasheet")
 # The gatherable tables of the quests: a chest of their rows is a chest of a quest (stage 1.8). A gatherable row that a table of the
 # quest data names (a task of a quest: MSQ_18018_WerebearChest in objectivetasks_quest_18018) is a chest of a quest too.
@@ -223,7 +232,7 @@ class Tables:
             elif kind == GATHERABLE_TYPE:
                 found_tables.add(GATHERABLE_TYPE)
                 self._gatherables(sheet, path)
-            elif kind == TERRITORY_TYPE and path.rsplit("/", 1)[-1] in TERRITORY_FILES:
+            elif kind == TERRITORY_TYPE:
                 found_tables.add(TERRITORY_TYPE)
                 self._territories(sheet, path)
         # The gatherable rows that a quest task names (a chest of a quest: stage 1.8), from each table of the quest data.
@@ -282,7 +291,8 @@ class Tables:
             self.gatherable_crc.setdefault(zlib.crc32(identifier.lower().encode()), identifier)
 
     def _territories(self, sheet: Sheet, path: str) -> None:
-        self._need(sheet, path, ("TerritoryID", "LootTags"))
+        main = path.rsplit("/", 1)[-1] in TERRITORY_FILES
+        self._need(sheet, path, ("TerritoryID", "LootTags") if main else ("TerritoryID",))
         for row in range(sheet.row_count):
             text = sheet.source(row, "TerritoryID").strip()
             if not text:
@@ -291,8 +301,8 @@ class Tables:
                 identifier = int(text)
             except ValueError as error:
                 raise Failure(f"{path}: the territory id {text!r} is not a number") from error
-            tags = [tag.strip() for tag in sheet.source(row, "LootTags").split(",") if tag.strip()]
-            level_text = sheet.source(row, "AIVariantLevelOverride").strip()
+            tags = [tag.strip() for tag in sheet.source(row, "LootTags").split(",") if tag.strip()] if "LootTags" in sheet.columns else []
+            level_text = sheet.source(row, "AIVariantLevelOverride").strip() if "AIVariantLevelOverride" in sheet.columns else ""
             level = int(finite(level_text, f"{path}: AIVariantLevelOverride of the territory {identifier}")) if level_text else None
             entry = {"tags": tags, "level": level}
             if identifier in self.territories and self.territories[identifier] != entry:
@@ -349,6 +359,12 @@ def gatherable_entry(identifier: str, cells: dict) -> dict:
             "status": any(cells.get(name, "").strip() for name in ("AddedStatusEffect", "RequiredStatusEffect",
                                                                     "ConsumedStatusEffect", "RequiredSongId", "RequiredWhisperId",
                                                                     "RequireControllingFaction", "ProgressionCurrencyCosts"))}
+
+
+def record_content(record: dict) -> tuple:
+    """@return The values of a record that the chest uses (finding CH-R7: two records of one row at a chest must agree)."""
+    return (record["root"], tuple(sorted(set(record["territories"]))), record["type"], record["coatlicue"], record["variant"],
+            record["override"], record["encounter"])
 
 
 def unavailable(gatherable: dict | None, root: str, record: dict | None, lock: str, slice_name: str) -> str:
@@ -542,11 +558,19 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                     gatherable["questTask"] = gatherable_id.lower() in tables.quest_named
                 if gatherable is not None:
                     used_gatherables[gatherable_id] = gatherable
-                # The record of the chest: the nearest kind-0 record of the layer (research K1: 0.06 m).
+                # The record of the chest (research K1: 0.06 m): only the records of the gatherable row of the variation (code review
+                # of stage 3.5b.1, finding CH-R7: GatherableId is the CRC-32 of the lower-case row id), then the nearest one. Two
+                # records of the row at the chest with different content stop the tool: the order of the file does not choose.
                 record = None
-                if near:
-                    near.sort(key=lambda index: sum((records[index]["position"][axis] - position[axis]) ** 2 for axis in range(3)))
-                    record = records[near[0]]
+                crc = zlib.crc32(gatherable_id.lower().encode()) if gatherable_id else None
+                matching = sorted((index for index in near if records[index]["id"] == crc),
+                                  key=lambda index: sum((records[index]["position"][axis] - position[axis]) ** 2 for axis in range(3)))
+                if matching:
+                    record = records[matching[0]]
+                    for index in matching[1:]:
+                        if record_content(records[index]) != record_content(record):
+                            raise Failure(f"the chest {identifier} of {layer} has two records of its gatherable row {gatherable_id} "
+                                          f"with different content")
                 root = (record["root"] if record is not None and record["root"]
                         else cells.get("LootTableComponent", cells.get("LootTableID", ""))).strip()
                 territories = sorted(set(record["territories"])) if record is not None else []
@@ -555,13 +579,19 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 for territory in territories:
                     entry = tables.territories.get(territory)
                     if entry is None:
-                        continue
+                        # Finding CH-R6: a territory with no row has tags and a level that the tool does not know.
+                        raise Failure(f"the record of the chest {identifier} of {layer} names the territory {territory}, which no "
+                                      f"TerritoryDefinition table has")
                     tags.extend(tag for tag in entry["tags"] if tag not in tags)
                     if entry["level"] is not None:
                         levels.append(entry["level"])
                 lock = cells.get("LootLockSlice", "").strip()
                 slice_name = str(placement.get("sliceName") or "")
                 reason = unavailable(gatherable, root, record, lock, slice_name)
+                if record is None and not reason:
+                    # Finding CH-R5: an ordinary chest needs its record (the gate IsEncounter, the type, the root, the territories).
+                    raise Failure(f"the chest {identifier} of {layer} has no record of its gatherable row {gatherable_id} in the "
+                                  f"layer metadata (the source has no metadata file of the layer, or the file has no such record)")
                 kind = KIND_OF_ROOT.get(root.lower(), "elite" if gatherable is not None and gatherable["elite"] else "other")
                 state = "unavailable" if reason else "ordinary"
                 flags = {"coatlicue": record["coatlicue"], "variant": record["variant"], "override": record["override"],

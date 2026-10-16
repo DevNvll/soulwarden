@@ -142,8 +142,10 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   and the rule of the server of the game is not known), checks the use again at the end (the source, Enabled, the life, the exact
   position and the range), and completes it one time (`InteractionHandler::complete`). A failed check ends the use (3746). A
   release (the block goes away), a 2473, a cancel, a travel, the death, and damage before the end: no completion. Damage ends a use
-  of a timed option and a use of a handler with `ends_at_damage` (stage 3.5b.1: the open of a chest). A handler with its own timer (the
-  chests) checks the use again with `Interactions::use_valid` and ends it with `end_use` (3746). The same block in
+  of a timed option and a use of a handler with `ends_at_damage` (stage 3.5b.1: the open of a chest). A handler with its own time
+  gives it with `InteractionHandler::use_time` (stage 3.5b.2: the open time of a chest; code review of stage 3.5b.1, finding CH-R2): the
+  use is then a timed use of the base with that time, and the rules of this paragraph apply (the timer, the checks again, the
+  completion of a late release). A handler ends a use with `end_use` (3746). The same block in
   each report is the same use: the time does not start again. After the completion the client clears its request (live: 5.0 s after
   the press). The handler of the fixture counts the completions (no explosion, no reward). A report with no block that the world takes
   at the full time or later, before the timer (1 ms after the time), completes the use first through the path of the timer and then
@@ -168,7 +170,12 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   An echo that comes after the release gives a mark: a new press in the next 5 input steps then starts no use (a trap of the rule). The
   echo of a use that the world ended also ends the attempt of its block when the session still has that block (code review of stage
   3.4f-D, finding SU-R5, case RSU5): the next input step with the same block (no step with no block between, the order of INT-R2) is a
-  new request; a block of a different reference stays. Source: decisions of an agent with the rules of the carrier (protocol notes 4.7).
+  new request; a block of a different reference stays. A matched cancel and a late cancel (also the echo of a server end) give a mark
+  with only the datagram of the cancel (code review of stage 3.5b.1, finding CH-R1, case RCH1): a delayed input report of the held
+  block that the client made before the cancel starts no new use; a press in a later datagram is a new request (case RSU5). Source:
+  decisions of an agent with the rules of the carrier (protocol notes 4.7).
+- The hook `InteractionHandler::started` (stage 3.5b.2): the base calls it after it registered an accepted use, so that the handler can
+  end the use (`end_use`) in the same request. The loot bags take the items of Take All there ([Loot bags](loot-bags.md)).
 - The service handoff (stage 2.5b; the base of the shops 5.1 and the transmog 5.6; research Q4): a handler of a later stage gives the
   character of a committed use a service of its source (`grant_service`: the kind, the ids of the offer, the revision, a deadline
   only when the data has one). The grant is a value of the entity (`Entity::serviceGrant`), and only this system changes it. It stays

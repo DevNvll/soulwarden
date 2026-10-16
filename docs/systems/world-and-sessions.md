@@ -64,6 +64,10 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   slice of its placement or template (case SC1). The client shows a server child only after its
   record (live check L4 of stage 2.5b); the stop of the record removes it in the client, and a
   new interest gives a new full record with one metadata state.
+- A server child with a private list (stage 3.5b.2: a personal loot bag, [Loot bags](loot-bags.md)): `ObjectBody::viewers` has the
+  character ids that observe it; the interest of a session skips the object when the list does not have the character of the
+  session (MP-3: no record, no state). Its LootDrop state (type 2027, `ObjectBody::lootDropSlot`) is in the object codecs. The player
+  codecs have the selected Container (slot 76, type 1755) and the GlobalStorage map (slot 77, type 2938), both owner only.
 - A projectile of a creature (stage 3.4f-A, `EntityKind::projectile`, [Projectiles](projectiles.md)): only the projectile system makes
   it (`World::make_projectile`: an actor of the allocator) and removes it (`World::remove_projectile`); it moves with its flight
   (`World::place_projectile`: the position index, no state change). Its codecs (`projectile_codecs`): the metadata state of the

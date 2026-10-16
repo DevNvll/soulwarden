@@ -185,6 +185,10 @@ std::uint32_t put(Bag& bag,
 
 } // namespace
 
+InstanceId make_instance_id() {
+    return new_instance();
+}
+
 const char* item_error_text(ItemError error) {
     switch (error) {
     case ItemError::none:
@@ -640,6 +644,17 @@ ItemResult Inventory::grant(const std::string& characterId,
         characterId,
         what.c_str(),
         [&](Carried& carried, Touched& touched) {
+            if (whole) {
+                // The whole result or nothing (code review of stage 3.5b.1, finding CH-R3): an item that the catalog does not have (or with
+                // no item type) refuses the whole grant before a change. The caller keeps the complete roll.
+                for (const GrantItem& grant : items) {
+                    const gamedata::ItemDefinition* definition =
+                        m_catalog != nullptr && m_catalog->loaded() ? m_catalog->find(grant.itemId) : nullptr;
+                    if (grant.quantity != 0 && (definition == nullptr || definition->type.empty())) {
+                        return definition == nullptr ? ItemError::unknownItem : ItemError::noItemType;
+                    }
+                }
+            }
             for (const GrantItem& grant : items) {
                 const gamedata::ItemDefinition* definition =
                     m_catalog != nullptr && m_catalog->loaded() ? m_catalog->find(grant.itemId) : nullptr;
@@ -667,6 +682,188 @@ ItemResult Inventory::grant(const std::string& characterId,
             return ItemError::none;
         },
         wallet);
+}
+
+std::vector<ItemInstance> Inventory::make_instances(const std::vector<GrantItem>& items, std::vector<GrantItem>* unknown) const {
+    std::vector<ItemInstance> made;
+    std::uint32_t chrono = 1;
+    for (const GrantItem& grant : items) {
+        const gamedata::ItemDefinition* definition =
+            m_catalog != nullptr && m_catalog->loaded() ? m_catalog->find(grant.itemId) : nullptr;
+        if (definition == nullptr || definition->type.empty() || grant.quantity == 0) {
+            if (unknown != nullptr && grant.quantity != 0) {
+                unknown->push_back(grant);
+            }
+            continue;
+        }
+        const std::uint32_t maxStack = std::clamp<std::uint32_t>(definition->maxStack, 1, kMaxItemQuantity);
+        for (std::uint32_t left = grant.quantity; left > 0;) {
+            ItemInstance item = new_item(*definition, std::min(left, maxStack), grant.gearScore, chrono++, true, grant.perks);
+            left -= item.quantity;
+            resolve_perks(item);
+            made.push_back(std::move(item));
+        }
+    }
+    return made;
+}
+
+ItemResult Inventory::receive(const std::string& characterId, const std::vector<ItemInstance>& items, std::vector<std::uint32_t>& taken) {
+    taken.assign(items.size(), 0);
+    const std::string what = "pickup of " + std::to_string(items.size()) + " stack(s)";
+    return change_bag(characterId, what.c_str(), [&](Bag& bag, std::set<std::uint32_t>& changed) {
+        for (std::size_t index = 0; index < items.size(); ++index) {
+            const ItemInstance& source = items[index];
+            const gamedata::ItemDefinition* definition =
+                m_catalog != nullptr && m_catalog->loaded() ? m_catalog->find(source.itemId) : nullptr;
+            if (definition == nullptr || source.quantity == 0) {
+                continue; // An item that the catalog does not have stays with its source.
+            }
+            const std::uint32_t maxStack = std::clamp<std::uint32_t>(definition->maxStack, 1, kMaxItemQuantity);
+            std::uint32_t left = source.quantity;
+            // First the stacks of the same item that are not full (an equal ItemID alone is not enough: same_stack).
+            for (std::uint32_t slot = 0; slot < bag.slots.size() && left > 0; ++slot) {
+                BagSlot& target = bag.slots[slot];
+                if (!target.item || !same_stack(*target.item, source) || target.item->quantity >= maxStack) {
+                    continue;
+                }
+                const std::uint32_t moved = std::min(left, maxStack - target.item->quantity);
+                target.item->quantity += moved;
+                target.action = sync::kItemGathered;
+                changed.insert(slot);
+                left -= moved;
+            }
+            // Then empty slots: the stored instance, its values unchanged.
+            std::vector<std::uint32_t> placed;
+            std::uint32_t search = 0;
+            while (left > 0) {
+                const auto slot = free_slot(bag, search);
+                if (!slot) {
+                    break;
+                }
+                ItemInstance stack = source;
+                stack.instance = new_instance();
+                stack.quantity = std::min(left, maxStack);
+                stack.chrono = bag.nextChrono++;
+                left -= stack.quantity;
+                BagSlot& target = slot_at(bag, *slot);
+                target.item = std::move(stack);
+                target.action = sync::kItemGathered;
+                changed.insert(*slot);
+                placed.push_back(*slot);
+                search = *slot + 1;
+            }
+            // The source keeps nothing of the instance: its last new stack keeps the instance id (the instance moved).
+            if (left == 0 && !placed.empty()) {
+                bag.slots[placed.back()].item->instance = source.instance;
+            }
+            taken[index] = source.quantity - left;
+        }
+        for (const std::uint32_t slot : changed) {
+            if (slot < bag.slots.size() && bag.slots[slot].item) {
+                resolve_perks(*bag.slots[slot].item);
+            }
+        }
+        return ItemError::none;
+    });
+}
+
+ItemResult Inventory::release(const std::string& characterId, const std::vector<DropEntry>& entries, std::vector<ItemInstance>& out) {
+    out.clear();
+    const std::string what = "discard of " + std::to_string(entries.size()) + " entr" + (entries.size() == 1 ? "y" : "ies");
+    return change_bag(characterId, what.c_str(), [&](Bag& bag, std::set<std::uint32_t>& changed) {
+        out.clear();
+        if (entries.empty()) {
+            return ItemError::emptyRequest;
+        }
+        // The rules of drop(): each entry against the bag with the entries before it applied; one wrong entry refuses the request.
+        for (const DropEntry& entry : entries) {
+            if (entry.slot >= bag.slots.size()) {
+                return ItemError::badSlot;
+            }
+            BagSlot& source = bag.slots[entry.slot];
+            if (!source.item) {
+                return ItemError::emptySlot;
+            }
+            if (source.item->instance != entry.instance) {
+                return ItemError::wrongInstance;
+            }
+            if ((source.item->flags & kItemLocked) != 0) {
+                return ItemError::itemLocked;
+            }
+            if (entry.quantity == 0 || entry.quantity > source.item->quantity) {
+                return ItemError::badQuantity;
+            }
+            ItemInstance left = *source.item;
+            left.quantity = entry.quantity;
+            if (entry.quantity == source.item->quantity) {
+                source.item.reset();
+            } else {
+                left.instance = new_instance();
+                source.item->quantity -= entry.quantity;
+            }
+            out.push_back(std::move(left));
+            source.action = sync::kItemRemoved;
+            changed.insert(entry.slot);
+        }
+        return ItemError::none;
+    });
+}
+
+ItemResult Inventory::release_instance(const std::string& characterId, const InstanceId& instance, std::uint32_t quantity,
+                                       std::vector<ItemInstance>& out) {
+    std::optional<std::uint32_t> slot;
+    if (const Entity* entity = m_world.find_character(characterId)) {
+        for (std::uint32_t index = 0; index < entity->bag.slots.size(); ++index) {
+            if (entity->bag.slots[index].item && entity->bag.slots[index].item->instance == instance) {
+                slot = index;
+                break;
+            }
+        }
+    }
+    if (!slot) {
+        out.clear();
+        ItemResult result;
+        result.error = ItemError::wrongInstance;
+        log::write("inventory: give of an instance of character %s refused: the bag has no such instance", characterId.c_str());
+        return result;
+    }
+    return release(characterId, {DropEntry{*slot, instance, quantity}}, out);
+}
+
+ItemResult Inventory::release_equipped(const std::string& characterId, std::uint32_t slot, std::uint32_t quantity,
+                                       std::vector<ItemInstance>& out) {
+    out.clear();
+    const std::string what = "discard of the item of slot " + std::to_string(slot) + " of the paperdoll";
+    return change(characterId, what.c_str(), [&](Carried& carried, Touched& touched) {
+        out.clear();
+        if (!paperdoll::valid_slot(slot)) {
+            return ItemError::badEquipSlot;
+        }
+        const auto found = carried.equipment.slots.find(slot);
+        if (found == carried.equipment.slots.end() || !found->second.item) {
+            return ItemError::emptySlot;
+        }
+        ItemInstance& item = *found->second.item;
+        if ((item.flags & kItemLocked) != 0) {
+            return ItemError::itemLocked;
+        }
+        // The request names the quantity of the slot (the client sends 1 for a piece of equipment).
+        if (quantity == 0 || quantity > item.quantity) {
+            return ItemError::badQuantity;
+        }
+        ItemInstance left = item;
+        left.quantity = quantity;
+        if (quantity == item.quantity) {
+            found->second.item.reset();
+        } else {
+            left.instance = new_instance();
+            item.quantity -= quantity;
+        }
+        found->second.action = sync::kItemUnequipped;
+        out.push_back(std::move(left));
+        touched.equipment.insert(slot);
+        return ItemError::none;
+    });
 }
 
 ItemResult Inventory::remove(const std::string& characterId, std::uint32_t slot, std::optional<std::uint32_t> quantity) {

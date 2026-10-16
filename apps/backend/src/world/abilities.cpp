@@ -1970,7 +1970,8 @@ void Abilities::change_mana(Entity& character, float amount, const char* what) {
     }
     const WorldClock::time_point now = m_world.clock().now();
     const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
-    const float rate = tables != nullptr && tables->loaded() ? tables->data().manaRegenRate : 0.0F;
+    // The rate of the client (stage 3.5b.2): the base rate of the data times the factor of the ManaRate parts.
+    const float rate = (tables != nullptr && tables->loaded() ? tables->data().manaRegenRate : 0.0F) * character.vitals.manaRateFactor;
     if (amount < 0.0F) {
         // A spend: the regeneration starts after the delay of the data (client code at image RVA 0x6949DE0).
         const float delay = tables != nullptr && tables->loaded()
@@ -2282,16 +2283,42 @@ void Abilities::step_dashes() {
     }
 }
 
+void Abilities::mana_changed(Entity& character) {
+    if (character.kind != EntityKind::player) {
+        return;
+    }
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const float rate = (tables != nullptr && tables->loaded() ? tables->data().manaRegenRate : 0.0F) * character.vitals.manaRateFactor;
+    const WorldClock::time_point now = m_world.clock().now();
+    if (character.vitals.mana < character.vitals.manaMax) {
+        if (!character.vitals.manaRegenFrom) {
+            character.vitals.manaRegenFrom = now;
+        }
+        character.vitals.manaRegenRate = rate;
+        if (rate > 0.0F) {
+            const auto found = m_regenerating.find(character.characterId);
+            m_regenerating[character.characterId] = found != m_regenerating.end() ? std::max(found->second, *character.vitals.manaRegenFrom)
+                                                                                  : std::max(now, *character.vitals.manaRegenFrom);
+        }
+    } else {
+        character.vitals.manaRegenFrom.reset();
+        character.vitals.manaRegenRate = rate;
+        m_regenerating.erase(character.characterId);
+    }
+    m_world.touch(character.id, ComponentKey::mana);
+}
+
 void Abilities::tick() {
     step_dashes();
     if (m_regenerating.empty()) {
         return;
     }
     const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
-    const float rate = tables != nullptr && tables->loaded() ? tables->data().manaRegenRate : 0.0F;
+    const float base = tables != nullptr && tables->loaded() ? tables->data().manaRegenRate : 0.0F;
     const WorldClock::time_point now = m_world.clock().now();
     for (auto entry = m_regenerating.begin(); entry != m_regenerating.end();) {
         Entity* character = m_world.find_character(entry->first);
+        const float rate = character != nullptr ? base * character->vitals.manaRateFactor : 0.0F;
         if (character == nullptr || rate <= 0.0F || !character->vitals.manaRegenFrom) {
             entry = m_regenerating.erase(entry);
             continue;

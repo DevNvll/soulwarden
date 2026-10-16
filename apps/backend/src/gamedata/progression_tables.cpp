@@ -189,6 +189,32 @@ bool ProgressionTables::load(const std::string& path) {
         || !read_number(vitals["mana"], data.baseMana)) {
         return false;
     }
+    // The threshold abilities of the attributes (stage 3.5b.2): optional; each entry [value, [ids]] with values that go up.
+    if (attributes.contains("abilities")) {
+        if (!attributes["abilities"].is_object()) {
+            return false;
+        }
+        for (const auto& [name, list] : attributes["abilities"].items()) {
+            if (!list.is_array()) {
+                return false;
+            }
+            std::vector<AttributeThreshold>& thresholds = data.attributeAbilities[name];
+            for (const json& entry : list) {
+                AttributeThreshold threshold;
+                if (!entry.is_array() || entry.size() != 2 || !read_number(entry[0], threshold.value) || !entry[1].is_array()
+                    || (!thresholds.empty() && threshold.value <= thresholds.back().value)) {
+                    return false;
+                }
+                for (const json& ability : entry[1]) {
+                    if (!ability.is_string() || ability.get<std::string>().empty()) {
+                        return false;
+                    }
+                    threshold.abilities.push_back(ability.get<std::string>());
+                }
+                thresholds.push_back(std::move(threshold));
+            }
+        }
+    }
     // The mana regeneration (stage 1.3b): three numbers of 0 or more, or none of them (a file from before).
     for (const auto& [member, target] : {std::pair<const char*, float*>{"manaRegenRate", &data.manaRegenRate},
                                          {"manaRegenDelay", &data.manaRegenDelay},

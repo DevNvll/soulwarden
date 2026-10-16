@@ -1092,6 +1092,28 @@ fragment of 100 of 100:  2f b4 19 | 01 0f | 42 c8 00 00  42 c8 00 00  00 00 00 0
   of the vitals state) and the two rates 0: the client changes no value itself. The maximum
   is the mana of the progression tables (`baseMana`) when the tables have it. The remote
   player slice has no mana component: an observer gets no fragment.
+- **The maximum of the client** (stage 3.5b.2; live proof of the final run, static proof of
+  the two functions). `ManaPercent` is the current value of the state divided by the maximum
+  of the client (0x691F190: the object at component +0x140, function +0x20), not by field 1.
+  The client maximum is its stat MaxMana (0x31; 0x676B310 also reads the stat 0x30, the
+  regeneration). At a change of the stat the client scales the current value by the new
+  maximum over the old one (0x676B310): a full bar stays full, and the meter shows the change
+  only at the next mana state. The client computes the stat from the maximum of the **first**
+  mana state (field 1) and its own MaxMana parts: the threshold abilities of its attributes
+  (Focus 100: `Foc_Bonus_100_1`, MaxMana 0.1, ManaRate 0.2), the perks, the effects. Later
+  values of field 1 change nothing (fragments 110 of 100 and 55 of 110 or 100: the same bar).
+  Proof: a first state with the maximum 100 gave the client the maximum 110 (100 of 100: the
+  bar at 91 percent; 110 of 110 hides it); a first state with 110 gave 121 (110 of 110: the
+  bar at 91 percent; 121 of 121 hides it; 105 and 115 probes). ManaMax of the vitals state
+  (group 1, field 3) changed nothing in the probes: the backend sends the base there too.
+- The backend (stage 3.5b.2, `world/progress.cpp`, `server/rep/states/mana_state.cpp`): the
+  current value has the parts (100 x (1 + 0.1) = 110 of 110 with Focus 100 or more), field 1
+  and ManaMax of the vitals state have the base maximum (`Vitals::manaBase`, 100), and the
+  regeneration rate is the base rate times 1 plus the ManaRate parts (2 x 1.2 = 2.4). Live:
+  full mana hides the meter; a Divine Embrace (25) shows 85 of 110; the meter is hidden again
+  at the full value (`~/Games/soulwarden/work/evidence/loot-bags/implement/final/`,
+  `mana-proof-sheet.png`, `mana-spend-regen.mp4`). The meter does not move during the
+  regeneration: it changes at the next state (the state at the full value). Test case MN1.
 
 `MB::PlayerAppearanceComponentReplicatedState` has 1 group with 12 fields of one byte each
 (indexes into the character creation databases of the client: gender, race, skin tone,
@@ -1965,7 +1987,8 @@ that the server did: the new container state is the answer.
 
 | Type | Name | Body after `target entity` | The backend |
 | ---: | --- | --- | --- |
-| 1838 | `ItemDropComponentServerFacet_DropInventoryItems` (writer 0x65AF090) | `count:size` (501 at most), then for each entry `slot:u32 instance:16 bytes u32 quantity:u32` | removes the quantities (the world has no entity for an item on the ground yet) |
+| 1838 | `ItemDropComponentServerFacet_DropInventoryItems` (writer 0x65AF090) | `count:size` (501 at most), then for each entry `slot:u32 instance:16 bytes u32 quantity:u32` | stage 3.5b.2: puts the quantities into a new Discarded bag at the feet of the character (4.42); with no loot container in the interaction data it removes them (stage 1.3). Live check L7 of stage 3.5b.2: the drag of a stack to the area "Drop items" gives count 1, the slot, the instance, `FFFFFFFF`, the quantity |
+| 826 | `PaperdollDropItem` (stage 3.5b.2, live check L7) | `slot:u32 quantity:u32` (24 bytes with the call): the paperdoll slot and the quantity | puts the item of the paperdoll slot into a new Discarded bag (4.42), and refreshes the gear; with no answer the client keeps the item |
 | 2549 | `ItemRepairComponentServerFacet_RequestSetLockState` (writer 0x2E8E120) | `containerType:u32 slot:u32 instance:16 bytes quantity:u32 locked:u8` | sets or clears flag bit 1 (container type 1, the bag) |
 
 - The backend finds the character from the session. The `entity` field must be the entity
@@ -2196,8 +2219,8 @@ actor id with the serial 1; slice entity "Inventory", component id `A4682AF2564E
   local player flag at facet +0x338, which was 1 in the live client). It sends no request for
   an action that its screen does not offer.
 - Not handled: the sheathe request (3899), `ServerUseItem` (663), `UnequipAllItems` (1253),
-  the loadouts, the transfer of an item of a different container into the paperdoll, and the
-  drop of an equipped item (826).
+  the loadouts, and the transfer of an item of a different container into the paperdoll. The
+  drop of an equipped item (826) is handled since stage 3.5b.2.
 
 **What the backend does with a request.** It finds the character from the session. The
 `entity` field must be the entity group id of the entity of the session: if not, the request
@@ -6160,7 +6183,7 @@ Code: `world/chests.h`, `server/rep/states/chest_states.cpp`, `gamedata/chest_da
 | A chest: a placement with a variant name of `Gatherable_LootContainers` (the slice `master_lootcontainer`: Variation 1, PositionInTheWorld 2, GatherableController 3, Interact 4, Marker 5); the row names GatherableEntryID and LootTableComponent (the root). | `javelindata_variations_gatherables_lootcontainers.datasheet`, the layer capitals |
 | The gatherable row: BaseGatherTime (2.5 s supply, 5 s elite), MinRespawnRate and MaxRespawnRate (82,800 s for `LootLargeT3ElitePOI`, 0 for a supply chest), the restrictions. | GatherableData tables |
 | The reset of an instanced chest 60 minutes and its count 60 (`Instanced Loot Chest Reset Time Mins`, `Max Instanced Loot Chest Count`). | `playerbaseattributes.pbadb` (reflection `0x5CAD110`) |
-| The territories of a chest: the record of the layer metadata (GatherableLocations) 0.06 m or less from the placement; LootTags and AIVariantLevelOverride of TerritoryDefinition rows. | `.metadata` of the layers, `javelindata_territorydefinitions`, `javelindata_areadefinitions` |
+| The territories of a chest: the record of the layer metadata (GatherableLocations) 0.06 m or less from the placement whose GatherableId is the CRC-32 of the gatherable row of the variation (stage 3.5b.2, finding CH-R7: 48 lock chests had a different record first); LootTags and AIVariantLevelOverride of the TerritoryDefinition rows of each table of this type (stage 3.5b.2, finding CH-R6: the records name the points of interest of `pointofinterestdefinitions/` and the arenas; with only the two tables 5,092 references had no row, and 1,228 chests had no LootTags of their point of interest, for example `EPOI`, `Corrupted`, `Elite`). | `.metadata` of the layers, the TerritoryDefinition tables (`javelindata_territorydefinitions`, `javelindata_areadefinitions`, `pointofinterestdefinitions/javelindata_poidefinitions_*`, `arenas/javelindata_arenadefinitions`, ...) |
 | The container floor of the gear score: ContainerLootGSFloor of each level. | VitalsLevels |
 | The action Gather ends at a hit (IfDamagedByPowerLevel 0 or more); it has no condition of the weight of the bag. | `playeractions_gather.actionlist` |
 
@@ -6168,9 +6191,9 @@ Code: `world/chests.h`, `server/rep/states/chest_states.cpp`, `gamedata/chest_da
 
 | Rule | What the backend does |
 | --- | --- |
-| The open | GatherOption of an ordinary chest with no Looted claim of the character: the Gathering state Success with the BaseGatherTime of the data and the speed 1; a timer of the world of the same time. A release, 2473, a walk out of the range, a travel, the death, or damage before the end: Failure and no item. |
+| The open | GatherOption of an ordinary chest with no Looted claim of the character: the Gathering state Success with the BaseGatherTime of the data and the speed 1; the timed use of the base with the same time (stage 3.5b.2, finding CH-R2: a release at or after the time completes first). A release, 2473, a walk out of the range, a travel, the death, or damage before the end: Failure and no item. |
 | The completion | The base checks the use again; the roll of the root of the chest (the level of the character, the content level and the loot tags of its territories, the container floor); one transaction: the items (cause 1) and the Looted claim with its reset; the Gathering state Done; the LootTracker of the owner with the claim. |
-| A full bag | The whole result must fit (500 slots): else no item, the roll stays in a Rolled claim, the chest stays closed, 3746; the next open gives the kept roll. No weight check (the client has none for the action). |
+| A full bag | The whole result must fit (500 slots), and the catalog must have each item (stage 3.5b.2, finding CH-R3): else no item, the roll stays in a Rolled claim, the chest stays closed, 3746; the next open gives the kept roll. No weight check (the client has none for the action). |
 | The reset | The reset values of the gatherable row, else 60 minutes; on the wall clock in the store (a restart keeps it); the server removes the claim and sends the map with no entry. |
 | The map | The claims 192 m or less from the character and a Locked entry for each unavailable chest 192 m or less from it; made again at a new cell of 64 m. Each active claim stays in the store also above 60. |
 
@@ -6193,6 +6216,61 @@ Code: `world/chests.h`, `server/rep/states/chest_states.cpp`, `gamedata/chest_da
 - The loot limits (LootLimits), HWMMult, and LootBiasing of the roller; the umbral currency and the territory standing of the elite event.
 - The personal loot bag of a creature (AILoot, stage 3.5b.2); the locks, keys, quests, and events (stage 3.5b.3); the gathering nodes
   (stage 3.6).
+
+### 4.42 The personal loot bags: the bag of a kill and the discard of a player (live proof of stage 3.5b.2; static proof for the client code and the game data; the rules are project rules with the values of the game data)
+
+Stage 3.5b.2. Research: `~/Games/soulwarden/work/research/chests-ground-loot.md` (Q3, Q4, the criteria I9 to I15), `storage.md` (the
+GlobalStorage map). Live checks and the live proof: `~/Games/soulwarden/work/evidence/loot-bags/implement/` (`LIVE-CHECKS.md`, `probe/`,
+`proof/`, `final/`, `RESULT.md`). Code: `world/loot_bags.h`, `server/rep/states/loot_bag_states.cpp`, `server/rep/item_requests.h`,
+`tools/gamedata/interactions.py`. Document: [Loot bags](systems/loot-bags.md). Test cases GL1 to GL7.
+
+**The wire contracts** (live checks L5 to L7: a probe backend and `tools/world fragment` before the code):
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The record of a bag: the metadata state of `slices/instanced_loot_container.dynamicslice` (asset 9844F2DE-C3B1-5BD3-98FA-8768B5445906, sub 2), PositionInTheWorld (slot 1), Interact (slot 5: component `2953d2fecfa764bd` on the entity of the slice; TakeAllOption action 28 and OpenStorageOption action 26, committed, on the option entity Storage), LootDrop (slot 6). With no LootTracker entry of the character nothing shows. | Live L5. | — |
+| The LootTracker entry of a bag (slot 33, type 982, the 58-byte entry of 4.41): Rolled (1) and the kind AILoot (1) or Discarded (5) with the place show the bag and its light beam; Looted (2) hides the prompt and the beam at once (+0.33 s), a dissolve shows (+0.9 s), and the client ends its use (2473, 7 ms). | Live L5, L6. | InstancedLootType reflection `0x36FD750`, InstancedLootState `0x36FD370` |
+| LootDrop (type 2027), group 0 field 0 m_rarityLevel u32: the rarity of the light beam (the particle of the slice). | Live L5 (2: the beam). | Ctor `0x2D356F0`, apply `0x2D3F460`, reader `0x17B3620`; particle selection `0x36F6BC0` |
+| GlobalStorage (type 2938, player slot 77, owner only), field 0 m_globalItemMap in the full form: changes size 0, version u8 0, count size, and for each key: actor 16, item count size, the items (the item of 4.10). The key of a bag gives the item list under its prompt ("Iron Ore 9"); the panel does not read it. | Live L5. | Ctor `0x2CF3C30`, apply `0x2D09280`, reader `0x2D1B110` |
+| The selected Container (type 1755, player slot 76, owner only; the full vector of 4.10): the panel of the open bag ("3 items", Take All on). The open clears it in the client: a state before the request is not in the panel. | Live L5, L6. | Container reader `0x40E8F30` |
+| OpenStorageOption (T, or Tab near a bag: OpenNearbyLootContainers) is the interaction request of 4.35 (action 26); the panel opens at once. Escape closes it with 2473. | Live L5. | — |
+| 2939 TakeAllItems (48 bytes): the call (a RootPlayer component), the group, and the reference actor 16, group u64, target u64 of the player Container (`GlobalStorage/91b8850b-3bdf-1d1f-16bb-4b7cb8ddc4e1`): the reference names the player Container, not the bag. 2942 TakeItem (68 bytes): the same, the instance 16, the quantity u32 (LSHIFT and a click: the stack; LCTRL: the split slider). 2801 GiveItem (68 bytes): a drag of a bag item into the panel. A right click or a drag out of the panel sends nothing. | Live L5. | Field readers `0x2E6AB10`, `0x2D93D60`, `0x2D93E30` (the quantity 1 to 10,000), `0x692CF20` |
+| E (Take All of the prompt) sends TakeAllOption (action 28) and no 2939; the client waits for the server. | Live L5. | — |
+| The client does not end a bag at KillSelfDelay (180 s) of the slice, and a DelayedEvent state (slot 2, type 3139) has no visible effect. The stop of the record removes the bag at once; with the panel open the use ends (3746), the panel closes, and a late 2473 comes. | Live L6. | — |
+| 1838 of a drag of a stack to "Drop items" and 826 (24 bytes: paperdoll slot u32, quantity u32) of a drag of an equipped item (4.10). With no answer the client keeps the equipped item. | Live L7. | — |
+
+**The game data** (static; `interactions.py` format 3, member `lootContainers.personal`):
+
+| Fact | Source |
+| --- | --- |
+| The personal container: the slice `instanced_loot_container` (InstancedLootContainer: AILoot, m_isInstancedLoot; Storage unique for a player; LootDrop slot 6; 5 rarity particles). | The slice of the game copy |
+| The lifetime: a DelayedEvent with KillSelfDelay 180 s at the init; FastKillSelfDelay 1.25 s at completelyLooted (the end of the slice); HideMeshDelay 1.5 s at looted. | The slice (DelayedEvent slots 2, 3, 4) |
+| The rarity of an item from its perk count. | `playerbaseattributes.pbadb`, client `0x5C528D0` (research itemization.md K6) |
+
+**The rules** (the source of each rule is in [Loot bags](systems/loot-bags.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The bag of a kill | The items of each character with the credit go into its own part of one bag at the place of the creature; the experience, the mastery, and the coin at the kill. Only the eligible characters observe the bag. |
+| The pickup | TakeAllOption, 2939, and 2942 move the stored instances (the id, the gear score, the durability, the flags, the perks) into the bag of the character in one transaction; a full bag takes what fits. 2801 moves an item of the bag of the character into the open bag. |
+| The discard | 1838 and 826: a new Discarded bag at the feet of the character with the instances (a locked item does not move). |
+| The lifetime | 180 s from the bag, and 1.25 s after the last item of the last part; on the wall clock in the store. The server removes the record. |
+
+**The live proof** (stage 3.5b.2, the backend of the stage and the game data of the run):
+
+| Check | Result |
+| --- | --- |
+| B1 A kill, the bag, the panel, Take All, the inventory (`final/kill-bag-panel-takeall.mp4`, `final/kill-video-sheet.png`) | A Grey Wolf: the bag with the green beam, T: the panel "LOOT 1 item", Take All: 2939 moved 1 item, the item in the inventory, the bag ended 1.3 s later. |
+| B2 A take of one item (`proof/t-00` to `t-05`) | A give (2801) of an ore stack into the bag, then LSHIFT and a click: the stack came back, the musket stayed in the bag; then Take All. |
+| B3 The end of a bag (`proof/frames-end/`, `end-sheet.png`) | The bag with no pickup: the beam is gone 180 s after the bag (between -0.22 s and +1.42 s of the time). |
+| B4 A discard and its recovery (`proof/frames-discard/`, `discard-sheet.png`) | The bound Miner Goggles into "Drop items": a Discarded bag at the feet, the panel, the take: the same instance id, gear score 75, durability 750, the bind flag. |
+
+**Not known, not done** (stage 3.5b.2):
+
+- The rule of the original server for the rarity of a bag of two parts and for the ForceRarity column: a project rule (rarity 0; the
+  perk count).
+- The shared bag of a death, the permissions of a group, and the trade between players (decision of the user: not in this part).
+- The meaning of the panel label ("LOOT", "DROPPED ITEMS", "ITEMS") for each kind and order of the states: only the observed cases.
 
 ## 5. Open items
 

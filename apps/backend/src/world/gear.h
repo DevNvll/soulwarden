@@ -112,6 +112,9 @@ struct GearValues {
     std::unordered_map<std::string, float> absorption;
     /** The health that the character gets in each second (a part of its maximum health: HealthModifierPercent with TickRate 1). */
     float regeneration{0.0F};
+    /** The mana parts (stage 3.5b.2): MaxMana and ManaRate of the passive ability rows of the perks (Global_Ring_MaxMana +0.1). */
+    float maxMana{0.0F};
+    float manaRate{0.0F};
     float equipLoad{0.0F};
     LoadClass load{LoadClass::light};
 };

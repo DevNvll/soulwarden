@@ -157,9 +157,22 @@ enum class ComponentKey {
     gathering,
     /**
      * The LootTracker state of a character (stage 3.5b.1, slot 33, type 982): the loot claims of the character on the chests near it
-     * (live check L2: a Looted entry removes the prompt of the chest). Only the owner gets it.
+     * (live check L2: a Looted entry removes the prompt of the chest). Only the owner gets it. Stage 3.5b.2: also the entries of its loot
+     * bags (Entity::bagTracker).
      */
     lootTracker,
+    /**
+     * The selected Container of a character (stage 3.5b.2, slot 76, type 1755; docs/systems/loot-bags.md): the items of the loot bag that
+     * the character opened (live check L5: the panel of the bag shows them). Only the owner gets it.
+     */
+    selectedContainer,
+    /**
+     * The GlobalStorage state of a character (stage 3.5b.2, slot 77, type 2938): a map of the actor of each loot bag of the character to
+     * its items (live check L5: the item list under the prompt of a bag). Only the owner gets it.
+     */
+    globalStorage,
+    /** The LootDrop state of a loot bag (stage 3.5b.2, type 2027, the slot of its slice): m_rarityLevel. */
+    lootDrop,
 };
 
 /**
@@ -223,12 +236,23 @@ struct Vitals {
     float mana{100.0F};
     float manaMax{100.0F};
     /**
+     * The base maximum of the mana (ManaMax of the base vitals of a player, before the MaxMana parts; stage 3.5b.2). The vitals state sends
+     * it: the client multiplies the ManaMax of the vitals state with its own MaxMana parts (live check of the final run of stage 3.5b.2: a
+     * vitals state with 110 gave the client the maximum 121).
+     */
+    float manaBase{100.0F};
+    /**
      * The mana regeneration (stage 1.3b, I14): the mana comes back from this time on, at the rate of the base vitals of a
      * player (a spend sets the delay of the data). No value: the mana is full, or the backend has no rate.
      */
     std::optional<WorldClock::time_point> manaRegenFrom;
     /** The mana in one second of the regeneration (the base vitals of a player; the mana state sends it while the mana is not full). */
     float manaRegenRate{0.0F};
+    /**
+     * The factor of the mana regeneration (stage 3.5b.2): 1 plus the ManaRate parts of the threshold abilities, the perks, and the effects
+     * (the client predicts the gain with the same rate, stat 0x30). The progress system sets it with the maximum.
+     */
+    float manaRateFactor{1.0F};
     /**
      * The stamina (stage 3.4f-B, world/stamina.h): the regeneration starts at this time (a payment sets the delay of the data; no value:
      * the stamina is full or has no rule), and it is off until `staminaHeldUntil` (a dodge, to its mark CanTransition). At 0 the
@@ -978,6 +1002,12 @@ struct Life {
 struct GearSummary {
     /** The part of the maximum health that the perks and the effects add (0.047: 4.7 percent more). */
     float healthPart{0.0F};
+    /**
+     * The mana parts of the perks and the effects (stage 3.5b.2): MaxMana and ManaRate. The progress system adds the parts of the threshold
+     * abilities of the attributes (Foc_Bonus_100_1: MaxMana 0.1, ManaRate 0.2) and sets the maximum and the regeneration factor.
+     */
+    float manaPart{0.0F};
+    float manaRatePart{0.0F};
     /** The part of the damage of each hit (BaseDamage of a passive perk), and of the damage of a type (DMG<type>). */
     float baseDamage{0.0F};
     std::unordered_map<std::string, float> damage;
@@ -1193,6 +1223,26 @@ struct ServiceGrant {
     std::optional<WorldClock::time_point> deadline;
 };
 
+/** One key of the GlobalStorage map of a character (stage 3.5b.2, slot 77): the actor of a loot bag and the items of its part. */
+struct StorageKey {
+    std::array<std::uint8_t, 16> actor{};
+    std::vector<ItemInstance> items;
+
+    bool operator==(const StorageKey& other) const {
+        if (actor != other.actor || items.size() != other.items.size()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < items.size(); ++index) {
+            const ItemInstance& a = items[index];
+            const ItemInstance& b = other.items[index];
+            if (a.instance != b.instance || a.quantity != b.quantity || a.index != b.index) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
 /** The server state of one Interact component of an object entity (stage 2.5a): a copy of the values of the interaction system. */
 struct ObjectBound {
     /** The slot of the state 2930 in the record (game data). */
@@ -1224,6 +1274,14 @@ struct ObjectBody {
     std::uint8_t buildableState{0};
     std::uint32_t ownershipSlot{0};
     std::uint8_t permissionRule{0};
+    /**
+     * A private object (stage 3.5b.2: a loot bag): only a session whose character is in this list observes it (the eligible characters;
+     * docs/systems/loot-bags.md). Empty: each session near it.
+     */
+    std::vector<std::string> viewers;
+    /** The LootDrop state of a loot bag (stage 3.5b.2): the slot of its slice (0: none) and m_rarityLevel. */
+    std::uint32_t lootDropSlot{0};
+    std::uint32_t rarity{0};
 };
 
 /** Development aid: the slice of a probe entity (EntityKind::probe) and its interest distance. */
@@ -1384,6 +1442,12 @@ struct Entity {
     GatherProgress gathering;
     /** The loot claims of the character on the chests near it (stage 3.5b.1): a copy of the values of the chest system. */
     std::vector<LootTrackerEntry> lootTracker;
+    /** The LootTracker entries of the loot bags of the character (stage 3.5b.2): a copy of the values of the loot bag system. */
+    std::vector<LootTrackerEntry> bagTracker;
+    /** The items of the loot bag that the character opened (stage 3.5b.2, slot 76): the loot bag system sets them. */
+    Bag selectedContainer;
+    /** The items of each loot bag of the character (stage 3.5b.2, slot 77): the loot bag system sets them. */
+    std::vector<StorageKey> storageMap;
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */
     std::vector<RawFragment> rawFragments;
 

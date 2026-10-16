@@ -182,7 +182,15 @@ private:
         Attributes attributes;
         /** The part of the maximum health of the gear and the effects (Entity::gear, stage 1.3b). */
         float healthPart{0.0F};
+        /** The mana parts of the gear and the effects (Entity::gear, stage 3.5b.2): MaxMana and ManaRate. */
+        float manaPart{0.0F};
+        float manaRatePart{0.0F};
     };
+    /**
+     * @return The MaxMana and ManaRate parts of the threshold abilities of the attributes of a sheet (stage 3.5b.2; the attribute tables,
+     *         EquipAbilities: Focus 100 gives Foc_Bonus_100_1 with MaxMana 0.1 and ManaRate 0.2; the value with the bonus of the gear).
+     */
+    [[nodiscard]] std::pair<float, float> threshold_mana(const Sheet& sheet) const;
 
     /** A change: `apply(Sheet&, std::uint64_t& cost)` gives a ProgressError. */
     template <class Change>

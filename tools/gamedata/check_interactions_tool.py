@@ -16,6 +16,10 @@ compares the status and the output file of each case:
     state, the Assembly key, the fee flag, "resolved" from the station database, the bound in the frame of the slice, the forge
     child), and the fixture keg (the Trigger option, the permission rule); a station key with no row of the database is
     "resolved": false; a child of a client-authoritative spawner is not in the file; a fixture with no source stops the tool;
+  - stage 3.5b.2 (format 3): the personal loot container has its template (the kind lootDrop, the bound with TakeAllOption and
+    OpenStorageOption of the Storage entity) and the values of its slice (AILoot, the LootDrop slot, the lifetime of 180 s at the init,
+    the end of 1.25 s after the last item, the hide of 1.5 s, the 5 rarity particles); a loot container with no source, with no delayed
+    event at the init, or with no player-unique Storage stops the tool;
   - the cases of the code review of stage 2.5a (--review, case IR5): a layer with no list Capitals, a named slice with an asset id of
     a wrong form, one placement id with two different placements, and two referenced achievements of one bit stop the tool; an
     equal copy of a placement does not.
@@ -74,6 +78,12 @@ KEG_ASSET = (uuid.UUID("0a0b0c0d-0000-4000-8000-0000000000e3").bytes, 2)
 SPAWNER_ENTITY, STATION_ROOT, FUNCTIONAL, STATION_BOUND, FORGE_SPAWNER = 0x2001, 0x3000, 0x3001, 0x3002, 0x3003
 ASSEMBLY_COMPONENT, STATION_INTERACT = 0x6000, 0x6001
 KEG_ROOT, KEG_INTERACT_ENTITY, KEG_INTERACT = 0x4000, 0x4001, 0x7000
+# Stage 3.5b.2: the personal loot bag (the parts of slices/instanced_loot_container: research chests-ground-loot.md Q3, K6, K7).
+BAG_SLICE = "slices/test/bag.dynamicslice"
+BAG_ASSET = (uuid.UUID("0a0b0c0d-0000-4000-8000-0000000000e4").bytes, 2)
+BAG_ROOT, BAG_KILL_DELAY, BAG_FAST_DELAY, BAG_HIDE_DELAY, BAG_KILL_SELF, BAG_MESH, BAG_STORAGE, BAG_INTERACT_ENTITY = (
+    0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007)
+BAG_INTERACT = 0x8100
 
 
 def element(name: str | int | None, value: bytes | None = None, children: list | None = None,
@@ -186,6 +196,45 @@ def keg_slice() -> list[Element]:
     ])]
 
 
+def event(target: int) -> Element:
+    return element(None, children=[element("m_entityRef", children=[entity_ref(target)]), element("m_type", (0).to_bytes(4, "big"))])
+
+
+def delay(identifier: int, slot: int, seconds: float, on_init: bool, target: int, override: str = "") -> Element:
+    return component(getattr(tool, "DELAYED_EVENT_CLASS", uuid.UUID(int=8)), identifier, slot, [
+        element("m_startDelayOnInit", b"\x01" if on_init else b"\x00"), element("m_startDelayOnTrigger", b"\x01"),
+        element("m_timeDelaySeconds", struct.pack(">f", seconds)), text("m_timeDelaySecondsOverrideConfig", override),
+        element("m_eventData", children=[element("m_entityRef", children=[entity_ref(target)]), element("m_type", (0).to_bytes(4, "big"))])])
+
+
+def bag_slice(mode: str) -> list[Element]:
+    """The personal loot bag (stage 3.5b.2): InstancedLoot (AILoot, the looted and the completely looted events, 5 particles), Position
+    slot 1, the delayed events of slots 2 to 4 (180 s at the init, 1.25 s and 1.5 s at a trigger), the Interact bound (slot 5) with
+    TakeAllOption and OpenStorageOption of the Storage entity, LootDrop slot 6, the player-unique Storage."""
+    instanced = component(getattr(tool, "INSTANCED_LOOT_CLASS", uuid.UUID(int=9)), 0x8200, 0, [
+        element("m_instancedLootType", (1).to_bytes(4, "big")),
+        element("m_clientFacetPtr", children=[element("m_lootedEvents", children=[event(BAG_STORAGE), event(BAG_HIDE_DELAY)]),
+                                              element("m_rarityParticleEntityRef", children=[entity_ref(BAG_MESH) for _ in range(5)])]),
+        element("m_serverFacetPtr", children=[element("m_completelyLootedEvents", children=[event(BAG_FAST_DELAY)])])])
+    loot_drop = component(getattr(tool, "LOOT_DROP_CLASS", uuid.UUID(int=10)), 0x8201, 6, [element("m_isInstancedLoot", b"\x01")])
+    storage = component(getattr(tool, "STORAGE_CLASS", uuid.UUID(int=11)), 0x8202, 0,
+                        [element("m_isPlayerUniqueStorage", b"\x00" if mode == "bag-shared" else b"\x01")])
+    return [element(None, children=[
+        entity(BAG_ROOT, "Instanced_Loot_Container", [transform(NO_ENTITY, (0.0, 0.0, 0.0)), instanced, loot_drop,
+                                                      component(getattr(tool, "POSITION_CLASS", uuid.UUID(int=3)), 0x8203, 1, [])]),
+        entity(BAG_KILL_DELAY, "KillSelfDelay", [transform(BAG_ROOT, (0.0, 0.0, 0.0)),
+                                                 delay(0x8300, 2, 180.0, mode != "bag-no-lifetime", BAG_KILL_SELF)]),
+        entity(BAG_FAST_DELAY, "FastKillSelfDelay", [transform(BAG_ROOT, (0.0, 0.0, 0.0)), delay(0x8301, 3, 1.25, False, BAG_KILL_SELF)]),
+        entity(BAG_HIDE_DELAY, "HideMeshDelay", [transform(BAG_ROOT, (0.0, 0.0, 0.0)), delay(0x8302, 4, 1.5, False, BAG_MESH)]),
+        entity(BAG_KILL_SELF, "KillSelf", [transform(BAG_ROOT, (0.0, 0.0, 0.0))]),
+        entity(BAG_MESH, "Mesh", [transform(BAG_ROOT, (0.0, 0.0, 0.0))]),
+        entity(BAG_STORAGE, "Storage", [transform(BAG_ROOT, (0.0, 0.0, 0.0)), storage]),
+        entity(BAG_INTERACT_ENTITY, "Interaction", [transform(BAG_STORAGE, (0.0, 0.0, 0.0)),
+                                                    interact(["TakeAllOption", "OpenStorageOption"], slot=5, identifier=BAG_INTERACT,
+                                                             option_entity=BAG_STORAGE)]),
+    ])]
+
+
 def option_row(name: str, action: int, committed: bool, delay: float = 0.0) -> Element:
     return element(None, type_id=tool.OPTION_ROW_CLASS, children=[
         text("Name", name),
@@ -255,6 +304,7 @@ class MadeUpSources:
             VISUAL_SLICE: [element(None, children=[entity(0x5000, "Forge", [transform(NO_ENTITY, (0.0, 0.0, 0.0)),
                                                                            component(getattr(tool, "POSITION_CLASS", uuid.UUID(int=3)), 0x5100, 1, [])])])],
             KEG_SLICE: keg_slice(),
+            BAG_SLICE: bag_slice(mode),
         }
         layer = {"Other": []} if mode == "missing-capitals" else {"Capitals": placements}
         person_achievement = "Lore_unlock_00_Test_Title_02" if mode == "duplicate-bit" else ""
@@ -272,7 +322,8 @@ class MadeUpSources:
             getattr(tool, "CRAFTING_STATIONS", "made-up/stations"): b"made-up",
         }
         for path in self.slices:
-            if not (mode == "slice-missing" and path == PAGE_SLICE) and not (mode == "fixture-missing" and path == KEG_SLICE):
+            if not (mode == "slice-missing" and path == PAGE_SLICE) and not (mode == "fixture-missing" and path == KEG_SLICE) \
+                    and not (mode == "bag-missing" and path == BAG_SLICE):
                 self.files[path] = tool.INTERACT_BYTES + getattr(tool, "SPAWNER_CLASS", uuid.UUID(int=1)).bytes + b"made-up"
         self.absent: list[str] = []
 
@@ -292,7 +343,8 @@ class MadeUpSources:
         if path == UI_DATABASE:
             return [element(None, children=[option_row("ReadLore", 47, True), option_row("AddLoreToJournal", 50, False),
                                             option_row("OpenConversation", 63, True), option_row("OpenCraftingOption", 20, True),
-                                            option_row("Trigger", 33, True, 5.0)])]
+                                            option_row("Trigger", 33, True, 5.0), option_row("TakeAllOption", 28, True),
+                                            option_row("OpenStorageOption", 26, True)])]
         if path == getattr(tool, "CRAFTING_STATIONS", None):
             # The crafting station database: one row (its name and its crafting types).
             return [element(None, children=[element(None, children=[text("Name", "Blacksmith5"),
@@ -329,6 +381,9 @@ CASES = [
     ("station-no-row", True, "a station key with no row of the crafting station database: resolved false (stage 2.5b)"),
     ("spawner-client", True, "a child of a client-authoritative spawner: not a server child (stage 2.5b)"),
     ("fixture-missing", False, "a fixture slice with no source (stage 2.5b)"),
+    ("bag-missing", False, "a loot container slice with no source (stage 3.5b.2)"),
+    ("bag-no-lifetime", False, "a loot container with no delayed event that starts at the init (stage 3.5b.2)"),
+    ("bag-shared", False, "a loot container with no player-unique Storage: not a personal bag (stage 3.5b.2)"),
 ]
 # The cases of the code review of stage 2.5a (--review, case IR5).
 REVIEW_CASES = [
@@ -360,12 +415,28 @@ def check_valid(document: dict) -> bool:
             and document["achievements"][bound["lore"]] == ["Lore_unlock_00_Test_Title_01", 2032]
             and document["options"][names.index("AddLoreToJournal")]["committed"] is False
             and document["counts"]["placements"] == 5 and document["counts"]["objects"] == 2
-            and any("PLOT" in cause for cause in document["excluded"]) and not document["unresolved"] and check_station(document))
+            and any("PLOT" in cause for cause in document["excluded"]) and not document["unresolved"] and check_station(document)
+            and check_bag(document))
+
+
+def check_bag(document: dict) -> bool:
+    """@return True when the personal loot container has its template and the values of its slice (stage 3.5b.2, format 3)."""
+    container = document.get("lootContainers", {}).get("personal")
+    if document.get("format") != 3 or container is None or document["counts"].get("lootContainers") != 1:
+        return False
+    template = document["templates"][container["template"]]
+    names = [document["options"][index]["name"] for index, _ in template["bounds"][0]["options"]] if template["bounds"] else []
+    return (template["slice"] == BAG_SLICE and template["kind"] == "lootDrop" and template["slots"]["position"] == 1
+            and template["root"] == f"{BAG_ROOT:016x}" and template["bounds"][0]["slot"] == 5
+            and template["bounds"][0]["options"][0][1] == f"{BAG_STORAGE:016x}" and names == ["TakeAllOption", "OpenStorageOption"]
+            and container["kind"] == 1 and container["lootDropSlot"] == 6 and container["lifetime"] == 180.0
+            and container["emptyLifetime"] == 1.25 and container["hideDelay"] == 1.5 and container["rarityParticles"] == 5
+            and [delay["slot"] for delay in container["delays"]] == [2, 3, 4])
 
 
 def check_station(document: dict, resolved: bool = True) -> bool:
     """@return True when the station of the settlement, its template, the forge child, and the keg fixture are correct (stage 2.5b)."""
-    if document.get("format") != 2 or len(document.get("spawned", [])) != 1:
+    if document.get("format") not in (2, 3) or len(document.get("spawned", [])) != 1:
         return False
     child = document["spawned"][0]
     station = document["templates"][child["template"]]
@@ -402,10 +473,11 @@ def main() -> int:
     work = Path(folders[0]) if folders else Path(tempfile.mkdtemp(prefix="soulwarden-interactions-tool-"))
     work.mkdir(parents=True, exist_ok=True)
     tool.Sources = MadeUpSources
-    every = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE}
+    every = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE, BAG_ASSET: BAG_SLICE}
     assets = dict(every)
     tool.Catalog = lambda data: SimpleNamespace(path=lambda asset: assets.get(asset), paths=assets)
     tool.FIXTURES = {"powderKeg": KEG_SLICE}
+    tool.LOOT_CONTAINERS = {"personal": BAG_SLICE}
     failures = 0
     for mode, writes, what in STATION_REVIEW_CASES if stations else REVIEW_CASES if review else CASES:
         MadeUpSources.mode = mode

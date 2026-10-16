@@ -27,6 +27,11 @@ inline constexpr std::uint32_t kTypeUseItem = 2917;            // ContainerCompo
 inline constexpr std::uint32_t kTypeEquipItem = 3895;          // PaperdollComponentServerFacet_ServerEquipItem
 inline constexpr std::uint32_t kTypeUnequipItem = 3896;        // PaperdollComponentServerFacet_ServerUnequipItem
 inline constexpr std::uint32_t kTypeSwapItems = 3900;          // PaperdollComponentServerFacet_ServerSwapItems
+/** Stage 3.5b.2 (live check L5; research chests-ground-loot.md, K5): the requests of a loot bag and of a discard. */
+inline constexpr std::uint32_t kTypeTakeAllItems = 2939;      // PlayerTradeComponentServerFacet_TakeAllItems (reader 0x2D54AE0)
+inline constexpr std::uint32_t kTypeTakeItem = 2942;          // PlayerTradeComponentServerFacet_TakeItem (reader 0x2D50720)
+inline constexpr std::uint32_t kTypeGiveItem = 2801;          // PlayerTradeComponentServerFacet_GiveItem (writer 0x2D506F0)
+inline constexpr std::uint32_t kTypePaperdollDropItem = 826;  // ItemDropComponentServerFacet_DropPaperdollItem (reader 0x6571780)
 /** Server to client: the server refused a request for the equipment. */
 inline constexpr std::uint32_t kTypeEquipItemFail = 3626;      // PaperdollComponentClientFacet_OnEquipItemFail
 
@@ -111,8 +116,31 @@ struct SwapRequest {
     std::uint8_t count{0};
 };
 
+/**
+ * PlayerTradeComponentServerFacet_TakeAllItems (2939, 48 bytes), TakeItem (2942, 68 bytes), and GiveItem (2801, 68 bytes):
+ *   target:u64 entity:u64 container:(actor:16 group:u64 local:u64) [instance:16 quantity:u32]
+ * The container reference names the selected Container of the player (live check L5 of stage 3.5b.2: the actor and the group of the
+ * player, and the facet target of the Container component of the entity GlobalStorage), not the loot bag.
+ */
+struct BagRequest {
+    ComponentCall call;
+    world::InteractionReference container;
+    world::InstanceId instance{};
+    std::uint32_t quantity{0};
+};
+
+/** DropPaperdollItem (826, 24 bytes): target:u64 entity:u64 slot:u32 quantity:u32 (live check L7 of stage 3.5b.2: slot 0, quantity 1). */
+struct PaperdollDropRequest {
+    ComponentCall call;
+    std::uint32_t slot{0};
+    std::uint32_t quantity{0};
+};
+
 /** @return The request, or no value when the body does not have the form of the request. */
 [[nodiscard]] std::optional<DropRequest> read_drop_request(std::span<const std::uint8_t> body);
+/** @param item True: the form of TakeItem and GiveItem (an instance and a quantity); false: TakeAllItems. */
+[[nodiscard]] std::optional<BagRequest> read_bag_request(std::span<const std::uint8_t> body, bool item);
+[[nodiscard]] std::optional<PaperdollDropRequest> read_paperdoll_drop_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<LockRequest> read_lock_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<EquipRequest> read_equip_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<UnequipRequest> read_unequip_request(std::span<const std::uint8_t> body);

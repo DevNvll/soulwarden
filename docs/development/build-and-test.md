@@ -116,6 +116,14 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`InteractionBlock`, `InputEntry::interaction`), and the state decoder knows the states 3752 and 2930. IT10 runs
   `tools/gamedata/check_interactions_tool.py`. IT5 adds a trigger to a database file (a refused row); IT8 has a time limit of 300 ms
   for 400,000 lookups and of 2 s for 300 reports with a catalog of 90,008 objects.
+- Stage 3.5b.2 adds the cases GL1 to GL7 (`tests/loot_bag_tests.cpp`: the personal loot bags of a kill and of a discard: the bag and
+  its states, the panel and the takes, two sessions and a known reference of a different character, the discard and its recovery, the
+  lifetime on a synthetic clock at its boundaries, a refused write and a restart, and the load with 2,000 and 20,000 far bags and a limit
+  of 2 s, written in the case before it runs), MN1 (`tests/mana_tests.cpp`: the MaxMana and ManaRate parts of the threshold abilities and
+  the base maximum of the states), and RCH1 to RCH6 (`tests/review_chests_tests.cpp`: the corrections of the code review of stage
+  3.5b.1, findings CH-R1 to CH-R8; each one fails on the tree of stage 3.5b.1 and passes with the correction; RCH6 runs the review cases
+  of `check_chests_tool.py`). The fixture of the GL cases is in `tests/support/loot_bag_fixture.h` (namespace `tests::bags`: a made-up
+  bag slice and template, items, a creature kind, and a loot table; `BagShop`). The state decoder knows the states 2938 and 2027.
 - Stage 3.5b.1 adds the cases LC1 to LC9 (`tests/chest_tests.cpp`: the chest file and the loot tables of format 2, the open and its
   ends, the context of the roll, the claim in the store and its resets on a synthetic clock with the elite value 82,800 s of the data, two
   characters on one chest, a refused write and a full bag, the gates, the load, and the check of the chest tool) and RSU1 to RSU7

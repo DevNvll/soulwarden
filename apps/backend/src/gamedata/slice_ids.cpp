@@ -69,4 +69,13 @@ const SliceIds::Component* SliceIds::find(std::uint64_t group, std::uint64_t tar
     return nullptr;
 }
 
+const SliceIds::Component* SliceIds::find_named(std::string_view name) const {
+    for (const Component& component : m_components) {
+        if (component.name == name) {
+            return &component;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace soulwarden::backend::gamedata

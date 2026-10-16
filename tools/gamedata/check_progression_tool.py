@@ -87,8 +87,9 @@ def run(case: str):
         return None, str(error)
 
 
-def rank_sources(short: bool) -> tuple[dict, dict]:
-    """@return The made-up tables of the entry point of the tool (the reviewer's probe RDT1 of stage 1.1b)."""
+def rank_sources(short: bool, thresholds: bool = True) -> tuple[dict, dict]:
+    """@return The made-up tables of the entry point of the tool (the reviewer's probe RDT1 of stage 1.1b). `thresholds`: the attribute
+    tables have the column EquipAbilities (stage 3.5b.2: Focus 100 gives Foc_Bonus_100_1)."""
     tables, kinds, expansions = sheets("valid")
     tables[expansions.name] = expansions
     kinds[expansions.name] = "ExpansionData"
@@ -96,7 +97,12 @@ def rank_sources(short: bool) -> tuple[dict, dict]:
         ("ExperienceData", FakeSheet(tool.LEVEL_TABLE, [
             {"Level Number": level, "XPToLevel": level * 100, "AttributePoints": 0, "Health": 1, "AttributeRespecCost": 0}
             for level in range(70)])),
-        ("AttributeDefinition", FakeSheet(tool.CONSTITUTION_TABLE, [{"Level": 5, "Health": 0}])),
+        ("AttributeDefinition", FakeSheet(tool.CONSTITUTION_TABLE, [{"Level": 5, "Health": 0, "EquipAbilities": ""}])),
+        *[("AttributeDefinition", FakeSheet(table, [dict({"Level": 5, "Health": 0}, **({"EquipAbilities": ""} if thresholds else {})),
+                                                    dict({"Level": 100, "Health": 0},
+                                                         **({"EquipAbilities": f"{table[:3]}_Bonus_100_1,{table[:3]}_Bonus_100_2"}
+                                                            if thresholds else {}))]))
+          for name, table in getattr(tool, "ATTRIBUTE_TABLES", ()) if table != tool.CONSTITUTION_TABLE],
         ("VitalsBaseData", FakeSheet(tool.PLAYER_VITALS_TABLE, [{"VitalsID": tool.PLAYER_VITALS_ROW, "HealthBaseMax": 800,
                                                                  "StaminaBaseMax": 100, "ManaBaseMax": 100, "ManaBaseRegenRate": 0,
                                                                  "ManaRegenDelay": 0, "ManaRegenDelayOnEmpty": 0}])),
@@ -117,9 +123,10 @@ def rank_sources(short: bool) -> tuple[dict, dict]:
     return tables, kinds
 
 
-def run_ranks(short: bool) -> tuple[int, bool, object]:
-    """@return The status of the entry point, True when the old file stayed, and the Mining cap with the expansion."""
-    tables, kinds = rank_sources(short)
+def run_ranks(short: bool, thresholds: bool = True) -> tuple[int, bool, object]:
+    """@return The status of the entry point, True when the old file stayed, and the Mining cap with the expansion (with the document:
+    run_ranks.document)."""
+    tables, kinds = rank_sources(short, thresholds)
     with tempfile.TemporaryDirectory(prefix="soulwarden-progression-check-") as folder:
         target = Path(folder) / "progression-tables.json"
         target.write_text("earlier output\n")
@@ -134,6 +141,7 @@ def run_ranks(short: bool) -> tuple[int, bool, object]:
         text = target.read_text()
     document = json.loads(text) if status == 0 else {}
     mining = next((row[4] for row in document.get("progressions", []) if row[0] == "Mining"), None)
+    run_ranks.document = document
     return status, text == "earlier output\n", mining
 
 
@@ -160,9 +168,19 @@ def main() -> int:
     passed = status == 0 and mining == 250
     print(f"{'ok  ' if passed else 'FAIL'}  rank-control: status {status}, Mining cap with the expansion {mining}")
     failures += 0 if passed else 1
+    thresholds = run_ranks.document.get("attributes", {}).get("abilities", {})
+    passed = status == 0 and thresholds.get("focus") == [[100, ["Foc_Bonus_100_1", "Foc_Bonus_100_2"]]] and thresholds.get("constitution") == []
+    print(f"{'ok  ' if passed else 'FAIL'}  attribute-thresholds: the threshold abilities of each attribute (stage 3.5b.2): focus "
+          f"{thresholds.get('focus')}")
+    failures += 0 if passed else 1
     status, kept, mining = run_ranks(True)
     passed = status == 1 and kept
     print(f"{'ok  ' if passed else 'FAIL'}  short-rank-source: status {status}, old file {'kept' if kept else 'replaced'}, Mining cap {mining}")
+    failures += 0 if passed else 1
+    status, kept, mining = run_ranks(False, thresholds=False)
+    passed = status == 1 and kept
+    print(f"{'ok  ' if passed else 'FAIL'}  no-equip-abilities: an attribute table with no column EquipAbilities: status {status}, old file "
+          f"{'kept' if kept else 'replaced'} (stage 3.5b.2)")
     failures += 0 if passed else 1
     return 1 if failures else 0
 

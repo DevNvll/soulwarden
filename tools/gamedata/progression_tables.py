@@ -45,13 +45,15 @@ Output: {"format": 2, "levelCap": N, "tradeSkillCap": N,
 "entitlements": [[alias, index, rewardType, rewards, achievement], ...],
 "achievements": [[id, index], ...],
 "levels": [[experience, attributePoints, health, resetCost], ...],
-"attributes": {"minimum": N, "maximum": N, "constitutionHealth": [...]},
+"attributes": {"minimum": N, "maximum": N, "constitutionHealth": [...], "abilities": {"focus": [[VALUE, [ABILITY, ...]], ...], ...}},
 "vitals": {"health": N, "stamina": N, "mana": N},
 "rankTables": {"<name>": {"experience": [...], "resetCost": [...]}, ...},
 "progressions": [[id, kind, maxRank, rankTable, expansionMaxRank], ...],
 "abilities": [[table, node, tree, row, column, active, requiredNode], ...]}.
 Entry K of `levels` (from 0) is the level K + 1 of the screen. `levelCap` is a level of the
-screen. Entry K of `constitutionHealth` is the value `minimum` + K. `kind` is "weapon" or
+screen. Entry K of `constitutionHealth` is the value `minimum` + K. `abilities` (stage 3.5b.2) has, for each attribute, the
+threshold abilities of the EquipAbilities column: a character with the attribute at VALUE or above has them (the backend reads
+their MaxMana and ManaRate: the mana of the client). `kind` is "weapon" or
 "tradeskill". Entry R of a rank table is the experience that takes a character from the rank R
 to the next rank. `entitlements` is the list of the entitlements that the backend gives each
 account (the expansion first): `index` is the bit of the entitlement in the entitlement state of
@@ -94,6 +96,10 @@ LEVEL_TABLE = "XPLevels"
 EXPANSION_TABLE = "Expansions"
 NO_EXPANSION_ROW = "None"
 CONSTITUTION_TABLE = "Constitution"
+# The five attribute tables (AttributeDefinition; stage 3.5b.2, the mana of the client): the EquipAbilities of a value are the threshold
+# abilities that a character with the attribute at that value or above has (Focus 100: Foc_Bonus_100_1 with MaxMana 0.1).
+ATTRIBUTE_TABLES = (("strength", "Strength"), ("dexterity", "Dexterity"), ("intelligence", "Intelligence"), ("focus", "Focus"),
+                    ("constitution", "Constitution"))
 PLAYER_VITALS_TABLE = "BaseVitals_Player"
 PLAYER_VITALS_ROW = "Player"
 PROGRESSION_TABLE = "CategoricalProgression"
@@ -265,6 +271,19 @@ def build_tables(contents: list[bytes]) -> dict:
             raise Failure(f"row {row} of the table {CONSTITUTION_TABLE} is not the value {minimum + row}")
         health.append(whole(constitution.cell(row, "Health")))
 
+    # The threshold abilities of each attribute (stage 3.5b.2): [value, [ability ids]] for each row with EquipAbilities.
+    attribute_abilities: dict[str, list] = {}
+    for name, table in ATTRIBUTE_TABLES:
+        sheet = one_table(sheets, table)
+        if "EquipAbilities" not in sheet.columns:
+            raise Failure(f"the table {table} has no column EquipAbilities")
+        thresholds = []
+        for row in range(sheet.row_count):
+            text = str(sheet.cell(row, "EquipAbilities") or "").strip()
+            if text:
+                thresholds.append([whole(sheet.cell(row, "Level")), [part.strip() for part in text.split(",") if part.strip()]])
+        attribute_abilities[name] = thresholds
+
     vitals_sheet = one_table(sheets, PLAYER_VITALS_TABLE)
     vitals_row = row_of(vitals_sheet, "VitalsID", PLAYER_VITALS_ROW)
     vitals = {"health": whole(vitals_sheet.cell(vitals_row, "HealthBaseMax")),
@@ -352,7 +371,8 @@ def build_tables(contents: list[bytes]) -> dict:
         raise Failure(f"the table {POINT_TABLE} has no node of a weapon tree")
     return {"format": 2, "levelCap": level_cap, "tradeSkillCap": trade_skill_cap, "expansions": expansion_rows,
             "entitlements": entitlements, "achievements": achievements, "levels": levels,
-            "attributes": {"minimum": minimum, "maximum": minimum + len(health) - 1, "constitutionHealth": health},
+            "attributes": {"minimum": minimum, "maximum": minimum + len(health) - 1, "constitutionHealth": health,
+                           "abilities": attribute_abilities},
             "vitals": vitals, "rankTables": rank_tables, "progressions": progressions, "abilities": abilities}
 
 

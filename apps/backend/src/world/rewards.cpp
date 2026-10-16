@@ -421,6 +421,11 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
     const std::string& creatureType = vitals != nullptr && !vitals->creatureType.empty() ? vitals->creatureType : body.kind->creatureType;
     const gamedata::RewardModifier* type = m_tables->modifier(creatureType);
     const gamedata::CombatTables* combat = m_world.options().combatTables;
+    // The personal loot bag of the kill (stage 3.5b.2, docs/systems/loot-bags.md): the items of each character go into its own part of one
+    // bag at the place of the creature. With no personal container in the interaction data (a file of format 1 or 2) the items go into
+    // the bag of the character as in stage 3.5a.
+    const bool bagged = m_world.loot_bags().container() != nullptr;
+    KillBag bag = bagged ? m_world.loot_bags().begin_kill(creature) : KillBag{};
     for (const Creditor& creditor : creditors) {
         Entity& character = *creditor.entity;
         KillReward reward;
@@ -495,20 +500,35 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
                 }
             }
         }
-        // The items and the coin.
+        // The items and the coin. Stage 3.5b.2: the items into the part of the character of the loot bag (a row of the batch), the coin
+        // into its wallet.
+        std::size_t itemsBagged = 0;
         if (written && (!reward.items.empty() || reward.coin != 0)) {
             std::vector<GrantItem> grants = grant_items(reward.items, character.progression.level);
             std::vector<GrantItem> lost;
-            const ItemResult given = m_world.inventory().grant(character.characterId, grants, reward.coin, &lost);
-            written = given.error != ItemError::storeFailed;
-            granted = given.ok();
+            if (bagged && !grants.empty()) {
+                written = m_world.loot_bags().stage_part(bag, character, grants, &lost);
+                const auto part = bag.parts.find(character.characterId);
+                itemsBagged = part != bag.parts.end() ? part->second.items.size() : 0;
+                granted = written;
+                if (written && reward.coin != 0) {
+                    const ItemResult given = m_world.inventory().grant(character.characterId, {}, reward.coin);
+                    written = given.error != ItemError::storeFailed;
+                    granted = given.ok();
+                }
+            } else {
+                const ItemResult given = m_world.inventory().grant(character.characterId, grants, reward.coin, &lost);
+                written = given.error != ItemError::storeFailed;
+                granted = given.ok();
+                itemsGiven = grants.size() - std::min(grants.size(), lost.size());
+            }
             for (const GrantItem& item : lost) {
                 itemsLost += item.quantity;
             }
-            itemsGiven = grants.size() - std::min(grants.size(), lost.size());
         }
         written = written && batch.commit();
         if (!written) {
+            m_world.loot_bags().forget_part(bag, character.characterId);
             character.progression = progressionBefore;
             character.attributes = attributesBefore;
             character.vitals = vitalsBefore;
@@ -532,7 +552,9 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
         if (!reward.items.empty() || reward.coin != 0) {
             if (granted) {
                 reward.itemsLost = itemsLost;
+                reward.itemsInBag = static_cast<std::uint32_t>(itemsBagged);
                 m_counts.items += itemsGiven;
+                m_counts.itemsInBags += itemsBagged;
                 m_counts.coin += reward.coin;
                 m_counts.coinRewards += reward.coin != 0 ? 1 : 0;
             } else {
@@ -561,7 +583,15 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
                    level,
                    creditors.size(),
                    reward.itemsLost != 0 ? ", some items did not go into the bag" : "");
+        if (reward.itemsInBag != 0) {
+            log::write("world: reward: the items of %s go into its part of the loot bag %s (%u stack(s))", character.name.c_str(),
+                       bag.key.c_str(), reward.itemsInBag);
+        }
         rewards.push_back(std::move(reward));
+    }
+    // The bag with the committed parts goes into the world (its record for its eligible characters).
+    if (bagged) {
+        m_world.loot_bags().finish_kill(bag);
     }
     return rewards;
 }

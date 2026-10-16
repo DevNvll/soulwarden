@@ -418,6 +418,14 @@ inline constexpr float kAdminChestRange = 30.0F;
  */
 [[nodiscard]] WorldCommand set_chest_reset(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
+// The loot bag commands (stage 3.5b.2, world/loot_bags.h, server/http/loot_bag_commands.cpp).
+
+/**
+ * @return The loot bags of a character (world thread): its open bag and each bag in which it has a part (the kind, the source, the place,
+ *         the distance, the seconds to its end, the items of its own part: never the part of a different character), and the counts.
+ */
+[[nodiscard]] nlohmann::json loot_bags_view(world::World& world, const std::string& character);
+
 /** @return The bag, the equipment, and the coin of a character (world thread), or no value when the store does not have it. */
 [[nodiscard]] std::optional<nlohmann::json> items_view(world::World& world, const std::string& character);
 
