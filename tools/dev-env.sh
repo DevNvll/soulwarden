@@ -13,6 +13,15 @@ dev_compat_dir="${SOULWARDEN_COMPAT_DIR:-${HOME}/Games/soulwarden/proton-dev/106
 # Prefix of a start with no development variable (the default of linux-compat/run-soulwarden.sh).
 user_compat_dir="${HOME}/Games/soulwarden/proton/1063730"
 dev_mark="SOULWARDEN_DEV_RUN=1"
+# A development run makes no sound: tools/dev-run.sh gives the game the startup setting sys_audio_disable 1 ("1: use
+# NullAudioSystem (disable all audio functionality)"; the game log then has "<Audio>: Skipping Audio System Initialization - it
+# was disabled by startup settings!"). The form "-NAME VALUE" is the one that the client takes (live check of 2026-10-15; the
+# form "+NAME VALUE" has no effect). No file of a prefix changes (code review of stage 3.3b-S6, finding S6-R1).
+# SOULWARDEN_DEV_SOUND=1 gives the game its sound.
+dev_sound_arguments=()
+if [[ "${SOULWARDEN_DEV_SOUND:-0}" != "1" ]]; then
+    dev_sound_arguments=(-sys_audio_disable 1)
+fi
 
 # Data directory of a development run and of each development tool (tools/hx, tools/shot,
 # tools/world, the scenario scripts, the research tools): database, logs, captures, harness

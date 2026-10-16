@@ -278,6 +278,8 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                  {"spells", commands::spells_json(target)},
                                  // The projectiles of the players (stage 3.3b-S3).
                                  {"projectiles", commands::projectiles_json(target)},
+                                 // The basic attacks of the melee weapons (stage 3.3b-M1).
+                                 {"basicAttacks", commands::basic_attacks_json(target)},
                                  {"spawnPointsWaiting", creatures.waiting_count()},
                                  {"removedByRespawn", creatures.counts().removedByRespawn},
                                  // The navigation: the tiles of the data, the path searches, and the sight tests.

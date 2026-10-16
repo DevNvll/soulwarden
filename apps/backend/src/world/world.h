@@ -267,6 +267,11 @@ struct WorldOptions {
     /** The projectile data (game data, stage 3.3b-S3). Null or not loaded: each shot of a ranged or magic basic attack is refused. */
     const gamedata::ProjectileData* projectileData{nullptr};
     /**
+     * The basic attacks of the melee weapons (game data, stage 3.3b-M1). Null or not loaded: each melee hit uses the light or the
+     * heavy row of the weapon table (the rule of stage 3.2a).
+     */
+    const gamedata::WeaponActions* weaponActions{nullptr};
+    /**
      * The terrain heights (game data): the ground for a creature that walks. Null: no creature
      * leaves its place. The world asks it only in the world thread.
      */

@@ -3374,11 +3374,10 @@ and of case HT4): `ccc47f93daf6bfc3 0000000100000002 040000000100000020000000000
 
 **Not known, not done.**
 
-- The kind of each attack of the client is not known to the server: the rule (8 steps of
-  hold) is a limit of one weapon. The attack after the end of a long hold, the last attack of
-  a chain (the rows `..._Ender`), and a heavy attack with a full charge (the rows
-  `..._Charged`) have their own rows in the damage table: the backend uses the light row or
-  the heavy row for them.
+- From stage 3.3b-M1 (4.32) the server follows the fragment that the client plays for each
+  attack, with the row of its strike (the ender, the charged heavy, the sub-hits); the rule of
+  this section (8 steps of hold, the light or the heavy row, one hit in 250 ms) stays for a
+  weapon with no graph in `weapon-actions.json` and for a backend with no such file.
 - The heavy attack of a spear gave a contact in 2 of 10 tries (the wolf was 3.9 m from the
   character at the contact). A sword gives no contact for a creature that is 1.0 m or less from
   the character in a heavy attack: a creature has no body that stops the character.
@@ -5521,18 +5520,69 @@ cases HE1 to HE11.
 **The rules** (project rules; the source of each rule is in [Combat and health](systems/combat-and-health.md)):
 
 - The heal base of an ability (a decision of the user, 2026-10-15): the base damage of the weapon at its gear score times
-  1 + ScalingFocus times the damage value of Focus. Live check L9: the weapon damage of the attribute window has the same
-  base and curve, and also the level part and the other attributes (not in the heal base).
+  1 + ScalingFocus times the damage value of Focus + the level damage times the level above 1 (stage 3.3b-M1, a decision of the
+  user through the orchestrator). Live check L9: the weapon damage of the attribute window has the same base and curve, and
+  also the level part (in the heal base from stage 3.3b-M1) and the other attributes (not in the heal base).
 - The amount: the base times HealthModifierDamageBased, the potency, the stacks, the potency factor, the outgoing factor
   of the healer (1 + HealScalingValueMultiplier of its statuses and of its rules with OnHealed + the equip load part), and
   the received factor of the target (1 + HealMod + the part of the kind), in this order (a decision of the user: multiply).
 - One heal path (`Health::heal`): the real gain after the cap, bit 1 one time for the owner, message 4298 one time for a
   healer that is a different character. A heal of a dead, a full, or a hostile character changes nothing.
+- Each heal with a number is its own owner vitals state (code review of stage 3.3b-S6, finding S6-R7; stage 3.3b-M1): when the
+  health changed with no number before it (the rest rule, a food), the session first sends that health with no bit 1, then
+  the health after the heal with bit 1, then the health now with no bit 1 when it changed after the heal. The number of the
+  client is then the gain of that heal (case RW7 decodes the owner states; the client reads the change from the state before).
 
 **Not known, not done** (stage 3.3b-S6): the point of the click of an aim (the server heals the nearest friend in range
 and in sight, and puts Sacred Ground at the caster); the client reader of ShowUiDamageNumbersOnHeal (bit 1 of byte +0x368
 of the status row, loader 0x44B6EFF); the groups (a friend is only a test fixture); an effect after a heal (OnHealed with
-a status or a cooldown change); the level part of the heal base.
+a status or a cooldown change).
+
+### 4.32 The basic attacks of a melee weapon: the attack graph of the client, the fragment of a contact, the strike (live proof of stage 3.3b-M1; the rules are project rules with the values of the game data)
+
+Stage 3.3b-M1. Research file `~/Games/soulwarden/work/research/abilities-melee.md` (Q2, the attachment databases, the
+combo graphs, the charged branches). Live checks I1 and the live proof: `~/Games/soulwarden/work/evidence/abilities-combos/implement/`
+(`i1/NOTES.md`, `proof/`, `RESULT.md`; runs `m1-i1` to `m1-i1d` with the backend of stage 3.3b-S6, runs `m1-proof` and
+`m1-proof2` with the backend of the stage). Code: `world/attack_sequence.h`, `world/combat.h` (`Combat::step`, `claim_strike`,
+`row_for`), `gamedata/weapon_actions.h`, `server/rep/client_input.cpp` (the dodge bit), `tools/gamedata/weapon_actions.py`.
+Documents: [Combat and health](systems/combat-and-health.md), [Game data](development/game-data.md). Test cases MB1 to MB9.
+
+**What the client sends** (behavioral proof): no message for an attack and no fragment id; the input steps (the attack input
+bit 555 with 203, its hold 191, its release 567; the dodge 322, left Shift) and the melee contacts of 4.15. The server finds
+the fragment of each contact from the input steps and the data.
+
+**The attack graph** (game data; the action lists `playeractions_*.actionlist`, the animation databases
+`player_<weapon>.adb`, `player_1h_melee.adb` or `player_2h_melee.adb`, `playermaleanims_1h_meleeattach.adb` or `_2h_`; the
+transition reader 0x257CB60, 0x257CC10, 0x257D2A0, 0x257D0E0 and the damage reader 0x2566A50 of the research):
+
+| Element | Rule | Evidence |
+| --- | --- | --- |
+| The clock of a fragment | (k - s + 1) / 30 seconds at the input step k of a fragment that started at the step s | The action layer of the client (the predicted movement state: state, start step, action number, fragment time at +12; `tools/research/player_position.py` with `SOULWARDEN_TRACE=6769980`): t = 0.0333 at the start step. Live check I1 |
+| From rest | The attack input starts Attack_Start_Charge (CanAttack_Heavy) | Live: the action 5055 (great axe) at the press step |
+| Attack_Start_Charge | Instant: Attack_Heavy_NotHeld 0 to 0.333 s gives the light swing (the first step with no attack input and no hold: the release step); Attack_Primary_Released 0.333 to 0.667 s gives Attack_Heavy (the partial charge); no condition from 0.667 s gives Attack_Heavy_Charged (the full charge; 0.5 s for the flail) | Live: the release after 0.45 s gives Attack_Heavy (great axe 550, war hammer 2319) at the release step; a hold of 0.9 s gives Attack_Heavy_Charged 19 steps after the press (great axe 2991 in a chain, war hammer 586) |
+| A buffered transition | A press (not a hold) in its window starts its fragment at the end of the window; a press before the window is lost | Live: a second click 0.15 s after the first (war hammer, its window from 0.333 s): no second swing; a click at 0.5 s: the second swing at 0.667 s |
+| An instant transition | The first step in its window with the input of its condition: the attack input or its hold (CanAttack_Heavy), the attack input (CanAttack_Primary_Rapier) | Live: a long hold of 3 s repeats the charged swing (war hammer: Start_Charge at 1.0 s of the charged swing, 586 again 19 steps later; great axe: the charged swing again at +59); a release in the buffered window of the second charged swing: no third |
+| The end of a fragment | The end of its animation: the last clip of its first animation layer from its StartTime (seconds) at its speed; a clip of the same animation as the clip before continues its time. The client ends the action one step after | Live: great axe first swing 49 steps (1.617 s), second swing 59 steps (1.933 s), war hammer first swing 44 steps (1.447 s), charged swing 64 steps (2.1 s) |
+| A strike | The damage clips of one damage key of the fragment (body and attachment, each shape) are one strike: one contact for each target | Live: one contact for each swing on a wolf; the rapier second step two contacts (atk1 at its step 9, atk2 at its step 16 or 17) |
+| A dodge | Bit 322 in a CanDodgeBuffer window: the dodge at the end of the window; in a CanDodgeCancel window after the start of the fragment: at once; in the CanDodgeCancel window from the start: no dodge | Live (great axe, its windows cancel 0 to 0.167 s, buffer to 0.533 s, cancel after): left Shift at 0.6 s: the dodge (4221) at once; at 0.35 s: at 0.567 s; at 0.03 s to 0.15 s (three tries): no dodge |
+
+**The contacts of the live checks** (the step of each contact in its fragment, the window of the data): great axe light 9
+and 10 (0.3 to 0.4 s), its second swing 11 (0.367 to 0.467 s), its partial heavy 14, its charged swing 11; war hammer light
+12, its second swing 16, its heavy and charged swing 14; rapier 10, 9 and 16, 8; sword 11, 5, 5; hatchet 7, 5, 9, 10; greatsword
+14, 15, 11; flail 5, 7. The spear gave no contact in these runs.
+
+**The rules of the server** (project rules on the data; the source of each rule is in [Combat and health](systems/combat-and-health.md)):
+the sequence of each character follows the graph with the input steps of its session; a contact is a hit of a strike when the
+clock of a visit at its input step is in the window of the strike (1 step early, 2 steps late) and on the world clock; the row
+of the strike by the learned nodes of its clip conditions; one hit of each target for each strike, 32 targets at most; the
+claim limit 64 in 1 s; a press within 0.25 s of the length of a fragment keeps the other fragment for the first contact; the
+ends (a weapon change, an accepted ability, a travel, a death, a reconnect, a dodge of the table). No message of the server:
+the client plays its own attack.
+
+**Not known, not done**: the contact of the spear in this client; the stamina (no model: the reachable stamina payments are 0,
+the greatsword pays 10 in its offense stance); the stances of the greatsword and the oils (FragTags); the length of a fragment
+with two clips of one animation that ends by a different rule (war hammer Attack_Heavy: 44 steps, the rule of the table gives
+51; its instant window to Attack_Start_Charge gives the same next fragment).
 
 ## 5. Open items
 

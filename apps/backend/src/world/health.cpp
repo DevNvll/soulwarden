@@ -179,6 +179,10 @@ HealOutcome Health::heal(Entity& target, const HealRequest& request) {
         // The state of the owner after this revision has bit 1 of healthChangeFlags: one number for the gain (live check L3: the same
         // state again gives no second number).
         target.vitals.healShown = revision;
+        target.vitals.healSteps.push_back(Vitals::HealStep{revision, outcome.before, health});
+        if (target.vitals.healSteps.size() > Vitals::kHealSteps) {
+            target.vitals.healSteps.erase(target.vitals.healSteps.begin());
+        }
         ++m_healCounts.numbers;
     }
     const Entity* healer = request.healer != 0 && request.healer != target.id ? m_world.find(request.healer) : nullptr;
@@ -213,7 +217,12 @@ float Health::heal_base(const Entity& healer, const std::string& itemId, std::ui
     }
     const float scaling = weapon->scaling[attribute::kFocus];
     const float focus = scaling > 0.0F ? scaling * tables->attribute_damage(attribute::kFocus, healer.attributes.value(attribute::kFocus)) : 0.0F;
-    return m_world.combat().weapon_base(*weapon, gearScore) * (1.0F + focus);
+    // The level part of the damage rule (Combat::damage: the level damage of the base attributes file times the level above 1): a heal
+    // scales with the level as damage scales (a decision of the user of 2026-10-15, through the orchestrator, after live check L9 of
+    // stage 3.3b-S6). No part of a different attribute (the Intelligence of the life staff): a heal scales with Focus.
+    const std::uint32_t level = std::max<std::uint32_t>(healer.progression.level, 1);
+    const float levelPart = tables->constants().levelDamage * static_cast<float>(level - 1);
+    return m_world.combat().weapon_base(*weapon, gearScore) * (1.0F + focus + levelPart);
 }
 
 float Health::outgoing(const Entity& healer, const Entity& target, const HealSource& source) const {

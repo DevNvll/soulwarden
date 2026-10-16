@@ -546,11 +546,20 @@ void Spells::aura_step(Entity& spell, Live& live) {
     const Entity* caster = m_world.find(spell.spell.caster);
     std::set<EntityId> inside;
     if (caster != nullptr && live.radius > 0.0F) {
+        // The sight from the center of the area to the chest of the friend (code review of stage 3.3b-S6, finding S6-R4; the same heights
+        // as the sight test of a direct heal, 1.5 m: a decision of an agent): a wall between them keeps the friend out, and a friend that
+        // goes behind a wall leaves the area.
+        state::WorldPosition center = spell.position;
+        center.z += 1.5F;
         m_world.for_each_near(spell.position, live.radius, [&](Entity& entity) {
             ++m_counts.looked;
             if (entity.kind == EntityKind::player && !entity.life.dead && distance3(entity.position, spell.position) <= live.radius
                 && std::fabs(entity.position.z - spell.position.z) <= spell_rules::kHeight && m_world.friendly(*caster, entity)) {
-                inside.insert(entity.id);
+                state::WorldPosition chest = entity.position;
+                chest.z += 1.5F;
+                if (m_world.navigation().sees(center, chest)) {
+                    inside.insert(entity.id);
+                }
             }
         });
     }
@@ -628,8 +637,12 @@ void Spells::remove_member(const Entity& spell, const Live& live, EntityId membe
         row.owner = *row.auras.begin();
         const Entity* owner = m_world.find(row.owner);
         if (owner != nullptr) {
+            // The heal source of that aura too (code review of stage 3.3b-S6, finding S6-R5): its healer gets the notices, and its
+            // base heals.
+            const auto ownerLive = m_live.find(owner->id);
             (void)m_world.statuses().change_source(characterId, status, source,
-                                                   StatusSource{StatusSourceKind::spell, owner->spell.spellId, 0, owner->id});
+                                                   StatusSource{StatusSourceKind::spell, owner->spell.spellId, 0, owner->id},
+                                                   ownerLive != m_live.end() ? &ownerLive->second.heal : nullptr);
         }
     }
     if (rows->second.empty()) {

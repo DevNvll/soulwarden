@@ -18,6 +18,7 @@
 #include "gamedata/combat_tables.h"
 #include "gamedata/ability_data.h"
 #include "gamedata/projectile_data.h"
+#include "gamedata/weapon_actions.h"
 #include "gamedata/spell_data.h"
 #include "gamedata/loot_tables.h"
 #include "gamedata/creature_data.h"
@@ -537,6 +538,22 @@ int main(int argc, char** argv) {
     log::write("backend: stub authentication, the Steam ticket of a login is not validated");
     // One thread owns the world. With the game server listener, it is the listener thread of
     // the DTLS server: each tick of the game server is one tick of the world. With no
+    // The basic attacks of the melee weapons (stage 3.3b-M1): the attack graph of each weapon, its strikes and their damage rows.
+    const std::string weaponActionsPath = (gameDataDirectory / gamedata::kWeaponActionsFile).string();
+    gamedata::WeaponActions weaponActions;
+    if (weaponActions.load(weaponActionsPath)) {
+        std::size_t fragments = 0;
+        for (const gamedata::WeaponActionSet& weapon : weaponActions.tables().weapons) {
+            fragments += weapon.fragments.size();
+        }
+        log::write("backend: weapon actions loaded from %s (%zu melee weapon tag sets, %zu fragments)", weaponActionsPath.c_str(),
+                   weaponActions.tables().weapons.size(), fragments);
+    } else {
+        log::write("backend: no weapon actions at %s (%s): each melee hit uses the light or the heavy row of its weapon (the rule of "
+                   "stage 3.2a). Make the file with tools/gamedata/weapon-actions.sh",
+                   weaponActionsPath.c_str(),
+                   weaponActions.error().c_str());
+    }
     // listener, the world has its own thread, so that a task of an HTTP thread runs.
     world::SystemClock clock;
     world::WorldOptions worldOptions;
@@ -549,6 +566,7 @@ int main(int argc, char** argv) {
     worldOptions.abilityData = &abilityData;
     worldOptions.spellData = &spellData;
     worldOptions.projectileData = &projectileData;
+    worldOptions.weaponActions = &weaponActions;
     worldOptions.perkData = &perkData;
     worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
     worldOptions.navigationData = &navigationData;

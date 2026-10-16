@@ -36,6 +36,8 @@ struct Known {
      * test 1, finding F3). No value: nothing waits.
      */
     std::optional<world::WorldClock::time_point> scopeDue;
+    /** For the own entity: the health of the last vitals state that the session sent (finding S6-R7). Below 0: none. */
+    float ownerHealth{-1.0F};
 };
 
 class Observer {

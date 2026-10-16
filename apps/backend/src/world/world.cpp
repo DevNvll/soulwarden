@@ -64,7 +64,7 @@ World::World(const WorldClock& clock,
       m_ownership(*this, store, options.progressionTables),
       m_navigation(*this, options.navigationData, options.terrain, options.navigationThread),
       m_creatures(*this, options.creatureData),
-      m_combat(*this, options.combatTables),
+      m_combat(*this, options.combatTables, options.weaponActions),
       m_health(*this),
       m_rewards(*this, options.lootTables),
       m_abilities(*this, options.abilityData, options.combatTables),
@@ -403,6 +403,8 @@ bool World::leave(SessionId session) {
     if (entity == nullptr || entity->owner != session) {
         return false;
     }
+    // The sequence of the basic attacks of the character goes away with its entity (stage 3.3b-M1).
+    m_combat.forget_sequence(entity->characterId);
     if (entity->life.dead) {
         // A dead character is not dead at its next world entry: its row gets its respawn
         // place, and each world entry starts with the full health (world/health.h).
@@ -763,6 +765,10 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
                    static_cast<unsigned>(entity->teleport));
         log::write("rep: position %.2f %.2f %.2f saved", position.x, position.y, position.z);
     }
+    // The basic attack of the character ends with the travel (stage 3.3b-M1), and its aim of an ability (code review of stage 3.3b-S6,
+    // finding S6-R8: a confirm after the travel would use the place before it).
+    m_combat.end_sequence(entity->characterId, SequenceEnd::travel);
+    m_abilities.cancel_aim(entity->characterId);
     // The creatures of the new place: the spawn point rule runs in this tick, not at its interval.
     m_creatures.scan_soon();
     // No creature of the new place takes the character at once, and the creatures of the old place lose it.

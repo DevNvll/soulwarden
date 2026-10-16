@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 
 #include "server/rep/replication.h"
 #include "server/rep/states/state_codecs.h"
@@ -138,10 +139,10 @@ namespace {
  *        changed", for a state after the first one and for a dead character.
  * @param gain True: the state carries a heal with a number for the owner (bit 1 of healthChangeFlags).
  */
-hub::Bytes player_vitals(const world::Entity& entity, View view, bool life, bool gain) {
+hub::Bytes player_vitals(const world::Entity& entity, View view, bool life, bool gain, float health) {
     const world::Vitals& vitals = entity.vitals;
     StateWriter state(kGroups);
-    state.field(0, kHealthAmount).f32(vitals.health);
+    state.field(0, kHealthAmount).f32(health);
     if (life) {
         // Bit 0 of the flags of vitalsData is the death of the character: the client of the
         // owner shows its death screen with it, and it closes that screen when the bit is 0
@@ -169,17 +170,42 @@ hub::Bytes player_vitals(const world::Entity& entity, View view, bool life, bool
 } // namespace
 
 hub::Bytes encode_vitals_state(const world::Entity& entity, View view, const world::WorldClock&) {
-    return player_vitals(entity, view, false, false);
+    return player_vitals(entity, view, false, false, entity.vitals.health);
 }
 
 std::vector<hub::Bytes> encode_vitals_parts(const world::Entity& entity, View view, const PartsRequest& request) {
     // The first state of a session for a character that lives has no life data: the client has
     // the start values (alive). A character can be dead when a session starts to observe it.
     std::vector<hub::Bytes> parts;
+    const bool life = request.since != 0 || entity.life.dead;
     // The number of a heal (stage 3.3b-S6): only the owner, only for a heal after the last state of this session (the same health
-    // again gives no second number: live check L3). The first state of a session has none.
-    const bool gain = view == View::owner && request.since != 0 && entity.vitals.healShown > request.since;
-    parts.push_back(player_vitals(entity, view, request.since != 0 || entity.life.dead, gain));
+    // again gives no second number: live check L3). The first state of a session has none. The client shows the change of its health
+    // in a state with bit 1: each heal with a number is its own state, from the health before it to the health after it, and a change
+    // with no number (the rest rule, a food) is a state with no bit 1 (code review of stage 3.3b-S6, finding S6-R7: a silent gain made
+    // the next number larger).
+    if (view == View::owner && request.since != 0) {
+        const std::vector<world::Vitals::HealStep>& steps = entity.vitals.healSteps;
+        float current = request.ownerHealth;
+        bool any = false;
+        for (const world::Vitals::HealStep& step : steps) {
+            if (step.revision <= request.since) {
+                continue;
+            }
+            if (current >= 0.0F && std::fabs(step.from - current) > 0.001F) {
+                parts.push_back(player_vitals(entity, view, life, false, step.from));
+            }
+            parts.push_back(player_vitals(entity, view, life, true, step.to));
+            current = step.to;
+            any = true;
+        }
+        if (any) {
+            if (std::fabs(entity.vitals.health - current) > 0.001F) {
+                parts.push_back(player_vitals(entity, view, life, false, entity.vitals.health));
+            }
+            return parts;
+        }
+    }
+    parts.push_back(player_vitals(entity, view, life, false, entity.vitals.health));
     return parts;
 }
 

@@ -74,17 +74,17 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
 - The spell kind fixture (`tests/support/spell_kind_fixture.h`: the Pylon, the trap, and the Beacon on the projectile
   fixture) is common to the cases SB (stage 3.3b-S2b) and RK (the corrections of its code review, stage 1.1b,
   `tests/review_spells2_tests.cpp`).
-- Case RK1 runs `tools/check_dev_mute.py` (the mute of `tools/dev-mute.sh` against made-up prefixes in a temporary folder),
-  RK11 `check_projectile_tool.py`, RK12 `check_spell_tool.py`, and DL9 `tools/gamedata/check_progression_tool.py`
-  (stage 1.1b): with no Python 3 these cases fail. `check_dev_mute.py --script FILE` runs the check against a different mute
-  script (the proof on the tree of stage 3.3b-S2b used the block of its `tools/dev-run.sh`).
+- Case RK1 runs `tools/check_dev_sound.py` (the silence of a development run: the startup setting, and no tool that edits
+  a settings file; since the code review of stage 3.3b-S6), RK11 `check_projectile_tool.py`, RK12 `check_spell_tool.py`, and
+  DL9 `tools/gamedata/check_progression_tool.py` (stage 1.1b): with no Python 3 these cases fail. `check_dev_sound.py TREE`
+  checks a different tree (the proof of finding S6-R1 on the tree of stage 3.3b-S6: status 1).
 - Stage 3.3b-S5 adds the cases CH1 to CH10 (`tests/crit_tests.cpp`: the critical hits), PS1 to PS7
   (`tests/passive_tests.cpp`: the evaluator of the passive rules), and RD1 to RD6 (`tests/review_dlc_tests.cpp`: the
   corrections of the code review of stage 1.1b). The passive fixture (`tests/support/passive_fixture.h`) has rows of the
   ability tables of the game copy (the rows that each case names, with their statuses and spells: made-up ids only, no
   file of the game), a combat file with critical values, a progression file with the trees of the great axe and the war
   hammer, and a wolf slice with its angles and its head volume. Case CH9 runs `tools/gamedata/check_hit_facts_tool.py`,
-  RD1 `tools/check_dev_mute.py`, RD2 `check_spell_tool.py`, RD3 `check_progression_tool.py`, and RD4
+  RD1 `tools/check_dev_sound.py`, RD2 `check_spell_tool.py`, RD3 `check_progression_tool.py`, and RD4
   `check_projectile_tool.py`. A test of a roll sets the seed of the generator of the world (`World::set_random_seed`):
   the numbers of a seed are fixed (splitmix64), and the case computes the first number itself.
 - Stage 3.3b-S6 adds the cases HE1 to HE11 (`tests/heal_tests.cpp`: the heals) and RV1 to RV12
@@ -92,16 +92,19 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`tests/support/heal_fixture.h`, `HealShop`) has the life staff with ScalingFocus and the Focus table, Divine Embrace,
   Sacred Ground, the Beacon, the heal statuses of the data, and two sessions. A heal press of a client needs its confirm
   (`HealShop::cast`: the key, then the self cast input or a click). The RV cases use only the interfaces of the tree of
-  stage 3.3b-S5, so that the same file proves each finding on that tree. RV1 runs `tools/check_dev_mute.py`, RV10
+  stage 3.3b-S5, so that the same file proves each finding on that tree. RV1 runs `tools/check_dev_sound.py`, RV10
   `check_ability_tool.py`, and RV12 `check_hit_facts_tool.py`.
-- The mute of a development run is `tools/dev_mute.py` (code review of stage 1.1b, finding F1; code review of stage
-  3.3b-S5, finding F1): it opens the development prefix one time (O_DIRECTORY), compares its identity with the prefix of
-  the user and each folder above the settings files, opens each part below it from its parent descriptor with no link
-  (O_NOFOLLOW), refuses a settings file with more than one link or with the identity of a file of the user, and writes
-  through the same descriptor (`pwrite`, `ftruncate`). No path text is used after the first open.
-  `python3 -B tools/check_dev_mute.py` (status 0) tests it with made-up folders, also a swap of the folder at three
-  moments, a swap of the prefix before the open (the probe RCM1 of the reviewer), and two hard links; never run it against
-  a real prefix.
+- The silence of a development run is the startup setting `-sys_audio_disable 1` of the game (`tools/dev-env.sh`,
+  `dev_sound_arguments`; code review of stage 3.3b-S6, finding S6-R1). The file mute of the stages 1.1b to 3.3b-S6
+  (`tools/dev_mute.py`, `tools/dev-mute.sh`, `tools/check_dev_mute.py`) is gone: four reviews found a swap of folders that sent
+  its write to a settings file of the user. Do not add a tool that edits a file of a Proton prefix.
+- Stage 3.3b-M1 adds the cases MB1 to MB9 (`tests/attack_sequence_tests.cpp`: the basic attacks of the melee weapons, with the
+  made-up graphs of an axe and a rapier in the form of the data; MB5 two sessions; MB6 a replay, a wrap of the input number, a
+  flood, a reconnect; MB7 the load with a time limit; MB9 runs `tools/gamedata/check_weapon_actions_tool.py`), RW1 to RW9
+  (`tests/review_heal_tests.cpp`: the corrections of the code review of stage 3.3b-S6, from the proof cases of the reviewer; RW1
+  runs `tools/check_dev_sound.py`; RW9 is a control), and HE12 (the level part of the heal base). HE9 counts the periodic heals
+  apart (S6-R9). The proof that RW1 to RW8 fail on the tree of stage 3.3b-S6 used a copy of that tree with only the case file
+  added (evidence of the stage, `review-proof/`). The claim limit of a character is 64 in 1 s: case HT5 uses the constant.
 - The state decoder of the tests knows the entitlement state (3133) and the achievement state (3210) of stage 1.1b: a case
   with expansion data has them in the first record of a character (cases DL2, DL10). The stored bytes of T2 have no
   expansion data: the change of stage 1.1b does not change them.

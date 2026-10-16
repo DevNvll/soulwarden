@@ -2,6 +2,7 @@
 # Development loop: restart the backend and the game with protocol capture on.
 # The game window opens on an isolated agent desktop, not on the user desktop.
 # Usage: tools/dev-run.sh [run-label] [-- game arguments]
+# The game gets the arguments of tools/dev-env.sh (dev_sound_arguments: -sys_audio_disable 1, no sound) before the game arguments.
 # The agent desktop starts the launcher with the environment of the compositor, not with the
 # environment of this script. The variables below go to the launcher by name. An identity or
 # seed variable that is not set stays not set.
@@ -68,14 +69,6 @@ rm -rf "${data_dir}/captures"
 # process uses this data directory"), and this script removed no file of that start.
 exec 8>&-
 
-# A development run makes no sound: the master volume of each account in the settings of the
-# development prefix is 0 before the start (the game keeps one settings file for each account).
-# The game is stopped here, so it does not write the old value back. tools/dev-mute.sh (with
-# tools/dev_mute.py) opens each folder and file one time, checks the open descriptor, and writes
-# through it: it changes nothing in the prefix of the user. SOULWARDEN_DEV_SOUND=1 keeps the
-# volumes of the prefix.
-"${repository_directory}/tools/dev-mute.sh" "${dev_compat_dir}" "${user_compat_dir}"
-
 if ! omarchy-agent-desktop status "${desktop_id}" >/dev/null 2>&1; then
     omarchy-agent-desktop create "Soulwarden game" --id "${desktop_id}" --mode "${desktop_mode}" >/dev/null
 fi
@@ -110,6 +103,6 @@ else
 fi
 omarchy-agent-desktop run --wait "${SOULWARDEN_WINDOW_WAIT:-120}" --json "${desktop_id}" -- \
     env "${launcher_environment[@]}" "${display_wrapper[@]}" \
-    "${repository_directory}/linux-compat/run-soulwarden.sh" "$@" \
+    "${repository_directory}/linux-compat/run-soulwarden.sh" "${dev_sound_arguments[@]}" "$@" \
     >"${data_dir}/logs/launch-${label}.json" 2>&1 || true
 cat "${data_dir}/logs/launch-${label}.json"

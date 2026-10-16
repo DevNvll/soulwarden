@@ -200,7 +200,20 @@ backend. The tool of each system is also in the document of that system.
   `BASIC_ROWS_WITH_NO_SHOT` (MusketAttack2, the strike of the stock of the musket), and when a projectile spell of an
   ability that the backend launches (`REQUIRED_ABILITY_SHOTS`: the Pylon shot, the tosses of the trap, the four Beacon
   projectiles) has no shot or no slice (`check_projectile_tool.py` cases partial-basic-sources and missing-ability-prefab,
-  RK11); [Projectiles](../systems/projectiles.md)), `travel-places.json` (the spirit shrines and the inns
+  RK11); [Projectiles](../systems/projectiles.md)), `weapon-actions.json` (stage 3.3b-M1, `tools/gamedata/weapon-actions.sh`:
+  the attack graph of each tag set of a melee weapon of the weapon tables (12 sets; the dagger is excluded) from
+  Attack_Start_Charge: the fragments of the body file of the weapon and of the common file (the variant with no FragTags and the
+  most tags of the weapon), their transitions with the conditions of the basic attacks (CanAttack_Heavy, CanAttack_Primary,
+  CanAttack_Primary_Rapier, Attack_Heavy_NotHeld, Attack_Primary_Released, none), the strikes of the body and of the weapon
+  attachment (a damage key, its window, the row of each clip with the learned nodes of its named condition, the shapes), the
+  payments with their condition, the dodge windows, the mark CanTransition, and the length of each fragment from the animation
+  files (the motion parameters chunk of the CAF; a second clip of one animation continues its time); 119 fragments, 275
+  transitions, 89 strikes, 0.07 MB, 5 s; without it each melee hit uses the light or the heavy row of the weapon table; the backend
+  refuses a file whose form or counts are not correct, as a whole: a transition to a fragment that the weapon does not have, a
+  window with its end before its start, a strike with no row, two tag sets with one key; the tool stops when a transition of a
+  basic attack names an action that no action list has and when a damage clip has no row, and lists the tag sets with no graph,
+  the transitions of other conditions, and the clips with a condition that is not an AND of node tests (`check_weapon_actions_tool.py`,
+  case MB9; [Combat and health](../systems/combat-and-health.md)), `travel-places.json` (the spirit shrines and the inns
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
@@ -231,12 +244,16 @@ tools/gamedata/abilities.sh          # one time: ability data for the backend (c
 tools/gamedata/perks.sh              # one time: perk data for the backend (perk list, affixes, buckets, item perk places, consumables, equip load, swaps; 6.5 MB)
 tools/gamedata/spells.sh             # one time: spell entity data for the backend (slices, slots, delayed events, the values of format 2; 1.6 MB); needs an Oodle source
 tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots; 72 KB, 10 s); needs an Oodle source
+tools/gamedata/weapon-actions.sh     # one time: the attack graphs of the melee weapons for the backend (fragments, transitions, strikes, lengths; 0.07 MB, 5 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
 ```
 
 ## Traps
+
+- Stage 3.3b-M1 adds `weapon-actions.json`. The backend of this stage reads no older form of it; with no file it uses the rule of
+  stage 3.2a for the melee hits. The other files of the tools are equal to the files of stage 3.3b-S6.
 
 - Stage 3.3b-S6 changes `combat-tables.json` (format 2: the CanCrit cells as true, false, or null). The backend of this
   stage reads a file of format 1: then the 42 rows with an explicit CanCrit 0 (the burst of Gravity Well) can be critical,

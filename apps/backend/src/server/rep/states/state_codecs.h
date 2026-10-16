@@ -118,6 +118,11 @@ struct PartsRequest {
      * plays follows at the end of the lead of that spawn action (rep_session.cpp, kSpawnLead).
      */
     bool keepScope{false};
+    /**
+     * The health of the last vitals state of the owner that the session sent (code review of stage 3.3b-S6, finding S6-R7): the health
+     * that the client of the owner has. Below 0: not known.
+     */
+    float ownerHealth{-1.0F};
 };
 
 /**

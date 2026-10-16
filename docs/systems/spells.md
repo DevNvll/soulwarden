@@ -181,14 +181,19 @@ and the stop are in [World and sessions](world-and-sessions.md).
 - The follow: each 250 ms (a decision of an agent) the area takes the place of its target (the client moves the picture
   with field 6 of the Spell state).
 - The statuses (game data): each 250 ms the area looks for the friends of the caster in its radius (the position index;
-  3 m up or down at most). A friend that comes in gets the statuses of the spell row (`Status_Ability_Lifestaff_Beacon`,
+  3 m up or down at most) with the sight from 1.5 m above the center of the area to the chest of the friend
+  (`Navigation::sees`; code review of stage 3.3b-S6, finding S6-R4, case RW4: a friend behind a wall is not in the area, and a
+  friend that goes behind a wall leaves it; the heights are a decision of an agent, the same as the sight test of a direct heal).
+  A friend that comes in gets the statuses of the spell row (`Status_Ability_Lifestaff_Beacon`,
   `Status_Ability_Lifestaff_Beacon_SG_Potency`; the source `spell`); a friend that leaves loses them (`ClearOnExit`); at
   the end each friend loses them (`ClearOnEnd`). The press resolves the status rows of the area (`SpellPlan::statuses`): a row that the
   data does not have refuses the press before the payment (finding F9; case RK9).
 - Two auras with one status row (code review of stage 3.3b-S2b, findings F4 to F6; project rules): a friend in two Beacons
   has one status of each row, with the source of the first Beacon (`Spells::AuraRow`: the auras of each row of each
   character); the second Beacon gives no new application and no new tick. The end of the Beacon of the source gives the
-  status the source of the other Beacon (`Statuses::change_source`); the end of the last Beacon ends it (cases RK4). A row
+  status the source of the other Beacon (`Statuses::change_source`), and the heal source of that aura too: its healer gets the
+  notices and its heal base heals (code review of stage 3.3b-S6, finding S6-R5, case RW5); the end of the last Beacon ends it
+  (cases RK4). A row
   of the data that is shorter than the Beacon (10 s in the Beacon of 15 s of Radiance's Blessing) comes again on a friend in
   it when it ended, with one new application (`SpellCounts::auraRenewed`; RK5). A friend that leaves the world loses the
   statuses of each Beacon before its entity goes away (`Spells::member_left`; the status of a character stays with its

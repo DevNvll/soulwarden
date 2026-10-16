@@ -3,7 +3,7 @@
 // that tree, so that the same file proves it there (the proof of the reviewer: RCI1 to RCI10, RCM1, RCT1, RCT2).
 //
 //   RV1   F1: the mute of a development run: the prefix of the user moves to the development path before the first open (the probe
-//         RCM1 of the reviewer), and a hard link through a link in the path of the user (tools/check_dev_mute.py)
+//         RCM1 of the reviewer): since the review of 3.3b-S6 (S6-R1) no tool edits a settings file (tools/check_dev_sound.py)
 //   RV2   F2: a damage row with an explicit CanCrit 0 (format 2 of the combat file) takes no critical hit; a blank cell can crit (the rule of the data)
 //   RV3   F3: the CritDamage of a rule with OnCrit (Vicious) joins the additive pool of a critical hit
 //   RV4   F4: Crowded Well counts the creatures of the upgraded vortex too
@@ -92,14 +92,12 @@ void add_perk(PassiveShop& shop, const char* rule, const gamedata::CellValues& r
     shop.world().gear().refresh(*shop.character());
 }
 
-/** RV1 (F1): the mute against a move of the prefix of the user to the development path before the first open. */
+/** RV1 (F1): a swap of the prefix cannot redirect a write: no tool writes a settings file (review of 3.3b-S6, S6-R1). */
 void mute_prefix_swap(const Options& options) {
-    const std::vector<std::string> lines = run_check(options, "tools/check_dev_mute.py", "");
-    check(passed(lines, "prefix swap before the open (RCM1)"),
-          "mute: the prefix of the user moves to the development path before the open (RCM1): the original settings file of the user "
-          "stays, a message, status 0");
-    check(passed(lines, "hard link, user path link"), "mute: a hard link of the settings file of the user, the user path through a link: refused");
-    check(passed(lines, "separate prefix with spaces"), "control: the settings file of a separate development prefix gets the volume 0");
+    const std::vector<std::string> lines = run_check(options, "tools/check_dev_sound.py", "");
+    check(passed(lines, "no settings write"), "silence: no tool edits a settings file of a prefix (the file mute is gone)");
+    check(passed(lines, "launcher line") && passed(lines, "sound override"),
+          "control: tools/dev-run.sh gives the startup setting to the launcher, and SOULWARDEN_DEV_SOUND=1 gives none");
 }
 
 /** RV2 (F2): an explicit CanCrit 0 of a damage row (format 2 of the combat file). */
@@ -402,7 +400,7 @@ void cut_angle(const Options& options) {
 } // namespace
 
 std::vector<Case> review_crit_cases() {
-    return {{"RV1", "review of 3.3b-S5, F1: the mute against a move of the prefix of the user before the first open (check_dev_mute.py)", mute_prefix_swap},
+    return {{"RV1", "review of 3.3b-S5, F1 (with 3.3b-S6 S6-R1): a swap of the prefix cannot redirect a write: the silence edits no file (check_dev_sound.py)", mute_prefix_swap},
             {"RV2", "review of 3.3b-S5, F2: a damage row with an explicit CanCrit 0 takes no critical hit", explicit_no_crit},
             {"RV3", "review of 3.3b-S5, F3: the CritDamage of an OnCrit rule (Vicious) joins the critical pool", crit_damage_rule},
             {"RV4", "review of 3.3b-S5, F4: Crowded Well counts the upgraded vortex", crowded_upgrade},

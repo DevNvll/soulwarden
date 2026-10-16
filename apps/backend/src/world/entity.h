@@ -132,6 +132,18 @@ struct Vitals {
      * health). 0: none.
      */
     Revision healShown{0};
+    /**
+     * The last heals with a number (code review of stage 3.3b-S6, finding S6-R7): the world revision, the health before the heal, and the
+     * health after it. The vitals state of the owner sends each one as its own state with bit 1 (the number is exactly its gain), and a
+     * change with no number before or after it as a state with no bit 1. At most kHealSteps, the newest last.
+     */
+    struct HealStep {
+        Revision revision{0};
+        float from{0.0F};
+        float to{0.0F};
+    };
+    static constexpr std::size_t kHealSteps = 8;
+    std::vector<HealStep> healSteps;
 };
 
 /**

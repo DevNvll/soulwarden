@@ -426,6 +426,13 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             projectiles = load.get("projectiles")
             if projectiles:
                 print(projectiles_text(projectiles))
+            basic = load.get("basicAttacks")
+            if basic:
+                ends = ", ".join(f"{count} {why}" for why, count in basic["ends"].items()) or "none"
+                print(f"basic attacks: {basic['characters']} characters with a sequence, {basic['visits']} fragment visits, "
+                      f"{basic['strikes']} strike hits, {basic['alternates']} visits with a second fragment (the band at the end of "
+                      f"a fragment); payments: {basic['staminaPayments']} stamina (no stamina model), {basic['manaPayments']} mana, "
+                      f"{basic['paymentsWithCondition']} with a condition (a stance); ends: {ends}")
             navigation = load.get("navigation")
             if navigation and navigation["data"]:
                 def part(entry: dict) -> str:

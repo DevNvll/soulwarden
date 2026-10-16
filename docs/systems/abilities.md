@@ -194,15 +194,22 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   (`Abilities::confirm`): the self cast input `self_target` (action bit 430, LCTRL) heals the caster; a click
   (`attack_primary`) heals the target choice. The key with `self_target` held casts at once on the caster (the actions
   `*_SelfCast` and `*_SelfLoop` of the data). An aim ends at its confirm, at a press of a key, at a change of the weapon,
-  and after 10 s (`ability_rules::kAimKeep`, a decision of an agent). A click of a different session confirms nothing
-  (rule MP-10). A press with no session (`tools/world cast`, a character with no client) casts at once.
+  at a change of the bar or of the nodes of the character, at a travel (code review of stage 3.3b-S6, findings S6-R2 and S6-R8;
+  `Abilities::cancel_aim`), and after 10 s (`ability_rules::kAimKeep`, a decision of an agent). The confirm needs the ability of
+  the aim on its place of the bar now (`AbilityPress::expected`; else the refusal `aimChanged`, "the place of the bar has a
+  different ability than the aim", case RW2) and uses the lock of the session now: a confirm in the loading screen of a travel is
+  refused (`locked`, case RW8). A click of a different session confirms nothing (rule MP-10). A press with no session
+  (`tools/world cast`, a character with no client) casts at once.
 - The target of a direct heal (`Abilities::heal_target`). The self cast: the caster. A click: the nearest friend
-  (`World::friendly`) that lives, in the range of the spell (CastDistance 25 m), and in sight (chest to chest); with no
-  such friend the caster (the self form of the spell). The data excludes a target that has the status of the heal
+  (`World::friendly`) that lives, can gain health (code review of stage 3.3b-S6, finding S6-R3), is in the range of the spell
+  (CastDistance 25 m), and in sight (chest to chest); with no such friend the caster (the self form of the spell). A caster at its
+  full health is no target: no heal and no payment. The data excludes a target that has the status of the heal
   (TargetStatusEffect with NotEqual of the ability row). No target: no heal and no payment. The point of the click is
   not decoded: the nearest friend, not the friend under the aim (a decision of an agent).
 - The heal source of a cast (`Abilities::heal_source`): the healer, its weapon and its gear score, the spell, and the
   ability table. The heal path computes the amount from it ([Combat and health](combat-and-health.md)).
+- An accepted press (a cast, or the aim of an aimed ability) ends the basic attack of the character (stage 3.3b-M1,
+  `Combat::end_sequence`): the client leaves the fragment of its attack for the action of the ability.
 - A new ability needs, in this sequence: a live check of its keys, its contacts, and its
   shots (protocol notes 4.22: L1, L3, L7), its rule in `Abilities::plan` with the rows and the
   spells of the data, a test case, and a live video. Do not make a message of the server for

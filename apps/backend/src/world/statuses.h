@@ -185,7 +185,8 @@ public:
      * Beacons stays when the Beacon of its source ends while the other one still gives it). The wire has no source: no new
      * fragment. @return False: the character has no status of the row with the source `from`.
      */
-    bool change_source(const std::string& characterId, std::string_view status, const StatusSource& from, const StatusSource& to);
+    bool change_source(const std::string& characterId, std::string_view status, const StatusSource& from, const StatusSource& to,
+                       const HealSource* heal = nullptr);
 
     /** One status of the gear: a status that an affix of an equipped item keeps (world/gear.h). */
     struct GearStatus {

@@ -11,6 +11,8 @@
 
 #include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
+#include "gamedata/weapon_actions.h"
+#include "world/attack_sequence.h"
 #include "world/entity.h"
 #include "world/ids.h"
 #include "world/world_clock.h"
@@ -27,11 +29,13 @@
 //      component of its slice, the session observes the creature, and the creature lives.
 //   2. Weapon. The character has a melee weapon in its hand, and the combat tables have the
 //      damage row of the attack.
-//   3. Attack. The input of the client has an attack input that fits the contact: the input
-//      started some input steps before the contact, and it is on at the contact or went off
-//      not long before it (in input steps, and on the world clock).
-//   4. One time. One attack hurts one creature one time: a second contact with the same
-//      creature a short time after a hit is the same attack.
+//   3. Attack. A strike of the sequence of the basic attacks of the character fits the contact (stage 3.3b-M1,
+//      world/attack_sequence.h): the fragment that the client plays at the input step of the contact, the window of a damage
+//      key of that fragment, and the damage row of that key. With no weapon actions (the file of tools/gamedata/weapon-actions.sh)
+//      the rule of stage 3.2a: an attack input that fits the contact (it started some input steps before the contact, and it is
+//      on at the contact or went off not long before it), and the light or the heavy row of the weapon table.
+//   4. One time. A strike hurts one creature one time (the ledger of the sequence). With no weapon actions: one attack hurts one
+//      creature one time, and a second contact with the same creature a short time after a hit is the same attack.
 //   5. Distance. The position of the character (the exact position that the world has) is
 //      not farther from the creature than the reach of a melee weapon with a tolerance, and
 //      the point of the contact is at the creature.
@@ -120,8 +124,18 @@ inline constexpr float kMeleeReach = 3.5F;
 inline constexpr float kReachTolerance = 1.5F;
 /** The point of a contact is not farther than this from the position of the creature (meters). */
 inline constexpr float kPointRange = 4.0F;
-/** A client makes this number of claims at most in one time window of the world clock. */
-inline constexpr unsigned kClaimsInWindow = 12;
+/**
+ * A client makes this number of claims at most in one time window of the world clock. Stage 3.3b-M1 (a decision of an agent): 64,
+ * not 12. A strike of a chain hits each creature of its shape (the research abilities-melee.md, Q2: "a valid multi-target rapid
+ * sequence can exceed that claim count"): two or three strikes in one second on many creatures are legal. Each claim that no strike
+ * fits is refused with no damage, and the strike ledger limits the hits (kStrikeTargets).
+ */
+inline constexpr unsigned kClaimsInWindow = 64;
+/**
+ * A strike hurts this number of creatures at most (stage 3.3b-M1; the same value as the targets of an area of an ability, 3.3a; a
+ * decision of an agent: the data has no count of targets for a melee strike).
+ */
+inline constexpr unsigned kStrikeTargets = 32;
 inline constexpr std::chrono::milliseconds kClaimWindow{1000};
 /** A report is newer when its input number is 1 to this value above the last one (16 bits, with wrap). */
 inline constexpr std::uint16_t kNewerRange = 0x7FFF;
@@ -180,8 +194,13 @@ enum class HitVerdict : std::uint8_t {
     attackerDead,
     /** The creature is on its way back (the reset): it takes no damage (world/behavior.h). */
     immune,
+    /**
+     * The sequence of the basic attacks of the character plays a fragment at the input of the contact, but no strike window of
+     * that fragment fits it (stage 3.3b-M1), or the strike hurt its largest number of creatures.
+     */
+    noStrike,
 };
-inline constexpr std::size_t kHitVerdictCount = 15;
+inline constexpr std::size_t kHitVerdictCount = 16;
 
 /** @return A short text for a log line, for example "too far". */
 [[nodiscard]] const char* hit_verdict_text(HitVerdict verdict);
@@ -289,6 +308,9 @@ struct HitResult {
     Critical critical;
     bool behind{false};
     bool head{false};
+    /** The fragment of the basic attack and the damage row of the hit (stage 3.3b-M1). Empty: no fragment (a rule with no data). */
+    std::string fragment;
+    std::string row;
 };
 
 /**
@@ -484,8 +506,33 @@ struct CastConversion {
 
 class Combat {
 public:
-    /** @param tables The combat tables (game data). Null or not loaded: each claim is refused. */
-    Combat(World& world, const gamedata::CombatTables* tables);
+    /**
+     * @param tables The combat tables (game data). Null or not loaded: each claim is refused.
+     * @param actions The basic attacks of the melee weapons (game data, stage 3.3b-M1). Null or not loaded: the rule of stage 3.2a.
+     */
+    Combat(World& world, const gamedata::CombatTables* tables, const gamedata::WeaponActions* actions = nullptr);
+
+    /**
+     * One input step of the client of a session (stage 3.3b-M1; the session gives each step one time, before the contacts of the
+     * step): the sequence of the basic attacks of its character follows it (world/attack_sequence.h). The world finds the
+     * character from the session (rule MP-5).
+     * @param inputSequence The number of the input sequence of the client (AttackTrack::sequence).
+     */
+    void step(SessionId session, std::uint32_t inputSequence, std::uint16_t input, const AttackBits& bits);
+    /** Ends the sequence of the basic attacks of a character (an accepted ability, a death, a travel). */
+    void end_sequence(const std::string& characterId, SequenceEnd why);
+    /** The character left the world: its sequence goes away. */
+    void forget_sequence(const std::string& characterId);
+    [[nodiscard]] const AttackSequences& sequences() const {
+        return m_sequences;
+    }
+    /** @return The attack graph of a weapon (its tags), or null with no weapon actions. */
+    [[nodiscard]] const gamedata::WeaponActionSet* actions_of(const gamedata::WeaponRow& weapon) const;
+    /**
+     * @return The damage row of a strike for a character: the first row of the strike whose clip condition the learned nodes of
+     *         the character meet (the nodes that it needs, and none that it must not have), or null.
+     */
+    [[nodiscard]] static const gamedata::StrikeRow* row_for(const Entity& attacker, const gamedata::AttackStrike& strike);
 
     [[nodiscard]] bool has_tables() const {
         return m_tables != nullptr && m_tables->loaded();
@@ -647,8 +694,14 @@ private:
     HitResult apply_hit(Entity& attacker, Entity& target, const Damage& damage, const std::string& itemId, const std::string& row,
                         const char* what, EntityId threat = 0, std::uint16_t flags = 0, const char* note = nullptr);
 
+    /** The check of a claim with the sequence of the basic attacks (stage 3.3b-M1), after the checks of the target. */
+    HitResult claim_strike(SessionId session, const HitClaim& claim, AttackTrack& track, Entity& attacker, Entity& target,
+                           const ItemInstance& item, const gamedata::WeaponRow& weapon, HitLimits& limits);
+
     World& m_world;
     const gamedata::CombatTables* m_tables;
+    const gamedata::WeaponActions* m_actions;
+    AttackSequences m_sequences;
     /** Character id to the limits of the character. An entry with no value in its time window goes away. */
     std::unordered_map<std::string, HitLimits> m_limits;
 };

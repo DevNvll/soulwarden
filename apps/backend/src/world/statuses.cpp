@@ -460,7 +460,8 @@ unsigned Statuses::remove_row_of(const std::string& characterId, std::string_vie
                         [&](const ActiveStatus& entry) { return entry.source == source && same_text(entry.status, status); }, cause);
 }
 
-bool Statuses::change_source(const std::string& characterId, std::string_view status, const StatusSource& from, const StatusSource& to) {
+bool Statuses::change_source(const std::string& characterId, std::string_view status, const StatusSource& from, const StatusSource& to,
+                             const HealSource* heal) {
     const auto found = m_characters.find(characterId);
     if (found == m_characters.end()) {
         return false;
@@ -469,6 +470,11 @@ bool Statuses::change_source(const std::string& characterId, std::string_view st
     for (ActiveStatus& entry : found->second.statuses) {
         if (entry.source == from && same_text(entry.status, status)) {
             entry.source = to;
+            // The heal of the status goes with its source (code review of stage 3.3b-S6, finding S6-R5): the healer and the base of the
+            // aura that gives the status now. The timer and the ticks of the status stay.
+            if (heal != nullptr) {
+                entry.heal = *heal;
+            }
             changed = true;
         }
     }
@@ -477,6 +483,9 @@ bool Statuses::change_source(const std::string& characterId, std::string_view st
         for (ActiveStatus& entry : character->statuses) {
             if (entry.source == from && same_text(entry.status, status)) {
                 entry.source = to;
+                if (heal != nullptr) {
+                    entry.heal = *heal;
+                }
             }
         }
     }

@@ -1029,13 +1029,14 @@ void refusals(const Options&) {
             "row, and an item that the combat tables do not have: refused (no melee weapon)");
     arm(host, kCharacterA, "TestSword");
 
-    // Too many claims in one second: 14 contacts in one entry. The window takes 12.
+    // Too many claims in one second: the limit and 2 more contacts in one entry (stage 3.3b-M1: 64, not 12). The window takes the limit.
     attacker.idle(40);
     const std::uint64_t badBefore = arena.track().count(HitVerdict::badReference);
-    attacker.light(std::vector<InputContactItem>(14, wrongFacet));
-    check(arena.track().count(HitVerdict::tooMany) == 2 && arena.track().count(HitVerdict::badReference) == badBefore + 12
+    attacker.light(std::vector<InputContactItem>(world::combat_limits::kClaimsInWindow + 2, wrongFacet));
+    check(arena.track().count(HitVerdict::tooMany) == 2
+              && arena.track().count(HitVerdict::badReference) == badBefore + world::combat_limits::kClaimsInWindow
               && log_count("rep: hit claim refused (too many claims)") == 1 && nothing(),
-          "14 claims in one input step: the check does 12 of them, and 2 are refused (too many claims)");
+          "the limit and 2 claims in one input step: the check does the limit, and 2 are refused (too many claims)");
 
     // The same attack two times: the one accepted claim of this case, and then the refusals.
     attacker.idle(40);
@@ -1053,7 +1054,10 @@ void refusals(const Options&) {
           "three claims are refused (the same attack: a contact less than 8 steps or less than 250 ms after a hit of the "
           "same creature)");
     host.disconnect(a.peer);
-    check(log_count("rep: hit claims of the session:") == 1 && log_count("1 accepted, 37 refused (4 not a creature, 15 not a component of the creature, 1 not observed, 1 dead, 4 no melee weapon, 4 no attack, 3 the same attack, 1 too far, 2 bad point, 2 too many claims, 0 no combat tables, 0 immune)") == 1,
+    check(log_count("rep: hit claims of the session:") == 1 && log_count(("1 accepted, " + std::to_string(25 + world::combat_limits::kClaimsInWindow) + " refused (4 not a creature, "
+                                                                     + std::to_string(3 + world::combat_limits::kClaimsInWindow)
+                                                                     + " not a component of the creature, 1 not observed, 1 dead, 4 no melee weapon, 4 no attack, 3 the same "
+                                                                       "attack, 1 too far, 2 bad point, 2 too many claims, 0 no combat tables, 0 immune, 0 no strike)")) == 1,
           "the log of the session end has the count of the claims of each cause");
 
     // A backend with no combat tables.

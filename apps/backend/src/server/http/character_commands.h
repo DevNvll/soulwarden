@@ -141,6 +141,8 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand shoot(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /** @return The projectiles in the air (world thread), the counts of the shots by verdict, of the ends by cause, and of the work. */
 [[nodiscard]] nlohmann::json projectiles_json(world::World& world);
+/** @return The counts of the sequences of the basic attacks (stage 3.3b-M1) for the list of the world. */
+[[nodiscard]] nlohmann::json basic_attacks_json(world::World& world);
 // The tree and the bar commands (stage 3.3a, world/skills.h): the same rules as the requests of
 // a client. assign_node: `weapon` (as for the mastery) and `node` (the id text of the node of the
 // game table, "Ability_WarHammer_WreckingBall"): one mastery point on the node.

@@ -2,7 +2,7 @@
 // tree of stage 1.1b (commit 264c945) and passes after its correction.
 //
 //   RD1   F1: the mute of a development run: a move of the savedata folder and a link at its old place between the check and
-//         the write changes no settings file of the user (tools/check_dev_mute.py, the swap and hard link cases)
+//         no settings file of the user changes (since the review of 3.3b-S6: no write at all, tools/check_dev_sound.py)
 //   RD2   F2: a Vitals slot needs its vitals row: the spell loader refuses it, the spell tool keeps the old file, and a Pylon
 //         of a slice with a Vitals slot and no row is not made and not paid
 //   RD3   F3: the progression tool keeps the old file for a rank table shorter than the cap (check_progression_tool.py)
@@ -68,13 +68,11 @@ bool passed(const std::vector<std::string>& lines, const std::string& name) {
     return ok && !failed;
 }
 
-/** RD1 (F1): the mute against a move of the savedata folder at the write, after the checks, after the folder open, and a hard link. */
+/** RD1 (F1): no write of a settings file at all (code review of stage 3.3b-S6, S6-R1: the startup setting, tools/check_dev_sound.py). */
 void mute_swap(const Options& options) {
-    const std::vector<std::string> lines = run_check(options, "tools/check_dev_mute.py", "");
-    for (const char* name : {"swap at the write (sed shim)", "swap after the checks", "swap after the folder open", "hard link"}) {
-        check(passed(lines, name), std::string("mute: ") + name + ": the settings file of the user stays, each check of the case passes");
-    }
-    check(passed(lines, "separate prefix with spaces"), "control: the settings file of a separate development prefix gets the volume 0");
+    const std::vector<std::string> lines = run_check(options, "tools/check_dev_sound.py", "");
+    check(passed(lines, "no settings write"), "silence: no tool edits a settings file of a prefix: a swap of folders cannot redirect a write");
+    check(passed(lines, "game argument"), "control: the game of a development run gets -sys_audio_disable 1");
 }
 
 /** RD2 (F2): a Vitals slot with no vitals row. */
@@ -204,7 +202,7 @@ void reward_children(const Options& options) {
 } // namespace
 
 std::vector<Case> review_dlc_cases() {
-    return {{"RD1", "review of 1.1b, F1: the mute changes no settings file of the user at a move of the savedata folder (check_dev_mute.py)", mute_swap},
+    return {{"RD1", "review of 1.1b, F1 (with 3.3b-S6 S6-R1): no settings file changes for the silence of a run (check_dev_sound.py)", mute_swap},
             {"RD2", "review of 1.1b, F2: a Vitals slot needs its vitals row: loader, spell tool, no paid Pylon", vitals_slot},
             {"RD3", "review of 1.1b, F3: the progression tool stops at a rank table shorter than the cap", short_ranks},
             {"RD4", "review of 1.1b, F4: the projectile tool stops when a required ability spell is not a row of the source", required_spell_row},

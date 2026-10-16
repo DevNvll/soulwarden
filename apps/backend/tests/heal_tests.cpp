@@ -181,6 +181,9 @@ void heal_checks(const Options& options) {
         }
         const float max = shop.host.world.find_character(kCharacterB)->vitals.healthMax;
         (void)shop.host.world.health().hurt(kCharacterB, variant.dead ? max : max * 0.5F);
+        // The caster is hurt: a target at its full health takes no direct heal (code review of stage 3.3b-S6, finding S6-R3).
+        shop.character()->vitals.health = shop.character()->vitals.healthMax - 100.0F;
+        shop.host.world.health().fought(*shop.character());
         const float before = shop.host.world.find_character(kCharacterB)->vitals.health;
         const std::size_t from = shop.a.got.size();
         shop.cast(false);
@@ -204,6 +207,16 @@ void heal_checks(const Options& options) {
               "no target that the data permits: no heal and no payment (the choice of the target and the cost go together)");
     }
     {
+        // A caster at its full health with no friend near: no target that can gain health, no heal and no payment (finding S6-R3).
+        HealShop shop;
+        shop.staff(*shop.character(), kDivineNode);
+        const float mana = shop.character()->vitals.mana;
+        shop.cast(true);
+        shop.pass(1.2F);
+        check(shop.ability_counts().healsRefused == 1 && shop.ability_counts().healsSelf == 0 && near(shop.character()->vitals.mana, mana),
+              "a caster at its full health (the self cast): no heal and no payment (code review of stage 3.3b-S6, finding S6-R3)");
+    }
+    {
         // Less mana than the cost: the press is refused (no cast, no cooldown).
         HealShop shop;
         shop.staff(*shop.character(), kDivineNode);
@@ -216,6 +229,8 @@ void heal_checks(const Options& options) {
         // Privilege: the spell _ReducedCost (20).
         HealShop shop;
         shop.staff(*shop.character(), kDivineNode, {kPrivilege});
+        shop.character()->vitals.health = shop.character()->vitals.healthMax - 100.0F;
+        shop.host.world.health().fought(*shop.character());
         const float mana = shop.character()->vitals.mana;
         shop.cast(true);
         shop.pass(1.2F);
@@ -434,13 +449,18 @@ void no_double_heal(const Options&) {
           "an observer that comes into the interest again: the health of B with no number, and no second heal");
 }
 
-/** HE9: the load. */
+/**
+ * HE9: the load. Code review of stage 3.3b-S6, finding S6-R9: the direct heals and the periodic heals of the areas are counted apart. Each
+ * healer of Sacred Ground has a hurt friend 1 m from it (a pair), whose health only the pulses of the area can raise (the rest rule waits
+ * for 6 s with no fight: each round marks a fight), and the case needs a gain of each such friend.
+ */
 void heal_load(const Options&) {
     HealShop shop;
     for (int index = 0; index < 4000; ++index) {
         (void)shop.world().creatures().spawn("Test_Wolf", at(5000.0F + static_cast<float>(index % 100) * 3.0F, 5000.0F + static_cast<float>(index / 100) * 3.0F), 0.0F);
     }
     std::vector<std::string> healers;
+    std::vector<std::string> friends;
     const auto add = [&](int index, const state::WorldPosition& place) {
         char id[64];
         std::snprintf(id, sizeof(id), "eeeeeeee-3333-4000-8000-%012d", index);
@@ -452,7 +472,7 @@ void heal_load(const Options&) {
         (void)shop.world().spawn_character(id, place);
         return std::string(id);
     };
-    // 400 characters far away (a crowd that no heal sees), and 100 healers in groups of two near each other.
+    // 400 characters far away (a crowd that no heal sees), and 100 healers 60 m apart; each healer of Sacred Ground with a friend 1 m away.
     for (int index = 0; index < 400; ++index) {
         (void)add(index, at(8000.0F + static_cast<float>(index % 20) * 4.0F, 8000.0F + static_cast<float>(index / 20) * 4.0F));
     }
@@ -462,27 +482,54 @@ void heal_load(const Options&) {
         world::Entity* healer = shop.world().find_character(id);
         shop.staff(*healer, index % 2 == 0 ? kDivineNode : kSacredNode);
         healers.push_back(id);
+        if (index % 2 == 1) {
+            const std::string friendId = add(600 + index, at(place.x + 1.0F, place.y));
+            shop.world().set_test_friends(id, friendId);
+            friends.push_back(friendId);
+        }
     }
     const auto started = std::chrono::steady_clock::now();
     const std::uint64_t lookedBefore = shop.ability_counts().healLooked;
+    float periodicGain = 0.0F;
+    std::size_t friendsHealed = 0;
     for (int round = 0; round < 3; ++round) {
+        std::vector<float> before;
+        for (const std::string& id : friends) {
+            world::Entity* friendly = shop.world().find_character(id);
+            friendly->vitals.health = friendly->vitals.healthMax * 0.5F;
+            shop.world().health().fought(*friendly);
+            before.push_back(friendly->vitals.health);
+        }
         for (const std::string& id : healers) {
             world::Entity* healer = shop.world().find_character(id);
             healer->vitals.health = healer->vitals.healthMax * 0.5F;
+            shop.world().health().fought(*healer);
             world::AbilityPress press;
             press.place = 0;
             press.sequence = static_cast<std::uint32_t>(round + 1);
             (void)shop.world().abilities().reset_cooldowns(id);
             (void)shop.world().abilities().press_character(id, press);
         }
-        shop.pass(21.0F);
+        shop.pass(5.0F);
+        for (std::size_t index = 0; index < friends.size(); ++index) {
+            const world::Entity* friendly = shop.world().find_character(friends[index]);
+            const float gain = friendly->vitals.health - before[index];
+            periodicGain += std::max(gain, 0.0F);
+            friendsHealed += gain > 0.0F ? 1 : 0;
+        }
+        shop.pass(16.0F);
     }
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     const std::uint64_t looked = shop.ability_counts().healLooked - lookedBefore;
     note("100 healers, 3 rounds of Divine Embrace and Sacred Ground in a world of 4,000 creatures and 400 far characters: " + std::to_string(seconds)
-         + " s; heals " + std::to_string(shop.heals().heals) + ", friends looked at by the choice of a target " + std::to_string(looked));
-    check(shop.ability_counts().healsSelf >= 140 && shop.heals().heals >= 150 && looked == 0 && seconds < 5.0,
-          "the heals look only at the friends near the caster (none here) and at the due ticks: the far crowd adds no work, less than 5 s");
+         + " s; heals " + std::to_string(shop.heals().heals) + ", direct self heals " + std::to_string(shop.ability_counts().healsSelf)
+         + ", friends of the areas healed " + std::to_string(friendsHealed) + " of " + std::to_string(friends.size() * 3) + " (gain "
+         + std::to_string(periodicGain) + "), friends looked at by the choice of a target " + std::to_string(looked));
+    check(shop.ability_counts().healsSelf >= 140, "the direct heals: 50 healers of Divine Embrace in 3 rounds heal themselves");
+    check(friendsHealed == friends.size() * 3 && periodicGain > 0.0F,
+          "the periodic heals: in each round each hurt friend 1 m from a healer of Sacred Ground gains health from the pulses of the area");
+    check(looked == 0, "the choice of a direct target looks only at the entities near the caster (no character is near a healer of Divine Embrace)");
+    check(seconds < 5.0, "the far crowd adds no work: less than 5 s");
 }
 
 /** HE10: the list of the rules with OnHealed. */
@@ -572,6 +619,28 @@ void heal_aim(const Options&) {
     check(shop.ability_counts().healsSelf == 3, "a press with no session: the cast at once (no aim)");
 }
 
+/** HE12: the level part of the heal base (a decision of the user of 2026-10-15): the level damage of the damage rule, and no Intelligence part. */
+void heal_base_level(const Options&) {
+    HealShop shop;
+    world::Entity& own = *shop.character();
+    shop.staff(own, kDivineNode);
+    const float levelOne = shop.host.world.health().heal_base(own, "TestLifeStaff", 100);
+    own.progression.level = 60;
+    const float levelSixty = shop.host.world.health().heal_base(own, "TestLifeStaff", 100);
+    const float levelDamage = shop.host.combat.constants().levelDamage;
+    const float expected = kWeaponDamage * (1.0F + kScalingFocus * kFocusDamage + levelDamage * 59.0F);
+    note("heal base: level 1 " + std::to_string(levelOne) + ", level 60 " + std::to_string(levelSixty) + " (expected " + std::to_string(expected)
+         + ", level damage " + std::to_string(levelDamage) + ")");
+    check(near(levelOne, kBase, 0.01F) && near(levelSixty, expected, 0.01F) && levelSixty > levelOne,
+          "the heal base of a healer of the level 60: the base damage times (1 + the Focus part + the level damage x 59), the level part of the "
+          "damage rule");
+    const unsigned intelligence = own.attributes.value(world::attribute::kIntelligence);
+    own.attributes.spent[world::attribute::kIntelligence] += 200;
+    const float clever = shop.host.world.health().heal_base(own, "TestLifeStaff", 100);
+    check(own.attributes.value(world::attribute::kIntelligence) > intelligence && near(clever, levelSixty, 0.001F),
+          "200 more Intelligence: the same heal base (no Intelligence part; a heal scales with Focus)");
+}
+
 } // namespace
 
 std::vector<Case> heal_cases() {
@@ -585,7 +654,8 @@ std::vector<Case> heal_cases() {
             {"HE8", "heals: a repeated press and an observer that comes back: no heal two times (MP-10)", no_double_heal},
             {"HE9", "heals: the load of 100 healers in a world of 4,000 creatures and 400 far characters, with a time limit", heal_load},
             {"HE10", "heals: the list of the rules with OnHealed", heal_rules},
-            {"HE11", "heals: the aim of Divine Embrace: the confirm of its session, its end, the key with the self cast input", heal_aim}};
+            {"HE11", "heals: the aim of Divine Embrace: the confirm of its session, its end, the key with the self cast input", heal_aim},
+            {"HE12", "heals: the level part of the heal base, and no Intelligence part", heal_base_level}};
 }
 
 } // namespace soulwarden::backend::tests

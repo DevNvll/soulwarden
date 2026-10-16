@@ -405,6 +405,19 @@ WorldCommand shoot(const std::string& character, const Arguments& arguments, ser
     };
 }
 
+json basic_attacks_json(world::World& target) {
+    const world::SequenceCounts& counts = target.combat().sequences().counts();
+    json ends = json::object();
+    for (std::size_t why = 0; why < world::kSequenceEndCount; ++why) {
+        if (counts.ends[why] != 0) {
+            ends[world::sequence_end_text(static_cast<world::SequenceEnd>(why))] = counts.ends[why];
+        }
+    }
+    return {{"characters", target.combat().sequences().size()}, {"visits", counts.visits}, {"strikes", counts.strikes},
+            {"alternates", counts.alternates}, {"staminaPayments", counts.staminaPayments}, {"manaPayments", counts.manaPayments},
+            {"paymentsWithCondition", counts.paymentsWithCondition}, {"ends", ends}};
+}
+
 json projectiles_json(world::World& target) {
     json flying = json::array();
     for (const world::ProjectileView& view : target.projectiles().active()) {

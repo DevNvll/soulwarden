@@ -191,7 +191,7 @@ below is the layout after the port.
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
 | 3.1 | Weapons in the hand and attack actions | 1.4, 2.3 | L | verified | a part in 3.2a (the attack inputs, the weapon keys) | |
 | 3.2 | Damage, stamina, and mana model | 3.1, 2.4 | L | verified (`damage.md` command, `hit-reports.md` layouts, `melee-mode.md`); the live checks M1 and M2 of the melee mode passed | 3.2a done | |
-| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b, 3.3b-S5, 3.3b-S6 done | |
+| 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b, 3.3b-S5, 3.3b-S6, 3.3b-M1 done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
@@ -247,7 +247,7 @@ stage with a letter is a part of the system with that number.
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
 | 11 | 3.3b | Abilities, the shared parts (research file `abilities-shared.md`): part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte), part S3 (the projectiles of the basic attacks of the bow and the fire staff, and the check of a ranged hit), and part S2b (the spell entities of three kinds: the Pylon of the ice gauntlet, the trap of the musket, the Beacon of the life staff) | 1.3b | S1, S2a, S4, S3, S2b done |
 | 12 | 1.1b | The DLC for each player: each account and each character owns the expansion (Rise of the Angry Earth) and the DLC packs of the client data, with no purchase and no setting: the limits of the expansion (level, gear score, trade skills), the flail tree, the content of the expansion (research file `dlc-entitlements.md`) | 3.3b | done (the ownership, the limits, the flail tree, the amulet of a DLC pack; the content of the expansion keeps its own stages) |
-| 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | S5 done (the critical hits, a hit from behind, the headshot of a projectile, and one evaluator of the passive rules of the data); S6 done (one heal path, the heal base of an ability, Divine Embrace, Sacred Ground, the heal pulses of the Beacon, the outgoing and the received heal parts, the number of the owner and the notice of the healer); M1, M2, M3 open |
+| 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | S5 done (the critical hits, a hit from behind, the headshot of a projectile, and one evaluator of the passive rules of the data); S6 done (one heal path, the heal base of an ability, Divine Embrace, Sacred Ground, the heal pulses of the Beacon, the outgoing and the received heal parts, the number of the owner and the notice of the healer); M1 done (the basic attacks of the eight melee weapons from the attack graph of the data: the light chain with its ender, the partial and the full charge, the fast sub-hits, one hit of each target for each strike; the level part of the heal base; the corrections of the review of S6); M2, M3 open |
 | 14 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
 | 15 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
 | 16 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
@@ -1316,6 +1316,38 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   the level part of the heal base (L9; a decision for the user), the client reader of ShowUiDamageNumbersOnHeal, the
   groups (a friend only in a fixture), an effect after a heal. Not in this stage: the other abilities of the life staff,
   the heals of the other weapons, the groups.
+- Stage 3.3b-M1, the basic attacks of the melee weapons (done, protocol notes 4.32 and 4.15, documents
+  `docs/systems/combat-and-health.md`, `abilities.md`, `spells.md`, `projectiles.md`, `docs/development/game-data.md`,
+  `live-runs.md`, `build-and-test.md`; evidence `~/Games/soulwarden/work/evidence/abilities-combos/implement/`). The live checks
+  came first (runs `m1-i1` to `m1-i1d` with the backend of stage 3.3b-S6, the captures, and the action layer of the client): the
+  client plays the attack graph of its action lists and animation databases: the clock of a fragment that starts at the input step
+  s is (k - s + 1) / 30 at the step k; a light swing starts at the release step, a partial heavy at the release step after 0.333
+  s, the full charge by itself at 0.667 s (0.5 s for the flail); a buffered window takes a press and starts the next fragment at
+  its end, a press before it is lost; an instant window starts it at the first step with the press or the hold (the repeat of a
+  long hold); a fragment ends at the end of its animation (the length of its CAF file). Each contact came in the window of the
+  damage key of its fragment (7 weapons; the spear gave no contact). The tool `tools/gamedata/weapon-actions.sh` writes
+  `weapon-actions.json` (12 tag sets of melee weapons, 119 fragments, 275 transitions, 89 strikes); `combat-tables.json` needs no
+  change (it has each damage row). The combat system follows the sequence of each character (the character id is the key, rule
+  MP-1) with the input steps of its session, finds the fragment and the strike of each contact, gives the row of the strike (with
+  the node conditions of its clips: the pull of the great axe), and counts each target one time for each strike (a ledger of the
+  last 4 visits); a weapon change, an accepted ability, a travel, a death, a reconnect, and a dodge in a buffer window or a later
+  cancel window end it (a dodge in the cancel window from the start of a swing does not: live check). The claim limit is 64 in 1
+  s (was 12), and a strike hurts 32 creatures at most. With no file the rule of stage 3.2a stays. The heal base has the level
+  part of the damage rule (a decision of the user of 2026-10-15, case HE12). The stage corrected the nine findings of the review
+  of stage 3.3b-S6 (cases RW1 to RW8 fail on the tree of stage 3.3b-S6; HE9 with no area heal passes there and fails now): a
+  development run is silent through the startup setting `-sys_audio_disable 1`, and no tool edits a file of a prefix (S6-R1);
+  the confirm of an aim needs the ability of the aim on its place of the bar and the lock of the session now, and a change of
+  the bar, of the nodes, or a travel ends the aim (S6-R2, S6-R8); a target at its full health takes no direct heal and no cost
+  (S6-R3); an area heal needs the sight to the friend (S6-R4); the aura that stays gives its heal source (S6-R5); a head contact
+  must come within the hit tolerance after the body (S6-R6); each heal with a number is its own owner state (S6-R7); HE9 checks
+  the periodic heals (S6-R9). Test cases MB1 to MB9 (MB5: two sessions; MB6: a replay, a wrap, a flood, a reconnect; MB7: the
+  load of 60 swings on 8 wolves in 4,008 creatures: 0.06 s), RW1 to RW9, HE12; 462 cases pass, and the stored bytes of T2 did
+  not change. Live (runs `m1-proof` and `m1-proof2` with the backend of the stage): the light chain, the partial and the full
+  charge of the great axe and the war hammer, one chain of the sword, the rapier (the second sub-hit), the hatchet (the ender),
+  the greatsword, and the flail, each hit with the row of the fragment that the client played, and a dodge. Open: the spear
+  gives no contact in this client (5 distances, two wolf levels); the stamina has no model (the payments of the reachable
+  graphs are 0, but the stance payment of the greatsword); the stances of the greatsword and the oils. Not in this stage: the
+  abilities of the great axe and the war hammer (M2, M3), the abilities and the special rules of the other weapons, the block.
 
 ### 3.4 Creatures: spawn, behavior, navigation
 

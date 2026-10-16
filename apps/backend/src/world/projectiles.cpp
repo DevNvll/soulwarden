@@ -233,7 +233,17 @@ bool head_contact(const Entity& creature, const state::WorldPosition& point, con
     const std::array<float, 3> unit{direction[0] / size, direction[1] / size, direction[2] / size};
     const state::WorldPosition from{point.x - unit[0] * back, point.y - unit[1] * back, point.z - unit[2] * back};
     const state::WorldPosition to{point.x + unit[0] * ahead, point.y + unit[1] * ahead, point.z + unit[2] * ahead};
-    return sweep(from, to, *head, radius).has_value();
+    // The order of the two contacts on that line (code review of stage 3.3b-S6, finding S6-R6): the projectile stops at its first contact
+    // with the body capsule; the head is a contact only when the line meets it no more than the hit tolerance after that stop (also for a
+    // hit near the muzzle, whose point is the contact of the body). The radius of the body capsule does not permit a later head contact.
+    const std::optional<float> headAt = sweep(from, to, *head, radius);
+    if (!headAt) {
+        return false;
+    }
+    const std::optional<float> bodyAt = sweep(from, to, body, radius);
+    // The sweep gives a part of the line (0 to 1): the distances in meters for the tolerance.
+    const float span = back + ahead;
+    return !bodyAt || *headAt * span <= *bodyAt * span + projectile_rules::kHitTolerance;
 }
 
 std::optional<float> sweep(const state::WorldPosition& from, const state::WorldPosition& to, const WorldCapsule& capsule, float radius) {

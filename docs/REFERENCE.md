@@ -111,6 +111,7 @@ tools/gamedata/loot.sh             # one time: loot tables and kill rewards (wit
 tools/gamedata/abilities.sh        # one time: ability data (cooldowns, status effects, spells, costs; without it an ability does nothing)
 tools/gamedata/spells.sh           # one time: spell entity data (slices, slots, delayed events; without it the vortex has no picture)
 tools/gamedata/projectiles.sh      # one time: projectile data (profiles, slices, ammunition, weapons, shots; without it a shot does nothing); needs an Oodle library
+tools/gamedata/weapon-actions.sh   # one time: the attack graphs of the melee weapons (without them a melee hit has the light or the heavy row of its weapon); needs an Oodle library
 tools/gamedata/perks.sh            # one time: perk data (perks, buckets, item perk places, consumables, equip load; without it an item has no perk)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
@@ -425,6 +426,13 @@ button on "Confirm").
   each weapon and the head and critical cells of each damage row, and the creature tool
   writes the angles of a hit from behind and the head volume of each creature model (from
   its skeleton): with older files no hit is critical.
+- `tools/gamedata/weapon-actions.sh` makes the weapon actions
+  (`~/.local/share/soulwarden/gamedata/weapon-actions.json`, 0.07 MB, stage 3.3b-M1): the attack graph of each
+  melee weapon of the game (the light chain, the charges, the swings and the thrusts with their damage rows and
+  their times, the dodge windows, the length of each animation; protocol notes 4.32). It reads the weapon
+  tables, the animation databases, the action lists, and the animation files of the game copy (it needs an
+  Oodle library). `--find TEXT` prints the graph of the weapons with a text. Without the file the backend
+  starts, and each melee hit uses the light or the heavy row of its weapon.
 - `tools/gamedata/projectiles.sh` makes the projectile data
   (`~/.local/share/soulwarden/gamedata/projectile-data.json`, 72 KB, stage 3.3b-S3): the ranged
   attack profiles of the game (the range, the radius, the near range, the acceleration delay),
@@ -534,8 +542,15 @@ button on "Confirm").
   creature lowers its health: a click of the left pointer button is a light attack, and a
   hold is a heavy attack. The damage number shows at the creature, the creature plays its
   reaction to the hit, and it dies at the health 0 (the body falls, and its name plate goes).
-  This works with a sword, a great axe, a hatchet, a war hammer, and a spear; the keys 1 and
-  2 select the weapon. The backend computes the damage from the weapon, its gear score, the
+  This works with a sword, a rapier, a hatchet, a flail, a spear, a great axe, a war hammer,
+  and a greatsword; the keys 1 and 2 select the weapon. With the weapon actions (stage 3.3b-M1,
+  protocol notes 4.32) each swing of a chain has its own damage row as in the game: the last
+  swing of a chain (the ender of the sword, the hatchet, the great axe, the war hammer, the
+  spear), the three swings of the greatsword (the third one 1.3), the two quick thrusts of the
+  second swing of the rapier (each one 0.66, and both hit), a heavy attack that you release
+  before the full charge (the great axe 1.2, the war hammer 1.3), and a full charge (hold the
+  button for 0.67 s: the great axe 1.6, the war hammer 1.7). A swing hits each creature one
+  time; a weapon change, an ability, or a dodge ends the chain. The backend computes the damage from the weapon, its gear score, the
   attack, the attributes and the level of the character, and the defense values of the
   creature. The client finds each contact itself and reports it, and the backend checks each
   report (the creature, the distance, the weapon, the time of the attack): the rules are
@@ -563,12 +578,14 @@ button on "Confirm").
   character (an ability, a potion, a food, the gear, a life steal) goes through one rule: the
   real gain to the maximum health, a green number for the owner, and for a heal of a friend a
   green number at the feet of the friend for the healer. The heal of an ability is the base
-  damage of the staff at its gear score times the Focus scaling of the staff (the same curve as
-  the damage), times the value of the effect (Divine Embrace 1.2, Sacred Ground and the Beacon
+  damage of the staff at its gear score times the Focus scaling of the staff and the level part
+  (the same curve and level part as the damage; stage 3.3b-M1), times the value of the effect (Divine Embrace 1.2, Sacred Ground and the Beacon
   0.16 each second), times the outgoing part of the healer (effects, Divine Blessing, the equip
   load) and the received part of the target (Disease halves it; Anointed adds to it). Divine
   Embrace and Sacred Ground need a confirm after the key: LCTRL heals you, a click heals the
-  nearest friend in sight (Sacred Ground comes at your feet). There are no groups: in a
+  nearest friend in sight that is not at its full health (Sacred Ground comes at your feet, and it
+  heals only a friend that it sees: not through a wall). Divine Embrace on yourself at your full
+  health heals nothing and costs nothing. A change of your bar or a travel ends the aim. There are no groups: in a
   development run, `tools/world friends NAME OTHER` makes two characters friends for a test,
   and `tools/world heals NAME [TARGET]` shows the heal base, the outgoing and the received
   parts, and the counts.

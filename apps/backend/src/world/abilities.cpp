@@ -168,6 +168,8 @@ const char* cast_verdict_text(CastVerdict verdict) {
         return "a different cast plays";
     case CastVerdict::noMana:
         return "the character has less mana than the cost";
+    case CastVerdict::aimChanged:
+        return "the place of the bar has a different ability than the aim";
     }
     return "unknown";
 }
@@ -541,6 +543,9 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     if (ability == 0) {
         return refuse(CastVerdict::emptyPlace);
     }
+    if (press.expected != 0 && ability != press.expected) {
+        return refuse(CastVerdict::aimChanged);
+    }
     const auto pool = character->skills.pools.find(table);
     const auto node = pool != character->skills.pools.end() ? pool->second.find(ability) : decltype(pool->second.end()){};
     if (pool == character->skills.pools.end() || node == pool->second.end() || node->second.level == 0) {
@@ -686,6 +691,8 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         ++m_counts.aims;
         log::write("world: ability: %s aims %s (place %u of the bar): the cast starts at the confirm", character->name.c_str(),
                    ability_name(planned->kind), press.place + 1);
+        // The client leaves its basic attack for the action of the ability (stage 3.3b-M1).
+        m_world.combat().end_sequence(character->characterId, SequenceEnd::ability);
         return CastVerdict::accepted;
     }
     Cast cast;
@@ -811,6 +818,8 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         m_world.statuses().apply(*character, stored.plan.window, how);
     }
     ++m_counts.presses[static_cast<std::size_t>(CastVerdict::accepted)];
+    // The client leaves its basic attack for the action of the ability (stage 3.3b-M1).
+    m_world.combat().end_sequence(character->characterId, SequenceEnd::ability);
     log::write("world: ability: %s casts %s (place %u of the bar): cooldown %.1f s, %zu phase(s)",
                character->name.c_str(),
                ability_name(stored.plan.kind),
@@ -921,7 +930,15 @@ void Abilities::throw_spell(Cast& cast, const state::WorldPosition& origin, cons
     }
 }
 
-bool Abilities::confirm(SessionId session, std::uint16_t input, bool self, float yaw) {
+void Abilities::cancel_aim(const std::string& characterId) {
+    const auto known = m_characters.find(characterId);
+    if (known != m_characters.end() && known->second.aim) {
+        known->second.aim.reset();
+        log::write("world: ability: the aim of character %s ends (a change of its bar, its nodes, or its place)", characterId.c_str());
+    }
+}
+
+bool Abilities::confirm(SessionId session, std::uint16_t input, bool self, float yaw, bool locked) {
     Entity* character = m_world.entity_of(session);
     if (character == nullptr) {
         return false;
@@ -939,6 +956,10 @@ bool Abilities::confirm(SessionId session, std::uint16_t input, bool self, float
     press.input = input;
     press.confirmed = true;
     press.self = self;
+    // The lock of the session now, not the lock of the press of the aim (code review of stage 3.3b-S6, finding S6-R8), and the ability
+    // of the aim on its place of the bar (finding S6-R2).
+    press.locked = locked;
+    press.expected = aim.ability;
     if (std::isfinite(yaw)) {
         press.yaw = yaw;
     }
@@ -1078,7 +1099,11 @@ Entity* Abilities::heal_target(Entity& caster, const gamedata::SpellRow& spell, 
     const std::string_view excluded = row != nullptr && data_rules::same_text(row->cells.text("TargetStatusEffectComparison"), "NotEqual")
                                           ? row->cells.text("TargetStatusEffect")
                                           : std::string_view();
-    const auto permitted = [&](const Entity& target) { return excluded.empty() || !m_world.statuses().has(target, excluded); };
+    // A target that cannot gain health (at its maximum) takes no direct heal (code review of stage 3.3b-S6, finding S6-R3): the choice
+    // goes on to the next friend or to the caster, and with no target the cast heals nobody and pays nothing.
+    const auto permitted = [&](const Entity& target) {
+        return (excluded.empty() || !m_world.statuses().has(target, excluded)) && target.vitals.health < target.vitals.healthMax;
+    };
     // The self cast input (the confirm `self_target`, live check of stage 3.3b-S6): the caster, the self form of the spell.
     if (self) {
         return !caster.life.dead && permitted(caster) ? &caster : nullptr;

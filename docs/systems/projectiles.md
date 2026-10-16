@@ -83,7 +83,11 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   before the point of the hit to one radius of the head volume and the hit tolerance (`projectile_rules::kHitTolerance`,
   0.25 m) after it, with the radius of the projectile. The projectile stops at its first contact with the body: a head
   volume further on the line (a shot from behind, through the body) is not a headshot (code review of stage 3.3b-S5,
-  finding F7, test case RV7; before, the line went two radii of the body further). The head volume is the capsule of the slice (`creatures.json`: the HitVolume with m_isHeadshot on its bone
+  finding F7, test case RV7; before, the line went two radii of the body further). The order of the two contacts on that
+  line (code review of stage 3.3b-S6, finding S6-R6, case RW6): the head is a contact only when the line meets it no more than
+  the hit tolerance after its first contact with the body capsule, also for a hit near the muzzle (the body capsule is broad:
+  a shot from the front at the low part of the head of a wolf meets the body up to 0.27 m before the head, and is then no
+  headshot). The head volume is the capsule of the slice (`creatures.json`: the HitVolume with m_isHeadshot on its bone
   in the bind pose of the skeleton), turned with the yaw of the creature (`head_of`). A slice with no head volume (no
   skeleton in the game copy, or a shape with no radius) has no headshot. The hit near the muzzle (the receiver of the
   item) uses the line of the launch. A headshot is a critical hit with the flags Ranged, CanCrit, Crit, and Headshot

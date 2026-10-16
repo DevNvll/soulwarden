@@ -55,6 +55,8 @@ const char* hit_verdict_text(HitVerdict verdict) {
         return "the character is dead";
     case HitVerdict::immune:
         return "the creature is on its way back (immune)";
+    case HitVerdict::noStrike:
+        return "no strike of the attack fits the contact";
     }
     return "unknown";
 }
@@ -203,7 +205,72 @@ bool HitLimits::admit(WorldClock::time_point now) {
     return true;
 }
 
-Combat::Combat(World& world, const gamedata::CombatTables* tables) : m_world(world), m_tables(tables) {}
+Combat::Combat(World& world, const gamedata::CombatTables* tables, const gamedata::WeaponActions* actions)
+    : m_world(world), m_tables(tables), m_actions(actions) {}
+
+const gamedata::WeaponActionSet* Combat::actions_of(const gamedata::WeaponRow& weapon) const {
+    // The data can be set after the start of the world (a test): `loaded` at each use.
+    return m_actions != nullptr && m_actions->loaded() && weapon.melee ? m_actions->of_tags(weapon.tags) : nullptr;
+}
+
+const gamedata::StrikeRow* Combat::row_for(const Entity& attacker, const gamedata::AttackStrike& strike) {
+    const auto learned = [&](std::uint32_t node) {
+        for (const auto& [pool, nodes] : attacker.skills.pools) {
+            const auto found = nodes.find(node);
+            if (found != nodes.end() && found->second.level != 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+    for (const gamedata::StrikeRow& row : strike.rows) {
+        if (std::all_of(row.needs.begin(), row.needs.end(), learned) && std::none_of(row.forbids.begin(), row.forbids.end(), learned)) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
+void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t input, const AttackBits& bits) {
+    Entity* character = m_world.entity_of(session);
+    if (character == nullptr) {
+        return;
+    }
+    const ItemInstance* item = weapon_in_hand(*character);
+    const gamedata::WeaponRow* weapon = item != nullptr && has_tables() ? m_tables->weapon_of(item->itemId) : nullptr;
+    const gamedata::WeaponActionSet* actions = weapon != nullptr ? actions_of(*weapon) : nullptr;
+    if (character->life.dead) {
+        // A dead character does no damage: its attack ends, and its steps play nothing.
+        m_sequences.end(character->characterId, SequenceEnd::death);
+        return;
+    }
+    const std::vector<const gamedata::AttackPayment*> payments =
+        m_sequences.step(character->characterId, session, inputSequence, input, bits, weapon_key(*character), actions, m_world.clock().now());
+    // The payments of the fragments (PayStaminaCost, CAGE-PayManaCost). The backend has no stamina model (the stamina rows of the
+    // basic attacks of the reachable graphs are 0); a payment with a condition is a rule of a stance (the greatsword, a later
+    // part). A mana payment with a row of the mana table goes through the one mana path.
+    for (const gamedata::AttackPayment* payment : payments) {
+        if (!payment->condition.empty()) {
+            m_sequences.count_payment(2);
+        } else if (!payment->mana) {
+            m_sequences.count_payment(0);
+        } else {
+            m_sequences.count_payment(1);
+            const float cost = m_world.abilities().mana_cost_of(*character, payment->cost) * payment->multiplier;
+            if (cost > 0.0F) {
+                m_world.abilities().change_mana(*character, -std::min(cost, character->vitals.mana), "the payment of a basic attack");
+            }
+        }
+    }
+}
+
+void Combat::end_sequence(const std::string& characterId, SequenceEnd why) {
+    m_sequences.end(characterId, why);
+}
+
+void Combat::forget_sequence(const std::string& characterId) {
+    m_sequences.forget(characterId);
+}
 
 HitLimits& Combat::limits_of(const std::string& characterId) {
     /** With more characters than this in the table, the entries with no value in a time window go away. */
@@ -250,6 +317,8 @@ void Combat::select_weapon(SessionId session, unsigned key) {
     const std::uint32_t slot = paperdoll::kMainHand1 + key - 1;
     if (entity->equipment.item(slot) != nullptr && entity->combat.selectedWeapon != slot) {
         entity->combat.selectedWeapon = slot;
+        // The attack of the weapon before the change ends (stage 3.3b-M1).
+        m_sequences.end(entity->characterId, SequenceEnd::weapon);
         // The perks of a weapon with OnActive count only while it is in the hand (stage 1.3b).
         m_world.gear().refresh(*entity);
         // The window of a counter ends with the weapon of its cast (finding F2 of the review of stage 3.3b-S4).
@@ -510,6 +579,13 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
         }
         return result;
     }
+    // The sequence of the basic attacks (stage 3.3b-M1): the fragment and the strike of the contact, when the weapon in the hand has
+    // an attack graph.
+    if (const ItemInstance* inHand = weapon_in_hand(*attacker)) {
+        if (const gamedata::WeaponRow* held = m_tables->weapon_of(inHand->itemId); held != nullptr && actions_of(*held) != nullptr) {
+            return claim_strike(session, claim, track, *attacker, *target, *inHand, *held, limits);
+        }
+    }
     // The attack input of the contact: it is on, or it went off a short time before.
     const AttackTrack::Press* attack = track.press_for(claim.input);
     if (attack == nullptr) {
@@ -551,6 +627,63 @@ HitResult Combat::claim(SessionId session, const HitClaim& claim, AttackTrack& t
     use.attack = passive_rules::kAttackPress | (static_cast<std::uint64_t>(session & 0xFFFFFFU) << 32) | attack->number;
     result = strike(*attacker, *target, use, *rowIndex, 1.0F, kind == AttackKind::heavy ? "heavy attack" : "light attack");
     result.kind = kind;
+    if (result.verdict != HitVerdict::accepted) {
+        return refuse(result.verdict);
+    }
+    result.verdict = track.counted(HitVerdict::accepted);
+    return result;
+}
+
+HitResult Combat::claim_strike(SessionId session, const HitClaim& claim, AttackTrack& track, Entity& attacker, Entity& target,
+                               const ItemInstance& item, const gamedata::WeaponRow& weapon, HitLimits& limits) {
+    HitResult result;
+    const auto refuse = [&](HitVerdict verdict) {
+        result.verdict = track.counted(verdict);
+        return result;
+    };
+    const WorldClock::time_point now = m_world.clock().now();
+    const auto usable = [&](const gamedata::AttackStrike& strike) { return row_for(attacker, strike) != nullptr; };
+    const StrikeMatch match =
+        m_sequences.match(attacker.characterId, session, track.sequence(), claim.input, target.id, now, usable);
+    switch (match.verdict) {
+    case StrikeMatch::Verdict::noVisit:
+        return refuse(HitVerdict::noAttack);
+    case StrikeMatch::Verdict::noStrike:
+        return refuse(HitVerdict::noStrike);
+    case StrikeMatch::Verdict::sameStrike:
+        return refuse(HitVerdict::sameAttack);
+    case StrikeMatch::Verdict::hit:
+        break;
+    }
+    if (m_sequences.strike_hits(attacker.characterId, match.visit, match.strike) >= combat_limits::kStrikeTargets) {
+        return refuse(HitVerdict::noStrike);
+    }
+    const gamedata::StrikeRow* strikeRow = row_for(attacker, *match.strikeData);
+    const std::optional<std::uint32_t> rowIndex = strikeRow != nullptr ? m_tables->row_index(strikeRow->row) : std::nullopt;
+    if (!rowIndex) {
+        return refuse(HitVerdict::noWeapon);
+    }
+    // The distance, with the exact position of the character that the world has, and the point of the contact.
+    if (distance(attacker.position, target.position) > combat_limits::kMeleeReach + combat_limits::kReachTolerance) {
+        return refuse(HitVerdict::tooFar);
+    }
+    if (!valid_position(claim.point) || distance(claim.point, target.position) > combat_limits::kPointRange) {
+        return refuse(HitVerdict::badPoint);
+    }
+    m_sequences.note_hit(attacker.characterId, match.visit, match.strike, target.id);
+    limits.note_hit(HitLimits::Hit{target.id, now, claim.input, session, track.sequence()});
+    const gamedata::DamageRow& row = m_tables->damage_row(*rowIndex);
+    const AttackKind kind = row.attackType == "Heavy" ? AttackKind::heavy : AttackKind::light;
+    // The hits of one fragment visit are the hits of one attack (TrackHitCount of a passive rule; the two thrusts of the second
+    // step of the rapier), with the session.
+    HitWeapon use{item.itemId, weapon_slot_in_hand(attacker).value_or(0), &weapon, item.gearScore, {}};
+    use.attack = passive_rules::kAttackPress | (static_cast<std::uint64_t>(session & 0xFFFFFFU) << 32) | match.visit;
+    const std::string what = std::string(kind == AttackKind::heavy ? "heavy attack" : "light attack") + ", " + match.fragment->name + " "
+                             + match.strikeData->key;
+    result = strike(attacker, target, use, *rowIndex, 1.0F, what.c_str());
+    result.kind = kind;
+    result.fragment = match.fragment->name;
+    result.row = row.id;
     if (result.verdict != HitVerdict::accepted) {
         return refuse(result.verdict);
     }

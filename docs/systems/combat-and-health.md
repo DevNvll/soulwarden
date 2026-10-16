@@ -2,13 +2,14 @@
 
 Read this document before a change of a melee attack of a player, the damage rules, the health and
 the death of a character, the heals, or the mana, and before a live test of a hit or a heal. The wire
-contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, and 4.31).
+contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, and 4.32).
 
 ## Start here
 
 | Task | Start here |
 | --- | --- |
 | A melee attack of a player on a creature: the contact report of the client, the hit check, the damage rule, the damage number | Protocol notes 2.3, 4.7, and 4.15, `apps/backend/src/world/combat.h`, `gamedata/combat_tables.h`, `server/rep/client_input.h`, `server/rep/combat_messages.h`, `server/http/aws_routes.cpp`, `tools/gamedata/combat.sh`, `tools/research/input_packet.py --contacts` |
+| The basic attacks of a melee weapon (stage 3.3b-M1): the light chain, the partial and the full charge, the sub-hits, the strike of a contact, the ends of a sequence | Protocol notes 4.32, `world/attack_sequence.h` (`AttackSequences`), `world/combat.h` (`Combat::step`, `claim_strike`, `row_for`), `gamedata/weapon_actions.h`, `tools/gamedata/weapon-actions.sh` (`weapon_actions.py`), test cases MB1 to MB9 |
 | A hit of an ability: the contact of an ability phase, the hit of an area, the weaken of a creature | Protocol notes 4.22, [Abilities](abilities.md), `world/combat.h` (`Combat::claim`, `Combat::strike`), `world/abilities.h` (`Abilities::contact_phase`), test cases AB4, AB5 |
 | A hit of a projectile of a ranged or magic basic attack (the bow, the fire staff) | Protocol notes 4.27, [Projectiles](projectiles.md), `world/projectiles.h`, test cases PJ3, PJ8 |
 | A critical hit, a hit from behind, a headshot, the flags of the damage number | Protocol notes 4.30, `world/combat.h` (`Combat::critical`, `Combat::source_angle`, `damage_flags`), `world/projectiles.cpp` (`head_contact`), [Passive rules](passive-rules.md), test cases CH1 to CH10 |
@@ -58,9 +59,12 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, and 4.3
   `Health::tick`, with no number and no modifier (rules of this project).
 - The base of a heal of an ability (`Health::heal_base`; a decision of the user of 2026-10-15, through the orchestrator): the
   base damage of the weapon of the cast at its gear score (the first factor of the damage rule, `Combat::weapon_base`) times
-  the scaling of Focus with the curve and the table of a damage attribute: 1 + the ScalingFocus of the weapon (LifeStaff 0.0095,
-  game data) times the damage value of the Focus of the healer (the column ModifierValueSum of the Focus table, game data). A
-  weapon with no ScalingFocus has no Focus part. The base is a value of the source of the heal at the cast (`HealSource`: the
+  1 + the scaling of Focus with the curve and the table of a damage attribute (the ScalingFocus of the weapon, LifeStaff 0.0095,
+  game data, times the damage value of the Focus of the healer: the column ModifierValueSum of the Focus table, game data) + the
+  level part of the damage rule (the level damage of the base attributes file, 0.025, times the level above 1: stage 3.3b-M1, a
+  decision of the user of 2026-10-15 through the orchestrator: a heal scales with the level as damage does; case HE12). No part of
+  a different attribute (the Intelligence of the life staff): a heal scales with Focus. A weapon with no ScalingFocus has no Focus
+  part. The base is a value of the source of the heal at the cast (`HealSource`: the
   healer, the base, the row of the spell, the ability table of the weapon): a status keeps it, and its ticks heal with it (the
   client has a cached heal scaling value for each source of a status: StatusEffectSource 0x5CB7F20; the snapshot is a decision
   of an agent). The amount of a status of an ability: the base times HealthModifierDamageBased of the row (Divine Embrace 1.2,
@@ -70,8 +74,8 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, and 4.3
   A row with HealthModifierDamageBased and no UseHealScalingValue (its base is the core damage of the source) gives no heal
   in this stage (`StatusCounts::pulsesWithNoHeal`). Live check L9: the weapon damage that the client shows in the attribute
   window (`GetCoreDamage`) has the same base and Focus curve, and also the level part (0.025 for each level above 1) and the
-  other attributes of the weapon (the Intelligence of the life staff, 0.004): the heal base of the decision has neither (a
-  decision for the user, see the result of stage 3.3b-S6).
+  other attributes of the weapon (the Intelligence of the life staff, 0.004): the heal base has the level part (stage 3.3b-M1),
+  not the other attributes.
 - The outgoing factor of a heal of an ability (`Health::outgoing`): 1 plus one additive pool (a decision of an agent, as the
   damage parts and the critical pool) of the HealScalingValueMultiplier of the statuses of the healer (live check L9: the
   tooltip "outgoing healing is reduced by 3% per stack"), of the rules with OnHealed of the healer whose conditions pass for
@@ -84,6 +88,10 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, and 4.3
   NonConsumableHealMod (an ability, the gear, a life steal), and DmgPctToHealthHealMod (a life steal; game text of Anointed:
   "healing from non-consumables and lifesteal"), each with the limits of its categories (Disease -0.5), in one additive pool
   (a decision of an agent). 0 or more.
+- A target of a direct heal (Divine Embrace) must be able to gain health (code review of stage 3.3b-S6, finding S6-R3, case RW3):
+  the choice skips a friend at its full health and goes on to the next friend or to the caster; a caster at its full health with
+  no such friend: no heal and no cost (a rule of this project: the client plays the cast; the rule "no heal, no cost" of stage
+  3.3b-S6).
 - The order: the outgoing factor times the received factor (a decision of the user of 2026-10-15: multiply where the data and
   the client prove no order).
 - The heals of a consumable and of a life steal keep their proved rules (crit-heal-formulas.md): a potion is Health +
@@ -92,7 +100,11 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, and 4.3
   received factor of its kind.
 - The number of the owner (live check L3; protocol notes 4.31): the vitals state of the owner that carries a heal has bit 1
   of healthChangeFlags (`Vitals::healShown`: the world revision of the heal); the client shows a green "+N", N the change of
-  its own health. The observer view never has bit 1 (live check L3: an observer shows no number). The kinds with a number:
+  its own health. Each heal with a number is its own owner state (code review of stage 3.3b-S6, finding S6-R7, case RW7): the
+  vitals keep the last 8 such heals (`Vitals::healSteps`: the revision, the health before, the health after), and the encoder
+  sends, from the health of the last owner state of the session (`Known::ownerHealth`), a state with the health before each heal
+  and no bit 1 when the health changed with no number, the state after the heal with bit 1, and a last state with no bit 1 for a
+  change with no number after it. The observer view never has bit 1 (live check L3: an observer shows no number). The kinds with a number:
   a heal of an ability, a life steal, the application of a consumable (a potion), and a tick of a consumable with
   ShowUiDamageNumbersOnHeal (the regen potions of the data); no number for a tick of a food, a status of the gear, the rest
   rule, and the command (a decision of an agent from the column of the data; the reader of the column in the client was not
@@ -112,10 +124,11 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, and 4.3
 - A contact is a claim of a client, not a fact. The session gives each claim to the combat
   system of the world (`world/combat.h`, `Combat::claim`), which finds the attacker from the
   session and checks the claim: the character lives, the target is a creature of the world
-  that lives and that the session observes, the reference names a component of its slice, an attack input of
-  the client fits the contact, the character has a melee weapon in its hand, the same attack
-  did not hurt the creature, the exact position of the character is 5 m or less from the
-  creature, and the client made 12 claims or less in 1 s. A contact in the window of a
+  that lives and that the session observes, the reference names a component of its slice, a strike of the sequence of the
+  basic attacks of the character fits the contact (stage 3.3b-M1, below; with no weapon actions: an attack input of the client
+  fits it and the same attack did not hurt the creature), the character has a melee weapon in its hand, the exact position of
+  the character is 5 m or less from the creature, and the client made 64 claims or less in 1 s (stage 3.3b-M1, a decision of an
+  agent: 12 before; a chain of two or three strikes in one second on many creatures is legal). A contact in the window of a
   phase of an ability of the character (stage 3.3a, `Abilities::contact_phase`) is a hit of
   that phase: the damage row of the phase, the weapon of the cast, and one hit of a creature
   for each phase in place of each attack; the other checks stay. A refused claim changes nothing
@@ -128,6 +141,32 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, and 4.3
   and again gets no more hits. The session takes each input step one time: a client sends
   an entry in 5 reports. An input entry that ends before the end of its body has no
   position of the character (`ClientInput::hasCharacter`).
+- The basic attacks of a melee weapon (stage 3.3b-M1, protocol notes 4.32). The combat system follows the sequence of the
+  basic attacks of each character (`world/attack_sequence.h`, `AttackSequences`; the character id is the key, rule MP-1) with
+  the input steps of its session (`Combat::step`, before the contacts of the step), as the client plays the attack graph of the
+  weapon in its hand (`weapon-actions.json`, game data): the clock of a fragment is (k - s + 1) / 30 at the input step k of a
+  fragment that started at s; from rest the attack input starts Attack_Start_Charge; an instant transition takes the first step
+  of its window whose input fits (the attack input or its hold for CanAttack_Heavy, the attack input for
+  CanAttack_Primary_Rapier, neither for Attack_Heavy_NotHeld, the release for Attack_Primary_Released, each step for the full
+  charge); a buffered transition takes a press in its window and starts its fragment at the end of the window; a fragment ends
+  at its length (the end of its animation). Source: the data of the action lists and of the animation databases, and the live
+  checks I1 (the client fragments of the action layer and the contacts of 7 weapons). A contact is a hit of a strike (the damage
+  clips of one damage key of a fragment: body, attachment, each shape) when the clock of a visit at the input step of the contact
+  is in the window of the strike, 1 step before its start to 2 steps after its end, and on the world clock not more than 250 ms
+  before its time and 0.5 s after it (decisions of an agent; live: each contact in its window). The row of the strike is the
+  first row whose clip condition the learned nodes of the character meet (the pull of the great axe: Passive_Greataxe_Mauler_
+  HeavyAddPull; a strike with no row for the character is no match). A strike hurts each creature one time (a ledger of the
+  last 4 visits: a second contact of the same strike is `sameAttack`), and 32 creatures at most. A press within 0.25 s of the
+  length of a fragment (`attack_rules::kLengthBand`) can be the next step of the chain or a new attack: the visit keeps the other
+  fragment, and a contact that fits only that one selects it (a decision of an agent: the length of a fragment with two clips of
+  one animation is not fully known). The sequence ends at a change of the weapon, an accepted ability (also the aim of an aimed
+  ability), a travel, the death, a new session or a new input sequence of the client (a reconnect), and a dodge (bit 322): at once
+  in a CanDodgeCancel window that starts after the start of the fragment, at the end of a CanDodgeBuffer window; a dodge in a
+  cancel window that starts with the fragment is no end (live check: the client plays no dodge there). The payments of a fragment
+  (PayStaminaCost, CAGE-PayManaCost) pass with the visit: the backend has no stamina model (the stamina rows of the basic attacks
+  of the reachable graphs are 0), a mana payment goes through the one mana path, and a payment with a condition (the stance of
+  the greatsword) is counted only. With no file (or a weapon with no graph: the dagger) the rule of stage 3.2a stays: the light
+  or the heavy row of the weapon table, and one hit of a creature in 250 ms.
 - The damage of an attack is computed in one function (`Combat::damage`), from the combat
   tables (game data) and the entity of the attacker: the weapon of the item, its gear score,
   the damage row of the light or of the heavy attack, the attributes and the level of the
@@ -216,7 +255,15 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, and 4.3
 ```sh
 tools/world heal NAME                # give a character its full health (a dead character lives again at its place)
 tools/world hurt NAME 500            # lower the health of a character (the health 0 is its death)
+tools/gamedata/weapon-actions.sh     # write weapon-actions.json (the attack graphs of the melee weapons) to the game data folder
+tools/gamedata/weapon-actions.sh --find greataxe   # print the graph of a weapon: transitions, strikes, payments
+tools/world list                     # the line "basic attacks": the sequences, the visits, the strike hits, the ends by cause
 ```
+
+- `tools/gamedata/weapon-actions.sh` (stage 3.3b-M1) reads the weapon tables, the animation databases of the body and of the
+  weapon attachment, the action lists, and the animation files of the player (`SOULWARDEN_OODLE_LIB` reads the pak files; 5 s)
+  and writes `weapon-actions.json` (12 tag sets of melee weapons, 119 fragments, 275 transitions, 89 strikes, 3 payments; 0.07
+  MB). With no file the backend starts, and each melee hit uses the rule of stage 3.2a (the log says it at the start).
 
 - `tools/gamedata/combat.sh` writes `combat-tables.json` to the game data folder (14,073 items
   with a weapon, 587 weapons, 414 damage rows, the defense values of 8,779 vitals rows; from stage
@@ -297,5 +344,17 @@ tools/world hurt NAME 500            # lower the health of a character (the heal
   Soulwarden -2.2 0 0 --yaw 90` (`--yaw 270`: the wolf looks at the character). The log line after the hit line gives the
   cause: `world: hit: NAME, the hit on creature ID: critical: roll|behind|headshot (chance C, roll R, multiplier M)`. The
   roll 1.000 is "no number taken".
+- A test of a combo (stage 3.3b-M1): the reaction of a wolf moves it back after a hit, and the next swing of a chain often makes
+  no contact (the second swing of the war hammer gave none in 5 tries). Let the first swing miss: spawn the wolf 0.8 s after the
+  first click (`tools/world creature spawn Wolf_Grey_7 NAME -2.4 0 0 --yaw 270 --level 65`; a level 65 wolf has 15,800 health).
+- The spear gives no melee contact in the client of the runs of stage 3.3b-M1 (1.9 m to 3.3 m, a wolf of the level 18 and of the
+  level 65), but in stage 3.2a it did. The sequence of the server follows its fragments (the action layer); the cause is open.
+- A travel with `--screen off` turns the camera of the client to the north and selects the first weapon slot: turn the camera
+  (`tools/hx 'look -300 0' 'wait 300' ...`) and press the weapon key after the travel, not before it.
+- The action layer of the client (the predicted movement state, `tools/research/player_position.py`; a run with
+  `SOULWARDEN_TRACE=6769980`) has the action number and the start step of the fragment that the client plays (for example the great
+  axe: 5055 Attack_Start_Charge, 467 the first swing, 484 the second): compare it with the visits of the server
+  (`world: hit: ... (light attack, FRAGMENT KEY, row ROW)`). The script of the evidence of stage 3.3b-M1
+  (`tools/fragment_sampler.py` of the evidence folder) reads it while the keys of the harness play.
 - The critical number is orange and larger, with no other mark. A number in yellow with an arrow is a weakness of the
   creature (thrust on a wolf), not a critical hit.

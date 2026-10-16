@@ -2,7 +2,7 @@
 // 3.3b-S2b (commit 78b8c5f, with this file, the fixture header, and the check scripts of the tools) and passes after the
 // correction. The C++ cases come from the proof cases of the reviewer (RSB1 to RSB10). All ids, names, and values are made up.
 //
-//   RK1   F1: the mute of a development run changes no settings file of the user through a link (tools/check_dev_mute.py)
+//   RK1   F1: the silence of a development run changes no settings file of the user (tools/check_dev_sound.py, review of 3.3b-S6)
 //   RK2   F2: a near-hit claim does not hurt a creature behind a corner wall on the line of the launch
 //   RK3   F3: the death of the entity of a Beacon ends the Beacon and its statuses; a lethal impact makes no Beacon
 //   RK4   F4: the end of one of two Beacons keeps the statuses of the other one on both friends (two sessions)
@@ -78,15 +78,17 @@ world::Entity* make_aura(KindShop& shop, world::EntityId caster, world::EntityId
     return shop.host.world.spells().make(request);
 }
 
-/** RK1 (F1): the mute script against made-up prefixes (a link, a "/.", a savedata link, and the controls). */
+/**
+ * RK1 (F1): no settings file of the user changes for the silence of a development run. Since the code review of stage 3.3b-S6
+ * (finding S6-R1) the game gets the startup setting -sys_audio_disable 1 and no tool edits a file (tools/check_dev_sound.py).
+ */
 void mute(const Options& options) {
-    const std::vector<std::string> lines = run_check(options, "tools/check_dev_mute.py", "");
-    for (const char* name : {"separate prefix with spaces", "exact user prefix", "sound override", "prefix link", "dot alias", "savedata link",
-                             "settings file link", "user path through a link"}) {
+    const std::vector<std::string> lines = run_check(options, "tools/check_dev_sound.py", "");
+    for (const char* name : {"game argument", "sound override", "launcher line", "no settings write"}) {
         const bool clean = std::none_of(lines.begin(), lines.end(), [&](const std::string& line) {
             return line.rfind("FAIL", 0) == 0 && line.find(name) != std::string::npos;
         });
-        check(clean && passed(lines, name), std::string("mute: ") + name + ": the settings of the user stay, each check of the case passes");
+        check(clean && passed(lines, name), std::string("silence: ") + name + ": no settings file changes, each check of the case passes");
     }
 }
 
@@ -319,7 +321,7 @@ void spell_tool(const Options& options) {
 } // namespace
 
 std::vector<Case> review_spells2_cases() {
-    return {{"RK1", "review of 3.3b-S2b, F1: the mute of a development run changes no settings file of the user through a link", mute},
+    return {{"RK1", "review of 3.3b-S2b, F1 (with 3.3b-S6 S6-R1): the silence of a development run changes no settings file (check_dev_sound.py)", mute},
             {"RK2", "review of 3.3b-S2b, F2: a wall on the line of the launch blocks a near-hit claim", near_wall},
             {"RK3", "review of 3.3b-S2b, F3: the death of its entity ends a Beacon; a lethal impact makes no Beacon", dead_target},
             {"RK4", "review of 3.3b-S2b, F4: two Beacons: the end of one keeps the status of the other on both friends (MP-10)", overlap},

@@ -160,6 +160,11 @@ struct InputStep {
      * (live check of stage 3.3b-S6: LCTRL in the aim of Divine Embrace). A click (attackPress) is the confirm on the target.
      */
     bool selfTarget{false};
+    /**
+     * The dodge input came ("dodge", bit 322 of the table of the research combat-actions.md; the left Shift of the default profile;
+     * stage 3.3b-M1): a dodge window of the fragment of a basic attack ends the attack.
+     */
+    bool dodge{false};
     std::vector<InputContact> contacts;
 };
 

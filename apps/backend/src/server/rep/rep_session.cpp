@@ -525,7 +525,7 @@ void RepSession::log_message_counts() const {
         log::write("rep: hit claims of the session: %u attack input(s), %llu melee contact(s): %llu accepted, %llu refused "
                    "(%llu not a creature, %llu not a component of the creature, %llu not observed, %llu dead, %llu no "
                    "melee weapon, %llu no attack, %llu the same attack, %llu too far, %llu bad point, %llu too many "
-                   "claims, %llu no combat tables, %llu immune); %llu item(s) of the projectile lists",
+                   "claims, %llu no combat tables, %llu immune, %llu no strike); %llu item(s) of the projectile lists",
                    m_attack.presses(),
                    static_cast<unsigned long long>(m_contacts),
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::accepted)),
@@ -542,6 +542,7 @@ void RepSession::log_message_counts() const {
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::tooMany)),
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::noTables)),
                    static_cast<unsigned long long>(m_attack.count(HitVerdict::immune)),
+                   static_cast<unsigned long long>(m_attack.count(HitVerdict::noStrike)),
                    static_cast<unsigned long long>(m_projectileItems));
     }
     if (std::any_of(m_shots.begin(), m_shots.end(), [](std::uint64_t count) { return count != 0; })) {
@@ -1053,8 +1054,13 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
         }
         const std::uint32_t slot = slot_of(codec, entity);
         if (codec.parts != nullptr) {
-            for (hub::Bytes& state : codec.parts(entity, view, PartsRequest{known.sent, kFragmentBudget, &m_clock})) {
+            PartsRequest request{known.sent, kFragmentBudget, &m_clock};
+            request.ownerHealth = owner ? known.ownerHealth : -1.0F;
+            for (hub::Bytes& state : codec.parts(entity, view, request)) {
                 fragments.push_back(PendingFragment{slot, codec.type, std::move(state), false});
+            }
+            if (owner && codec.key == world::ComponentKey::vitals) {
+                known.ownerHealth = entity.vitals.health;
             }
             continue;
         }
@@ -1303,6 +1309,13 @@ void RepSession::handle_attacks(const ClientInput& input) {
         const world::Entity* own = m_world.entity_of(m_id);
         m_attack.step(step.sequence, step.attackPress, step.attackHold, step.attackRelease, now,
                       own != nullptr ? world::Combat::weapon_key(*own) : std::string());
+        // The sequence of the basic attacks of the character (stage 3.3b-M1): before the contacts of the step.
+        world::AttackBits bits;
+        bits.press = step.attackPress;
+        bits.hold = step.attackHold;
+        bits.release = step.attackRelease;
+        bits.dodge = step.dodge;
+        m_world.combat().step(m_id, m_attack.sequence(), step.sequence, bits);
         m_projectileItems += step.projectileHits + step.shots;
         if (step.abilityKey != 0) {
             press_ability(input, step);
@@ -1310,7 +1323,9 @@ void RepSession::handle_attacks(const ClientInput& input) {
         // The confirm of the aim of a heal of an ability (stage 3.3b-S6): a click (on the target) or the self cast input. The world
         // starts the cast only for an aim of this session; each other click is an attack as before.
         if (step.attackPress || step.selfTarget) {
-            if (m_world.abilities().confirm(m_id, step.sequence, step.selfTarget, input.hasLook ? input.lookYaw : m_input.lookYaw)) {
+            // The lock of the session now (code review of stage 3.3b-S6, finding S6-R8): a confirm in the loading screen of a travel is refused.
+            if (m_world.abilities().confirm(m_id, step.sequence, step.selfTarget, input.hasLook ? input.lookYaw : m_input.lookYaw,
+                                            m_travelAnchor.has_value())) {
                 log::write("rep: the aim of the ability is confirmed (%s, input %u)", step.selfTarget ? "self cast" : "click",
                            static_cast<unsigned>(step.sequence));
             }

@@ -181,8 +181,13 @@ enum class CastVerdict : std::uint8_t {
     casting,
     /** The character has less mana than the cost of the cast (stage 1.3b, I14). */
     noMana,
+    /**
+     * The confirm of an aim: the place of the bar has a different ability than the aim now, or a different weapon is in the hand (code
+     * review of stage 3.3b-S6, finding S6-R2).
+     */
+    aimChanged,
 };
-inline constexpr std::size_t kCastVerdictCount = 12;
+inline constexpr std::size_t kCastVerdictCount = 13;
 
 /** @return A short text for a log line, for example "the cooldown runs". */
 [[nodiscard]] const char* cast_verdict_text(CastVerdict verdict);
@@ -204,6 +209,8 @@ struct AbilityPress {
      */
     bool confirmed{false};
     bool self{false};
+    /** The ability that the press must find on the place of the bar (the confirm of an aim: the ability of the aim). 0: any. */
+    std::uint32_t expected{0};
 };
 
 /** One shot of a client (an item of the second list of its input entry): the projectile of an ability. */
@@ -435,7 +442,9 @@ public:
      * @param yaw The look yaw of the confirm (the direction of the cast).
      * @return True when an aim of the session started its cast.
      */
-    bool confirm(SessionId session, std::uint16_t input, bool self, float yaw);
+    bool confirm(SessionId session, std::uint16_t input, bool self, float yaw, bool locked = false);
+    /** Ends the aim of a character (a change of its bar or of its nodes, a travel; code review of stage 3.3b-S6, S6-R2 and S6-R8). */
+    void cancel_aim(const std::string& characterId);
     /**
      * Development aid (tools/world cast): the press of a key of the bar for a character with no client (a remote test
      * character). The same checks and the same cast as a press of a session; the server throws a projectile itself.

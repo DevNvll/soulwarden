@@ -176,6 +176,11 @@ SkillResult Skills::change(const std::string& characterId, const char* what, Cha
             m_world.touch(entity->id, ComponentKey::cooldowns);
         }
         entity->skills = std::move(skills);
+        if (touched.bars || touched.points) {
+            // An aim of an ability names the place of the bar and the node of its press: a change of the bar or of the nodes ends it (code
+            // review of stage 3.3b-S6, finding S6-R2).
+            m_world.abilities().cancel_aim(characterId);
+        }
         if (touched.points) {
             // The fixed stats of the learned nodes are gear values (Passives::fixed, Gear::values): a change of the nodes (an
             // assignment, a reset of a tree) refreshes them after the stored change (code review of stage 3.3b-S5, finding F5).
