@@ -131,9 +131,16 @@ RANGED_EVENT = "CAGE-RangedAttack"
 AMMO_SLOTS = {"PaperdollSlotTypes::ARROW_AMMO_SLOT": 12, "PaperdollSlotTypes::CARTRIDGE_AMMO_SLOT": 13,
               "PaperdollSlotTypes::QUICK_SLOT_1": 14}
 AMMO_TYPE = "AmmoItemDefinitions"
-# The basic shot of an archer (stage 3.4f-A, a project rule of the backend: gamedata::kBasicShotAction): the one ranged attack that
-# a creature uses in this stage. The other ranged attacks of the file (a charged or a fast shot, a cast) wait for later stages.
+# The basic shot of an archer (stage 3.4f-A, a project rule of the backend: gamedata::kBasicShotAction) and the basic cast of a caster
+# (stage 3.4f-B: gamedata::kBasicCastAction): the ranged attacks that a creature uses. The other ranged attacks of the file (a charged or
+# a fast shot, a rolling spell) wait for later stages.
 BASIC_SHOT_ACTION = "FireBow"
+BASIC_CAST_ACTION = "Cast_One_Projectile"
+BASIC_RANGED_ACTIONS = (BASIC_SHOT_ACTION, BASIC_CAST_ACTION)
+# A release of a basic ranged action whose join fails stops the tool (code review of stage 3.4f-A, finding CR-R5: a broken source must
+# not replace a complete export with fewer attacks), but for these authored cases of the retail data, each with its reason: the slice
+# keeps no such basic attack in the file. Key: (the slice path, the action, the cause). Empty: the retail data has none.
+BASIC_RANGED_EXCEPTIONS: dict[tuple[str, str, str], str] = {}
 # An action of a ranged event that is a movement or an attack on a structure is not a ranged attack of the file (a project
 # rule): the backend has no rule for a shot in a walk (WalkBack of the skeleton archer) or for a structure.
 RANGED_LEFT_OUT_WORDS = LEFT_OUT_WORDS | {"walkback", "walk", "move"}
@@ -495,15 +502,23 @@ class Animations:
                         entry["end"] = last
                 for layer in variant.findall("ProcLayer"):
                     time = 0.0
+                    # A time of a ranged event needs each ExitTime before it as a finite number (code review of stage 3.4f-A, finding
+                    # CR-R6): a text that is not a number gives the event no time (None), not the time 0.
+                    broken = False
                     for item in layer:
                         if item.tag == "Blend":
+                            strict = strict_number(item.get("ExitTime"))
+                            broken = broken or strict is None
                             step = number_of(item.get("ExitTime"))
                             if step > 0.0:
                                 time += step
                         elif item.tag == "Procedural" and item.get("type") in ("CAGE-Damage", RANGED_EVENT):
                             parameters = item.find("ProceduralParams")
                             values = {value.tag: value.get("value", "") for value in parameters} if parameters is not None else {}
-                            entry["contacts" if item.get("type") == "CAGE-Damage" else "ranged"].append((time, values))
+                            if item.get("type") == "CAGE-Damage":
+                                entry["contacts"].append((time, values))
+                            else:
+                                entry["ranged"].append((None if broken else time, values))
                 fragments.setdefault(fragment.tag.lower(), []).append(entry)
         included = root.find("SubADBs")
         for sub in (included.iter("SubADB") if included is not None else []):
@@ -519,6 +534,18 @@ def number_of(value: str | None) -> float:
     except ValueError:
         return 0.0
     return number if math.isfinite(number) else 0.0
+
+
+def strict_number(value: str | None) -> float | None:
+    """@return The number of an attribute: 0 for no text (the default of the format), no value for a text that is not a finite number
+    (code review of stage 3.4f-A, finding CR-R6)."""
+    if value is None or not value.strip():
+        return 0.0
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def select(variants: list[dict], tags: set[str], offhand: bool) -> dict | None:
@@ -606,9 +633,15 @@ class Behavior:
         projectile = self.projectile_of(path) if self.projectile_of is not None else None
         if projectile is None:
             return None, "the projectile slice has no asset, no Projectile component, or no flight values"
+        if isinstance(projectile, str):
+            return None, projectile
+        aim = {name: strict_number(values.get(name)) for name in ("ProjectileSpeed", "AILeadTargetMaxAngle", "AIAimMaxAngle",
+                                                                  "AIMissMinDistance", "AIMissMaxDistance")}
+        if any(value is None for value in aim.values()):
+            return None, "a ranged attack has an aim value that is not a finite number"
 
         def number(name: str) -> float:
-            return rounded(number_of(values.get(name)))
+            return rounded(aim[name])
 
         wire, category = self.tables.types[row["type"]]
         return {"profile": attack["profile"], "attack": attack["attack"], "index": attack["index"], "ammo": ammo_id,
@@ -631,7 +664,7 @@ class Behavior:
             self._tags[path] = TagBits(self.sources, path)
         return self._tags[path]
 
-    def read(self, roots: list, controller_path: str, actions: list[list]) -> dict:
+    def read(self, roots: list, controller_path: str, actions: list[list], slice_path: str = "") -> dict:
         """@return The members of a slice for its behavior: "behavior" (when the slice has the values), "tags" (when
         the slice has a tag), "attacks", and "noAttack" (the cause, for a slice with no attack: not a member of
         the file). `actions` is the action table of the slice."""
@@ -719,7 +752,7 @@ class Behavior:
         # creature-ranged.md Q1: the skeleton archer plays Bow+Skeleton+Bowman, the dryad archer Bow+Dryad+Bowman). The melee
         # attacks keep the tags of the weapons (their selection has the live proof of stage 3.4b).
         ranged_tags = tags | read_default_tags(roots)
-        ranged = (self.read_ranged(actions, databases, ranged_tags, references, main_hand, rows)
+        ranged = (self.read_ranged(actions, databases, ranged_tags, references, main_hand, rows, slice_path)
                   if self.ranged_attacks is not None else [])
         if ranged:
             result["ranged"] = ranged
@@ -728,8 +761,9 @@ class Behavior:
         return result
 
     def read_ranged(self, actions: list[list], databases: list[str], tags: set[str], references: dict, main_hand: dict | None,
-                    rows: dict) -> list[list]:
-        """@return The ranged attacks of a slice (stage 3.4f-A): [action, time, [release, ...]], a release with its "time"."""
+                    rows: dict, slice_path: str = "") -> list[list]:
+        """@return The ranged attacks of a slice (stage 3.4f-A): [action, time, [release, ...]], a release with its "time". A release of
+        a basic ranged action (BASIC_RANGED_ACTIONS) whose join fails stops the tool (finding CR-R5), but for BASIC_RANGED_EXCEPTIONS."""
         ranged = []
         for index, (name, fragment, fragment_index, _) in enumerate(actions):
             if fragment_index < 0:
@@ -752,9 +786,15 @@ class Behavior:
                 self.count("a ranged action is a part of a chain, a reaction, a movement, or an attack on a structure")
                 continue
             releases = []
-            for time, values in sorted(events, key=lambda event: event[0]):
-                release, cause = self.release(values, references, main_hand, rows)
+            basic = name in BASIC_RANGED_ACTIONS
+            for time, values in sorted(events, key=lambda event: (event[0] is None, event[0] or 0.0)):
+                if time is None:
+                    release, cause = None, "a ranged event has a time that is not a finite number"
+                else:
+                    release, cause = self.release(values, references, main_hand, rows)
                 if release is None:
+                    if basic and (slice_path, name, cause) not in BASIC_RANGED_EXCEPTIONS:
+                        raise Failure(f"the basic ranged action {name} has a release whose join fails: {cause}")
                     self.count(cause)
                     releases = []
                     break

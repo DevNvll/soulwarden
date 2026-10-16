@@ -1187,14 +1187,22 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     projectile_index: dict[str, int | None] = {}
     by_path = slice_assets(catalog)
 
-    def projectile_of(path: str) -> int | None:
+    def projectile_of(path: str) -> int | str | None:
+        """@return The index of a projectile slice in the list of the file, or the cause with no slice: the catalog has no asset of the
+        path (an authored reference that the game copy does not have), or the slice has no Projectile component or no flight values.
+        An asset of the catalog with no source stops the tool (code review of stage 3.4f-A, finding CR-R5: a broken source)."""
         if path not in projectile_index:
             entry = None
             asset = by_path.get(path)
-            roots = sources.stream(path) if asset is not None and sources.has(path) else None
-            if roots is not None:
-                entry = read_projectile(path, asset, roots, flight_of(path, roots))
-            projectile_index[path] = None
+            if asset is None:
+                projectile_index[path] = "the projectile slice is not in the asset catalog of the game copy"
+                return projectile_index[path]
+            roots = sources.stream(path) if sources.has(path) else None
+            if roots is None:
+                sources.check_complete()
+                raise Failure(f"the projectile slice {path} of the asset catalog has no source")
+            entry = read_projectile(path, asset, roots, flight_of(path, roots))
+            projectile_index[path] = "the projectile slice has no Projectile component or no flight values"
             if entry is not None:
                 projectile_index[path] = len(projectile_list)
                 projectile_list.append(entry)
@@ -1254,7 +1262,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
             # What the behavior of a creature with this slice needs: its sense and speed values, the
             # tags of its animation fragments, and its attacks.
             try:
-                slices[-1].update(behavior.read(roots, controller_path_of(roots), slices[-1]["actions"]))
+                slices[-1].update(behavior.read(roots, controller_path_of(roots), slices[-1]["actions"], path))
             except Failure as error:
                 raise Failure(f"the behavior data of {path} is not complete: {error}") from error
         return slice_index[path]
@@ -1462,12 +1470,12 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     counts["headsWithNoSkeleton"] = hit_counts.get("noSkeleton", 0)
     counts["headsWithOtherShape"] = hit_counts.get("headOtherShape", 0)
     # A kind attacks when one of its slices has an attack (a melee attack, or from stage 3.4f-A the basic shot of the backend:
-    # creature_behavior.BASIC_SHOT_ACTION) and the values for the way to a target.
+    # creature_behavior.BASIC_RANGED_ACTIONS, the cast of a caster from stage 3.4f-B) and the values for the way to a target.
     quiet = 0
     quiet_points = 0
 
     def shoots(body: dict) -> bool:
-        return any(body["actions"][attack[0]][0] == creature_behavior.BASIC_SHOT_ACTION for attack in body.get("ranged", []))
+        return any(body["actions"][attack[0]][0] in creature_behavior.BASIC_RANGED_ACTIONS for attack in body.get("ranged", []))
 
     for kind, entry in zip(kind_list, document_kinds):
         bodies = [slices[body] for body, _ in kind["bodies"]]
@@ -1598,7 +1606,7 @@ def ranged_counts(slices: list[dict], points: list[list], kinds: list[dict], lef
     ranged_slices = {index for index, entry in enumerate(slices) if entry.get("ranged")}
     ranged_kinds = {index for index, kind in enumerate(kinds) if any(body[0] in ranged_slices for body in kind["bodies"])}
     releases = sum(len(attack[2]) for entry in slices for attack in entry.get("ranged", []))
-    basic = sum(1 for entry in slices if any(entry["actions"][attack[0]][0] == creature_behavior.BASIC_SHOT_ACTION
+    basic = sum(1 for entry in slices if any(entry["actions"][attack[0]][0] in creature_behavior.BASIC_RANGED_ACTIONS
                                              for attack in entry.get("ranged", [])))
     return {"slicesWithRangedAttacks": len(ranged_slices), "slicesWithBasicShot": basic,
             "rangedAttacks": sum(len(entry.get("ranged", [])) for entry in slices),
@@ -1741,7 +1749,7 @@ def main() -> int:
     print(f"  ranged attacks: {counts['rangedAttacks']} of {counts['slicesWithRangedAttacks']} slices ({counts['rangedReleases']} "
           f"releases, {counts['projectileSlices']} projectile slices; {counts['kindsWithRangedAttacks']} kinds, "
           f"{counts['spawnPointsWithRangedAttacks']} spawn points); slices with the basic shot "
-          f"{creature_behavior.BASIC_SHOT_ACTION}: {counts['slicesWithBasicShot']}; player capsule: "
+          f"{' or '.join(creature_behavior.BASIC_RANGED_ACTIONS)}: {counts['slicesWithBasicShot']}; player capsule: "
           f"{document.get('playerCapsule', 'none')}")
     for cause, count in counts["rangedLeftOut"].items():
         print(f"  no ranged attack, {cause}: {count}")

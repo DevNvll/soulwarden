@@ -20,7 +20,7 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 | A shot of the server for a character with no client | `Projectiles::launch_character`, `commands::shoot`, `tools/world shoot` |
 | The projectile of an ability: the toss of the trap, the Beacon, the shots of the Pylon | `Projectiles::launch_spell` (`SpellShot`, `SpellLanding`), `Abilities::takes_shot`, `Abilities::throw_spell`, `Spells::summon_shot`, [Spell entities](spells.md), test cases SB3, SB5, SB6, SB9 |
 | The corrections of the code review of stage 3.3b-S3 (F1 to F8) | `tests/review_projectile_tests.cpp`, test cases RJ1 to RJ8 |
-| The shot of a creature (stage 3.4f-A): the projectile entity and its record, the flight, the hit on a character, the ends, the holds, the limits | Protocol notes 4.37, `world/projectiles.h` (`Projectiles::launch_creature`, `CreatureShot`, `CreatureShotEnd`, `creature_shot_rules`), `server/rep/states/projectile_state.cpp`, `World::make_projectile`, test cases CRG3 to CRG6, CRG9 |
+| The shot of a creature (stage 3.4f-A; the casts and the dodge of stage 3.4f-B): the projectile entity and its record, the flight, the hit on a character, a character in a dodge, the ends, the holds, the limits | Protocol notes 4.37, `world/projectiles.h` (`Projectiles::launch_creature`, `CreatureShot`, `CreatureShotEnd`, `creature_shot_rules`), `server/rep/states/projectile_state.cpp`, `World::make_projectile`, test cases CRG3 to CRG6, CRG9 |
 
 ## Rules
 
@@ -83,8 +83,8 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   first point of the segment of a step in the sphere of a shield of an enemy of the shooter (`Spells::absorbs`; a creature and a
   character are enemies, two characters are not: `World::hostile`) ends the projectile there before a creature or a wall
   behind it, with the end `absorbed` and no hit. The shooter is the spell entity of a spell projectile or the caster. From stage
-  3.4f-A the shots of the archers fly (below): the shield takes them too (the creature is the shooter); the live check of the
-  absorption is part 3.4f-B.
+  3.4f-A the shots of the archers fly (below): the shield takes them too (the creature is the shooter): before a later character
+  and before a wall in the sphere (test case CRG13; live proof P4 of stage 3.4f-B: an arrow of a Varangian Archer).
 - The head of a creature (stage 3.3b-S5, `head_contact`, protocol notes 4.30). A hit of a projectile is a headshot when the
   line of the projectile at the body meets the head volume of the creature: the line from one radius of the body capsule
   before the point of the hit to one radius of the head volume and the hit tolerance (`projectile_rules::kHitTolerance`,
@@ -157,6 +157,17 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   character is the capsule of the CharacterComponent of the player slice (game data: radius 0.41 m, segment 0.8 m, its lowest point at
   the feet; the default capsule with a file of an older tool). The shot hits the first character on its line, not only the target (case
   CRG4). A wall or the ground first: no damage. A shield of an enemy of the creature first: the end `absorbed`.
+- A character in a dodge (stage 3.4f-B, [Stamina and dodge](stamina-and-dodge.md)): the contact has its time on the world clock (the
+  time of the flight step and the part of the segment). A character in the immune window of its dodge at that time takes no damage
+  (`CreatureHitOutcome::evaded`, the count `evaded`), and the shot flies on through it (the profiles of the basic attacks of the creatures
+  have `m_destroyProjectileOnUnsuccesfulHit` false; a rule of this project for the rest): the flight keeps the characters that it passed
+  (`CreatureFlight::passed`) and never hits them again; it can hit a later character (test case CRG12) or a wall (live proof P2, P3).
+- The casts of the casters (stage 3.4f-B) are creature shots with the release of the cast: the slow ball of the Skeleton Mage
+  (`mage_projectile_slow`, 20 m/s, no fall, 3 s) has the attack index 125 and the ammunition key 0 (test case CRB1, live proof P1). A
+  session that comes near in its flight gets one launch with the time anchor of the release (test case CRG10).
+- The loader of the creature data (code review of stage 3.4f-A, finding CR-R7; test case RR7): the ammunition key of a release must be
+  the CRC-32 of its lower-case ammunition name (0 with no ammunition), and the damage table key the CRC-32 of its table name. A file
+  whose keys do not agree is refused (the wire would name a different ammunition or table).
 - The ends (rules of this project, research A6): a hit, a wall, a shield: the collision state, and the stop of the record after
   `creature_shot_rules::kHitHold` (0.25 s: the collision state goes out before the stop) or, at a wall, after the stuck life time of the
   slice (`m_stuckLifetime`, 8 s, at most 10 s: the arrow stays in the wall). The range or the life time: the stop at once (no contact).
@@ -164,8 +175,8 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   player). The death or the leave of the target in the flight: the shot flies on (it can hit a different character on its line).
 - The limits and the cost: 8 shots of a creature in the air at most (`kCreatureMost`, a limit of the cost); a direction that is not a
   unit vector or a place that is not of the world is refused. The tick looks only at the shots in the air and at the holds (case CRG9:
-  32,840 far spawn points, 50 characters, 50 archers, 200 flights, 1,000 ticks in about 14 ms; the same steps, looks, and wall tests with
-  840 points).
+  32,840 far spawn points, 50 characters, 25 archers and 25 mages from stage 3.4f-B, 200 flights, 1,000 ticks in about 17 ms; the same
+  steps, looks, and wall tests with 840 points).
 
 ### The projectile of an ability (stage 3.3b-S2b)
 

@@ -102,8 +102,9 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   has only the slots that changed. The progression encoder has the two views too: the owner
   gets the level and the experience, and an observer gets the level (the name tag of a remote
   player shows it). The attribute state, the three skill states, the cooldown state (stage
-  3.3a), the charge state of the heart rune (stage 1.3b, slot 48), and the speed table (stage
-  3.3b-S2a, slot 43; [Status effects](status-effects.md)) are for the owner only.
+  3.3a), the charge state of the heart rune (stage 1.3b, slot 48), the speed table (stage
+  3.3b-S2a, slot 43; [Status effects](status-effects.md)), and the Stamina state (stage 3.4f-B,
+  slot 42, type 4297; [Stamina and dodge](stamina-and-dodge.md)) are for the owner only.
   The status state of a creature (stage 3.3a) has only the observer view. The status state of
   a player (stage 3.3b-S1, slot 44) has the two views: the owner gets its maps, an observer the
   public statuses ([Status effects](status-effects.md)). The Player state of the owner has the

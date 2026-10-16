@@ -98,11 +98,12 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   | Sundering Shockwave | A hit of the rows of Shockwave gives `Status_Perk_Hammer_Shockwave_Rend` (7 s, armor -0.05 times the potency); the icon shows at the name plate. |
   | Insatiable Gravity Well | A hit of the burst of Gravity Well heals 15 percent times the potency of its damage, one time in 1 s, and casts the burst of the perk (`InsatiableGravityWell`, 4 m, row `GreatAxe_GravityWell_Burst_Perk`) around the character in the next tick: the client text of the perk; the data has no link from the perk to the spell. |
   | Refreshing Move | A light or heavy hit takes 0.8 percent times the potency of the cooldown of each ability of the bar of the weapon in the hand (0.4 s activation cooldown). |
-  | Abyssal Attunement, Abyssal Gambit, Abyssal Cruel | The void damage over time of the hit; the BaseDamage parts need stamina below 100 or a crowd control effect on the creature. |
+  | Abyssal Attunement, Abyssal Gambit, Abyssal Cruel | The void damage over time of the hit; the BaseDamage parts need stamina below 100 (from stage 3.4f-B the stamina of the server) or a crowd control effect on the creature. |
+  | Shirking Fortification, Stamina Recovery, Gambled Energy, the stamina runeglass (stage 3.4f-B) | A creature hit in the immune window of a dodge gives the fortify of the armor (`Status_Perk_Armor_DodgeSuccess_Fortify`); a hit taken below 50 percent health and 100 percent stamina gives 20 stamina (60 s activation cooldown); a hit with less than 100 percent stamina gets the BaseDamage part; a hit with damage gives 1 or 4 stamina, one time in 3 s ([Stamina and dodge](stamina-and-dodge.md), [Passive rules](passive-rules.md)). |
   | Chain Void | A light or heavy hit casts the chain (3 creatures, 15 percent of the raw damage, 0.3 s apart). |
   | The runeglass and ward gems | ABS and DMG parts (passive). |
   | Health, Wellness, Acutely Empowered, Slash Protection, Slash Damage, Regenerating, Refreshing Toast | Passive values; Refreshing Toast shortens the cooldown of a consumable. |
-  | Thwarting Strikes, Resilient, Shirking Fortification, Freedom, Stamina Recovery, Gambled Energy, Purifying Toast, the PvP ring perk | No effect: the backend has no grit, no dodge, no crowd control on a player, no stamina, no debuff on a player, and no player target (the critical hits came in stage 3.3b-S5: [Combat and health](combat-and-health.md)). |
+  | Thwarting Strikes, Resilient, Freedom, Purifying Toast, the PvP ring perk | No effect: the backend has no grit, no crowd control on a player, no debuff on a player, and no player target (the critical hits came in stage 3.3b-S5: [Combat and health](combat-and-health.md)). |
 
 - The cost of the rules: a hit looks at the perks of one character (55 at most), the chain at
   the position index near its target; the effects of a creature are in the creature system

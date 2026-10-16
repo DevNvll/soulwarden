@@ -303,6 +303,9 @@ void Gear::refresh(Entity& character) {
     character.gear.healNonConsumable = status.healNonConsumable;
     character.gear.healLifeSteal = status.healLifeSteal;
     character.gear.healOutgoing = status.healOutgoing;
+    // The regeneration part of the stamina (stage 3.4f-B): the stamina system and the speed table of the owner (the key StaminaRate).
+    const bool staminaChanged = character.gear.staminaRate != status.staminaRate;
+    character.gear.staminaRate = status.staminaRate;
     // The speed table of the character (stage 3.3b-S2a, S2a-I10): the client runs with these multipliers (live check of
     // status-speed.md: the table of slot 43, not the status map, changes the run), in the limits of the data (StatMultiplierData:
     // the client bounds them itself, getter 0x3FEA370). With no limits in the data (a file of the ability tool from before
@@ -320,13 +323,18 @@ void Gear::refresh(Entity& character) {
     };
     const float move = multiplier("MoveSpeedMod", status.moveSpeed);
     const float sprint = multiplier("SprintSpeedMod", status.sprintSpeed);
-    if (move != character.moveMultiplier || sprint != character.sprintMultiplier) {
+    if (move != character.moveMultiplier || sprint != character.sprintMultiplier || staminaChanged) {
         character.moveMultiplier = move;
         character.sprintMultiplier = sprint;
         m_world.touch(character.id, ComponentKey::statMultipliers);
     }
+    const bool loadChanged = character.gear.loadClass != static_cast<std::uint8_t>(values.load);
     character.gear.equipLoad = values.equipLoad;
     character.gear.loadClass = static_cast<std::uint8_t>(values.load);
+    if (staminaChanged || loadChanged) {
+        // The regeneration of the stamina follows the StaminaRate of the statuses and the factor of the load class (stage 3.4f-B).
+        m_world.stamina().refreshed(character, staminaChanged);
+    }
     if (bonusChanged) {
         m_world.touch(character.id, ComponentKey::attribute);
     }

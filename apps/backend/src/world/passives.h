@@ -123,6 +123,8 @@ struct PassiveCounts {
     std::uint64_t aroundLooked{0};
     std::uint64_t aroundStatuses{0};
     std::uint64_t hitTakenRules{0};
+    /** Rules with OnHitTakenWhileInvulnerable that acted (stage 3.4f-B). */
+    std::uint64_t evadedRules{0};
 };
 
 class Passives {
@@ -143,6 +145,18 @@ public:
      * and of its perks, with the conditions that a hit taken has a source for (code review of stage 3.3b-S5, finding F6).
      */
     void hit_taken(Entity& character, float dealt);
+    /**
+     * A creature hit came in the immune window of the dodge of a character (stage 3.4f-B, Stamina::evaded): the rules with
+     * OnHitTakenWhileInvulnerable of the weapon in its hand and of its perks (Shirking Fortification: the fortify of the armor perks),
+     * with the conditions that such a hit has a source for (its values, its statuses, its load class, the dodge as the action and its
+     * fragment as the sequence, RequireReaction: the damage that the hit would do above 0).
+     */
+    void hit_evaded(Entity& character, float wouldDeal);
+    /**
+     * A dodge of a character started or reached its mark CanTransition (stage 3.4f-B): the status actions of the character look at it in
+     * the next tick of the evaluator (the tag Dodging), not after the step of `passive_rules::kAroundStep`.
+     */
+    void recheck(const std::string& characterId);
     /**
      * @return The outgoing part of a heal of a healer from its rules (stage 3.3b-S6): the sum of the HealScalingValueMultiplier of each
      *         rule with OnHealed of the tree of the weapon of the heal (HealSource::table) and of the perks whose conditions pass for

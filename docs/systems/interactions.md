@@ -146,8 +146,16 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
 - A cancel before its press (code review of stage 2.5b, finding ST-R2, case RY2): the press (an input report) and its release (2473) go
   on different carrier channels, and a press can come after its 2473. A 2473 that matches no use marks its reference with the sequence
   number of its datagram (`carrier::Connection::delivered_datagram`: one sequence for all channels of a client); a request of that
-  reference from an earlier datagram starts no use (`RepSession::m_earlyCancel`). A request of a later datagram ends the mark, and the
+  reference from an earlier datagram starts no use (`RepSession::m_earlyCancels`). A request of a later datagram ends the mark, and the
   mark ends 3 s after the cancel (a decision of an agent: the numbers have 16 bits).
+- The marks of the early cancels (code review of stage 3.4f-A; stage 3.4f-B): each reference has its own mark, 8 at most (finding
+  CR-R3, test case RR3: a cancel of a second source does not erase the mark of the first one). A mark also has the input steps of the
+  cancelled attempt: the estimate of the input number of the client at the cancel (`AttackTrack::estimate`: the last input and one
+  step for each 1/30 s since it) and 5 steps more (`kEarlyCancelSteps`: an entry is in the five reports of its client). A request of a
+  newer datagram whose input step is not later than that is the old entry that the client repeats: no use (finding CR-R4, test case
+  RR4). A cancel of a reference that the session took in the last 3 s and that has no use is late (the echo of a use that ended,
+  `m_seenRequests`): it gives no mark (test case IT6). Source: decisions of an agent with the rules of the carrier (protocol notes
+  4.7).
 - The service handoff (stage 2.5b; the base of the shops 5.1 and the transmog 5.6; research Q4): a handler of a later stage gives the
   character of a committed use a service of its source (`grant_service`: the kind, the ids of the offer, the revision, a deadline
   only when the data has one). The grant is a value of the entity (`Entity::serviceGrant`), and only this system changes it. It stays

@@ -5944,6 +5944,66 @@ now), the lines `creature shots` of `tools/world projectiles` and `tools/world l
   The release time of the Dryad Archer (0.65 s) is a time of that variant; the live proof P6 shows no early or late arrow (a check to
   about 0.1 s, at night).
 
+### 4.38 The stamina of a player, the dodge, and the cast of a creature (live proof of stage 3.4f-B; static proof for the client code; the rules are project rules with the values of the game data)
+
+Stage 3.4f-B. Research: `~/Games/soulwarden/work/research/creature-ranged.md` (part B, task D, the live check L6). Live checks and the
+live proof: `~/Games/soulwarden/work/evidence/creature-ranged-b/implement/` (`live/LIVE-CHECKS.md`, `RESULT.md`, `proof/`). Code:
+`world/stamina.h`, `gamedata/stamina_data.h`, `server/rep/states/stamina_state.cpp`, `server/rep/states/stat_multiplier_state.cpp`,
+`world/behavior.h` (the band of a caster), `gamedata/creature_data.h` (`kBasicCastAction`), `tools/gamedata/stamina.py`. Documents:
+[Stamina and dodge](systems/stamina-and-dodge.md), [Creature behavior](systems/creature-behavior.md). Test cases SM1 to SM4, CRB1,
+CRG9 to CRG13.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The Stamina state (`MB::StaminaComponentReplicatedState`, type 4297) at slot 42 of the player slice (component Stamina): one group, six fields, each a 32-bit float, big-endian: 0 cur, 1 max, 2 winded (the time that is left), 3 regen (the delay that is left), 4 multMax, 5 multRegen. The apply function stores the six values in the server copy of the component (+0xD0 to +0xE4) and multMax also in the multiplier of the maximum (+0xC0). It does not set the predicted value (+0xB0): a state with 20 of 100, or with 0, does not change the HUD or the dodge of the owner client. | Live LS2, LS3, LS8; static. | Constructor `0x671A230`, apply `0x683E5D0`, reader `0x2A42F30` |
+| The message 473 (ForceSyncServerStateRemote) sets the predicted values only for a remote player: its handler returns for the local player. | Static. | Handler `0x67A69C0` |
+| The client of the owner predicts its stamina: a dodge pays 45 at 0.1 s of its fragment and sets the delay of the regeneration to 1.0 s; at the mark CanTransition (0.5 s) the delay is 1.0 s again; then 1.111 in each client tick of 1/30 s (33.33 in one second). The value stops at 0 (no debt); at 0 the winded time is 2.0 s; a dodge needs a value above 0 (a dodge at 5 is accepted). A payment of cost 0 (a light attack of the great axe) does not stop the regeneration. The HUD reads the current and the maximum value of the component. | Live LS1, LS4 to LS7 (memory reads of the component). | Stamina change `0x6892480`, HUD `0x691F9B0` |
+| The maximum of the client of the development character is 95 (also with no item equipped); the slice has `m_initMax` 100. A state with max 100 changes only the server copy. | Live LS5, LS8. | — (the source of the 95 is open) |
+| The component reads the multipliers of its maximum and of its regeneration from the speed table of the owner (StatMultiplierTable, slot 43, 4.24): the keys 0x0B (StaminaRate) and 0x0C (MaxStamina); an absent key is 1.0. The backend sends 0x0B (1 + the StaminaRate of the statuses, times 10000) when it is not 1. | Static; test case SM3 (the bytes). | `0x6888790` |
+| The dodge input: one input step with the bit 322 for each press of the dodge key, also for a press that the client refuses (the fourth press at 0 stamina). | Live LS9. | — |
+| The cast of a Skeleton Mage: the action `Cast_One_Projectile` (ALC state, 4.14) shows the windup (the staff up with a purple light); the Projectile state of 4.37 with the slice `mage_projectile_slow` (asset `F7ECC33B-2C2D-5897-9492-049E8A30462A`, sub 2, slot 1), the attack index 125 (`AI_Mage_Sphere/Basic`), the ammunition key 0 (no ammunition: the slice override of the profile), the damage table key of `SkeletonMageDamageTable` (`CC5D9B49`), the row 0, and the speed 20 m/s flies one purple ball to the character; the collision state stops it there. | Live L6 (a probe), live proof P1 (the backend). | As 4.37 |
+
+**The data.** `stamina-data.json` (format 1, `tools/gamedata/stamina.sh`): the Stamina component of `slices/player.dynamicslice`
+(`m_min` 0, `m_initMax` 100, `m_regenRate` 33.33, `m_blockRegenRate` 10, `m_maxWindedTime` 2), BaseVitals_Player
+(`StaminaRegenDelay` 1, `StaminaRegenDelayOnEmpty` 1, `StaminaFullyDepletedDelay` 1), the load factors of EncumbranceData (1 for
+each class), the action Dodge of `playeractions_dodge.actionlist` (its fragment for each load class, its cost ids, the delay of its
+exit 1 s; six conditional costs of a weapon rule of the hatchet and the spear that the backend does not apply), the action Exhausted
+of `playeractions_global.actionlist` (from 0 to 100 percent), and the times of the dodge fragments of `player.adb` (pay 0.1 s,
+immune 0 to 0.5 s, CanTransition 0.5 s, the windows CanDodgeCancel 0.267 s to 0.5 s buffered and from 0.5 s instant). `creatures.json`:
+a slice with no ranged FireBow and a ranged `Cast_One_Projectile` has the cast as its basic shot (10 slices of 88 kinds: the Skeleton
+Mage, the Ancient Guardian mage, the Dynasty summoner, the Dryad shaman, the Damned priest). `ability-data.json` format 6: the
+hit-taken actions of the player lists (`actionHitStatuses`).
+
+**The rules** (the source of each rule is in [Stamina and dodge](systems/stamina-and-dodge.md) and [Creature behavior](systems/creature-behavior.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The stamina | The value of the server with the rules of the client: payments, gains, the regeneration after its delay, no debt, winded and exhausted at 0. The owner gets the Stamina state as the record. |
+| The dodge | A request for each step with the bit 322; the checks (alive, not locked, not overburdened, not exhausted, stamina above 0, a window of the playing dodge); the payment at 0.1 s; immune from 0 to 0.5 s of the world time of the input step. |
+| A hit in a dodge | No damage, no mark, no effect; the passive rules with OnHitTakenWhileInvulnerable; a creature shot flies on and never hits that character again. |
+| The caster | The cast as the basic shot; the band 6 m to 16 m (a walk into the band from farther, a walk back to 11 m from nearer than 6 m); the next cast 2.5 s after the start of the last one. |
+
+**The live proof** (stage 3.4f-B, a development run with the backend of the stage, daylight; `proof/` of the evidence folder):
+
+| Check | Result |
+| --- | --- |
+| P1 The cast (`p1-mage-hit.mp4`) | A Celestial Mage (`Skeleton_Mage:2`) at 10 m: the windup with a purple light, the release 0.5 s after the start of the action, one purple ball, the hit at its contact (56.3 Arcane damage), the next cast 2.67 s later. |
+| P2 A dodge through the ball (`p2-dodge-ball.mp4`) | A dodge 0.7 s after the start of the cast: the ball reaches the body in the roll, the server avoids the hit at 0.26 s of the dodge (no damage), and the ball stops at a wall 1.5 m behind the character. The HUD bar goes from 99 to 52 percent and comes back. A first dodge took the character out of the line: no contact. |
+| P3 A dodge through an arrow (`p3-dodge-arrow.mp4`) | A Varangian Archer at 10 m, a dodge 1.2 s after the start of each shot: two arrows avoided at 0.28 s of each dodge, no damage; one arrow flew on 18.5 m to a wall. |
+| P4 The shield of Maelstrom (`p4-shield.mp4`) | Maelstrom with Absorb 1.0 s after the start of a shot: the shield takes the arrow (7.4 m, no damage); two later arrows in the cooldown of Maelstrom hit the character (65 damage each). |
+| P5 The empty stamina (`p5-empty-regen.mp4`) | Four presses 0.73 s apart: the server pays 45, 45, 10 (100 to 0, exhausted), refuses the fourth press (exhausted), and its stamina is full about 4.4 s after the third payment (the regeneration starts 1 s after the mark CanTransition and needs 3 s for 100); the HUD bar empties, shows the red flash of the refused press, and is full at the same time. |
+
+**Not known, not done** (stage 3.4f-B):
+
+- The source of the maximum 95 of the client of the development character (no item, perk, affix, attribute row, or status of the data
+  gives it). The server uses 100 of the data.
+- A red cloud near the line of the shot about 0.2 s after the avoided ball of P2 (an impact effect at the wall, or an effect of the
+  client for a hit in the immune window: not proved).
+- The observer view of the Stamina state (no fragment is sent), the MaxStamina key (0x0C: no source in this stage), the block, grit,
+  the other casts of the data (a charged or a triple cast), the hostile statuses of a row, the heals and the buffs of a creature.
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

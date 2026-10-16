@@ -94,6 +94,8 @@ struct AttackBits {
     bool dodge{false};
     /** The block press (block_press_virtual, bit 484; stage 3.3b-M2: the swing of Charge with Unpredictable Strike). */
     bool block{false};
+    /** The input of the session is locked (a travel that the client did not confirm; stage 3.4f-B: only the dodge reads it). */
+    bool locked{false};
 };
 
 /**
@@ -279,6 +281,11 @@ public:
         WorldClock::time_point pendingDue{};
         /** The count of the ends of the sequence. */
         std::uint32_t generation{0};
+        /**
+         * Stage 3.4f-B: the step permitted a dodge (a dodge input at rest, at once in a cancel window, or the end of a buffered window
+         * of the fragment that played). The combat system takes it (take_dodge) and gives it to the stamina system.
+         */
+        bool dodged{false};
     };
 
     /**
@@ -339,6 +346,11 @@ public:
     void forget(const std::string& characterId);
     /** @return The number of the targets that a strike of a visit hit. */
     [[nodiscard]] std::size_t strike_hits(const std::string& characterId, std::uint32_t visit, std::uint32_t strike) const;
+    /**
+     * @return True when the last step of the character permitted a dodge (stage 3.4f-B): the dodge input at rest, in a cancel window of
+     *         the fragment that plays, or at the end of a buffered dodge window. The value is cleared.
+     */
+    bool take_dodge(const std::string& characterId);
     /** Counts a payment of a fragment: 0 stamina, 1 mana, 2 a payment with a condition that the world does not model. */
     void count_payment(int kind);
     /** Counts an item of a fragment that waits for its due time (Combat::step). */

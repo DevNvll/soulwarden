@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 22> codecs{{
+    static constexpr std::array<StateCodec, 23> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -50,6 +50,8 @@ std::span<const StateCodec> player_codecs() {
         {world::ComponentKey::status, kStatusSlot, kTypeStatusEffectsState, nullptr, encode_player_status_state},
         // The speed table (stage 3.3b-S2a, S2a-I10): owner only; the client runs with its multipliers.
         {world::ComponentKey::statMultipliers, kStatMultiplierSlot, kTypeStatMultiplierState, nullptr, encode_stat_multiplier_state, true},
+        // The stamina (stage 3.4f-B): owner only; the client predicts its own value (live checks LS2, LS3).
+        {world::ComponentKey::stamina, kStaminaSlot, kTypeStaminaState, nullptr, encode_stamina_state, true},
         // The movement of a character for its observers (stage 3.3b-S4: a dash): observer view only (the encoder gives the
         // owner no fragment).
         {world::ComponentKey::motion, kMovementSlot, kTypeMovementState, encode_observed_motion_state},

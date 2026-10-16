@@ -41,8 +41,9 @@ differences of the game), and each link of a status row resolves (with the named
 The first six cases after valid are the corrections of the findings F11 and F12 of the code review of stage 3.3a
 (a column that is not there is not 0 or false; two rows with one id must agree). The last three are the cost data of
 stage 1.3b (criterion I14). The last three are the caster effect rows and the status categories of stage 3.3b-S1
-(format 3). The values of the valid document: the format 5 (stage 3.3b-M2: the status actions of the player: a status that the action
-applies at its enter and takes at its exit, with its condition of nodes and tags as terms; a tracker that stays is not one); the status row with its number among
+(format 3). The values of the valid document: the format 6 (stage 3.3b-M2: the status actions of the player: a status that the action
+applies at its enter and takes at its exit, with its condition of nodes and tags as terms; a tracker that stays is not one; stage 3.4f-B:
+a hit-taken action with its tests, and a hit-taken action that also casts a spell is not exported); the status row with its number among
 the CRC values of all rows; its other cells (Health 400, TickRate 1, EffectCategories); the spell with its cost id
 "SpecialAttack" (an id that the game itself does not resolve: no cost); the mana cost 25 of a cost id; the cost
 columns of an ability row.
@@ -217,7 +218,21 @@ def action_list(case: str) -> bytes:
             f"<IfMannequinTag TagName='Warhammer'/></And></ActivationCondition><Activities><ModifyStatusEffects><Default>"
             f"<EffectsToApplyOnEnter><EffectId EffectId='WarHammer_Shockwave_Stun'/><EffectId EffectId='PotionHeal'/></EffectsToApplyOnEnter>"
             f"<EffectsToRemoveOnExit><EffectId EffectId='WarHammer_Shockwave_Stun'/></EffectsToRemoveOnExit></Default></ModifyStatusEffects>"
-            f"</Activities></Action></Actions></ActionList>").encode()
+            f"</Activities></Action>"
+            # Format 6 (stage 3.4f-B): a hit-taken action (the form of GreatAxe_Passive_StamWhenLowHP_Detect), and one that also casts a
+            # spell (the form of the HealingAura action of the life staff: not exported, with its cause).
+            f"<Action Name='Test_Hit_Stamina'><ActivationCondition><And><IfAbilityActive AbilityName='Passive_Test_Sprint'/>"
+            f"<IfMannequinTag TagName='Warhammer'/><IfHealthPercentage Comparison='LessThan' Percentage='0.5'/>"
+            f"<IfStaminaValue ComparisonType='LessThan' ComparisonValue='1.0' ComparisonValueIsPercentage='true'/>"
+            f"<Not><IfHasStatusEffect StatusEffect='PotionHeal'/></Not>"
+            f"<IfDamagedByPowerLevel Comparison='GreaterThanOrEqual' Value='0' FailOnNoReactionDamage='true'/></And></ActivationCondition>"
+            f"<Activities><ModifyStatusEffects><Default><EffectsToApplyOnEnter><EffectId EffectId='WarHammer_Shockwave_Stun'/>"
+            f"<EffectId EffectId='PotionHeal'/></EffectsToApplyOnEnter></Default></ModifyStatusEffects></Activities></Action>"
+            f"<Action Name='Test_Hit_Aura'><ActivationCondition><And><IfAbilityActive AbilityName='Passive_Test_Sprint'/>"
+            f"<IfDamagedByPowerLevel Comparison='GreaterThan' Value='0'/></And></ActivationCondition>"
+            f"<Activities><ModifyStatusEffects><Default><EffectsToApplyOnEnter><EffectId EffectId='PotionHeal'/></EffectsToApplyOnEnter>"
+            f"</Default></ModifyStatusEffects><CastSpell><Default SpellName='WarHammer_Spell_Shockwave'/></CastSpell></Activities></Action>"
+            f"</Actions></ActionList>").encode()
 
 
 class FakeSources:
@@ -244,7 +259,7 @@ def valid_values(document: dict, case: str) -> list[str]:
     """@return The values of the valid document that are not correct."""
     wrong = []
     statuses = {row[0]: row for row in document["statusEffects"]}
-    if document["format"] != 5:
+    if document["format"] != 6:
         wrong.append(f"the format {document['format']}")
     potion = statuses.get("PotionHeal")
     if potion is None or potion[9] != {"Health": 400.0, "TickRate": 1.0, "EffectCategories": "SurvivalPotion"}:
@@ -289,6 +304,13 @@ def valid_values(document: dict, case: str) -> list[str]:
                                            [[sprint[0], ["tag", "ForwardNav", False], sprint[1], sprint[2]],
                                             [sprint[0], ["tag", "BackNav", False], sprint[1], sprint[2]]], ["WarHammer_Shockwave_Stun"]]]:
         wrong.append(f"the status actions (format 5) {document.get('actionStatuses')}")
+    hit = {"nodes": ["Passive_Test_Sprint"], "tags": ["Warhammer"], "health": ["LessThan", 0.5], "stamina": ["LessThan", 1.0],
+           "without": ["PotionHeal"], "power": ["GreaterThanOrEqual", 0.0, True]}
+    if document.get("actionHitStatuses") != [["playeractions_ability_test", "Test_Hit_Stamina", hit, ["PotionHeal", "WarHammer_Shockwave_Stun"]]]:
+        wrong.append(f"the hit-taken actions (format 6) {document.get('actionHitStatuses')}")
+    if document.get("actionHitStatusesNotExported") != [["playeractions_ability_test", "Test_Hit_Aura",
+                                                         "an activity other than the statuses (CastSpell)"]]:
+        wrong.append(f"the hit-taken actions that are not exported {document.get('actionHitStatusesNotExported')}")
     if document["statusCategories"] != [["Buff", {}], ["Haste", {"MoveSpeedMod": 0.4, "SprintSpeedMod": 0.4}]]:
         wrong.append(f"the status categories {document['statusCategories']}")
     if document.get("statMultipliers") != [["MoveSpeedMod", 0.0, 1.5], ["SprintSpeedMod", 0.0, 1.5]]:

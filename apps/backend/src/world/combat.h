@@ -362,6 +362,11 @@ public:
     /** @return True when this input number is newer than the last one of the track (or the track has none). */
     [[nodiscard]] bool newer(std::uint16_t input) const;
     /**
+     * @return The input number of the client now, as an estimate from the last step of the track and the steps of 1/30 s since it came,
+     *         or no value with no step (code review of stage 3.4f-A, finding CR-R4: the bound of the steps before an early cancel).
+     */
+    [[nodiscard]] std::optional<std::uint16_t> estimate(WorldClock::time_point now) const;
+    /**
      * @return True when the input numbers of the client started again: this number is not
      *         newer, and no newer one came for some time (combat_limits::kSequenceRestart).
      *         Ask this only for the newest entry of a report: an older entry of a report is

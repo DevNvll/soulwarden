@@ -69,6 +69,14 @@ bool AttackTrack::newer(std::uint16_t input) const {
     return ahead >= 1 && ahead <= combat_limits::kNewerRange;
 }
 
+std::optional<std::uint16_t> AttackTrack::estimate(WorldClock::time_point now) const {
+    if (!m_hasInput) {
+        return std::nullopt;
+    }
+    const double steps = std::ceil(std::max(std::chrono::duration<double>(now - m_lastStep).count(), 0.0) * attack_rules::kStepsInSecond);
+    return static_cast<std::uint16_t>(m_lastInput + static_cast<unsigned>(std::min(steps, 1000.0)));
+}
+
 bool AttackTrack::restarted(std::uint16_t input, WorldClock::time_point now) const {
     return !newer(input) && now - m_lastStep >= combat_limits::kSequenceRestart;
 }
@@ -247,10 +255,23 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
     const std::vector<SequenceEvent> events =
         m_sequences.step(character->characterId, session, inputSequence, input, bits, weapon_key(*character), actions, m_world.clock().now(),
                          facts_of(*character));
-    // The payments of the fragments (PayStaminaCost, CAGE-PayManaCost). The backend has no stamina model (the stamina rows of the
-    // basic attacks of the reachable graphs are 0); a payment with a condition is a rule of a stance (the greatsword, a later
-    // part). A mana payment with a row of the mana table goes through the one mana path. The strikes, the spell casts, and the marks of
-    // the fragment of an ability go to the abilities system (stage 3.3b-M2).
+    // The dodge (stage 3.4f-B): the sequence permits a dodge input at rest, in a cancel window of the fragment of an attack, or at the end
+    // of a buffered window; a weapon with no attack graph (a bow, a staff, no weapon) has no fragment that refuses it. The stamina system
+    // decides it with its own stamina (world/stamina.h).
+    if (m_sequences.take_dodge(character->characterId) || (bits.dodge && actions == nullptr)) {
+        const DodgeVerdict verdict = m_world.stamina().dodge(*character, m_world.clock().now(), bits.locked);
+        if (verdict != DodgeVerdict::accepted && verdict != DodgeVerdict::buffered) {
+            const std::string mark = log::session_mark(character->owner, character->characterId);
+            const log::Context context(mark);
+            log::write("world: dodge: %s, input %u: no dodge of the server: %s", character->name.c_str(), static_cast<unsigned>(input),
+                       dodge_verdict_text(verdict));
+        }
+    }
+    // The payments of the fragments (PayStaminaCost, CAGE-PayManaCost). A stamina payment goes through the one stamina path (stage
+    // 3.4f-B; the stamina rows of the basic attacks of the reachable graphs are 0: no change, live check LS7); a payment with a condition
+    // is a rule of a stance (the greatsword: Greatsword_Offense_Stance_Active, a later part): the backend has no stance, and the
+    // condition does not hold. A mana payment with a row of the mana table goes through the one mana path. The strikes, the spell casts,
+    // and the marks of the fragment of an ability go to the abilities system (stage 3.3b-M2).
     for (const SequenceEvent& event : events) {
         if (event.kind != SequenceEvent::Kind::payment) {
             run_event(character->characterId, session, event);
@@ -261,6 +282,7 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
             m_sequences.count_payment(2);
         } else if (!payment->mana) {
             m_sequences.count_payment(0);
+            m_world.stamina().pay_cost(*character, payment->cost, payment->multiplier, "the payment of a basic attack");
         } else {
             m_sequences.count_payment(1);
             const float cost = m_world.abilities().mana_cost_of(*character, payment->cost) * payment->multiplier;

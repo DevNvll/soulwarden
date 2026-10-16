@@ -12,8 +12,8 @@
 //   CRG5  the late interest and the stop: a session that comes near in the flight gets the launch with its time anchor and no second
 //         launch; no record after the end; the stop at the hold; the death of the archer in the flight ends it with no damage
 //   CRG6  the bounds: the shots of one creature in the air, the hold list, no projectile entity after the ends
-//   CRG9  the load: 32,840 far spawn points, 50 characters, 50 archers that shoot, 200 flights, 1,000 ticks, a time limit; the work
-//         does not change with the far points
+//   CRG9  the load: 32,840 far spawn points, 50 characters, 25 archers and 25 mages (stage 3.4f-B) that shoot, 200 flights, 1,000 ticks,
+//         a time limit; the work does not change with the far points
 //
 // The accounts, the characters, the creature kinds, the rows, and the places are made up.
 
@@ -32,6 +32,7 @@
 #include "server/rep/health_messages.h"
 #include "support/cases.h"
 #include "support/check.h"
+#include "support/range_fixture.h"
 #include "support/shop_fixture.h"
 #include "support/test_navigation.h"
 #include "world/behavior.h"
@@ -43,250 +44,7 @@ namespace {
 using namespace shop;
 using nlohmann::json;
 
-/** The actions of the test archer: the melee bash (3) and the basic shot FireBow (5). */
-constexpr std::uint32_t kBash = 3;
-constexpr std::uint32_t kFireBow = 5;
-constexpr float kRelease = 1.33333F;
-constexpr float kShotLength = 2.46667F;
-constexpr float kArrowSpeed = 50.0F;
-constexpr float kArrowLife = 1.5F;
-constexpr std::uint32_t kArrowSlot = 1;
-constexpr float kPlayerRadius = 0.41F;
-constexpr float kPlayerSegment = 0.8F;
-constexpr std::uint32_t kAttackIndex = 7;
-constexpr float kArcherDamage = 100.0F;
-
-std::uint32_t crc_of(const char* text) {
-    return gamedata::progression_id(text);
-}
-
-gamedata::RangedRelease arrow_release() {
-    gamedata::RangedRelease release;
-    release.time = kRelease;
-    release.profile = "AI_Bow";
-    release.attack = "Basic";
-    release.attackIndex = kAttackIndex;
-    release.ammo = "Arrow_AI";
-    release.ammoKey = crc_of("Arrow_AI");
-    release.projectile = 0;
-    release.table = "TestBowDamageTable";
-    release.tableKey = crc_of("TestBowDamageTable");
-    release.rowIndex = 0;
-    release.damage.row = "Test_Bow_Shot";
-    release.damage.factor = 0.35F;
-    release.damage.type = "Slash";
-    release.damage.wire = 4;
-    release.damage.category = gamedata::DamageCategory::physical;
-    release.lead = true;
-    release.aimSpeed = 50.0F;
-    release.leadAngle = 10.0F;
-    release.aimAngle = 45.0F;
-    release.missMin = 1.5F;
-    release.missMax = 3.0F;
-    release.range = 100.0F;
-    release.radius = 0.0F;
-    release.accelDelay = 0.0F;
-    return release;
-}
-
-gamedata::ProjectileSliceData arrow_slice() {
-    gamedata::ProjectileSliceData arrow;
-    arrow.path = "slices/test/arrow.dynamicslice";
-    arrow.asset.fill(0x61);
-    arrow.subId = 2;
-    arrow.root = 0x6C1BE29704877324ULL;
-    arrow.slot = kArrowSlot;
-    arrow.speed = kArrowSpeed;
-    arrow.extraSpeed = 10.0F;
-    arrow.timeForMaxSpeed = 1.5F;
-    arrow.accel = {0.0F, 0.0F, -2.0F};
-    arrow.flyingLifetime = kArrowLife;
-    arrow.stuckLifetime = 8.0F;
-    return arrow;
-}
-
-/** The archer of the cases: the wolf slice of the shop with a bash and the basic shot (the values of the Evil Knight archer). */
-gamedata::CreatureSlice archer_slice(bool melee = true) {
-    gamedata::CreatureSlice slice = wolf_slice();
-    slice.path = "slices/test/archer.dynamicslice";
-    slice.asset.fill(0x31);
-    slice.root = 0x1000000000000031ULL;
-    slice.actions = {{"Idle_No_Task", "Idle", 0, false},       {"Reaction", "r_R2_F", 15, true}, {"Death", "r_Death", 4, true},
-                     {"Attack_Bash", "Charged_Melee", 7, false}, {"Move_Combat", "Move_Combat", 11, false},
-                     {"FireBow", "Fire_Bow", 35, false}};
-    slice.behavior->sightAngle = 75.0F;
-    slice.behavior->sightDistance = 12.0F;
-    slice.behavior->runSpeed = 5.5F;
-    slice.behavior->walkSpeed = 5.5F;
-    slice.attacks.clear();
-    if (melee) {
-        gamedata::CreatureContact bash;
-        bash.time = 0.5F;
-        bash.reach = 2.2F;
-        bash.factor = 0.4F;
-        bash.type = "Strike";
-        bash.wire = 6;
-        bash.category = gamedata::DamageCategory::physical;
-        bash.row = "Test_Bash";
-        slice.attacks = {gamedata::CreatureAttack{kBash, 1.4F, {bash}}};
-    }
-    slice.ranged = {gamedata::CreatureRangedAttack{kFireBow, kShotLength, {arrow_release()}}};
-    return slice;
-}
-
-gamedata::CreatureKind archer_kind() {
-    gamedata::CreatureKind kind = wolf_kind();
-    kind.id = "Test_Archer";
-    kind.vitals = kind.id;
-    kind.category = "Test_Archer_Category";
-    kind.vitalsId = 0x31112222;
-    kind.categoryId = 0x31112223;
-    kind.name = kind.id;
-    kind.vitalsName = kind.id;
-    kind.family = "Human";
-    kind.bodies = {{0, 100}};
-    return kind;
-}
-
-std::vector<gamedata::CreatureLevel> archer_levels() {
-    return {{1, kWolfHealth, kArcherDamage, 50.0F}};
-}
-
-/** The world of a case: the shop with the archer data, the behavior on, A with a client, B (enter_b) next to A. */
-struct Range : Shop {
-    explicit Range(bool observe = true, bool melee = true, std::vector<gamedata::SpawnPoint> points = {}) : Shop(false, false, observe) {
-        if (!host.creatures.set_full({archer_slice(melee)}, {archer_kind()}, std::move(points), archer_levels(), {}, {arrow_slice()},
-                                     gamedata::CreatureCapsule{kPlayerRadius, kPlayerSegment, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 0.0F}})) {
-            throw std::runtime_error("ranged test: the creature data is not valid: " + host.creatures.error());
-        }
-        host.world.set_creature_behavior(true);
-        walker.idle(5);
-    }
-    world::Behavior& behavior() {
-        return host.world.creatures().behavior();
-    }
-    world::Projectiles& projectiles() {
-        return host.world.projectiles();
-    }
-    const world::CreatureShotCounts& shots() {
-        return projectiles().creature_counts();
-    }
-    std::uint64_t ends(world::CreatureShotEnd end) {
-        return shots().ends[static_cast<std::size_t>(end)];
-    }
-    /** An archer `east` m east of A (and `north` m to the north), its face to the west. */
-    world::Entity* archer(float east, float north = 0.0F) {
-        world::Entity* entity = host.world.creatures().spawn("Test_Archer", at(kPlace.x + east, kPlace.y + north), 90.0F).entity;
-        return entity;
-    }
-    /** True after enter_b: each step also gives the datagrams of the host to the client of B. */
-    bool withB{false};
-    void enter_both() {
-        enter_b();
-        withB = true;
-    }
-    /** One step of A (33 ms), and the exchange of the client of B. */
-    void step(int count = 1) {
-        for (int index = 0; index < count; ++index) {
-            walker.idle(1);
-            if (withB) {
-                b.exchange(host);
-            }
-        }
-    }
-    /** Steps until the condition holds, at most `limit` steps. @return True when it holds. */
-    bool until(const std::function<bool()>& condition, int limit = 300) {
-        for (int index = 0; index < limit; ++index) {
-            if (condition()) {
-                return true;
-            }
-            step();
-        }
-        return condition();
-    }
-    /** Steps to the time `time` of the world clock. */
-    void to(world::WorldClock::time_point time) {
-        while (host.clock.now() < time) {
-            step();
-        }
-    }
-    world::WorldClock::time_point now() {
-        return host.clock.now();
-    }
-    std::size_t projectile_entities() {
-        return static_cast<std::size_t>(std::count_if(host.world.entities().begin(), host.world.entities().end(), [](const auto& entry) {
-            return entry.second.kind == world::EntityKind::projectile;
-        }));
-    }
-};
-
-std::chrono::microseconds seconds(float value) {
-    return std::chrono::microseconds(static_cast<long long>(std::lround(value * 1.0e6F)));
-}
-
-/** @return The interest number of an entity in a session of the host, or 0. */
-std::uint32_t interest_in(ServerHost& host, std::uint32_t session, world::EntityId id) {
-    const auto& table = host.session(session).observer().known();
-    const auto found = table.find(id);
-    return found == table.end() ? 0 : found->second.interest;
-}
-
-/** @return The records of an interest number from the message `from` on: the fragments of each record, in their sequence. */
-std::vector<Fragment> fragments_for(const FakeClient& client, std::uint32_t interest, std::size_t from = 0) {
-    std::vector<Fragment> found;
-    for (std::size_t index = from; index < client.got.size(); ++index) {
-        if (client.got[index].type != 8) {
-            continue;
-        }
-        for (const Record& record : read_bundle(client.got[index].body).records) {
-            if (record.interest == interest) {
-                found.insert(found.end(), record.fragments.begin(), record.fragments.end());
-            }
-        }
-    }
-    return found;
-}
-
-/** @return The number of the stops of an interest number from the message `from` on. */
-std::size_t stops_of(const FakeClient& client, std::uint32_t interest, std::size_t from = 0) {
-    std::size_t count = 0;
-    for (std::size_t index = from; index < client.got.size(); ++index) {
-        if (client.got[index].type == 8) {
-            const Bundle bundle = read_bundle(client.got[index].body);
-            count += static_cast<std::size_t>(std::count(bundle.stops.begin(), bundle.stops.end(), interest));
-        }
-    }
-    return count;
-}
-
-/** @return The Projectile states (slot 1, type 16) of the records of an interest number. */
-std::vector<Fragment> projectile_states(const FakeClient& client, std::uint32_t interest, std::size_t from = 0) {
-    std::vector<Fragment> found;
-    for (const Fragment& fragment : fragments_for(client, interest, from)) {
-        if (fragment.slot == kArrowSlot && fragment.type == 16) {
-            found.push_back(fragment);
-        }
-    }
-    return found;
-}
-
-std::uint64_t field_u64(const Fragment& fragment, unsigned field) {
-    server::hub::Reader reader(fragment.fields.at({0, field}));
-    return reader.u64();
-}
-
-/** The projectile entity of the newest flight of the system, or 0. */
-world::EntityId newest_projectile(Range& range) {
-    world::EntityId id = 0;
-    std::uint64_t number = 0;
-    for (const auto& [key, entity] : range.host.world.entities()) {
-        if (entity.kind == world::EntityKind::projectile && entity.shot.number >= number) {
-            number = entity.shot.number;
-            id = key;
-        }
-    }
-    return id;
-}
+using namespace range;
 
 /** CRG1: the export and the dictionary. */
 void ranged_data(const Options& options) {
@@ -700,9 +458,11 @@ void ranged_load(const Options&) {
     const auto run = [&](std::size_t count) {
         ServerHost host;
         host.terrain.source = [](float, float) { return std::optional<float>(kHeight); };
-        check(host.creatures.set_full({archer_slice(false)}, {archer_kind()}, points(count), archer_levels(), {}, {arrow_slice()},
+        // Stage 3.4f-B: the archer and the mage (a caster), and their projectiles.
+        check(host.creatures.set_full({archer_slice(false), mage_slice()}, {archer_kind(), mage_kind()}, points(count), archer_levels(), {},
+                                      {arrow_slice(), slow_slice()},
                                       gamedata::CreatureCapsule{kPlayerRadius, kPlayerSegment, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 0.0F}}),
-              "setup: the archer data with " + std::to_string(count) + " spawn points");
+              "setup: the archer and mage data with " + std::to_string(count) + " spawn points");
         check(host.combat.set(shop_combat()), "setup: the combat tables");
         const unsigned kPlayers = 50;
         std::vector<world::EntityId> archers;
@@ -714,15 +474,19 @@ void ranged_load(const Options&) {
             const state::WorldPosition place{500.0F + 120.0F * static_cast<float>(index % 10), 500.0F + 120.0F * static_cast<float>(index / 10),
                                              kHeight};
             (void)host.world.spawn_character(id, place);
-            // An archer 10 m east of each character, its face to it: it sees it and shoots it again and again.
-            world::Entity* archer = host.world.creatures().spawn("Test_Archer", {place.x + 10.0F, place.y, kHeight}, 90.0F).entity;
+            // An archer (or for each second character a mage) 10 m east of each character, its face to it: it sees it and shoots it
+            // again and again.
+            world::Entity* archer =
+                host.world.creatures().spawn(index % 2 == 0 ? "Test_Archer" : "Test_Mage", {place.x + 10.0F, place.y, kHeight}, 90.0F).entity;
             archers.push_back(archer->id);
         }
-        // 150 more flights at the start (3 for each archer, to the south, 75 m each): 200 flights in the air with the shots.
-        const gamedata::RangedRelease& release = host.creatures.slices()[0].ranged[0].releases[0];
+        // 175 more flights at the start (3 for each archer, 75 m each; 4 for each mage, 60 m each; to the south): 200 flights in the air
+        // with the shots.
         for (const world::EntityId id : archers) {
             const world::Entity* archer = host.world.creatures().find(id);
-            for (int extra = 0; extra < 3; ++extra) {
+            const gamedata::RangedRelease& release = archer->creature.body->ranged[0].releases[0];
+            const int extras = archer->creature.body->caster ? 4 : 3;
+            for (int extra = 0; extra < extras; ++extra) {
                 (void)host.world.projectiles().launch_creature(
                     world::CreatureShot{id, &release, {archer->position.x, archer->position.y - 1.0F, kHeight + 1.5F}, {0.0F, -1.0F, 0.0F}, 0});
             }
@@ -742,18 +506,18 @@ void ranged_load(const Options&) {
     };
     const Result full = run(32840);
     const Result few = run(840);
-    note("32,840 points, 50 characters, 50 archers: 1000 ticks (33 s of the world clock) need " + std::to_string(full.milliseconds)
+    note("32,840 points, 50 characters, 25 archers and 25 mages: 1000 ticks (33 s of the world clock) need " + std::to_string(full.milliseconds)
          + " ms; " + std::to_string(full.shots) + " shots, " + std::to_string(full.counts.launches) + " launches, "
          + std::to_string(full.counts.largest) + " in the air at most, " + std::to_string(full.counts.steps) + " flight steps, "
          + std::to_string(full.counts.looked) + " characters looked at, " + std::to_string(full.counts.wallTests)
          + " wall tests; with 840 points: " + std::to_string(few.milliseconds) + " ms, " + std::to_string(few.counts.looked) + " looks");
-    check(full.counts.largest >= 200 && full.shots >= 50ULL * 10 && full.counts.launches >= 150 + 50ULL * 10,
-          "200 flights in the air at one time, and each archer shoots again and again (10 shots or more in 33 s)");
+    check(full.counts.largest >= 200 && full.shots >= 50ULL * 10 && full.counts.launches >= 175 + 50ULL * 10,
+          "200 flights in the air at one time, and each archer and mage shoots again and again (10 shots or more in 33 s)");
     check(full.counts.looked == few.counts.looked && full.counts.wallTests == few.counts.wallTests && full.counts.steps == few.counts.steps
               && full.shots == few.shots && full.sensed == few.sensed,
           "the work depends on the archers and their flights, not on the far spawn points: the same steps, looks, and wall tests with "
           "840 and with 32,840 points");
-    check(full.milliseconds < 3000.0, "1000 ticks with 50 shooting archers and 200 flights need less than 3 s of real time");
+    check(full.milliseconds < 3000.0, "1000 ticks with 25 shooting archers, 25 casting mages, and 200 flights need less than 3 s of real time");
 }
 
 } // namespace
@@ -766,7 +530,7 @@ std::vector<Case> ranged_cases() {
             {"CRG4", "ranged (3.4f-A): two sessions, one record for each, the damage mark of the owner, the first on the line", two_sessions},
             {"CRG5", "ranged (3.4f-A): the late interest, the stop, the death of the archer in the flight", late_interest_and_stop},
             {"CRG6", "ranged (3.4f-A): the bounds of the shots of a creature", bounded_flights},
-            {"CRG9", "ranged (3.4f-A): the load with 32,840 points, 50 archers, 200 flights, a time limit", ranged_load}};
+            {"CRG9", "ranged (3.4f-A, 3.4f-B): the load with 32,840 points, 25 archers and 25 mages, 200 flights, a time limit", ranged_load}};
 }
 
 } // namespace soulwarden::backend::tests

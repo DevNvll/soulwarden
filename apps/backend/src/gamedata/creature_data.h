@@ -284,6 +284,14 @@ struct CreatureRangedAttack {
  * in the data, and no creature uses them yet. The tool has the same name (creature_behavior.py, BASIC_SHOT_ACTION).
  */
 inline constexpr const char* kBasicShotAction = "FireBow";
+/**
+ * The basic cast of a caster (stage 3.4f-B, a rule of this project for the scope of the stage, research creature-ranged.md part B): the
+ * action Cast_One_Projectile of the data (one release of the attack Basic of its profile: the Skeleton Mage and the Ancient Guardian
+ * mage with AI_Mage_Sphere index 125, the Dryad Shaman and the Damned Priest with AI_Spell_Ball, the Dynasty Summoner, the Swamp Shaman)
+ * is the basic shot of a slice that has no FireBow. The creature fights with the band of a caster (world/behavior.h). The tool has the
+ * same names (creature_behavior.py, BASIC_RANGED_ACTIONS).
+ */
+inline constexpr const char* kBasicCastAction = "Cast_One_Projectile";
 
 /** One slice of a creature. */
 struct CreatureSlice {
@@ -413,8 +421,13 @@ struct CreatureSlice {
     std::vector<std::uint32_t> heavyAttacks;
     /** The ranged attacks of the slice (stage 3.4f-A). Empty: a file of an older tool, or the slice has none. */
     std::vector<CreatureRangedAttack> ranged;
-    /** The index in `ranged` of its basic shot (kBasicShotAction; the backend sets it at the load of the data). No value: none. */
+    /**
+     * The index in `ranged` of its basic shot (kBasicShotAction, or with no such action kBasicCastAction; the backend sets it at the load
+     * of the data). No value: none.
+     */
     std::optional<std::uint32_t> basicShot;
+    /** True: the basic shot is the cast of a caster (kBasicCastAction, stage 3.4f-B): the band of a caster. */
+    bool caster{false};
 
     /**
      * @return True when a creature with this slice gets a target and attacks it: the slice has a sense, a speed, and an attack (a

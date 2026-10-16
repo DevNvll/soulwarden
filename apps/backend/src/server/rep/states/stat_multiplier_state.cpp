@@ -5,6 +5,7 @@
 
 #include "server/rep/replication.h"
 #include "server/rep/states/state_codecs.h"
+#include "world/stamina.h"
 
 // MB::StatMultiplierTableReplicatedState (type 1525), the component StatMultiplierTable of the player slice, slot 43
 // (stage 3.3b-S2a, criterion I10; research status-speed.md). The run and the sprint of the client read the value of a key
@@ -16,7 +17,8 @@
 //            deltaCount:size = 0, hasSequence:u8 = 1, sequence:size64, count:size, entries
 //            entry := key:u8 value:i32 (big-endian, the multiplier times 10000: DECIMAL_PLACES 4 of the slice) m_syncVitals:u8
 //          the keys 0x34 (MoveSpeedMod) and 0x35 (SprintSpeedMod) with the multipliers of the character
-//          (Entity::moveMultiplier, sprintMultiplier). Both at 1: the empty table (live check: it gives 1.0 again).
+//          (Entity::moveMultiplier, sprintMultiplier), and from stage 3.4f-B the key 0x0B (StaminaRate: 1 + the StaminaRate of the
+//          statuses) when it is not 1. All at 1: the empty table (live check: it gives 1.0 again).
 //          The sequence is the world revision of the change: a newer table has a larger sequence.
 // observer no fragment (the remote map of group 2 is not proved; the remote player needs no speed).
 // The first record of a character with both multipliers at 1 has no fragment (the client makes an empty table itself).
@@ -30,6 +32,8 @@ namespace {
 constexpr unsigned kGroups = 3;
 constexpr unsigned kOwnerGroup = 1;
 constexpr unsigned kMultiplierTable = 0;
+/** StaminaRate (stage 3.4f-B): the client multiplies the regeneration of its Stamina component with it (client code 0x6888790). */
+constexpr std::uint8_t kStaminaRateKey = 0x0B;
 constexpr std::uint8_t kMoveSpeedKey = 0x34;
 constexpr std::uint8_t kSprintSpeedKey = 0x35;
 constexpr float kScale = 10000.0F;
@@ -44,7 +48,8 @@ std::vector<hub::Bytes> encode_stat_multiplier_state(const world::Entity& entity
     if (view != View::owner) {
         return {};
     }
-    const bool neutral = entity.moveMultiplier == 1.0F && entity.sprintMultiplier == 1.0F;
+    const float staminaRate = world::Stamina::regeneration_multiplier(entity);
+    const bool neutral = entity.moveMultiplier == 1.0F && entity.sprintMultiplier == 1.0F && staminaRate == 1.0F;
     if (neutral && request.since == 0) {
         return {};
     }
@@ -59,8 +64,14 @@ std::vector<hub::Bytes> encode_stat_multiplier_state(const world::Entity& entity
         table.size(0);
         return {state.finish()};
     }
-    table.size(2);
-    for (const auto& [key, value] : {std::pair<std::uint8_t, float>{kMoveSpeedKey, entity.moveMultiplier}, {kSprintSpeedKey, entity.sprintMultiplier}}) {
+    std::vector<std::pair<std::uint8_t, float>> entries;
+    if (staminaRate != 1.0F) {
+        entries.emplace_back(kStaminaRateKey, staminaRate);
+    }
+    entries.emplace_back(kMoveSpeedKey, entity.moveMultiplier);
+    entries.emplace_back(kSprintSpeedKey, entity.sprintMultiplier);
+    table.size(entries.size());
+    for (const auto& [key, value] : entries) {
         table.u8(key);
         table.u32(wire_value(value));
         table.u8(0); // m_syncVitals

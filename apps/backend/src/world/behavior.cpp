@@ -165,6 +165,7 @@ void Behavior::died(Entity& creature) {
     mind.attack.reset();
     mind.shooting = false;
     mind.retreating = false;
+    mind.closing = false;
     mind.trail.clear();
     mind.holdUntil.reset();
     if (wasImmune) {
@@ -317,10 +318,13 @@ void Behavior::take_target(Entity& creature, const Entity& target, const char* c
 
 void Behavior::lose_target(Entity& creature, const char* cause) {
     CreatureMind& mind = creature.creature.mind;
+    // A shot whose release did not come does not fly (code review of stage 3.4f-A, finding CR-R2: a travel of the target).
+    mind.shooting = false;
     mind.target = 0;
     mind.mode = CreatureMode::home;
     mind.blockedSteps = 0;
     mind.retreating = false;
+    mind.closing = false;
     mind.holdUntil.reset();
     mind.retracing = false;
     // The path to the target is of no use for the way back: without this the creature goes
@@ -1154,11 +1158,21 @@ void Behavior::contact(const PendingContact& pending) {
     m_world.health().creature_hit(*creature, data, *target);
 }
 
+Behavior::ShotBand Behavior::band_of(const gamedata::CreatureSlice& body) {
+    if (body.caster) {
+        return ShotBand{behavior_rules::kCastFar, behavior_rules::kCastHold, behavior_rules::kCastNear, behavior_rules::kCastMiddle,
+                        behavior_rules::kCastRepeat};
+    }
+    return ShotBand{behavior_rules::kShotFar, behavior_rules::kShotHold, behavior_rules::kShotNear, behavior_rules::kShotMiddle,
+                    behavior_rules::kShotRepeat};
+}
+
 bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, float seconds) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
     const gamedata::CreatureBehavior& values = *body.behavior;
     const WorldClock::time_point now = m_world.clock().now();
+    const ShotBand band = band_of(body);
     const float away = horizontal_distance(creature.position, target.position);
     const float rise = std::fabs(creature.position.z - target.position.z);
     // The melee attack wins in its reach (research creature-ranged.md Q3, the first option): the next melee attack of the slice.
@@ -1171,24 +1185,26 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
     }
     const bool walks = can_walk(creature) && !creature.creature.rooted(now);
     const bool sees = rise <= behavior_rules::kShotHeight && m_world.navigation().sees(creature.position, target.position);
-    const bool inBand = sees && away <= behavior_rules::kShotFar;
+    // A creature that walks into its band from farther walks on to the hold distance (kShotHold, kCastHold: some steps of the target
+    // need no new walk; stage 3.4f-B, the rule of the research Q3 that the code of stage 3.4f-A did not keep: it stopped at the edge).
+    const bool inBand = sees && away <= (mind.closing && walks ? band.hold : band.outer);
     // The walk back to the middle of the band: on a path, inside the leash, one time in kRetreatPause.
-    if (inBand && walks && !mind.retreating && away < behavior_rules::kShotNear && now >= mind.retreatPauseUntil) {
+    if (inBand && walks && !mind.retreating && away < band.inner && now >= mind.retreatPauseUntil) {
         mind.retreating = true;
         m_world.navigation().forget(creature.id);
         ++m_counts.retreats;
         log::write("world: creature %016llx (%s) walks back from %s (%.1f m) to %.0f m for its shot",
                    id_number(creature.id), creature.creature.kind->id.c_str(), target.name.c_str(), static_cast<double>(away),
-                   static_cast<double>(behavior_rules::kShotMiddle));
+                   static_cast<double>(band.middle));
     }
     if (mind.retreating) {
         const float size = std::max(away, 0.01F);
-        const state::WorldPosition goal{target.position.x + (creature.position.x - target.position.x) / size * behavior_rules::kShotMiddle,
-                                        target.position.y + (creature.position.y - target.position.y) / size * behavior_rules::kShotMiddle,
+        const state::WorldPosition goal{target.position.x + (creature.position.x - target.position.x) / size * band.middle,
+                                        target.position.y + (creature.position.y - target.position.y) / size * band.middle,
                                         creature.position.z};
         const bool inLeash = horizontal_distance(goal, mind.anchor) <= leash_of(values);
         NavStep next;
-        if (inLeash && away < behavior_rules::kShotMiddle - 0.5F && walks) {
+        if (inLeash && away < band.middle - 0.5F && walks) {
             next = m_world.navigation().next_step(creature.id, creature.position, goal,
                                                   values.runSpeed * seconds * creature.creature.speed_factor(now), false);
         } else {
@@ -1212,8 +1228,12 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
         m_world.navigation().forget(creature.id);
     }
     if (inBand) {
+        mind.closing = false;
         turn_to(creature, target.position);
-        if (now >= mind.shotReady) {
+        // A creature whose slice needs the spawn action waits until each session that saw it come shows the action that plays
+        // (code review of stage 3.4f-A, finding CR-R1).
+        const bool shown = !creature.creature.spawnAction || now >= creature.creature.madeAt + behavior_rules::kSpawnLead;
+        if (now >= mind.shotReady && shown) {
             start_shot(creature, target, shot);
         }
         return true;
@@ -1223,13 +1243,14 @@ bool Behavior::think_shot(Entity& creature, Entity& target, std::uint32_t shot, 
         return true;
     }
     // Farther than the band, or no free line: the walk to the target on its path, to kShotHold with a free line.
+    mind.closing = true;
     const float way = values.runSpeed * seconds * creature.creature.speed_factor(now);
     NavStep next = m_world.navigation().next_step(creature.id, creature.position, target.position, way, true);
-    if (next.kind == StepKind::moved && sees && away - way < behavior_rules::kShotHold) {
+    if (next.kind == StepKind::moved && sees && away - way < band.hold) {
         // The step ends in the band: a shorter step to kShotHold.
         m_world.navigation().take_back(creature.id);
         next = m_world.navigation().next_step(creature.id, creature.position, target.position,
-                                              std::max(away - behavior_rules::kShotHold, 0.05F), true);
+                                              std::max(away - band.hold, 0.05F), true);
     }
     if (next.kind == StepKind::arrived || next.kind == StepKind::noWay) {
         // The rule of a target with no way (the melee rule): the place nearest to it, a wait, then the way back.
@@ -1286,7 +1307,7 @@ void Behavior::start_shot(Entity& creature, Entity& target, std::uint32_t shot) 
     mind.shooting = true;
     mind.attackGeneration = creature.creature.action->generation;
     mind.attackEnds = now + length;
-    mind.shotReady = std::max(now + behavior_rules::kShotRepeat, mind.attackEnds);
+    mind.shotReady = std::max(now + band_of(body).repeat, mind.attackEnds);
     ++mind.attacks;
     ++m_counts.shots;
     for (std::uint32_t index = 0; index < attack.releases.size(); ++index) {
@@ -1399,6 +1420,10 @@ void Behavior::release(const PendingRelease& pending) {
     } else if (!creature->creature.mind.shooting || creature->creature.mind.attackGeneration != pending.generation
                || !creature->creature.action || creature->creature.action->generation != pending.generation) {
         cancelled = "a different action replaced the shot";
+    } else if (creature->creature.mind.mode != CreatureMode::fight || creature->creature.mind.target != pending.target) {
+        // The creature lost the target of the shot before the release (a travel, the shelter, the leash): no shot (code review of stage
+        // 3.4f-A, finding CR-R2).
+        cancelled = "the creature lost the target of the shot";
     }
     Entity* target = cancelled == nullptr ? fightable(pending.target) : nullptr;
     if (cancelled == nullptr && (target == nullptr || target->kind != EntityKind::player)) {

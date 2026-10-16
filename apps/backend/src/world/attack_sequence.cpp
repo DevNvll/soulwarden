@@ -125,6 +125,9 @@ const char* sequence_end_text(SequenceEnd end) {
 }
 
 void AttackSequences::reset(State& state, SequenceEnd why, std::uint16_t input) {
+    if (why == SequenceEnd::dodge) {
+        state.dodged = true;
+    }
     state.pendingAbility = -1;
     state.pendingCast = 0;
     if (!state.visits.empty() && !state.visits.back().ended) {
@@ -243,6 +246,10 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
         }
         AttackVisit* visit = !state.visits.empty() && !state.visits.back().ended ? &state.visits.back() : nullptr;
         if (visit == nullptr) {
+            // A dodge input at rest (stage 3.4f-B): no fragment of an attack decides it.
+            if (bits.dodge) {
+                state.dodged = true;
+            }
             if (!bits.press || pressUsed) {
                 return;
             }
@@ -463,6 +470,15 @@ std::vector<SequenceEvent> AttackSequences::step(const std::string& characterId,
     advance(state, input, bits, now, events, facts);
     state.holding = (bits.press || bits.hold) && !bits.release;
     return events;
+}
+
+bool AttackSequences::take_dodge(const std::string& characterId) {
+    const auto found = m_states.find(characterId);
+    if (found == m_states.end() || !found->second.dodged) {
+        return false;
+    }
+    found->second.dodged = false;
+    return true;
 }
 
 AbilityStart AttackSequences::start_ability(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,

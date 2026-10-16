@@ -18,6 +18,7 @@
 #include "gamedata/item_catalog.h"
 #include "gamedata/perk_data.h"
 #include "gamedata/projectile_data.h"
+#include "gamedata/stamina_data.h"
 #include "gamedata/weapon_actions.h"
 #include "gamedata/spell_data.h"
 #include "gamedata/loot_tables.h"
@@ -81,10 +82,13 @@ struct ServerHost {
     gamedata::WeaponActions weaponActions;
     /** The interaction data (stage 2.5a). It is empty until a case sets it: each request of an interaction is then refused. */
     gamedata::InteractionData interactions;
+    /** The stamina data (stage 3.4f-B). It is empty until a case sets it: a character then keeps its full stamina and has no dodge rule. */
+    gamedata::StaminaData stamina;
     world::World world{clock, store, tables,
-                       with_interactions(with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities,
-                                                        perks, spells, projectiles, weaponActions),
-                                         interactions)};
+                       with_stamina(with_interactions(with_game_data(catalog, progression, creatures, combat, places, terrain, navigation,
+                                                                     loot, abilities, perks, spells, projectiles, weaponActions),
+                                                      interactions),
+                                    stamina)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -242,6 +246,10 @@ struct ServerHost {
 
     static world::WorldOptions with_interactions(world::WorldOptions options, const gamedata::InteractionData& interactions) {
         options.interactionData = &interactions;
+        return options;
+    }
+    static world::WorldOptions with_stamina(world::WorldOptions options, const gamedata::StaminaData& stamina) {
+        options.staminaData = &stamina;
         return options;
     }
 

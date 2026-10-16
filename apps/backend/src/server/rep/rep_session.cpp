@@ -59,7 +59,7 @@ constexpr std::chrono::seconds kCreaturesAfterTravel{20};
  * and then the body (stage 3.4c), and an action in the next state can hide the body (code review
  * of the corrections after user test 1, finding F3). A rule of this project.
  */
-constexpr std::chrono::milliseconds kSpawnLead{1500};
+constexpr std::chrono::milliseconds kSpawnLead = world::behavior_rules::kSpawnLead;
 /** Largest number of interest numbers in the control block of one bundle (client reader at image RVA 0x6A6DDB0). */
 constexpr std::size_t kMaxStopsInBundle = 100;
 /** Shortest time between two log lines for a camera that moves. */
@@ -1363,6 +1363,8 @@ void RepSession::handle_attacks(const ClientInput& input) {
         bits.hold = step.attackHold;
         bits.release = step.attackRelease;
         bits.dodge = step.dodge;
+        // The lock of a travel (stage 3.4f-B): a dodge in the loading screen of a travel is refused, as the press of an ability.
+        bits.locked = m_travelAnchor.has_value();
         bits.block = step.blockPress;
         m_world.combat().step(m_id, m_attack.sequence(), step.sequence, bits);
         m_projectileItems += step.projectileHits + step.shots;
@@ -1456,26 +1458,36 @@ void RepSession::observe_interaction(const InputStep& step) {
         return;
     }
     const InputInteraction& block = *step.interaction;
-    // A press of a datagram before an early cancel of its reference (code review of stage 2.5b, finding ST-R2): the client released it
-    // before the server got it. No use, and no reply: the request is old. A datagram after the cancel ends the mark.
-    if (m_earlyCancel && m_clock.now() >= m_earlyCancel->ends) {
-        m_earlyCancel.reset();
-    }
-    if (m_earlyCancel && m_messageDatagram) {
-        const auto before = static_cast<std::int16_t>(static_cast<std::uint16_t>(*m_messageDatagram - m_earlyCancel->datagram)) < 0;
-        const world::InteractionReference reference{block.actor, block.group, block.target};
-        if (before && reference == m_earlyCancel->reference) {
-            log::write("rep: interaction request of input %u is older than the cancel of its client (datagram %u before %u): no use",
-                       static_cast<unsigned>(step.sequence), static_cast<unsigned>(*m_messageDatagram),
-                       static_cast<unsigned>(m_earlyCancel->datagram));
-            // The attempt ended with the cancel: the same block in a later datagram is a new press (as after a matched cancel).
+    // A press before an early cancel of its reference (code review of stage 2.5b, finding ST-R2; stage 3.4f-A, findings CR-R3 and CR-R4):
+    // the client released it before the server got it. No use, and no reply: the request is old. The press is old when its datagram is
+    // older than the datagram of the cancel, or when its input step is not later than the steps of the cancelled attempt (a newer
+    // datagram can repeat the old entry). Each reference has its own mark until its time ends; a real new press (a later step) ends it.
+    const world::WorldClock::time_point now = m_clock.now();
+    std::erase_if(m_earlyCancels, [&](const EarlyCancel& mark) { return now >= mark.ends; });
+    const world::InteractionReference reference{block.actor, block.group, block.target};
+    const auto mark = std::find_if(m_earlyCancels.begin(), m_earlyCancels.end(),
+                                   [&](const EarlyCancel& candidate) { return candidate.reference == reference; });
+    if (mark != m_earlyCancels.end()) {
+        const bool olderDatagram =
+            m_messageDatagram && static_cast<std::int16_t>(static_cast<std::uint16_t>(*m_messageDatagram - mark->datagram)) < 0;
+        const bool olderStep = mark->hasStep && static_cast<std::int16_t>(static_cast<std::uint16_t>(step.sequence - mark->step)) <= 0;
+        if (olderDatagram || olderStep) {
+            log::write("rep: interaction request of input %u is older than the cancel of its client (datagram %u, cancel datagram %u, "
+                       "steps of the attempt to %u): no use",
+                       static_cast<unsigned>(step.sequence), m_messageDatagram ? static_cast<unsigned>(*m_messageDatagram) : 0U,
+                       static_cast<unsigned>(mark->datagram), static_cast<unsigned>(mark->step));
+            // The attempt ended with the cancel: the same block in a later step is a new press (as after a matched cancel).
             m_interactionBlock.reset();
             return;
         }
-        if (!before) {
-            m_earlyCancel.reset();
-        }
+        m_earlyCancels.erase(mark);
     }
+    // The session took a request of this reference: a later cancel of it with no use is a late cancel (no mark).
+    std::erase_if(m_seenRequests, [&](const auto& seen) { return seen.first == reference || now >= seen.second; });
+    if (m_seenRequests.size() >= kEarlyCancelMost) {
+        m_seenRequests.erase(m_seenRequests.begin());
+    }
+    m_seenRequests.emplace_back(reference, now + kEarlyCancelKeep);
     world::InteractionRequest request;
     request.object.actor = block.actor;
     request.object.group = block.group;
@@ -1795,9 +1807,24 @@ void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
     // The world ends the committed interaction of the character when the reference is its reference: a late cancel, or the
     // answer of the client to 3746, changes nothing (research K7).
     const bool ended = m_world.interactions().client_cancel(m_id, cancel->reference);
-    if (!ended && m_messageDatagram) {
-        // A cancel with no use: its press can still come in an earlier datagram of a different channel (finding ST-R2).
-        m_earlyCancel = EarlyCancel{cancel->reference, *m_messageDatagram, m_clock.now() + kEarlyCancelKeep};
+    const world::WorldClock::time_point now = m_clock.now();
+    std::erase_if(m_seenRequests, [&](const auto& seen) { return now >= seen.second; });
+    const bool late = std::any_of(m_seenRequests.begin(), m_seenRequests.end(),
+                                  [&](const auto& seen) { return seen.first == cancel->reference; });
+    if (!ended && !late && m_messageDatagram) {
+        // A cancel with no use, and no request of its reference in the last kEarlyCancelKeep: its press can still come in an earlier
+        // datagram of a different channel (finding ST-R2), or in a later report that repeats the old entry (finding CR-R4). One mark for
+        // each reference (finding CR-R3). A cancel of a reference that the session took is late (an echo of a use that ended): no mark.
+        EarlyCancel mark{cancel->reference, *m_messageDatagram, 0, false, now + kEarlyCancelKeep};
+        if (const std::optional<std::uint16_t> client = m_attack.estimate(now)) {
+            mark.step = static_cast<std::uint16_t>(*client + kEarlyCancelSteps);
+            mark.hasStep = true;
+        }
+        std::erase_if(m_earlyCancels, [&](const EarlyCancel& old) { return old.reference == cancel->reference || now >= old.ends; });
+        if (m_earlyCancels.size() >= kEarlyCancelMost) {
+            m_earlyCancels.erase(m_earlyCancels.begin());
+        }
+        m_earlyCancels.push_back(mark);
     }
     if (ended) {
         // The attempt of this block ended: a later input step with the same block is a new request (code review of stage 2.5a,

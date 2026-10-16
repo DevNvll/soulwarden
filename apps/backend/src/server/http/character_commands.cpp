@@ -2,15 +2,18 @@
 
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <utility>
 
 #include "server/http/router.h"
 #include "world/behavior.h"
 #include "world/creatures.h"
 #include "world/projectiles.h"
+#include "world/stamina.h"
 
 namespace soulwarden::backend::server::http::commands {
 namespace {
@@ -480,6 +483,7 @@ json projectiles_json(world::World& target) {
                          {"refused", shotCounts.refused},
                          {"ends", creatureEnds},
                          {"damage", shotCounts.damage},
+                         {"evaded", shotCounts.evaded},
                          {"steps", shotCounts.steps},
                          {"looked", shotCounts.looked},
                          {"wallTests", shotCounts.wallTests},
@@ -498,6 +502,44 @@ json projectiles_json(world::World& target) {
                 {"lineTests", navigation.lineTests},
                 {"lineCells", navigation.lineCells},
                 {"lineStopped", navigation.lineStopped}};
+}
+
+json stamina_json(world::World& target) {
+    const world::Stamina& stamina = target.stamina();
+    const world::StaminaCounts& counts = stamina.counts();
+    json dodges = json::object();
+    for (std::size_t verdict = 0; verdict < world::kDodgeVerdictCount; ++verdict) {
+        if (counts.dodges[verdict] != 0) {
+            dodges[world::dodge_verdict_text(static_cast<world::DodgeVerdict>(verdict))] = counts.dodges[verdict];
+        }
+    }
+    const world::WorldClock::time_point now = target.clock().now();
+    using Seconds = std::chrono::duration<double>;
+    json characters = json::array();
+    target.for_each_character([&](const world::Entity& entity) {
+        json item{{"character", entity.characterId},
+                  {"stamina", entity.vitals.stamina},
+                  {"maximum", entity.vitals.staminaMax},
+                  {"exhausted", entity.vitals.exhausted},
+                  {"regeneration", stamina.regeneration(entity)}};
+        if (const std::optional<world::Stamina::DodgeView> dodge = stamina.dodge_of(entity.characterId)) {
+            item["dodge"] = {{"fragment", dodge->fragment},
+                             {"cost", dodge->cost},
+                             {"age", Seconds(now - dodge->start).count()},
+                             {"paid", dodge->paid},
+                             {"immune", stamina.immune(entity, now)}};
+        }
+        characters.push_back(item);
+    });
+    return json{{"data", stamina.has_data()},
+                {"dodges", dodges},
+                {"payments", counts.payments},
+                {"paymentsCancelled", counts.paymentsCancelled},
+                {"gains", counts.gains},
+                {"regenerationSteps", counts.regenerationSteps},
+                {"emptied", counts.emptied},
+                {"evaded", counts.evaded},
+                {"characters", characters}};
 }
 
 WorldCommand end_spells(const std::string& character, const Arguments&, service::HttpResponse&) {

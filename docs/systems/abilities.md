@@ -67,7 +67,8 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   cast pays through the one mana path (`Abilities::change_mana`), which the mana potion uses
   too. The abilities of the great axe and the war hammer have no cost: the spells of the war hammer name
   `SpecialAttack`, which the mana table does not have, and the spells of the great axe name no
-  cost id. The stamina has no model in the backend (the stamina rows of the two weapons are 0).
+  cost id. The stamina costs of the abilities of the two weapons are 0 in the data; from stage 3.4f-B a stamina payment of a
+  fragment goes through the stamina path ([Stamina and dodge](stamina-and-dodge.md)).
 - The mana regeneration (stage 1.3b): a spend starts it after `ManaRegenDelay` (0 s), or after
   `ManaRegenDelayOnEmpty` (2 s) at 0 mana, at `ManaBaseRegenRate` (2 mana in each second; the
   row Player of the base vitals). The mana state (slot 47) has the delay that is left and the

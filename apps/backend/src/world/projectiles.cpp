@@ -1039,7 +1039,8 @@ bool Projectiles::fly(CreatureFlight& flight, WorldClock::time_point now) {
         const float range = distance3(flight.position, end) * 0.5F + reach + release.radius;
         std::vector<EntityId> candidates;
         m_world.for_each_near(middle, range, [&](Entity& entity) {
-            if (entity.kind == EntityKind::player && !entity.life.dead && !m_world.creatures().behavior().ignores(entity.characterId)) {
+            if (entity.kind == EntityKind::player && !entity.life.dead && !m_world.creatures().behavior().ignores(entity.characterId)
+                && std::find(flight.passed.begin(), flight.passed.end(), entity.id) == flight.passed.end()) {
                 candidates.push_back(entity.id);
             }
         });
@@ -1068,16 +1069,26 @@ bool Projectiles::fly(CreatureFlight& flight, WorldClock::time_point now) {
         }
         if (first && (!wall || *first <= *wall)) {
             const state::WorldPosition point = along(flight.position, end, *first);
-            flight.at += std::chrono::duration_cast<WorldClock::time_point::duration>(step * static_cast<double>(*first));
+            const WorldClock::time_point contactAt =
+                flight.at + std::chrono::duration_cast<WorldClock::time_point::duration>(step * static_cast<double>(*first));
             if (Entity* target = m_world.find(struck); target != nullptr && creature != nullptr) {
                 const float before = target->vitals.health;
                 // One damage result of the creature rule with the row of the release (Health::creature_hit: the damage of the level and
-                // of the kind of the creature, the factor of the row, the level difference, the armor; the damage mark of the owner).
-                m_world.health().creature_hit(*m_world.find(flight.creature), release.damage, *target);
+                // of the kind of the creature, the factor of the row, the level difference, the armor; the damage mark of the owner), at
+                // the time of the contact. A character in the immune window of its dodge at that time takes no damage (stage 3.4f-B), and
+                // the shot flies on through it (a rule of this project, research task D: the profiles of the basic attacks of the
+                // creatures have m_destroyProjectileOnUnsuccesfulHit false): it can hit a later character or a wall, never this one.
+                if (m_world.health().creature_hit(*m_world.find(flight.creature), release.damage, *target, contactAt)
+                    == CreatureHitOutcome::evaded) {
+                    flight.passed.push_back(struck);
+                    ++m_creatureCounts.evaded;
+                    continue;
+                }
                 if (target->vitals.health < before) {
                     ++m_creatureCounts.damage;
                 }
             }
+            flight.at = contactAt;
             land(flight, CreatureShotEnd::hit, point, struck);
             return true;
         }

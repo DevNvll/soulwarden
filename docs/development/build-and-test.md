@@ -111,6 +111,15 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`InteractionBlock`, `InputEntry::interaction`), and the state decoder knows the states 3752 and 2930. IT10 runs
   `tools/gamedata/check_interactions_tool.py`. IT5 adds a trigger to a database file (a refused row); IT8 has a time limit of 300 ms
   for 400,000 lookups and of 2 s for 300 reports with a catalog of 90,008 objects.
+- Stage 3.4f-B adds the cases SM1 to SM5, CRB1, and CRG10 to CRG13 (`tests/ranged_b_tests.cpp`: the stamina data and path, the
+  statuses and the passive rules of the stamina, the tag Dodging, the caster, two attackers and two targets with a late observer, the
+  dodge, no immunity for a different character, the shield before a later target and a wall; SM1 runs `check_stamina_tool.py`) and RR1
+  to RR7 (`tests/review_ranged_tests.cpp`: the corrections of the code review of stage 3.4f-A, findings CR-R1 to CR-R7; each one fails
+  on the tree of stage 3.4f-A and passes with the correction; RR5 and RR6 run the review cases of `check_creature_tool.py`). The
+  fixture `Range` moved to `tests/support/range_fixture.h` (namespace `tests::range`, with the test mage `mage_slice` and
+  `set_battle`); the stamina values of the retail data are in `tests/support/stamina_fixture.h` (`set_stamina`). `ServerHost` has the
+  stamina data (`stamina`), and the state decoder knows the Stamina state (type 4297). CRG9 has 25 archers and 25 mages, with the
+  same limit. The check of the ability tool expects format 6 (cases RA12, RS8, RS13, RG4).
 - Stage 3.4f-A adds the cases CRG1 to CRG6 and CRG9 (`tests/ranged_tests.cpp`: the archer; its fixture `Range` is the shop with the
   archer slice, its basic shot, the arrow slice, and the capsule of the player slice; CRG1 runs `check_creature_tool.py` and reads its
   ranged cases; CRG9 has a time limit of 3 s for 1,000 ticks with 50 archers and 200 flights) and RY1 to RY8

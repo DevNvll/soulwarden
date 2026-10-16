@@ -19,7 +19,8 @@ using data_rules::percent_of;
 using data_rules::same_text;
 
 /** The events that the backend has a source for (stage 3.3b-S5; OnHealed: stage 3.3b-S6, a heal that the character gives). */
-constexpr const char* kEvents[] = {"OnHit", "OnCrit", "OnKill", "OnHitTaken", "OnHeadShot", "OnHitBehind", "OnHealed"};
+constexpr const char* kEvents[] = {"OnHit", "OnCrit", "OnKill", "OnHitTaken", "OnHeadShot", "OnHitBehind", "OnHealed",
+                                   "OnHitTakenWhileInvulnerable"};
 
 /**
  * The columns of a rule that are marks of the data, not a condition or an effect (the place of a node, the stack rule of a
@@ -50,7 +51,7 @@ const std::set<std::string, std::less<>> kConditions = {
     "AttackerVitalsCategory", "TargetVitalsCategory", "DontHaveStatusEffect", "InSequence", "InAction", "RequireReaction",
     "TrackHitCount", "NumberOfTrackedHits", "NumberOfHitsComparisonType", "NumSuccessfulHits", "NumConsecutiveHits",
     "MaxConsecutiveHits", "ResetConsecutiveOnSuccess", "DamageIsMelee", "DamageIsRanged", "NumAroundMe", "MaxNumAroundMe",
-    "NumAroundComparisonType"};
+    "NumAroundComparisonType", "EquipLoadCategory"};
 
 /** The effects that the evaluator has (before the damage, after the hit, or a fixed stat through the gear values). */
 const std::set<std::string, std::less<>> kEffects = {
@@ -58,7 +59,9 @@ const std::set<std::string, std::less<>> kEffects = {
     "BaseDamage", "CritChance", "CritDamage", "ArmorPenetration", "HeadshotDamage", "HitFromBehindDamage", "SelfApplyStatusEffect",
     "OtherApplyStatusEffect", "DmgPctToHealth", "CooldownTimer", "CDRImmediatelyOptions", "PhysicalArmor", "ElementalArmor", "CastSpell",
     "MaxHealth", "MaxHealthMod", "BaseDamageReduction", "MODStrength", "MODDexterity", "MODIntelligence", "MODFocus",
-    "MODConstitution"};
+    "MODConstitution",
+    // Stage 3.4f-B: a stamina gain of a hit rule (the runeglass rows Runeglass_Just_Stamina_*: OnHit, RequireReaction, 1 or 4 stamina).
+    "Stamina"};
 
 /**
  * The conditions that a hit taken has a source for (code review of stage 3.3b-S5, finding F6): the values of the character (its
@@ -70,6 +73,40 @@ const std::set<std::string, std::less<>> kTakenConditions = {
     "MyHealthPercent", "MyComparisonType", "MyStaminaPercent", "MyStaminaComparisonType", "MyManaPercent", "MyManaComparisonType",
     "DontHaveStatusEffect", "HasGritActive", "RequireReaction", "TrackHitCount", "NumberOfTrackedHits", "NumberOfHitsComparisonType",
     "NumSuccessfulHits", "NumConsecutiveHits", "MaxConsecutiveHits", "ResetConsecutiveOnSuccess"};
+
+/**
+ * The conditions that a hit in the immune window of a dodge has a source for (stage 3.4f-B, OnHitTakenWhileInvulnerable): the values of
+ * the character, its statuses, grit (none), the damage that the hit would do (RequireReaction), the load class of the character
+ * (EquipLoadCategory), the dodge as its action (InAction Dodge) and the fragment of the dodge as its sequence (InSequence), and the
+ * category of the attacker and of the target (a creature hit: AttackerVitalsCategory Player does not pass).
+ */
+const std::set<std::string, std::less<>> kEvadedConditions = {
+    "MyHealthPercent", "MyComparisonType", "MyStaminaPercent", "MyStaminaComparisonType", "MyManaPercent", "MyManaComparisonType",
+    "DontHaveStatusEffect", "HasGritActive", "RequireReaction", "EquipLoadCategory", "InAction", "InSequence", "AttackerVitalsCategory",
+    "TargetVitalsCategory"};
+
+/** @return The condition columns of a rule that a hit in the immune window of a dodge has no source for (stage 3.4f-B). */
+std::vector<std::string> evaded_unsourced(const gamedata::CellValues& cells) {
+    std::vector<std::string> columns;
+    const auto check = [&](const std::string& column) {
+        if (kConditions.count(column) != 0 && kEvadedConditions.count(column) == 0) {
+            columns.push_back(column);
+        }
+    };
+    for (const auto& [column, value] : cells.numbers) {
+        check(column);
+    }
+    for (const auto& [column, value] : cells.texts) {
+        check(column);
+    }
+    return columns;
+}
+
+/** @return The name of the load class of a character in the data (EquipLoadCategory: Fast, Normal, Slow, Overburdened). */
+std::string_view load_category(const Entity& character) {
+    constexpr std::string_view kNames[] = {"Fast", "Normal", "Slow", "Overburdened"};
+    return kNames[std::min<std::size_t>(character.gear.loadClass, 3)];
+}
 
 /**
  * The conditions that a heal has a source for (stage 3.3b-S6, a rule with OnHealed and HealScalingValueMultiplier): the health of the
@@ -194,10 +231,10 @@ bool tracking_supported(const gamedata::SpellRow& spell) {
 /**
  * @return True when the condition of a status action of the data holds for a character (stage 3.3b-M2, Guarded Sprint): a node literal
  *         is a learned node; a tag literal is a tag of the weapon in the hand (its MannequinTag), a tag of the movement (ForwardNav,
- *         BackNav, LeftNav, RightNav: the character moves, Entity::moving), or a different tag (Dodging; false: the backend has no state of
- *         it; a decision of an agent).
+ *         BackNav, LeftNav, RightNav: the character moves, Entity::moving), the tag Dodging (stage 3.4f-B: a dodge of the stamina system
+ *         plays, from its start to its mark CanTransition, `dodging`), or a different tag of the weapon.
  */
-bool action_holds(const gamedata::ActionStatus& action, const Entity& character, const gamedata::WeaponRow* weapon) {
+bool action_holds(const gamedata::ActionStatus& action, const Entity& character, const gamedata::WeaponRow* weapon, bool dodging) {
     const auto literal_true = [&](const gamedata::ActionStatus::Literal& literal) {
         if (!literal.tag) {
             for (const auto& [pool, nodes] : character.skills.pools) {
@@ -212,6 +249,9 @@ bool action_holds(const gamedata::ActionStatus& action, const Entity& character,
             if (same_text(literal.name, movement)) {
                 return character.moving;
             }
+        }
+        if (same_text(literal.name, "Dodging")) {
+            return dodging;
         }
         return weapon != nullptr && list_has(weapon->tags, literal.name);
     };
@@ -359,6 +399,10 @@ bool Passives::conditions_pass(const PassiveRule& rule, const Entity& attacker, 
         return false;
     }
     if (const std::string_view status = row.text("DontHaveStatusEffect"); !status.empty() && m_world.statuses().has(attacker, status)) {
+        return false;
+    }
+    // EquipLoadCategory (stage 3.4f-B): the load class of the attacker is in the list (Fast, Normal, Slow).
+    if (const std::string_view loads = row.text("EquipLoadCategory"); !loads.empty() && !list_has(loads, load_category(attacker))) {
         return false;
     }
     // InSequence and InAction: the hit is a hit of the cast of an ability of the list (the action of the ability), or (stage 3.3b-M2) a
@@ -630,7 +674,7 @@ void Passives::after_hit(Entity& attacker, Entity& target, const HitContext& hit
                              && std::any_of(kValues.begin(), kValues.end(), [&](const std::string& column) { return row.number(column) != 0.0F; });
         const bool effect = !row.text("OtherApplyStatusEffect").empty() || !row.text("SelfApplyStatusEffect").empty()
                             || row.number("DmgPctToHealth") > 0.0F || (row.number("CooldownTimer") < 0.0F && !row.text("CDRImmediatelyOptions").empty())
-                            || !row.text("CastSpell").empty() || counted;
+                            || !row.text("CastSpell").empty() || row.number("Stamina") != 0.0F || counted;
         // A rule with OnCrit and only CritChance changed the roll (before_hit): it has no effect after the hit.
         if (!takes || !effect) {
             continue;
@@ -688,6 +732,11 @@ void Passives::apply_effects(const PassiveRule& rule, Entity& attacker, Entity& 
         m_world.health().heal(attacker, request);
         ++m_counts.heals;
         ++m_world.gear().m_counts.perkHeals;
+    }
+    if (const float stamina = row.number("Stamina"); stamina != 0.0F) {
+        // A stamina gain of the rule (stage 3.4f-B; the runeglass gems: 1 or 4 stamina at a hit with damage, one time in 3 s), times the
+        // potency, through the one stamina path.
+        m_world.stamina().change(attacker, stamina * rule.potency, rule.id.c_str());
     }
     if (const float part = row.number("CooldownTimer"); part < 0.0F) {
         // CDRImmediatelyOptions: ActiveWeapon (each ability of the bar of the weapon in the hand), AbilitySpecific (the
@@ -857,6 +906,118 @@ void Passives::hit_taken(Entity& character, float dealt) {
         ++m_counts.hitTakenRules;
         m_world.gear().caster_effect(character, row, rule.id, rule.potency);
     }
+    // The hit-taken status actions of the data (stage 3.4f-B, ability-data.json format 6: Mauler's Stamina of the great axe,
+    // GreatAxe_Passive_StamWhenLowHP_Detect). The tests of the action after the damage of the hit: a hit with damage (IfDamagedByPowerLevel
+    // with FailOnNoReactionDamage: a decision of an agent, a creature hit with damage above 0 has a reaction), the health and the stamina as a
+    // part of the maximum (the comparator of the client), each learned node, each tag (the tags of the weapon in the hand), and no status of
+    // the list. The statuses come with the duration of their rows, with the action as the source.
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    if (abilities == nullptr) {
+        return;
+    }
+    for (const gamedata::ActionHitStatus& action : abilities->tables().actionHitStatuses) {
+        if (action.reaction && !(dealt > 0.0F)) {
+            continue;
+        }
+        if (!compare(dealt, action.power.value, action.power.comparison)) {
+            continue;
+        }
+        if (action.health && !compare(character.vitals.healthMax > 0.0F ? character.vitals.health / character.vitals.healthMax : 0.0F,
+                                      action.health->value, action.health->comparison)) {
+            continue;
+        }
+        if (action.stamina && !compare(character.vitals.staminaMax > 0.0F ? character.vitals.stamina / character.vitals.staminaMax : 0.0F,
+                                       action.stamina->value, action.stamina->comparison)) {
+            continue;
+        }
+        const bool nodes = std::all_of(action.nodes.begin(), action.nodes.end(), [&](const std::string& node) {
+            const std::uint32_t id = gamedata::progression_id(node);
+            return std::any_of(character.skills.pools.begin(), character.skills.pools.end(), [&](const auto& pool) {
+                const auto found = pool.second.find(id);
+                return found != pool.second.end() && found->second.level != 0;
+            });
+        });
+        const bool tags = std::all_of(action.tags.begin(), action.tags.end(),
+                                      [&](const std::string& tag) { return weapon != nullptr && list_has(weapon->tags, tag); });
+        const bool without = std::none_of(action.without.begin(), action.without.end(),
+                                          [&](const std::string& status) { return m_world.statuses().has(character, status); });
+        if (!nodes || !tags || !without) {
+            continue;
+        }
+        ++m_counts.hitTakenRules;
+        for (const std::string& status : action.statuses) {
+            StatusApply how;
+            how.source = StatusSource{StatusSourceKind::ability, action.action, 0, character.id};
+            (void)m_world.statuses().apply(character, status, how);
+        }
+    }
+}
+
+void Passives::hit_evaded(Entity& character, float wouldDeal) {
+    if (character.kind != EntityKind::player || character.life.dead) {
+        return;
+    }
+    const ItemInstance* item = Combat::weapon_in_hand(character);
+    const gamedata::CombatTables* tables = m_world.combat().tables();
+    const gamedata::WeaponRow* weapon = item != nullptr && tables != nullptr ? tables->weapon_of(item->itemId) : nullptr;
+    const std::uint32_t table = weapon != nullptr && !weapon->mastery.empty() ? gamedata::progression_id(weapon->mastery) : 0;
+    const std::optional<Stamina::DodgeView> dodge = m_world.stamina().dodge_of(character.characterId);
+    const gamedata::StaminaData* stamina = m_world.options().staminaData;
+    HitContext hit;
+    for (const PassiveRule& rule : rules_of(character, table)) {
+        const gamedata::CellValues& row = *rule.cells;
+        if (event_of(row) != "OnHitTakenWhileInvulnerable" || row.text("SelfApplyStatusEffect").empty() || !unknown_columns(row).empty()
+            || !evaded_unsourced(row).empty() || row.number("HasGritActive") != 0.0F) {
+            continue;
+        }
+        if (row.has("MyHealthPercent")
+            && !compare(percent_of(character.vitals.health, character.vitals.healthMax), row.number("MyHealthPercent"), row.text("MyComparisonType"))) {
+            continue;
+        }
+        if (row.has("MyStaminaPercent")
+            && !compare(percent_of(character.vitals.stamina, character.vitals.staminaMax), row.number("MyStaminaPercent"),
+                        row.text("MyStaminaComparisonType"))) {
+            continue;
+        }
+        if (row.has("MyManaPercent")
+            && !compare(percent_of(character.vitals.mana, character.vitals.manaMax), row.number("MyManaPercent"), row.text("MyManaComparisonType"))) {
+            continue;
+        }
+        if (const std::string_view status = row.text("DontHaveStatusEffect"); !status.empty() && m_world.statuses().has(character, status)) {
+            continue;
+        }
+        if (row.number("RequireReaction") != 0.0F && !(wouldDeal > 0.0F)) {
+            continue;
+        }
+        if (const std::string_view loads = row.text("EquipLoadCategory"); !loads.empty() && !list_has(loads, load_category(character))) {
+            continue;
+        }
+        // The attacker is a creature: a rule of a hit between players does not pass.
+        if (!row.text("AttackerVitalsCategory").empty() || same_text(row.text("TargetVitalsCategory"), "Player")) {
+            continue;
+        }
+        // The immunity comes from a dodge (the action Dodge of the data and its fragment).
+        if (const std::string_view actions = row.text("InAction");
+            !actions.empty() && (stamina == nullptr || !list_has(actions, stamina->tables().dodgeAction))) {
+            continue;
+        }
+        if (const std::string_view sequences = row.text("InSequence"); !sequences.empty() && (!dodge || !list_has(sequences, dodge->fragment))) {
+            continue;
+        }
+        if (!activation_ready(character.characterId, rule, false)) {
+            continue;
+        }
+        (void)activation_ready(character.characterId, rule, true);
+        ++m_counts.evadedRules;
+        m_world.gear().caster_effect(character, row, rule.id, rule.potency);
+    }
+    (void)hit;
+}
+
+void Passives::recheck(const std::string& characterId) {
+    if (const auto found = m_characters.find(characterId); found != m_characters.end()) {
+        found->second.nextAround = {};
+    }
 }
 
 void Passives::tick() {
@@ -887,7 +1048,7 @@ void Passives::tick() {
         // in the hand and the character moves): their statuses while the condition holds, with the action as the source.
         std::vector<const gamedata::ActionStatus*> actions;
         for (const gamedata::ActionStatus& action : abilities->tables().actionStatuses) {
-            if (!character->life.dead && action_holds(action, *character, weapon)) {
+            if (!character->life.dead && action_holds(action, *character, weapon, m_world.stamina().dodging(*character, now))) {
                 wanted.insert(action.action);
                 actions.push_back(&action);
             }
@@ -1014,6 +1175,9 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
     if (row.has("DmgPctToHealth")) {
         kind("heal of a part of the damage");
     }
+    if (row.has("Stamina")) {
+        kind("stamina gain");
+    }
     if (row.has("NumAroundMe")) {
         kind("entities near");
     }
@@ -1079,6 +1243,14 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
             if (names) {
                 view.applied = true;
                 view.note = "applied by the evaluator: the status action " + action.action + " of the data (a status while its condition holds)";
+                return true;
+            }
+        }
+        // The hit-taken status actions (stage 3.4f-B: Mauler's Stamina, GreatAxe_Passive_StamWhenLowHP_Detect).
+        for (const gamedata::ActionHitStatus& action : abilities->tables().actionHitStatuses) {
+            if (std::any_of(action.nodes.begin(), action.nodes.end(), [&](const std::string& node) { return same_text(node, id); })) {
+                view.applied = true;
+                view.note = "applied by the evaluator: the hit-taken action " + action.action + " of the data (its statuses at a hit taken)";
                 return true;
             }
         }
@@ -1173,10 +1345,22 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
         }
         return false;
     };
+    // A hit in the immune window of a dodge (stage 3.4f-B): the action Dodge and the dodge fragments of the stamina data have their rule
+    // in the stamina system (Passives::hit_evaded tests them).
+    const gamedata::StaminaData* stamina = m_world.options().staminaData;
+    const auto dodge_name = [&](std::string_view name) {
+        if (event != "OnHitTakenWhileInvulnerable" || stamina == nullptr || !stamina->loaded()) {
+            return false;
+        }
+        const gamedata::StaminaTables& tables = stamina->tables();
+        return same_text(tables.dodgeAction, name)
+               || std::any_of(tables.fragments.begin(), tables.fragments.end(),
+                              [&](const gamedata::DodgeFragment& fragment) { return same_text(fragment.name, name); });
+    };
     for (const char* column : {"InAction", "InSequence"}) {
         if (const std::string_view list = row.text(column); !list.empty()) {
             const std::vector<std::string_view> names = parts_of(list);
-            if (std::none_of(names.begin(), names.end(), planned_name)) {
+            if (std::none_of(names.begin(), names.end(), planned_name) && std::none_of(names.begin(), names.end(), dodge_name)) {
                 view.note = "not applied yet: its ability " + std::string(list) + " has no plan in this backend";
                 return view;
             }
@@ -1210,6 +1394,24 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
     if (event == "OnHealed") {
         view.note = "not applied: an effect after a heal is not in the backend (the backend applies HealScalingValueMultiplier of OnHealed)";
         return view;
+    }
+    if (event == "OnHitTakenWhileInvulnerable") {
+        if (row.text("SelfApplyStatusEffect").empty()) {
+            view.note = "not applied: a hit in the immune window of a dodge with an effect other than a status on the character";
+            return view;
+        }
+        if (!row.text("AttackerVitalsCategory").empty() || same_text(row.text("TargetVitalsCategory"), "Player")) {
+            view.note = "not applied: a hit between players (the attacker of a hit in a dodge is a creature)";
+            return view;
+        }
+        if (const std::vector<std::string> columns = evaded_unsourced(row); !columns.empty()) {
+            std::string list;
+            for (const std::string& column : columns) {
+                list += (list.empty() ? "" : ", ") + column;
+            }
+            view.note = "not applied: a hit in the immune window of a dodge has no source for the condition " + list;
+            return view;
+        }
     }
     if (event == "OnHitTaken" && row.text("SelfApplyStatusEffect").empty()) {
         view.note = "not applied: a hit taken with an effect other than a status on the caster";

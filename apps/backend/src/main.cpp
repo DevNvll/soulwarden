@@ -18,6 +18,7 @@
 #include "gamedata/combat_tables.h"
 #include "gamedata/ability_data.h"
 #include "gamedata/projectile_data.h"
+#include "gamedata/stamina_data.h"
 #include "gamedata/weapon_actions.h"
 #include "gamedata/spell_data.h"
 #include "gamedata/loot_tables.h"
@@ -380,9 +381,10 @@ int main(int argc, char** argv) {
             log::write("backend: the creature data has no ranged attacks (a file of a tool from before stage 3.4f-A): no creature "
                        "shoots. Make the file again with tools/gamedata/creatures.sh");
         } else {
-            log::write("backend: creature ranged data: %zu slices with the basic shot %s, %zu projectile slices, %s",
+            log::write("backend: creature ranged data: %zu slices with the basic shot %s or the cast %s, %zu projectile slices, %s",
                        creatureData.shooting_slices(),
                        gamedata::kBasicShotAction,
+                       gamedata::kBasicCastAction,
                        creatureData.projectiles().size(),
                        creatureData.player_capsule() ? "the capsule of the player slice" : "no capsule of the player slice (the default capsule)");
         }
@@ -579,6 +581,23 @@ int main(int argc, char** argv) {
                    weaponActionsPath.c_str(),
                    weaponActions.error().c_str());
     }
+    // The stamina of a player and the dodge (stage 3.4f-B): the Stamina component of the player slice, the delays, the dodge fragments.
+    const std::string staminaPath = (gameDataDirectory / gamedata::kStaminaDataFile).string();
+    gamedata::StaminaData staminaData;
+    if (staminaData.load(staminaPath)) {
+        const gamedata::StaminaTables& stamina = staminaData.tables();
+        log::write("backend: stamina data loaded from %s (stamina %.0f, regeneration %.2f in a second after %.1f s, dodge costs %.0f, "
+                   "%.0f, %.0f, immune %.2f s)",
+                   staminaPath.c_str(), static_cast<double>(stamina.maximum), static_cast<double>(stamina.regenRate),
+                   static_cast<double>(stamina.regenDelay), static_cast<double>(stamina.dodge[0].cost), static_cast<double>(stamina.dodge[1].cost),
+                   static_cast<double>(stamina.dodge[2].cost),
+                   stamina.fragments.empty() ? 0.0 : static_cast<double>(stamina.fragments.front().immuneEnd));
+    } else {
+        log::write("backend: no stamina data at %s (%s): a character keeps its full stamina, and a dodge has no immune window. Make the "
+                   "file with tools/gamedata/stamina.sh",
+                   staminaPath.c_str(),
+                   staminaData.error().c_str());
+    }
     // listener, the world has its own thread, so that a task of an HTTP thread runs.
     world::SystemClock clock;
     world::WorldOptions worldOptions;
@@ -593,6 +612,7 @@ int main(int argc, char** argv) {
     worldOptions.spellData = &spellData;
     worldOptions.projectileData = &projectileData;
     worldOptions.weaponActions = &weaponActions;
+    worldOptions.staminaData = &staminaData;
     worldOptions.perkData = &perkData;
     worldOptions.terrain = heightMaps.available() ? &heightMaps : nullptr;
     worldOptions.navigationData = &navigationData;

@@ -189,6 +189,7 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | The behavior of a creature: the fight, the way back, patrol and wander | [Creature behavior](docs/systems/creature-behavior.md) |
 | The navigation data, the path search, the terrain heights | [Navigation](docs/systems/navigation.md) |
 | Melee attacks, the damage, the critical hits (the roll, a hit from behind, a headshot), the health and the death of a character, the heals (the one heal path, the heal base, the heal number), the mana | [Combat and health](docs/systems/combat-and-health.md) |
+| The stamina of a player and the dodge: the one stamina path, the regeneration, the empty stamina, the dodge input and its checks, the immune window, the Stamina state | [Stamina and dodge](docs/systems/stamina-and-dodge.md) |
 | The abilities of a player: the press, the aim and its confirm, the cast, the cooldown, the hits, the heals of the life staff, the effects on a creature | [Abilities](docs/systems/abilities.md) |
 | The passive rules of the weapon trees and the perks: the one evaluator, its events, conditions, and effects, the list of the rules that it does not apply | [Passive rules](docs/systems/passive-rules.md) |
 | The rewards of a kill and the respawn of a creature | [Rewards](docs/systems/rewards.md) |

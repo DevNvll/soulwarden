@@ -322,6 +322,8 @@ struct CreatureShotCounts {
     std::array<std::uint64_t, kCreatureShotEndCount> ends{};
     /** Hits that changed the health of a character (a hit on a dead character, or a refused one, does not count). */
     std::uint64_t damage{0};
+    /** Contacts with a character in the immune window of its dodge (stage 3.4f-B): no damage, and the shot flies on. */
+    std::uint64_t evaded{0};
     /** Flight steps, the characters that the steps looked at, the wall tests of the segments, and the most flights at one time. */
     std::uint64_t steps{0};
     std::uint64_t looked{0};
@@ -533,6 +535,8 @@ private:
         float travelled{0.0F};
         WorldClock::time_point launched{};
         WorldClock::time_point at{};
+        /** The characters that the shot passed in the immune window of their dodge (stage 3.4f-B): not a target of this shot again. */
+        std::vector<EntityId> passed;
     };
     /** Flies one creature shot to `now`. @return True when its flight ended. */
     bool fly(CreatureFlight& flight, WorldClock::time_point now);

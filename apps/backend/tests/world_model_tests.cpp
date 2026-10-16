@@ -338,7 +338,7 @@ void encoder_views(const Options&) {
         return fields_text(decode_state(codec.type, codec.encode(entity, view, clock)));
     };
     const std::span<const StateCodec> codecs = player_codecs();
-    check(codecs.size() == 22 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
+    check(codecs.size() == 23 && codecs[0].slot == 0 && codecs[0].type == 10 && codecs[1].slot == 9 && codecs[1].type == 3935
               && codecs[2].slot == 16 && codecs[2].type == 11 && codecs[3].slot == 41 && codecs[3].type == 15
               && codecs[4].slot == 47 && codecs[4].type == 1652 && codecs[5].slot == 12 && codecs[5].type == 1195
               && codecs[6].slot == 19 && codecs[6].type == 3133 && codecs[7].slot == 66 && codecs[7].type == 3210
@@ -348,15 +348,17 @@ void encoder_views(const Options&) {
               && codecs[14].slot == 67 && codecs[14].type == 3681 && codecs[15].slot == 46 && codecs[15].type == 185
               && codecs[16].slot == 45 && codecs[16].type == 2932 && codecs[17].slot == 48 && codecs[17].type == 5257
               && codecs[18].slot == 44 && codecs[18].type == 4236 && codecs[19].slot == 43 && codecs[19].type == 1525
-              && codecs[20].slot == 16 && codecs[20].type == 11 && codecs[20].key == world::ComponentKey::motion
-              && codecs[21].slot == 26 && codecs[21].type == 3752 && !codecs[21].ownerOnly,
+              && codecs[20].slot == 42 && codecs[20].type == 4297 && codecs[20].key == world::ComponentKey::stamina && codecs[20].ownerOnly
+              && codecs[21].slot == 16 && codecs[21].type == 11 && codecs[21].key == world::ComponentKey::motion
+              && codecs[22].slot == 26 && codecs[22].type == 3752 && !codecs[22].ownerOnly,
           "one encoder for each component state: metadata (0, 10), player (9, 3935), movement (16, 11), vitals (41, 15), "
           "mana (47, 1652, user test 1), appearance (12, 1195), from stage 1.1b the entitlements (19, 3133) and the "
           "achievements (66, 3210) before the level, from stage 1.3 progression (70, 899), currency (60, 3786), "
           "and container (61, 1755), from stage 1.4 paperdoll (62, 3183), from stage 1.5 attribute (27, 129), from "
           "stage 1.6 categorical progression (65, 911), progression points (67, 3681), and ability (46, 185), from "
           "stage 3.3a the cooldowns (45, 2932), from stage 1.3b the heart rune charge (48, 5257), from stage 3.3b-S1 the "
-          "status effects (44, 4236), from stage 3.3b-S2a the speed table (43, 1525), from stage 3.3b-S4 the movement "
+          "status effects (44, 4236), from stage 3.3b-S2a the speed table (43, 1525), from stage 3.4f-B the stamina (42, 4297, "
+          "owner only), from stage 3.3b-S4 the movement "
           "of a dash for the observers (16, 11), and from stage 2.5a the Interactor (26, 3752, owner and observers)");
     check(!codecs[0].ownerOnly && !codecs[1].ownerOnly && !codecs[2].ownerOnly && !codecs[3].ownerOnly
               && codecs[4].ownerOnly && !codecs[5].ownerOnly && codecs[6].ownerOnly && codecs[7].ownerOnly && !codecs[8].ownerOnly

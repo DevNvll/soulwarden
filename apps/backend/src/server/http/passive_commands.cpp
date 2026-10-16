@@ -1,4 +1,6 @@
+#include <cctype>
 #include <string>
+#include <string_view>
 
 #include "gamedata/progression_tables.h"
 #include "server/http/character_commands.h"
@@ -99,6 +101,42 @@ json passives_table_json(world::World& target, const std::string& table) {
         rules.push_back(rule_json(view));
     }
     return {{"table", name}, {"rules", rules}, {"applied", applied}, {"count", rules.size()}};
+}
+
+json passives_stamina_json(world::World& target) {
+    // Each ability row of the data with a part of the stamina or of the dodge (stage 3.4f-B): a column whose name has "Stamina", the
+    // event OnHitTakenWhileInvulnerable, the condition EquipLoadCategory, or a text that names a dodge.
+    const gamedata::AbilityData* abilities = target.options().abilityData;
+    const gamedata::ProgressionTables* progression = target.options().progressionTables;
+    const auto lower = [](std::string_view text) {
+        std::string out(text);
+        for (char& letter : out) {
+            letter = static_cast<char>(std::tolower(static_cast<unsigned char>(letter)));
+        }
+        return out;
+    };
+    json rules = json::array();
+    std::size_t applied = 0;
+    if (abilities != nullptr) {
+        for (const gamedata::AbilityRow& row : abilities->tables().abilityRows) {
+            bool found = row.cells.has("OnHitTakenWhileInvulnerable") || row.cells.has("EquipLoadCategory");
+            for (const auto& [column, value] : row.cells.numbers) {
+                found = found || lower(column).find("stamina") != std::string::npos;
+            }
+            for (const auto& [column, value] : row.cells.texts) {
+                found = found || lower(column).find("stamina") != std::string::npos || lower(value).find("dodge") != std::string::npos;
+            }
+            if (!found) {
+                continue;
+            }
+            const gamedata::AbilityNode* node = progression != nullptr ? progression->node(row.id) : nullptr;
+            const world::RuleOrigin origin = node == nullptr ? world::RuleOrigin::perk : node->active ? world::RuleOrigin::active : world::RuleOrigin::node;
+            const world::RuleView view = target.passives().describe_row(row.id, &row.cells, origin);
+            applied += view.applied ? 1 : 0;
+            rules.push_back(rule_json(view));
+        }
+    }
+    return {{"table", "stamina"}, {"rules", rules}, {"applied", applied}, {"count", rules.size()}};
 }
 
 } // namespace soulwarden::backend::server::http::commands

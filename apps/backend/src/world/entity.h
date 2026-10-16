@@ -140,6 +140,12 @@ enum class ComponentKey {
      * collision (the contact, its time, the collided bit).
      */
     projectile,
+    /**
+     * The Stamina state of a character (stage 3.4f-B, slot 42, type 4297, world/stamina.h): the stamina, its maximum, the winded time and
+     * the delay of the regeneration that are left, and the two multipliers. Only the owner gets it; the first record of a character with
+     * its full stamina has no fragment.
+     */
+    stamina,
 };
 
 /**
@@ -161,6 +167,15 @@ struct Vitals {
     std::optional<WorldClock::time_point> manaRegenFrom;
     /** The mana in one second of the regeneration (the base vitals of a player; the mana state sends it while the mana is not full). */
     float manaRegenRate{0.0F};
+    /**
+     * The stamina (stage 3.4f-B, world/stamina.h): the regeneration starts at this time (a payment sets the delay of the data; no value:
+     * the stamina is full or has no rule), and it is off until `staminaHeldUntil` (a dodge, to its mark CanTransition). At 0 the
+     * character is winded to `windedUntil` and exhausted until its stamina is full again (no dodge in that time).
+     */
+    std::optional<WorldClock::time_point> staminaRegenFrom;
+    WorldClock::time_point staminaHeldUntil{};
+    WorldClock::time_point windedUntil{};
+    bool exhausted{false};
     /**
      * The world revision of the last heal of the character that shows its number on the screen of its owner (stage 3.3b-S6, live
      * check L3): the vitals state of the owner after it has bit 1 of healthChangeFlags (the client shows the gain from its own old
@@ -450,11 +465,12 @@ struct CreatureMind {
     /**
      * The shot of stage 3.4f-A: true while the action of its basic shot plays (its generation and its end are attackGeneration and
      * attackEnds), the time from which it can start its next shot, its walk back to the middle of its band, and the time before it walks
-     * back again.
+     * back again. `closing` (stage 3.4f-B): it walks into its band from farther; it walks on to the hold distance of the band.
      */
     bool shooting{false};
     WorldClock::time_point shotReady{};
     bool retreating{false};
+    bool closing{false};
     WorldClock::time_point retreatPauseUntil{};
     /** Steps in sequence in which a different creature stood at the place of the next step of this one. */
     std::uint32_t blockedSteps{0};
@@ -868,6 +884,8 @@ struct GearSummary {
     float healNonConsumable{0.0F};
     float healLifeSteal{0.0F};
     float healOutgoing{0.0F};
+    /** The StaminaRate part of the statuses (stage 3.4f-B): the regeneration of the stamina is 1 + this part times its rate. */
+    float staminaRate{0.0F};
     /** The equip load of the armor (tenths: the client shows 38.75 as 3.8) and its class: 0 light, 1 medium, 2 heavy, 3 overburdened. */
     float equipLoad{0.0F};
     std::uint8_t loadClass{0};

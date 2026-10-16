@@ -13,6 +13,7 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 | Patrol and wander of a creature: the routes of the spawn points, the wander values, the walk out of a fight, which creatures roam, the anchor of a fight, the reset (immune, the trail back), the wait at the place nearest to a target with no way | Protocol notes 4.14, 4.17, and 4.5, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/navigation.h` (`next_step` with `nearest`), `gamedata/creature_data.h` (`PatrolRoute`), `server/rep/states/vitals_state.cpp`, `tools/gamedata/creature_data.py` (`read_patrol`, `world_route`, `check_creature_tool.py`), `tools/world creatures`, `tools/world creature anchor`, test cases PT1 to PT10 and RP1 to RP9 |
 | A fight that a player can play: the 10 s with no target after a travel, the health that comes back, light and heavy attacks of a creature and their pause, creatures that do not stand at one place | Protocol notes 4.19, `apps/backend/src/world/behavior.h` (`behavior_rules`), `world/health.h`, `gamedata/creature_data.h` (`kContactGap`, `kHeavyWeight`), test cases PL1 to PL4 |
 | The shot of an archer (stage 3.4f-A): the band, the choice of melee or shot, the windup and the release, the aim and the lead, the repeat time, the walk back, the cancels | Protocol notes 4.37, `apps/backend/src/world/behavior.h` (the rule Shoot, `behavior_rules::kShot*`, `Behavior::aim`, `command_shot`), `world/projectiles.h` (`launch_creature`), `gamedata/creature_data.h` (`RangedRelease`, `kBasicShotAction`), `tools/world creature shoot`, test cases CRG2 to CRG5 |
+| The cast of a caster (stage 3.4f-B): the cast as the basic shot, the band of a caster, its repeat time; the corrections CR-R1 and CR-R2 of the review of stage 3.4f-A | Protocol notes 4.38, `world/behavior.h` (`behavior_rules::kCast*`, `kSpawnLead`, `Behavior::band_of`), `gamedata/creature_data.h` (`kBasicCastAction`, `CreatureSlice::caster`), test cases CRB1, CRG9, CRG10, RR1, RR2 |
 
 ## Rules
 
@@ -35,7 +36,7 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   goes back. A creature has one target. From stage 3.4d a wall stops the vision, the attack, each contact of an
   attack, and the way (the navigation data, protocol notes 4.19; a ceiling between two
   bodies on one vertical line too). A kind with no attack that the data tool can use (814
-  of the 3,848 kinds from stage 3.4f-A; 859 before the basic shot) takes no target and takes damage; it patrols or wanders with the roam
+  of the 3,848 kinds from stage 3.4f-B; 814 in stage 3.4f-A, 859 before the basic shot) takes no target and takes damage; it patrols or wanders with the roam
   data of its spawn point and of its slice, as each other creature (test case RP9).
 - A summon as a target (stage 3.3b-S2b, [Spell entities](spells.md)). A creature that a shot of a summon hurts takes the
   summon as its target (the Pylon: `OverrideTargetForAiThreat` of its spell row; `Behavior::hurt_by` with the threat of the
@@ -156,6 +157,27 @@ protocol notes (sections 4.14, 4.17, and 4.19).
     the target.
   - The command `tools/world creature shoot CREATURE CHARACTER` (`Behavior::command_shot`): the creature takes the character as its target
     and starts its shot now, with no band and no repeat time (a test of a wall, a far target, an observer).
+  - The walk into the band (stage 3.4f-B, the rule of the research Q3): a creature that walks into its band from farther walks on to
+    `kShotHold` (`kCastHold` for a caster) before it stands (`CreatureMind::closing`); the code of stage 3.4f-A stopped at the edge of
+    the band (test case CRB1: a mage at 18 m stands at 14 m, an archer at 18 m in its band shoots from its place).
+  - A required spawn action (code review of stage 3.4f-A, finding CR-R1; test case RR1): a creature whose slice needs the spawn action
+    starts no shot before `kSpawnLead` (1.5 s) after it was made: each session that saw it come shows the action that plays (the
+    windup), not only the arrow.
+  - The pending release (finding CR-R2; test case RR2): a release flies only when the creature still fights the same target. A travel
+    of the target (its shelter), a lost target, or a different target cancels it (`releasesCancelled`): the shot does not follow the
+    target to its new place.
+- The cast of a caster (stage 3.4f-B, protocol notes 4.38; research `creature-ranged.md` part B). A slice with no ranged attack of
+  the action FireBow and a ranged attack of the action `Cast_One_Projectile` (`gamedata::kBasicCastAction`) has the cast as its basic
+  shot (`CreatureSlice::caster`; 10 slices of 88 kinds: the Skeleton Mage, the Ancient Guardian mage, the Dynasty summoner, the Dryad
+  shaman, the Damned priest). The rules of the shot above hold, with these values:
+  - The cast (game data): the action `Cast_One_Projectile` (1.4 s for the Skeleton Mage), the release at its CAGE-RangedAttack event
+    (0.5 s), the profile, the attack index (125 for `AI_Mage_Sphere/Basic`), the ammunition (none for the Skeleton Mage: the slice
+    override of the profile), the projectile slice (`mage_projectile_slow`, 20 m/s, no fall, a flight of 3 s), and the row of its
+    damage table (live check L6, live proof P1).
+  - The band and the repeat (a project rule: a decision of an agent with an option of the research Q3; the game files have no
+    keep-distance rule; a caster stands nearer than an archer and casts more often): a cast in `kCastFar` (16 m) with a free line; a walk
+    to `kCastHold` (14 m) from farther; a walk back to `kCastMiddle` (11 m) from nearer than `kCastNear` (6 m); the next cast
+    `kCastRepeat` (2.5 s) after the start of the last one, or at the end of its action when later.
 - Two switches for the behavior. `SOULWARDEN_CREATURE_BEHAVIOR=0` (backend option
   `--no-creature-behavior`) turns it off for a start: the creatures stand at their spawn
   points. The command `set_creatures_ignore` (`tools/world ignore`, the mark of the tab
@@ -203,6 +225,10 @@ tools/world creature anchor 2c 8585.5 4243.1 173.26   # the anchor of a creature
   Skeleton Archer), and it shoots in 20 m: a character at 15 m in front of a Lost Knight archer is not seen. Hit it, or come nearer.
 - A creature of a spawn point near the archer (a wolf, a Risen) attacks the character too: for a clean video remove them
   (`tools/world creature remove ID`; the points wait until `tools/world creature reset`).
+- A Skeleton Mage (`Skeleton_Mage:2`, Celestial Mage) sees 12 m too and casts in 16 m. For a video of a cast or a dodge (stage
+  3.4f-B) the street of the default spawn is clear at 8879 4252.2 138.4 with the view to the west (`tools/world travel ... --screen
+  off`, then `tools/hx 'look -900 0'`): put the creature 10 m to the west and 1.5 m to the south (`-10 -1.5 0 --yaw 270`), so that
+  the character does not hide it.
 
 - Each creature that sees the character attacks it, also in a test of a different system:
   the character can die while a test waits. Turn the ignore value on first

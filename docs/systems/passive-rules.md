@@ -39,7 +39,7 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   fixed stat. A row with no event, NumAroundMe, and SelfApplyStatusEffect is a status while the condition holds. A row
   with OnBlockedHit and OnHit applies its OnHit part (the backend has no block).
 - A row with a column that is not a condition, an effect, or a mark of the evaluator, or with an event that the backend does
-  not have (a block, a weapon swap, a dodge), has no effect. A row with OnHealed and an effect after the heal (a status, a
+  not have (a block, a weapon swap, a dodge with no hit), has no effect. A row with OnHealed and an effect after the heal (a status, a
   cooldown change, a heal of the healer: `Passive_Lifestaff_Healing_CDROnLow`) has no effect: the backend applies only the
   outgoing heal part. The list names it with the column (rule "no silent
   rule").
@@ -58,6 +58,10 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   - DamageIsMelee: a melee contact; DamageIsRanged: a projectile. A hit of an area is neither (a decision of an agent).
   - HasGritActive, TargetHasGritActive: the backend has no grit; such a row does not pass (a project rule).
   - TargetVitalsCategory Player does not pass (the target of a hit is a creature); AttackerVitalsCategory must be Player.
+  - EquipLoadCategory (stage 3.4f-B): a list of the load classes of the data (Fast, Normal, Slow, Overburdened); the class of the
+    equip load of the character (`GearSummary::loadClass`: light, medium, heavy, overburdened).
+  - MyStaminaPercent is the stamina of the server from stage 3.4f-B ([Stamina and dodge](stamina-and-dodge.md)); before it the
+    stamina was always full (a rule with LessThan 100 never passed).
   - DontHaveStatusEffect: the attacker does not have the status.
   - TrackHitCount with NumberOfTrackedHits: the hits of one attack, compared with the limit (game text of Quick
     Recovery: "Max 5 reductions per attack").
@@ -105,7 +109,22 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   the tree of the weapon in the hand and of the perks, with the hit counts (`Passive_WarHammer_Juggernaut_DmgAfterTakingDmg`).
   Its conditions: the health of the character after the hit, its stamina, its mana, DontHaveStatusEffect, RequireReaction
   (the damage above 0), and grit (none). A row with a different condition is not applied, with the column in the list
-  (finding F6: `Global_Amulet_FortifyOnLow` gives its fortify only below 50 percent health; test case RV6).
+  (finding F6: `Global_Amulet_FortifyOnLow` gives its fortify only below 50 percent health; test case RV6). Stage 3.4f-B: Stamina
+  Recovery (`Global_Amulet_StamOnLow`: below 50 percent health and below 100 percent stamina, 20 stamina) passes with the
+  stamina of the server (test case SM4).
+- A hit-taken action of the data (stage 3.4f-B; `actionHitStatuses` of `ability-data.json` format 6): an action of the player lists
+  that applies statuses at a hit that the character takes (IfDamagedByPowerLevel) with tests of a learned node, the tags of the weapon,
+  the health and the stamina as a part of the maximum, and statuses that the character must not have. Mauler's Stamina
+  (`Passive_Greataxe_Mauler_StamVsLowHp`, the action `GreatAxe_Passive_StamWhenLowHP_Detect`): below 50 percent health and below 100
+  percent stamina with the great axe, 40 stamina and a timer of 20 s (`Passives::hit_taken`; test case SM4). An action with an other
+  activity (the HealingAura action of the life staff casts a spell) is not exported, with its cause (`actionHitStatusesNotExported`).
+  The test IfDamagedByPowerLevel with FailOnNoReactionDamage needs a hit with damage above 0 (a decision of an agent).
+- A hit in the immune window of a dodge (stage 3.4f-B, `Passives::hit_evaded`, [Stamina and dodge](stamina-and-dodge.md)): the rows
+  with OnHitTakenWhileInvulnerable and SelfApplyStatusEffect of the tree of the weapon in the hand and of the perks. Its conditions:
+  the values of the character, DontHaveStatusEffect, RequireReaction (the damage that the hit would do above 0), EquipLoadCategory,
+  the activation cooldown, InAction (the action Dodge of the stamina data) and InSequence (the fragment of the dodge). A row of a hit
+  between players (AttackerVitalsCategory or TargetVitalsCategory Player) does not pass: the attacker is a creature. Shirking
+  Fortification (`Global_Armor_DodgeSuccess_Fortify`): the fortify of the armor perks (test case SM4).
 - A heal (`Passives::heal_bonus`, stage 3.3b-S6): the rows with OnHealed and HealScalingValueMultiplier of the healer (the
   tree of the weapon of the heal and the perks) add their value to the outgoing heal part. Its conditions: TargetHealthPercent
   (the health of the target before the heal), the health, stamina, and mana of the healer, DamageTableRow (the row of the
@@ -144,9 +163,10 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   gives statuses while its condition holds. Guarded Sprint (`Passive_WarHammer_CrowdCrusher_RangeAbsorbSprint`): the action
   `Warhammer_Passve_SprintDmgRed` of `playeractions_ability_warhammer` gives `WarHammer_Pass_SprintDmgReduction` (10 percent
   absorption) while the character has the node, moves (the tags ForwardNav, BackNav, LeftNav, RightNav: `Entity::moving`), does
-  not dodge (Dodging: always false, the backend has no state of it), and has the war hammer in the hand (the tag Warhammer of
-  the MannequinTag of the weapon). The world tick gives the status and takes it when the condition does not hold
-  (`Passives::tick`; test case GH13).
+  not dodge (the tag Dodging: from stage 3.4f-B a dodge of the stamina system plays, from its start to its mark CanTransition), and
+  has the war hammer in the hand (the tag Warhammer of the MannequinTag of the weapon). The world tick gives the status and takes it
+  when the condition does not hold (`Passives::tick`; test case GH13). The start and the mark CanTransition of a dodge make the
+  evaluator look at the character in its next tick (`Passives::recheck`; test case SM5).
 - The list names the uses of a node in the data of the actions (stage 3.3b-M2, `describe_row`): a row of a strike, a transition
   inside an ability, a fragment that an action selects, or a spell cast of the weapon actions of format 2 (applied by the data);
   a grit of an action (ActivateGrit: not applied, the backend has no grit); a conditional of the movement of an action (applied
@@ -156,16 +176,16 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
 ### The rules of the great axe and the war hammer (stage 3.3b-M2)
 
 The list of the backend (`tools/world passives --table greataxe`, `--table warhammer`; the run `m2-list` of stage 3.3b-M2)
-names each node with what the backend does with it. The great axe: 33 of 38 nodes applied (with Unyielding). The war hammer:
-34 of 38 nodes applied. The nodes that are not applied, and the cause (the stamina model, grit, and the block are not in this
-stage):
+names each node with what the backend does with it. The great axe: 33 of 38 nodes applied (with Unyielding), 34 from stage
+3.4f-B (Mauler's Stamina). The war hammer: 34 of 38 nodes applied. The nodes that are not applied, and the cause (grit and the
+block are not in these stages):
 
 | Node | Cause |
 | --- | --- |
 | `Upgrade_Greataxe_Executioner_AddGrit`, `Upgrade_WarHammer_ArmBreak_Grit` | Grit: the action ActivateGrit of the fragment. The backend has no grit. |
 | `Passive_Greataxe_Mauler_HeavyAddGrit`, `Passive_WarHammer_Juggernaut_HeavyGrit` | The backend has no grit. |
 | `Passive_Greataxe_Reaper_DmgWhenBlocked`, `Passive_Greataxe_Mauler_DmgOnBlock`, `Passive_WarHammer_CrowdCrusher_LessStaminaOnBlock`, `Upgrade_WarHammer_Gavel_StaminaDmg` | No rule in the backend for a block (OnBlockedHit, OnBlockedHitTaken, BlockDamage, BlockDamageReduction). |
-| `Passive_Greataxe_Mauler_StamVsLowHp` | An action of the client gives stamina: the backend has no stamina model. |
+| `Passive_Greataxe_Mauler_StamVsLowHp` | Applied from stage 3.4f-B: the hit-taken action of the data gives its stamina through the stamina path. |
 
 The nodes of stage 3.3b-M2 and how they act: The Collector (`Upgrade_Greataxe_Reap_RngInc`: the rows and the shapes of the
 strikes of Reap), Fatal Attraction (`Upgrade_Greataxe_Reap_SpingAttack`: the fragment of Reap), Unending Winds
@@ -195,6 +215,34 @@ Sacred Ground), the two Beacon upgrades with a spell selection, Divine Blessing 
 
 The special rules of the other weapons (Berserk, the channels, the stacks of the rapier and the spear, the stances of
 the greatsword) are not in this stage: their rows show in the list with the cause.
+
+### The rules of the stamina and the dodge (stage 3.4f-B)
+
+The list of the backend (`tools/world passives --table stamina`; the final run of stage 3.4f-B with the files of `dist` and of the
+common game data folder) names each row of the data (a node or a perk) with a part of the stamina or of the dodge: a column with
+"Stamina", OnHitTakenWhileInvulnerable, EquipLoadCategory, or a text that names a dodge. 115 rows, 45 applied. The stamina model of
+this stage gives the source of each applied row; the rows that are not applied need a different system, and the list names the cause.
+
+| Rows | What the backend does |
+| --- | --- |
+| 20 rows with OnHitTakenWhileInvulnerable and a status on the character: the fortify of the armor perks (`Global_Armor_DodgeSuccess_Fortify`, Shirking Fortification), the stamina of the legs perks (`Global_Legs_DodgeSuccess_Stamina`, Fast load), the trackers of the elemental weapon perks (`Global_Weapon_DodgeSuccess_*_Tracker`), `AbilityID_Catacombs_AddShirkingBlessing`, `Dex_Bonus_250_1`, `GlobalPerk_Artifact_Set1_LightFeet`, `Global_Conqueror_Longsword_ShieldlessAgility_SuccessfulDodge`, and the `Ability_Perk_*` forms of the same perks | Applied (`Passives::hit_evaded`): a creature hit in the immune window of a dodge gives the status. |
+| `Global_Amulet_StamOnLow`, `Ability_Perk_Amulet_StamOnLow` (Stamina Recovery) | Applied: OnHitTaken below 50 percent health and 100 percent stamina, 20 stamina. |
+| `Global_Ring_DmgLowStam` (Gambled Energy), `StaminaNotFullDamagePerk1` to `4`, `Rapier_BonusDmgLowStamina`, `Ability_Spear_BonusDmgMaxStamina`, `Dex_Bonus_100_1` | Applied: the BaseDamage part with MyStaminaPercent of the stamina of the server. |
+| `Runeglass_Just_Stamina_Armor`, `Runeglass_Just_Stamina_Weapon`, `Runeglass_ThreatAdd_Stamina`, `Runeglass_ThreatSub_Stamina` | Applied: the cell Stamina of a hit rule (1 or 4 stamina at a hit with damage, one time in 3 s) through the stamina path. |
+| `Ability_Spear_ReducedDodgeStamCost`, `Passive_Hatchet_ThrowingAxe_AbilityDodgeStamina` | Applied as a status on the character (OnHit); the conditional cost of the dodge that the status enables (the cost times 0.8 or 0.75) is in `costsNotApplied` of the stamina data: the stamina system does not apply it yet (the spear and the hatchet have no abilities in this backend). |
+| `Passive_Greataxe_Mauler_StamVsLowHp` (not one of the 115 rows: its row has no stamina cell) | Applied: the hit-taken action of the data gives its stamina. |
+| The other applied rows of the list (`AbilityTable_SetBonus_Infix_SecondWind_Gloves`, `GlobalPerk_Artifact_Set2_Warhammer2`, `GlobalPerk_Artifact_Set2_HeavyLegs`, `Global_Conqueror_MeleeWeapon_DodgeSuppressant`, `Heartgem_Rune_SpinningSwords_*`, `IceTempestPass3`, `Passive_Dagger_Blade_LightFinish_Weaken`, `Runeglass_Just_ElementalAdd`) | Applied by the rules of the earlier stages (a text of the row names a dodge or a stamina status; the row has no stamina condition). |
+| 5 rows of a hit between players in a dodge (`Global_PvP_Amulet_DodgeSuccess_DMG`, `Global_PvP_Armor_DodgeSuccess_Heal`, `Global_Conqueror_DodgeCorruptionBall`, and two `Ability_Perk_PvP_*`) | Not applied: the attacker of a hit in a dodge is a creature. |
+| 12 elemental weapon perks (`Global_Weapon_DodgeSuccess_*DMG`, `Ability_Perk_Weapon_DodgeSuccess_*DMG`) | Not applied: the damage over time of the next hit needs StatusEffect (a condition of a status of the character), RemoveStatusEffects, and ForceStatusEffectDamageTableRow. |
+| 3 cleanse amulets (`Global_Amulet_DodgeSuccess_CleanseDoT`, `_CleanseDebilitate`, `Ability_Perk_Amulet_DodgeSuccess_Cleanse`), `GlobalPerk_Artifact_Set2_HeavyChest`, `Ability_Spear_CDROnHitAfterDodge` | Not applied: RemoveStatusEffects (the removal of statuses of a category) is not in the backend. |
+| 3 block perks (`Global_Chest_OnBlockedHitTaken_StaminaRegen`, its `Ability_Perk_*` form, `Passive_Flail_Eldritch_Passive2`), `AbilityID_Catacombs_Revitalize_Ability` | Not applied: the backend has no block (OnBlockedHitTaken). |
+| 22 rows after a dodge (`CDROnDodgePerk1` to `3`, `Global_Common_CDRonDodge`, `Global_Earring_ThreatSubOnDodge`, the 10 `Mut_Curse1_*` rows, `Passive_Lifestaff_Protection_HealingOnDodge`, `Passive_Musket_Trapper_*`, `Passive_VoidGauntlet_HealOnDodgeMaxMana`, `Passive_Greatsword_Off_8`, `Ultimate_Bow_Skirmish`, `AbilityTable_SetBonus_Infix_Stifling_Legs`) | Not applied: AfterAction, AfterSequence, and Duration (a rule after the end of an action) are not in the evaluator. |
+| 13 rows of an equipped ability or a trigger (`RequiredEquippedAbilityId`, `AbilityTrigger`, `AbilityList`: the helpers of the flail, the sword, the dagger, and the greatsword, the greatsword counter, `Passive_Flail_Crusader_Passive4`) | Not applied: the evaluator has no such condition. |
+| 5 rows of an ability with no plan (`Ability_Greatsword_DrainAttack`, `Ability_Spear_Cyclone_BonusStaminaOnMultiHit`, `Rapier_Evasion_Mod2`, `_Mod4`, `Upgrade_Sword_WhirlingBlade_Rend`) | Not applied yet: the weapon part of their ability comes later. |
+| `Global_Conqueror_Longsword_ShieldlessAgility_HitStaminaCostTracker`, `Global_Conqueror_Musket_LimbDebilitation_Legshot`, `GlobalPerk_Artifact_Set2_MediumLegs`, `Passive_Firestaff_Pyro_ManaOnblock` | Not applied: OnEquipStatusEffect, OnLegShot, DamageTypes, UseDefenderWeaponOnApplyOtherSE are not in the evaluator. |
+
+Grit and the block stay out of this stage (the roadmap): `Passive_Greataxe_Mauler_HeavyAddGrit`, `Passive_WarHammer_Juggernaut_HeavyGrit`,
+and the block rows of the table of the great axe and the war hammer above keep their cause.
 
 ## Commands
 

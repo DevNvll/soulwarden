@@ -73,7 +73,7 @@ bool ticks(const gamedata::StatusRow& row) {
     return row.cells.number("TickRate") > 0.0F
            && (row.cells.number("Health") != 0.0F || row.cells.number("HealthModifierPercent") != 0.0F
                || row.cells.number("HealthModifierDamageBased") != 0.0F || row.cells.number("Mana") != 0.0F
-               || row.cells.number("ManaModifierPercent") != 0.0F);
+               || row.cells.number("ManaModifierPercent") != 0.0F || row.cells.number("Stamina") != 0.0F);
 }
 
 } // namespace
@@ -307,6 +307,12 @@ void Statuses::give(Entity& character, const gamedata::StatusRow& row, float amo
     const float mana = (row.cells.number("Mana") + row.cells.number("ManaModifierPercent") * character.vitals.manaMax) * amount;
     if (mana != 0.0F) {
         m_world.abilities().change_mana(character, mana, row.id.c_str());
+    }
+    // The stamina of a status (stage 3.4f-B): the cell Stamina at each application and tick (Stamina Recovery 20, the node Mauler's
+    // Stamina of the great axe 40), through the one stamina path.
+    const float stamina = row.cells.number("Stamina") * amount;
+    if (stamina != 0.0F) {
+        m_world.stamina().change(character, stamina, row.id.c_str());
     }
 }
 
@@ -745,7 +751,7 @@ StatusValues Statuses::values(const Entity& character) const {
         }
         for (const char* column : {"MaxHealthMod", "PhysicalArmor", "ElementalArmor", "BaseDamageReduction", "SprintSpeedMod",
                                    "CritChanceModifier", "CritDamageModifier", "HealMod", "ConsumableHealMod", "NonConsumableHealMod",
-                                   "DmgPctToHealthHealMod", "HealScalingValueMultiplier"}) {
+                                   "DmgPctToHealthHealMod", "HealScalingValueMultiplier", "StaminaRate"}) {
             add(*row, column, row->cells.number(column) * factor);
         }
         add(*row, "MoveSpeedMod", row->moveSpeed * factor);
@@ -782,6 +788,8 @@ StatusValues Statuses::values(const Entity& character) const {
     values.healNonConsumable = value("NonConsumableHealMod");
     values.healLifeSteal = value("DmgPctToHealthHealMod");
     values.healOutgoing = value("HealScalingValueMultiplier");
+    // The regeneration part of the stamina (stage 3.4f-B): StaminaRate (Sacred Ground with Holy Ground +0.25, an earring affix).
+    values.staminaRate = value("StaminaRate");
     values.moveSpeed = value("MoveSpeedMod");
     values.sprintSpeed = value("SprintSpeedMod");
     for (const std::string& name : typeNames) {

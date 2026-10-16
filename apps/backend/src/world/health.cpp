@@ -36,6 +36,10 @@ HealthResult Health::apply(Entity& target, float damage) {
     if (result.died) {
         // RemoveOnDeath (stage 3.3b-S1): the statuses of the row end at the death (no end status of a heart rune).
         m_world.statuses().died(target);
+        // A dodge of the character ends at its death (stage 3.4f-B).
+        if (target.kind == EntityKind::player) {
+            m_world.stamina().interrupted(target.characterId, "the death of the character");
+        }
         // The spells of the character whose row has EndOnCasterDeath end (stage 3.3b-S2a).
         m_world.spells().caster_died(target.id);
         // The auras that follow the character end (code review of stage 3.3b-S2b, finding F3).
@@ -51,11 +55,18 @@ HealthResult Health::apply(Entity& target, float damage) {
     return result;
 }
 
-void Health::creature_hit(Entity& creature, const gamedata::CreatureContact& contact, Entity& target) {
+CreatureHitOutcome Health::creature_hit(Entity& creature, const gamedata::CreatureContact& contact, Entity& target,
+                                        std::optional<WorldClock::time_point> at) {
     const CreatureDamage damage = m_world.combat().creature_damage(creature, contact, target);
+    // The dodge (stage 3.4f-B): a hit in the Invulnerability clip of the dodge fragment of the character does not hurt it (game data:
+    // player.adb, 0 to 0.5 s; the time of the contact, the end not included).
+    if (target.kind == EntityKind::player && !target.life.dead && m_world.stamina().immune(target, at.value_or(m_world.clock().now()))) {
+        m_world.stamina().evaded(target, creature, damage.dealt, contact.row.c_str());
+        return CreatureHitOutcome::evaded;
+    }
     const HealthResult result = apply(target, damage.dealt);
     if (result.error != HealthError::none) {
-        return;
+        return CreatureHitOutcome::hurt;
     }
     const std::string mark = log::session_mark(target.owner, target.characterId);
     const log::Context context(mark);
@@ -95,6 +106,7 @@ void Health::creature_hit(Entity& creature, const gamedata::CreatureContact& con
         log::write("world: character %s (%s) is dead", target.characterId.c_str(), target.name.c_str());
         m_world.died(target.owner, kRespawnTime);
     }
+    return CreatureHitOutcome::hurt;
 }
 
 void Health::entered(const Entity& character) {
@@ -151,6 +163,8 @@ HealthResult Health::heal(const std::string& characterId) {
         // that the death removed come back (code review of stage 3.3b-S1, finding F5).
         m_world.creatures().behavior().shelter(*target, false);
         m_world.gear().refresh(*target);
+        // A character that lives again has its full stamina (stage 3.4f-B; the client fills its Stamina component at a revival).
+        m_world.stamina().refilled(*target);
     }
     const std::string mark = log::session_mark(target->owner, target->characterId);
     const log::Context context(mark);
@@ -335,6 +349,8 @@ HealthResult Health::respawn(SessionId session) {
     m_world.touch(target->id, ComponentKey::vitals);
     // The statuses of the gear that the death removed come back (finding F5).
     m_world.gear().refresh(*target);
+    // The full stamina of a respawn (stage 3.4f-B).
+    m_world.stamina().refilled(*target);
     {
         const std::string mark = log::session_mark(target->owner, target->characterId);
         const log::Context context(mark);

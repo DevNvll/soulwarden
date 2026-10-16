@@ -164,10 +164,12 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   one animation is not fully known). The sequence ends at a change of the weapon, an accepted ability (also the aim of an aimed
   ability), a travel, the death, a new session or a new input sequence of the client (a reconnect), and a dodge (bit 322): at once
   in a CanDodgeCancel window that starts after the start of the fragment, at the end of a CanDodgeBuffer window; a dodge in a
-  cancel window that starts with the fragment is no end (live check: the client plays no dodge there). The payments of a fragment
-  (PayStaminaCost, CAGE-PayManaCost) pass with the visit: the backend has no stamina model (the stamina rows of the basic attacks
-  of the reachable graphs are 0), a mana payment goes through the one mana path, and a payment with a condition (the stance of
-  the greatsword) is counted only. With no file (or a weapon with no graph: the dagger) the rule of stage 3.2a stays: the light
+  cancel window that starts with the fragment is no end (live check: the client plays no dodge there). From stage 3.4f-B the
+  dodge that ends the sequence (`AttackSequences::take_dodge`) goes to the stamina system, which decides it with its own stamina and
+  makes the character immune for 0.5 s ([Stamina and dodge](stamina-and-dodge.md)). The payments of a fragment (PayStaminaCost,
+  CAGE-PayManaCost) pass with the visit: a stamina payment goes through the stamina path (stage 3.4f-B; the stamina rows of the basic
+  attacks of the reachable graphs are 0: no change, live check LS7), a mana payment goes through the one mana path, and a payment with
+  a condition (the stance of the greatsword) is counted only. With no file (or a weapon with no graph: the dagger) the rule of stage 3.2a stays: the light
   or the heavy row of the weapon table, and one hit of a creature in 250 ms.
 - The corrections of the code review of stage 3.3b-M1 (test cases RB1 to RB5; each one fails on the tree of stage 3.3b-M1):
   - The due time (M1-R1): each visit has the time of the world clock at which its start is due (`AttackVisit::dueAt`): the

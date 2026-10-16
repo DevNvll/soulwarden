@@ -204,6 +204,22 @@ inline constexpr std::chrono::milliseconds kShotRepeat{3000};
 /** A creature that walked back (or found no way back) does not walk back again for this time (a decision of an agent: no endless kite). */
 inline constexpr std::chrono::milliseconds kRetreatPause{6000};
 /**
+ * The band of a caster (stage 3.4f-B; project rules: research creature-ranged.md Q3, the first option for a caster, 6 m to 16 m): the
+ * same rules as the band of an archer with these distances, and the next cast kCastRepeat after the start of the last one (research Q3:
+ * 2.5 s from the start of the action of a caster). The game files have no band and no repeat time of a caster.
+ */
+inline constexpr float kCastFar = 16.0F;
+inline constexpr float kCastHold = 14.0F;
+inline constexpr float kCastNear = 6.0F;
+inline constexpr float kCastMiddle = 11.0F;
+inline constexpr std::chrono::milliseconds kCastRepeat{2500};
+/**
+ * The presentation of the spawn action of a new creature (protocol notes 4.14): a session gives the action that plays this long after a
+ * first record with the spawn action (rep_session.cpp). A creature whose slice needs the spawn action starts no shot in this time after
+ * its creation (code review of stage 3.4f-A, finding CR-R1: the arrow came before the windup of FireBow in each observer).
+ */
+inline constexpr std::chrono::milliseconds kSpawnLead{1500};
+/**
  * The origin of a shot: this high above the feet of the creature and this far in front of it (meters; a decision of an agent: the data
  * has the joint of the bow, and the backend has no animated body; live check L2: the arrow leaves the bow of the archer).
  */
@@ -386,6 +402,16 @@ private:
      * @return False: the melee rules decide (the target is in the reach of the next melee attack).
      */
     bool think_shot(Entity& creature, Entity& target, std::uint32_t shot, float seconds);
+    /** The distances and the repeat time of the shot of a slice: the band of an archer, or of a caster (stage 3.4f-B). */
+    struct ShotBand {
+        /** The outer edge (kShotFar, kCastFar) and the inner edge (kShotNear, kCastNear) of the band. */
+        float outer{0.0F};
+        float hold{0.0F};
+        float inner{0.0F};
+        float middle{0.0F};
+        std::chrono::milliseconds repeat{0};
+    };
+    [[nodiscard]] static ShotBand band_of(const gamedata::CreatureSlice& body);
     void start_shot(Entity& creature, Entity& target, std::uint32_t shot);
     void release(const PendingRelease& pending);
     void go_home(Entity& creature, float seconds);

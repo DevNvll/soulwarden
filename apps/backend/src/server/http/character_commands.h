@@ -141,6 +141,12 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand shoot(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /** @return The projectiles in the air (world thread), the counts of the shots by verdict, of the ends by cause, and of the work. */
 [[nodiscard]] nlohmann::json projectiles_json(world::World& world);
+/**
+ * The stamina and the dodges (stage 3.4f-B), for the development list (`tools/world list`, `tools/world stamina`): the data, the
+ * counts of the dodge inputs by verdict, the payments, the gains, the empty stamina, the avoided creature hits, and for each
+ * character its stamina, its maximum, the exhausted state, and its dodge.
+ */
+[[nodiscard]] nlohmann::json stamina_json(world::World& world);
 /** @return The counts of the sequences of the basic attacks (stage 3.3b-M1) for the list of the world. */
 [[nodiscard]] nlohmann::json basic_attacks_json(world::World& world);
 // The tree and the bar commands (stage 3.3a, world/skills.h): the same rules as the requests of
@@ -215,6 +221,8 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] nlohmann::json passives_json(world::World& world, const std::string& character);
 /** @return Each node of a weapon tree (the id text of its ability table: "GreatAxeAbilityTable") with what the backend does with it. */
 [[nodiscard]] nlohmann::json passives_table_json(world::World& world, const std::string& table);
+/** @return The ability rows of the data with a part of the stamina or of the dodge (stage 3.4f-B), each with what the backend does. */
+[[nodiscard]] nlohmann::json passives_stamina_json(world::World& world);
 
 /**
  * @return The heal values of a character (stage 3.3b-S6, heal_commands.cpp): the heal base with the weapon in its hand (its gear score,

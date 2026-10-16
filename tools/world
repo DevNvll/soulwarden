@@ -183,6 +183,8 @@ not, as for the items):
   tools/world passives --table WEAPON           the same for each node of a weapon tree (greataxe, warhammer, or
                                                 the id of the table): the rules that the evaluator applies and the
                                                 rules that it does not apply yet
+  tools/world passives --table stamina          the same for each row of the data (a node or a perk) with a part of
+                                                the stamina or of the dodge (stage 3.4f-B)
   tools/world node CHARACTER WEAPON NODE...     spend one mastery point on each node of a weapon
                                                 tree, in this sequence (NODE: the id text of the
                                                 game table, Ability_WarHammer_WreckingBall). The
@@ -204,6 +206,8 @@ not, as for the items):
                                                 heavy shot, a charged arrow or a charged fire ball)
   tools/world projectiles                       the projectiles in the air (stage 3.3b-S3), the shots by
                                                 verdict, and the ends by cause
+  tools/world stamina                           the stamina of each character and its dodge (stage
+                                                3.4f-B), the dodge inputs by verdict, the payments
   tools/world bar CHARACTER WEAPON SLOT ABILITY put an active ability that the character has on a
                                                 place (0 to 2) of the bar of a weapon (ABILITY: the
                                                 id text of its node, or none: an empty place)
@@ -450,6 +454,9 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             projectiles = load.get("projectiles")
             if projectiles:
                 print(projectiles_text(projectiles))
+            stamina = load.get("stamina")
+            if stamina:
+                print(stamina_text(stamina))
             basic = load.get("basicAttacks")
             if basic:
                 ends = ", ".join(f"{count} {why}" for why, count in basic["ends"].items()) or "none"
@@ -612,12 +619,31 @@ def projectiles_text(projectiles: dict) -> str:
         lines.append(f"creature shots: {len(creatures['flying'])} in the air, {creatures['holds']} ended ones before their stop; "
                      f"{creatures['shots']} shots started, {creatures['releases']} releases flew, {creatures['releasesCancelled']} did "
                      f"not, {creatures['retreats']} walks back; {creatures['launches']} launches ({creatures['refused']} refused); ends: "
-                     f"{ends}; {creatures['damage']} hits with damage, {creatures['steps']} flight steps, {creatures['looked']} "
+                     f"{ends}; {creatures['damage']} hits with damage, {creatures.get('evaded', 0)} passed a dodge, {creatures['steps']} flight steps, {creatures['looked']} "
                      f"characters looked at, {creatures['wallTests']} wall tests, {creatures['largest']} in the air at one time at most")
         for flying in creatures["flying"]:
             x, y, z = flying["position"]
             lines.append(f"  shot {flying['number']}  {flying['attack']} of creature {flying['creature']} (entity {flying['entity']})  age "
                          f"{flying['age']:.2f} s, {flying['travelled']:.1f} m  at {x:.2f} {y:.2f} {z:.2f}")
+    return "\n".join(lines)
+
+
+def stamina_text(stamina: dict) -> str:
+    """@return The lines `stamina` of the list (stage 3.4f-B): the dodge inputs by verdict, the payments, and each character."""
+    if not stamina["data"]:
+        return "stamina: the backend has no stamina data (tools/gamedata/stamina.sh): no payment, no dodge rule of the server"
+    dodges = ", ".join(f"{count} {verdict}" for verdict, count in stamina["dodges"].items()) or "none"
+    lines = [f"stamina: dodges: {dodges}; {stamina['payments']} payments ({stamina['paymentsCancelled']} dodges ended before their "
+             f"payment), {stamina['gains']} gains, {stamina['regenerationSteps']} regeneration steps, {stamina['emptied']} times empty, "
+             f"{stamina['evaded']} creature hits avoided by a dodge"]
+    for character in stamina["characters"]:
+        line = (f"  {character['character'][:8]}  {character['stamina']:.1f} of {character['maximum']:.1f}"
+                f"{'  exhausted' if character['exhausted'] else ''}  regeneration {character['regeneration']:.2f}/s")
+        dodge = character.get("dodge")
+        if dodge:
+            line += (f"  dodge {dodge['fragment']} ({dodge['cost']:.0f}) {dodge['age']:.2f} s, {'paid' if dodge['paid'] else 'not paid'}"
+                     f"{', immune' if dodge['immune'] else ''}")
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -1019,6 +1045,9 @@ def main() -> None:
     elif command == "projectiles" and len(arguments) == 1:
         document = fetch(data_dir, "/v1/dev/world")
         print(projectiles_text(document["load"]["projectiles"]))
+    elif command == "stamina" and len(arguments) == 1:
+        document = fetch(data_dir, "/v1/dev/world")
+        print(stamina_text(document["load"]["stamina"]))
     elif command == "spells" and len(arguments) == 1:
         document = fetch(data_dir, "/v1/dev/world")
         print(spells_text(document["load"]["spells"]))
@@ -1298,7 +1327,8 @@ def main() -> None:
         if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[2]):
             fail("give the weapon (greataxe) or the id of its ability table (GreatAxeAbilityTable)")
         document = fetch(data_dir, f"/v1/dev/passives/table?table={arguments[2]}")
-        print(f"{document['table']}: {document['count']} nodes, {document['applied']} applied")
+        kind = "rows of nodes and perks" if document["table"] == "stamina" else "nodes"
+        print(f"{document['table']}: {document['count']} {kind}, {document['applied']} applied")
         for rule in document["rules"]:
             mark = "applied    " if rule["applied"] else "NOT APPLIED"
             kinds = ", ".join(rule["kinds"]) or "-"

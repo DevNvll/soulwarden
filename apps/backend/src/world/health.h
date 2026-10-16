@@ -127,6 +127,14 @@ struct RespawnPlace {
     std::string name;
 };
 
+/** What a creature hit did (stage 3.4f-B). */
+enum class CreatureHitOutcome : std::uint8_t {
+    /** The health system applied the damage of the rule (or the target was dead: no change). */
+    hurt,
+    /** The target was in the immune window of a dodge at the time of the hit: no damage (world/stamina.h). */
+    evaded,
+};
+
 class Health {
 public:
     explicit Health(World& world) : m_world(world) {}
@@ -135,8 +143,12 @@ public:
      * One contact of an attack of a creature that passed its test: the target takes the damage
      * of the rule (Combat::creature_damage), and the session of the target gets the mark for
      * its screen. The health 0 is the death of the target.
+     * Stage 3.4f-B: a character in the immune window of its dodge at `at` (the time of the contact; no value: now) takes no damage, no
+     * mark, and no effect of the hit (the Invulnerability clip of the dodge fragment); the passive rules with
+     * OnHitTakenWhileInvulnerable get the hit.
      */
-    void creature_hit(Entity& creature, const gamedata::CreatureContact& contact, Entity& target);
+    CreatureHitOutcome creature_hit(Entity& creature, const gamedata::CreatureContact& contact, Entity& target,
+                                    std::optional<WorldClock::time_point> at = std::nullopt);
 
     /**
      * A session entered the world with a character that is dead (a second session took the

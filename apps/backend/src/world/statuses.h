@@ -134,6 +134,8 @@ struct StatusValues {
     float healNonConsumable{0.0F};
     float healLifeSteal{0.0F};
     float healOutgoing{0.0F};
+    /** The StaminaRate part (stage 3.4f-B): the regeneration of the stamina is (1 + this part) times its rate. */
+    float staminaRate{0.0F};
 };
 
 /** Counts of the status system, for the log, `tools/world list`, and the tests. */

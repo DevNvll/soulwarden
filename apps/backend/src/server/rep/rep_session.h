@@ -551,12 +551,31 @@ private:
     struct EarlyCancel {
         world::InteractionReference reference;
         std::uint16_t datagram{0};
+        /**
+         * The input steps of the client up to this number are older than the cancel (code review of stage 3.4f-A, finding CR-R4: the
+         * client repeats an input entry in its later reports, thus a newer datagram can carry the press of the cancelled attempt): the
+         * estimate of the input number of the client at the cancel and kEarlyCancelSteps more.
+         */
+        std::uint16_t step{0};
+        bool hasStep{false};
         /** The mark ends at this time (kEarlyCancelKeep after the cancel): the datagram numbers have 16 bits. */
         world::WorldClock::time_point ends{};
     };
     /** An early cancel stays this long (a decision of an agent: a press later than this behind its cancel is not a press of the client). */
     static constexpr std::chrono::milliseconds kEarlyCancelKeep{3000};
-    std::optional<EarlyCancel> m_earlyCancel;
+    /**
+     * The steps after the estimate of the input number of the client at a cancel that are still steps of the cancelled attempt: an entry
+     * is in the five reports of its client (protocol notes 4.7), and a new press needs a release and a press (a decision of an agent).
+     */
+    static constexpr std::uint16_t kEarlyCancelSteps = 5;
+    /** The marks of the early cancels, one for each reference (code review of stage 3.4f-A, finding CR-R3), kEarlyCancelMost at most. */
+    static constexpr std::size_t kEarlyCancelMost = 8;
+    std::vector<EarlyCancel> m_earlyCancels;
+    /**
+     * The references of the requests that the session took in the last kEarlyCancelKeep (stage 3.4f-B): a cancel with no use of such a
+     * reference is a late cancel (the echo of a use that ended), not an early one, and it gives no mark.
+     */
+    std::vector<std::pair<world::InteractionReference, world::WorldClock::time_point>> m_seenRequests;
     /** Newest input report of the client and the time of the last log line for it. */
     ClientInput m_input;
     carrier::Clock::time_point m_lastInputLog{};

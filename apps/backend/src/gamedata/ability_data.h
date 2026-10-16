@@ -167,6 +167,29 @@ struct ActionStatus {
     std::vector<std::string> statuses;
 };
 
+/**
+ * An action of the player lists that applies statuses at a hit that the character takes (stage 3.4f-B, file format 6; the node Mauler's
+ * Stamina of the great axe: GreatAxe_Passive_StamWhenLowHP_Detect). The tests of its activation condition: a hit with a power level
+ * (IfDamagedByPowerLevel; `reaction`: the hit must have damage of a reaction), the health and the stamina as a part of the maximum, the
+ * learned nodes, the mannequin tags (the tag of the weapon in the hand), and the statuses that the character must not have.
+ */
+struct ActionHitStatus {
+    struct Compare {
+        std::string comparison;
+        float value{0.0F};
+    };
+    std::string list;
+    std::string action;
+    std::vector<std::string> nodes;
+    std::vector<std::string> tags;
+    std::optional<Compare> health;
+    std::optional<Compare> stamina;
+    std::vector<std::string> without;
+    Compare power;
+    bool reaction{false};
+    std::vector<std::string> statuses;
+};
+
 /** The data as plain values: the content of the file, and what a test sets. */
 struct AbilityTables {
     std::vector<CooldownRow> cooldowns;
@@ -189,6 +212,8 @@ struct AbilityTables {
     std::vector<ActionNodes> actionNodes;
     /** The status actions of the player (stage 3.3b-M2, file format 5; empty for an older file). */
     std::vector<ActionStatus> actionStatuses;
+    /** The hit-taken status actions of the player (stage 3.4f-B, file format 6; empty for an older file). */
+    std::vector<ActionHitStatus> actionHitStatuses;
     /**
      * The number of the rows of the status tables of the game, with each duplicate: the length of the
      * status list of the client. Each status number is below it (code review of stage 3.3a, finding F10).

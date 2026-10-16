@@ -30,6 +30,21 @@ The ranged attacks (stage 3.4f-A, test case CRG1), with made-up rows and slices:
   ranged-projectile    a projectile slice with and with no Projectile      its asset, root, slot, flight values; no
                        component                                           entry with no component
 
+The corrections of the code review of stage 3.4f-A (findings CR-R5 and CR-R6; stage 3.4f-B, test case RR5), with the production ranged
+reader, the joins, the projectile reader, the builder, and the writer of the tool (made-up sources):
+
+  case                          what                                                expected result
+  review-control                one FireBow release of 1.33333 s                    status 0, one ranged attack, the time
+  review-control-cast           the same release in the action Cast_One_Projectile  status 0, one ranged attack (the basic cast)
+  review-other-action           a release of an action that the backend does not   status 0, no ranged attack, one count
+                                use (a charged shot) with no damage row
+  review-missing-asset          the catalog has no asset of the arrow slice         status 1, the file stays (CR-R5)
+  review-missing-source         the arrow slice has no source                       status 1, the file stays (CR-R5)
+  review-missing-row            the damage table has no row of the release          status 1, the file stays (CR-R5)
+  review-nonfinite-time         the ExitTime before the release is "nan"            status 1, the file stays (CR-R6)
+  review-malformed-time         the ExitTime before the release is "1.3x"           status 1, the file stays (CR-R6)
+  review-malformed-aim          the ProjectileSpeed of the release is "fast"        status 1, the file stays (CR-R6)
+
 Usage: check_creature_tool.py WORK_FOLDER     status 0: each case gives its result
 """
 
@@ -227,6 +242,121 @@ def check_ranged() -> int:
     return failures
 
 
+REVIEW_CASES = ("review-control", "review-control-cast", "review-other-action", "review-missing-asset", "review-missing-source",
+                "review-missing-row", "review-nonfinite-time", "review-malformed-time", "review-malformed-aim")
+REVIEW_ARROW = "slices/items/test_arrow.dynamicslice"
+REVIEW_ADB = "animations/test/archer.adb"
+REVIEW_ASSET = (bytes([0x61]) * 16, 2)
+
+
+def check_review_ranged(work: Path) -> int:
+    """The cases of the findings CR-R5 and CR-R6 of the code review of stage 3.4f-A. @return The number of failures."""
+    import creature_behavior as cb
+    failures = 0
+    state = {"case": "review-control"}
+    Sources.case = "none"  # The spawner names no patrol: only the ranged sources decide a case.
+
+    def arrow_roots() -> list:
+        component = node(kind=cd.PROJECTILE_CLASS, children=[
+            node(cd.REPLICATION_FIELD, (1).to_bytes(4, "big")),
+            *[node(cd.field_id(name), struct.pack(">f", value)) for name, value in (
+                ("m_baseSpeed", 50.0), ("m_extraSpeed", 10.0), ("m_timeForMaxSpeed", 1.5), ("m_flyingLifetime", 1.5),
+                ("m_stuckLifetime", 8.0))],
+            node(cd.field_id("m_accel"), struct.pack(">fff", 0.0, 0.0, -2.0))])
+        transform = node(children=[node(cd.LOCAL_TRANSFORM_FIELD, b""), node(cd.PARENT_FIELD, cd.NO_ENTITY.to_bytes(8, "big"))])
+        return [entity(0x1234, [component, transform])]
+
+    def animation() -> bytes:
+        case = state["case"]
+        time = {"review-nonfinite-time": "nan", "review-malformed-time": "1.3x"}.get(case, "1.33333")
+        speed = "fast" if case == "review-malformed-aim" else "50"
+        parameters = {"RangedAttackName": "Basic", "DamageTableRow": "Test_Row", "UseAmmo": "true",
+                      "AmmoSlot": "PaperdollSlotTypes::ARROW_AMMO_SLOT", "AILeadTarget": "true", "ProjectileSpeed": speed,
+                      "AILeadTargetMaxAngle": "10", "AIAimMaxAngle": "45", "AIMissMinDistance": "1.5", "AIMissMaxDistance": "3"}
+        return ("<AnimDB><FragmentList><Fire_Bow><Fragment Tags=\"Bow\"><AnimLayer><Blend ExitTime=\"2.46667\"/>"
+                "<Animation name=\"\"/></AnimLayer><ProcLayer>"
+                f"<Blend ExitTime=\"{time}\"/><Procedural type=\"CAGE-RangedAttack\"><ProceduralParams>"
+                + "".join(f"<{key} value=\"{value}\"/>" for key, value in parameters.items())
+                + "</ProceduralParams></Procedural></ProcLayer></Fragment></Fire_Bow></FragmentList></AnimDB>").encode()
+
+    class ReviewSources(Sources):
+        def stream(self, path: str) -> list:
+            return arrow_roots() if path == REVIEW_ARROW else super().stream(path)
+
+        def read(self, path: str) -> bytes:
+            return animation() if path == REVIEW_ADB else super().read(path)
+
+        def has(self, path: str) -> bool:
+            return not (state["case"] == "review-missing-source" and path == REVIEW_ARROW)
+
+    class ReviewCatalog(Catalog):
+        def __init__(self, data) -> None:
+            self.paths = {} if state["case"] == "review-missing-asset" else {REVIEW_ASSET: REVIEW_ARROW}
+
+    class ReviewBehavior(cb.Behavior):
+        def __init__(self, sources, folder, ranged_attacks, projectile_of) -> None:
+            self.sources = sources
+            self.animations = cb.Animations(sources)
+            self.ranged_attacks = ranged_attacks
+            self.projectile_of = projectile_of
+            self.ranged_left_out = {}
+            self.tables = type("Tables", (), {"types": {"Thrust": (5, "Physical")},
+                                              "ammo": {"test_arrow": {"id": "Test_Arrow", "slice": REVIEW_ARROW}}})()
+
+        def read(self, roots, controller, actions, slice_path="") -> dict:
+            rows = {} if state["case"] in ("review-missing-row", "review-other-action") else {
+                "test_row": {"ordinal": 0, "table": "TestBowDamageTable", "id": "Test_Row", "type": "Thrust", "factor": 0.35,
+                             "added": 0.0, "charge": 0.0}}
+            result = Behavior.read(self)
+            result["ranged"] = self.read_ranged(actions, [REVIEW_ADB], {"bow"}, {"weapons": {12: "Test_Arrow"}}, {"profile": "AI_Bow"},
+                                                rows, slice_path)
+            if not result["ranged"]:
+                del result["ranged"]
+            return result
+
+    tables = {"variants": {}, "bases": {1: {"id": "Check_Kind", "family": "Wildlife", "creatureType": "Solo", "healthMod": 1.0,
+                                           "damageMod": 1.0, "name": ""}},
+              "categories": {}, "levels": {18: (1000.0, 100.0, 180.0)}, "modifiers": {"Solo": (1.0, 1.0)}}
+    entries = [{"vitals": 1, "category": 0, "level": 18, "position": (1000.0, 1000.0, 50.0), "coatlicue": True, "override": False,
+                "encounter": False}]
+    attack = [["AI_Bow", "Basic", False, 100.0, 0.0, 100.0, 0.0, 0.0, 0, 0, 0, 0, False, False, [0, 0, -9.8], 0]]
+    for case in REVIEW_CASES:
+        state["case"] = case
+        action = {"review-control-cast": "Cast_One_Projectile", "review-other-action": "Archer_Charged_Ranged_Attack"}.get(case, "FireBow")
+        target = work / f"{case}.json"
+        target.write_text(MARK, encoding="utf-8")
+        replacements = {"Sources": ReviewSources, "Catalog": ReviewCatalog, "read_tables": lambda _: tables,
+                        "read_names": lambda _: {}, "read_slice_lists": lambda: (set(), set()),
+                        "read_spawn_entries": lambda _: entries, "read_creature_slice": creature_slice,
+                        "read_ranged_attacks": lambda _: cd.ranged_dictionary(attack),
+                        "read_action_table": lambda *arguments, name=action: [[name, "Fire_Bow", 35, False]]}
+        errors = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            for name, value in replacements.items():
+                stack.enter_context(patch.object(cd, name, value))
+            stack.enter_context(patch.object(cd.creature_behavior, "Behavior", ReviewBehavior))
+            stack.enter_context(patch.object(cd.height_maps, "Terrain", Terrain))
+            stack.enter_context(patch.object(sys, "argv", ["creature_data.py", str(target)]))
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+                status = cd.main()
+        text = target.read_text(encoding="utf-8")
+        kept = text == MARK
+        document = {} if kept else json.loads(text)
+        ranged = sum(len(entry.get("ranged", [])) for entry in document.get("slices", []))
+        times = [release["time"] for entry in document.get("slices", []) for item in entry.get("ranged", []) for release in item[2]]
+        left_out = document.get("counts", {}).get("rangedLeftOut", {})
+        if case in ("review-control", "review-control-cast"):
+            passed = status == 0 and ranged == 1 and times == [1.33333]
+        elif case == "review-other-action":
+            passed = status == 0 and ranged == 0 and sum(left_out.values()) == 1
+        else:
+            passed = status == 1 and kept and not (work / f"{case}.json.tmp").exists()
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, file {'kept' if kept else 'replaced'}, {ranged} ranged "
+              f"attack(s), times {times}, left out {left_out} {errors.getvalue().strip()[:160]}")
+        failures += 0 if passed else 1
+    return failures
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
@@ -271,6 +401,7 @@ def main() -> int:
             print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
             failures += 0 if passed else 1
     failures += check_ranged()
+    failures += check_review_ranged(work)
     return 1 if failures else 0
 
 

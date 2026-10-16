@@ -37,7 +37,7 @@ constexpr ComponentKey kAllComponents[] = {ComponentKey::metadata,    ComponentK
  * character keeps across a new session and their speed table. The first record has them; their encoders give no fragment
  * for a character with no status. A full record again (touch_all) does not send them.
  */
-constexpr ComponentKey kEnteredComponents[] = {ComponentKey::status, ComponentKey::statMultipliers};
+constexpr ComponentKey kEnteredComponents[] = {ComponentKey::status, ComponentKey::statMultipliers, ComponentKey::stamina};
 /**
  * The component states of a spell entity (stage 3.3b-S2a; stage 3.3b-S2b: the place of a slice with no Spell component, the vitals
  * of a summon or a trap). A codec gives no fragment for a state that the slice of the spell does not have.
@@ -75,6 +75,7 @@ World::World(const WorldClock& clock,
       m_statuses(*this),
       m_spells(*this, options.spellData),
       m_projectiles(*this, options.projectileData, options.combatTables),
+      m_stamina(*this),
       m_interactions(*this, options.interactionData) {
     m_random = options.randomSeed;
 }
@@ -132,6 +133,7 @@ void World::tick() {
         m_statuses.tick();
         m_passives.tick();
         m_abilities.tick();
+        m_stamina.tick();
         m_spells.tick();
         m_projectiles.tick();
         // The server children of the placements near the characters (stage 2.5b).
@@ -235,6 +237,8 @@ Entity& World::make_entity(const state::Character& character) {
     m_consumables.entered(entity);
     m_runes.entered(entity);
     m_gear.refresh(entity);
+    // The stamina (stage 3.4f-B): each world entry starts with the full stamina, as the health; the client starts full too.
+    m_stamina.entered(entity);
     const Revision revision = ++m_revision;
     entity.positionRevision = revision;
     for (const ComponentKey key : kAllComponents) {
@@ -307,6 +311,8 @@ void World::remove_entity(EntityId id) {
         // The statuses of the rules near the character end: the next entry evaluates them again (stage 3.3b-S5).
         m_passives.left(found->second);
         m_statuses.left(found->second);
+        // A dodge of the character ends (stage 3.4f-B): a payment before its mark is cancelled.
+        m_stamina.interrupted(entity.characterId, "the character left the world");
         m_characters.erase(entity.characterId);
     }
     m_dirtyPositions.erase(id);
@@ -894,6 +900,8 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     // finding S6-R8: a confirm after the travel would use the place before it).
     m_combat.end_sequence(entity->characterId, SequenceEnd::travel);
     m_abilities.cancel_aim(entity->characterId);
+    // A dodge of the character ends with the travel (stage 3.4f-B).
+    m_stamina.interrupted(entity->characterId, "a travel");
     // The committed interaction of the character ends (stage 2.5a): the session sends 3746 and 6709 (RepSession::traveled).
     m_interactions.traveled(*entity);
     // The creatures of the new place: the spawn point rule runs in this tick, not at its interval.

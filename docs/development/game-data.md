@@ -284,6 +284,7 @@ tools/gamedata/creatures.sh          # one time: creature data for the backend (
 tools/gamedata/combat.sh             # one time: combat tables for the backend (weapons, damage rows, defense values of the creatures)
 tools/gamedata/loot.sh               # one time: rewards of a kill for the backend (loot tables, experience and coin of each level, credit, gear score limits; 10 s)
 tools/gamedata/abilities.sh          # one time: ability data for the backend (cooldowns, status effects and spells with their cells, cost tables; 2 MB)
+tools/gamedata/stamina.sh            # one time: stamina data for the backend (the stamina of the player slice, the dodge and its times; 2 KB); needs an Oodle source
 tools/gamedata/perks.sh              # one time: perk data for the backend (perk list, affixes, buckets, item perk places, consumables, equip load, swaps; 6.5 MB)
 tools/gamedata/spells.sh             # one time: spell entity data for the backend (slices, slots, delayed events, the values of format 2; 1.6 MB); needs an Oodle source
 tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots; 72 KB, 10 s); needs an Oodle source
@@ -295,6 +296,23 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 ```
 
 ## Traps
+
+- Stage 3.4f-B adds `stamina-data.json` (`tools/gamedata/stamina.sh`, format 1; 2 KB; needs an Oodle source for the player slice): the
+  Stamina component of `slices/player.dynamicslice`, the stamina rows of BaseVitals_Player, StaminaCosts_Player, and the Player row of
+  EncumbranceData, the action Dodge of `playeractions_dodge.actionlist` (its fragment and cost id for each load class, the delay of its
+  exit, the conditional costs of a weapon rule that the backend does not apply), the action Exhausted of
+  `playeractions_global.actionlist`, and the times of the dodge fragments of `player.adb` (the variant with no tag; each standing
+  variant must have the same times to 1/60 s; the prone variants are listed as not used). The tool stops for a time that is not a
+  finite number, a cost id with no row, a standing variant with different times, no Stamina component, and an exhausted action that
+  does not run from 0 to 100 percent (`check_stamina_tool.py`, case SM1). With no file the backend works: the stamina is full, the
+  dodge has no rule of the server (each dodge input is `noData`), and no payment changes anything. `ability-data.json` format 6 adds
+  `actionHitStatuses` (the hit-taken actions of the player lists, with their tests; Mauler's Stamina) and
+  `actionHitStatusesNotExported` (with the cause); the loader takes the formats 1 to 5 too. `creatures.json` (still format 3): a slice
+  with no ranged FireBow has its ranged `Cast_One_Projectile` as its basic shot (the casters); the corrected tool (code review of stage
+  3.4f-A, findings CR-R5 and CR-R6, `check_creature_tool.py` review cases) stops for a basic ranged action whose projectile has no
+  catalog entry, no source, or no damage row, and for a release time or an aim value that is not a finite number (a time "nan" was 0
+  before). Its file of this build has 805 kinds with no attack (814 before). The backend refuses a release whose ammunition key or
+  damage table key does not agree with its names (finding CR-R7).
 
 - Stage 3.4f-A changes `creatures.json` (still format 3): each slice can have `ranged` (its ranged attacks with their releases and
   joins), and the file has `projectiles` (the projectile slices: the asset, the root, the slot of the Projectile component, the flight

@@ -60,6 +60,7 @@ inline constexpr std::uint32_t kTypeInteractState = 2930;       // MB::InteractR
 inline constexpr std::uint32_t kTypeBuildableState = 1594;      // MB::BuildableControllerReplicatedState (stage 2.5b)
 inline constexpr std::uint32_t kTypeOwnershipState = 3217;      // MB::OwnershipComponentReplicatedState (stage 2.5b)
 inline constexpr std::uint32_t kTypeProjectileState = 16;       // MB::ProjectileReplicatedState (stage 3.4f-A)
+inline constexpr std::uint32_t kTypeStaminaState = 4297;        // MB::StaminaComponentReplicatedState (stage 3.4f-B)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -92,6 +93,8 @@ inline constexpr std::uint32_t kCooldownSlot = 45;
 inline constexpr std::uint32_t kChargeSlot = 48;
 /** The component StatusEffects of the player slice and of the remote player slice (stage 3.3b-S1, research abilities-shared.md Q1). */
 inline constexpr std::uint32_t kStatusSlot = 44;
+/** The component Stamina of the player slice (stage 3.4f-B; research abilities-melee.md, creature-ranged.md task D). */
+inline constexpr std::uint32_t kStaminaSlot = 42;
 /** The component StatMultiplierTable of the player slice (stage 3.3b-S2a, S2a-I10; research status-speed.md): the speed table. */
 inline constexpr std::uint32_t kStatMultiplierSlot = 43;
 /** The components Entitlement and Achievement of the player slice (stage 1.1b; research dlc-entitlements.md, Q2). */
@@ -325,6 +328,12 @@ struct StateCodec {
 [[nodiscard]] hub::Bytes encode_achievement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The coin of the character for the owner. No byte for the observer view. */
 [[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The Stamina state of a character for the owner (states/stamina_state.cpp, stage 3.4f-B): the stamina, the maximum, the winded
+ *         time and the delay that are left, and the two multipliers. No fragment for an observer, and none in the first record of a full
+ *         stamina.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_stamina_state(const world::Entity& entity, View view, const PartsRequest& request);
 /** @return The mana state of a character (states/mana_state.cpp): owner only. */
 [[nodiscard]] hub::Bytes encode_mana_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /**

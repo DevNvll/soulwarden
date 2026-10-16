@@ -297,6 +297,8 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                  {"spells", commands::spells_json(target)},
                                  // The projectiles of the players (stage 3.3b-S3).
                                  {"projectiles", commands::projectiles_json(target)},
+                                 // The stamina and the dodges (stage 3.4f-B).
+                                 {"stamina", commands::stamina_json(target)},
                                  // The basic attacks of the melee weapons (stage 3.3b-M1).
                                  {"basicAttacks", commands::basic_attacks_json(target)},
                                  {"spawnPointsWaiting", creatures.waiting_count()},
@@ -985,7 +987,10 @@ void register_dev_routes(Router& router, const Services& services) {
         if (table.empty() || table.size() > 64) {
             return message(400, "give table (the id of an ability table: GreatAxeAbilityTable)");
         }
-        return in_world(services, [table](world::World& target) { return json_reply(200, commands::passives_table_json(target, table).dump()); });
+        return in_world(services, [table](world::World& target) {
+            // "stamina" (stage 3.4f-B): the rows of the data with a part of the stamina or of the dodge.
+            return json_reply(200, (table == "stamina" ? commands::passives_stamina_json(target) : commands::passives_table_json(target, table)).dump());
+        });
     });
     router.add("POST", "", "/v1/dev/items/use", "dev.items_use", command_route(services, commands::use_item));
     router.add("POST", "", "/v1/dev/items/perks", "dev.items_perks", command_route(services, commands::set_item_perks));

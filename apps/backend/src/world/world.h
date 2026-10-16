@@ -47,6 +47,7 @@
 #include "world/skills.h"
 #include "world/projectiles.h"
 #include "world/spells.h"
+#include "world/stamina.h"
 #include "world/statuses.h"
 #include "world/world_clock.h"
 
@@ -283,6 +284,11 @@ struct WorldOptions {
      * heavy row of the weapon table (the rule of stage 3.2a).
      */
     const gamedata::WeaponActions* weaponActions{nullptr};
+    /**
+     * The stamina rules of a player and the dodge (game data, stage 3.4f-B). Null or not loaded: a character keeps its full stamina,
+     * and a dodge has no immune window.
+     */
+    const gamedata::StaminaData* staminaData{nullptr};
     /**
      * The terrain heights (game data): the ground for a creature that walks. Null: no creature
      * leaves its place. The world asks it only in the world thread.
@@ -792,6 +798,13 @@ public:
     [[nodiscard]] const Spells& spells() const {
         return m_spells;
     }
+    /** @return The stamina of the characters and the dodge (stage 3.4f-B). */
+    [[nodiscard]] Stamina& stamina() {
+        return m_stamina;
+    }
+    [[nodiscard]] const Stamina& stamina() const {
+        return m_stamina;
+    }
     /** @return The projectiles of the players (stage 3.3b-S3): the shots, the flights, and the hits. */
     [[nodiscard]] Projectiles& projectiles() {
         return m_projectiles;
@@ -898,6 +911,8 @@ private:
     /** The friend pairs of a test fixture (set_test_friends), each pair in both sequences. */
     std::set<std::pair<std::string, std::string>> m_testFriends;
     Projectiles m_projectiles;
+    /** The stamina of the characters and the dodge (stage 3.4f-B). */
+    Stamina m_stamina;
     /** The interactions of the characters and the states of the objects (stage 2.5a). */
     Interactions m_interactions;
     Revision m_lastSpell{0};

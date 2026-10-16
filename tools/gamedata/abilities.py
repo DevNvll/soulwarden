@@ -58,7 +58,15 @@ Output: {"format": 5, "statusRows": N,
 "actionSpells": [[action list, action, spell, [node, ...], [node, ...]], ...],
 "actionNodes": [[action list, [node, ...]], ...],
 "actionSpellsNotExported": [[action list, action, spell, cause], ...],
-"actionStatuses": [[action list, action, [[[kind, name, negated], ...], ...], [status, ...]], ...]}.
+"actionStatuses": [[action list, action, [[[kind, name, negated], ...], ...], [status, ...]], ...],
+"actionHitStatuses": [[action list, action, {"nodes": [...], "tags": [...], "health": [comparison, part] or null,
+  "stamina": [comparison, part] or null, "without": [status, ...], "power": [comparison, value, needs reaction]}, [status, ...]], ...],
+"actionHitStatusesNotExported": [[action list, action, cause], ...]}.
+Format 6 (stage 3.4f-B): `actionHitStatuses` has each action of the player lists that applies statuses at a hit that the character
+takes (an activation condition with IfDamagedByPowerLevel, ModifyStatusEffects EffectsToApplyOnEnter) and that tests a learned node: an
+AND of IfDamagedByPowerLevel, IfHealthPercentage, IfStaminaValue (a part of the maximum), IfAbilityActive, IfMannequinTag, and Not of
+IfHasStatusEffect. The node Mauler's Stamina of the great axe (GreatAxe_Passive_StamWhenLowHP_Detect) is such an action. An action with
+a different test is in `actionHitStatusesNotExported` with its cause.
 Format 5 (stage 3.3b-M2): `actionStatuses` has each action of the player lists that applies statuses while it is active
 (ModifyStatusEffects: EffectsToApplyOnEnter and the same status in EffectsToRemoveOnExit) and whose activation condition tests a
 learned node: the condition as an OR of ANDs of
@@ -494,6 +502,7 @@ def build_data(sources: Sources) -> dict:
                     raise Failure(f"the ability {entry[0]} names the status {status} ({column}), which the status tables do not have")
     action_spells, action_nodes, action_skipped = read_action_lists(sources, spells)
     action_statuses = read_action_statuses(sources)
+    action_hit_statuses, action_hit_skipped = read_action_hit_statuses(sources)
 
     # The status categories (stage 3.3b-S1): the ValueLimits of each category ("MoveSpeedMod:0.4,SprintSpeedMod:0.4").
     categories: dict[str, list] = {}
@@ -531,23 +540,28 @@ def build_data(sources: Sources) -> dict:
     if not cooldowns:
         raise Failure("the cooldown tables have no row")
     # A status of an action names a row of the status tables (else the tool stops).
-    for entry in action_statuses:
+    for entry in action_statuses + action_hit_statuses:
         for status in entry[3]:
             if status.lower() not in statuses:
                 raise Failure(f"the action {entry[1]} of {entry[0]} applies the status {status}, which the status tables do not have")
-    data = {"format": 5, "statusRows": len(all_crcs),
+    for entry in action_hit_statuses:
+        for status in entry[2]["without"]:
+            if status.lower() not in statuses:
+                raise Failure(f"the action {entry[1]} of {entry[0]} tests the status {status}, which the status tables do not have")
+    data = {"format": 6, "statusRows": len(all_crcs),
             "counts": {"cooldowns": len(cooldowns), "statusEffects": len(statuses), "spells": len(spells),
                        "manaCosts": len(mana_costs), "staminaCosts": len(stamina_costs), "abilityCosts": len(ability_costs),
                        "abilityRows": len(ability_rows), "statusCategories": len(categories),
                        "statMultipliers": len(multipliers), "actionSpells": len(action_spells),
                        "actionNodes": len(action_nodes), "actionSpellsNotExported": len(action_skipped),
-                       "actionStatuses": len(action_statuses)},
+                       "actionStatuses": len(action_statuses), "actionHitStatuses": len(action_hit_statuses)},
             "cooldowns": sorted(cooldowns.values()), "statusEffects": sorted(statuses.values(), key=lambda entry: entry[1]),
             "spells": sorted(spells.values()), "manaCosts": sorted(mana_costs.values()),
             "staminaCosts": sorted(stamina_costs.values()), "abilityCosts": sorted(ability_costs.values()),
             "abilityRows": sorted(ability_rows.values()), "statusCategories": sorted(categories.values()),
             "statMultipliers": sorted(multipliers.values()), "actionSpells": action_spells, "actionNodes": action_nodes,
-            "actionSpellsNotExported": action_skipped, "actionStatuses": action_statuses}
+            "actionSpellsNotExported": action_skipped, "actionStatuses": action_statuses,
+            "actionHitStatuses": action_hit_statuses, "actionHitStatusesNotExported": action_hit_skipped}
     return data
 
 
@@ -627,6 +641,97 @@ def read_action_statuses(sources: Sources) -> list:
                 continue
             found.append([stem, action.get("Name", ""), terms, statuses])
     return found
+
+
+HIT_COMPARISONS = ("LessThan", "LessThanOrEqual", "Equal", "GreaterThanOrEqual", "GreaterThan", "NotEqual")
+
+
+def hit_conditions(activation) -> tuple[dict | None, str]:
+    """@return The tests of the activation condition of a hit-taken action (format 6), or no value and the cause."""
+    tests = {"nodes": [], "tags": [], "health": None, "stamina": None, "without": [], "power": None}
+    parts = list(activation)
+    while len(parts) == 1 and parts[0].tag == "And":
+        parts = list(parts[0])
+    for part in parts:
+        if part.tag == "IfDamagedByPowerLevel":
+            comparison = part.get("Comparison", "")
+            if comparison not in HIT_COMPARISONS:
+                return None, f"IfDamagedByPowerLevel with the comparison {comparison!r}"
+            try:
+                value = float(part.get("Value", ""))
+            except ValueError:
+                return None, "IfDamagedByPowerLevel with a value that is not a number"
+            if not math.isfinite(value):
+                return None, "IfDamagedByPowerLevel with a value that is not finite"
+            tests["power"] = [comparison, rounded(value), str(part.get("FailOnNoReactionDamage", "")).lower() == "true"]
+        elif part.tag == "IfHealthPercentage":
+            comparison = part.get("Comparison", "")
+            try:
+                value = float(part.get("Percentage", ""))
+            except ValueError:
+                return None, "IfHealthPercentage with a part that is not a number"
+            if comparison not in HIT_COMPARISONS or not math.isfinite(value):
+                return None, "IfHealthPercentage with a comparison or a part that the reader does not know"
+            tests["health"] = [comparison, rounded(value)]
+        elif part.tag == "IfStaminaValue":
+            comparison = part.get("ComparisonType", "")
+            try:
+                value = float(part.get("ComparisonValue", ""))
+            except ValueError:
+                return None, "IfStaminaValue with a value that is not a number"
+            if comparison not in HIT_COMPARISONS or not math.isfinite(value) or str(part.get("ComparisonValueIsPercentage", "")).lower() != "true":
+                return None, "IfStaminaValue that is not a part of the maximum"
+            tests["stamina"] = [comparison, rounded(value)]
+        elif part.tag == "IfAbilityActive" and part.get("AbilityName", "").strip():
+            tests["nodes"].append(part.get("AbilityName").strip())
+        elif part.tag == "IfMannequinTag" and part.get("TagName", "").strip():
+            tests["tags"].append(part.get("TagName").strip())
+        elif part.tag == "Not" and len(part) == 1 and part[0].tag == "IfHasStatusEffect" and part[0].get("StatusEffect", "").strip():
+            tests["without"].append(part[0].get("StatusEffect").strip())
+        else:
+            return None, f"a test {part.tag} that the reader does not know"
+    if tests["power"] is None:
+        return None, "no IfDamagedByPowerLevel"
+    if not tests["nodes"]:
+        return None, "no test of a learned node"
+    return tests, ""
+
+
+def read_action_hit_statuses(sources: Sources) -> tuple[list, list]:
+    """@return The hit-taken actions of the player lists (format 6, stage 3.4f-B): [list, action, tests, statuses] for each action that
+    applies statuses on its enter at a hit that the character takes (IfDamagedByPowerLevel) and that tests a learned node; and each such
+    action with a test of a different kind, [list, action, cause]."""
+    found: list = []
+    skipped: list = []
+    for path in sources.paths(ACTION_FOLDER, ACTION_SUFFIX):
+        stem = path.rsplit("/", 1)[-1][:-len(ACTION_SUFFIX)]
+        if not stem.startswith(ACTION_PREFIX):
+            continue
+        root = read_xml(sources, path, "the folder of the player actions")
+        if root is None:
+            continue
+        for action in root.iter("Action"):
+            activation = action.find("ActivationCondition")
+            activities = action.find("Activities")
+            if activation is None or activities is None or not any(node.tag == "IfDamagedByPowerLevel" for node in activation.iter()):
+                continue
+            applied = sorted({effect.get("EffectId", "").strip() for modify in activities.findall("ModifyStatusEffects")
+                              for enter in modify.iter("EffectsToApplyOnEnter") for effect in enter.iter("EffectId")} - {""})
+            if not applied:
+                continue
+            if not any(node.tag == "IfAbilityActive" for node in activation.iter()):
+                continue
+            others = sorted({child.tag for child in activities} - {"ModifyStatusEffects"})
+            if others:
+                # The action does more than its statuses (HealingAura casts a spell): the backend does not have it.
+                skipped.append([stem, action.get("Name", ""), f"an activity other than the statuses ({', '.join(others)})"])
+                continue
+            tests, cause = hit_conditions(activation)
+            if tests is None:
+                skipped.append([stem, action.get("Name", ""), cause])
+                continue
+            found.append([stem, action.get("Name", ""), tests, applied])
+    return found, skipped
 
 
 def read_action_lists(sources: Sources, spells: dict[str, list]) -> tuple[list, list]:

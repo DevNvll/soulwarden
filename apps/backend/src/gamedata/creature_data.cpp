@@ -8,6 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "gamedata/progression_tables.h"
 #include "server/rep/states/state_codecs.h"
 
 namespace soulwarden::backend::gamedata {
@@ -747,6 +748,8 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
         }
         // The ranged attacks (stage 3.4f-A): the releases in the sequence of their times, and the basic shot (kBasicShotAction).
         slice.basicShot.reset();
+        slice.caster = false;
+        std::optional<std::uint32_t> cast;
         for (std::uint32_t index = 0; index < slice.ranged.size(); ++index) {
             CreatureRangedAttack& attack = slice.ranged[index];
             std::stable_sort(attack.releases.begin(), attack.releases.end(),
@@ -754,6 +757,14 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
             if (!slice.basicShot && slice.actions[attack.action].name == kBasicShotAction) {
                 slice.basicShot = index;
             }
+            if (!cast && slice.actions[attack.action].name == kBasicCastAction) {
+                cast = index;
+            }
+        }
+        // The cast of a caster (stage 3.4f-B) when the slice has no FireBow.
+        if (!slice.basicShot && cast) {
+            slice.basicShot = cast;
+            slice.caster = true;
         }
         m_shootingSlices += slice.basicShot ? 1 : 0;
         slice.spawnAction = slice.spawnActionName.empty() ? std::nullopt : slice.find_action(slice.spawnActionName);
@@ -905,7 +916,12 @@ bool CreatureData::check() {
                           && in_range(release.aimAngle, 180.0F) && in_range(release.missMin, kMaxSenseDistance)
                           && in_range(release.missMax, kMaxSenseDistance) && release.range > 0.0F && in_range(release.range, kMaxSenseDistance)
                           && in_range(release.radius, kMaxReach) && in_range(release.accelDelay, kMaxSenseDistance)
-                          && release.rowIndex <= kMaxRowIndex;
+                          && release.rowIndex <= kMaxRowIndex
+                          // The keys on the wire name the ammunition and the damage table of the release (code review of stage 3.4f-A,
+                          // finding CR-R7): the CRC-32 of the lower-case AmmoID (0 with no ammunition) and of the lower-case unique name
+                          // of the table (client code: the row cache 0x677CEC0, the ammunition lookup of the attack).
+                          && release.ammoKey == (release.ammo.empty() ? 0U : progression_id(release.ammo)) && !release.table.empty()
+                          && release.tableKey == progression_id(release.table);
             }
             if (!correct) {
                 m_error = "slice " + std::to_string(index) + " has a ranged attack whose action, time, or releases do not fit together";

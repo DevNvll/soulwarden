@@ -41,8 +41,8 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   the loader 0x44B4430).
 - The duration: the duration of the source (DurationOverrides of a consumable), else BaseDuration; not more than
   DurationMax. A row with no duration is one application now: a heal (Health and HealthModifierPercent of the maximum
-  health, times the potency, through the heal path of stage 3.3b-S6 with its kind), a mana change (Mana, ManaModifierPercent), and its
-  CastSpell. A status of the gear has no end.
+  health, times the potency, through the heal path of stage 3.3b-S6 with its kind), a mana change (Mana, ManaModifierPercent), a
+  stamina change (Stamina, stage 3.4f-B), and its CastSpell. A status of the gear has no end.
 - ApplicationCooldown: one application of a row for each character in that time. Only an application that changes the
   character starts it: an application that DontReplaceStack refuses does not (finding F7, test case RS7).
 - A positive time of a status row (BaseDuration, TickRate, DurationMax, ApplicationCooldown) is 1 ms at least: the
@@ -52,9 +52,12 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 - Each OnEndStatusEffect and each CastSpell of a status row names a row of the data: the loader refuses a file with a
   link that does not resolve, but for the one link of the game with no row (`AI_IceDragon_EmpoweringLink_Stack_Apply`
   to `AI_IceDragon_EmpoweringLink_Stack`, `kMissingEndLinks`; finding F8, test case RS8).
-- A TickRate with Health, HealthModifierPercent, Mana, or ManaModifierPercent: a heal and a mana change at each tick
-  (times the potency and the stacks); the first tick comes at the next tick of the world after the application
-  (DelayInitialTick: one TickRate later). The ticks of a character that is not in the world wait for its next entry.
+- A TickRate with Health, HealthModifierPercent, Mana, ManaModifierPercent, or Stamina (stage 3.4f-B): a heal, a mana change, and a
+  stamina change at each tick (times the potency and the stacks); the first tick comes at the next tick of the world after the
+  application (DelayInitialTick: one TickRate later). The ticks of a character that is not in the world wait for its next entry. The
+  stamina change goes through the stamina path ([Stamina and dodge](stamina-and-dodge.md)): Stamina Recovery (`Status_Perk_Amulet_StamOnLow`,
+  0.1 s, TickRate 0.25: 20 one time), Mauler's Stamina (`Status_Passive_Greataxe_Mauler_StamVsLowHp`: 40 one time); test cases SM3, SM4.
+  Before stage 3.4f-B a row with only Stamina did not tick (no gain).
 - A heal of an ability (stage 3.3b-S6): a status with HealthModifierDamageBased (Divine Embrace 1.2 with one tick, Sacred
   Ground and the Beacon 0.16 each 1 s) heals the heal base of its source (`ActiveStatus::heal`, the `HealSource` of the
   cast or of the area: the healer, its weapon, its gear score) times the value, the potency, the stacks, and the potency
@@ -134,6 +137,10 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   multipliers; both at 1 give the empty table, and a first record with both at 1 has no fragment. In the live walks the
   key 0x35 changes the run and the sprint (for 1.4: the run x1.43, the sprint x1.31), and the key 0x34 has no effect. The
   status rows of the game have their speed in SprintSpeedMod (the haste, the heart rune, the slow of the vortex).
+- The regeneration of the stamina (stage 3.4f-B): the StaminaRate part of the statuses (`StatusValues::staminaRate`, summed with the
+  potency; Holy Ground +0.25, an earring affix) is `GearSummary::staminaRate`. The stamina system regenerates 1 + that part times its
+  rate, and the speed table of the owner has the key 0x0B (StaminaRate) with that value when it is not 1 (client code 0x6888790;
+  test case SM3). The value of a creature changes nothing (a creature has no stamina).
 - The position check takes the multiplier that the client has: the window speed (8 m/s) times the larger multiplier of
   the last speed table that the session sent (`PositionTrack::client_speed`), not less than 1; after a change the
   multiplier before it counts for 1 s more (the client gets the table some time after the send). Each older value keeps

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <set>
 #include <iterator>
 
 #include <nlohmann/json.hpp>
@@ -20,6 +21,8 @@ constexpr std::uint64_t kFormat = 3;
 constexpr std::uint64_t kRulesFormat = 4;
 /** Format 5 (stage 3.3b-M2): also the status actions of the player (Guarded Sprint). */
 constexpr std::uint64_t kActionStatusFormat = 5;
+/** Format 6 (stage 3.4f-B): the hit-taken status actions (actionHitStatuses). */
+constexpr std::uint64_t kHitStatusFormat = 6;
 constexpr std::uint64_t kCostFormat = 2;
 constexpr std::uint64_t kOldFormat = 1;
 
@@ -213,6 +216,45 @@ bool read_action_nodes(const json& row, ActionNodes& nodes) {
     return row.is_array() && row.size() == 2 && text(row, 0, nodes.list) && read_texts(row[1], nodes.nodes) && !nodes.nodes.empty();
 }
 
+bool read_compare(const json& value, ActionHitStatus::Compare& compare) {
+    static const std::set<std::string> kComparisons{"LessThan", "LessThanOrEqual", "Equal", "GreaterThanOrEqual", "GreaterThan", "NotEqual"};
+    if (!value.is_array() || value.size() < 2 || !value[0].is_string() || !value[1].is_number() || !std::isfinite(value[1].get<double>())) {
+        return false;
+    }
+    compare.comparison = value[0].get<std::string>();
+    compare.value = static_cast<float>(value[1].get<double>());
+    return kComparisons.count(compare.comparison) != 0;
+}
+
+bool read_action_hit_status(const json& row, ActionHitStatus& action) {
+    if (!row.is_array() || row.size() != 4 || !text(row, 0, action.list) || !text(row, 1, action.action) || !row[2].is_object()
+        || !read_texts(row[3], action.statuses) || action.statuses.empty()) {
+        return false;
+    }
+    const json& tests = row[2];
+    if (!tests.contains("nodes") || !read_texts(tests["nodes"], action.nodes) || action.nodes.empty() || !tests.contains("tags")
+        || !read_texts(tests["tags"], action.tags) || !tests.contains("without") || !read_texts(tests["without"], action.without)
+        || !tests.contains("power") || !read_compare(tests["power"], action.power) || tests["power"].size() != 3
+        || !tests["power"][2].is_boolean()) {
+        return false;
+    }
+    action.reaction = tests["power"][2].get<bool>();
+    for (const auto& [member, target] : {std::pair<const char*, std::optional<ActionHitStatus::Compare>*>{"health", &action.health},
+                                         {"stamina", &action.stamina}}) {
+        if (!tests.contains(member)) {
+            return false;
+        }
+        if (!tests[member].is_null()) {
+            ActionHitStatus::Compare compare;
+            if (!read_compare(tests[member], compare)) {
+                return false;
+            }
+            *target = compare;
+        }
+    }
+    return true;
+}
+
 bool read_action_status(const json& row, ActionStatus& status) {
     if (!row.is_array() || row.size() != 4 || !text(row, 0, status.list) || !text(row, 1, status.action) || !row[2].is_array()
         || !read_texts(row[3], status.statuses) || status.statuses.empty()) {
@@ -313,8 +355,9 @@ bool AbilityData::load(const std::string& path) {
     }
     const std::uint64_t format =
         document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kActionStatusFormat && format != kRulesFormat && format != kFormat && format != kCostFormat && format != kOldFormat) {
-        m_error = "the file does not have the format 1, 2, 3, 4, or 5";
+    if (format != kHitStatusFormat && format != kActionStatusFormat && format != kRulesFormat && format != kFormat && format != kCostFormat
+        && format != kOldFormat) {
+        m_error = "the file does not have the format 1, 2, 3, 4, 5, or 6";
         return false;
     }
     AbilityTables tables;
@@ -352,6 +395,10 @@ bool AbilityData::load(const std::string& path) {
         return false;
     }
     if (format >= kActionStatusFormat && !read_list(document, "actionStatuses", read_action_status, tables.actionStatuses, m_error)) {
+        return false;
+    }
+    if (format >= kHitStatusFormat
+        && !read_list(document, "actionHitStatuses", read_action_hit_status, tables.actionHitStatuses, m_error)) {
         return false;
     }
     return accept(std::move(tables), true);
@@ -508,6 +555,16 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
         for (const std::string& name : action.statuses) {
             if (error.empty() && status.count(lower_ascii(name)) == 0) {
                 error = "the status action " + action.action + " names the status " + name + ", which the data does not have";
+            }
+        }
+    }
+    // The hit-taken status actions (stage 3.4f-B): each status that they apply or test is a status row of the data.
+    for (const ActionHitStatus& action : tables.actionHitStatuses) {
+        for (const auto* names : {&action.statuses, &action.without}) {
+            for (const std::string& name : *names) {
+                if (error.empty() && status.count(lower_ascii(name)) == 0) {
+                    error = "the hit status action " + action.action + " names the status " + name + ", which the data does not have";
+                }
             }
         }
     }

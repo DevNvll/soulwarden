@@ -473,6 +473,12 @@ button on "Confirm").
   tables, the animation databases, the action lists, and the animation files of the game copy (it needs an
   Oodle library). `--find TEXT` prints the graph of the weapons with a text. Without the file the backend
   starts, and each melee hit uses the light or the heavy row of its weapon.
+- `tools/gamedata/stamina.sh` makes the stamina data (`~/.local/share/soulwarden/gamedata/stamina-data.json`, 2 KB, stage
+  3.4f-B): the Stamina component of the player slice (the maximum 100, the regeneration 33.33 in a second, the winded time 2 s),
+  the delays of the base vitals (1 s), the dodge of each load class (its animation and its cost: 45, 45, 50), the times of the dodge
+  (the payment at 0.1 s, immune to 0.5 s, the next dodge from 0.267 s), and the exhausted state (protocol notes 4.38). It reads the
+  data tables, the action lists, the animation database of the player, and the player slice of the game copy (it needs an Oodle
+  library). Without the file the backend starts: the stamina stays full and the server has no rule for a dodge.
 - `tools/gamedata/projectiles.sh` makes the projectile data
   (`~/.local/share/soulwarden/gamedata/projectile-data.json`, 72 KB, stage 3.3b-S3): the ranged
   attack profiles of the game (the range, the radius, the near range, the acceleration delay),
@@ -565,8 +571,18 @@ button on "Confirm").
   health 0 your character dies: the client shows "You died" for 5 s and then its respawn
   screen. The button "Respawn" puts your character at the nearest spirit shrine or inn
   with its full health (with no travel places: at the place of its death). A character is
-  never dead after a login. Not yet: blocks, dodges, and the respawn points of the game
-  (camps, houses).
+  never dead after a login. Not yet: blocks and the respawn points of the game (camps,
+  houses).
+- Stamina and dodge (stage 3.4f-B, [Stamina and dodge](systems/stamina-and-dodge.md), protocol notes 4.38). Left Shift is the
+  dodge. The server keeps the stamina of your character with the values of the game data: a dodge costs 45 (Dodge_Roll_Fast in
+  light armor, Dodge_Roll in medium armor; 50 for Dodge_Roll_Slow in heavy armor; no dodge when overburdened) at 0.1 s of the roll,
+  and the stamina comes back 33.33 in each second, 1 s after the payment and 1 s after the end of the roll (0.5 s). At 0 your
+  character is winded for 2 s and cannot dodge until its stamina is full again. For 0.5 s from the start of the roll a creature hit
+  does nothing (no damage, no effect): an arrow or a ball flies through your character and can hit a different character or a wall.
+  The client shows its own stamina bar (the server copy is the record: the client does not take it). A status with Stamina gives
+  stamina (Stamina Recovery 20, Mauler's Stamina 40), and StaminaRate makes the regeneration faster. In a development run `tools/world
+  stamina` lists the stamina of each character and its dodge, and `tools/world passives --table stamina` lists the rules of the data
+  with a stamina or dodge part. Not yet: the block and grit; the HUD of a development character shows a maximum of 95 (open).
 - Archers (stage 3.4f-A, [Creature behavior](systems/creature-behavior.md), [Projectiles](systems/projectiles.md)).
   An archer of the game data (20 models: the Varangian, Lugdunum, and mercenary archers, the
   skeleton archers, the Dryad archers, the Damned bowmen, and their variants) shoots at your
@@ -579,9 +595,18 @@ button on "Confirm").
   to 14 m one time in 6 s when you are nearer than 8 m, and uses its melee attack when you are in
   its reach. Other players see the same arrows. The Varangian archers near the start place (about
   450 m to the west of the default spawn) and the skeleton archers (300 m to the west) show it.
-  Not yet: the other shots of the data (a charged, a fast, or a triple shot), the casters, a dodge
-  or a block of an arrow. In a development run `tools/world creature shoot CREATURE CHARACTER`
-  starts a shot, and `tools/world projectiles` lists the flights.
+  Not yet: the other shots of the data (a charged, a fast, or a triple shot) and a block of an
+  arrow. In a development run `tools/world creature shoot CREATURE CHARACTER` starts a shot, and
+  `tools/world projectiles` lists the flights. From stage 3.4f-B an archer that walks to you walks
+  on to 18 m (the code of stage 3.4f-A stopped at 20 m), and a dodge lets an arrow fly through you.
+- Mages (stage 3.4f-B, [Creature behavior](systems/creature-behavior.md)). A creature with the cast
+  `Cast_One_Projectile` and no bow shot (10 models of 88 kinds: the Skeleton Mages, the Ancient
+  Guardian mages, the Dynasty summoners, the Dryad shamans, the Damned priests) casts at your
+  character in 16 m: the windup, the release at the time of the game data (0.5 s for a Skeleton
+  Mage), and one ball (the slow ball of the Skeleton Mage: 20 m/s, 56 damage of the type Arcane at
+  level 17). It casts again 2.5 s after the start of its last cast, walks to 14 m when you are
+  farther, and walks back to 11 m when you are nearer than 6 m. A Celestial Mage
+  (`Skeleton_Mage:2`) of `tools/world creature spawn` shows it.
 - Interactions (stage 2.5a). The client shows the prompt of an object and executes its option
   at the key; the backend checks the request with the interaction data of the game and
   replies. A lore page: E (Read) opens the journal on the page, T (Add To Journal) adds it, and
@@ -726,9 +751,10 @@ button on "Confirm").
   for 4 s. Charge with Unpredictable Strike swings when you press the right button in its run.
   An ability can start in a swing of a basic attack in the windows of the game data; a press
   that the swing does not take does nothing. The nodes of the two trees act now, but the nodes
-  that need grit, a block, or stamina: Unyielding (the armor of the friends in the vortex),
-  Absorb (a shield at you in Maelstrom: from stage 3.4f-A its rule takes the arrow of an archer too; not yet checked in the game), Blood Lust (a creature in front
-  of your camera in 14 m), and Guarded Sprint (less damage while you run with the war hammer).
+  that need grit or a block: Unyielding (the armor of the friends in the vortex),
+  Absorb (a shield at you in Maelstrom: from stage 3.4f-A it takes the arrow of an archer, checked in the game in stage 3.4f-B), Blood Lust (a creature in front
+  of your camera in 14 m), Guarded Sprint (less damage while you run with the war hammer and do not dodge), and from stage 3.4f-B
+  Mauler's Stamina (40 stamina at a hit below half health).
   `tools/gamedata/weapon-actions.sh`, `combat.sh`, `spells.sh`, and `abilities.sh` must make
   their files again for this stage.
 - Spell abilities (stage 3.3b-S2b, protocol notes 4.28, `docs/systems/spells.md`). With the
