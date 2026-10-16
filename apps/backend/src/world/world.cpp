@@ -134,6 +134,8 @@ void World::tick() {
         m_abilities.tick();
         m_spells.tick();
         m_projectiles.tick();
+        // The server children of the placements near the characters (stage 2.5b).
+        m_interactions.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -280,6 +282,8 @@ void World::remove_entity(EntityId id) {
         m_creatures.entity_removed(entity);
     } else if (entity.kind == EntityKind::probe) {
         log::write("world: DEVELOPMENT COMMAND: probe entity %016llx removed", static_cast<unsigned long long>(entity.id));
+    } else if (entity.kind == EntityKind::object) {
+        // A server child (stage 2.5b): the interaction system ended its uses and its grants before the call.
     } else if (entity.kind == EntityKind::spell) {
         m_spells.entity_removed(entity);
     } else {
@@ -638,6 +642,32 @@ Entity& World::make_object(const ObjectBody& body, const ActorId& actor, const s
     return entity;
 }
 
+Entity& World::spawn_object(const ObjectBody& body, const state::WorldPosition& position) {
+    const ActorId actor = m_ids.next(ActorKind::otherEntity);
+    Entity& entity = m_entities[entity_group_id(actor)];
+    entity.id = entity_group_id(actor);
+    entity.actor = actor;
+    entity.kind = EntityKind::object;
+    entity.object = body;
+    entity.name = "object";
+    entity.position = position;
+    const Revision revision = ++m_revision;
+    entity.positionRevision = revision;
+    for (const ComponentKey key : {ComponentKey::metadata, ComponentKey::objectPlace, ComponentKey::buildable, ComponentKey::ownership,
+                                   ComponentKey::interact}) {
+        entity.changed[key] = revision;
+    }
+    m_index.insert(entity.id, entity.position);
+    return entity;
+}
+
+void World::remove_object(EntityId id) {
+    const Entity* entity = find(id);
+    if (entity != nullptr && entity->kind == EntityKind::object && entity->object.spawned) {
+        remove_entity(id);
+    }
+}
+
 bool World::remove_probe(EntityId id) {
     const Entity* entity = find(id);
     if (entity == nullptr || entity->kind != EntityKind::probe) {
@@ -874,6 +904,10 @@ void World::place(Entity& entity, const state::WorldPosition& position, bool est
     entity.moving = moving;
     entity.positionDirty = true;
     m_dirtyPositions.insert(entity.id);
+    // The range of the committed interaction of the character (stage 2.5b): only a character with one (O(1)).
+    if (entity.kind == EntityKind::player && entity.interaction) {
+        m_interactions.moved(entity);
+    }
 }
 
 Revision World::touch(EntityId id, ComponentKey key) {

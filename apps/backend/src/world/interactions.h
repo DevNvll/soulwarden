@@ -1,12 +1,15 @@
 #pragma once
 
 #include <array>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gamedata/interaction_data.h"
@@ -19,9 +22,20 @@
 // refuses the request (client handler 0x49175F0). This system checks each request, keeps the committed interaction of each
 // character, and keeps the state of each object (Enabled, HasInteractors of each Interact component).
 //
+// Two kinds of usable objects (stage 2.5b):
+//   - a level object of the interaction data: the client makes it from its level data; its managed actor id comes from the
+//     placement UUID; the system makes its entity when its state first differs from the level data (stage 2.5a);
+//   - a server child: a station of a settlement, a camp, or a development fixture (the powder keg): the client shows it only after
+//     a record of the server (live check L4 of stage 2.5b). Its entity has an actor of the id allocator, and its template (game data)
+//     gives the ids: the instance ids and the facet targets come from G of that actor (the XOR rule of protocol notes 4.2). The spawn
+//     rule makes the station children of the placements near the characters (150 m; removal when no character is 200 m or less from
+//     it, the distances of the spawn points of the creatures); a template child (the forge of a station) comes and goes with its
+//     parent. The camp children of the placements stay in the data (stage 2.6).
+//
 // The checks of a request, in this sequence (research interaction-stage.md, Q3; each refusal changes nothing):
 //   1. The character of the session is in the world and lives (MP-5: the character comes from the session).
-//   2. The reference (G and the facet target) is a bound of the interaction data, and the actor id is the actor of its object.
+//   2. The reference (G and the facet target) is a bound of the interaction data or of a server child, and the actor id is the actor
+//      of its object.
 //   3. The option id, the option entity, and the action are an option of that bound (the data, not the values of the block).
 //   4. A bound with an unresolved name of the data, a status rule, a quest rule, a condition, a line of sight, or an arc: the
 //      backend cannot check it, and it refuses (an object is not open because a check is missing).
@@ -34,28 +48,50 @@
 //   9. A handler for the kind and the option. With no handler: refused (the domain is not in the backend).
 // A one-shot request whose base action is not its own action is a part of the committed interaction of the character: it
 // needs that interaction on the same object with that action (research Q4). A committed request replaces the committed
-// interaction of the character (the old one ends with the cause `replaced`).
+// interaction of the character: the old one ends (cause `replaced`) only after the handler of the new one accepted it (code review
+// of stage 2.5a, finding INT-R1: a refused write changes nothing).
 //
-// A handler gets the begin of an accepted use (one time for each use) and the end of a committed use. Stage 2.5a has two:
-//   - the lore page (ReadLore 47, committed; AddLoreToJournal 50, one-shot): the achievement of the page goes to the
-//     character through the ownership system (one row in the database, then the bit of the entity; live check L3: the journal
-//     of the client shows the pages of the bits of the achievement state);
-//   - the presentation of the client (OpenConversation, the animations of a chair, a bed, a pet, PlayInteractionAnimation,
-//     PlayCinematicVideo): the client plays it from its own data, and the use has no effect on the server. A decision of an agent
-//     from live check L1: a refusal closes a conversation that the client opened (6705 comes at once).
+// A handler gets the begin of an accepted use (one time for each use), the completion of a timed use, and the end of a committed
+// use. The handlers:
+//   - the lore page (ReadLore 47, committed; AddLoreToJournal 50, one-shot; stage 2.5a);
+//   - the presentation of the client (OpenConversation, the animations, PlayCinematicVideo; stage 2.5a);
+//   - the station (stage 2.5b: OpenCraftingOption and OpenCraftingOptionLevel60 of a crafting station or a camp): the StationContext of
+//     the use, from the data of the object (the Assembly key, the fee flag, the Assembly reference, the parent settlement); a key with
+//     no row of the crafting station database is refused. The recipes and the crafts are stage 3.7;
+//   - the timed fixture (stage 2.5b: Trigger of the powder keg): the completion counts on the object; no explosion and no reward.
 //
-// The state of an object goes to each session near it as the record of an object entity (EntityKind::object): the metadata
-// state with the managed actor id of the placement, and the state 2930 of each bound (live check L2: the client applies it to
-// the object that it made from the level data). The system makes the entity when the state first differs from the level data
-// (a user, a disabled bound) and keeps it while the backend runs: the client keeps the last state of a record after its stop
-// (live check L2), and a session that observes the entity again gets its state of now.
+// A timed use (an option with a Delay Time: Trigger 5 s; live check L6 of stage 2.5b): the client counts the Delay Time from its
+// request (0x49106F0, 0x49146F0) and executes the object at zero (0x4910750); a release before sends 2473. The server counts the full
+// Delay Time of the option row on the world clock from the accepted request (a decision of an agent from the research: the client
+// timer has no factor 0.6, and the original server rule is not known), checks the use again at the end (the source, Enabled, the
+// range, the life), and completes it one time. The use stays until the client ends it (its release sends 2473).
 //
-// The cost depends on the requests and on the active interactions, not on the size of the world (MP-8): a request finds its
-// bound in the reference map of the data, a list near a character looks at the cells of the grid near it, and the ends of
-// the interactions of a character look only at that character.
+// The ends of a committed use: the end of the block, 2473 with the reference, a new committed request, a command (3746), the death
+// (3746), a travel or a respawn (3746 and 6709), the leave, the removal of the source (3746), the loss of the range (3746: an accepted
+// position of the character farther than the range of the bound), and damage for a use whose option ends at damage (3746):
+//   - the action PlayInteractionAnimation (64: a chair, a bed, an animation): the action InteractionAnimation of the client ends
+//     at IfDamaged (game data: playeractions_interact.actionlist);
+//   - a timed option (Delay Time above 0): a decision of an agent (stage 2.5b, live check L7: the client continues its timed use at a
+//     hit; the action list has no damage rule for DelayedInteraction).
+// The client ends a conversation at 3746 itself (it sends 6705; the session answers 6709: live check L7).
 //
-// The temporary state of a use (the active interaction, the users of an object, a disabled bound) is a value of the world: a
-// restart has none (research: no resume contract). The read lore pages are rows of the database (the ownership system).
+// The service handoff (stage 2.5b; the base of the shops 5.1 and the transmog 5.6; research Q4): a handler can give the character of
+// an accepted use a service of its source (grant_service). The grant stays after the end of the use (a conversation that the client
+// closes with 2473), so that a later operation with no source id (a purchase 3741) can check it (require_service): the same world
+// entry, the same source and generation, the source near (its range), the service and the id in the offer. A new source use, the
+// removal of the source, the death, a travel, the leave, and close_service end it. No time limit (the option data has none).
+//
+// The state of an object goes to each session near it as the record of an object entity (EntityKind::object). Each session observes an
+// object at the distance of a character from its nearest bound (finding INT-R3: a bound can be more than 100 m from its placement
+// root), with the grid of this system: for_each_entity_near.
+//
+// The cost depends on the requests, the active uses, and the objects near the players, not on the size of the world (MP-8): a
+// request finds its bound in the reference map of the data or in the map of the server children (by G), a list near a character
+// looks at the cells of the grid near it, the spawn rule looks at the cells near each character and at the live children, a timed
+// use has a timer of the world, and the ends of a character look only at that character.
+//
+// The temporary state of a use (the active interaction, the users of an object, a disabled bound, a service grant, the server
+// children) is a value of the world: a restart has none (research: no resume contract). The read lore pages are rows of the database.
 // World thread only.
 
 namespace soulwarden::backend::world {
@@ -83,7 +119,7 @@ enum class InteractionVerdict : std::uint8_t {
     dead,
     /** The backend has no interaction data. */
     noData,
-    /** No bound of the data has this reference, or the actor id is not the actor of its object. */
+    /** No bound of the data or of a server child has this reference, or the actor id is not the actor of its object. */
     unknownObject,
     /** The option id, the option entity, or the action is not an option of the bound. */
     unknownOption,
@@ -101,7 +137,7 @@ enum class InteractionVerdict : std::uint8_t {
     noHandler,
     /** A part of a committed interaction (a one-shot with a base action) with no such interaction on the object. */
     noMainInteraction,
-    /** The handler refused (the database did not take the row). */
+    /** The handler refused (the database did not take the row, a station key with no row). */
     refused,
 };
 inline constexpr std::size_t kInteractionVerdictCount = 16;
@@ -123,17 +159,57 @@ enum class InteractionEnd : std::uint8_t {
     death,
     /** The character left the world. */
     left,
+    /** The source went away (stage 2.5b: the removal of a server child; the client gets 3746). */
+    sourceRemoved,
+    /** An accepted position of the character farther than the range of the bound (stage 2.5b; the client gets 3746). */
+    rangeLost,
+    /** Damage for a use whose option ends at damage (stage 2.5b; the client gets 3746). */
+    damage,
+    /** The check at the end of a timed use failed (stage 2.5b: the bound is disabled; the client gets 3746). */
+    policyFailed,
 };
 
 [[nodiscard]] const char* interaction_end_text(InteractionEnd cause);
 
 /** The values of one accepted use for a handler: the object, the bound, the option of the data. */
 struct InteractionContext {
+    /** The object of the data (a level object) or the template (a server child: `instance` is its entity). */
     std::uint32_t objectIndex{0};
     std::uint32_t boundIndex{0};
     const gamedata::InteractionObject* object{nullptr};
     const gamedata::InteractionBound* bound{nullptr};
     const gamedata::InteractionOption* option{nullptr};
+    EntityId instance{0};
+    std::uint64_t generation{0};
+};
+
+/**
+ * The facts of a use of a crafting station or a camp (stage 2.5b, research Q1 "StationContext"): what stage 3.7 needs, from the data
+ * of the registered object, never from the block of the client.
+ */
+struct StationContext {
+    /** The durable key of the object (a placement UUID; a server child: "UUID/ENTITY"; a fixture: "fixture/NAME/N"). */
+    std::string objectKey;
+    std::uint64_t objectGeneration{0};
+    std::array<std::uint8_t, 16> actor{};
+    std::uint64_t group{0};
+    /** The facet target of the Interact bound of the use, and the instance id of its option entity. */
+    std::uint64_t interactTarget{0};
+    std::uint64_t optionEntity{0};
+    /** The Assembly: the facet target (instance id + component id), the instance id of its entity, the key, and the fee flag. */
+    std::uint64_t assemblyTarget{0};
+    std::uint64_t assemblyEntity{0};
+    std::string assemblyKey;
+    bool chargeCraftingFee{false};
+    /** True: the key is a row of the crafting station database (stage 3.7 must not craft at a key with no row). */
+    bool keyResolved{false};
+    /** The parent placement (the settlement) and its managed actor id. Empty: no parent (a level object, a fixture). */
+    std::string parentKey;
+    std::array<std::uint8_t, 16> parentActor{};
+    std::string region;
+    state::WorldPosition position;
+    float rangeSq{0.0F};
+    bool isCamp{false};
 };
 
 /** A handler of a kind and its options. A later stage registers its own one (research Q4: no switch of action numbers). */
@@ -147,6 +223,11 @@ public:
      * @return `accepted`, or `refused` when the domain refuses (it changed nothing).
      */
     [[nodiscard]] virtual InteractionVerdict begin(Entity& character, const InteractionContext& context) = 0;
+    /** A timed use reached its end, and the checks again passed (stage 2.5b): one call for each use. */
+    virtual void complete(Entity& character, const InteractionContext& context) {
+        (void)character;
+        (void)context;
+    }
     /** A committed use ends. */
     virtual void end(Entity& character, const InteractionContext& context, InteractionEnd cause) {
         (void)character;
@@ -165,12 +246,22 @@ struct InteractionObjectView {
     std::vector<ObjectBound> bounds;
     /** The entity of the object (0: the object has the state of the level data, and no entity). */
     EntityId entity{0};
+    /** A server child (stage 2.5b): its generation, its parent (the key of the placement), its fixture name, the completions. */
+    bool spawned{false};
+    std::uint64_t generation{0};
+    std::string parentKey;
+    std::string fixture;
+    std::uint32_t completions{0};
 };
 
 /** The interactions of a character and the objects near it, for a reader (a command). */
 struct InteractionsView {
     bool inWorld{false};
     std::optional<ActiveInteraction> active;
+    /** The object of the active use (no value: none), its station facts (a station), and the service grant of the character. */
+    const gamedata::InteractionObject* activeObject{nullptr};
+    std::optional<StationContext> station;
+    std::optional<ServiceGrant> grant;
     std::vector<InteractionObjectView> objects;
     /** The work of the lookup (case IT-LOAD). */
     gamedata::LookupWork work;
@@ -187,10 +278,58 @@ struct InteractionCounts {
     std::array<std::uint64_t, kInteractionVerdictCount> verdicts{};
     std::uint64_t begins{0};
     std::uint64_t ends{0};
+    /** Stage 2.5b: the completions of the timed uses, the server children made and removed, the scans of the spawn rule. */
+    std::uint64_t completions{0};
+    std::uint64_t spawned{0};
+    std::uint64_t removed{0};
+    std::uint64_t scans{0};
+    /** The work of the last scan of the spawn rule (case IT-LOAD). */
+    gamedata::LookupWork scanWork;
 };
+
+/** Why a fixture was not made (stage 2.5b, a development command). */
+enum class FixtureError {
+    none,
+    /** The backend has no interaction data, or the data has no fixture of this name. */
+    unknownFixture,
+    notInWorld,
+    /** The place is not a position of the world. */
+    badPosition,
+};
+
+struct FixtureResult {
+    FixtureError error{FixtureError::none};
+    Entity* entity{nullptr};
+};
+
+/** Why require_service refused (stage 2.5b). */
+enum class ServiceError {
+    none,
+    notInWorld,
+    /** The character has no grant, or a grant of a different kind. */
+    noGrant,
+    /** The grant is of an older world entry. */
+    oldEntry,
+    /** The source went away, or it is a new child (a different generation). */
+    sourceGone,
+    /** The character is farther from the source than the range of its bound. */
+    tooFar,
+    /** The id is not in the offer of the source. */
+    notOffered,
+    /** The deadline of the grant passed. */
+    expired,
+};
+
+[[nodiscard]] const char* service_error_text(ServiceError error);
 
 class Interactions {
 public:
+    /** Interval of the spawn rule of the server children on the world clock (the interval of the spawn points of the creatures). */
+    static constexpr std::chrono::milliseconds kSpawnInterval{500};
+    /** A server child is made when a character is this near (horizontal), and removed when no character is this near (meters). */
+    static constexpr float kSpawnEnter = 150.0F;
+    static constexpr float kSpawnLeave = 200.0F;
+
     /** @param data The interaction data (game data), or null: the system refuses each request. */
     Interactions(World& world, const gamedata::InteractionData* data);
     ~Interactions();
@@ -235,28 +374,86 @@ public:
     void traveled(Entity& character);
     void died(Entity& character);
     void left(Entity& character);
+    /** The health system calls it for each accepted damage of a character that lives (stage 2.5b): the damage rule of its use. */
+    void damaged(Entity& character);
+    /** The world calls it after an accepted position of a character (stage 2.5b): the range of its use. O(1). */
+    void moved(Entity& character);
+
+    /** The world tick: the spawn rule of the server children (each kSpawnInterval of the world clock). */
+    void tick();
 
     /**
      * Enables or disables each bound of an object (a command; research I2): each session near it gets the state, and a
      * disabled bound refuses each request. A character that uses a bound that goes off keeps its use (the end of a use has
-     * its own causes).
+     * its own causes). `key`: the placement UUID of a level object, or the key of a live server child.
      */
     [[nodiscard]] ObjectError set_enabled(const std::string& key, bool enabled);
 
+    /**
+     * Development aid (stage 2.5b, live checks L5 and L6): makes a fixture of the data near a character (`offset` from it, turned
+     * by `yawDegrees` about the vertical axis). `permissionRule`: the permission rule of its Ownership state (-1: the rule of the
+     * data). The fixture stays until remove_object.
+     */
+    [[nodiscard]] FixtureResult make_fixture(const std::string& characterId, const std::string& name, const state::WorldPosition& offset,
+                                             float yawDegrees, int permissionRule);
+    /**
+     * Removes a server child (a fixture or a child of a placement) and its template children: each use of it ends (sourceRemoved,
+     * 3746), each grant of it ends, and each session that observes it gets the stop. @return False: no server child with this id.
+     */
+    bool remove_object(EntityId entity);
+
     /** @return The interactions of a character and the objects that are `radius` or less from it (horizontal). */
     [[nodiscard]] InteractionsView view(const std::string& characterId, float radius) const;
+    /** @return The station facts of the committed use of a character (a crafting station or a camp), or no value. */
+    [[nodiscard]] std::optional<StationContext> station(const Entity& character) const;
+
+    /**
+     * Gives a character a service of the source of its committed use (stage 2.5b, a handler of a later stage). It replaces the grant
+     * of a different source. @return False: the character has no committed use.
+     */
+    bool grant_service(Entity& character, const std::string& kind, std::vector<std::uint32_t> ids, std::uint64_t revision,
+                       std::optional<WorldClock::time_point> deadline = std::nullopt);
+    /**
+     * @return `none` when the character has a grant of this kind that offers `id` and is still valid: the same world entry, the same
+     *         source and generation, the source near (the 3D range of its bound), and no deadline passed. A grant that is not valid
+     *         any more ends.
+     */
+    [[nodiscard]] ServiceError require_service(const std::string& characterId, const std::string& kind, std::uint32_t id);
+    /** Ends the service grant of a character (an authenticated close of a later stage). @return False: no grant. */
+    bool close_service(const std::string& characterId);
+
+    /**
+     * Calls `visit(Entity&)` for each object entity with an interest point `range` or less from `center` (horizontal): a bound, or
+     * the place of a server child with no bound. It looks only at the cells near the center (MP-8). Each entity one time.
+     */
+    template <class Visit>
+    void for_each_entity_near(const state::WorldPosition& center, float range, Visit&& visit);
+    /** @return The horizontal distance of the nearest interest point of an object entity from a place (another entity: its place). */
+    [[nodiscard]] float distance_to(const Entity& entity, const state::WorldPosition& place) const;
 
     [[nodiscard]] const InteractionCounts& counts() const {
         return m_counts;
     }
-    /** @return The number of object entities that the system made. */
-    [[nodiscard]] std::size_t object_entities() const {
-        return m_objects.size();
+    /** @return The number of object entities that the system made (level objects and server children that live). */
+    [[nodiscard]] std::size_t object_entities() const;
+    /** @return The number of server children that live (stage 2.5b). */
+    [[nodiscard]] std::size_t instance_count() const {
+        return m_instances.size();
     }
     /** @return The number of characters with a committed interaction. */
     [[nodiscard]] std::size_t active_count() const {
         return m_active.size();
     }
+    /** @return The number of timed uses that wait for their end (stage 2.5b). */
+    [[nodiscard]] std::size_t timed_count() const {
+        return m_timed;
+    }
+    /** @return The completions of the timed uses of a server child (a fixture). 0: none, or no such child. */
+    [[nodiscard]] std::uint32_t completions_of(EntityId entity) const;
+    /** @return The entity of the live server child of a placement child key ("UUID/ENTITY"), or 0. */
+    [[nodiscard]] EntityId spawned_entity(const std::string& key) const;
+    /** @return The object of a key: a level object of the data (its placement UUID) or a live server child (its key). Null: none. */
+    [[nodiscard]] const gamedata::InteractionObject* object_of_key(const std::string& key) const;
 
 private:
     struct BoundState {
@@ -268,30 +465,117 @@ private:
         std::vector<BoundState> bounds;
         EntityId entity{0};
     };
+    /** A server child (stage 2.5b): its runtime object (the ids from its G), its state, its links. */
+    struct Instance {
+        std::uint32_t templateIndex{0};
+        std::uint64_t generation{0};
+        /** The index of its placement child in the data (-1: a fixture or a template child). */
+        std::int64_t spawned{-1};
+        EntityId parent{0};
+        std::vector<EntityId> children;
+        /** The object of the requests: the key, the kind, the slice, the actor, G, the world places of the bounds, the targets. */
+        gamedata::InteractionObject object;
+        ObjectState state;
+        std::string parentKey;
+        std::array<std::uint8_t, 16> parentActor{};
+        std::string fixture;
+        std::uint32_t completions{0};
+        /** The cells of the grid of the entities that have this child (its interest points). */
+        std::vector<std::int64_t> cells;
+    };
+    /** A usable object: a level object of the data (instance 0) or a server child. */
+    struct Site {
+        const gamedata::InteractionObject* object{nullptr};
+        std::uint32_t index{0};
+        EntityId instance{0};
+        std::uint64_t generation{0};
+    };
 
     [[nodiscard]] InteractionVerdict check(Entity& character, const InteractionRequest& request, InteractionContext& context,
                                            InteractionHandler*& handler);
     [[nodiscard]] InteractionVerdict refuse(InteractionVerdict verdict, const Entity& character, const InteractionRequest& request);
     /** Ends the committed interaction of a character. @param notify True: the session of the character sends 3746. */
     void end(Entity& character, InteractionEnd cause, bool notify);
+    /** @return The usable object of an active use or of a grant (null object: it went away, or a new generation). */
+    [[nodiscard]] Site site_of(std::uint32_t object, EntityId instance, std::uint64_t generation) const;
     [[nodiscard]] ObjectState& state_of(std::uint32_t objectIndex);
-    /** Gives the entity of an object the state of now and marks its state (a new entity for an object with no entity). */
+    [[nodiscard]] ObjectState* state_of(const Site& site);
+    /** Gives the entity of an object the state of now and marks its state (a new entity for a level object with no entity). */
     void publish(std::uint32_t objectIndex);
+    void publish(Instance& instance);
     [[nodiscard]] InteractionHandler* handler_of(gamedata::InteractionKind kind, std::uint32_t optionId) const;
+    /** Makes a server child of a template with its template children. @return Its entity, or null (a place that is not of the world). */
+    Entity* spawn(std::uint32_t templateIndex, const state::WorldPosition& place, const gamedata::Rotation& rotation,
+                  const std::string& key, std::int64_t spawnedIndex, EntityId parent, const std::string& parentKey,
+                  const std::array<std::uint8_t, 16>& parentActor, const std::string& region, int permissionRule, int depth);
+    /** The spawn rule: makes the children of the placements near the characters, removes the ones with no character near. */
+    void scan();
+    /** The timer of a timed use: the end of its Delay Time. */
+    void timed_due(const std::string& characterId, std::uint64_t serial);
+    /** @return True when the use of a character still passes the checks of its source (the end of a timed use). */
+    [[nodiscard]] bool still_valid(const Entity& character, const ActiveInteraction& active, InteractionEnd& cause) const;
+    [[nodiscard]] std::optional<StationContext> station_of(const Site& site, std::uint32_t boundIndex, const InteractionReference& reference) const;
+    /** Ends the grants of a source (the removal of a server child). */
+    void end_grants_of(EntityId instance);
+    void end_grant(Entity& character, const char* cause);
+    void add_cells(std::vector<std::int64_t>& cells, EntityId entity, const gamedata::InteractionObject& object, const state::WorldPosition& place);
+    [[nodiscard]] Entity* find_entity(EntityId id) const;
 
     World& m_world;
     const gamedata::InteractionData* m_data;
-    /** The handlers of stage 2.5a: the lore page, and the presentation of the client. */
+    /** The handlers of the stages 2.5a and 2.5b. */
     std::unique_ptr<InteractionHandler> m_lore;
     std::unique_ptr<InteractionHandler> m_presentation;
+    std::unique_ptr<InteractionHandler> m_station;
+    std::unique_ptr<InteractionHandler> m_fixture;
     std::map<std::pair<gamedata::InteractionKind, std::uint32_t>, InteractionHandler*> m_handlers;
-    /** The objects whose state differs from the level data, or that have an entity, by their index. */
+    /** The level objects whose state differs from the level data, or that have an entity, by their index. */
     std::map<std::uint32_t, ObjectState> m_objects;
+    /** The server children that live, by their entity id (= G of their actor). */
+    std::map<EntityId, Instance> m_instances;
+    /** The placement children that live: the index into the data to the entity. */
+    std::map<std::uint32_t, EntityId> m_spawnedLive;
+    /** The object entities by the cells of their interest points (64 m; finding INT-R3), for for_each_entity_near. */
+    std::unordered_map<std::int64_t, std::vector<EntityId>> m_entityCells;
+    /** The interest points of each level object entity (its bounds). */
+    std::map<EntityId, std::uint32_t> m_levelEntities;
     /** The characters with a committed interaction (MP-8: an end visits only them). */
     std::set<EntityId> m_active;
+    /** The characters with a service grant (MP-8: the removal of a source visits only them). */
+    std::set<EntityId> m_granted;
     std::uint64_t m_serial{0};
+    std::uint64_t m_generation{0};
+    std::size_t m_timed{0};
+    WorldClock::time_point m_lastScan{};
+    bool m_scanned{false};
     InteractionCounts m_counts;
     std::array<bool, kInteractionVerdictCount> m_logged{};
 };
+
+template <class Visit>
+void Interactions::for_each_entity_near(const state::WorldPosition& center, float range, Visit&& visit) {
+    if (m_entityCells.empty() || !(range >= 0.0F)) {
+        return;
+    }
+    const auto low = [](float value) { return static_cast<std::int32_t>(std::floor(value / gamedata::InteractionData::kCellSize)); };
+    std::set<EntityId> seen;
+    for (std::int32_t x = low(center.x - range); x <= low(center.x + range); ++x) {
+        for (std::int32_t y = low(center.y - range); y <= low(center.y + range); ++y) {
+            const auto found = m_entityCells.find(gamedata::InteractionData::cell_key(x, y));
+            if (found == m_entityCells.end()) {
+                continue;
+            }
+            for (const EntityId id : found->second) {
+                if (!seen.insert(id).second) {
+                    continue;
+                }
+                Entity* entity = find_entity(id);
+                if (entity != nullptr && distance_to(*entity, center) <= range) {
+                    visit(*entity);
+                }
+            }
+        }
+    }
+}
 
 } // namespace soulwarden::backend::world

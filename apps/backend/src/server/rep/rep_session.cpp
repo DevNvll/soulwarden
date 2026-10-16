@@ -881,7 +881,9 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
             if (id == own.id || entity == nullptr) {
                 continue;
             }
-            const float distance = world::horizontal_distance(own.position, entity->position);
+            // An object: the distance of its nearest bound (code review of stage 2.5a, finding INT-R3).
+            const float distance = entity->kind == world::EntityKind::object ? m_world.interactions().distance_to(*entity, own.position)
+                                                                            : world::horizontal_distance(own.position, entity->position);
             if (distance > m_world.interest_leave(*entity)) {
                 gone.push_back(id);
                 distances[id] = distance;
@@ -959,16 +961,7 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
             return;
         }
         if (entity.kind == world::EntityKind::object) {
-            // An object of the level data with a state of the server (stage 2.5a): its record has the state of now, also when
-            // the client has an older one (the client keeps the last state of a stopped record: live check L2).
-            if (distance <= m_world.interest_enter(entity)) {
-                const std::uint32_t interest = m_observer.add(entity.id);
-                if (interest != 0) {
-                    log::write("rep: object %016llx comes into the interest table (interest %u, %.1f m)",
-                               static_cast<unsigned long long>(entity.id), interest, static_cast<double>(distance));
-                }
-            }
-            return;
+            return; // The objects come from the grid of the interaction system (below): the distance of their nearest bound.
         }
         if (entity.kind == world::EntityKind::probe) {
             // Development aid (tools/world probe): an entity of a slice with the fragments of a command.
@@ -996,6 +989,24 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
                    entity.characterId.c_str(),
                    interest,
                    distance);
+    });
+    // The objects (stage 2.5a; server children: stage 2.5b): a level object with a state of the server, a station, a camp, a
+    // fixture, each at the distance of a character from its nearest bound (code review of stage 2.5a, finding INT-R3: a bound can be
+    // more than 100 m from the root of its placement). Its record has the state of now, also when the client has an older one (the
+    // client keeps the last state of a stopped record of a level object: live check L2 of stage 2.5a).
+    m_world.interactions().for_each_entity_near(own.position, m_world.options().interestEnter, [&](world::Entity& entity) {
+        if (m_observer.find(entity.id) != nullptr) {
+            return;
+        }
+        const float distance = m_world.interactions().distance_to(entity, own.position);
+        if (distance > m_world.interest_enter(entity)) {
+            return;
+        }
+        const std::uint32_t interest = m_observer.add(entity.id);
+        if (interest != 0) {
+            log::write("rep: object %016llx comes into the interest table (interest %u, %.1f m)", static_cast<unsigned long long>(entity.id),
+                       interest, static_cast<double>(distance));
+        }
     });
     // The nearest creatures first, and not more than some of them in one scan.
     std::sort(creatures.begin(), creatures.end(), [](const auto& left, const auto& right) {
@@ -1741,6 +1752,12 @@ void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
     // The world ends the committed interaction of the character when the reference is its reference: a late cancel, or the
     // answer of the client to 3746, changes nothing (research K7).
     const bool ended = m_world.interactions().client_cancel(m_id, cancel->reference);
+    if (ended) {
+        // The attempt of this block ended: a later input step with the same block is a new request (code review of stage 2.5a,
+        // finding INT-R2: a new press of the same object with no report of an absent block between). The input numbers of the
+        // steps that the session processed stay: an old report changes nothing.
+        m_interactionBlock.reset();
+    }
     log::write("rep: the client ended its interaction (type %u) with the object %016llx target %016llx: %s",
                kTypeCancelCommittedInteraction, static_cast<unsigned long long>(cancel->reference.group),
                static_cast<unsigned long long>(cancel->reference.target),

@@ -610,6 +610,14 @@ public:
      * that actor; it has an odd first byte, and an id of the allocator has an even one.
      */
     Entity& make_object(const ObjectBody& body, const ActorId& actor, const state::WorldPosition& position);
+    /**
+     * Makes the entity of a server child (stage 2.5b: a station of a settlement, a camp, a fixture). Only the interaction system calls
+     * it. Its actor id comes from the id allocator: the client shows the child only after its record (the metadata state and the
+     * PositionInTheWorld state of its slice: live check L4). The caller checks the position (valid_position).
+     */
+    Entity& spawn_object(const ObjectBody& body, const state::WorldPosition& position);
+    /** Removes the entity of a server child: each session that observes it sends the stop. Only the interaction system calls it. */
+    void remove_object(EntityId id);
 
     /**
      * Makes the entity of a spell (stage 3.3b-S2a). Only the spell system calls it (world/spells.h). Its actor id comes from

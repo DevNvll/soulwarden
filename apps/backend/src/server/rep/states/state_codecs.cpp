@@ -104,10 +104,26 @@ std::span<const StateCodec> probe_codecs() {
     return codecs;
 }
 
+std::uint32_t object_place_slot(const world::Entity& entity) {
+    return entity.object.positionSlot;
+}
+
+std::uint32_t object_buildable_slot(const world::Entity& entity) {
+    return entity.object.buildableSlot;
+}
+
+std::uint32_t object_ownership_slot(const world::Entity& entity) {
+    return entity.object.ownershipSlot;
+}
+
 std::span<const StateCodec> object_codecs() {
-    // The slot of each Interact state is a value of the slice of the object (game data): one fragment for each bound.
-    static constexpr std::array<StateCodec, 2> codecs{{
+    // The slot of each state is a value of the slice of the object (game data): one Interact fragment for each bound. A level object
+    // has no place state, no BuildableController state, and no Ownership state (slot 0): the client has them from its level data.
+    static constexpr std::array<StateCodec, 5> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
+        {world::ComponentKey::buildable, 0, kTypeBuildableState, encode_buildable_state, nullptr, false, object_buildable_slot},
+        {world::ComponentKey::objectPlace, 0, kTypePositionInTheWorldState, encode_object_place_state, nullptr, false, object_place_slot},
+        {world::ComponentKey::ownership, 0, kTypeOwnershipState, encode_ownership_state, nullptr, false, object_ownership_slot},
         {world::ComponentKey::interact, 0, kTypeInteractState, nullptr, nullptr, false, nullptr, encode_interact_states},
     }};
     return codecs;

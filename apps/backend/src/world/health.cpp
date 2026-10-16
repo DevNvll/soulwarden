@@ -44,6 +44,9 @@ HealthResult Health::apply(Entity& target, float damage) {
         if (target.kind == EntityKind::player) {
             m_world.interactions().died(target);
         }
+    } else if (damage > 0.0F && target.kind == EntityKind::player) {
+        // The damage rule of the committed interaction of the character (stage 2.5b, world/interactions.h).
+        m_world.interactions().damaged(target);
     }
     return result;
 }

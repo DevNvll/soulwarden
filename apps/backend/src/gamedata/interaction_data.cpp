@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <fstream>
+#include <set>
 
 #include <nlohmann/json.hpp>
 
+#include "gamedata/progression_tables.h"
 #include "world/position_index.h"
 
 namespace soulwarden::backend::gamedata {
@@ -12,8 +14,9 @@ namespace {
 
 using nlohmann::json;
 
-/** The form of the file that this code reads (tools/gamedata/interactions.py). */
-constexpr std::uint64_t kFormat = 1;
+/** The forms of the file that this code reads (tools/gamedata/interactions.py): 1 (stage 2.5a), 2 (stage 2.5b: the server children). */
+constexpr std::uint64_t kFormatLevel = 1;
+constexpr std::uint64_t kFormat = 2;
 
 constexpr std::pair<const char*, InteractionKind> kKindTexts[] = {
     {"lorePage", InteractionKind::lorePage},
@@ -155,7 +158,8 @@ public:
         return true;
     }
 
-    bool position(const json& parent, const char* key, state::WorldPosition& value) {
+    /** @param local True: a place in the frame of a slice (finite numbers), not a position of the world. */
+    bool position(const json& parent, const char* key, state::WorldPosition& value, bool local = false) {
         if (!parent.contains(key) || !parent[key].is_array() || parent[key].size() != 3) {
             return fail(std::string("the member ") + key + " is not three numbers");
         }
@@ -167,7 +171,45 @@ public:
             }
             *axes[index] = number.get<float>();
         }
+        if (local) {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z) && std::abs(value.x) < 1000.0F
+                           && std::abs(value.y) < 1000.0F && std::abs(value.z) < 1000.0F
+                       ? true
+                       : fail(std::string("the member ") + key + " is not a place in the frame of a slice (1000 m or less)");
+        }
         return world::valid_position(value) ? true : fail(std::string("the member ") + key + " is not a position of the world");
+    }
+
+    /** A unit quaternion [x, y, z, w]. */
+    bool rotation(const json& parent, const char* key, Rotation& value) {
+        if (!parent.contains(key) || !parent[key].is_array() || parent[key].size() != 4) {
+            return fail(std::string("the member ") + key + " is not four numbers");
+        }
+        float length = 0.0F;
+        for (std::size_t index = 0; index < 4; ++index) {
+            const json& number = parent[key][index];
+            if (!number.is_number() || !std::isfinite(number.get<float>())) {
+                return fail(std::string("the member ") + key + " is not four finite numbers");
+            }
+            value[index] = number.get<float>();
+            length += value[index] * value[index];
+        }
+        return std::abs(length - 1.0F) < 0.001F ? true : fail(std::string("the member ") + key + " is not a unit quaternion");
+    }
+
+    bool assembly(const json& parent, std::optional<InteractionAssembly>& value) {
+        if (!parent.contains("assembly") || parent["assembly"].is_null()) {
+            value.reset();
+            return true;
+        }
+        const json& entry = parent["assembly"];
+        InteractionAssembly part;
+        if (!entry.is_object() || !text(entry, "key", part.key) || !flag(entry, "fee", part.fee) || !hex64(entry, "entity", part.entity)
+            || !hex64(entry, "component", part.component) || !flag(entry, "resolved", part.resolved)) {
+            return fail("the member assembly is not {key, fee, entity, component, resolved}");
+        }
+        value = part;
+        return true;
     }
 
     bool option(const json& entry, InteractionOption& row) {
@@ -204,15 +246,16 @@ public:
         return text(entry, "unresolved", row.unresolved, false) && flag(entry, "statusRules", row.statusRules);
     }
 
-    bool bound(const json& entry, InteractionBound& bound) {
+    /** @param local True: a bound of a template (the entity of the slice, a place in the frame of the slice, no target). */
+    bool bound(const json& entry, InteractionBound& bound, bool local = false) {
         std::uint64_t number = 0;
         std::int64_t whole = 0;
         if (!entry.is_object() || !unsigned_number(entry, "slot", 4095, number)) {
             return fail("a bound has no slot from 0 to 4095");
         }
         bound.slot = static_cast<std::uint32_t>(number);
-        if (!hex64(entry, "component", bound.component) || !hex64(entry, "target", bound.target)
-            || !position(entry, "position", bound.position) || !real(entry, "rangeSq", bound.rangeSq)) {
+        if (!hex64(entry, "component", bound.component) || (local ? !hex64(entry, "entity", bound.entity) : !hex64(entry, "target", bound.target))
+            || !position(entry, "position", bound.position, local) || !real(entry, "rangeSq", bound.rangeSq)) {
             return false;
         }
         if (!(bound.rangeSq > 0.0F)) {
@@ -303,6 +346,80 @@ public:
                 return fail("a bound of the object " + object.key + " is not correct");
             }
         }
+        return assembly(entry, object.assembly);
+    }
+
+    bool slot(const json& slots, const char* key, std::uint32_t& value) {
+        std::uint64_t number = 0;
+        if (!unsigned_number(slots, key, 4095, number)) {
+            return false;
+        }
+        value = static_cast<std::uint32_t>(number);
+        return true;
+    }
+
+    bool template_entry(const json& entry, InteractionTemplate& value) {
+        std::string kind;
+        std::uint64_t number = 0;
+        std::int64_t whole = 0;
+        if (!entry.is_object() || !text(entry, "slice", value.slice) || !text(entry, "kind", kind) || !hex128(entry, "asset", value.asset)
+            || !unsigned_number(entry, "sub", 0xFFFFFFFFULL, number) || !hex64(entry, "root", value.root)) {
+            return fail("a template has no slice, kind, asset, sub id, or root");
+        }
+        const std::optional<InteractionKind> parsed = interaction_kind_of(kind);
+        if (!parsed) {
+            return fail("a template has the kind " + kind + ", which is not a kind of the file");
+        }
+        value.kind = *parsed;
+        value.sub = static_cast<std::uint32_t>(number);
+        if (!entry.contains("slots") || !entry["slots"].is_object()) {
+            return fail("the template " + value.slice + " has no member slots");
+        }
+        const json& slots = entry["slots"];
+        if (!slot(slots, "position", value.positionSlot) || !slot(slots, "buildable", value.buildableSlot)
+            || !slot(slots, "ownership", value.ownershipSlot) || !slot(slots, "vitals", value.vitalsSlot)) {
+            return false;
+        }
+        if (!signed_number(entry, "buildableState", -1, 255, whole)) {
+            return false;
+        }
+        value.buildableState = static_cast<std::int32_t>(whole);
+        if (!signed_number(entry, "permissionRule", -1, 255, whole)) {
+            return false;
+        }
+        value.permissionRule = static_cast<std::int32_t>(whole);
+        if (!assembly(entry, value.assembly) || !entry.contains("bounds") || !entry["bounds"].is_array() || !entry.contains("children")
+            || !entry["children"].is_array()) {
+            return fail("the template " + value.slice + " has no list bounds or children");
+        }
+        for (const json& item : entry["bounds"]) {
+            if (!bound(item, value.bounds.emplace_back(), true)) {
+                return fail("a bound of the template " + value.slice + " is not correct");
+            }
+        }
+        for (const json& item : entry["children"]) {
+            TemplateChild child;
+            if (!item.is_object() || !unsigned_number(item, "template", 0xFFFFFFFFULL, number) || !position(item, "position", child.position, true)
+                || !rotation(item, "rotation", child.rotation)) {
+                return fail("a child of the template " + value.slice + " is not {template, position, rotation}");
+            }
+            child.templateIndex = static_cast<std::uint32_t>(number);
+            value.children.push_back(child);
+        }
+        return true;
+    }
+
+    bool spawned(const json& entry, SpawnedPlacement& value) {
+        std::uint64_t number = 0;
+        if (!entry.is_object() || !text(entry, "key", value.key) || !text(entry, "parent", value.parent)
+            || !hex128(entry, "parentActor", value.parentActor) || !text(entry, "parentSlice", value.parentSlice)
+            || !text(entry, "spawner", value.spawner) || !unsigned_number(entry, "template", 0xFFFFFFFFULL, number)
+            || !flag(entry, "spawnOnInitialize", value.spawnOnInitialize) || !text(entry, "region", value.region)
+            || !position(entry, "position", value.position) || !rotation(entry, "rotation", value.rotation)) {
+            return fail("a server child is not {key, parent, parentActor, parentSlice, spawner, template, spawnOnInitialize, region, "
+                        "position, rotation}");
+        }
+        value.templateIndex = static_cast<std::uint32_t>(number);
         return true;
     }
 };
@@ -353,8 +470,9 @@ bool InteractionData::load(const std::string& path) {
         m_error = "the file is not a JSON object";
         return false;
     }
-    if (!document.contains("format") || !document["format"].is_number_unsigned() || document["format"].get<std::uint64_t>() != kFormat) {
-        m_error = "the file does not have the format 1";
+    const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
+    if (format != kFormatLevel && format != kFormat) {
+        m_error = "the file does not have the format 1 or 2";
         return false;
     }
     for (const char* list : {"options", "achievements", "objects"}) {
@@ -388,6 +506,41 @@ bool InteractionData::load(const std::string& path) {
             return false;
         }
     }
+    // Format 2 (stage 2.5b): the templates, the server children, and the fixtures.
+    std::vector<InteractionTemplate> templates;
+    std::vector<SpawnedPlacement> spawned;
+    std::map<std::string, std::uint32_t> fixtures;
+    if (format == kFormat) {
+        for (const char* list : {"templates", "spawned"}) {
+            if (!document.contains(list) || !document[list].is_array()) {
+                m_error = std::string("the file does not have the list ") + list;
+                return false;
+            }
+        }
+        if (!document.contains("fixtures") || !document["fixtures"].is_object()) {
+            m_error = "the file does not have the member fixtures";
+            return false;
+        }
+        for (const json& entry : document["templates"]) {
+            if (!reader.template_entry(entry, templates.emplace_back())) {
+                m_error = "template " + std::to_string(templates.size() - 1) + ": " + reader.error;
+                return false;
+            }
+        }
+        for (const json& entry : document["spawned"]) {
+            if (!reader.spawned(entry, spawned.emplace_back())) {
+                m_error = "server child " + std::to_string(spawned.size() - 1) + ": " + reader.error;
+                return false;
+            }
+        }
+        for (const auto& [name, index] : document["fixtures"].items()) {
+            if (!index.is_number_unsigned() || index.get<std::uint64_t>() > 0xFFFFFFFFULL) {
+                m_error = "the fixture " + name + " is not a template index";
+                return false;
+            }
+            fixtures[name] = index.get<std::uint32_t>();
+        }
+    }
     // The counts of the tool: a file that lost a part of a list is not complete.
     if (document.contains("counts")) {
         const json& counts = document["counts"];
@@ -395,8 +548,11 @@ bool InteractionData::load(const std::string& path) {
         for (const InteractionObject& object : objects) {
             bounds += object.bounds.size();
         }
-        const std::pair<const char*, std::size_t> expected[] = {
+        std::vector<std::pair<const char*, std::size_t>> expected = {
             {"objects", objects.size()}, {"bounds", bounds}, {"options", options.size()}, {"achievements", achievements.size()}};
+        if (format == kFormat) {
+            expected.insert(expected.end(), {{"templates", templates.size()}, {"spawned", spawned.size()}, {"fixtures", fixtures.size()}});
+        }
         for (const auto& [key, size] : expected) {
             if (!counts.is_object() || !counts.contains(key) || !counts[key].is_number_unsigned() || counts[key].get<std::uint64_t>() != size) {
                 m_error = std::string("the list does not have the count ") + key + " of the file";
@@ -404,21 +560,38 @@ bool InteractionData::load(const std::string& path) {
             }
         }
     }
-    return set(std::move(options), std::move(achievements), std::move(objects));
+    return set(std::move(options), std::move(achievements), std::move(objects), std::move(templates), std::move(spawned),
+               std::move(fixtures));
 }
 
 bool InteractionData::set(std::vector<InteractionOption> options,
                           std::vector<InteractionAchievement> achievements,
-                          std::vector<InteractionObject> objects) {
+                          std::vector<InteractionObject> objects,
+                          std::vector<InteractionTemplate> templates,
+                          std::vector<SpawnedPlacement> spawned,
+                          std::map<std::string, std::uint32_t> fixtures) {
     *this = InteractionData{};
-    if (objects.empty()) {
+    if (objects.empty() && templates.empty()) {
         m_error = "the data has no object";
         return false;
     }
     InteractionData data;
+    // One id and one bit for each achievement, in the limit of the achievement state (code review of stage 2.5a, finding INT-R4:
+    // two lore pages with one journal bit cannot be told apart; the rule of the progression loader).
+    std::map<std::uint32_t, std::string> bits;
     for (std::size_t index = 0; index < achievements.size(); ++index) {
+        if (achievements[index].id.empty() || achievements[index].index >= kAchievementBitLimit) {
+            m_error = "achievement " + std::to_string(index) + " has no id, or a bit above the limit of the achievement state";
+            return false;
+        }
         if (!data.m_achievementByLowerId.emplace(lower_ascii(achievements[index].id), static_cast<std::uint32_t>(index)).second) {
             m_error = "two achievements have the id " + achievements[index].id;
+            return false;
+        }
+        const auto [other, added] = bits.emplace(achievements[index].index, achievements[index].id);
+        if (!added) {
+            m_error = "the achievements " + other->second + " and " + achievements[index].id + " have one bit ("
+                      + std::to_string(achievements[index].index) + ")";
             return false;
         }
     }
@@ -469,11 +642,123 @@ bool InteractionData::set(std::vector<InteractionOption> options,
             data.m_cells[cell_key(cell(bound.position.x), cell(bound.position.y))].push_back(BoundRef{index, boundIndex});
         }
     }
+    // The templates (stage 2.5b): the option and the achievement indexes, the child indexes, and no cycle of children.
+    const auto bound_indexes_ok = [&](const InteractionBound& bound) {
+        for (const BoundOption& item : bound.options) {
+            if (item.option >= options.size()) {
+                return false;
+            }
+        }
+        return bound.lore < static_cast<std::int32_t>(achievements.size()) && bound.requiredAchievement < static_cast<std::int32_t>(achievements.size())
+               && std::isfinite(bound.position.x) && std::isfinite(bound.position.y) && std::isfinite(bound.position.z) && bound.rangeSq > 0.0F
+               && bound.capacity >= -1;
+    };
+    data.m_templateSpread.assign(templates.size(), 0.0F);
+    for (std::uint32_t index = 0; index < templates.size(); ++index) {
+        const InteractionTemplate& entry = templates[index];
+        if (entry.slice.empty() || entry.positionSlot == 0) {
+            m_error = "template " + std::to_string(index) + " has no slice or no PositionInTheWorld slot";
+            return false;
+        }
+        float spread = 0.0F;
+        for (const InteractionBound& bound : entry.bounds) {
+            if (!bound_indexes_ok(bound) || bound.slot == 0) {
+                m_error = "a bound of the template " + entry.slice + " has an index, a place, a range, a capacity, or a slot that is not correct";
+                return false;
+            }
+            spread = std::max(spread, std::hypot(bound.position.x, bound.position.y));
+        }
+        for (const TemplateChild& child : entry.children) {
+            if (child.templateIndex >= templates.size() || child.templateIndex == index) {
+                m_error = "a child of the template " + entry.slice + " names no other template";
+                return false;
+            }
+            spread = std::max(spread, std::hypot(child.position.x, child.position.y));
+        }
+        data.m_templateSpread[index] = spread;
+    }
+    // No cycle of children: a template that is its own child (through others) would make an endless chain of entities.
+    std::vector<std::uint8_t> mark(templates.size(), 0); // 0: not seen, 1: on the path, 2: done
+    std::vector<std::pair<std::uint32_t, std::size_t>> path;
+    for (std::uint32_t start = 0; start < templates.size(); ++start) {
+        if (mark[start] != 0) {
+            continue;
+        }
+        path.push_back({start, 0});
+        mark[start] = 1;
+        while (!path.empty()) {
+            auto& [node, next] = path.back();
+            if (next == templates[node].children.size()) {
+                mark[node] = 2;
+                path.pop_back();
+                continue;
+            }
+            const std::uint32_t child = templates[node].children[next++].templateIndex;
+            if (mark[child] == 1) {
+                m_error = "the children of the template " + templates[child].slice + " make a cycle";
+                return false;
+            }
+            if (mark[child] == 0) {
+                mark[child] = 1;
+                path.push_back({child, 0});
+            }
+        }
+    }
+    std::set<std::string> spawnedKeys;
+    for (std::uint32_t index = 0; index < spawned.size(); ++index) {
+        const SpawnedPlacement& entry = spawned[index];
+        if (entry.templateIndex >= templates.size() || !world::valid_position(entry.position) || entry.key.empty()
+            || !spawnedKeys.insert(lower_ascii(entry.key)).second) {
+            m_error = "server child " + std::to_string(index) + " has no template, a place that is not of the world, or the key of a "
+                      "different child";
+            return false;
+        }
+        data.m_spawnedCells[cell_of(entry.position)].push_back(index);
+    }
+    for (const auto& [name, index] : fixtures) {
+        if (index >= templates.size() || templates[index].bounds.empty()) {
+            m_error = "the fixture " + name + " names no template with a bound";
+            return false;
+        }
+    }
     data.m_options = std::move(options);
     data.m_achievements = std::move(achievements);
     data.m_objects = std::move(objects);
+    data.m_templates = std::move(templates);
+    data.m_spawned = std::move(spawned);
+    data.m_fixtures = std::move(fixtures);
     *this = std::move(data);
     return true;
+}
+
+std::optional<std::uint32_t> InteractionData::fixture(std::string_view name) const {
+    const auto found = m_fixtures.find(std::string(name));
+    return found == m_fixtures.end() ? std::nullopt : std::optional<std::uint32_t>(found->second);
+}
+
+float InteractionData::template_spread(std::uint32_t templateIndex) const {
+    return templateIndex < m_templateSpread.size() ? m_templateSpread[templateIndex] : 0.0F;
+}
+
+state::WorldPosition transform_point(const state::WorldPosition& place, const Rotation& q, const state::WorldPosition& local) {
+    // v' = v + 2 w (u x v) + 2 u x (u x v), with u = (x, y, z).
+    const float ux = q[0];
+    const float uy = q[1];
+    const float uz = q[2];
+    const float w = q[3];
+    const float cx = uy * local.z - uz * local.y;
+    const float cy = uz * local.x - ux * local.z;
+    const float cz = ux * local.y - uy * local.x;
+    const float dx = uy * cz - uz * cy;
+    const float dy = uz * cx - ux * cz;
+    const float dz = ux * cy - uy * cx;
+    return state::WorldPosition{place.x + local.x + 2.0F * (w * cx + dx), place.y + local.y + 2.0F * (w * cy + dy),
+                                place.z + local.z + 2.0F * (w * cz + dz)};
+}
+
+Rotation compose_rotation(const Rotation& a, const Rotation& b) {
+    return Rotation{a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1], a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+                    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3], a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]};
 }
 
 std::optional<BoundRef> InteractionData::find(std::uint64_t group, std::uint64_t target) const {

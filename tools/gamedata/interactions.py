@@ -32,9 +32,26 @@ The chain of one object (all files are in the pak files of the game copy; resear
      state of the character, slot 66; the journal of the client reads it, live check L3 of stage 2.5a).
   The same for a required achievement of an option or of the Interact component.
 
+The server children (stage 2.5b, research interaction-stage.md Q1, live check L4 of stage 2.5b). A PrefabSpawner component of
+a slice (m_sliceAsset) with m_isClientAuthoratative false has a child that the server makes: the client shows it only after a
+record of the server. The file has these children of a placement:
+  - "spawned": the station or the camp of a placement: the child of a PrefabSpawner whose slice has an Assembly component
+    (520015fd-...) and an Interact bound with OpenCraftingOption, OpenCraftingOptionLevel60, or BindToCampOption (the stations of
+    a settlement, Public_Blacksmith and the others; the camp of a permanent camp). Its key is the placement UUID and the entity
+    id of the spawner ("UUID/ENTITY"), its place the placement matrix times the m_worldTM of the spawner entity, and its parent
+    the managed actor of the placement. The tool writes each such child, also with m_spawnOnInitialize false (the stations of a
+    settlement: the server of the game made them from the state of the town, which the game files do not have).
+  - "templates": the slice of each child (and of each fixture): the asset, the root entity, the slots of the replicated
+    components that the backend sends (PositionInTheWorld, BuildableController, Ownership, Vitals), m_initialState and
+    m_initialPermissionRule, the Assembly (m_craftingStationEntry, m_chargeCraftingFee, its entity and component, and "resolved":
+    the key is a row of sharedassets/genericassets/craftingstations.craftstationdb), the Interact bounds in the frame of the slice
+    (the backend makes the ids from G of the child: the XOR rule), and "children": the PrefabSpawner children of the slice with
+    m_isClientAuthoratative false and m_spawnOnInitialize true (the forge of a station is such a child: live check L4), with the
+    transform of the spawner entity.
+  - "fixtures": the slices of the development fixtures (FIXTURES: the powder keg with the timed option Trigger, the player camp
+    CampT5, the camp of a permanent camp): a development command of the backend makes them near a character (live checks L5, L6).
 What the file does not have, with the count of each cause in "excluded" (a later stage reads them):
-  - The children of a PrefabSpawner of a slice (m_sliceAsset): the server makes these entities (a crafting station, a
-    person of a quest swap). Stage 2.5b.
+  - The other children of a PrefabSpawner (a person of a quest swap, a trading post, a building): a later stage.
   - The records of the distribution files of a region (the gathering nodes of the terrain): stage 3.6.
   - A placement with no slice (an entry `<PLOT>` with no asset): the level chunks have these objects.
 A placement whose slice has no Interact component has no object.
@@ -44,10 +61,14 @@ table KINDS that a bound has gives its kind. The backend registers a handler for
 
 The tool stops with status 1 and one message, and writes no file, when:
   - a file that it needs has no source (the pak entries have Oodle data: see creature_data.py);
+  - a layer has no list "Capitals" (code review of stage 2.5a, finding INT-R5), or a placement with a slice name has no
+    correct slice asset id (an asset id with a wrong form is not a plot: a plot has no slice name or the name <PLOT>);
   - a numeric field has a wrong form: a range that is not a finite number above 0, a capacity or a slot that is not a
     number of 4 bytes, a transform that is not 12 numbers, a position that is not finite;
-  - two bounds have the same reference (G and target) with different content, or one placement id has two different
-    slices.
+  - two bounds have the same reference (G and target) with different content, or one placement id has two placements with a
+    different slice, position, rotation, or asset id (finding INT-R6: only equal copies are one placement);
+  - two rows of the achievement table have one AchievementIndex (finding INT-R4: one journal bit for two pages);
+  - a fixture slice has no source, no PositionInTheWorld component, or no Interact bound.
 A name of the data with no row does not stop the tool: a required achievement such as
 `*17_MSQ_Quest_18020_LynetteDungeonKey`, a lore id with no lore row or no achievement index, and an option name with no
 row of the user interface database (the placeholder `None` of some lore slices). A bound with an unresolved requirement
@@ -59,12 +80,19 @@ names: a stop for them would give no file at all.
 tools/gamedata/check_interactions_tool.py is the check of these rules, with made-up sources.
 
 Output (one line of JSON):
-  {"format": 1, "world": TEXT, "counts": {...}, "excluded": {CAUSE: N, ...},
+  {"format": 2, "world": TEXT, "counts": {...}, "excluded": {CAUSE: N, ...},
+   "templates": [{"slice", "asset", "sub", "kind", "root", "slots": {"position", "buildable", "ownership", "vitals"},
+                  "buildableState", "permissionRule", "assembly": {"key", "fee", "entity", "component", "resolved"} or null,
+                  "bounds": [{as the bounds of an object, with "entity" (the Interact entity of the slice), "position" in the
+                              frame of the slice, and an option entity of the slice}, ...],
+                  "children": [{"template", "position", "rotation"}, ...]}, ...],
+   "spawned": [{"key", "parent", "parentActor", "parentSlice", "spawner", "template", "region", "position", "rotation"}, ...],
+   "fixtures": {NAME: template index, ...},
    "options": [{"name", "id", "action", "committed", "delay", "hold", "instantCancel", "cooldown", "maxUsage",
                 "inactive", "requiredLevel", "requiredItem", "requiredItemCount", "requiredCurrency",
                 "requiredAchievement", "statusRules"}, ...],
    "achievements": [[achievement id, index], ...],
-   "objects": [{"key", "kind", "slice", "asset", "sub", "actor", "region", "position", "bounds": [
+   "objects": [{"key", "kind", "slice", "asset", "sub", "actor", "region", "position", "assembly" (or null), "bounds": [
                   {"slot", "component", "target", "position", "rangeSq", "capacity", "lineOfSight", "arcRequired", "arc",
                    "options": [[option index, option entity], ...], "lore": achievement index or -1,
                    "requires": {...}}, ...]}, ...]}
@@ -102,20 +130,36 @@ sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appearance_tables import Failure, field_id  # noqa: E402
 from creature_data import (CATALOG_PATH, DEFAULT_CENTER, REGIONS_FOLDER, TABLES_FOLDER, WORLD, Catalog, Sources,  # noqa: E402
-                           region_names, spawner_path)
+                           asset_id, region_names, spawner_path)
 from item_catalog import Sheet, sheet_type  # noqa: E402
 from slice_ids import (BASE_CLASS_FIELDS, COMPONENTS_FIELD, ENTITY_TYPE, ID_FIELD, NAME_FIELD, NO_ENTITY,  # noqa: E402
                        Element, component_id, find_field, id_value)
 
 OUTPUT_NAME = "interaction-data.json"
+FORMAT = 2
 UI_DATABASE = "sharedassets/genericassets/ui/uidatabase.uidb"
-WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", UI_DATABASE, CATALOG_PATH)
+CRAFTING_STATIONS = "sharedassets/genericassets/craftingstations.craftstationdb"
+WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", UI_DATABASE, CRAFTING_STATIONS, CATALOG_PATH)
+# The development fixtures (stage 2.5b, live checks L5 and L6): a command of the backend makes them near a character.
+FIXTURES = {
+    "powderKeg": "slices/structures/deployables/deployable_powderkeg.dynamicslice",
+    "campT5": "slices/structures/camps/defaultcamps/campt5.dynamicslice",
+    "camp": "slices/structures/camps/permanentcamp_master.dynamicslice",
+}
 LORE_TABLE_TYPE = "LoreData"
 ACHIEVEMENT_TABLE_TYPE = "AchievementData"
 
 INTERACT_CLASS = uuid.UUID("b69045a3-a129-4334-bdfb-069c18cc84a2")
 OPTION_ROW_CLASS = uuid.UUID("f0887e97-5084-413c-bce7-5c24cecb03c0")
 INTERACT_BYTES = INTERACT_CLASS.bytes
+# The classes of the components of a server child (live checks L4 to L6 of stage 2.5b; slice reads of the research).
+ASSEMBLY_CLASS = uuid.UUID("520015fd-2674-49e1-b862-e7371ae60043")
+BUILDABLE_CLASS = uuid.UUID("359f8468-0483-46ee-b1d4-beb75c1048fd")
+OWNERSHIP_CLASS = uuid.UUID("2a333c23-a549-bc11-1a9a-ae905170f2f6")
+POSITION_CLASS = uuid.UUID("6c2fc842-f451-4b45-9d7d-a6ee954df025")
+VITALS_CLASS = uuid.UUID("0c848755-1f41-4408-b2be-0a3627674f50")
+SPAWNER_CLASS = uuid.UUID("b52d0d52-99cd-41be-b6f7-d2519c15bf14")
+STATION_ROW_FIELDS = (field_id("CraftingTypes"),)
 
 WORLD_TM = field_id("m_worldTM")
 LOCAL_TM = field_id("m_localTM")
@@ -140,6 +184,13 @@ TAG = field_id("m_interactTagString")
 CONDITION = field_id("m_condition")
 SLOT = field_id("m_replicationIndex")
 LORE_ID = field_id("m_loreId")
+STATION_ENTRY = field_id("m_craftingStationEntry")
+CHARGE_FEE = field_id("m_chargeCraftingFee")
+INITIAL_STATE = field_id("m_initialState")
+INITIAL_PERMISSION = field_id("m_initialPermissionRule")
+CLIENT_AUTHORITY = field_id("m_isClientAuthoratative")
+SPAWN_ON_INIT = field_id("m_spawnOnInitialize")
+ALIAS_ASSET = field_id("m_aliasAsset")
 
 # The fields of an option row of the user interface database.
 ROW_FIELDS = {name: field_id(name) for name in (
@@ -157,8 +208,9 @@ KINDS = (
     ("OpenConversation", "npc"), ("OpenMissionBoardOption", "npc"),
     ("OpenStorageOption", "storage"), ("OpenTradingPostOption", "tradingPost"),
     ("OpenMap", "shrine"),
+    # A camp has OpenCraftingOption too (permanentcamp_master, CampT5): the camp option comes first (stage 2.5b).
+    ("BindToCampOption", "camp"), ("BindToCampOption_17DW", "camp"),
     ("OpenCraftingOption", "craftingStation"), ("OpenCraftingOptionLevel60", "craftingStation"),
-    ("BindToCampOption", "camp"),
     ("OpenLootStorageOption", "lootDrop"), ("GatherOption", "gathering"),
     ("ToggleDoorOption", "door"), ("TeleportToOtherSideOfDoor", "door"), ("TeleportDoorEnter", "door"),
     ("TeleportDoorExit", "door"),
@@ -167,7 +219,11 @@ KINDS = (
 KIND_OF = dict(KINDS)
 KIND_ORDER = {name: index for index, (name, _) in enumerate(KINDS)}
 
-CAUSE_SPAWNER = "a PrefabSpawner in the slice of an object: its child is a server entity (stage 2.5b)"
+STATION_OPTIONS = ("OpenCraftingOption", "OpenCraftingOptionLevel60", "BindToCampOption", "BindToCampOption_17DW")
+
+CAUSE_SPAWNER = "a child of a PrefabSpawner that is not a station or a camp, or that the client makes: a later stage"
+CAUSE_ALIAS = "a child of a PrefabSpawner with an alias asset and no slice asset: not read"
+CAUSE_CHILD_NO_PLACE = "a child of a station or a camp slice with no PositionInTheWorld component: the client cannot place it"
 CAUSE_DISTRIBUTION = "a record of a distribution file: not read (stage 3.6)"
 CAUSE_PLOT = "a placement with no slice (<PLOT>): an object of the level chunks"
 CAUSE_NO_INTERACT = ("a placement whose slice has no Interact component (a PrefabSpawner of it makes a server entity: "
@@ -230,6 +286,66 @@ def apply(matrix: tuple[float, ...], point: tuple[float, float, float]) -> tuple
     return (matrix[0] * x + matrix[1] * y + matrix[2] * z + matrix[3],
             matrix[4] * x + matrix[5] * y + matrix[6] * z + matrix[7],
             matrix[8] * x + matrix[9] * y + matrix[10] * z + matrix[11])
+
+
+IDENTITY = (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+
+
+def multiply(a: tuple[float, ...], b: tuple[float, ...]) -> tuple[float, ...]:
+    """@return The 3 x 4 matrix a * b (rows of 4: the rotation and the translation)."""
+    out = []
+    for row in range(3):
+        for column in range(4):
+            value = sum(a[row * 4 + k] * b[k * 4 + column] for k in range(3))
+            out.append(value + (a[row * 4 + 3] if column == 3 else 0.0))
+    return tuple(out)
+
+
+def quaternion_of(m: tuple[float, ...]) -> tuple[float, float, float, float]:
+    """@return The unit quaternion (x, y, z, w) of the rotation of a 3 x 4 matrix (its columns made unit: a scale is not a turn),
+    with w not negative."""
+    columns = []
+    for column in range(3):
+        size = math.sqrt(sum(m[row * 4 + column] ** 2 for row in range(3))) or 1.0
+        columns.append([m[row * 4 + column] / size for row in range(3)])
+    r = [[columns[c][r] for c in range(3)] for r in range(3)]
+    trace = r[0][0] + r[1][1] + r[2][2]
+    if trace > 0.0:
+        s = math.sqrt(trace + 1.0) * 2.0
+        q = ((r[2][1] - r[1][2]) / s, (r[0][2] - r[2][0]) / s, (r[1][0] - r[0][1]) / s, 0.25 * s)
+    elif r[0][0] > r[1][1] and r[0][0] > r[2][2]:
+        s = math.sqrt(1.0 + r[0][0] - r[1][1] - r[2][2]) * 2.0
+        q = (0.25 * s, (r[0][1] + r[1][0]) / s, (r[0][2] + r[2][0]) / s, (r[2][1] - r[1][2]) / s)
+    elif r[1][1] > r[2][2]:
+        s = math.sqrt(1.0 + r[1][1] - r[0][0] - r[2][2]) * 2.0
+        q = ((r[0][1] + r[1][0]) / s, 0.25 * s, (r[1][2] + r[2][1]) / s, (r[0][2] - r[2][0]) / s)
+    else:
+        s = math.sqrt(1.0 + r[2][2] - r[0][0] - r[1][1]) * 2.0
+        q = ((r[0][2] + r[2][0]) / s, (r[1][2] + r[2][1]) / s, 0.25 * s, (r[1][0] - r[0][1]) / s)
+    size = math.sqrt(sum(value * value for value in q)) or 1.0
+    q = tuple(value / size for value in q)
+    if q[3] < 0.0:
+        q = tuple(-value for value in q)
+    if not all(math.isfinite(value) for value in q):
+        raise Failure("a transform has a rotation that is not finite")
+    return q
+
+
+def read_station_keys(sources: Sources) -> set[str]:
+    """@return The name of each row of the crafting station database (the Assembly key of a station, stage 2.5b)."""
+    roots = sources.stream(CRAFTING_STATIONS)
+    if roots is None:
+        sources.check_complete()
+    keys = set()
+    for root in roots:
+        for element in walk(root):
+            if any(child.name in STATION_ROW_FIELDS for child in element.children):
+                name = text_of(child_of(element, NAME_FIELD))
+                if name:
+                    keys.add(name)
+    if not keys:
+        raise Failure("the crafting station database has no row")
+    return keys
 
 
 def actor_of(placement_id: str) -> bytes:
@@ -346,13 +462,20 @@ def read_lore_tables(sources: Sources) -> tuple[dict[str, str], dict[str, int]]:
 
 
 class Template:
-    """The Interact components of one slice, in the frame of the slice."""
+    """The Interact components of one slice, in the frame of the slice, and the parts of a server child (stage 2.5b)."""
 
     def __init__(self, path: str, roots: list[Element]) -> None:
         self.path = path
         self.root: int | None = None
         self.bounds: list[dict] = []
-        self.spawners = 0
+        # The PrefabSpawner components of the slice: the entity, the child asset, and the flags of the spawner.
+        self.spawner_list: list[dict] = []
+        # The slots of the replicated components that the backend sends for a server child (0: the slice has none).
+        self.slots = {"position": 0, "buildable": 0, "ownership": 0, "vitals": 0}
+        self.buildable_state = -1
+        self.permission_rule = -1
+        self.assembly: dict | None = None
+        self.matrices: dict[int, tuple[float, ...]] = {}
         entities: dict[int, dict] = {}
         interacts: list[tuple[int, Element]] = []
         for root in roots:
@@ -376,15 +499,59 @@ class Template:
                     lore = find_field(component, LORE_ID)
                     if lore is not None and text_of(lore):
                         info["lore"] = text_of(lore)
-                    if find_field(component, SLICE_ASSET) is not None:
-                        self.spawners += 1
+                    self._read_parts(path, name, entity_id, component)
                 entities[entity_id] = info
         roots_of_slice = [identifier for identifier, info in entities.items() if info["parent"] == NO_ENTITY]
-        if interacts and not roots_of_slice:
+        if (interacts or self.spawner_list) and not roots_of_slice:
             raise Failure(f"{path}: the slice has no root entity (an entity whose transform has no parent)")
         self.root = roots_of_slice[-1] if roots_of_slice else None
+        self.matrices = {identifier: info["matrix"] for identifier, info in entities.items() if info["matrix"] is not None}
         for entity_id, component in interacts:
             self.bounds.append(self._bound(entity_id, component, entities))
+
+    @property
+    def spawners(self) -> int:
+        return len(self.spawner_list)
+
+    def _slot(self, component: Element, what: str) -> int:
+        element = find_field(component, SLOT)
+        return whole_of(element, 4, f"{what}: m_replicationIndex") if element is not None else 0
+
+    def _read_parts(self, path: str, name: str, entity_id: int, component: Element) -> None:
+        """Reads the parts of a server child in one component: a slot, the Assembly, an initial state, a spawner."""
+        what = f"{path}: the component {component.type_id} of the entity {name}"
+        kind = {POSITION_CLASS: "position", BUILDABLE_CLASS: "buildable", OWNERSHIP_CLASS: "ownership",
+                VITALS_CLASS: "vitals"}.get(component.type_id)
+        if kind is not None and self.slots[kind] == 0:
+            self.slots[kind] = self._slot(component, what)
+        if component.type_id == BUILDABLE_CLASS and find_field(component, INITIAL_STATE) is not None:
+            self.buildable_state = whole_of(find_field(component, INITIAL_STATE), 4, f"{what}: m_initialState")
+        if component.type_id == OWNERSHIP_CLASS and find_field(component, INITIAL_PERMISSION) is not None:
+            self.permission_rule = whole_of(find_field(component, INITIAL_PERMISSION), 4, f"{what}: m_initialPermissionRule")
+        if component.type_id == ASSEMBLY_CLASS and self.assembly is None:
+            entry = next((node for node in walk(component) if node.name == STATION_ENTRY and node.value is not None), None)
+            fee = next((node for node in walk(component) if node.name == CHARGE_FEE), None)
+            identifier = component_id(component)
+            if identifier is None:
+                raise Failure(f"{what}: the Assembly component has no component id")
+            self.assembly = {"key": text_of(entry), "fee": flag_of(fee, f"{what}: m_chargeCraftingFee") if fee is not None else False,
+                             "entity": entity_id, "component": identifier}
+        if component.type_id == SPAWNER_CLASS or find_field(component, SLICE_ASSET) is not None:
+            authority = find_field(component, CLIENT_AUTHORITY)
+            on_init = find_field(component, SPAWN_ON_INIT)
+            alias = find_field(component, ALIAS_ASSET)
+            self.spawner_list.append({
+                "entity": entity_id, "name": name, "asset": asset_id(find_field(component, SLICE_ASSET)),
+                "alias": asset_id(alias) is not None,
+                "client": flag_of(authority, f"{what}: m_isClientAuthoratative") if authority is not None else False,
+                "onInit": flag_of(on_init, f"{what}: m_spawnOnInitialize") if on_init is not None else False})
+
+    def option_names(self) -> set[str]:
+        return {name for bound in self.bounds for _, names in bound["options"] for name in names}
+
+    def is_station(self) -> bool:
+        """@return True for a crafting station or a camp: an Assembly and a bound with a station option (stage 2.5b)."""
+        return self.assembly is not None and any(name in STATION_OPTIONS for name in self.option_names())
 
     def _bound(self, entity_id: int, component: Element, entities: dict[int, dict]) -> dict:
         info = entities[entity_id]
@@ -528,6 +695,121 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
             option_list.append(row)
         return option_index[name]
 
+    station_keys = read_station_keys(sources)
+    # The asset id of each slice path (the catalog of the game): the metadata state of a fixture.
+    path_assets = {path: asset for asset, path in getattr(catalog, "paths", {}).items()}
+    template_index: dict[str, int] = {}
+    template_list: list[dict] = []
+    spawned: list[dict] = []
+    parsed: set[str] = set()
+
+    def load_template(slice_path: str, child: bool = False) -> Template:
+        """@param child True for the slice of a server child: it can have only a PositionInTheWorld component (a forge)."""
+        if slice_path not in templates or (child and templates[slice_path].root is None and slice_path not in parsed):
+            raw = sources.read(slice_path)
+            if raw is None:
+                sources.check_complete()
+            parsed.add(slice_path) if child else None
+            if not child and INTERACT_BYTES not in raw and SPAWNER_CLASS.bytes not in raw and ASSEMBLY_CLASS.bytes not in raw:
+                # No Interact, PrefabSpawner, or Assembly class in the slice: no object (the class id is in each component of the
+                # class).
+                templates[slice_path] = Template(slice_path, [])
+            else:
+                templates[slice_path] = Template(slice_path, sources.stream(slice_path))
+        return templates[slice_path]
+
+    def bound_entry(bound: dict, what: str, k: int | None, place: tuple[float, float, float]) -> tuple[dict, list[str]]:
+        """@return One bound of the file and its unknown option names. k: the XOR key of an object (root XOR G); no value for a
+        template (the ids of the slice; the backend makes the ids from G of the child)."""
+        entries = []
+        unknown_options = []
+        for option_entity, names in bound["options"]:
+            for name in names:
+                index = option(name, what)
+                if index is None:
+                    unknown_options.append(name)
+                    continue
+                entries.append([index, f"{option_entity ^ (k or 0):016x}"])
+                counts["byOption"][name] = counts["byOption"].get(name, 0) + 1
+        lore = -1
+        requires = dict(bound["requires"])
+        unresolved_texts = []
+        if bound["lore"]:
+            achievement_id = lore_rows.get(bound["lore"].lower(), "")
+            index = achievement(achievement_id, f"{what}: the lore id {bound['lore']}") if achievement_id else None
+            if index is None:
+                unresolved.setdefault(f"lore {bound['lore']}", what)
+                unresolved_texts.append(f"lore {bound['lore']}")
+            else:
+                lore = index
+        if "achievement" in requires:
+            index = achievement(requires["achievement"], what)
+            if index is None:
+                unresolved_texts.append(requires.pop("achievement"))
+            else:
+                requires["achievement"] = index
+        if unresolved_texts:
+            requires["unresolved"] = unresolved_texts
+            counts["unresolvedBounds"] += 1
+        if not all(math.isfinite(value) for value in place):
+            raise Failure(f"{what}: the place of a bound is not finite")
+        entry = {"slot": bound["slot"], "component": f"{bound['component']:016x}", "position": [round(value, 3) for value in place],
+                 "rangeSq": bound["rangeSq"], "capacity": bound["capacity"], "lineOfSight": bound["lineOfSight"],
+                 "arcRequired": bound["arcRequired"], "arc": bound["arc"], "options": entries, "lore": lore, "requires": requires}
+        if k is None:
+            entry["entity"] = f"{bound['entity']:016x}"
+        if bound["tag"]:
+            entry["tag"] = bound["tag"]
+        if unknown_options:
+            entry["unknownOptions"] = unknown_options
+            counts["unknownOptions"] += len(unknown_options)
+        return entry, unknown_options
+
+    def assembly_entry(template: Template, k: int | None) -> dict | None:
+        if template.assembly is None:
+            return None
+        key = template.assembly["key"]
+        return {"key": key, "fee": template.assembly["fee"], "entity": f"{template.assembly['entity'] ^ (k or 0):016x}",
+                "component": f"{template.assembly['component']:016x}", "resolved": key in station_keys}
+
+    def template_entry(slice_path: str, asset: tuple[bytes, int] | None, depth: int = 0) -> int:
+        """@return The index of the template of a slice in "templates" (with its server children)."""
+        if slice_path in template_index:
+            return template_index[slice_path]
+        template = load_template(slice_path, child=True)
+        if asset is None:
+            asset = path_assets.get(slice_path)
+        if asset is None:
+            raise Failure(f"{slice_path}: the catalog of the game has no asset id of this slice")
+        if template.root is None:
+            raise Failure(f"{slice_path}: the slice of a server child has no root entity")
+        index = len(template_list)
+        template_index[slice_path] = index
+        entry: dict = {"slice": slice_path, "asset": asset[0].hex(), "sub": asset[1], "kind": kind_of(template.bounds),
+                       "root": f"{template.root:016x}", "slots": dict(template.slots), "buildableState": template.buildable_state,
+                       "permissionRule": template.permission_rule, "assembly": assembly_entry(template, None), "bounds": [],
+                       "children": []}
+        template_list.append(entry)
+        for bound in template.bounds:
+            entry["bounds"].append(bound_entry(bound, f"the template {slice_path}", None, bound["translation"])[0])
+        for spawner in template.spawner_list:
+            # The children that the server makes with the child (the forge of a station: live check L4 of stage 2.5b).
+            if spawner["client"] or not spawner["onInit"]:
+                continue
+            child_path = catalog.path(spawner["asset"]) if spawner["asset"] is not None else None
+            if child_path is None:
+                exclude(CAUSE_ALIAS if spawner["alias"] else CAUSE_SPAWNER)
+                continue
+            child = load_template(child_path, child=True)
+            if child.slots["position"] == 0 or depth >= 3:
+                exclude(CAUSE_CHILD_NO_PLACE)
+                continue
+            matrix = template.matrices.get(spawner["entity"], IDENTITY)
+            entry["children"].append({"template": template_entry(child_path, spawner["asset"], depth + 1),
+                                      "position": [round(matrix[3], 4), round(matrix[7], 4), round(matrix[11], 4)],
+                                      "rotation": [round(value, 6) for value in quaternion_of(matrix)]})
+        return index
+
     for region in regions:
         for path in sources.paths(f"{REGIONS_FOLDER}{region}/capitals/", ".capitals.json"):
             data = sources.read(path)
@@ -535,108 +817,94 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 continue
             counts["layers"] += 1
             try:
-                placements = json.loads(data.decode("utf-8-sig")).get("Capitals") or []
+                document = json.loads(data.decode("utf-8-sig"))
             except (ValueError, AttributeError) as error:
                 raise Failure(f"{path}: the placements of the layer did not parse: {error}") from error
+            # A layer with no list "Capitals" is not a layer with no placement (code review of stage 2.5a, finding INT-R5).
+            if not isinstance(document, dict) or not isinstance(document.get("Capitals"), list):
+                raise Failure(f"{path}: the layer has no list Capitals")
+            placements = document["Capitals"]
             layer = path[len(REGIONS_FOLDER):-len(".capitals.json")]
             for placement in placements:
+                if not isinstance(placement, dict):
+                    raise Failure(f"{layer}: a placement is not an object")
                 counts["placements"] += 1
                 where = placement.get("worldPosition") or {}
                 try:
                     position = {axis: float(where.get(axis, 0.0)) for axis in "xyz"}
-                except (TypeError, ValueError) as error:
+                except (TypeError, ValueError, AttributeError) as error:
                     raise Failure(f"{layer}: a placement has a position that is not a number") from error
                 if not all(math.isfinite(value) for value in position.values()):
                     raise Failure(f"{layer}: the placement {placement.get('id')} has a position that is not finite")
                 if center is not None and radius is not None \
                         and math.hypot(position["x"] - center[0], position["y"] - center[1]) > radius:
                     continue
+                slice_name = str(placement.get("sliceName") or "")
+                asset_text = str(placement.get("sliceAssetId") or "")
                 asset = asset_of(placement)
-                slice_path = spawner_path(placement, catalog, sources) if asset is not None else None
-                if asset is None or slice_path is None:
-                    if "plot" in str(placement.get("sliceName", "")).lower() or asset is None:
+                plot = not slice_name.strip() or "<plot>" in slice_name.lower()
+                if plot and (asset is None or asset[0] == bytes(16)):
+                    exclude(CAUSE_PLOT)
+                    continue
+                if asset is None:
+                    # A named slice with an asset id of a wrong form is an incomplete source, not a plot (finding INT-R5).
+                    raise Failure(f"{layer}: the placement {placement.get('id')} of the slice {slice_name} has no correct slice "
+                                  f"asset id ({asset_text!r})")
+                slice_path = spawner_path(placement, catalog, sources)
+                if slice_path is None:
+                    if plot:
                         exclude(CAUSE_PLOT)
                         continue
                     raise Failure(f"{layer}: the placement {placement.get('id')} names a slice that the game copy does not "
-                                  f"have ({placement.get('sliceName')})")
+                                  f"have ({slice_name})")
                 counts["placementsWithSlice"] += 1
-                if slice_path not in templates:
-                    raw = sources.read(slice_path)
-                    if raw is None:
-                        sources.check_complete()
-                    if INTERACT_BYTES not in raw:
-                        # No Interact class in the slice: no object (the class id is in each component of the class).
-                        templates[slice_path] = Template(slice_path, [])
-                    else:
-                        templates[slice_path] = Template(slice_path, sources.stream(slice_path))
-                template = templates[slice_path]
-                if template.spawners:
-                    exclude(CAUSE_SPAWNER, template.spawners)
-                if not template.bounds:
-                    exclude(CAUSE_NO_INTERACT)
-                    continue
+                template = load_template(slice_path)
                 identifier = str(placement.get("id", ""))
                 try:
                     actor = actor_of(identifier)
                 except ValueError as error:
                     raise Failure(f"{layer}: the placement id {identifier!r} is not a UUID") from error
+                # One placement id in two layers: only an equal copy is one placement (finding INT-R6).
+                normal = json.dumps([slice_path, position, placement.get("rotation") or {}, asset_text.lower()], sort_keys=True)
                 if identifier in keys:
-                    if keys[identifier] != slice_path:
-                        raise Failure(f"the placement {identifier} has two different slices")
+                    if keys[identifier] != normal:
+                        raise Failure(f"the placement {identifier} has two different placements (a slice, a place, a rotation, or "
+                                      f"an asset id)")
                     continue
-                keys[identifier] = slice_path
+                keys[identifier] = normal
                 group = group_of(actor)
-                k = template.root ^ group
                 matrix = placement_matrix(placement.get("rotation") or {}, position)
+                # The server children of the placement: its stations and its camp (stage 2.5b).
+                for spawner in template.spawner_list:
+                    if spawner["client"]:
+                        exclude(CAUSE_SPAWNER)
+                        continue
+                    child_path = catalog.path(spawner["asset"]) if spawner["asset"] is not None else None
+                    if child_path is None:
+                        exclude(CAUSE_ALIAS if spawner["alias"] else CAUSE_SPAWNER)
+                        continue
+                    child = load_template(child_path)
+                    if not child.is_station():
+                        exclude(CAUSE_SPAWNER)
+                        continue
+                    world = multiply(matrix, template.matrices.get(spawner["entity"], IDENTITY))
+                    spawned.append({"key": f"{identifier}/{spawner['entity']:016x}", "parent": identifier, "parentActor": actor.hex(),
+                                    "parentSlice": slice_path, "spawner": spawner["name"], "spawnOnInitialize": spawner["onInit"],
+                                    "template": template_entry(child_path, spawner["asset"]), "region": region,
+                                    "position": [round(world[3], 4), round(world[7], 4), round(world[11], 4)],
+                                    "rotation": [round(value, 6) for value in quaternion_of(world)]})
+                if not template.bounds:
+                    exclude(CAUSE_NO_INTERACT)
+                    continue
+                k = template.root ^ group
                 object_position = [round(position[axis], 3) for axis in "xyz"]
                 bounds = []
                 for bound in template.bounds:
                     instance = bound["entity"] ^ k
                     target = (instance + bound["component"]) & 0xFFFFFFFFFFFFFFFF
                     what = f"{layer}: the object {identifier}"
-                    entries = []
-                    unresolved_texts = []
-                    unknown_options = []
-                    for option_entity, names in bound["options"]:
-                        for name in names:
-                            index = option(name, what)
-                            if index is None:
-                                unknown_options.append(name)
-                                continue
-                            entries.append([index, f"{option_entity ^ k:016x}"])
-                            counts["byOption"][name] = counts["byOption"].get(name, 0) + 1
-                    lore = -1
-                    requires = dict(bound["requires"])
-                    if bound["lore"]:
-                        achievement_id = lore_rows.get(bound["lore"].lower(), "")
-                        index = achievement(achievement_id, f"{what}: the lore id {bound['lore']}") if achievement_id else None
-                        if index is None:
-                            unresolved.setdefault(f"lore {bound['lore']}", what)
-                            unresolved_texts.append(f"lore {bound['lore']}")
-                        else:
-                            lore = index
-                    if "achievement" in requires:
-                        index = achievement(requires["achievement"], what)
-                        if index is None:
-                            unresolved_texts.append(requires.pop("achievement"))
-                        else:
-                            requires["achievement"] = index
-                    if unresolved_texts:
-                        requires["unresolved"] = unresolved_texts
-                        counts["unresolvedBounds"] += 1
-                    world = apply(matrix, bound["translation"])
-                    if not all(math.isfinite(value) for value in world):
-                        raise Failure(f"{what}: the place of a bound is not finite")
-                    entry = {"slot": bound["slot"], "component": f"{bound['component']:016x}", "target": f"{target:016x}",
-                             "position": [round(value, 3) for value in world], "rangeSq": bound["rangeSq"],
-                             "capacity": bound["capacity"], "lineOfSight": bound["lineOfSight"],
-                             "arcRequired": bound["arcRequired"], "arc": bound["arc"], "options": entries, "lore": lore,
-                             "requires": requires}
-                    if bound["tag"]:
-                        entry["tag"] = bound["tag"]
-                    if unknown_options:
-                        entry["unknownOptions"] = unknown_options
-                        counts["unknownOptions"] += len(unknown_options)
+                    entry, _ = bound_entry(bound, what, k, apply(matrix, bound["translation"]))
+                    entry["target"] = f"{target:016x}"
                     reference = (group, target)
                     text = json.dumps(entry, sort_keys=True)
                     if reference in references and references[reference] != text:
@@ -648,19 +916,43 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
                 counts["bounds"] += len(bounds)
                 objects.append({"key": identifier, "kind": kind, "slice": slice_path, "asset": asset[0].hex(),
                                 "sub": asset[1], "actor": actor.hex(), "region": region, "position": object_position,
-                                "bounds": bounds})
+                                "assembly": assembly_entry(template, k), "bounds": bounds})
+    fixtures: dict[str, int] = {}
+    for name, fixture_path in FIXTURES.items():
+        if not sources.has(fixture_path):
+            raise Failure(f"the fixture {name} ({fixture_path}) has no source in the game copy")
+        index = template_entry(fixture_path, None)
+        if template_list[index]["slots"]["position"] == 0 or not template_list[index]["bounds"]:
+            raise Failure(f"the fixture {name} ({fixture_path}) has no PositionInTheWorld component or no Interact bound")
+        fixtures[name] = index
     sources.check_complete()
     exclude(CAUSE_DISTRIBUTION, 0)
+    # One journal bit for two achievements: the journal cannot tell the pages apart (finding INT-R4).
+    bits: dict[int, str] = {}
+    for identifier, bit in achievement_list:
+        if bit in bits:
+            raise Failure(f"the achievements {bits[bit]} and {identifier} have one AchievementIndex ({bit})")
+        bits[bit] = identifier
     counts["objects"] = len(objects)
     counts["options"] = len(option_list)
     counts["achievements"] = len(achievement_list)
+    counts["templates"] = len(template_list)
+    counts["spawned"] = len(spawned)
+    counts["fixtures"] = len(fixtures)
     counts["byKind"] = dict(sorted(counts["byKind"].items()))
     counts["byOption"] = dict(sorted(counts["byOption"].items()))
+    counts["spawnedByKey"] = {}
+    for entry in spawned:
+        assembly = template_list[entry["template"]]["assembly"] or {}
+        label = assembly.get("key", "") + ("" if assembly.get("resolved") else " (no row)")
+        counts["spawnedByKey"][label] = counts["spawnedByKey"].get(label, 0) + 1
+    counts["spawnedByKey"] = dict(sorted(counts["spawnedByKey"].items()))
     objects.sort(key=lambda entry: (entry["region"], entry["position"][0], entry["position"][1], entry["key"]))
+    spawned.sort(key=lambda entry: (entry["region"], entry["position"][0], entry["position"][1], entry["key"]))
     counts["unresolvedNames"] = len(unresolved)
-    return {"format": 1, "world": WORLD, "counts": counts, "excluded": dict(sorted(excluded.items())),
+    return {"format": FORMAT, "world": WORLD, "counts": counts, "excluded": dict(sorted(excluded.items())),
             "unresolved": dict(sorted(unresolved.items())), "options": option_list, "achievements": achievement_list,
-            "objects": objects}
+            "templates": template_list, "spawned": spawned, "fixtures": fixtures, "objects": objects}
 
 
 def main() -> int:
@@ -673,7 +965,8 @@ def main() -> int:
     parser.add_argument("--region", action="append", help="a region (r_+04_+02); more than one is possible")
     parser.add_argument("--radius", type=float, help="only the placements in this circle (meters)")
     parser.add_argument("--center", type=float, nargs=2, metavar=("X", "Y"), help="the center of the circle")
-    parser.add_argument("--list", metavar="KIND", help="print the objects of a kind, and write no file")
+    parser.add_argument("--list", metavar="KIND", help="print the objects of a kind (or 'spawned': the server children), and "
+                                                      "write no file")
     arguments = parser.parse_args()
     if arguments.radius is not None and not (math.isfinite(arguments.radius) and arguments.radius > 0):
         print("interactions: --radius must be a number above 0. No file was written.", file=sys.stderr)
@@ -695,7 +988,15 @@ def main() -> int:
     except OSError as error:
         print(f"interactions: {target}: {error}", file=sys.stderr)
         return 1
-    if arguments.list:
+    if arguments.list == "spawned":
+        for entry in document["spawned"]:
+            template = document["templates"][entry["template"]]
+            assembly = template["assembly"] or {}
+            x, y, z = entry["position"]
+            print(f"{entry['key']}  {x:9.2f} {y:9.2f} {z:8.2f}  {template['kind']}  {assembly.get('key', '')}"
+                  f"{'' if assembly.get('resolved') else ' (no row)'}  {template['slice'].rsplit('/', 1)[-1]}  "
+                  f"({entry['spawner']} of {entry['parentSlice'].rsplit('/', 1)[-1]})")
+    elif arguments.list:
         for entry in document["objects"]:
             if entry["kind"] != arguments.list:
                 continue
@@ -707,6 +1008,9 @@ def main() -> int:
     print(f"{'the game copy' if arguments.list else target}: {counts['objects']} objects with {counts['bounds']} Interact "
           f"bounds and {counts['options']} options in {counts['regions']} regions ({counts['placements']} placements)")
     print("  kinds: " + ", ".join(f"{kind} {count}" for kind, count in counts["byKind"].items()))
+    print(f"  server children: {counts['spawned']} stations and camps of {counts['templates']} templates; fixtures: "
+          + ", ".join(document["fixtures"]))
+    print("  station keys: " + ", ".join(f"{key} {count}" for key, count in counts["spawnedByKey"].items()))
     for cause, count in document["excluded"].items():
         print(f"  not in the file: {count} ({cause})")
     if document["unresolved"]:

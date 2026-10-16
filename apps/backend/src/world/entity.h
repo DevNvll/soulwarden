@@ -119,6 +119,15 @@ enum class ComponentKey {
     interactor,
     /** The Interact states of an object (stage 2.5a, type 2930): Enabled and HasInteractors of each Interact component. */
     interact,
+    /**
+     * The PositionInTheWorld state of a server child (stage 2.5b, type 13, the slot of its slice): its place and its rotation. With
+     * the metadata state it is the smallest record that shows a station, its prompt, and its window (live check L4).
+     */
+    objectPlace,
+    /** The BuildableController state of a server child (stage 2.5b, type 1594): m_initialState of its slice (5: Complete). */
+    buildable,
+    /** The Ownership state of a server child (stage 2.5b, type 3217): the permission rule (live checks L5, L6). */
+    ownership,
 };
 
 /**
@@ -957,11 +966,12 @@ struct InteractionReference {
 
 /**
  * The active interaction of a character (stage 2.5a, world/interactions.h): one committed use of an object (a lore page that
- * the client reads, a conversation). Only the interaction system changes it. It is a value of the world, not of the database:
- * a restart of the backend or a new world entry has no active interaction (research interaction-stage.md, the temporary state).
+ * the client reads, a conversation, a station). Only the interaction system changes it. It is a value of the world, not of the
+ * database: a restart of the backend or a new world entry has no active interaction (research interaction-stage.md, the temporary
+ * state).
  */
 struct ActiveInteraction {
-    /** The object and the bound of the interaction data, and the option row. */
+    /** The object of the interaction data (a level object) or the template (a server child), the bound, and the option row. */
     std::uint32_t object{0};
     std::uint32_t bound{0};
     std::uint32_t option{0};
@@ -970,6 +980,37 @@ struct ActiveInteraction {
     /** The start on the world clock, and the number of the use (a new use has a new number). */
     WorldClock::time_point started{};
     std::uint64_t serial{0};
+    /** The entity of a server child (stage 2.5b). 0: a level object. */
+    EntityId instance{0};
+    /** The generation of the source: the number of the server child (a new child has a new number; a level object: 0). */
+    std::uint64_t generation{0};
+    /** A timed use (an option with a Delay Time, stage 2.5b): its end on the world clock, and its completion (one time). */
+    std::optional<WorldClock::time_point> due;
+    bool completed{false};
+};
+
+/**
+ * A service that a source gave a character (stage 2.5b, the base of the shops 5.1 and the transmog 5.6; research Q4,
+ * "NPC services"): a later operation with no source in its message (a purchase 3741 has no NPC id) checks it. Only the interaction
+ * system changes it. It is a value of the world: a restart or a new world entry has none.
+ */
+struct ServiceGrant {
+    /** The kind of the service ("shop") and the ids that the source offers (the offer set of the source). */
+    std::string kind;
+    std::vector<std::uint32_t> ids;
+    /** The entity of the character at the grant: a new world entry has a new entity id. */
+    EntityId worldEntry{0};
+    /** The source: the object of the data or the template, its bound, its server child and generation, its reference. */
+    std::uint32_t object{0};
+    std::uint32_t bound{0};
+    EntityId instance{0};
+    std::uint64_t generation{0};
+    InteractionReference source;
+    /** The revision of the offer of the source (the conversation state of a later stage). */
+    std::uint64_t revision{0};
+    WorldClock::time_point openedAt{};
+    /** An end of the grant on the world clock (a later stage; the option data has no timeout: no value). */
+    std::optional<WorldClock::time_point> deadline;
 };
 
 /** The server state of one Interact component of an object entity (stage 2.5a): a copy of the values of the interaction system. */
@@ -982,14 +1023,27 @@ struct ObjectBound {
     std::uint32_t users{0};
 };
 
-/** The values of an object entity (EntityKind::object, stage 2.5a). */
+/** The values of an object entity (EntityKind::object, stage 2.5a; a server child: stage 2.5b). */
 struct ObjectBody {
-    /** The index of the object in the interaction data. */
+    /** The index of the object in the interaction data (a level object), or of its template (a server child). */
     std::uint32_t index{0};
     /** The slice asset id of the placement and its sub id: the metadata state of the record. */
     std::array<std::uint8_t, 16> asset{};
     std::uint32_t subId{2};
     std::vector<ObjectBound> bounds;
+    /**
+     * True: a server child (stage 2.5b): an actor of the id allocator, and the client shows it only after the record of the
+     * server, with its place (live check L4). False: an object of the level data (the client has it).
+     */
+    bool spawned{false};
+    /** The slot of its PositionInTheWorld state and its rotation (x, y, z, w). 0: no place state (a level object). */
+    std::uint32_t positionSlot{0};
+    std::array<float, 4> rotation{0.0F, 0.0F, 0.0F, 1.0F};
+    /** The BuildableController state (slot, m_initialState) and the Ownership state (slot, permission rule). Slot 0: none. */
+    std::uint32_t buildableSlot{0};
+    std::uint8_t buildableState{0};
+    std::uint32_t ownershipSlot{0};
+    std::uint8_t permissionRule{0};
 };
 
 /** Development aid: the slice of a probe entity (EntityKind::probe) and its interest distance. */
@@ -1111,6 +1165,8 @@ struct Entity {
      */
     std::optional<ActiveInteraction> interaction;
     Revision interactionEnded{0};
+    /** The service that a source gave the character (stage 2.5b): a copy of the value of the interaction system. No value: none. */
+    std::optional<ServiceGrant> serviceGrant;
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */
     std::vector<RawFragment> rawFragments;
 

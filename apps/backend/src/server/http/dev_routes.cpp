@@ -114,6 +114,10 @@
 //   POST /v1/dev/interactions/object?character=ID&object=KEY&enabled=0|1
 //                                                        enable or disable an object of the interaction data
 //   POST /v1/dev/interactions/cancel?character=ID        end the committed interaction of a character (3746)
+//   POST /v1/dev/interactions/fixture?character=ID&name=NAME[&dx=N&dy=N&dz=N][&yaw=N][&permission=N]
+//                                                        a fixture of the interaction data near a character (stage 2.5b)
+//   POST /v1/dev/interactions/remove?character=ID&entity=HEX16
+//                                                        remove a server child: its uses end (3746), each observer gets the stop
 //   GET  /v1/dev/abilities?character=ID                  the cooldowns of the character and the
 //                                                        counts of the abilities
 //   POST /v1/dev/abilities/reset?character=ID            each cooldown of the character ends
@@ -487,8 +491,12 @@ service::HttpResponse raw_fragment(const Services& services, const RouteContext&
         const world::Entity* entity =
             isCreature ? target.creatures().find(std::strtoull(character.c_str(), nullptr, 16)) : target.find_character(character);
         if (isProbe) {
+            // A probe, or a server child (stage 2.5b: a live check of a state of its slice before its encoder).
             entity = target.find(std::strtoull(character.c_str(), nullptr, 16));
-            entity = entity != nullptr && entity->kind == world::EntityKind::probe ? entity : nullptr;
+            entity = entity != nullptr && (entity->kind == world::EntityKind::probe
+                                           || (entity->kind == world::EntityKind::object && entity->object.spawned))
+                         ? entity
+                         : nullptr;
         }
         if (entity == nullptr) {
             return message(404, isCreature ? "the world has no creature with this id" : "the character is not in the world");
@@ -908,6 +916,9 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/interactions/object", "dev.interactions_object",
                creature_route(services, commands::set_object_enabled));
     router.add("POST", "", "/v1/dev/interactions/cancel", "dev.interactions_cancel", command_route(services, commands::cancel_interaction));
+    // Stage 2.5b: the fixtures of the live checks L5 and L6, and the removal of a server child (the end of a use at the removal).
+    router.add("POST", "", "/v1/dev/interactions/fixture", "dev.interactions_fixture", command_route(services, commands::make_fixture));
+    router.add("POST", "", "/v1/dev/interactions/remove", "dev.interactions_remove", command_route(services, commands::remove_object));
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));
     router.add("POST", "", "/v1/dev/abilities/cast", "dev.abilities_cast", command_route(services, commands::cast_ability));
     router.add("POST", "", "/v1/dev/spells/end", "dev.spells_end", command_route(services, commands::end_spells));

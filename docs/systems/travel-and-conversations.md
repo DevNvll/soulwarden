@@ -54,7 +54,10 @@ client (a conversation, a cutscene). The wire contracts are in the protocol note
   conversation gets 3743 result 1, and a refusal would close the conversation). A call that
   names a different entity gets nothing. Only the session of the owner gets 6709 and 3746. The
   backend has no conversation content: a new message of the conversation keeps this answer.
-  A travel and a respawn also end the interaction of the character in the world.
+  A travel and a respawn also end the interaction of the character in the world. When the
+  server ends a conversation with 3746 (a command; stage 2.5b), the client closes it, sends 2473
+  and 6705, and the answer 6709 frees the input and the camera (live check L7 of stage 2.5b: a
+  walk of 6 m after it); the backend sends no extra 6709 for it.
 - The travel places are game data (`travel-places.json`, `gamedata::TravelPlaces`): the
   spirit shrines and the inns of the territories, each with an id, a name, a territory, and
   a position. A command names a place by its id, or it gives the three numbers of a

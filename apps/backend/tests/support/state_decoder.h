@@ -296,6 +296,10 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         return group == 0 && field == 0 ? 8 : group == 1 && field == 0 ? 1 : -1;
     case 2930: // Interact (stage 2.5a): Enabled (a flag) and HasInteractors (u32); CooldownUpdates is not sent.
         return group == 0 && field == 0 ? 1 : group == 0 && field == 1 ? 4 : -1;
+    case 1594: // BuildableController (stage 2.5b): currentState (one byte); the other fields are not sent.
+        return group == 0 && field == 0 ? 1 : -1;
+    case 3217: // Ownership (stage 2.5b): currentPermissionRule (field 4, one byte); the other fields are not sent.
+        return group == 0 && field == 4 ? 1 : -1;
     default:
         return -1;
     }
@@ -321,6 +325,8 @@ inline unsigned group_count(std::uint32_t type) {
     case 3133:
     case 3210:
     case 2930:
+    case 1594:
+    case 3217:
         return 1;
     case 3752:
         return 2;

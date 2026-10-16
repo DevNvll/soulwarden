@@ -20,6 +20,17 @@ constexpr const char* kLoreOptions[] = {"ReadLore", "AddLoreToJournal"};
  */
 constexpr const char* kPresentationOptions[] = {"OpenConversation", "ChairInteractionAnimation", "BedInteractionAnimation",
                                                 "PlayInteractionAnimation", "PlayPetAnimation", "PlayCinematicVideo"};
+/** The options of a crafting station and of a camp (stage 2.5b; uidatabase.uidb: action 20, committed). */
+constexpr const char* kStationOptions[] = {"OpenCraftingOption", "OpenCraftingOptionLevel60"};
+/** The timed option of the powder keg fixture (stage 2.5b; uidatabase.uidb: action 33, committed, Delay Time 5 s). */
+constexpr const char* kTimedFixtureOptions[] = {"Trigger"};
+/**
+ * The action PlayInteractionAnimation (Interact Action Type 64 of the rows of the chair, the bed, and the animations): the client
+ * plays the action InteractionAnimation, which ends at IfDamaged (game data: playeractions_interact.actionlist).
+ */
+constexpr std::uint8_t kPlayInteractionAnimation = 64;
+/** The depth limit of the template children (the tool writes no deeper chain; the loader refuses a cycle). */
+constexpr int kChildDepth = 4;
 
 std::string hex64(std::uint64_t value) {
     char text[17];
@@ -32,6 +43,10 @@ float distance_sq(const state::WorldPosition& a, const state::WorldPosition& b) 
     const float dy = a.y - b.y;
     const float dz = a.z - b.z;
     return dx * dx + dy * dy + dz * dz;
+}
+
+float horizontal(const state::WorldPosition& a, const state::WorldPosition& b) {
+    return std::hypot(a.x - b.x, a.y - b.y);
 }
 
 /** The lore page (stage 2.5a): the achievement of the page goes to the character, one row in the database, then its bit. */
@@ -62,6 +77,38 @@ class PresentationHandler final : public InteractionHandler {
 public:
     [[nodiscard]] const char* name() const override {
         return "presentation of the client";
+    }
+
+    [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context) override {
+        (void)character;
+        (void)context;
+        return InteractionVerdict::accepted;
+    }
+};
+
+/**
+ * A crafting station or a camp (stage 2.5b): the client opens its crafting screen at the key (live check L4); the use has the
+ * StationContext of the object (Interactions::station). An object with no Assembly is refused: the client has no station to open
+ * (client 0x2E61E00: "Player is missing valid Assembly Component"). A key with no row of the crafting station database is accepted
+ * and marked (a decision of an agent: the crafts are stage 3.7, and the research keeps the authored key).
+ */
+class StationHandler final : public InteractionHandler {
+public:
+    [[nodiscard]] const char* name() const override {
+        return "station";
+    }
+
+    [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context) override {
+        (void)character;
+        return context.object->assembly ? InteractionVerdict::accepted : InteractionVerdict::refused;
+    }
+};
+
+/** The timed option of a development fixture (stage 2.5b, the powder keg): the completion counts; no explosion, no reward. */
+class TimedFixtureHandler final : public InteractionHandler {
+public:
+    [[nodiscard]] const char* name() const override {
+        return "timed fixture";
     }
 
     [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context) override {
@@ -127,12 +174,43 @@ const char* interaction_end_text(InteractionEnd cause) {
         return "the death of the character";
     case InteractionEnd::left:
         return "the character left the world";
+    case InteractionEnd::sourceRemoved:
+        return "the source went away";
+    case InteractionEnd::rangeLost:
+        return "the character is not in the range of the object any more";
+    case InteractionEnd::damage:
+        return "damage (the option ends at damage)";
+    case InteractionEnd::policyFailed:
+        return "the check at the end of the timed use failed";
+    }
+    return "?";
+}
+
+const char* service_error_text(ServiceError error) {
+    switch (error) {
+    case ServiceError::none:
+        return "the grant is valid";
+    case ServiceError::notInWorld:
+        return "the character is not in the world";
+    case ServiceError::noGrant:
+        return "the character has no grant of this service";
+    case ServiceError::oldEntry:
+        return "the grant is of an older world entry";
+    case ServiceError::sourceGone:
+        return "the source of the grant went away";
+    case ServiceError::tooFar:
+        return "the character is not in the range of the source";
+    case ServiceError::notOffered:
+        return "the source does not offer this id";
+    case ServiceError::expired:
+        return "the grant expired";
     }
     return "?";
 }
 
 Interactions::Interactions(World& world, const gamedata::InteractionData* data)
-    : m_world(world), m_data(data), m_lore(std::make_unique<LoreHandler>(world)), m_presentation(std::make_unique<PresentationHandler>()) {
+    : m_world(world), m_data(data), m_lore(std::make_unique<LoreHandler>(world)), m_presentation(std::make_unique<PresentationHandler>()),
+      m_station(std::make_unique<StationHandler>()), m_fixture(std::make_unique<TimedFixtureHandler>()) {
     for (const char* name : kLoreOptions) {
         register_handler(gamedata::InteractionKind::lorePage, gamedata::interaction_option_id(name), *m_lore);
     }
@@ -141,6 +219,13 @@ Interactions::Interactions(World& world, const gamedata::InteractionData* data)
         for (std::uint8_t kind = 0; kind <= static_cast<std::uint8_t>(gamedata::InteractionKind::other); ++kind) {
             register_handler(static_cast<gamedata::InteractionKind>(kind), gamedata::interaction_option_id(name), *m_presentation);
         }
+    }
+    for (const char* name : kStationOptions) {
+        register_handler(gamedata::InteractionKind::craftingStation, gamedata::interaction_option_id(name), *m_station);
+        register_handler(gamedata::InteractionKind::camp, gamedata::interaction_option_id(name), *m_station);
+    }
+    for (const char* name : kTimedFixtureOptions) {
+        register_handler(gamedata::InteractionKind::other, gamedata::interaction_option_id(name), *m_fixture);
     }
 }
 
@@ -153,6 +238,10 @@ void Interactions::register_handler(gamedata::InteractionKind kind, std::uint32_
 InteractionHandler* Interactions::handler_of(gamedata::InteractionKind kind, std::uint32_t optionId) const {
     const auto found = m_handlers.find({kind, optionId});
     return found == m_handlers.end() ? nullptr : found->second;
+}
+
+Entity* Interactions::find_entity(EntityId id) const {
+    return m_world.find(id);
 }
 
 InteractionVerdict Interactions::refuse(InteractionVerdict verdict, const Entity& character, const InteractionRequest& request) {
@@ -168,6 +257,29 @@ InteractionVerdict Interactions::refuse(InteractionVerdict verdict, const Entity
     return verdict;
 }
 
+Interactions::Site Interactions::site_of(std::uint32_t object, EntityId instance, std::uint64_t generation) const {
+    Site site;
+    const gamedata::InteractionData* catalog = data();
+    if (catalog == nullptr) {
+        return site;
+    }
+    if (instance == 0) {
+        if (object < catalog->objects().size()) {
+            site.object = &catalog->objects()[object];
+            site.index = object;
+        }
+        return site;
+    }
+    const auto found = m_instances.find(instance);
+    if (found != m_instances.end() && found->second.generation == generation) {
+        site.object = &found->second.object;
+        site.index = found->second.templateIndex;
+        site.instance = instance;
+        site.generation = generation;
+    }
+    return site;
+}
+
 InteractionVerdict Interactions::check(Entity& character, const InteractionRequest& request, InteractionContext& context,
                                        InteractionHandler*& handler) {
     const gamedata::InteractionData* catalog = data();
@@ -177,15 +289,32 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     if (character.life.dead) {
         return InteractionVerdict::dead;
     }
-    const std::optional<gamedata::BoundRef> ref = catalog->find(request.object.group, request.object.target);
-    if (!ref) {
+    // The reference: a bound of a level object (the reference map of the data), or of a server child (its G is its entity id).
+    Site site;
+    std::uint32_t boundIndex = 0;
+    const BoundState* boundState = nullptr;
+    if (const std::optional<gamedata::BoundRef> ref = catalog->find(request.object.group, request.object.target)) {
+        site.object = &catalog->objects()[ref->object];
+        site.index = ref->object;
+        boundIndex = ref->bound;
+        const auto state = m_objects.find(ref->object);
+        boundState = state != m_objects.end() ? &state->second.bounds[ref->bound] : nullptr;
+    } else if (const auto found = m_instances.find(request.object.group); found != m_instances.end()) {
+        const Instance& instance = found->second;
+        for (std::uint32_t index = 0; index < instance.object.bounds.size(); ++index) {
+            if (instance.object.bounds[index].target == request.object.target) {
+                site = Site{&instance.object, instance.templateIndex, found->first, instance.generation};
+                boundIndex = index;
+                boundState = &instance.state.bounds[index];
+                break;
+            }
+        }
+    }
+    if (site.object == nullptr || site.object->actor != request.object.actor) {
         return InteractionVerdict::unknownObject;
     }
-    const gamedata::InteractionObject& object = catalog->objects()[ref->object];
-    if (object.actor != request.object.actor) {
-        return InteractionVerdict::unknownObject;
-    }
-    const gamedata::InteractionBound& bound = object.bounds[ref->bound];
+    const gamedata::InteractionObject& object = *site.object;
+    const gamedata::InteractionBound& bound = object.bounds[boundIndex];
     const gamedata::InteractionOption* option = nullptr;
     for (const gamedata::BoundOption& item : bound.options) {
         const gamedata::InteractionOption& row = catalog->options()[item.option];
@@ -197,13 +326,11 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     if (option == nullptr) {
         return InteractionVerdict::unknownOption;
     }
-    context = InteractionContext{ref->object, ref->bound, &object, &bound, option};
+    context = InteractionContext{site.index, boundIndex, &object, &bound, option, site.instance, site.generation};
     if (!bound.unresolved.empty() || !option->unresolved.empty() || option->statusRules || bound.onlyOnQuest || bound.condition
         || bound.lineOfSight || bound.arcRequired) {
         return InteractionVerdict::unsupported;
     }
-    const auto state = m_objects.find(ref->object);
-    const BoundState* boundState = state != m_objects.end() ? &state->second.bounds[ref->bound] : nullptr;
     if (boundState != nullptr && !boundState->enabled) {
         return InteractionVerdict::disabled;
     }
@@ -265,16 +392,18 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
     // A part of a committed interaction: a one-shot whose base action is not its own action (research Q4).
     if (!committed && request.baseAction != 0 && request.baseAction != request.action) {
         const std::optional<ActiveInteraction>& main = character->interaction;
-        if (!main || main->object != context.objectIndex || main->action != request.baseAction) {
+        if (!main || main->object != context.objectIndex || main->instance != context.instance || main->action != request.baseAction) {
             return refuse(InteractionVerdict::noMainInteraction, *character, request);
         }
     }
-    if (committed && character->interaction) {
-        end(*character, InteractionEnd::replaced, false);
-    }
+    // The handler first: a refusal (a database that did not take the row) leaves the committed interaction of the character as it
+    // was, with its users and its Interactor state (code review of stage 2.5a, finding INT-R1).
     verdict = handler->begin(*character, context);
     if (verdict != InteractionVerdict::accepted) {
         return refuse(verdict, *character, request);
+    }
+    if (committed && character->interaction) {
+        end(*character, InteractionEnd::replaced, false);
     }
     ++m_counts.verdicts[static_cast<std::size_t>(InteractionVerdict::accepted)];
     ++m_counts.begins;
@@ -288,17 +417,50 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
         active.action = request.action;
         active.started = m_world.clock().now();
         active.serial = ++m_serial;
+        active.instance = context.instance;
+        active.generation = context.generation;
+        // A timed use (stage 2.5b): the full Delay Time of the option row on the world clock (live check L6: the client timer).
+        if (context.option->delay > 0.0F) {
+            const auto delay = std::chrono::duration_cast<WorldClock::time_point::duration>(std::chrono::duration<float>(context.option->delay));
+            active.due = active.started + delay;
+            ++m_timed;
+            m_world.after(std::chrono::duration_cast<std::chrono::milliseconds>(delay) + std::chrono::milliseconds(1),
+                          [this, characterId = character->characterId, serial = active.serial](World&) { timed_due(characterId, serial); });
+        }
         character->interaction = active;
         m_active.insert(character->id);
-        BoundState& boundState = state_of(context.objectIndex).bounds[context.boundIndex];
-        boundState.users.push_back(character->id);
-        publish(context.objectIndex);
+        if (ObjectState* state = state_of(Site{context.object, context.objectIndex, context.instance, context.generation})) {
+            state->bounds[context.boundIndex].users.push_back(character->id);
+        }
+        if (context.instance != 0) {
+            publish(m_instances.at(context.instance));
+        } else {
+            publish(context.objectIndex);
+        }
         m_world.touch(character->id, ComponentKey::interactor);
+        // A use of a different source ends the service grant of the character (research Q4: one source grant).
+        if (character->serviceGrant
+            && (character->serviceGrant->object != active.object || character->serviceGrant->instance != active.instance
+                || character->serviceGrant->generation != active.generation)) {
+            end_grant(*character, "a use of a different source");
+        }
     }
-    log::write("world: interaction of character %s: %s at the %s %s (%s, %.2f m, %s): accepted, %s", character->characterId.c_str(),
+    log::write("world: interaction of character %s: %s at the %s %s (%s, %.2f m, %s): accepted, %s%s", character->characterId.c_str(),
                context.option->name.c_str(), gamedata::interaction_kind_text(context.object->kind), context.object->key.c_str(),
                context.object->slice.c_str(), static_cast<double>(distance), handler->name(),
-               committed ? "committed: it stays until its end" : "one time");
+               committed ? "committed: it stays until its end" : "one time",
+               context.option->delay > 0.0F ? (", timed: it completes after " + std::to_string(context.option->delay) + " s").c_str() : "");
+    if (committed && context.object->assembly) {
+        if (const std::optional<StationContext> station = this->station(*character)) {
+            log::write("world: station of the interaction: key %s%s, fee %s, Assembly entity %s target %s, object %s generation %llu, "
+                       "parent %s",
+                       station->assemblyKey.c_str(), context.object->assembly->resolved ? "" : " (no row of the crafting station data)",
+                       station->chargeCraftingFee ? "yes" : "no", hex64(station->assemblyEntity).c_str(),
+                       hex64(station->assemblyTarget).c_str(), station->objectKey.c_str(),
+                       static_cast<unsigned long long>(station->objectGeneration),
+                       station->parentKey.empty() ? "none" : station->parentKey.c_str());
+        }
+    }
     return InteractionVerdict::accepted;
 }
 
@@ -331,17 +493,47 @@ void Interactions::traveled(Entity& character) {
     if (character.interaction) {
         end(character, InteractionEnd::travel, false); // The session sends 3746 and 6709 itself (end_input_lock).
     }
+    end_grant(character, "a travel");
 }
 
 void Interactions::died(Entity& character) {
     if (character.interaction) {
         end(character, InteractionEnd::death, true);
     }
+    end_grant(character, "the death of the character");
 }
 
 void Interactions::left(Entity& character) {
     if (character.interaction) {
         end(character, InteractionEnd::left, false);
+    }
+    end_grant(character, "the character left the world");
+}
+
+void Interactions::damaged(Entity& character) {
+    if (!character.interaction || data() == nullptr || character.life.dead) {
+        return;
+    }
+    const gamedata::InteractionOption& option = data()->options()[character.interaction->option];
+    // The action InteractionAnimation ends at IfDamaged (game data); a timed use ends at damage (a decision of an agent: the
+    // client continues it, live check L7).
+    if (option.action == kPlayInteractionAnimation || option.delay > 0.0F) {
+        end(character, InteractionEnd::damage, true);
+    }
+}
+
+void Interactions::moved(Entity& character) {
+    if (!character.interaction || character.positionEstimated) {
+        return;
+    }
+    const ActiveInteraction& active = *character.interaction;
+    const Site site = site_of(active.object, active.instance, active.generation);
+    if (site.object == nullptr || active.bound >= site.object->bounds.size()) {
+        return;
+    }
+    const gamedata::InteractionBound& bound = site.object->bounds[active.bound];
+    if (distance_sq(character.position, bound.position) > bound.rangeSq) {
+        end(character, InteractionEnd::rangeLost, true);
     }
 }
 
@@ -354,25 +546,95 @@ void Interactions::end(Entity& character, InteractionEnd cause, bool notify) {
     character.interactionEnded = m_world.touch(character.id, ComponentKey::interactor);
     m_active.erase(character.id);
     ++m_counts.ends;
+    if (active.due && !active.completed && m_timed > 0) {
+        --m_timed;
+    }
     const gamedata::InteractionData* catalog = data();
-    if (catalog != nullptr && active.object < catalog->objects().size()) {
-        const auto state = m_objects.find(active.object);
-        if (state != m_objects.end()) {
-            std::vector<EntityId>& users = state->second.bounds[active.bound].users;
+    const Site site = site_of(active.object, active.instance, active.generation);
+    if (catalog != nullptr && site.object != nullptr) {
+        if (ObjectState* state = state_of(site)) {
+            std::vector<EntityId>& users = state->bounds[active.bound].users;
             users.erase(std::remove(users.begin(), users.end(), character.id), users.end());
-            publish(active.object);
+            if (site.instance != 0) {
+                publish(m_instances.at(site.instance));
+            } else {
+                publish(active.object);
+            }
         }
-        const gamedata::InteractionObject& object = catalog->objects()[active.object];
-        InteractionContext context{active.object, active.bound, &object, &object.bounds[active.bound], &catalog->options()[active.option]};
-        if (InteractionHandler* handler = handler_of(object.kind, context.option->id)) {
+        InteractionContext context{site.index, active.bound, site.object, &site.object->bounds[active.bound], &catalog->options()[active.option],
+                                   site.instance, site.generation};
+        if (InteractionHandler* handler = handler_of(site.object->kind, context.option->id)) {
             handler->end(character, context, cause);
         }
-        log::write("world: interaction of character %s at the object %s ended: %s", character.characterId.c_str(), object.key.c_str(),
+        log::write("world: interaction of character %s at the object %s ended: %s", character.characterId.c_str(), site.object->key.c_str(),
                    interaction_end_text(cause));
     }
     if (notify && character.owner != 0) {
         m_world.interaction_cancelled(character.owner);
     }
+}
+
+void Interactions::timed_due(const std::string& characterId, std::uint64_t serial) {
+    Entity* character = m_world.find_character(characterId);
+    if (character == nullptr || !character->interaction || character->interaction->serial != serial || character->interaction->completed) {
+        return; // The use ended before its time (a release, a cancel): no completion.
+    }
+    if (m_timed > 0) {
+        --m_timed;
+    }
+    const std::string mark = log::session_mark(character->owner, character->characterId);
+    const log::Context logContext(mark);
+    InteractionEnd cause = InteractionEnd::policyFailed;
+    if (!still_valid(*character, *character->interaction, cause)) {
+        character->interaction->completed = true; // The end below must not count the timer again.
+        end(*character, cause, true);
+        return;
+    }
+    ActiveInteraction& active = *character->interaction;
+    active.completed = true;
+    const Site site = site_of(active.object, active.instance, active.generation);
+    const gamedata::InteractionOption& option = data()->options()[active.option];
+    InteractionContext context{site.index, active.bound, site.object, &site.object->bounds[active.bound], &option, site.instance,
+                               site.generation};
+    ++m_counts.completions;
+    std::uint32_t completions = 0;
+    if (site.instance != 0) {
+        completions = ++m_instances.at(site.instance).completions;
+    }
+    if (InteractionHandler* handler = handler_of(site.object->kind, option.id)) {
+        handler->complete(*character, context);
+    }
+    log::write("world: timed interaction of character %s: %s at the object %s completed after %.1f s (completion %u of the object)",
+               character->characterId.c_str(), option.name.c_str(), site.object->key.c_str(), static_cast<double>(option.delay),
+               completions);
+}
+
+bool Interactions::still_valid(const Entity& character, const ActiveInteraction& active, InteractionEnd& cause) const {
+    const Site site = site_of(active.object, active.instance, active.generation);
+    if (site.object == nullptr) {
+        cause = InteractionEnd::sourceRemoved;
+        return false;
+    }
+    if (character.life.dead) {
+        cause = InteractionEnd::death;
+        return false;
+    }
+    const BoundState* state = nullptr;
+    if (site.instance != 0) {
+        state = &m_instances.at(site.instance).state.bounds[active.bound];
+    } else if (const auto found = m_objects.find(active.object); found != m_objects.end()) {
+        state = &found->second.bounds[active.bound];
+    }
+    if (state != nullptr && !state->enabled) {
+        cause = InteractionEnd::policyFailed;
+        return false;
+    }
+    const gamedata::InteractionBound& bound = site.object->bounds[active.bound];
+    if (character.positionEstimated || distance_sq(character.position, bound.position) > bound.rangeSq) {
+        cause = InteractionEnd::rangeLost;
+        return false;
+    }
+    return true;
 }
 
 Interactions::ObjectState& Interactions::state_of(std::uint32_t objectIndex) {
@@ -381,6 +643,34 @@ Interactions::ObjectState& Interactions::state_of(std::uint32_t objectIndex) {
         state.bounds.resize(data()->objects()[objectIndex].bounds.size());
     }
     return state;
+}
+
+Interactions::ObjectState* Interactions::state_of(const Site& site) {
+    if (site.object == nullptr) {
+        return nullptr;
+    }
+    if (site.instance != 0) {
+        const auto found = m_instances.find(site.instance);
+        return found != m_instances.end() ? &found->second.state : nullptr;
+    }
+    return &state_of(site.index);
+}
+
+void Interactions::add_cells(std::vector<std::int64_t>& cells, EntityId entity, const gamedata::InteractionObject& object,
+                             const state::WorldPosition& place) {
+    std::vector<std::int64_t> keys;
+    if (object.bounds.empty()) {
+        keys.push_back(gamedata::InteractionData::cell_of(place));
+    }
+    for (const gamedata::InteractionBound& bound : object.bounds) {
+        keys.push_back(gamedata::InteractionData::cell_of(bound.position));
+    }
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    for (const std::int64_t key : keys) {
+        m_entityCells[key].push_back(entity);
+        cells.push_back(key);
+    }
 }
 
 void Interactions::publish(std::uint32_t objectIndex) {
@@ -399,6 +689,10 @@ void Interactions::publish(std::uint32_t objectIndex) {
         actor.bytes = object.actor;
         entity = &m_world.make_object(body, actor, object.position);
         state.entity = entity->id;
+        // Each session observes the object at the distance of a character from its nearest bound (finding INT-R3).
+        std::vector<std::int64_t> cells;
+        add_cells(cells, entity->id, object, object.position);
+        m_levelEntities[entity->id] = objectIndex;
     }
     bool changed = false;
     for (std::size_t index = 0; index < state.bounds.size(); ++index) {
@@ -414,20 +708,450 @@ void Interactions::publish(std::uint32_t objectIndex) {
     }
 }
 
+void Interactions::publish(Instance& instance) {
+    Entity* entity = m_world.find(instance.state.entity);
+    if (entity == nullptr) {
+        return;
+    }
+    bool changed = false;
+    for (std::size_t index = 0; index < instance.state.bounds.size() && index < entity->object.bounds.size(); ++index) {
+        ObjectBound& target = entity->object.bounds[index];
+        const ObjectBound now{target.slot, instance.state.bounds[index].enabled,
+                              static_cast<std::uint32_t>(instance.state.bounds[index].users.size())};
+        if (now.enabled != target.enabled || now.users != target.users) {
+            target = now;
+            changed = true;
+        }
+    }
+    if (changed) {
+        m_world.touch(entity->id, ComponentKey::interact);
+    }
+}
+
+Entity* Interactions::spawn(std::uint32_t templateIndex, const state::WorldPosition& place, const gamedata::Rotation& rotation,
+                            const std::string& key, std::int64_t spawnedIndex, EntityId parent, const std::string& parentKey,
+                            const std::array<std::uint8_t, 16>& parentActor, const std::string& region, int permissionRule, int depth) {
+    const gamedata::InteractionData* catalog = data();
+    if (catalog == nullptr || templateIndex >= catalog->templates().size() || depth > kChildDepth || !valid_position(place)) {
+        return nullptr;
+    }
+    const gamedata::InteractionTemplate& slice = catalog->templates()[templateIndex];
+    const int permission = permissionRule >= 0 ? permissionRule : slice.permissionRule;
+    ObjectBody body;
+    body.index = templateIndex;
+    body.asset = slice.asset;
+    body.subId = slice.sub;
+    body.spawned = true;
+    body.positionSlot = slice.positionSlot;
+    body.rotation = rotation;
+    // The authored initial states of the slice (game data). Live check L4: the station shows with the metadata and the place alone;
+    // the Complete state changes nothing that shows. Live checks L5 and L6: a camp and the keg need the permission rule.
+    if (slice.buildableState >= 0 && slice.buildableSlot != 0) {
+        body.buildableSlot = slice.buildableSlot;
+        body.buildableState = static_cast<std::uint8_t>(slice.buildableState);
+    }
+    if (permission >= 0 && slice.ownershipSlot != 0) {
+        body.ownershipSlot = slice.ownershipSlot;
+        body.permissionRule = static_cast<std::uint8_t>(permission);
+    }
+    for (const gamedata::InteractionBound& bound : slice.bounds) {
+        body.bounds.push_back(ObjectBound{bound.slot, true, 0});
+    }
+    Entity& entity = m_world.spawn_object(body, place);
+    Instance instance;
+    instance.templateIndex = templateIndex;
+    instance.generation = ++m_generation;
+    instance.spawned = spawnedIndex;
+    instance.parent = parent;
+    instance.parentKey = parentKey;
+    instance.parentActor = parentActor;
+    instance.state.entity = entity.id;
+    instance.state.bounds.resize(slice.bounds.size());
+    // The ids of the client (protocol notes 4.2, 4.35; live check L4 of stage 2.5b): K = root XOR G, an instance id is the entity id of
+    // the slice XOR K, and a facet target is the instance id plus the component id.
+    const std::uint64_t k = slice.root ^ entity.id;
+    gamedata::InteractionObject& object = instance.object;
+    object.key = key;
+    object.kind = slice.kind;
+    object.slice = slice.slice;
+    object.asset = slice.asset;
+    object.sub = slice.sub;
+    object.actor = entity.actor.bytes;
+    object.group = entity.id;
+    object.region = region;
+    object.position = place;
+    if (slice.assembly) {
+        object.assembly = slice.assembly;
+        object.assembly->entity = slice.assembly->entity ^ k;
+    }
+    for (const gamedata::InteractionBound& local : slice.bounds) {
+        gamedata::InteractionBound bound = local;
+        bound.position = gamedata::transform_point(place, rotation, local.position);
+        bound.target = (local.entity ^ k) + local.component;
+        for (gamedata::BoundOption& option : bound.options) {
+            option.entity ^= k;
+        }
+        object.bounds.push_back(std::move(bound));
+    }
+    add_cells(instance.cells, entity.id, object, place);
+    const EntityId id = entity.id;
+    m_instances.emplace(id, std::move(instance));
+    ++m_counts.spawned;
+    log::write("world: server child %016llx (%s) of %s at %.2f %.2f %.2f: %zu bound(s), generation %llu", static_cast<unsigned long long>(id),
+               slice.slice.c_str(), key.c_str(), static_cast<double>(place.x), static_cast<double>(place.y), static_cast<double>(place.z),
+               slice.bounds.size(), static_cast<unsigned long long>(m_instances.at(id).generation));
+    // The template children (the forge of a station): the same parent placement, a place in the frame of this child.
+    std::size_t childNumber = 0;
+    for (const gamedata::TemplateChild& child : slice.children) {
+        const state::WorldPosition childPlace = gamedata::transform_point(place, rotation, child.position);
+        const gamedata::Rotation childRotation = gamedata::compose_rotation(rotation, child.rotation);
+        Entity* made = spawn(child.templateIndex, childPlace, childRotation, key + "/" + std::to_string(++childNumber), -1, id, parentKey,
+                             parentActor, region, -1, depth + 1);
+        if (made != nullptr) {
+            m_instances.at(id).children.push_back(made->id);
+        }
+    }
+    return m_world.find(id);
+}
+
+bool Interactions::remove_object(EntityId id) {
+    auto found = m_instances.find(id);
+    if (found == m_instances.end()) {
+        return false;
+    }
+    const std::vector<EntityId> children = found->second.children;
+    for (const EntityId child : children) {
+        remove_object(child);
+    }
+    found = m_instances.find(id);
+    // Each use of the source ends (the client gets 3746), and each grant of it ends (research Q4: the removal of the source).
+    for (const BoundState& bound : found->second.state.bounds) {
+        const std::vector<EntityId> users = bound.users;
+        for (const EntityId user : users) {
+            Entity* character = m_world.find(user);
+            if (character != nullptr && character->interaction && character->interaction->instance == id) {
+                end(*character, InteractionEnd::sourceRemoved, true);
+            }
+        }
+    }
+    end_grants_of(id);
+    found = m_instances.find(id);
+    for (const std::int64_t cell : found->second.cells) {
+        auto& list = m_entityCells[cell];
+        list.erase(std::remove(list.begin(), list.end(), id), list.end());
+        if (list.empty()) {
+            m_entityCells.erase(cell);
+        }
+    }
+    if (found->second.spawned >= 0) {
+        m_spawnedLive.erase(static_cast<std::uint32_t>(found->second.spawned));
+    }
+    if (found->second.parent != 0) {
+        if (const auto parent = m_instances.find(found->second.parent); parent != m_instances.end()) {
+            auto& list = parent->second.children;
+            list.erase(std::remove(list.begin(), list.end(), id), list.end());
+        }
+    }
+    log::write("world: server child %016llx (%s) of %s removed", static_cast<unsigned long long>(id), found->second.object.slice.c_str(),
+               found->second.object.key.c_str());
+    m_instances.erase(found);
+    ++m_counts.removed;
+    m_world.remove_object(id);
+    return true;
+}
+
+void Interactions::tick() {
+    scan();
+}
+
+void Interactions::scan() {
+    const gamedata::InteractionData* catalog = data();
+    if (catalog == nullptr || catalog->spawned().empty()) {
+        return;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    if (m_scanned && now - m_lastScan < kSpawnInterval) {
+        return;
+    }
+    m_scanned = true;
+    m_lastScan = now;
+    ++m_counts.scans;
+    gamedata::LookupWork work;
+    // The children of the placements near each character (the cells of the grid near it: MP-8). Only the stations: the camps of
+    // the placements (permanentcamp_master at the places "blankspace_for_player_camp", with no visual) stay in the data for the
+    // camps of stage 2.6 (a decision of an agent: live check L5 of stage 2.5b, the client shows only a name and a bind option there).
+    std::set<std::uint32_t> wanted;
+    m_world.for_each_character([&](const Entity& character) {
+        catalog->for_each_spawned_near(
+            character.position, kSpawnEnter,
+            [&](std::uint32_t index) {
+                if (m_spawnedLive.count(index) == 0
+                    && catalog->templates()[catalog->spawned()[index].templateIndex].kind == gamedata::InteractionKind::craftingStation) {
+                    wanted.insert(index);
+                }
+            },
+            &work);
+    });
+    // The live children with no character near: only the live ones (each was made near a character).
+    std::vector<EntityId> far;
+    for (const auto& [index, id] : m_spawnedLive) {
+        const gamedata::SpawnedPlacement& child = catalog->spawned()[index];
+        bool near = false;
+        m_world.for_each_near(child.position, kSpawnLeave, [&](Entity& entity) { near = near || entity.kind == EntityKind::player; });
+        if (!near) {
+            far.push_back(id);
+        }
+    }
+    m_counts.scanWork = work;
+    for (const EntityId id : far) {
+        remove_object(id);
+    }
+    for (const std::uint32_t index : wanted) {
+        const gamedata::SpawnedPlacement& child = catalog->spawned()[index];
+        if (Entity* entity = spawn(child.templateIndex, child.position, child.rotation, child.key, index, 0, child.parent, child.parentActor,
+                                   child.region, -1, 0)) {
+            m_spawnedLive[index] = entity->id;
+        }
+    }
+}
+
+FixtureResult Interactions::make_fixture(const std::string& characterId, const std::string& name, const state::WorldPosition& offset,
+                                         float yawDegrees, int permissionRule) {
+    FixtureResult result;
+    const gamedata::InteractionData* catalog = data();
+    const std::optional<std::uint32_t> fixture = catalog != nullptr ? catalog->fixture(name) : std::nullopt;
+    if (!fixture) {
+        result.error = FixtureError::unknownFixture;
+        return result;
+    }
+    const Entity* character = m_world.find_character(characterId);
+    if (character == nullptr) {
+        result.error = FixtureError::notInWorld;
+        return result;
+    }
+    const state::WorldPosition place{character->position.x + offset.x, character->position.y + offset.y, character->position.z + offset.z};
+    if (!valid_position(place) || !std::isfinite(yawDegrees)) {
+        result.error = FixtureError::badPosition;
+        return result;
+    }
+    const float half = yawDegrees * 3.14159265358979F / 360.0F;
+    const gamedata::Rotation rotation{0.0F, 0.0F, std::sin(half), std::cos(half)};
+    const std::string key = "fixture/" + name + "/" + std::to_string(m_generation + 1);
+    result.entity = spawn(*fixture, place, rotation, key, -1, 0, "", {}, "", permissionRule, 0);
+    if (result.entity == nullptr) {
+        result.error = FixtureError::badPosition;
+        return result;
+    }
+    m_instances.at(result.entity->id).fixture = name;
+    return result;
+}
+
+EntityId Interactions::spawned_entity(const std::string& key) const {
+    for (const auto& [id, instance] : m_instances) {
+        if (instance.spawned >= 0 && instance.object.key == key) {
+            return id;
+        }
+    }
+    return 0;
+}
+
+const gamedata::InteractionObject* Interactions::object_of_key(const std::string& key) const {
+    if (const gamedata::InteractionData* catalog = data()) {
+        if (const gamedata::InteractionObject* object = catalog->find_key(key)) {
+            return object;
+        }
+    }
+    for (const auto& [id, instance] : m_instances) {
+        if (instance.object.key == key) {
+            return &instance.object;
+        }
+    }
+    return nullptr;
+}
+
+std::uint32_t Interactions::completions_of(EntityId entity) const {
+    const auto found = m_instances.find(entity);
+    return found != m_instances.end() ? found->second.completions : 0;
+}
+
+std::size_t Interactions::object_entities() const {
+    return m_levelEntities.size() + m_instances.size();
+}
+
+float Interactions::distance_to(const Entity& entity, const state::WorldPosition& place) const {
+    if (entity.kind != EntityKind::object) {
+        return horizontal(entity.position, place);
+    }
+    const gamedata::InteractionObject* object = nullptr;
+    if (const auto instance = m_instances.find(entity.id); instance != m_instances.end()) {
+        object = &instance->second.object;
+    } else if (const auto level = m_levelEntities.find(entity.id); level != m_levelEntities.end() && data() != nullptr
+                                                                    && level->second < data()->objects().size()) {
+        object = &data()->objects()[level->second];
+    }
+    if (object == nullptr || object->bounds.empty()) {
+        return horizontal(entity.position, place);
+    }
+    float best = horizontal(object->bounds.front().position, place);
+    for (const gamedata::InteractionBound& bound : object->bounds) {
+        best = std::min(best, horizontal(bound.position, place));
+    }
+    return best;
+}
+
 ObjectError Interactions::set_enabled(const std::string& key, bool enabled) {
     const gamedata::InteractionData* catalog = data();
     const std::optional<std::uint32_t> index = catalog != nullptr ? catalog->index_of(key) : std::nullopt;
-    if (!index) {
-        return ObjectError::unknownObject;
+    if (index) {
+        ObjectState& state = state_of(*index);
+        for (BoundState& bound : state.bounds) {
+            bound.enabled = enabled;
+        }
+        publish(*index);
+        log::write("world: object %s (%s) is %s", catalog->objects()[*index].key.c_str(), catalog->objects()[*index].slice.c_str(),
+                   enabled ? "enabled" : "disabled");
+        return ObjectError::none;
     }
-    ObjectState& state = state_of(*index);
-    for (BoundState& bound : state.bounds) {
-        bound.enabled = enabled;
+    for (auto& [id, instance] : m_instances) {
+        if (instance.object.key == key) {
+            for (BoundState& bound : instance.state.bounds) {
+                bound.enabled = enabled;
+            }
+            publish(instance);
+            log::write("world: server child %s (%s) is %s", instance.object.key.c_str(), instance.object.slice.c_str(),
+                       enabled ? "enabled" : "disabled");
+            return ObjectError::none;
+        }
     }
-    publish(*index);
-    log::write("world: object %s (%s) is %s", catalog->objects()[*index].key.c_str(), catalog->objects()[*index].slice.c_str(),
-               enabled ? "enabled" : "disabled");
-    return ObjectError::none;
+    return ObjectError::unknownObject;
+}
+
+std::optional<StationContext> Interactions::station_of(const Site& site, std::uint32_t boundIndex, const InteractionReference& reference) const {
+    if (site.object == nullptr || !site.object->assembly || boundIndex >= site.object->bounds.size()) {
+        return std::nullopt;
+    }
+    const gamedata::InteractionObject& object = *site.object;
+    const gamedata::InteractionBound& bound = object.bounds[boundIndex];
+    StationContext station;
+    station.objectKey = object.key;
+    station.objectGeneration = site.generation;
+    station.actor = object.actor;
+    station.group = object.group;
+    station.interactTarget = reference.target;
+    for (const gamedata::BoundOption& option : bound.options) {
+        const std::string& name = data()->options()[option.option].name;
+        if (name == kStationOptions[0] || name == kStationOptions[1]) {
+            station.optionEntity = option.entity;
+            break;
+        }
+    }
+    station.assemblyEntity = object.assembly->entity;
+    station.assemblyTarget = object.assembly->entity + object.assembly->component;
+    station.assemblyKey = object.assembly->key;
+    station.chargeCraftingFee = object.assembly->fee;
+    station.keyResolved = object.assembly->resolved;
+    if (site.instance != 0) {
+        const Instance& instance = m_instances.at(site.instance);
+        station.parentKey = instance.parentKey;
+        station.parentActor = instance.parentActor;
+    }
+    station.region = object.region;
+    station.position = bound.position;
+    station.rangeSq = bound.rangeSq;
+    station.isCamp = object.kind == gamedata::InteractionKind::camp;
+    return station;
+}
+
+std::optional<StationContext> Interactions::station(const Entity& character) const {
+    if (!character.interaction) {
+        return std::nullopt;
+    }
+    const ActiveInteraction& active = *character.interaction;
+    return station_of(site_of(active.object, active.instance, active.generation), active.bound, active.reference);
+}
+
+bool Interactions::grant_service(Entity& character, const std::string& kind, std::vector<std::uint32_t> ids, std::uint64_t revision,
+                                 std::optional<WorldClock::time_point> deadline) {
+    if (!character.interaction) {
+        return false;
+    }
+    const ActiveInteraction& active = *character.interaction;
+    ServiceGrant grant;
+    grant.kind = kind;
+    std::sort(ids.begin(), ids.end());
+    grant.ids = std::move(ids);
+    grant.worldEntry = character.id;
+    grant.object = active.object;
+    grant.bound = active.bound;
+    grant.instance = active.instance;
+    grant.generation = active.generation;
+    grant.source = active.reference;
+    grant.revision = revision;
+    grant.openedAt = m_world.clock().now();
+    grant.deadline = deadline;
+    character.serviceGrant = std::move(grant);
+    m_granted.insert(character.id);
+    log::write("world: service grant of character %s: %s with %zu id(s) from the source %s", character.characterId.c_str(), kind.c_str(),
+               character.serviceGrant->ids.size(), hex64(active.reference.group).c_str());
+    return true;
+}
+
+ServiceError Interactions::require_service(const std::string& characterId, const std::string& kind, std::uint32_t id) {
+    Entity* character = m_world.find_character(characterId);
+    if (character == nullptr) {
+        return ServiceError::notInWorld;
+    }
+    if (!character->serviceGrant || character->serviceGrant->kind != kind) {
+        return ServiceError::noGrant;
+    }
+    const ServiceGrant& grant = *character->serviceGrant;
+    ServiceError error = ServiceError::none;
+    const Site site = site_of(grant.object, grant.instance, grant.generation);
+    if (grant.worldEntry != character->id) {
+        error = ServiceError::oldEntry;
+    } else if (site.object == nullptr || grant.bound >= site.object->bounds.size()) {
+        error = ServiceError::sourceGone;
+    } else if (character->positionEstimated
+               || distance_sq(character->position, site.object->bounds[grant.bound].position) > site.object->bounds[grant.bound].rangeSq) {
+        error = ServiceError::tooFar;
+    } else if (grant.deadline && m_world.clock().now() > *grant.deadline) {
+        error = ServiceError::expired;
+    } else if (!std::binary_search(grant.ids.begin(), grant.ids.end(), id)) {
+        return ServiceError::notOffered; // The grant stays: a different id of the offer can pass.
+    }
+    if (error != ServiceError::none) {
+        end_grant(*character, service_error_text(error));
+    }
+    return error;
+}
+
+bool Interactions::close_service(const std::string& characterId) {
+    Entity* character = m_world.find_character(characterId);
+    if (character == nullptr || !character->serviceGrant) {
+        return false;
+    }
+    end_grant(*character, "a close of the service");
+    return true;
+}
+
+void Interactions::end_grants_of(EntityId instance) {
+    const std::vector<EntityId> granted(m_granted.begin(), m_granted.end());
+    for (const EntityId id : granted) {
+        Entity* character = m_world.find(id);
+        if (character != nullptr && character->serviceGrant && character->serviceGrant->instance == instance) {
+            end_grant(*character, "the source went away");
+        }
+    }
+}
+
+void Interactions::end_grant(Entity& character, const char* cause) {
+    m_granted.erase(character.id);
+    if (!character.serviceGrant) {
+        return;
+    }
+    log::write("world: service grant of character %s (%s) ended: %s", character.characterId.c_str(), character.serviceGrant->kind.c_str(),
+               cause);
+    character.serviceGrant.reset();
 }
 
 InteractionsView Interactions::view(const std::string& characterId, float radius) const {
@@ -438,9 +1162,14 @@ InteractionsView Interactions::view(const std::string& characterId, float radius
     }
     view.inWorld = true;
     view.active = character->interaction;
+    view.grant = character->serviceGrant;
     const gamedata::InteractionData* catalog = data();
     if (catalog == nullptr) {
         return view;
+    }
+    if (view.active) {
+        view.activeObject = site_of(view.active->object, view.active->instance, view.active->generation).object;
+        view.station = station(*character);
     }
     std::map<std::uint32_t, InteractionObjectView> near;
     catalog->for_each_near(
@@ -472,8 +1201,42 @@ InteractionsView Interactions::view(const std::string& characterId, float radius
     for (auto& [index, entry] : near) {
         view.objects.push_back(std::move(entry));
     }
+    // The server children near the character (only the live ones: each was made near a character).
+    for (const auto& [id, instance] : m_instances) {
+        if (instance.object.bounds.empty()) {
+            continue; // A template child with no bound (the forge): no use.
+        }
+        float distance = horizontal(instance.object.position, character->position);
+        for (const gamedata::InteractionBound& bound : instance.object.bounds) {
+            distance = std::min(distance, horizontal(bound.position, character->position));
+        }
+        if (distance > radius) {
+            continue;
+        }
+        InteractionObjectView entry;
+        entry.index = instance.templateIndex;
+        entry.object = &instance.object;
+        entry.distance = distance;
+        for (std::size_t index = 0; index < instance.object.bounds.size(); ++index) {
+            entry.bounds.push_back(ObjectBound{instance.object.bounds[index].slot, instance.state.bounds[index].enabled,
+                                               static_cast<std::uint32_t>(instance.state.bounds[index].users.size())});
+        }
+        entry.entity = id;
+        entry.spawned = true;
+        entry.generation = instance.generation;
+        entry.parentKey = instance.parentKey;
+        entry.fixture = instance.fixture;
+        entry.completions = instance.completions;
+        view.objects.push_back(std::move(entry));
+    }
     std::sort(view.objects.begin(), view.objects.end(), [](const auto& a, const auto& b) {
-        return a.distance != b.distance ? a.distance < b.distance : a.index < b.index;
+        if (a.distance != b.distance) {
+            return a.distance < b.distance;
+        }
+        if (a.spawned != b.spawned) {
+            return !a.spawned;
+        }
+        return a.index != b.index ? a.index < b.index : a.object->key < b.object->key;
     });
     return view;
 }

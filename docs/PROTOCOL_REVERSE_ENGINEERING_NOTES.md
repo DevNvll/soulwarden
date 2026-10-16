@@ -5804,8 +5804,63 @@ data, the range `m_interactRangeSq` in 3D, the exact position, Enabled, the capa
 chair, the bed, the animations, the cinematic video) are accepted with no effect; each other option is refused (3743 result 2).
 
 **Not proved:** the arc and the line of sight of an object (no checked object has them; the backend refuses an object that needs
-them); the grammar of `CooldownUpdates`; the chairs (a bench showed an "E" mark and sent no request at the key E in one try); a
-server object (a station of a settlement: stage 2.5b).
+them); the grammar of `CooldownUpdates`; the chairs (a bench showed an "E" mark and sent no request at the key E in one try). The
+server objects (the stations of a settlement): section 4.36.
+
+### 4.36 Server children: the stations of a settlement, the camps, the timed use, the ends of a use (live proof of stage 2.5b; static proof for the client code)
+
+Research: `~/Games/soulwarden/work/research/interaction-stage.md` (Q1, Q2, the stage plan 2.5b). The system:
+[Interactions](systems/interactions.md). Live checks L4 to L7 and the final run of stage 2.5b:
+`~/Games/soulwarden/work/evidence/stations/implement/` (`LIVE-CHECKS.md`, `RESULT.md`). Addresses are image-relative (client build
+1.400.6031.6004151).
+
+**The child of a spawner** (game data; live check L4). The settlement `Settlement_NorthWindsward_Complete` (placement
+`7d371958-377e-3c98-fff2-741c1bdf109d`) has the PrefabSpawner `Public_Blacksmith` (entity `0e220c168abe8deb`,
+m_isClientAuthoratative false, m_spawnOnInitialize false) with the slice `settlement_station_blacksmithing_t5` (asset
+`a6f8abbf-aed0-5da0-a950-ce98a77635b1:2`, root `4dcb587965f8256e`). The place of the child is the placement matrix times the
+m_worldTM of the spawner entity: 8857.867 4260.186 138.093, rotation (0, 0, -0.130849, 0.991402). The client shows nothing for a
+child before a record of the server.
+
+| Fact | Value | Proof |
+| --- | --- | --- |
+| The smallest record of a station | The metadata state (the asset of the slice, an actor of the allocator) and the PositionInTheWorld state (slot 2 of the station slice): `01 07 <x f32> <y f32> <height u16 over -100 to 2000> <rotation> 00`, here `0107460a67784585217c1d06036f3f00`. With these two the prompt "FORGE TIER 5 / E Craft" and the crafting screen work. The BuildableController state (slot 1, type 1594, `01 01 05`: Complete) and the Interact states (slots 4, 5) are not necessary (0x47B9190, 0x47A43B0, 0x35CB710 run) | Live L4 (fresh probes: metadata + place: prompt and window; + Complete; + Interact) |
+| The body of a station | The station slice has no mesh. Its entity `Blacksmith` has a PrefabSpawner (m_isClientAuthoratative false, m_spawnOnInitialize true, m_isVegetationSliceAsset true) of `craftingstation_t5_blacksmith_complete` (asset `bd64c85f-a57c-5f6d-98c4-d1b8883e474e:2`, PositionInTheWorld at slot 1): a second server child. Its record (metadata, place) shows the forge | Live L4 (`L4-03-visual-child.png`) |
+| The rotation of the PositionInTheWorld state | `header:u8`, then a `u16` for each of x, y, z with no header bit; the bits 0x01, 0x02, 0x04 give 0, 0x08, 0x10, 0x20 give 1, 0x40 makes w negative; v / 32767.5 - 1; the writer truncates (c + 1) * 32767.5. The station: header `03`, z `6f3f` | Static 0x87B250 (research `entities.md`, `conversations.md`); live L4 |
+| The ids of a child | G is the entity id of the allocator actor; K = root XOR G; the target of InteractBound2 is (`4dcb581b65f8256e` XOR K) + `2925259dec5f855e`; the option entity is the instance of `Functional` (the Assembly entity) | Live L4 (the block of the client) |
+| The station facts in the client | 0x2E6A440 gets the AZStd::string of the Assembly key (`Blacksmith5`); after 0x2E61E00 the crafting facet has at +0x3B8 the key, at +0x450 the fee flag (from Assembly +0x180: 01), at +0x398 the Assembly reference (the actor, G, and the target: the instance of `Functional` plus the component `698f02d45d873f1a`) | Live L4 and the final run (memory reads; the same values as `StationContext` of the backend) |
+| The end of a crafting screen | Escape: the client sends 2473 with the reference, then the block goes away. 3746: the screen closes and the client sends 2473 | Live L4, L7 |
+| A key with no row | `Carpentry2` (no row of craftingstations.craftstationdb): the client opens "WOODSHOP TIER 5" with its recipe list | Live (final run) |
+| A camp | `permanentcamp_master` (asset `f7967c2b-1fda-56bb-8ae8-041d1872dc06:2`; Position slot 1, Ownership slot 4, Interact slot 5; Assembly Camp5, fee false; no mesh): "CAMP" and no option with no Ownership state; the Ownership state (type 3217, group 0 field 4 currentPermissionRule `01 10 01`, the m_initialPermissionRule of the slice) gives "Camping not unlocked yet." (0x42AB230 shows `@ui_camping_error_not_unlocked` when a request of the player at 0x42AD5D9 gives 0); with a rank of the categorical progression `Camping` (slot 65): "Set Camp Recall Point" (BindToCampOption, action 73, one-shot). The rule 0 hides the option. OpenCraftingOption stays hidden (not solved) | Live L5 |
+| The player camp | `defaultcamps/campt5` (asset `be7e7f37-d6d9-5065-9324-940d1be5894a:2`; BuildableController slot 1, Position 2, Ownership 7, Interact 9; Camp5): with Complete a tent, "CAMP TIER 5", the same one option; with its m_initialState 3 a blue ghost of the tent | Live L5, final run |
+
+**The timed use** (game data, client code; live check L6, final run). The powder keg (`deployable_powderkeg`, asset
+`30b63473-6fd6-53ee-a89f-3a9c0045e0f7:2`; Ownership slot 3, Buildable 4, Position 6, Interact 10 with Trigger, capacity 1, a box
+trigger of 2 x 2 x 3 m): with m_initialPermissionRule 4 "No public access."; with the rule 1 "E Ignite Fuse". Trigger: action 33,
+committed, Delay Time 5 s (uidatabase.uidb).
+
+| Fact | Value | Proof |
+| --- | --- | --- |
+| The press | 0x42A93E0, 0x4916540, 0x4918560, 0x49106F0 in one frame; the request has hold time 5.000 (the Delay Time) | Live L6 (traces) |
+| The progress | The character kneels at the keg; a white frame fills around the key E (a small part at 0.3 s, half at 2.4 s, almost full at 4.8 s) | Live L6 (video) |
+| The end of the time | 0x4910750 (the object execution) 4.99 s to 5.00 s after the press. With no reply the client keeps its request until the release and then sends 2473; with 3743 result 1 it clears its request after the execution (the block goes away 5.03 s after the press) | Live L6, final run |
+| A release before the end | 0x4916150 and 2473 at the release; no 0x4910750 | Live L6, final run |
+| 3746 during the hold | 0x490EDA0, 0x4916150, 2473 at once; no 0x4910750; the progress stops | Live L7, final run |
+| Damage during the hold | The client goes on: 0x4910750 at 5 s. The server rule of the backend (3746) ends it | Live L7, final run |
+| A walk during the hold | The character stays at the keg; the execution comes at 5 s | Live L7 |
+| The removal of the keg during the hold | 3746 and the stop of its record: the keg goes away, the character stands up, no execution | Final run (video) |
+
+**A conversation that the server ends** (live check L7, final run): 3746 closes the conversation; the client sends 2473 and 6705, and
+the answer 6709 frees the input and the camera (a walk of 6 m in 1.5 s after it). The backend sends no extra 6709 for this end.
+
+**The rules of the backend** (stage 2.5b, [Interactions](systems/interactions.md)): the spawn rule of the station children (150 m,
+200 m); the record (metadata, PositionInTheWorld, the authored BuildableController state, the authored Ownership rule, the Interact
+states); the StationContext; the full Delay Time of the option on the world clock from the accepted request, a check at its end, one
+completion; the ends: the removal of the source, the range, damage for the action 64 and the timed options; the service grant.
+
+**Not proved:** the option OpenCraftingOption of a camp (hidden in each try, live check L5); the rule of the server of the game for
+the time of a timed use (the client timer is the Delay Time with no factor 0.6; the default `javelin.delayed-interactiontime-server-scalar`
+is 0.6 at 0x7F40084, research K5); the ids of a person that a client spawner makes (the artificer at the forge of Oxboro: its
+conversation is refused); the town state that chooses the station children of the server of the game (m_spawnOnInitialize false).
 
 ## 5. Open items
 

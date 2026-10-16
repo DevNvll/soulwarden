@@ -1,9 +1,9 @@
 # Interactions
 
 Read this document before a change of the use of an object of the world (the key E or T at a lore page, a person, a chair, a
-storage shed), of the interaction data, or of the states of an object and of the Interactor of a character, and before a later
-stage registers a handler (chests 3.5b, gathering 3.6, crafting 3.7, shops 5.1, quests 1.8). The wire contracts are in the
-protocol notes (section 4.35).
+storage shed, a station of a settlement, a camp, a timed fixture), of the interaction data, or of the states of an object and of
+the Interactor of a character, and before a later stage registers a handler (chests 3.5b, gathering 3.6, crafting 3.7, shops 5.1,
+transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (sections 4.35 and 4.36).
 
 ## Start here
 
@@ -15,7 +15,12 @@ protocol notes (section 4.35).
 | The lore page: its achievement and the journal | `world/ownership.h` (`Ownership::unlock_achievement`), [DLC and entitlements](dlc-and-entitlements.md) (the achievement state), test case IT5 |
 | A handler of a later stage | `world/interactions.h` (`InteractionHandler`, `Interactions::register_handler`) |
 | The commands: the list, the enable of an object, the cancel | `server/http/interaction_commands.cpp`, `tools/world interactions`, `tools/world object`, `tools/world interaction cancel`, test case IT9 |
-| The research | `~/Games/soulwarden/work/research/interaction-stage.md`, `interaction.md`; the result of the stage: `~/Games/soulwarden/work/evidence/interaction/implement/RESULT.md` |
+| The server children (stage 2.5b): the stations of a settlement, the template of a slice, the spawn rule, the record of a child | `gamedata/interaction_data.h` (`InteractionTemplate`, `SpawnedPlacement`), `world/interactions.h` (`Interactions::spawn`, `scan`), `World::spawn_object`, `server/rep/states/object_states.cpp`, protocol notes 4.36, test cases SC1, SC2 |
+| A crafting station or a camp: the facts of a use for stage 3.7 | `world/interactions.h` (`StationContext`, `Interactions::station`), test case SC2 |
+| A timed use (Trigger of the powder keg), the ends of a use (the removal, the range, damage) | `world/interactions.h` (`timed_due`, `still_valid`, `damaged`, `moved`), test cases SC3, SC4 |
+| The service handoff for the shops (5.1) and the transmog (5.6) | `world/interactions.h` (`grant_service`, `require_service`, `close_service`), `world/entity.h` (`ServiceGrant`), test case SC5 |
+| The fixtures of a development run (the keg, the camps) | `tools/world fixture`, `server/http/interaction_commands.cpp` (`make_fixture`, `remove_object`), test case SC9 |
+| The research | `~/Games/soulwarden/work/research/interaction-stage.md`, `interaction.md`; the results of the stages: `~/Games/soulwarden/work/evidence/interaction/implement/RESULT.md` (2.5a), `~/Games/soulwarden/work/evidence/stations/implement/RESULT.md` (2.5b) |
 
 ## Rules
 
@@ -57,13 +62,30 @@ protocol notes (section 4.35).
     `PlayInteractionAnimation`, `PlayPetAnimation`, `PlayCinematicVideo` (a decision of an agent from live check L1: the client
     plays these from its own data, the rows have no item, status, or reward, and a refusal closes a conversation that the client
     opened). The checks of the base still apply: a chair with one place takes one character.
+- A committed request replaces the committed interaction of the character only after its handler accepted it: a refusal (a
+  database that refuses the lore row) leaves the use before it as it was, with its users and its Interactor state (code review of
+  stage 2.5a, finding INT-R1, case IR1).
+- After a matched 2473 the session forgets the block of that attempt: a later input step with the same block is a new request
+  (finding INT-R2, case IR2: the absent interval of the client can fall between two reports). The input numbers of the processed
+  steps stay: an old report changes nothing. Live check of stage 2.5b: after the 2473 of a close the next request is the next key.
 - A committed interaction ends at the end of the block (the client), at the message 2473 with its reference, at a new committed
   request, at a command (the client gets 3746), at the death of the character (3746), at a travel or a respawn (the session sends
   3746 and 6709 as before: [Travel and conversations](travel-and-conversations.md)), and when the character leaves the world. A
-  2473 with a different reference or with no interaction changes nothing (the answer of the client to 3746). Stage 2.5b adds the
-  range loss and the removal of a source.
-- The temporary state of a use (the committed interaction, the users of a bound, a disabled bound) is a value of the world, not of
-  the database (the research: no resume contract): a restart has none. The read lore pages are rows of the database.
+  2473 with a different reference or with no interaction changes nothing (the answer of the client to 3746). Stage 2.5b:
+  - the removal of the source (a server child goes away): 3746 (live: the keg goes away during the hold, the use stops);
+  - the loss of the range: an accepted position of the character (an exact report) whose 3D squared distance to the bound is more
+    than `m_interactRangeSq` (game data; no margin): 3746. The world calls it only for a character with a use (O(1));
+  - damage, for a use whose option ends at damage: 3746. The option with the action PlayInteractionAnimation (64: a chair, a bed,
+    an animation): the client action InteractionAnimation ends at IfDamaged (game data: playeractions_interact.actionlist). A timed
+    option (Delay Time above 0): a decision of an agent (live check L7 of stage 2.5b: the client goes on with its timed use at a hit,
+    and the action DelayedInteraction has no damage rule). A station, a lore page, and a conversation do not end at damage (no rule
+    of the data);
+  - the check at the end of a timed use (below).
+- 3746 closes a conversation and a crafting screen (live check L7 of stage 2.5b): the client sends 2473, and for a conversation 6705
+  (the session answers 6709: the input and the camera are free). It does not close the journal.
+- The temporary state of a use (the committed interaction, the users of a bound, a disabled bound, a service grant, the server
+  children) is a value of the world, not of the database (the research: no resume contract): a restart has none. The read lore
+  pages are rows of the database.
 - The state of an object (`EntityKind::object`): the system makes the entity of an object when its state first differs from the
   level data (a user, a disabled bound) and keeps it while the backend runs. Its actor id is the managed actor id of its placement
   (game data), its entity id is G of that actor (an odd first byte; an id of the allocator has an even one). Each session observes
@@ -74,11 +96,70 @@ protocol notes (section 4.35).
 - The Interactor state of a character (slot 26, type 3752; the owner and each observer): the G of the object of its committed
   interaction, and the empty value 0x00000000FFFFFFFF at its end. A session that got a begin before an end gets the empty value
   first, then the new G (client 0x49199D0 ends the old object only on the empty value: research K8).
-- The cost depends on the requests and on the objects near the players, not on the size of the world (rule MP-8; case IT8): a
-  request finds its bound in the reference map of the data (a hash), the list near a character looks only at the cells of 64 m
-  near it, and the world tick has no interaction work.
-- No data (no file): the backend starts with an empty catalog, refuses each request (3743 result 2), and a read lore page is not
-  kept. The lock of a conversation (6705, 6709) works as before.
+- The server children (stage 2.5b, live check L4). A PrefabSpawner of a slice with m_isClientAuthoratative false has a child that
+  the server makes; the client shows it only after the record of the server. The interaction data has the station children of the
+  placements (`spawned`: the stations of each settlement, `Public_Blacksmith` and the others, and the camps of the permanent camps)
+  with their templates (`templates`: the slots of the slice, the initial states, the Assembly, the bounds in the frame of the
+  slice, the template children). The rules:
+  - the entity of a child (`World::spawn_object`): an actor of the id allocator; the template gives the ids of the client: K = root
+    XOR G, an instance id is the entity id of the slice XOR K, a facet target is the instance id plus the component id (protocol
+    notes 4.2; live check L4: the block of the client has these ids). The places of the bounds come from the place and the rotation
+    of the child (the placement matrix times the m_worldTM of the spawner entity, from the tool);
+  - its record: the metadata state (the asset of its slice) and the PositionInTheWorld state (the place and the rotation, at the slot
+    of the slice): with these two the client shows a station, its prompt, and its crafting screen (live check L4: the smallest
+    record). The backend also sends the BuildableController state with m_initialState of the slice (game data: 5, Complete, for a
+    station; it changes nothing that shows), the Ownership state with m_initialPermissionRule of the slice (game data: 1 for a camp;
+    without it a camp shows no option: live check L5), and the Interact state of each bound;
+  - a template child (`children`: a spawner of the slice with m_isClientAuthoratative false and m_spawnOnInitialize true) comes and
+    goes with its parent: the forge of a station is such a child (live check L4: the slice of the station has no mesh; the forge
+    `craftingstation_t5_blacksmith_complete` shows at the record of the child). The children of a station: the forge and a spawn
+    effect;
+  - the spawn rule (`Interactions::scan`, each 500 ms of the world clock): the world makes the station children of the placements
+    that are 150 m or less from a character, and removes a child when no character is 200 m or less from it (the distances of the
+    spawn points of the creatures; a decision of an agent). A new child has a new entity and a new generation. The camp children of
+    the placements (249 permanent camps, most at the places `blankspace_for_player_camp` with no visual) stay in the data for stage
+    2.6: the client shows there only "CAMP" and a bind option (live check L5; a decision of an agent);
+  - the station children have m_spawnOnInitialize false in the data: the server of the game made them from the state of the town,
+    which the game files do not have. The backend makes the authored child of each spawner (a decision of an agent from the
+    research: "a fixed valid child").
+- Each session observes an object at the distance of a character (100 m, 120 m to leave) from its nearest interest point: a bound,
+  or the place of a child with no bound (code review of stage 2.5a, finding INT-R3: a bound of a level object can be more than 100 m
+  from the root of its placement; case IR3). The grid of the entities of this system (`for_each_entity_near`) finds them.
+- A crafting station or a camp (stage 2.5b; `OpenCraftingOption`, `OpenCraftingOptionLevel60`): the station handler accepts a use
+  of an object with an Assembly (an object with no Assembly is refused: the client has no station to open), and
+  `Interactions::station` gives the facts of the use (`StationContext`) from the data of the object, never from the block: the
+  Assembly key (m_craftingStationEntry), the fee flag (m_chargeCraftingFee), the Assembly entity and its facet target, the parent
+  placement and its managed actor, the bound, and the generation. Live check L4: the client has the same key, fee flag, and
+  Assembly reference (client 0x2E61E00, 0x2E6A440). A key with no row of the crafting station database (Carpentry2) is accepted and
+  marked (`keyResolved` false; a decision of an agent: the client opens its crafting screen at such a key too, live check of stage
+  2.5b). The recipes and the crafts are stage 3.7.
+- A timed use (an option with a Delay Time: Trigger of the powder keg, 5 s; live check L6): the client counts the Delay Time from
+  its request and executes the object at zero (0x49106F0, 0x49146F0, 0x4910750). The server counts the full Delay Time of the option
+  row on the world clock from the accepted request (a decision of an agent from the research: the client timer has no factor 0.6,
+  and the rule of the server of the game is not known), checks the use again at the end (the source, Enabled, the life, the exact
+  position and the range), and completes it one time (`InteractionHandler::complete`). A failed check ends the use (3746). A
+  release (the block goes away), a 2473, a cancel, a travel, the death, and damage before the end: no completion. The same block in
+  each report is the same use: the time does not start again. After the completion the client clears its request (live: 5.0 s after
+  the press). The handler of the fixture counts the completions (no explosion, no reward).
+- The service handoff (stage 2.5b; the base of the shops 5.1 and the transmog 5.6; research Q4): a handler of a later stage gives the
+  character of a committed use a service of its source (`grant_service`: the kind, the ids of the offer, the revision, a deadline
+  only when the data has one). The grant is a value of the entity (`Entity::serviceGrant`), and only this system changes it. It stays
+  after the end of the use (the 2473 of a conversation), so that a later operation with no source in its message (a purchase 3741)
+  can check it: `require_service` passes for the same world entry (the entity), the same source and generation, the source near
+  (the 3D range of its bound), the service, and an id of the offer. A use of a different source, the removal of the source, the
+  range, the death, a travel, the leave, an expired deadline, and `close_service` end it. No fixed time limit: the option data has
+  none (research). Two characters at one source have two grants.
+- The cost depends on the requests and on the objects near the players, not on the size of the world (rule MP-8; cases IT8, SC7): a
+  request finds its bound in the reference map of the data (a hash) or in the map of the server children (by G), the list near a
+  character looks only at the cells of 64 m near it, the spawn rule looks at the cells of the grid of the children near each
+  character and at the live children, a timed use has a timer of the world, and the world tick has no other interaction work.
+- No data (no file): the backend starts with an empty catalog, makes no server child, refuses each request (3743 result 2), and a
+  read lore page is not kept. The lock of a conversation (6705, 6709) works as before. A file of format 1 (stage 2.5a) loads with no
+  server child.
+- The loader refuses a file as a whole when a part is not complete or not consistent: also two achievements with one bit, an
+  achievement with no id, a bit above the limit of the achievement state (finding INT-R4, case IR4), a cycle of template children, a
+  child with no template, a rotation that is not a unit, a template with no PositionInTheWorld slot, a fixture with no bound, and two
+  server children with one key (case SC8).
 - A later stage registers a handler for a kind and its options (`Interactions::register_handler`); it does not add an action switch
   to the session. Its domain (the loot, the gathering, the crafting) owns its state and its transactions.
 
@@ -88,18 +169,28 @@ protocol notes (section 4.35).
 tools/world interactions NAME [METERS]       # the committed interaction of a character and the objects near it, with their state
 tools/world object NAME KEY on|off           # enable or disable an object (KEY: its placement UUID); the prompt goes away
 tools/world interaction cancel NAME          # end the committed interaction of a character (its client gets 3746)
+tools/world fixture NAME powderKeg 0 2 0 --permission 1   # a fixture near a character (stage 2.5b): the keg, campT5, camp
+tools/world fixture remove NAME ENTITY       # remove a server child (its uses end: 3746)
 tools/gamedata/interactions.sh               # interaction-data.json: the objects of the level data of the whole world
+tools/gamedata/interactions.py --list spawned   # the server children of the placements (the stations), with their keys
 ```
 
 - The routes: `GET /v1/dev/interactions?character=ID[&radius=N]`, `POST /v1/dev/interactions/object?character=ID&object=KEY&enabled=0|1`,
-  `POST /v1/dev/interactions/cancel?character=ID`. The admin commands `set_object_enabled` (an object 30 m or less from the
+  `POST /v1/dev/interactions/cancel?character=ID`; stage 2.5b: `POST /v1/dev/interactions/fixture?character=ID&name=NAME[&dx&dy&dz][&yaw][&permission]`
+  and `POST /v1/dev/interactions/remove?character=ID&entity=HEX16` (the development routes only). The list has the server children
+  (their entity, generation, parent, fixture, completions), the station facts of the use (`station`), the service grant (`grant`),
+  and the counts of the timed uses and of the spawn rule. `tools/world object NAME KEY on|off` also takes the key of a live server
+  child. The admin commands `set_object_enabled` (an object 30 m or less from the
   character) and `cancel_interaction`; the admin state has the member `interactions` (the objects 30 m or less from the
   character). The tool window has no tab for them yet.
 - `tools/world probe CHARACTER ASSET ... --actor HEX32` (a development aid of live check L2): a probe with a given actor id, for
   example the managed actor id of a placement, with the fragments of the command.
-- `tools/gamedata/interactions.sh` writes `interaction-data.json` to the game data folder (43,225 objects with 43,485 bounds in 49
-  regions of the supported build: 1,157 lore pages, 146 persons, 40,768 gathering nodes, 136 shrines; 24 MB; about 4 minutes).
-  `--region NAME` and `--radius METERS [--center X Y]` write a smaller file, `--list KIND` prints the objects of a kind.
+- `tools/gamedata/interactions.sh` writes `interaction-data.json` to the game data folder (format 2: 43,225 objects with 43,485 bounds
+  in 49 regions of the supported build: 1,157 lore pages, 146 persons, 40,768 gathering nodes, 136 shrines; 425 server children of 93
+  templates: 176 stations and 249 camps; the fixtures powderKeg, campT5, camp; 25 MB; about 2 to 4 minutes). `--region NAME` and
+  `--radius METERS [--center X Y]` write a smaller file, `--list KIND` prints the objects of a kind (`--list spawned`: the server
+  children). The tool stops for a layer with no list Capitals, a named slice with an asset id of a wrong form, one placement id with
+  two different placements, and two referenced achievements of one bit (findings INT-R4 to INT-R6, case IR5).
 
 ## Traps
 
@@ -115,4 +206,18 @@ tools/gamedata/interactions.sh               # interaction-data.json: the object
   2.5a): the chair rule has only the test case IT7.
 - The prompt "Add To Journal" of a page becomes "Already Read" only at a new focus of the page after the bit (a travel, a step out
   of the trigger).
-- The file of the tool is 24 MB: the backend reads it in 0.5 s at its start.
+- The file of the tool is 25 MB: the backend reads it in 0.5 s at its start.
+- The slice of a station has no mesh: the forge is its template child (a second server entity). A record of the station alone shows a
+  prompt in the air and no station (live check L4).
+- The prompt of a station shows only in the trigger area of its bound (a cylinder of radius 2 m and height 4 m at the InteractBound
+  entity; the bounds of the forge are in the cabin). A person near a station (the artificer at the forge) takes the focus outside it.
+- A person that a client spawner makes (the artificer at the forge of Oxboro) is not in the interaction data: its conversation is
+  refused (3743 result 2) and closes at once. The commander near the lore pages is a level object and works.
+- A camp (permanentcamp_master, CampT5) shows no option with no Ownership state, "Camping not unlocked yet." for a character with no
+  rank of the categorical progression Camping (client 0x42AB230), and with a rank only "Set Camp Recall Point". Its option
+  OpenCraftingOption stays hidden (live check L5: not found; the bound has m_hidePermissionDeniedElement). CampT5 has the authored
+  initial state 3: the client shows a blue ghost of the tent.
+- The keg fixture has m_initialPermissionRule 4 in the data: "No public access." Make it with `--permission 1` for a use. Its prompt
+  shows only in its trigger box (2 x 2 x 3 m at the keg).
+- With the reply 3743 result 1, the client clears its timed request after its execution (5.0 s after the press); with no reply it
+  kept the request until the release of the key and then sent 2473 (live checks L6 and of the final run).

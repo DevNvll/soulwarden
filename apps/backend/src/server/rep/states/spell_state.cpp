@@ -78,8 +78,6 @@ constexpr unsigned kSpawnCount = 9;
 constexpr unsigned kRadiusScale = 10;
 constexpr unsigned kRemaining = 0;
 constexpr unsigned kCompleted = 1;
-constexpr unsigned kPlacePosition = 0;
-constexpr unsigned kPlaceRotation = 1;
 /** The vitals state (states/vitals_state.cpp: the field numbers of group 0). */
 constexpr unsigned kVitalsGroups = 2;
 constexpr unsigned kHealthAmount = 0;
@@ -206,10 +204,7 @@ hub::Bytes encode_spell_place_state(const world::Entity& entity, View view, cons
     if (entity.kind != world::EntityKind::spell || entity.spell.slice == nullptr || entity.spell.slice->positionSlot == 0) {
         return {};
     }
-    StateWriter state(kGroups);
-    write_position(state.field(0, kPlacePosition), entity.position);
-    state.field(0, kPlaceRotation).u8(kIdentityRotation);
-    return state.finish();
+    return position_in_the_world_state(entity.position, {0.0F, 0.0F, 0.0F, 1.0F}); // The rotation (0, 0, 0, 1): `07`.
 }
 
 std::vector<hub::Bytes> encode_spell_vitals_parts(const world::Entity& entity, View view, const PartsRequest& request) {

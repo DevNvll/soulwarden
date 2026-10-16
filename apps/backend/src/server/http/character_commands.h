@@ -360,6 +360,15 @@ inline constexpr float kAdminInteractionRange = 30.0F;
                                               service::HttpResponse& refusal);
 /** cancel_interaction: no argument. The committed interaction of the character ends; its client gets the message 3746. */
 [[nodiscard]] WorldCommand cancel_interaction(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * make_fixture (stage 2.5b, a development aid of the live checks L5 and L6; the development routes only): `name` (a fixture of the
+ * interaction data: powderKeg, campT5, camp), and when necessary `dx`, `dy`, `dz` (meters from the character; default 3 m to the
+ * north), `yaw` (degrees, to the left), `permission` (the permission rule of its Ownership state, 0 to 255; default: the rule of the
+ * data). The reply has the entity id of the fixture.
+ */
+[[nodiscard]] WorldCommand make_fixture(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/** remove_object (stage 2.5b, the development routes only): `entity` (16 hexadecimal digits): a server child goes away. */
+[[nodiscard]] WorldCommand remove_object(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
 /** @return The bag, the equipment, and the coin of a character (world thread), or no value when the store does not have it. */
 [[nodiscard]] std::optional<nlohmann::json> items_view(world::World& world, const std::string& character);

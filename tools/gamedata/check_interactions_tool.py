@@ -10,10 +10,18 @@ compares the status and the output file of each case:
   - an incomplete or inconsistent source stops the tool with no file: a range of 0, a capacity of 2 bytes, a transform of 11
     numbers, a position that is not finite, one placement id with two slices, a slice with no source;
   - a name of the data with no row does not stop the tool: an option with no row is in "unknownOptions" (the other options
-    stay), a required achievement and a lore id with no row are in "requires"/"unresolved".
-The test program of the backend runs it (case IT10).
+    stay), a required achievement and a lore id with no row are in "requires"/"unresolved";
+  - stage 2.5b: the station of a settlement (a PrefabSpawner child of a placement with an Assembly and OpenCraftingOption) is in
+    "spawned" with its place and rotation (the placement matrix times the spawner entity), its template (the slots, the initial
+    state, the Assembly key, the fee flag, "resolved" from the station database, the bound in the frame of the slice, the forge
+    child), and the fixture keg (the Trigger option, the permission rule); a station key with no row of the database is
+    "resolved": false; a child of a client-authoritative spawner is not in the file; a fixture with no source stops the tool;
+  - the cases of the code review of stage 2.5a (--review, case IR5): a layer with no list Capitals, a named slice with an asset id of
+    a wrong form, one placement id with two different placements, and two referenced achievements of one bit stop the tool; an
+    equal copy of a placement does not.
+The test program of the backend runs it (cases IT10, IR5).
 
-Usage: check_interactions_tool.py [WORK_FOLDER]
+Usage: check_interactions_tool.py [WORK_FOLDER] [--review]
 Status 0: each case has the expected result.
 """
 
@@ -51,6 +59,18 @@ PAGE_GROUP = 0x1010101010101013
 PERSON_ID = "0a0b0c0d-0000-4000-8000-000000000002"
 ROOT, PAGE_ENTITY, INTERACT_COMPONENT = 0x1000, 0x1001, 0x5000
 NO_ENTITY = 0xFFFFFFFF
+# Stage 2.5b: a settlement with a station spawner, the station, its forge, and the keg fixture.
+SETTLEMENT_ID = "0a0b0c0d-0000-4000-8000-000000000005"
+SETTLEMENT_SLICE = "slices/test/settlement.dynamicslice"
+STATION_SLICE = "slices/test/station.dynamicslice"
+VISUAL_SLICE = "slices/test/forge.dynamicslice"
+KEG_SLICE = "slices/test/keg.dynamicslice"
+STATION_ASSET = (uuid.UUID("0a0b0c0d-0000-4000-8000-0000000000e1").bytes, 2)
+VISUAL_ASSET = (uuid.UUID("0a0b0c0d-0000-4000-8000-0000000000e2").bytes, 2)
+KEG_ASSET = (uuid.UUID("0a0b0c0d-0000-4000-8000-0000000000e3").bytes, 2)
+SPAWNER_ENTITY, STATION_ROOT, FUNCTIONAL, STATION_BOUND, FORGE_SPAWNER = 0x2001, 0x3000, 0x3001, 0x3002, 0x3003
+ASSEMBLY_COMPONENT, STATION_INTERACT = 0x6000, 0x6001
+KEG_ROOT, KEG_INTERACT_ENTITY, KEG_INTERACT = 0x4000, 0x4001, 0x7000
 
 
 def element(name: str | int | None, value: bytes | None = None, children: list | None = None,
@@ -81,14 +101,31 @@ def transform(parent: int, translation: tuple[float, float, float], numbers: int
     ])
 
 
-def interact(options: list[str], range_sq: bytes = struct.pack(">f", 25.0), capacity: bytes = struct.pack(">i", -1),
-             achievement: str = "") -> Element:
-    base = element(field_id("BaseClass1"), children=[
-        element(field_id("BaseClass1"), type_id=COMPONENT_TYPE, children=[element(ID_FIELD, INTERACT_COMPONENT.to_bytes(8, "big"))]),
-        element("m_replicationIndex", (2).to_bytes(4, "big")),
+def base_class(component: int, slot: int) -> Element:
+    return element(field_id("BaseClass1"), children=[
+        element(field_id("BaseClass1"), type_id=COMPONENT_TYPE, children=[element(ID_FIELD, component.to_bytes(8, "big"))]),
+        element("m_replicationIndex", slot.to_bytes(4, "big")),
     ])
+
+
+def component(class_id: uuid.UUID, identifier: int, slot: int, fields: list[Element]) -> Element:
+    return element(None, type_id=class_id, children=[base_class(identifier, slot), *fields])
+
+
+def spawner(asset: tuple[bytes, int], client: bool, on_init: bool) -> Element:
+    return element(None, type_id=getattr(tool, "SPAWNER_CLASS", uuid.UUID(int=6)), children=[
+        base_class(0x9000 + asset[0][-1], 0),
+        element("m_sliceAsset", asset[0] + asset[1].to_bytes(4, "big")),
+        element("m_isClientAuthoratative", b"\x01" if client else b"\x00"),
+        element("m_spawnOnInitialize", b"\x01" if on_init else b"\x00"),
+    ])
+
+
+def interact(options: list[str], range_sq: bytes = struct.pack(">f", 25.0), capacity: bytes = struct.pack(">i", -1),
+             achievement: str = "", slot: int = 2, identifier: int = INTERACT_COMPONENT, option_entity: int = PAGE_ENTITY) -> Element:
+    base = base_class(identifier, slot)
     entries = element("m_interactOptionEntities", children=[element(None, children=[
-        element("m_interactEntityRef", children=[entity_ref(PAGE_ENTITY)]),
+        element("m_interactEntityRef", children=[entity_ref(option_entity)]),
         element("m_interactOptions", children=[element(None, children=[text("m_interactOption", name)]) for name in options]),
     ])])
     fields = [base, entries, element("m_numberOfInteractorsAllowed", capacity), element("m_interactRangeSq", range_sq),
@@ -119,11 +156,38 @@ def page_slice(mode: str, options: list[str], lore: str = "00_Test_Title_01", ac
     ])]
 
 
-def option_row(name: str, action: int, committed: bool) -> Element:
+def station_slice(key: str) -> list[Element]:
+    """A station slice (stage 2.5b): Buildable slot 1 (Complete), Position slot 2, the Assembly, a bound (slot 4), a forge spawner."""
+    return [element(None, children=[
+        entity(STATION_ROOT, "Station", [transform(NO_ENTITY, (0.0, 0.0, 0.0)),
+                                         component(getattr(tool, "BUILDABLE_CLASS", uuid.UUID(int=2)), 0x6100, 1, [element("m_initialState", (5).to_bytes(4, "big"))]),
+                                         component(getattr(tool, "POSITION_CLASS", uuid.UUID(int=3)), 0x6101, 2, [])]),
+        entity(FUNCTIONAL, "Functional", [transform(STATION_ROOT, (0.0, 0.0, 0.0)), component(getattr(tool, "ASSEMBLY_CLASS", uuid.UUID(int=4)), ASSEMBLY_COMPONENT, 0, [
+            element("m_craftingStationReference", children=[text("m_craftingStationEntry", key)]),
+            element("m_chargeCraftingFee", b"\x01")])]),
+        entity(STATION_BOUND, "InteractBound", [transform(FUNCTIONAL, (1.0, 0.0, 0.25)),
+                                                interact(["OpenCraftingOption"], slot=4, identifier=STATION_INTERACT, option_entity=FUNCTIONAL)]),
+        entity(FORGE_SPAWNER, "Forge", [transform(STATION_ROOT, (0.0, 0.0, 0.0)), spawner(VISUAL_ASSET, False, True)]),
+    ])]
+
+
+def keg_slice() -> list[Element]:
+    """The keg fixture (stage 2.5b): Ownership slot 3 (rule 4), Position slot 6, the Trigger bound (slot 10)."""
+    return [element(None, children=[
+        entity(KEG_ROOT, "Keg", [transform(NO_ENTITY, (0.0, 0.0, 0.0)),
+                                 component(getattr(tool, "OWNERSHIP_CLASS", uuid.UUID(int=5)), 0x7100, 3, [element("m_initialPermissionRule", (4).to_bytes(4, "big"))]),
+                                 component(getattr(tool, "POSITION_CLASS", uuid.UUID(int=3)), 0x7101, 6, [])]),
+        entity(KEG_INTERACT_ENTITY, "Interact", [transform(KEG_ROOT, (0.0, 0.0, 0.0)),
+                                                 interact(["Trigger"], capacity=struct.pack(">i", 1), slot=10, identifier=KEG_INTERACT,
+                                                          option_entity=KEG_INTERACT_ENTITY)]),
+    ])]
+
+
+def option_row(name: str, action: int, committed: bool, delay: float = 0.0) -> Element:
     return element(None, type_id=tool.OPTION_ROW_CLASS, children=[
         text("Name", name),
         element("Ui Interact Action", children=[element("Interact Action Type", bytes([action]))]),
-        element("Delayed Interaction Data", children=[element("Delay Time", struct.pack(">f", 0.0))]),
+        element("Delayed Interaction Data", children=[element("Delay Time", struct.pack(">f", delay))]),
         element("Is Committed Interaction", b"\x01" if committed else b"\x00"),
         element("Hold action press time", struct.pack(">f", 0.5)),
         element("Required Level", (0).to_bytes(4, "big")),
@@ -149,10 +213,20 @@ class MadeUpSources:
              "rotation": {"w": 1.0}, "sliceName": "Slices/Test/Plain.slice", "sliceAssetId": "{0A0B0C0D-0000-4000-8000-0000000000CC}:2"},
             {"id": "0a0b0c0d-0000-4000-8000-000000000004", "worldPosition": {"x": 1030.0, "y": 2000.0, "z": 50.0},
              "sliceName": "<PLOT>", "sliceAssetId": ""},
+            # A settlement turned by 90 degrees about z: its spawner entity at (5, 0, 0) puts the station at (1040, 2005, 50).
+            {"id": SETTLEMENT_ID, "worldPosition": {"x": 1040.0, "y": 2000.0, "z": 50.0},
+             "rotation": {"x": 0.0, "y": 0.0, "z": math.sqrt(0.5), "w": math.sqrt(0.5)},
+             "sliceName": "Slices/Test/Settlement.slice", "sliceAssetId": "{0A0B0C0D-0000-4000-8000-0000000000EE}:2"},
         ]
         if mode == "two-slices":
             placements.append(dict(placements[0], sliceName="Slices/Test/Other.slice",
                                    sliceAssetId="{0A0B0C0D-0000-4000-8000-0000000000DD}:2"))
+        if mode == "invalid-page-asset":
+            placements[0]["sliceAssetId"] = "not-an-asset-id"
+        if mode == "conflicting-placement":
+            placements.append(dict(placements[0], worldPosition={"x": 1500.0, "y": 2000.0, "z": 50.0}))
+        if mode == "equal-placement":
+            placements.append(dict(placements[0]))
         page_options = ["ReadLore", "AddLoreToJournal"] + (["NoSuchOption"] if mode == "unknown-option" else [])
         self.slices = {
             PAGE_SLICE: page_slice(mode, page_options, lore="00_No_Row" if mode == "unknown-lore" else "00_Test_Title_01"),
@@ -160,19 +234,34 @@ class MadeUpSources:
                                      achievement="Test_No_Row_Key" if mode == "unknown-achievement" else ""),
             PLAIN_SLICE: [element(None, children=[entity(ROOT, "Root", [transform(NO_ENTITY, (0.0, 0.0, 0.0))])])],
             OTHER_SLICE: page_slice("valid", ["ReadLore"]),
+            SETTLEMENT_SLICE: [element(None, children=[
+                entity(ROOT, "Settlement", [transform(NO_ENTITY, (0.0, 0.0, 0.0))]),
+                entity(SPAWNER_ENTITY, "Public_Blacksmith", [transform(ROOT, (5.0, 0.0, 0.0)),
+                                                              spawner(STATION_ASSET, mode == "spawner-client", False)]),
+            ])],
+            STATION_SLICE: station_slice("Carpentry2" if mode == "station-no-row" else "Blacksmith5"),
+            VISUAL_SLICE: [element(None, children=[entity(0x5000, "Forge", [transform(NO_ENTITY, (0.0, 0.0, 0.0)),
+                                                                           component(getattr(tool, "POSITION_CLASS", uuid.UUID(int=3)), 0x5100, 1, [])])])],
+            KEG_SLICE: keg_slice(),
         }
+        layer = {"Other": []} if mode == "missing-capitals" else {"Capitals": placements}
+        person_achievement = "Lore_unlock_00_Test_Title_02" if mode == "duplicate-bit" else ""
+        if person_achievement:
+            self.slices[PERSON_SLICE] = page_slice("valid", ["OpenConversation"], lore="", achievement=person_achievement)
         self.files = {
-            LAYER: json.dumps({"Capitals": placements}).encode(),
+            LAYER: json.dumps(layer).encode(),
             tool.TABLES_FOLDER + "javelindata_loreitems.datasheet": sheet("LoreItems", tool.LORE_TABLE_TYPE, [
                 {"LoreID": "00_Test_Title_01", "AchievementId": "Lore_unlock_00_Test_Title_01"}]),
             tool.TABLES_FOLDER + "javelindata_achievements.datasheet": sheet("Achievements", tool.ACHIEVEMENT_TABLE_TYPE, [
-                {"AchievementID": "Lore_unlock_00_Test_Title_01", "AchievementIndex": 2032}]),
+                {"AchievementID": "Lore_unlock_00_Test_Title_01", "AchievementIndex": 2032},
+                {"AchievementID": "Lore_unlock_00_Test_Title_02", "AchievementIndex": 2032 if mode == "duplicate-bit" else 2033}]),
             tool.CATALOG_PATH: b"made-up",
             UI_DATABASE: b"made-up",
+            getattr(tool, "CRAFTING_STATIONS", "made-up/stations"): b"made-up",
         }
         for path in self.slices:
-            if not (mode == "slice-missing" and path == PAGE_SLICE):
-                self.files[path] = tool.INTERACT_BYTES + b"made-up"
+            if not (mode == "slice-missing" and path == PAGE_SLICE) and not (mode == "fixture-missing" and path == KEG_SLICE):
+                self.files[path] = tool.INTERACT_BYTES + getattr(tool, "SPAWNER_CLASS", uuid.UUID(int=1)).bytes + b"made-up"
         self.absent: list[str] = []
 
     def paths(self, prefix, suffix):
@@ -190,7 +279,12 @@ class MadeUpSources:
     def stream(self, path):
         if path == UI_DATABASE:
             return [element(None, children=[option_row("ReadLore", 47, True), option_row("AddLoreToJournal", 50, False),
-                                            option_row("OpenConversation", 63, True)])]
+                                            option_row("OpenConversation", 63, True), option_row("OpenCraftingOption", 20, True),
+                                            option_row("Trigger", 33, True, 5.0)])]
+        if path == getattr(tool, "CRAFTING_STATIONS", None):
+            # The crafting station database: one row (its name and its crafting types).
+            return [element(None, children=[element(None, children=[text("Name", "Blacksmith5"),
+                                                                    element("CraftingTypes", children=[text(None, "blacksmith1")])])])]
         return self.slices.get(path)
 
     def check_complete(self) -> None:
@@ -210,6 +304,18 @@ CASES = [
     ("unknown-option", True, "an option name with no row: in unknownOptions, and the other options stay"),
     ("unknown-achievement", True, "a required achievement with no row: unresolved (the backend refuses the bound)"),
     ("unknown-lore", True, "a lore id with no row: unresolved, and no lore bit"),
+    ("station-no-row", True, "a station key with no row of the crafting station database: resolved false (stage 2.5b)"),
+    ("spawner-client", True, "a child of a client-authoritative spawner: not a server child (stage 2.5b)"),
+    ("fixture-missing", False, "a fixture slice with no source (stage 2.5b)"),
+]
+# The cases of the code review of stage 2.5a (--review, case IR5).
+REVIEW_CASES = [
+    ("valid", True, "control: a complete source"),
+    ("missing-capitals", False, "a layer with no list Capitals (finding INT-R5)"),
+    ("invalid-page-asset", False, "a named slice with an asset id of a wrong form (finding INT-R5)"),
+    ("conflicting-placement", False, "one placement id with two placements at different places (finding INT-R6)"),
+    ("equal-placement", True, "control: one placement id with two equal placements"),
+    ("duplicate-bit", False, "two referenced achievements with one AchievementIndex (finding INT-R4)"),
 ]
 
 
@@ -231,29 +337,69 @@ def check_valid(document: dict) -> bool:
             and bound["rangeSq"] == 25.0 and abs(x - 999.0) < 1e-3 and abs(y - 2000.0) < 1e-3 and abs(z - 50.5) < 1e-3
             and document["achievements"][bound["lore"]] == ["Lore_unlock_00_Test_Title_01", 2032]
             and document["options"][names.index("AddLoreToJournal")]["committed"] is False
-            and document["counts"]["placements"] == 4 and document["counts"]["objects"] == 2
-            and any("PLOT" in cause for cause in document["excluded"]) and not document["unresolved"])
+            and document["counts"]["placements"] == 5 and document["counts"]["objects"] == 2
+            and any("PLOT" in cause for cause in document["excluded"]) and not document["unresolved"] and check_station(document))
+
+
+def check_station(document: dict, resolved: bool = True) -> bool:
+    """@return True when the station of the settlement, its template, the forge child, and the keg fixture are correct (stage 2.5b)."""
+    if document.get("format") != 2 or len(document.get("spawned", [])) != 1:
+        return False
+    child = document["spawned"][0]
+    station = document["templates"][child["template"]]
+    x, y, z = child["position"]
+    qx, qy, qz, qw = child["rotation"]
+    names = [document["options"][index]["name"] for index, _ in station["bounds"][0]["options"]]
+    forge = document["templates"][station["children"][0]["template"]] if len(station["children"]) == 1 else {}
+    keg = document["templates"][document["fixtures"].get("powderKeg", 0)]
+    keg_names = [document["options"][index]["name"] for index, _ in keg["bounds"][0]["options"]] if keg["bounds"] else []
+    trigger = next((row for row in document["options"] if row["name"] == "Trigger"), {})
+    bound = station["bounds"][0]
+    return (child["key"] == f"{SETTLEMENT_ID}/{SPAWNER_ENTITY:016x}" and child["parent"] == SETTLEMENT_ID
+            and child["parentActor"] == tool.actor_of(SETTLEMENT_ID).hex() and child["spawner"] == "Public_Blacksmith"
+            and abs(x - 1040.0) < 1e-3 and abs(y - 2005.0) < 1e-3 and abs(z - 50.0) < 1e-3
+            and abs(qz - math.sqrt(0.5)) < 1e-4 and abs(qw - math.sqrt(0.5)) < 1e-4 and abs(qx) < 1e-6 and abs(qy) < 1e-6
+            and station["slice"] == STATION_SLICE and station["asset"] == STATION_ASSET[0].hex() and station["kind"] == "craftingStation"
+            and station["root"] == f"{STATION_ROOT:016x}" and station["slots"] == {"position": 2, "buildable": 1, "ownership": 0, "vitals": 0}
+            and station["buildableState"] == 5 and station["permissionRule"] == -1
+            and station["assembly"] == {"key": "Blacksmith5" if resolved else "Carpentry2", "fee": True, "entity": f"{FUNCTIONAL:016x}",
+                                        "component": f"{ASSEMBLY_COMPONENT:016x}", "resolved": resolved}
+            and bound["slot"] == 4 and bound["entity"] == f"{STATION_BOUND:016x}" and bound["component"] == f"{STATION_INTERACT:016x}"
+            and bound["position"] == [1.0, 0.0, 0.25] and names == ["OpenCraftingOption"] and bound["options"][0][1] == f"{FUNCTIONAL:016x}"
+            and "target" not in bound and forge.get("slice") == VISUAL_SLICE and forge.get("slots", {}).get("position") == 1
+            and not forge.get("bounds") and station["children"][0]["position"] == [0.0, 0.0, 0.0]
+            and keg["slice"] == KEG_SLICE and keg["slots"]["position"] == 6 and keg["slots"]["ownership"] == 3 and keg["permissionRule"] == 4
+            and keg["bounds"][0]["slot"] == 10 and keg["bounds"][0]["capacity"] == 1 and keg_names == ["Trigger"]
+            and trigger.get("delay") == 5.0 and trigger.get("committed") is True and trigger.get("action") == 33)
 
 
 def main() -> int:
-    work = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix="soulwarden-interactions-tool-"))
+    review = "--review" in sys.argv[1:]
+    folders = [argument for argument in sys.argv[1:] if not argument.startswith("--")]
+    work = Path(folders[0]) if folders else Path(tempfile.mkdtemp(prefix="soulwarden-interactions-tool-"))
     work.mkdir(parents=True, exist_ok=True)
     tool.Sources = MadeUpSources
-    tool.Catalog = lambda data: SimpleNamespace(path=lambda asset: None)
+    assets = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE}
+    tool.Catalog = lambda data: SimpleNamespace(path=lambda asset: assets.get(asset), paths=assets)
+    tool.FIXTURES = {"powderKeg": KEG_SLICE}
     failures = 0
-    for mode, writes, what in CASES:
+    for mode, writes, what in REVIEW_CASES if review else CASES:
         MadeUpSources.mode = mode
         target = work / f"interactions-tool-check-{mode}.json"
-        target.unlink(missing_ok=True)
+        # An old complete file at the place of the output: a refused source must keep it (finding INT-R5).
+        old = '{"oldExport": true}\n'
+        target.write_text(old, encoding="utf-8")
         sys.argv = ["interactions.py", str(target)]
         output = io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             status = tool.main()
-        exists = target.exists()
-        document = json.loads(target.read_text(encoding="utf-8")) if exists else {}
-        correct = (status == 0 and exists) if writes else (status == 1 and not exists)
+        written = target.exists() and target.read_text(encoding="utf-8") != old
+        exists = written
+        document = json.loads(target.read_text(encoding="utf-8")) if written else {}
+        correct = (status == 0 and written) if writes else (status == 1 and not written)
         if correct and mode == "valid":
-            correct = check_valid(document)
+            # The control of --review needs only the objects of stage 2.5a: the same check runs on the tree of stage 2.5a.
+            correct = len(document["objects"]) == 2 if review else check_valid(document)
         elif correct and mode == "unknown-option":
             bound = next(entry for entry in document["objects"] if entry["key"] == PAGE_ID)["bounds"][0]
             correct = bound.get("unknownOptions") == ["NoSuchOption"] and len(bound["options"]) == 2 and "option NoSuchOption" in document["unresolved"]
@@ -263,6 +409,12 @@ def main() -> int:
         elif correct and mode == "unknown-lore":
             bound = next(entry for entry in document["objects"] if entry["key"] == PAGE_ID)["bounds"][0]
             correct = bound["lore"] == -1 and bound["requires"].get("unresolved") == ["lore 00_No_Row"]
+        elif correct and mode == "station-no-row":
+            correct = check_station(document, resolved=False)
+        elif correct and mode == "spawner-client":
+            correct = document.get("spawned") == [] and len(document["fixtures"]) == 1
+        elif correct and mode == "equal-placement":
+            correct = len(document["objects"]) == 2 and document["counts"]["placements"] == 6
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""
         print(f"{'ok  ' if correct else 'FAIL'} {what}: status {status}, " + ("a file" if exists else "no file")
               + (f" ({message[:120]})" if not writes and message else ""))

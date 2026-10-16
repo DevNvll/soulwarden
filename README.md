@@ -37,6 +37,7 @@ This is an independent project with no connection to Amazon Games. The repositor
 - The heals of the life staff. Divine Embrace (its key on the bar, then LCTRL for yourself or a click for a friend) heals after its cast of 1 second; Sacred Ground (its key, then LCTRL or a click) puts a holy area at your feet that heals you each second for 12 seconds; the Beacon heals each second. Your heals scale with the base damage of your staff, its gear score, and your Focus. You see a green number for each heal, and a green number at the feet of a friend that you heal. Effects that lower healing (Disease) and the heal nodes (Divine Blessing: more healing on a target below half health; Anointed) count. Potions, food, and the life steal of a perk heal through the same rules.
 - Lore pages. Press E (Read) at a lore page: the journal opens on the page, and the page stays in the journal of your character, also after a restart and on the next day. T (Add To Journal) adds the page with no read. The prompt then shows "Already Read". The server checks each use of an object (the object, its option, your distance, and its limits) with the data of the game: 43,225 objects of the world (1,157 lore pages, 146 persons, gathering nodes, shrines, doors) are in the interaction data.
 - Talks with the persons of the settlements, and the sit and pet animations of the objects that have them: the server accepts them, and a chair takes one character at a time.
+- The crafting stations of the settlements. Each settlement has its stations at their places (for example the forge and the woodshop of Oxboro in Everfall): go into the station, and press E (Craft) at its prompt ("FORGE TIER 5"). The crafting screen of the game opens with your recipes. A craft does not work yet.
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.
 
@@ -53,7 +54,8 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
 - Only kills give experience. No quest and no gathering gives experience yet.
 - No quests, no ranged weapons, and no magic. People in the settlements say only their first line: talk to them and press E or Escape to end the talk.
-- Storage sheds, chests, gathering nodes, crafting stations, shops, inns, and teleport doors do not work yet: the server refuses their use (a window of the client can open and stays empty). A lore page gives no experience yet.
+- Storage sheds, chests, gathering nodes, shops, inns, and teleport doors do not work yet: the server refuses their use (a window of the client can open and stays empty). A crafting station opens its screen, but a craft does nothing. No camps. A lore page gives no experience yet.
+- Some persons of the settlements (the artificer at the forge of Oxboro) are not in the interaction data: a talk with them closes at once.
 - No world clock, so some sessions are dark.
 - One player. In a development run a second character can stand in the world, and that is all.
 
@@ -119,7 +121,7 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `projectiles.sh` | A shot of a bow, a musket, a staff, or a gauntlet does nothing; with a file from before stage 3.3b-S2b the musket trap and the Beacon do nothing, and the Ice Pylon does not shoot: run the tool again |
 | `weapon-actions.sh` | Each melee hit has the damage of the light or of the heavy attack of its weapon: no ender, no full charge, and the second quick thrust of the rapier does not hit |
 | `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
-| `interactions.sh` | The server refuses each use of an object: a talk with a person closes at once, and a lore page that you read does not stay in the journal |
+| `interactions.sh` | The server refuses each use of an object: a talk with a person closes at once, a lore page that you read does not stay in the journal, and the settlements have no crafting stations. With a file from before stage 2.5b the settlements have no crafting stations: run the tool again |
 | `heights.sh` | With no navigation data, creatures do not leave their place. They attack only when you are in their reach |
 | `navigation.sh` | Creatures go on a straight line on the terrain, through walls and rocks, and they see you through a wall. A creature on a floor of a building does not leave its place |
 

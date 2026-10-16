@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -56,6 +57,8 @@ inline constexpr std::uint32_t kTypeEntitlementState = 3133;    // MB::Entitleme
 inline constexpr std::uint32_t kTypeAchievementState = 3210;    // MB::AchievementComponentReplicatedState (stage 1.1b)
 inline constexpr std::uint32_t kTypeInteractorState = 3752;     // MB::InteractorComponentReplicatedState (stage 2.5a)
 inline constexpr std::uint32_t kTypeInteractState = 2930;       // MB::InteractReplicatedState (stage 2.5a)
+inline constexpr std::uint32_t kTypeBuildableState = 1594;      // MB::BuildableControllerReplicatedState (stage 2.5b)
+inline constexpr std::uint32_t kTypeOwnershipState = 3217;      // MB::OwnershipComponentReplicatedState (stage 2.5b)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -181,7 +184,9 @@ struct StateCodec {
 [[nodiscard]] std::span<const StateCodec> probe_codecs();
 /**
  * @return The codecs of an object entity (stage 2.5a): the metadata state (the slice and the managed actor id of the placement)
- *         and the Interact state of each bound (the slots of the data). Only the observer view.
+ *         and the Interact state of each bound (the slots of the data). Only the observer view. A server child (stage 2.5b) also has
+ *         the PositionInTheWorld state, the BuildableController state, and the Ownership state at the slots of its slice (game data;
+ *         slot 0: none).
  */
 [[nodiscard]] std::span<const StateCodec> object_codecs();
 /** @return The codecs of an entity of each kind. */
@@ -190,6 +195,15 @@ struct StateCodec {
 [[nodiscard]] std::uint32_t slot_of(const StateCodec& codec, const world::Entity& entity);
 
 [[nodiscard]] hub::Bytes encode_metadata_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The PositionInTheWorld state (type 13; states/object_states.cpp): the place and the rotation. One encoder for each entity
+ *         with such a state: a server child (stage 2.5b) and a spell with no Spell component (stage 3.3b-S2b).
+ */
+[[nodiscard]] hub::Bytes position_in_the_world_state(const state::WorldPosition& position, const std::array<float, 4>& rotation);
+/** @return The states of a server child (stage 2.5b, states/object_states.cpp): its place, its BuildableController, its Ownership. */
+[[nodiscard]] hub::Bytes encode_object_place_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] hub::Bytes encode_buildable_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+[[nodiscard]] hub::Bytes encode_ownership_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_player_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 [[nodiscard]] hub::Bytes encode_movement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /**

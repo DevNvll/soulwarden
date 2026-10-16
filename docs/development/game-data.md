@@ -256,10 +256,18 @@ backend. The tool of each system is also in the document of that system.
   requirements, and the achievement of a lore page (`javelindata_loreitems`, `javelindata_achievements`); the option rows of
   `uidatabase.uidb`; 43,225 objects, 43,485 bounds, 75 options, 1,152 achievements, 24 MB, about 4 minutes with 4 processes; the
   file lists the placements that are not objects with the cause (182,417 plots, 42,205 placements whose slice has no Interact
-  component, the PrefabSpawner children of stage 2.5b) and the 58 names of the data with no row; the tool stops with no file for a
-  source that is not complete or not consistent (`check_interactions_tool.py`, case IT10); the backend refuses a file whose form,
-  indexes, or counts are not correct, as a whole; without it the backend refuses each request of an interaction, and a read lore
-  page is not kept: [Interactions](../systems/interactions.md)).
+  component, the other PrefabSpawner children) and the 58 names of the data with no row; format 2 (stage 2.5b): the server
+  children of the placements (`spawned`: 425, the stations of the settlements and the camps, each with its place and rotation from
+  the placement matrix and the spawner entity, its parent, and its template), the templates of their slices (`templates`: 93, with
+  the slots of the PositionInTheWorld, BuildableController, Ownership, and Vitals components, m_initialState,
+  m_initialPermissionRule, the Assembly with "resolved" from `craftingstations.craftstationdb`, the bounds in the frame of the
+  slice, and the template children such as the forge of a station), and the fixtures (powderKeg, campT5, camp); 25 MB, about 2 to
+  4 minutes; the tool stops with no file for a source that is not complete or not consistent (`check_interactions_tool.py`, cases
+  IT10 and IR5: also a layer with no list Capitals, a named slice with an asset id of a wrong form, one placement id with two
+  different placements, two referenced achievements of one bit, and a fixture with no source); the backend refuses a file whose
+  form, indexes, or counts are not correct, as a whole (cases IR4, SC8), and it reads a file of format 1 with no server child;
+  without it the backend makes no station, refuses each request of an interaction, and a read lore page is not kept:
+  [Interactions](../systems/interactions.md)).
 
 ## Commands
 
@@ -277,7 +285,7 @@ tools/gamedata/spells.sh             # one time: spell entity data for the backe
 tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots; 72 KB, 10 s); needs an Oodle source
 tools/gamedata/weapon-actions.sh     # one time: the attack graphs and the abilities of the melee weapons for the backend (fragments, transitions, strikes, lengths; 0.4 MB, 5 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
-tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, ...; 24 MB, 4 minutes); needs an Oodle source
+tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, the stations, ...; 25 MB, 2 to 4 minutes); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
 ```

@@ -88,7 +88,8 @@ protocol notes (section 6).
   `enabled`, 1 or 0; only an object 30 m or less from the character, the rule `nearCharacter`
   of `commands::CreatureReach`) and `cancel_interaction` (no argument), and the member
   `interactions` of the state (the committed interaction and the objects 30 m or less from the
-  character; [Interactions](interactions.md)); the tool window has no button for them. The
+  character, with the stations of a settlement, the facts of a station use (`station`), and the service
+  grant (`grant`) from stage 2.5b; [Interactions](interactions.md)); the tool window has no button for them. The
   perk roll of an item (`tools/world perkroll`) is a development
   route only. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn

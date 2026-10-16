@@ -50,6 +50,14 @@ Usage:
                                                 away, and a request is refused
   tools/world interaction cancel CHARACTER      end the committed interaction of a character: its client
                                                 gets the message 3746
+  tools/world fixture CHARACTER NAME [DX DY DZ] [--yaw DEGREES] [--permission N]
+                                                a fixture of the interaction data near a character (stage
+                                                2.5b): powderKeg (the timed option Trigger), campT5, camp;
+                                                a server child with the record of its slice; --permission:
+                                                the permission rule of its Ownership state (1: public; the
+                                                default is the rule of the data). The reply has its entity
+  tools/world fixture remove CHARACTER ENTITY   remove a server child (a fixture or a station): its uses end
+                                                (3746), and each observer gets the stop
   tools/world heal CHARACTER                    give a character its full health. A dead character
                                                 lives again at its place (the death screen closes)
   tools/world ignore CHARACTER on|off           the creatures ignore the character (on), or not
@@ -500,6 +508,10 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         ignore = "the creatures ignore it" if document["creaturesIgnore"] else "the creatures do not ignore it"
         loot = "; each kill drops loot and coin (the loot switch)" if document.get("forceLoot") else ""
         print(f"world: {document.get('message', 'done')}{state}; {ignore}{loot} ({where})")
+    elif isinstance(document, dict) and "applied" in document and "position" in document and "actor" in document:
+        # A fixture of the interaction data (stage 2.5b).
+        x, y, z = document["position"]
+        print(f"world: fixture {document['entity']} (actor {document['actor']}) at {x:.3f} {y:.3f} {z:.3f}")
     elif isinstance(document, dict) and "applied" in document and "position" in document:
         x, y, z = document["position"]
         place = document.get("place")
@@ -620,19 +632,41 @@ def show_interactions(document: dict) -> None:
         print("the backend has no interaction data: make the file with tools/gamedata/interactions.sh")
     active = document.get("active")
     if active:
+        timed = ""
+        if active.get("timed"):
+            timed = " (timed: completed)" if active.get("completed") else f" (timed: {active.get('secondsLeft', 0.0):.1f} s left)"
         print(f"committed interaction: {active['option']} (action {active['action']}) at the {active['kind']} {active['object']} "
-              f"for {active['seconds']:.1f} s")
+              f"for {active['seconds']:.1f} s{timed}")
     else:
         print("committed interaction: none")
+    station = document.get("station")
+    if station:
+        print(f"station: {station['assemblyKey']}{'' if station['keyResolved'] else ' (no row of the crafting station data)'}, fee "
+              f"{'yes' if station['chargeCraftingFee'] else 'no'}, Assembly entity {station['assemblyEntity']} target "
+              f"{station['assemblyTarget']}, {'camp' if station['camp'] else 'station'} {station['object']} (generation "
+              f"{station['generation']}), parent {station['parent'] or 'none'}")
+    grant = document.get("grant")
+    if grant:
+        print(f"service grant: {grant['kind']} {grant['ids']} from the source {grant['source']}")
     for entry in document["objects"]:
         states = ", ".join(f"slot {bound['slot']} {'on' if bound['enabled'] else 'OFF'} users {bound['users']} "
                            f"({'/'.join(bound['options'])})" for bound in entry["bounds"])
-        print(f"{entry['key']}  {entry['kind']:<15} {entry['distance']:6.1f} m  {entry['slice'].rsplit('/', 1)[-1]:<48} {states}")
+        extra = ""
+        if "assembly" in entry:
+            extra += f"  {entry['assembly']['key']}{'' if entry['assembly']['resolved'] else ' (no row)'}"
+        if "spawned" in entry:
+            spawned = entry["spawned"]
+            extra += (f"  server child {entry['entity']} generation {spawned['generation']}"
+                      + (f", fixture {spawned['fixture']}, completions {spawned['completions']}" if spawned["fixture"] else "")
+                      + (f", parent {spawned['parent']}" if spawned["parent"] else ""))
+        print(f"{entry['key']}  {entry['kind']:<15} {entry['distance']:6.1f} m  {entry['slice'].rsplit('/', 1)[-1]:<48} {states}{extra}")
     counts = document.get("counts", {})
     work = document.get("work", {})
     print(f"{len(document['objects'])} objects in {document['radius']:.0f} m ({work.get('cells', 0)} cells, {work.get('bounds', 0)} "
           f"bounds looked at); {document['objectEntities']} object entities; requests {counts.get('requests', {})}, "
-          f"begins {counts.get('begins', 0)}, ends {counts.get('ends', 0)}")
+          f"begins {counts.get('begins', 0)}, ends {counts.get('ends', 0)}; server children {counts.get('serverChildren', 0)} "
+          f"(made {counts.get('made', 0)}, removed {counts.get('removed', 0)}); timed uses {counts.get('timed', 0)}, completions "
+          f"{counts.get('completions', 0)}")
 
 
 def fetch(data_dir: Path, path: str) -> dict:
@@ -1188,6 +1222,32 @@ def main() -> None:
             fail("give the key of the object: its placement UUID (tools/world interactions CHARACTER)")
         request(data_dir, "POST", f"/v1/dev/interactions/object?character={character_id(data_dir, arguments[1])}"
                                   f"&object={arguments[2].lower()}&enabled={1 if arguments[3] == 'on' else 0}")
+    elif command == "fixture" and len(arguments) == 4 and arguments[1] == "remove":
+        entity = arguments[3].lower()
+        if not re.fullmatch(r"[0-9a-f]{16}", entity):
+            fail("give the entity of the server child: 16 hexadecimal digits (tools/world interactions CHARACTER)")
+        request(data_dir, "POST", f"/v1/dev/interactions/remove?character={character_id(data_dir, arguments[2])}&entity={entity}")
+    elif command == "fixture" and len(arguments) >= 3:
+        rest = arguments[3:]
+        options = {"--yaw": "", "--permission": ""}
+        offsets: list[str] = []
+        index = 0
+        while index < len(rest):
+            if rest[index] in options and index + 1 < len(rest):
+                options[rest[index]] = rest[index + 1]
+                index += 2
+            else:
+                offsets.append(rest[index])
+                index += 1
+        query = f"character={character_id(data_dir, arguments[1])}&name={arguments[2]}"
+        if offsets:
+            dx, dy, dz = numbers(offsets, 3)
+            query += f"&dx={dx}&dy={dy}&dz={dz}"
+        if options["--yaw"]:
+            query += f"&yaw={numbers([options['--yaw']], 1)[0]}"
+        if options["--permission"]:
+            query += f"&permission={whole(options['--permission'], 'the permission rule')}"
+        request(data_dir, "POST", f"/v1/dev/interactions/fixture?{query}")
     elif command == "interaction" and len(arguments) == 3 and arguments[1] == "cancel":
         request(data_dir, "POST", f"/v1/dev/interactions/cancel?character={character_id(data_dir, arguments[2])}")
     elif command == "heal" and len(arguments) == 2:

@@ -111,6 +111,13 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`InteractionBlock`, `InputEntry::interaction`), and the state decoder knows the states 3752 and 2930. IT10 runs
   `tools/gamedata/check_interactions_tool.py`. IT5 adds a trigger to a database file (a refused row); IT8 has a time limit of 300 ms
   for 400,000 lookups and of 2 s for 300 reports with a catalog of 90,008 objects.
+- Stage 2.5b adds the cases SC1 to SC9 (`tests/station_tests.cpp`: the server children, the StationContext, the timed use, the ends
+  of a use, the service handoff, two sessions, the load, the loader of format 2, the fixture commands) and IR1 to IR5
+  (`tests/review_interaction_tests.cpp`: the corrections of the code review of stage 2.5a, findings INT-R1 to INT-R6; each one fails
+  on the tree of stage 2.5a and passes with the correction; IR5 runs `check_interactions_tool.py --review`). The fixture of the IT
+  cases moved to `tests/support/interaction_fixture.h` (namespace `tests::interaction`) for the three files. The state decoder knows
+  the states 1594 and 3217. SC7 has a time limit of 3 s for 1,000 steps with 60,000 far server children and of 2 s for 150 timed
+  uses.
 - Stage 3.3b-M2b adds the cases GH20 (Wrecking Ball in the fragment of the data) and GH21 (the target bits of a creature) to
   `tests/gawh_tests.cpp`; GH21 and the stored bytes of CR2 fail on the tree of stage 3.3b-M2. The hammer graph of `GawhShop` has
   the fragment of Wrecking Ball with its two clips (the base capsule and the sphere of Breathing Room) and the rule row of Safety

@@ -48,8 +48,22 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   byte; the ids of the allocator have an even one). Only the interaction system makes it
   (`World::make_object`). Its codecs (`object_codecs`): the metadata state and the Interact
   state of each bound (the slots of the data). A session observes it at the distances of a
-  character (100 m, 120 m). The Interactor state of a character (slot 26) is in the player codecs
-  for the owner and each observer; it has no fragment for a character that had no interaction.
+  character (100 m, 120 m) from its nearest bound (code review of stage 2.5a, finding INT-R3: the
+  grid of the interaction system finds it, not the place of its root). The Interactor state of a
+  character (slot 26) is in the player codecs for the owner and each observer; it has no fragment
+  for a character that had no interaction.
+- A server child (stage 2.5b, `EntityKind::object` with `ObjectBody::spawned`, [Interactions](interactions.md)):
+  a station of a settlement, its forge, a camp, a fixture. Only the interaction system makes it
+  (`World::spawn_object`) and removes it (`World::remove_object`). Its actor id comes from the id
+  allocator, it is in the position index, and its body is the slice descriptor of its template
+  (game data): the asset, the slot of its PositionInTheWorld state with its rotation, the
+  BuildableController and the Ownership slots with their authored values, and the slot of each
+  Interact bound. The object codecs give it the metadata state, the PositionInTheWorld state, the
+  BuildableController state, the Ownership state, and the Interact states (a slot 0: no fragment);
+  the metadata codec gives a player the player slice, a creature its slice, and an object the
+  slice of its placement or template (case SC1). The client shows a server child only after its
+  record (live check L4 of stage 2.5b); the stop of the record removes it in the client, and a
+  new interest gives a new full record with one metadata state.
 - A probe can have a given actor id (`ProbeBody::actor`, `tools/world probe ... --actor HEX32`;
   live check L2 of stage 2.5a: the record of a level placement).
 - The first record of a character has the states of the world that it has at the entry: the

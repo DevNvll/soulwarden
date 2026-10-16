@@ -47,7 +47,12 @@ the interaction data of the game (`interaction-data.json`: the object, its optio
 range, its limits) and the session replies (accepted or refused). A read lore page is a row of
 the database: the journal of the character keeps it. The state of an object (on or off, its
 users) goes to each session near it as the record of the level object of the client
-([Interactions](systems/interactions.md), protocol notes 4.35).
+([Interactions](systems/interactions.md), protocol notes 4.35). Stage 2.5b: the world makes the
+crafting stations of each settlement near a character as server entities (the client shows a
+station only after its record), keeps the facts of a use of a station for the crafting stage
+(the Assembly key, the fee flag, the parent settlement), counts a timed use on the world clock,
+and ends a use when its source goes away, when the character is out of its range, or at damage
+for an animation or a timed use (protocol notes 4.36).
 
 The game server refuses a registration with a character that the database does not have, or
 with a character of a different account (the client shows a connection error). A character
@@ -173,7 +178,9 @@ on|off`, and for its equipment: `equipment CHARACTER`, `equip CHARACTER BAGSLOT 
 weapon 1; `tools/world --help` has the list). A command for a character that is not in the
 world changes its rows in the database. For the objects of the world (stage 2.5a):
 `interactions CHARACTER [METERS]`, `object CHARACTER KEY on|off`, and `interaction cancel
-CHARACTER`. For a fight: `ignore CHARACTER on|off` (the
+CHARACTER`; stage 2.5b: `fixture CHARACTER NAME [DX DY DZ] [--yaw D] [--permission N]` (a
+fixture near a character: `powderKeg`, the timed option Trigger; `campT5`; `camp`) and
+`fixture remove CHARACTER ENTITY`. For a fight: `ignore CHARACTER on|off` (the
 creatures ignore a character), `heal CHARACTER` (its full health; a dead character lives
 again at its place), `hurt CHARACTER AMOUNT` (its health goes down), and `message CHARACTER
 TYPE HEX` (one message with bytes of the caller to the client of a character). For the
@@ -387,14 +394,17 @@ button on "Confirm").
   the backend starts, the travel list is empty, and a travel takes only a position in
   numbers.
 - `tools/gamedata/interactions.sh` makes the interaction objects
-  (`~/.local/share/soulwarden/gamedata/interaction-data.json`, stage 2.5a): each placement of the
-  level data whose slice has an Interact component (43,225 objects in the supported build: 1,157
-  lore pages, 146 persons, 40,768 gathering nodes, 136 shrines), with its ids on the wire, its
-  place, its options with the rows of the user interface database, and the achievement of each
-  lore page (protocol notes 4.35, [Interactions](systems/interactions.md)). `--region NAME` and
-  `--radius METERS` write a smaller file, `--list KIND` prints the objects of a kind. Without
-  the file the backend starts and refuses each use of an object: a talk with a person then
-  closes at once, and a read lore page is not kept.
+  (`~/.local/share/soulwarden/gamedata/interaction-data.json`, stage 2.5a; format 2 from stage
+  2.5b): each placement of the level data whose slice has an Interact component (43,225 objects
+  in the supported build: 1,157 lore pages, 146 persons, 40,768 gathering nodes, 136 shrines),
+  with its ids on the wire, its place, its options with the rows of the user interface database,
+  and the achievement of each lore page; the server children of the placements (425: the 176
+  stations of the settlements and 249 camps) with the templates of their slices (the slots, the
+  Assembly key and fee flag, the forge child); and the development fixtures (protocol notes 4.35,
+  4.36, [Interactions](systems/interactions.md)). `--region NAME` and `--radius METERS` write a
+  smaller file, `--list KIND` prints the objects of a kind (`--list spawned`: the server
+  children). Without the file the backend starts, makes no station, and refuses each use of an
+  object: a talk with a person then closes at once, and a read lore page is not kept.
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -555,12 +565,17 @@ button on "Confirm").
   replies. A lore page: E (Read) opens the journal on the page, T (Add To Journal) adds it, and
   the page stays in the journal of the character (the achievement of the page, a row of the
   database; after a restart the prompt shows "Already Read"). A talk with a person and the
-  animations of a chair, a bed, or a pet are accepted (a chair takes one character). Each
-  other option (storage, gathering, crafting, a shop, an inn, a teleport door) is refused: its
-  system is not there yet. In a development run, `tools/world interactions NAME` lists the
-  objects near a character with their state, `tools/world object NAME KEY on|off` hides or
-  shows the prompt of an object, and `tools/world interaction cancel NAME` ends the
-  interaction of a character ([Interactions](systems/interactions.md)).
+  animations of a chair, a bed, or a pet are accepted (a chair takes one character). The
+  crafting stations of the settlements (stage 2.5b) are at their places: E (Craft) at a station
+  opens the crafting screen of the game (a craft does not work yet: stage 3.7). Each other
+  option (storage, gathering, a shop, an inn, a teleport door, a camp) is refused: its system is
+  not there yet. In a development run, `tools/world interactions NAME` lists the objects near a
+  character with their state (also the stations and the facts of a station use),
+  `tools/world object NAME KEY on|off` hides or shows the prompt of an object,
+  `tools/world interaction cancel NAME` ends the interaction of a character, and
+  `tools/world fixture NAME powderKeg 0 2 0 --permission 1` puts a powder keg near a character:
+  E (Ignite Fuse), held for 5 seconds, completes one time (a count; no explosion)
+  ([Interactions](systems/interactions.md)).
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is
