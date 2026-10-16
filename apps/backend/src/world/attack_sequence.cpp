@@ -19,6 +19,11 @@ std::chrono::steady_clock::duration steps_time(unsigned steps) {
     return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(static_cast<double>(steps) / attack_rules::kStepsInSecond));
 }
 
+/** @return A time of a fragment (seconds) as a duration of the world clock. */
+std::chrono::steady_clock::duration seconds_time(float seconds) {
+    return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(std::max(seconds, 0.0F)));
+}
+
 /** @return The clock of a visit (seconds) at an input step: (k - s + 1) / 30. */
 float clock_of(const AttackVisit& visit, std::uint16_t input) {
     return static_cast<float>(steps_between(visit.start, input) + 1) / attack_rules::kStepsInSecond;
@@ -227,6 +232,7 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
             state.pendingAbility = -1;
             state.pendingCast = 0;
             start_visit(state, fragment, -1, at, now, due, cast);
+            events.push_back(SequenceEvent{SequenceEvent::Kind::start, cast, state.visits.back().number, &actions.fragments[fragment], 0, due});
             continue;
         }
         AttackVisit* visit = !state.visits.empty() && !state.visits.back().ended ? &state.visits.back() : nullptr;
@@ -252,9 +258,11 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
         }
         const gamedata::AttackFragment& fragment = actions.fragments[visit->fragment];
         const float t = clock_of(*visit, input);
+        // Each item has its due time on the world clock: the due time of the visit and the time of the item (finding M2-R1).
+        const auto due = [visit](float time) { return visit->dueAt + seconds_time(time); };
         while (visit->paid < fragment.payments.size() && fragment.payments[visit->paid].time <= t + kClockEpsilon) {
             events.push_back(SequenceEvent{SequenceEvent::Kind::payment, visit->cast, visit->number, &fragment,
-                                           static_cast<std::uint32_t>(visit->paid)});
+                                           static_cast<std::uint32_t>(visit->paid), due(fragment.payments[visit->paid].time)});
             ++visit->paid;
         }
         // The strikes, the spell casts, and the marks of the fragment of an ability that the clock passed (stage 3.3b-M2).
@@ -262,19 +270,22 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
             for (std::uint32_t index = 0; index < fragment.strikes.size() && index < 64; ++index) {
                 if ((visit->strikesPassed & (1ULL << index)) == 0 && fragment.strikes[index].start <= t + kClockEpsilon) {
                     visit->strikesPassed |= 1ULL << index;
-                    events.push_back(SequenceEvent{SequenceEvent::Kind::strike, visit->cast, visit->number, &fragment, index});
+                    events.push_back(SequenceEvent{SequenceEvent::Kind::strike, visit->cast, visit->number, &fragment, index,
+                                                   due(fragment.strikes[index].start)});
                 }
             }
             for (std::uint32_t index = 0; index < fragment.casts.size() && index < 32; ++index) {
                 if ((visit->castsPassed & (1U << index)) == 0 && fragment.casts[index].time <= t + kClockEpsilon) {
                     visit->castsPassed |= 1U << index;
-                    events.push_back(SequenceEvent{SequenceEvent::Kind::cast, visit->cast, visit->number, &fragment, index});
+                    events.push_back(SequenceEvent{SequenceEvent::Kind::cast, visit->cast, visit->number, &fragment, index,
+                                                   due(fragment.casts[index].time)});
                 }
             }
             for (std::uint32_t index = 0; index < fragment.markers.size() && index < 32; ++index) {
                 if ((visit->markersPassed & (1U << index)) == 0 && fragment.markers[index].time <= t + kClockEpsilon) {
                     visit->markersPassed |= 1U << index;
-                    events.push_back(SequenceEvent{SequenceEvent::Kind::marker, visit->cast, visit->number, &fragment, index});
+                    events.push_back(SequenceEvent{SequenceEvent::Kind::marker, visit->cast, visit->number, &fragment, index,
+                                                   due(fragment.markers[index].time)});
                 }
             }
         }
@@ -542,14 +553,17 @@ AbilityStart AttackSequences::start_ability(const std::string& characterId, Sess
 
 bool AttackSequences::strike_fits(const State& state, const AttackVisit& visit, std::uint32_t fragment, std::uint16_t input,
                                   WorldClock::time_point now, const std::function<bool(const gamedata::AttackStrike&)>& usable,
-                                  EntityId target, std::uint32_t& strike) const {
+                                  std::uint32_t& strike) const {
     const gamedata::AttackFragment& data = state.actions->fragments[fragment];
     const float t = clock_of(visit, input);
     const float early = attack_rules::kEarlySteps / attack_rules::kStepsInSecond;
     const float late = attack_rules::kLateSteps / attack_rules::kStepsInSecond;
-    // Two strikes can fit one step (the late tolerance of a spin of Whirlwind and the start of the next spin; stage 3.3b-M2): the first
-    // strike that did not hit the target in this visit, else the first one (a second contact of that strike).
-    std::optional<std::uint32_t> taken;
+    // Two strikes can fit one step (the late tolerance of a spin of Whirlwind and the start of the next spin; stage 3.3b-M2): the strike
+    // of the time window of the step, else the nearest window; at a tie the strike that started last (finding M2-R2: the ledger does not
+    // choose, thus a second contact of one step is a repeat of the same strike).
+    std::optional<std::uint32_t> best;
+    float bestDistance = 0.0F;
+    float bestStart = 0.0F;
     for (std::uint32_t index = 0; index < data.strikes.size(); ++index) {
         const gamedata::AttackStrike& candidate = data.strikes[index];
         if (t < candidate.start - early - kClockEpsilon || t > candidate.end + late + kClockEpsilon || !usable(candidate)) {
@@ -565,17 +579,19 @@ bool AttackSequences::strike_fits(const State& state, const AttackVisit& visit, 
         if (now < earliest || now > latest) {
             continue;
         }
-        if (state.hits.count({visit.number, index, target}) == 0) {
-            strike = index;
-            return true;
+        const float distance = t < candidate.start ? candidate.start - t : (t > candidate.end ? t - candidate.end : 0.0F);
+        if (!best || distance < bestDistance - kClockEpsilon
+            || (std::fabs(distance - bestDistance) <= kClockEpsilon && candidate.start > bestStart)) {
+            best = index;
+            bestDistance = distance;
+            bestStart = candidate.start;
         }
-        taken = taken ? taken : std::optional<std::uint32_t>(index);
     }
-    if (taken) {
-        strike = *taken;
-        return true;
+    if (!best) {
+        return false;
     }
-    return false;
+    strike = *best;
+    return true;
 }
 
 StrikeMatch AttackSequences::match(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,
@@ -605,9 +621,9 @@ StrikeMatch AttackSequences::match(const std::string& characterId, SessionId ses
         result.verdict = StrikeMatch::Verdict::noStrike;
         std::uint32_t strike = 0;
         bool alternate = false;
-        if (!strike_fits(state, *visit, visit->fragment, input, now, usable, target, strike)) {
+        if (!strike_fits(state, *visit, visit->fragment, input, now, usable, strike)) {
             if (visit->alternate < 0
-                || !strike_fits(state, *visit, static_cast<std::uint32_t>(visit->alternate), input, now, usable, target, strike)) {
+                || !strike_fits(state, *visit, static_cast<std::uint32_t>(visit->alternate), input, now, usable, strike)) {
                 continue;
             }
             alternate = true;
@@ -669,7 +685,7 @@ StrikeMatch AttackSequences::match(const std::string& characterId, SessionId ses
                 trial.startedAt = now;
                 trial.dueAt = visit.dueAt + steps_time(steps_between(visit.start, at));
                 std::uint32_t strike = 0;
-                if (!strike_fits(state, trial, transition.to, input, now, usable, target, strike)) {
+                if (!strike_fits(state, trial, transition.to, input, now, usable, strike)) {
                     continue;
                 }
                 result.verdict = StrikeMatch::Verdict::hit;
@@ -710,6 +726,15 @@ std::uint32_t AttackSequences::note_match(const std::string& characterId, const 
 std::uint32_t AttackSequences::cast_hits(const std::string& characterId, std::uint64_t cast) const {
     const auto found = m_states.find(characterId);
     return found != m_states.end() && cast != 0 && found->second.hitsCast == cast ? found->second.castHits : 0;
+}
+
+bool AttackSequences::live_visit(const std::string& characterId, std::uint32_t visit) const {
+    const auto found = m_states.find(characterId);
+    if (found == m_states.end()) {
+        return false;
+    }
+    return std::any_of(found->second.visits.begin(), found->second.visits.end(),
+                       [visit](const AttackVisit& played) { return played.number == visit && !played.interrupted; });
 }
 
 const AttackVisit* AttackSequences::newest(const std::string& characterId) const {

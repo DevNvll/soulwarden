@@ -502,6 +502,15 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
         }
         actionSpells[lower_ascii(action.action)].push_back(index);
     }
+    // The status actions (stage 3.3b-M2): each status of an action is a status row of the data (code review of stage 3.3b-M2, finding
+    // M2-R9: the tool checks this link; a file that a different source supplies must have it too).
+    for (const ActionStatus& action : tables.actionStatuses) {
+        for (const std::string& name : action.statuses) {
+            if (error.empty() && status.count(lower_ascii(name)) == 0) {
+                error = "the status action " + action.action + " names the status " + name + ", which the data does not have";
+            }
+        }
+    }
     std::unordered_map<std::string, std::vector<std::string>> actionNodes;
     for (const ActionNodes& list : tables.actionNodes) {
         for (const std::string& node : list.nodes) {

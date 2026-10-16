@@ -35,6 +35,10 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   immune for each source: a hit, the health command, and the kill command do not lower its
   health (`Creatures::set_health` gives `CreatureError::immune`; a health that goes up is not a
   damage; test case RP7).
+- The target bits (stage 3.3b-M2b, client code, protocol notes 4.34): each movement state of a creature has `dataBits` 0x03. Bit 0
+  makes the creature a camera lock target of the client, bit 1 a homing target (the Homing clips of the abilities of the players
+  turn the character to it). With 0 the client finds no target. Each creature slice of the data has `m_notTargetableOnInit`
+  false (the value from which the server of the game makes these bits). Test cases GH21, CR2.
 - The spawn points (a project rule, protocol notes 4.14). The creature data has the places
   where the game has a creature. The world makes the creature of a spawn point when a
   player is 150 m or less from the point, and it removes the creature when no player is

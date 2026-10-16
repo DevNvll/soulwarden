@@ -399,7 +399,8 @@ void creature_record_bytes(const Options&) {
     //   5, 11    movement: rotation (yaw 90 degrees), lookDir, worldPosAbs, scopeTimeBlobEx with
     //            no time, teleport id, scopeData with no scope, scopeInfoBlob with no record,
     //            globalFragTags (12 bytes of 0), time anchor, dataBits, moreDataBits (user test
-    //            1: a state with no action of the server has the scope fields with no record)
+    //            1: a state with no action of the server has the scope fields with no record;
+    //            stage 3.3b-M2b: dataBits 03, the camera lock target and the homing target)
     //   9, 15    vitals: HealthAmount, vitalsData (18 bytes, not dead), healthChangeFlags 1,
     //            HealthMax, HealthTickRate, vitalsId, vitalsCategoryId, vitalsLevel 18,
     //            invulnerability, displayImmuneWhenInvulnerable, maxHealth 1690
@@ -407,7 +408,7 @@ void creature_record_bytes(const Options&) {
     const std::string expected = std::string("0204")
                                  + "000a0103" + "11111111111111111111111111111111" + "00000002" + "00000040534f554c20000000534f554c"
                                  + "050b01fc000c00d48303" + "66ff" + "3a" + "447b0000447a000022e9" + "00" + "01" + "00" + "00"
-                                 + "000000000000000000000000" + anchor + "0000"
+                                 + "000000000000000000000000" + anchor + "0300"
                                  + "090f01bd" + "44d35c08" + "000000000000000000000000000000000000" + "01" + "44d35c08" + "0000"
                                  + "7e" + "11112222" + "33334444" + "00000012" + "00" + "00" + "069a"
                                  + "0f975401" + "0101";
@@ -443,7 +444,7 @@ void creature_record_bytes(const Options&) {
     const std::string expectedDeath = std::string("0202")
                                       + "050b01fe001800b8470706" + "66ff" + "3a" + "447b0000447a000022e9" + "00" + "00" + "01" + "01"
                                       + "07" + "0001" + "05" + "1c" + "3c00" + "00" + "000000000000000000000000" + "00" + deathAnchor
-                                      + "0000" + "00" + "00"
+                                      + "0300" + "00" + "00"
                                       + "090f010d" + "00000000" + "010000000000000000000000000000000000" + "01";
     note("death of the creature (90 bytes): " + death);
     check(payloads.size() == 1 && payloads[0].size() == 90 && death == expectedDeath && !deathAnchor.empty(),

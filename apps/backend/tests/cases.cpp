@@ -51,6 +51,7 @@ std::vector<Case> attack_sequence_cases();
 std::vector<Case> review_heal_cases();
 std::vector<Case> review_combos_cases();
 std::vector<Case> gawh_cases();
+std::vector<Case> review_gawh_cases();
 
 std::vector<Case> all_cases() {
     std::vector<Case> cases;
@@ -61,7 +62,7 @@ std::vector<Case> all_cases() {
                               review_corrections_cases(), patrol_cases(), review_patrol_cases(), loot_cases(), ability_cases(), review_loot_cases(), review_scope_cases(), itemization_cases(),
                               review_itemization_cases(), status_cases(), review_status_cases(), spell_cases(), motion_cases(), review_spell_cases(),
                               review_motion_cases(), projectile_cases(), review_projectile_cases(), spell_kind_cases(), review_spells2_cases(),
-                              ownership_cases(), review_dlc_cases(), crit_cases(), passive_cases(), review_crit_cases(), heal_cases(), attack_sequence_cases(), review_heal_cases(), review_combos_cases(), gawh_cases()}) {
+                              ownership_cases(), review_dlc_cases(), crit_cases(), passive_cases(), review_crit_cases(), heal_cases(), attack_sequence_cases(), review_heal_cases(), review_combos_cases(), gawh_cases(), review_gawh_cases()}) {
         cases.insert(cases.end(), group.begin(), group.end());
     }
     return cases;

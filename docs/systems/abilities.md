@@ -28,6 +28,7 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 | The heals of the life staff (stage 3.3b-S6): Divine Embrace, Sacred Ground, the aim and its confirm, the target of a heal | `Abilities::plan` (`HealPlan`), `Abilities::confirm`, `Abilities::heal_target`, `Abilities::cast_heal`, `Abilities::heal_source`, [Combat and health](combat-and-health.md) (the heal path), test cases HE1 to HE4, HE11 |
 | The fragment of an ability in the sequence (stage 3.3b-M2): Reap, Execute, Whirlwind, Mighty Gavel, Armor Breaker, Clear Out, and the other abilities of the great axe and the war hammer | `Abilities::press_entity` (`CastPlan::sequence`), `AttackSequences::start_ability`, `Abilities::strike_hit`, `Abilities::fragment_event`, `Abilities::follow_strike`, `Abilities::row_effects`, [Combat and health](combat-and-health.md) (the sequence), test cases GH1 to GH9 |
 | The spells of an action, of a fragment, and of a rule (stage 3.3b-M2): the shield of Maelstrom, the ground of Mighty Gavel, the fortify of Clear Out | `Abilities::cast_spell_at`, `Abilities::rule_spell`, [Spell entities](spells.md), test cases GH8, GH10, GH11 |
+| Wrecking Ball in the fragment of the data (stage 3.3b-M2b): the base clip, the clip of Breathing Room, the knockdown, Safety Measures | `Abilities::strike_hit`, `Combat::strike_reach`, protocol notes 4.34, test case GH20 |
 | The hits of a cast for the client (IfAbilityNumHits; the exit of Whirlwind) | `Abilities::count_hit`, `CombatState::abilityHits`, `server/rep/states/skill_states.cpp` (slot 46), protocol notes 4.22, test case GH19 |
 
 ## Rules
@@ -230,6 +231,17 @@ a live test of an ability. The wire contracts are in the protocol notes (section
     the character has: Fatal Attraction (`Ability_GreatAxe_JudgementsReach_Upgrade`), Unending Winds
     (`Ability_GreatAxe_Whirlwind_Upgrade`), the artifact perk of Whirlwind (`_Upgrade_Artifact`). Executioner plays its base
     fragment: no action selects `Ability_GreatAxe_Executioner_Upgrade` (live check I1).
+  - Each part of the fragments that the cast can play is in the data, or the press is refused (`noRule`) before the cooldown and the
+    payment (code review of stage 3.3b-M2, finding M2-R8, `Abilities::missing_fragment_part`, case RH8): the chosen fragment and each
+    fragment of a transition inside the ability; the usable rows of each strike in the combat tables, the status of each such row,
+    the spell of each cast of the fragment.
+  - The items of a fragment (the strikes with no damage, the spell casts, the marks) run at their due time on the world clock, also
+    when an input number reaches them earlier (finding M2-R1, [Combat and health](combat-and-health.md), case RH1).
+  - The strikes of the fragment of a cast end at a later press of the session that the server refused (finding M2-R6, the rule of the
+    contact phases; `Abilities::strike_of`, `Cast::refusedAt`, case RH6), but not when the cause shows that the client does not play
+    the press either: its own cooldown, or no window of the fragment that plays (`casting`; case GH4). A later press that the server
+    accepted ends the visit of the cast at the start of the next fragment (a buffered press: the fragment plays on to the end of its
+    window).
   - The start of the fragment (`AttackSequences::start_ability`): at rest at the press. In a fragment that plays, at the first
     step in the next 20 steps at which the action of the ability can start: in an instant window of a transition to it at once,
     in a buffered window at the end of the window, at the mark CanTransition, or at the end of the fragment. With none, the
@@ -243,13 +255,28 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   - The abilities of the other weapons (Riposte of the rapier) and an ability whose action is not in the file keep the
     contact phases of their plans. The six abilities of this stage (Reap, Execute, Whirlwind, Mighty Gavel, Armor Breaker,
     Clear Out) have no plan of their own: with no file of format 2 their press is refused (`noRule`).
+- Wrecking Ball (stage 3.3b-M2b; game data, protocol notes 4.34): the strike atk1 (0.8 s to 0.967 s) has the row
+  `Warhammer_Damage_WreckingBall` for the base clip (the capsule at the joint of the weapon) and for the clip of Breathing Room
+  (the sphere of 1.5 m at the root). The client tests the clip of the nodes of the character. A hit gives the knockdown of the plan,
+  and Safety Measures gives `WarHammer_WreckingBall_Fortify` (7 s) through its rule row (InSequence of the ability). The reach of
+  the server is the reach of the shape of the row of the character (`Combat::strike_reach`). Test case GH20.
+- The targets of a Homing clip and of the camera lock (stage 3.3b-M2b; client code, protocol notes 4.34): each movement state of a
+  creature has `dataBits` 0x03 (bit 0: a camera lock target, bit 1: a homing target). The client chooses the target of a Homing
+  clip itself (the radius, the height, and the half angle of the clip; the best score). Live: the leap of Wrecking Ball turns to a
+  wolf at 35 degrees, and Mighty Gavel moves to a wolf at 30 degrees. Test cases GH21, CR2.
 - The pull of Reap (stage 3.3b-M2): a strike whose usable rows do no damage (`_Pull`, `_upgrade`, `_upgrade2` with the factor
   0; `_RP2` with 0.0001) gets no contact from the client (live check I1). The server tests its shapes at the time of the
-  strike (`Abilities::follow_strike`): each creature that a strike of the cast hit, and each creature in a shape of a usable row
-  in front of the direction of the press (the capsule from its offset minus its half height and its radius to its offset
-  plus them, its radius to each side, and 0.5 m for the body, 2 m up or down) in sight of the caster. Each creature gets the
-  row of the shape nearest to it (1.2 m, 2.7 m, 4.3 m): the impact of the row (1 m, 2 m, 3 m of the test data; 2 m, 4 m, 6 m
-  in the game data) and the status of the row. A decision of an agent from the data and the live checks.
+  strike (`Abilities::follow_strike`): each creature in a shape of a usable row in front of the axis of the cast (the capsule from
+  its offset minus its half height and its radius to its offset plus them, its radius to each side, and 0.5 m for the body, 2 m up
+  or down) in sight of the caster. The axis (stage 3.3b-M2b): the direction of the move of the caster since the press when it moved
+  0.3 m or more (the root motion of Reap and the homing of the client turn the body; `ability_rules::kFacingMove`, case RH11), else
+  the direction of the camera at the press. A creature that a strike of the cast hit gets the shapes on the line to it when it is in
+  front of the axis within 60 degrees (the homing turns the body to its target; `kHomingTurnCosine`), at the height, and in sight; an
+  earlier hit alone admits no creature (code review of stage 3.3b-M2, finding M2-R4: a wolf that moved behind the caster got the
+  pull; case RH4). The pull takes the 32 nearest creatures (`kAreaMost`, the limit of an area phase; finding M2-R10, case RH10).
+  Each creature gets the row of the shape nearest to it (1.2 m, 2.7 m, 4.3 m): the impact of the row (1 m, 2 m, 3 m of the test data;
+  2 m, 4 m, 6 m in the game data) and the status of the row. A decision of an agent from the data and the live checks (live run of
+  stage 3.3b-M2b: a wolf at 22 degrees got the pull of 2.1 m).
 - The status of a damage row (the column StatusEffect of the combat tables, format 3; `Abilities::row_effects`): the root of
   Gravity on the pull rows `_RP2` (`Status_Passive_GreatAxe_Gravity_Root`, 0.33 s, then its OnEndStatusEffect
   `_Root_Hold`, a root of 0.4 s). EffectOnlyOnDamage: only after damage above 0. ApplicationCooldown of the status row: one
@@ -260,7 +287,9 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   them for IfAbilityNumHits: with no count it leaves the spin of Unending Winds at 1.933 s also after four hits; with the
   count it plays the seven spins (live proof of stage 3.3b-M2). A refused contact adds nothing.
 - The spells of a cast (stage 3.3b-M2; `Abilities::cast_spell_at`). The action casts a spell with no mark at its start (the
-  shield of Maelstrom with Absorb, `Spell_Upgrade_GreatAxe_Maelstrom_ProjectileConsume`). A fragment casts a spell at its
+  shield of Maelstrom with Absorb, `Spell_Upgrade_GreatAxe_Maelstrom_ProjectileConsume`): at the press, or for a fragment that waits
+  for a buffered window at its real start in the sequence; a start that a weapon change, a death, or a travel cancelled makes no spell
+  (code review of stage 3.3b-M2, finding M2-R5, case RH5). A fragment casts a spell at its
   time (CAGE-CastSpell: the ground of Mighty Gavel, `WarHammer_Spell_MightyGavel` at 0.638 s), and an action casts a spell at
   a mark; both only for the six abilities of this stage (the plans of stage 3.3a make the areas of their spells). The role of
   the spell comes from its row: a friend area with statuses is an aura, a friend spell at its owner is a shield, each other
@@ -359,8 +388,14 @@ tools/gamedata/abilities.sh          # write ability-data.json to the game data 
 - The swing of Charge (Unpredictable Strike) needs the block press between 0.1 s and 0.4 s of the charge:
   `tools/hx 'key 0x52' 'wait 230' 'mousedown right' 'wait 80' 'mouseup right'` (the key of Charge on place R). The node
   needs Frenzied Momentum first (`Upgrade_Greataxe_Charge_DmgPerDistance`).
-- Wrecking Ball gave no contact in the street of the test place (the setup of stage 3.3b-M2, a wolf 4 m in front, the body
-  turned to the camera), also with the backend of stage 3.3b-M1: the leap lands at the wolf, and the client reports no
-  contact. Open; stage 3.3a had a contact at 0.8 s in a different place.
+- Wrecking Ball needs the node Breathing Room for a test (stage 3.3b-M2b, protocol notes 4.34). With no Breathing Room the client
+  tests only the base clip (a capsule at the animated joint of the weapon), and it sent a contact in 2 of 27 presses, with each
+  backend from stage 3.3a to 3.3b-M2. Part M2 took Breathing Room and Safety Measures away from the development character, and its
+  presses gave no contact. The build of the user has Breathing Room: the 19 war hammer nodes of the build are on the development
+  character again. A test of the base clip needs a different character. With the homing of stage 3.3b-M2b the leap turns to the
+  creature, but the base clip still gave no contact in 4 presses (open: the place of the joint of the clip in the animation).
+- Before stage 3.3b-M2b the Homing clips of an ability (Wrecking Ball, Mighty Gavel) did not turn the character to a creature: the
+  movement state of a creature had `dataBits` 0, and the client takes its homing flag from bit 1 of that field. A backend of an
+  older stage shows this again in a test of an old tree.
 - The time of day of the game changes fast: the street of the test place is dark at some times. Make a video again when it
   is day.

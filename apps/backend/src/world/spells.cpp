@@ -627,7 +627,7 @@ bool Spells::give_member(const Entity& spell, const Live& live, Entity& friendly
     return given;
 }
 
-void Spells::remove_member(const Entity& spell, const Live& live, EntityId member, const std::string& characterId) {
+void Spells::remove_member(const Entity& spell, const Live& live, EntityId member, const std::string& characterId, bool takeStatus) {
     const StatusSource source{StatusSourceKind::spell, spell.spell.spellId, 0, spell.id};
     const auto rows = m_auraRows.find(characterId);
     if (rows == m_auraRows.end()) {
@@ -645,8 +645,11 @@ void Spells::remove_member(const Entity& spell, const Live& live, EntityId membe
         }
         if (row.auras.empty()) {
             // The last aura of the row: the status ends (ClearOnExit, ClearOnEnd), also for a character whose entity left the
-            // world (finding F6: the status of a character stays with its character id).
-            (void)m_world.statuses().remove_row_of(characterId, status, source, StatusEnd::source);
+            // world (finding F6: the status of a character stays with its character id). With no such column the status keeps its
+            // time (finding M2-R3), and only the row goes.
+            if (takeStatus) {
+                (void)m_world.statuses().remove_row_of(characterId, status, source, StatusEnd::source);
+            }
             rows->second.erase(found);
             continue;
         }
@@ -907,6 +910,14 @@ void Spells::member_left(const Entity& character) {
 }
 
 void Spells::entity_removed(const Entity& spell) {
+    // The members of an aura that ends with no ClearOnEnd (the fortify of Clear Out; code review of stage 3.3b-M2, finding M2-R3): the
+    // rows of the aura go, and the statuses keep their time. Without this a later aura saw the row of the ended one and gave nothing.
+    if (const auto live = m_live.find(spell.id); live != m_live.end()) {
+        for (const auto& [member, characterId] : live->second.members) {
+            remove_member(spell, live->second, member, characterId, false);
+        }
+        live->second.members.clear();
+    }
     m_live.erase(spell.id);
     m_endCauses.erase(spell.id);
     if (const auto found = m_byCaster.find(spell.spell.caster); found != m_byCaster.end()) {

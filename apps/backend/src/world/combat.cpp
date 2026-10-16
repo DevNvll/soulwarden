@@ -251,8 +251,29 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
     // basic attacks of the reachable graphs are 0); a payment with a condition is a rule of a stance (the greatsword, a later
     // part). A mana payment with a row of the mana table goes through the one mana path. The strikes, the spell casts, and the marks of
     // the fragment of an ability go to the abilities system (stage 3.3b-M2).
+    const WorldClock::time_point now = m_world.clock().now();
     for (const SequenceEvent& event : events) {
         if (event.kind != SequenceEvent::Kind::payment) {
+            // An item of the fragment of an ability runs at its due time on the world clock (code review of stage 3.3b-M2, finding
+            // M2-R1), with the tolerance of a contact (one input step and attack_rules::kWorldEarly, finding M1-R1): an input number
+            // that comes before that (a faster client, the gap fill) does not run the pull of Reap or the ground of Mighty Gavel early.
+            // The item waits for its due time, and it runs only when no end of the sequence interrupted its visit.
+            const auto earliest = event.due
+                                  - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                      std::chrono::duration<double>(attack_rules::kEarlySteps / attack_rules::kStepsInSecond))
+                                  - attack_rules::kWorldEarly;
+            if (now < earliest) {
+                const std::string characterId = character->characterId;
+                const auto wait = std::chrono::ceil<std::chrono::milliseconds>(event.due - now);
+                m_sequences.count_delayed();
+                m_world.after(wait, [this, characterId, event](World&) {
+                    Entity* own = m_world.find_character(characterId);
+                    if (own != nullptr && !own->life.dead && m_sequences.live_visit(characterId, event.visit)) {
+                        m_world.abilities().fragment_event(*own, event);
+                    }
+                });
+                continue;
+            }
             if (Entity* own = m_world.entity_of(session)) {
                 m_world.abilities().fragment_event(*own, event);
             }
@@ -737,7 +758,7 @@ HitResult Combat::claim_strike(SessionId session, const HitClaim& claim, AttackT
     }
     if (match.cast != 0) {
         // A strike of the fragment of an ability (stage 3.3b-M2): the abilities system makes the hit with the weapon of the cast.
-        const AbilityStrike ability = m_world.abilities().strike_of(match.cast);
+        const AbilityStrike ability = m_world.abilities().strike_of(match.cast, session, track.sequence(), claim.input);
         if (!ability.valid) {
             return refuse(HitVerdict::noStrike);
         }

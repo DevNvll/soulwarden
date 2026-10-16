@@ -116,6 +116,11 @@ struct SequenceEvent {
         cast,
         /** A named mark of the fragment (the cast of a spell of the action: CastGavityWellProjectile). */
         marker,
+        /**
+         * The start of the fragment of an ability that waited for its step (a buffered window of the fragment that played): the spells
+         * of the action at its start (code review of stage 3.3b-M2, finding M2-R5: a cancelled start gives no event).
+         */
+        start,
     };
     Kind kind{Kind::payment};
     /** The cast of the visit (0: a basic attack), the visit number, the fragment, and the index of the item in its list. */
@@ -123,6 +128,12 @@ struct SequenceEvent {
     std::uint32_t visit{0};
     const gamedata::AttackFragment* fragment{nullptr};
     std::uint32_t index{0};
+    /**
+     * The time of the world clock at which the item is due (code review of stage 3.3b-M2, finding M2-R1): the due time of the visit
+     * (AttackVisit::dueAt) and the time of the item in its fragment. The input number of a step can reach the item earlier (a client
+     * that sends its numbers faster than 30 in a second, or the gap fill): the item then waits for this time (Combat::step).
+     */
+    WorldClock::time_point due{};
 };
 
 /** Where the fragment of an ability starts after its press (AttackSequences::start_ability). */
@@ -221,6 +232,8 @@ struct SequenceCounts {
     std::uint64_t staminaPayments{0};
     std::uint64_t manaPayments{0};
     std::uint64_t paymentsWithCondition{0};
+    /** The items of a fragment of an ability that waited for their due time on the world clock (finding M2-R1). */
+    std::uint64_t delayedEvents{0};
     std::uint64_t ends[kSequenceEndCount]{};
 };
 
@@ -309,8 +322,18 @@ public:
     [[nodiscard]] std::size_t strike_hits(const std::string& characterId, std::uint32_t visit, std::uint32_t strike) const;
     /** Counts a payment of a fragment: 0 stamina, 1 mana, 2 a payment with a condition that the world does not model. */
     void count_payment(int kind);
+    /** Counts an item of a fragment that waits for its due time (Combat::step). */
+    void count_delayed() {
+        ++m_counts.delayedEvents;
+    }
 
     [[nodiscard]] const State* state_of(const std::string& characterId) const;
+    /**
+     * @return True when the character has the visit and no end of the sequence interrupted it (a death, a travel, a change of the
+     *         weapon, a dodge, a new session): a fragment event that waited for its time still belongs to an attack that plays
+     *         (finding M2-R1). A visit that ended at the end of its fragment or at a transition stays valid.
+     */
+    [[nodiscard]] bool live_visit(const std::string& characterId, std::uint32_t visit) const;
     [[nodiscard]] const SequenceCounts& counts() const {
         return m_counts;
     }
@@ -331,10 +354,15 @@ private:
     /** @return The state of a character for a step of a session (made, or reset for a new session, input sequence, or weapon). */
     State* state_for(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,
                      const std::string& weapon, const gamedata::WeaponActionSet* actions);
-    /** @return True when a strike of a fragment fits a contact on a target (the strike that did not hit the target first). */
+    /**
+     * @return True when a strike of a fragment fits a contact: the strike of its time window (the window that holds the step of the
+     *         contact; else the nearest window in the tolerance; at a tie the strike that started last). The ledger does not choose
+     *         the strike (code review of stage 3.3b-M2, finding M2-R2): a strike that hit the target already is a repeat, and the
+     *         contact does not become a hit of the next strike.
+     */
     [[nodiscard]] bool strike_fits(const State& state, const AttackVisit& visit, std::uint32_t fragment, std::uint16_t input,
                                    WorldClock::time_point now, const std::function<bool(const gamedata::AttackStrike&)>& usable,
-                                   EntityId target, std::uint32_t& strike) const;
+                                   std::uint32_t& strike) const;
 
     std::unordered_map<std::string, State> m_states;
     SequenceCounts m_counts;

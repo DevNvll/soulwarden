@@ -614,6 +614,11 @@ button on "Confirm").
   Wrecking Ball knocks a creature down, and Gravity Well throws a vortex that holds the
   creatures in it and slows them, with a burst 3 s later. The button of the ability on the
   HUD shows its cooldown (the time of the game data); a press in the cooldown does nothing.
+  From stage 3.3b-M2b each creature is a target of the homing of an ability and of the camera
+  lock (protocol notes 4.34): Wrecking Ball, Mighty Gavel, and the other abilities with a
+  homing turn you to a creature near the direction of the ability, as in the game. Wrecking
+  Ball hits each creature in 1.5 m of the landing with Breathing Room; with no Breathing Room
+  its hammer hits only a creature at the place of the landing, and it seldom hits.
   The upgrades of the tree change the abilities as in the game (Storm's Reach, No Reprieve,
   Gravity, Unyielding, Crowded Well, Breathing Room, Meteoric Crater, Frailty, Seismic Waves,
   Stimulated Reduction, Aftershock). A stunned or rooted creature does not move, a slowed

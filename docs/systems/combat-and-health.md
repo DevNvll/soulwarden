@@ -188,9 +188,16 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   The fragments of one ability keep its cast (the exit of Whirlwind, the uppercut of Charge). A contact of an ability visit is a
   hit of the abilities system (`Abilities::strike_hit`) with the reach of the shape of its row. The sequence notes a hit (its
   ledger, the hits of the cast for IfAbilityNumHits, a transition at a collision) only after the hit is accepted. Two strikes
-  can fit one step (the late tolerance of a spin and the start of the next spin): the strike that did not hit the target in the
-  visit comes first. The sequence gives the strikes, the spell casts, and the marks of a fragment of an ability to the abilities
-  system at their times (`SequenceEvent`). The block press (bit 484) is a bit of the step (`AttackBits::block`).
+  can fit one step (the late tolerance of a spin and the start of the next spin): the strike of the time window of the step comes
+  first (the window that holds the step, else the nearest one; at a tie the strike that started last), and then the ledger: a
+  strike that hit the target already is a repeat (code review of stage 3.3b-M2, finding M2-R2: the ledger chose the strike, and two
+  identical contacts of one step hit two spins; case RH2). The sequence gives the strikes, the spell casts, and the marks of a
+  fragment of an ability to the abilities system at their times (`SequenceEvent`), each with its due time on the world clock: the
+  due time of the visit and the time of the item, with the tolerance of a contact (one step and `attack_rules::kWorldEarly`). An
+  input number that reaches an item earlier (a faster client, the gap fill) does not run it: the item waits for its due time, and
+  it runs only when no end of the sequence interrupted its visit (finding M2-R1; case RH1). The start of a fragment that waited for a
+  buffered window is an item too (`SequenceEvent::Kind::start`: the spells of its action, finding M2-R5). The block press (bit 484)
+  is a bit of the step (`AttackBits::block`).
 - The damage of an attack is computed in one function (`Combat::damage`), from the combat
   tables (game data) and the entity of the attacker: the weapon of the item, its gear score,
   the damage row of the light or of the heavy attack, the attributes and the level of the

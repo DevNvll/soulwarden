@@ -12,6 +12,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -313,6 +314,88 @@ void mighty_gavel(const Options&) {
           "the strike hits one time; the spell does no hit and ends after its Duration (600 ms)");
 }
 
+/**
+ * GH20 (stage 3.3b-M2b): Wrecking Ball plays the fragment of the data. The base clip (WreckingBallBase) and the clip of Breathing Room
+ * (WreckingBallAOE) have the same damage key and row; a contact in the window is one hit with the knockdown of the plan and the fortify
+ * of Safety Measures (its rule row: SelfApplyStatusEffect, InSequence). A contact out of the reach of the shape of the row of the
+ * character is no hit. Two sessions (rule MP-10): the observer B gets the reaction of the wolf, only A gets the damage number.
+ */
+void wrecking_ball(const Options&) {
+    for (const bool room : {false, true}) {
+        const std::string name = room ? "with Breathing Room" : "with no Breathing Room";
+        GawhShop shop;
+        shop.enter_b();
+        shop.hold("TestHammer");
+        shop.bar(kWarHammer, {"Ability_WarHammer_WreckingBall", nullptr, nullptr});
+        shop.learn({kSafetyMeasures});
+        if (room) {
+            shop.learn({kBreathingRoom});
+        }
+        // The landing place of the leap is the place of A in the reports: a wolf 3.8 m away is in the sphere of Breathing Room (1.5 m,
+        // scale 2) and in the reach of each shape (not less than 3.5 m and the tolerance); a wolf 6 m away is out of each reach.
+        world::Entity* wolf = shop.wolf(-3.8F);
+        world::Entity* far = shop.wolf(-6.0F, 0.5F);
+        shop.host.steps(10, {&shop.a, &shop.b});
+        const std::size_t fromA = shop.a.got.size();
+        const std::size_t fromB = shop.b.got.size();
+        const std::uint16_t pressed = shop.press(0);
+        check(shop.accepted() == 1 && !shop.visits().empty() && shop.visits().back() == "Ability_WarHammer_WreckingBall",
+              name + ": the press starts the fragment Ability_WarHammer_WreckingBall in the sequence of A");
+        // The client reports the contacts 24 input steps after the press (live check L3 of stage 3.3a: 0.8 s).
+        shop.until(static_cast<std::uint16_t>(pressed + 24));
+        shop.step({}, {touch(*far), touch(*wolf)});
+        for (int index = 0; index < 10; ++index) {
+            shop.walker.idle(1);
+            shop.b.exchange(shop.host);
+        }
+        note(name + ": the claims of A: " + claim_counts(shop.host));
+        check(shop.abilities().counts().strikeHits == 1 && shop.host.session(1).attack_track().count(world::HitVerdict::tooFar) == 1,
+              name + ": the contact in the window is one hit; the contact 6 m away is out of the reach of the shape (too far)");
+        check(wolf->creature.knockedUntil.has_value() && !far->creature.knockedUntil.has_value(),
+              name + ": the hit gives the knockdown of the plan (an effect of the plan at each hit of a strike)");
+        check(shop.status_of(kWreckFortify) != nullptr, name + ": Safety Measures puts its fortify on A (InSequence: the ability of the cast)");
+        check(amounts(shop.a, fromA).size() == 1 && amounts(shop.b, fromB).empty(), name + ": only A gets the damage number");
+        check(!fragments_of(shop.b, kWolfSlots[0], 11, fromB).empty(), name + ": B gets the movement state of the wolf (the reaction)");
+    }
+}
+
+/**
+ * GH21 (stage 3.3b-M2b): each movement state of a creature has the target bits in dataBits (field 41): bit 0 the camera lock
+ * target, bit 1 the homing target (protocol notes 4.34). With 0 the client refuses each creature as a target of a Homing clip,
+ * and the leap of Wrecking Ball does not turn to it. Two sessions (rule MP-10): A and B get the bits in the first record, in a
+ * later state, and in the reaction after a hit.
+ */
+void creature_target_bits(const Options&) {
+    GawhShop shop;
+    const std::size_t fromA = shop.a.got.size();
+    shop.enter_b();
+    const std::size_t fromB = shop.b.got.size();
+    shop.hold("TestHammer");
+    shop.bar(kWarHammer, {"Ability_WarHammer_MightyGavel", nullptr, nullptr});
+    world::Entity* wolf = shop.wolf(-1.5F);
+    shop.host.steps(10, {&shop.a, &shop.b});
+    const std::uint16_t pressed = shop.press(0);
+    shop.contact_at(static_cast<std::uint16_t>(pressed + 18), *wolf);
+    for (int index = 0; index < 10; ++index) {
+        shop.walker.idle(1);
+        shop.b.exchange(shop.host);
+    }
+    check(shop.abilities().counts().strikeHits == 1 && wolf->creature.action.has_value(), "setup: a hit and the reaction of the wolf");
+    for (const auto& [client, from, name] : {std::tuple<FakeClient*, std::size_t, const char*>{&shop.a, fromA, "A"},
+                                             std::tuple<FakeClient*, std::size_t, const char*>{&shop.b, fromB, "B"}}) {
+        const std::vector<Fragment> states = fragments_of(*client, kWolfSlots[0], 11, from);
+        std::size_t withBits = 0;
+        for (const Fragment& state : states) {
+            const auto bits = state.fields.find({0, 41});
+            withBits += bits != state.fields.end() && bits->second.size() == 1 && bits->second[0] == 0x03 ? 1 : 0;
+        }
+        note(std::string(name) + ": " + std::to_string(states.size()) + " movement states of the wolf, " + std::to_string(withBits)
+             + " with dataBits 03");
+        check(states.size() >= 2 && withBits == states.size(),
+              std::string(name) + " gets dataBits 03 (camera lock target, homing target) in each movement state of the wolf");
+    }
+}
+
 /** GH9: Armor Breaker: the rule of its row (ArmorPenetration 0.35) passes with InSequence, the fragment of its action. */
 void armor_breaker(const Options&) {
     float dealt[2] = {0.0F, 0.0F};
@@ -552,8 +635,10 @@ void two_casters(const Options&) {
     shop.hold("TestAxe", kCharacterB);
     shop.bar(kGreatAxe, {"Ability_Greataxe_Reap", nullptr, nullptr});
     shop.bar(kGreatAxe, {"Ability_Greataxe_Reap", nullptr, nullptr}, kCharacterB);
-    world::Entity* wolfA = shop.wolf(-2.5F, -2.0F);
-    world::Entity* wolfB = shop.wolf(-3.5F, 1.0F);
+    // Each wolf is in the pull shape of its caster (0.8 m and 1 m to the side of the press direction) and out of the shape of the other
+    // caster (code review of stage 3.3b-M2, finding M2-R4: an earlier hit does not admit a creature to the pull).
+    world::Entity* wolfA = shop.wolf(-2.5F, -0.8F);
+    world::Entity* wolfB = shop.wolf(-3.5F, 2.0F);
     world::Entity* b = shop.world().find_character(kCharacterB);
     Walker bWalker{shop.host, shop.b, b->position};
     bWalker.input = 300;
@@ -583,8 +668,8 @@ void two_casters(const Options&) {
          + " m from A and " + std::to_string(away(*b, *wolfB)) + " m from B");
     check(shop.accepted() == 2 && shop.abilities().counts().strikeHits == 2 && shop.abilities().counts().follows == 2,
           "each caster has its cast, its hit, and its pull (the cooldown of A does not refuse the press of B)");
-    check(near(away(*shop.character(), *wolfA), std::hypot(2.5F, 2.0F) - 1.0F, 0.12F), "the wolf of A moves 1 m to A (the row _Pull)");
-    check(near(away(*b, *wolfB), 1.5F, 0.12F), "the wolf of B moves 1 m to B, not to A");
+    check(near(away(*shop.character(), *wolfA), std::hypot(2.5F, 0.8F) - 1.0F, 0.12F), "the wolf of A moves 1 m to A (the row _Pull)");
+    check(near(away(*b, *wolfB), std::hypot(2.5F, 1.0F) - 1.0F, 0.12F), "the wolf of B moves 1 m to B, not to A");
     check(cooldownsA != nullptr && cooldownsB != nullptr && cooldownsA->count(kReap) == 1 && cooldownsB->count(kReap) == 1,
           "each character has its own cooldown of Reap");
 }
@@ -913,6 +998,10 @@ std::vector<Case> gawh_cases() {
             {"GH16", "abilities 3.3b-M2: the load: 20 casts in a world of 4,001 creatures look only at the creatures near the caster", load},
             {"GH17", "abilities 3.3b-M2: the loader of the weapon actions of format 2", loader_actions},
             {"GH19", "abilities 3.3b-M2: the hits of a cast in the ability state of the owner (slot 46, fields 1 and 2), two sessions", hit_counts},
+            {"GH20", "abilities 3.3b-M2b: Wrecking Ball, the base clip and the clip of Breathing Room, the knockdown, Safety Measures (two sessions)",
+             wrecking_ball},
+            {"GH21", "abilities 3.3b-M2b: the target bits of a creature (camera lock, homing) in each movement state (two sessions)",
+             creature_target_bits},
             {"GH18", "abilities 3.3b-M2: the loaders of the combat tables (format 3), the spell data (format 3), the ability data (format 5)",
              loader_formats}};
 }

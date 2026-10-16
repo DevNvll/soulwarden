@@ -432,7 +432,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
                 print(f"basic attacks: {basic['characters']} characters with a sequence, {basic['visits']} fragment visits, "
                       f"{basic['strikes']} strike hits, {basic['alternates']} visits with a second fragment (the band at the end of "
                       f"a fragment); payments: {basic['staminaPayments']} stamina (no stamina model), {basic['manaPayments']} mana, "
-                      f"{basic['paymentsWithCondition']} with a condition (a stance); ends: {ends}")
+                      f"{basic['paymentsWithCondition']} with a condition (a stance); {basic.get('delayedEvents', 0)} items of an "
+                      f"ability that waited for their time; ends: {ends}")
             navigation = load.get("navigation")
             if navigation and navigation["data"]:
                 def part(entry: dict) -> str:

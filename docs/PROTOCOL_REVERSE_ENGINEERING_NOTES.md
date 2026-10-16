@@ -1134,6 +1134,8 @@ these things:
   | `dataBits` | 0x80 | can run |
   | `moreDataBits` | 0x01 | can navigate |
   | `moreDataBits` | 0x02 | can dodge |
+  | `dataBits` | 0x01 | the entity is a camera lock target (stage 3.3b-M2b, 4.34) |
+  | `dataBits` | 0x02 | the entity is a homing target (stage 3.3b-M2b, 4.34) |
 
   `dataBits` bit 0x20 is the 20 Hz mode. `moreDataBits` bits 0x04 and 0x08 set two more bits
   of the input (function not known). The backend sends `dataBits` 0xC0 and `moreDataBits`
@@ -2823,7 +2825,7 @@ points, stage 3.4a). The first creature of the live run at its spawn point, a Gr
 | State (type) | Slot | Fields of the record | Evidence |
 | --- | --- | --- | --- |
 | Metadata (10) | 0 | `AssetId`: the asset id of the slice with the sub id of the asset catalog (2 for each slice of the file); `GdeRef` | Behavioral: the client makes the slice (the body of the kind shows) |
-| Movement, `MB::ALCReplicatedState` (11) | Slot of the action list component | `rotation`, `lookDir`, `worldPosAbs`, `teleportAndMigrationId`, `timeAnchor`, `dataBits`, `moreDataBits` (both 0) | Behavioral: the creature stands at the position, turned as the rotation says, and it plays its idle animation |
+| Movement, `MB::ALCReplicatedState` (11) | Slot of the action list component | `rotation`, `lookDir`, `worldPosAbs`, `teleportAndMigrationId`, `timeAnchor`, `dataBits`, `moreDataBits` (both 0; from stage 3.3b-M2b `dataBits` 0x03, the target bits of 4.34) | Behavioral: the creature stands at the position, turned as the rotation says, and it plays its idle animation |
 | Vitals (15) | Slot of the vitals component | Group 0: `HealthAmount`, `vitalsData`, `healthChangeFlags`, `HealthMax`, `HealthTickRate`, `vitalsId`, `vitalsCategoryId`, `vitalsLevel`, `invulnerability`, `displayImmuneWhenInvulnerable`, `maxHealth` | Behavioral: the name plate with the name of the category row, the level, and the health bar |
 | Marker, `MB::MarkerComponentReplicatedState` (5399) | Slot of the marker component | `enabled` (1 byte) | Behavioral for the record with it (the name plate shows); a record with no marker state was not tested |
 
@@ -5612,7 +5614,8 @@ Test cases GH1 to GH19.
 - The caster moves in its action (Reap 1.5 m, Mighty Gavel 1.6 m, Clear Out 0.7 m; Whirlwind with Gusting Winds 7.95 m in 1
   s): the position check refused no report (live check I1).
 - Wrecking Ball gave no contact in the street of the test place (runs `m2-live4` and `m2-wb-baseline` with the backend of stage
-  3.3b-M1: the leap lands at the wolf). Open.
+  3.3b-M1: the leap lands at the wolf). Stage 3.3b-M2b found the cause: the development character had no Breathing Room in these
+  runs, and the base clip of Wrecking Ball seldom meets a creature (section 4.34).
 
 **The hits of an ability for the client** (static proof and live proof). The condition `IfAbilityNumHits` of the action lists
 (`AbilityName`, `NumHits`, `ComparisonType`; reader of the condition 0x2BED200) reads the hit counts of the ability state:
@@ -5647,9 +5650,76 @@ clips and the CAGE-Named marks of a fragment; the conditions of the transitions 
 starts its clip at the end of the clip before it (the sprint attack of the hatchet; the old rule of the tool gave the length
 -0.6 s).
 
-**Not known, not done**: the removal of a projectile by the shield of Maelstrom (no creature shoots); the picture of the
+**Not known, not done**: the removal of a projectile by the shield of Maelstrom (no creature shoots: the creature data tool keeps
+only the melee damage events of an attack, stage 3.3b-M2b); the picture of the
 ground of Mighty Gavel in the client (the stills of the live run do not show it clearly); the Upgrade fragment of Executioner
 (no action selects it); the stamina, grit, and the block of the nodes of the two trees.
+
+### 4.34 Wrecking Ball and the homing of an ability: the clips of the strike, the target of a Homing clip (live proof of stage 3.3b-M2b; static proof for the client code)
+
+Stage 3.3b-M2b. Evidence: `~/Games/soulwarden/work/evidence/abilities-wrecking-ball/implement/` (`RESULT.md`, `notes/presses.txt`,
+`notes/homing-research.md`, `notes/homing-trace-counts.txt`, `live/`). Document: [Abilities](systems/abilities.md). Test case GH20.
+
+**The two clips of the strike of Wrecking Ball** (game data: `playermaleanims_2h_meleeattach.adb`, fragment
+`Ability_WarHammer_WreckingBall` with the tags `2H_Melee+Warhammer`; the named conditions of
+`playeractions_ability_warhammer.actionlist`). Both clips have the damage key atk1 (0.8 s to 0.967 s) and the row
+`Warhammer_Damage_WreckingBall`:
+
+| Condition | Nodes | Shape |
+| --- | --- | --- |
+| `WreckingBallBase` | Wrecking Ball, not Breathing Room | capsule: radius 0.7 m, half height 0.6 m, 0.3 m along the joint `master_root` of the weapon attachment |
+| `WreckingBallAOE` | Wrecking Ball and Breathing Room (`Upgrade_WarHammer_Wreck_Pushback`) | sphere: radius 1.5 m, scale 2, 0.5 m above the root of the character |
+
+- The game text of Breathing Room: "Expands the range of Wrecking Ball to a 1.5m radius". The row
+  `Warhammer_Damage_WreckingBall_Push` is only in the DamageTableRow list of Safety Measures (`Upgrade_WarHammer_Wreck_Fortify`):
+  no clip uses it.
+- Live proof (runs `wb-d1`, `wb-33a`, `wb-13b`, `wb-s1`, `wb-s4`, `wb-base`, `wb-br1`, `wb-trace`; `notes/presses.txt`): with no
+  Breathing Room the client sent a contact in 2 of 27 presses (a wolf 1.6 m to 5.6 m in front, with the camera level and down);
+  with Breathing Room in each press (5 of 5: the street of the test place to the west, the default spawn to the north, after a
+  walk). The backends of stages 3.3a, 1.3b, 3.3b-S1, 3.3b-S4, and 3.3b-M2 gave the same result with the same character: no stage
+  of the backend changed the contact.
+- A ring of seven wolves 1.3 m around the landing point (run `wb-base`): the base clip hit only the wolf 1.3 m behind the
+  landing point and to the right; the wolves in front of the landing point got no contact. The capsule follows the animated
+  joint of the attachment, not a point in front of the character.
+- The leap goes in the direction of the body: after a travel to the north (run `wb-d1`: 2.4 m north with the camera to the west).
+
+**The target of a Homing clip** (static proof: `notes/homing-research.md` of the evidence; live proof: run `wb-trace`). The
+fragment of Wrecking Ball has two Homing clips (0.0 s: Radius 3, MaxAngle 60, TurnRate 0.6; 0.3 s: Radius 4, MaxAngle 55,
+TurnRate 0.2; MoveToTarget false).
+
+- The client chooses the target itself, from the creatures whose homing flag is on. The server gives the flag in the movement
+  state of each entity (`dataBits` bit 0x02, below); the homing components of the player and of the creature have no replicated
+  slot. `HomingComponentClientFacet_SetHomingOverrideTarget` (type 1790) only forces a target.
+- The scan of the player facet (0x68A3330) asks each `HomingTargetComponentClientFacet` near the player. Its handler (0x67A8A10)
+  adds the facet when the transform (+0x78) is not null, the entity is not dead (and not at death's door, with the flags of the
+  slice), the targetable flag (+0x70) is not 0, the entity is not the caster, and the distance is in the scan range. Then the
+  relation test (0x5B29100: faction, company, group, duel), the invisibility test, and the wedge test (0x5C6A000: the horizontal
+  distance less than Radius, the height less than Height, MaxAngle as the half angle). The best score wins; the scan repeats in
+  each frame.
+- The wolf slices have the component (component id `5FB6C5C9C0C00D41`; client facet `m_isNotTargetableWhenDead` and
+  `m_isNotTargetableWhenDeathsDoor` true; server facet `m_notTargetableOnInit` false). The constructor of the client facet
+  (0x6702C50) sets +0x70 to 1.
+- Live, before the correction (`SOULWARDEN_TRACE=67A8A10,68A3330,5B29100,5C6A000,684B000`): in one press of Wrecking Ball the scan ran 26 times and the
+  handler 78 times (three facets); the relation test and the wedge test ran 0 times. The flag +0x70 was 0 in the three facets. A
+  write of 1 (`tools/hx write`) stayed only in the facet that the handler refuses as the caster; in the two facets of the
+  creatures the flag was 0 again at once. The leap did not turn to a wolf 3 m away at 35 degrees, and Mighty Gavel (a Homing clip
+  with MoveToTarget) did not move to a wolf at 30 degrees.
+- The defaults of the homing settings (registration 0x616C670): `javelin.homing-validate-target-position` true,
+  `homing-target-validation-timeout-ms` 1000, `homing-fail-validation-on-timeout` false; no reader in the client (rules of the
+  server of the game). The target field of the input entry (reader 0x416EB00) is not the homing target: it has no entity id.
+- The writer of the flag (static proof, `notes/homing-research.md` part 2, and live trace): the setter of the
+  HomingTargetComponent (vtable 0x8547BB0, slot +0x110, 0x6928AB0) writes facet +0x70; the action list component calls it
+  (actor slot +0x490, 0x48496E0). The apply function of the action list state (0x2A2BC20) calls it at each state that it applies,
+  with bit 1 of the 16-bit value `(moreDataBits << 8) | dataBits` (copy 0x2A2AF07, getter 0x2A27A90); before it, it gives bit 0
+  (getter 0x2A279B0) to the camera lock target (actor slot +0x480, 0x4848AD0: the CameraLockTargetComponent, vtable 0x8130658).
+  Live trace (run `wb-trace2`, `SOULWARDEN_TRACE=48496E0s`): 400 calls, each with the value 0, each from 0x2A2BC20, for about
+  eight entities. The server of the game sets the homing bit from `m_notTargetableOnInit` of the server facet (0x68689D0 calls
+  the same actor slot with its negation). Game data: each of the 503 creature slices of `creatures.json` has
+  `m_notTargetableOnInit` false (1,006 values: two target components in each slice).
+- The correction (stage 3.3b-M2b, `server/rep/states/movement_state.cpp`, test cases GH21 and CR2): each movement state of a
+  creature has `dataBits` 0x03. Live (runs `wb-homing1`; `live/fix-*` of the evidence): the leap of Wrecking Ball turned 0.55 m to
+  a wolf 3 m away at 35 degrees (before: straight), and Mighty Gavel moved 0.88 m and 0.27 m to the side to a wolf at 30 degrees
+  (before: 2.07 m straight). The base clip of Wrecking Ball still gave no contact in 4 presses with the homing: open.
 
 ## 5. Open items
 

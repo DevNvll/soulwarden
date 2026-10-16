@@ -216,7 +216,11 @@ backend. The tool of each system is also in the document of that system.
   case MB9; [Combat and health](../systems/combat-and-health.md)); from the code review of stage 3.3b-M1 (finding M1-R6) the tool
   stops with status 1 and keeps the old file when a fragment that the graph reaches is not in the sources, when an animation
   database is empty, when a transition goes to a fragment that the file does not have, and when a tag set has no strike (case
-  "incomplete" of `check_weapon_actions_tool.py`, RB6); from stage 3.3b-M2 the file has the format 2: the abilities of each
+  "incomplete" of `check_weapon_actions_tool.py`, RB6); from the code review of stage 3.3b-M2 (finding M2-R7) the tool also stops
+  for the great axe and the war hammer (`FRAGMENT_WEAPONS`: the backend plays their abilities as fragments) when the fragment of an
+  ability or a fragment that its action selects is not in the sources, and when an ability has no strike in the fragments that it
+  can play, but for `AREA_ABILITIES` (Shockwave and Path of Destiny: the area of a spell of the server) (case "incomplete
+  abilities", RH7); from stage 3.3b-M2 the file has the format 2: the abilities of each
   weapon (the action of the ability action list with its cooldown, its fragment, the fragments that it selects with
   ChangeActionFragment and their node and perk conditions, and its spells with CastSpell and the mark of their condition), the
   start windows of the abilities in each fragment (CanAttack_<ability>), the transitions inside an ability with their condition
@@ -270,7 +274,9 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   pull rows `_RP2`; with an older file no row gives a status, and the plan of Maelstrom keeps its root). `spell-data.json` format
   3 (`areaStatuses` of each slice: the AreaStatusEffectComponents, `[entity, detection, radius, [status, ...], removeOnExit,
   targets]`: the fortify in the well of Unyielding). `ability-data.json` format 5 (`actionStatuses`: the actions of the action
-  lists that give statuses while a condition of nodes and tags holds, `[list, action, terms, [status, ...]]`: Guarded Sprint).
+  lists that give statuses while a condition of nodes and tags holds, `[list, action, terms, [status, ...]]`: Guarded Sprint; the
+  loader refuses a file whose status action names a status that the file does not have: code review of stage 3.3b-M2, finding
+  M2-R9, case RH9).
   Write the four files again with their tools. The other files of the tools are equal to the files of stage 3.3b-M1.
 - Stage 3.3b-M1 adds `weapon-actions.json`. The backend of this stage reads no older form of it; with no file it uses the rule of
   stage 3.2a for the melee hits. The other files of the tools are equal to the files of stage 3.3b-S6.

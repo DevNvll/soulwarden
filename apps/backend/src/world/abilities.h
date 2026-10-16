@@ -145,6 +145,18 @@ inline constexpr std::size_t kTrackedAbilities = 16;
  */
 inline constexpr float kShapeSlack = 0.5F;
 inline constexpr float kShapeHeight = 2.0F;
+/**
+ * The axis of the shapes of a strike that the server tests (stage 3.3b-M2b): the direction of the move of the caster from the place of
+ * the press, when it moved this far (meters; the root motion of Reap moves the body 1.5 m along its facing, and the homing of the client
+ * turns the body to a target, protocol notes 4.34); else the direction of the camera at the press. A decision of an agent.
+ */
+inline constexpr float kFacingMove = 0.3F;
+/**
+ * The turn of the body to a creature that a strike of the cast hit (stage 3.3b-M2b): the homing of the client turns the body to its target
+ * (the half angle of the Homing clips of the data: 60 and 55 degrees for Wrecking Ball). A creature that a strike hit, in front of the axis
+ * within this angle (cosine), gets the shapes of the pull on the line to it. A decision of an agent.
+ */
+inline constexpr float kHomingTurnCosine = 0.5F;
 } // namespace ability_rules
 
 /** The abilities that this backend has (the build of stage 3.3a): the great axe and the war hammer. */
@@ -468,6 +480,8 @@ struct AbilityCounts {
     std::uint64_t strikeHits{0};
     std::uint64_t follows{0};
     std::uint64_t followLooked{0};
+    /** The creatures in a pull shape above the limit of kAreaMost (code review of stage 3.3b-M2, finding M2-R10). */
+    std::uint64_t followOverLimit{0};
     std::uint64_t delayedStarts{0};
     std::uint64_t fragmentSpells{0};
     std::uint64_t ruleSpells{0};
@@ -553,8 +567,12 @@ public:
     /** The world made the entity of a character: it gets the cooldowns of the character. */
     void entered(Entity& character);
 
-    /** @return Whether a cast has a strike of a fragment (stage 3.3b-M2: a cast of the sequence, with its weapon). */
-    [[nodiscard]] AbilityStrike strike_of(std::uint64_t cast) const;
+    /**
+     * @return Whether a contact of a client can be a strike of the fragment of a cast (stage 3.3b-M2: a cast of the sequence, with its
+     *         weapon): the session and the input sequence of the cast, and an input before the close of the cast (a later press of
+     *         the session, accepted or refused: the rule of the contact phases, code review of stage 3.3b-M2, finding M2-R6).
+     */
+    [[nodiscard]] AbilityStrike strike_of(std::uint64_t cast, SessionId session, std::uint32_t sequence, std::uint16_t input) const;
     /**
      * A contact of the client fits a strike of the fragment of a cast (Combat::claim_strike, stage 3.3b-M2): the hit with the weapon, the
      * gem, and the attack of the cast (Combat::strike), the damage row of the strike, the status effect of the row, and the effects of the
@@ -713,12 +731,18 @@ private:
         EntityId spell{0};
         /** The input number of a later press of the session (accepted or refused): the contact windows end there. */
         std::optional<std::uint16_t> closedAt;
+        /**
+         * The input number of a later press of the session that the server refused (code review of stage 3.3b-M2, finding M2-R6): the
+         * strikes of the fragment of the cast end there. An accepted press does not set it: the sequence ends the visit of the cast at
+         * the start of the next fragment (a buffered press lets the fragment play on to the end of its window).
+         */
+        std::optional<std::uint16_t> refusedAt;
         /** A counter (stage 3.3b-S4): true after the hit that the window countered (one counter for each cast). */
         bool countered{false};
+        /** Stage 3.3b-M2: the creatures that a strike of the cast hit (the pull of Reap tests them on the line to them: follow_strike). */
+        std::set<EntityId> struck;
         /** Stage 3.3b-S6: the self cast confirm of an aimed heal (the caster is the target). */
         bool self{false};
-        /** Stage 3.3b-M2: the creatures that a strike of the cast hit (the targets of a strike with no damage after it: the pull of Reap). */
-        std::set<EntityId> struck;
     };
     /** The aim of an aimed ability (stage 3.3b-S6): the press that started it. */
     struct Aim {
@@ -822,6 +846,12 @@ private:
     void cast_spell_at(Entity& character, std::uint64_t cast, std::string_view spell);
     /** A strike with no damage of a cast at its time (fragment_event): each creature that the cast hit before. */
     void follow_strike(Cast& cast, Entity& caster, const gamedata::AttackStrike& strike);
+    /**
+     * @return The first part of the fragments that a cast can play that the data does not have (a row of a strike, a status of such a
+     *         row, a spell of a cast of the fragment; code review of stage 3.3b-M2, finding M2-R8), or nothing.
+     */
+    [[nodiscard]] std::optional<std::string> missing_fragment_part(const gamedata::WeaponActionSet& graph, std::uint32_t first,
+                                                                   const SkillSet& skills) const;
 };
 
 } // namespace soulwarden::backend::world

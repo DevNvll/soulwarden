@@ -103,6 +103,12 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   row statuses, the slices of the spells of an action, and `GawhShop::press`, `step`, `contact_at`. The state decoder of the
   tests reads the fields 1 and 2 of slot 46 (`progress_wire::ability_value_size`); the bundle decoder needs this to read a
   record of a character with a hit count.
+- Stage 3.3b-M2b adds the cases GH20 (Wrecking Ball in the fragment of the data) and GH21 (the target bits of a creature) to
+  `tests/gawh_tests.cpp`; GH21 and the stored bytes of CR2 fail on the tree of stage 3.3b-M2. The hammer graph of `GawhShop` has
+  the fragment of Wrecking Ball with its two clips (the base capsule and the sphere of Breathing Room) and the rule row of Safety
+  Measures. The cases RH1 to RH11 (`tests/review_gawh_tests.cpp`: the corrections of the code review of stage 3.3b-M2, findings
+  M2-R1 to M2-R10) fail on the tree of stage 3.3b-M2 and pass with the corrections; RH7 runs `check_weapon_actions_tool.py` (case
+  "incomplete abilities"). GH15 has its wolves in the pull shapes of their casters (finding M2-R4).
 - The silence of a development run is the startup setting `-sys_audio_disable 1` of the game (`tools/dev-env.sh`,
   `dev_sound_arguments`; code review of stage 3.3b-S6, finding S6-R1). The file mute of the stages 1.1b to 3.3b-S6
   (`tools/dev_mute.py`, `tools/dev-mute.sh`, `tools/check_dev_mute.py`) is gone: four reviews found a swap of folders that sent

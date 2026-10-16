@@ -316,7 +316,12 @@ private:
     /** A friend comes into an aura: the status rows of the aura that it does not have from a different aura. @return True: it has them. */
     bool give_member(const Entity& spell, const Live& live, Entity& friendly);
     /** A friend leaves an aura (or the aura ends): each row that no other aura gives ends, and a row that one gives gets its source. */
-    void remove_member(const Entity& spell, const Live& live, EntityId member, const std::string& characterId);
+    /**
+     * A friend is no member of the aura any more. `takeStatus` false (code review of stage 3.3b-M2, finding M2-R3: the end of an aura
+     * with no ClearOnEnd, the fortify of Clear Out): only the rows of the aura go away; the status keeps its time, and a later aura
+     * can give the row again.
+     */
+    void remove_member(const Entity& spell, const Live& live, EntityId member, const std::string& characterId, bool takeStatus = true);
     /** The friends in an aura get each row of the aura again that ended while they are in it (finding F5: a row of 10 s in an aura of 15 s). */
     void renew_members(const Entity& spell, const Live& live);
     /** One status row of a character from the auras (code review of stage 3.3b-S2b, finding F4). */

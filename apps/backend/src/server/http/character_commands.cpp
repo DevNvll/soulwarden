@@ -415,7 +415,7 @@ json basic_attacks_json(world::World& target) {
     }
     return {{"characters", target.combat().sequences().size()}, {"visits", counts.visits}, {"strikes", counts.strikes},
             {"alternates", counts.alternates}, {"staminaPayments", counts.staminaPayments}, {"manaPayments", counts.manaPayments},
-            {"paymentsWithCondition", counts.paymentsWithCondition}, {"ends", ends}};
+            {"paymentsWithCondition", counts.paymentsWithCondition}, {"delayedEvents", counts.delayedEvents}, {"ends", ends}};
 }
 
 json projectiles_json(world::World& target) {

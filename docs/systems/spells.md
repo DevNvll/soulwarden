@@ -36,6 +36,8 @@ and the stop are in [World and sessions](world-and-sessions.md).
   `visual` (a picture with no rule of the server: the ground of Mighty Gavel). The abilities system gives the role from the
   plan of the cast, or from the spell row for a spell of an action, a fragment, or a rule (a decision of an agent: the data
   has the components, and each role uses the values of its components).
+- The end of an area with no ClearOnEnd takes its rows from its friends and leaves their statuses (code review of stage 3.3b-M2,
+  finding M2-R3, `Spells::entity_removed`, case RH3): a later area gives the status again (a second Clear Out with Power Cleaner).
 - The statuses of an area leave a friend at its exit only with ClearOnExit of the spell row, and each friend at the end only
   with ClearOnEnd (stage 3.3b-M2; game data: the Beacon and Sacred Ground have both; the fortify of Clear Out has neither,
   and its status keeps its 4 s). An area of a slice component (an AreaStatusEffectComponent with m_removeOnExit) takes its

@@ -229,6 +229,7 @@ def main() -> int:
 
     results.append(("abilities", *abilities_case()))
     results.append(("incomplete", *incomplete_sources()))
+    results.append(("incomplete abilities", *incomplete_abilities()))
 
     failures = 0
     for name, passed, detail in results:
@@ -371,6 +372,62 @@ def incomplete_sources() -> tuple[bool, str]:
                 text = target.read_text()
                 kept = text == "old file\n"
                 good = (status == 0 and not kept and json.loads(text)["counts"]["strikes"] > 0) if case == "complete" else (status == 1 and kept)
+                passed = passed and good
+                details.append(f"{case}: status {status}, old file {'kept' if kept else 'replaced'}")
+    finally:
+        tool.Sources, tool.weapon_tag_sets, sys.argv, sys.stdout, sys.stderr = saved
+    return passed, "; ".join(details)
+
+
+def incomplete_abilities() -> tuple[bool, str]:
+    """The whole tool with made-up sources of a great axe with an ability (code review of stage 3.3b-M2, finding M2-R7): a missing fragment
+    of the ability, a missing fragment that its action selects, and an attachment file with no damage clip of the ability stop the tool with
+    status 1 and keep the old file; the complete sources write a new file with the ability, its selection, and its strike."""
+    import json
+    import os
+    import tempfile
+    body = ABILITY_BODY
+    attachment = ATTACHMENT.replace("TestAxe", "GreatAxe")
+    with_ability = attachment.replace("</FragmentList>", ABILITY_ATTACHMENT.split("<FragmentList>")[1].split("</FragmentList>")[0]
+                                      + "</FragmentList>")
+    no_root = ElementTree.fromstring(body)
+    no_root.find("FragmentList").remove(no_root.find("FragmentList/Ability_Test_Whirlwind"))
+    no_selection = ElementTree.fromstring(body)
+    no_selection.find("FragmentList").remove(no_selection.find("FragmentList/Ability_Test_Whirlwind_Upgrade"))
+    body_path = tool.BODY_FOLDER + "player_greataxe.adb"
+    attach_path = tool.ADB_FOLDER + "playermaleanims_2h_meleeattach.adb"
+    files = {body_path: body.encode(), tool.BODY_FOLDER + "player_2h_melee.adb": COMMON.encode(), attach_path: with_ability.encode(),
+             tool.ACTION_FOLDER + "playeractions_attack.actionlist": ACTIONS.encode(),
+             tool.ACTION_FOLDER + "playeractions_ability_greataxe.actionlist": ABILITY_ACTIONS.encode()}
+    variants = {"complete": dict(files),
+                "missing ability fragment": {**files, body_path: ElementTree.tostring(no_root)},
+                "missing selected fragment": {**files, body_path: ElementTree.tostring(no_selection)},
+                "missing ability damage": {**files, attach_path: attachment.encode()}}
+    saved = (tool.Sources, tool.weapon_tag_sets, sys.argv, sys.stdout, sys.stderr)
+    details = []
+    passed = True
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            for case, sources in variants.items():
+                target = Path(folder) / "weapon-actions.json"
+                target.write_text("old file\n")
+                tool.Sources = lambda *_, files=sources: FakeSources(dict(files))
+                tool.weapon_tag_sets = lambda _: [("2H_Melee", "GreatAxe")]
+                sys.argv = ["weapon_actions.py", str(target)]
+                with open(os.devnull, "w") as quiet:
+                    sys.stdout, sys.stderr = quiet, quiet
+                    status = tool.main()
+                    sys.stdout, sys.stderr = saved[3], saved[4]
+                text = target.read_text()
+                kept = text == "old file\n"
+                if case == "complete":
+                    weapon = json.loads(text)["weapons"][0] if status == 0 else {}
+                    abilities = weapon.get("abilities", [])
+                    strikes = sum(len(fragment["strikes"]) for fragment in weapon.get("fragments", [])
+                                  if fragment["name"] == "Ability_Test_Whirlwind")
+                    good = status == 0 and not kept and len(abilities) == 1 and len(abilities[0]["selections"]) == 1 and strikes == 1
+                else:
+                    good = status == 1 and kept
                 passed = passed and good
                 details.append(f"{case}: status {status}, old file {'kept' if kept else 'replaced'}")
     finally:

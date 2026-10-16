@@ -587,6 +587,17 @@ CastVerdict Abilities::press_character(const std::string& characterId, const Abi
 
 CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const AbilityPress& press) {
     Entity* character = &entity;
+    // The earlier cast that this press closed, and the end of that close for its strikes: a refusal that shows that the client does not
+    // play the press either (its own cooldown, no window of the fragment that plays) leaves the fragment of the earlier cast open (code
+    // review of stage 3.3b-M2, finding M2-R6: the close is for a press that the client plays and the server refuses).
+    std::optional<std::uint64_t> closedCast;
+    const auto reopen = [&] {
+        if (closedCast) {
+            if (const auto earlier = m_casts.find(*closedCast); earlier != m_casts.end() && earlier->second.refusedAt == press.input) {
+                earlier->second.refusedAt.reset();
+            }
+        }
+    };
     // A later press of the session, accepted or refused, ends the contact windows of the earlier cast (code review of
     // stage 3.3a, finding F2): a contact after it is not a hit of that cast. Before each refusal (code review of stage
     // 1.3b, finding F9: a press of an empty place of the bar closed no window).
@@ -595,6 +606,9 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         if (earlier != m_casts.end() && earlier->second.session == session && earlier->second.sequence == press.sequence
             && !earlier->second.closedAt) {
             earlier->second.closedAt = press.input;
+            // A refusal of this press keeps it; the acceptance takes it back (below).
+            earlier->second.refusedAt = press.input;
+            closedCast = earlier->first;
         }
     }
     // Each press ends the aim of an earlier key (stage 3.3b-S6; the confirm of an aim ends it before its press).
@@ -765,6 +779,15 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
                 planned->actionSpells.push_back(cast.spell);
             }
         }
+        // Each part of the fragments that the cast can play must be in the data (code review of stage 3.3b-M2, finding M2-R8: the rule
+        // "all the parts or a refusal" of a plan): the chosen fragment and each fragment that a transition inside the ability reaches
+        // (not the start of an other ability, not a basic attack); the usable rows of each strike in the combat tables, the status of
+        // each such row in the ability data, the spell of each cast of the fragment for the nodes. Else the press is refused before the
+        // cooldown and the payment.
+        if (const std::optional<std::string> missing = missing_fragment_part(*graph, planned->fragment, character->skills)) {
+            log::write("world: ability: %s plays a fragment whose part %s is not in the data", rule->name, missing->c_str());
+            return refuse(CastVerdict::noRule);
+        }
     } else if (needs_fragments(planned->kind)) {
         log::write("world: ability: %s needs its fragment in the weapon actions (format 2: tools/gamedata/weapon-actions.sh)", rule->name);
         return refuse(CastVerdict::noRule);
@@ -775,6 +798,9 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     // also when the cooldown of the server ended before (a reset command; stage 1.3b, I8, live check I8-05).
     const auto running = state.cooldowns.find(ability);
     if (running != state.cooldowns.end() && (running->second.indefinite || now < running->second.end || now < running->second.clientEnd)) {
+        if (now < running->second.clientEnd) {
+            reopen(); // The client does not play a press in its own cooldown.
+        }
         return refuse(CastVerdict::cooldown);
     }
     // A cast of the sequence (stage 3.3b-M2): the fragment that plays decides (the windows of the transitions to the ability, the mark
@@ -785,6 +811,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
                                                                                       Combat::weapon_key(*character), graph, ability, planned->fragment,
                                                                                       0, now, true);
         if (start.verdict == AbilityStart::Verdict::refused) {
+            reopen(); // No window of the fragment that plays: the client does not play the press (live check of stage 3.3b-M2).
             return refuse(CastVerdict::casting);
         }
     } else if (state.cast) {
@@ -870,6 +897,12 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         timer.clientEnd = now;
     }
     state.cooldowns[ability] = timer;
+    // The press is accepted: the strikes of the earlier cast stay open in the sequence until the next fragment starts (finding M2-R6).
+    if (state.cast) {
+        if (const auto earlier = m_casts.find(*state.cast); earlier != m_casts.end() && earlier->second.refusedAt == press.input) {
+            earlier->second.refusedAt.reset();
+        }
+    }
     state.cast = cast.number;
     const std::uint64_t number = cast.number;
     Cast& stored = m_casts.emplace(number, std::move(cast)).first->second;
@@ -877,6 +910,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     count_hit(*character, stored.ability, true);
     // The fragment of the cast starts in the sequence (stage 3.3b-M2): at the press, or later in a buffered window of the fragment that
     // played. The timed phases of the plan come that much later.
+    bool startsLater = false;
     if (sequenced) {
         const AbilityStart start = m_world.combat().sequences_of_world().start_ability(character->characterId, session, press.sequence, press.input,
                                                                                       Combat::weapon_key(*character), graph, ability, stored.plan.fragment,
@@ -884,6 +918,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         stored.plan.delay = std::chrono::milliseconds(static_cast<long long>(start.delaySteps) * 1000 / ability_rules::kStepsInSecond);
         if (start.verdict == AbilityStart::Verdict::later) {
             ++m_counts.delayedStarts;
+            startsLater = true;
         }
     }
     const std::chrono::milliseconds delay = stored.plan.delay;
@@ -957,14 +992,13 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         ++stored.pending;
         m_world.after(stored.plan.heal->at + delay, [this, number](World&) { cast_heal(number); });
     }
-    // The spells of the action at its start (stage 3.3b-M2: the shield of Maelstrom with Absorb).
-    for (const std::string& spell : stored.plan.actionSpells) {
-        const EntityId casterId = character->id;
-        m_world.after(delay, [this, number, casterId, spell](World&) {
-            if (Entity* caster = m_world.find(casterId); caster != nullptr && !caster->life.dead) {
-                cast_spell_at(*caster, number, spell);
-            }
-        });
+    // The spells of the action at its start (stage 3.3b-M2: the shield of Maelstrom with Absorb). A fragment that waits for a buffered
+    // window gets them at its real start (the sequence event `start`, fragment_event; code review of stage 3.3b-M2, finding M2-R5): a
+    // start that a weapon change, a death, or a travel cancelled makes no spell.
+    if (!startsLater) {
+        for (const std::string& spell : stored.plan.actionSpells) {
+            cast_spell_at(*character, number, spell);
+        }
     }
     publish(stored.characterId);
     if (cost > 0.0F) {
@@ -2358,10 +2392,72 @@ const std::map<std::uint32_t, AbilityCooldown>* Abilities::cooldowns_of(const st
     return state == m_characters.end() ? nullptr : &state->second.cooldowns;
 }
 
-AbilityStrike Abilities::strike_of(std::uint64_t cast) const {
+std::optional<std::string> Abilities::missing_fragment_part(const gamedata::WeaponActionSet& graph, std::uint32_t first,
+                                                           const SkillSet& skills) const {
+    std::vector<std::uint32_t> open{first};
+    std::set<std::uint32_t> seen{first};
+    const bool rowEffects = m_combat->has_row_effects();
+    while (!open.empty()) {
+        const std::uint32_t index = open.back();
+        open.pop_back();
+        if (index >= graph.fragments.size()) {
+            return "fragment " + std::to_string(index);
+        }
+        const gamedata::AttackFragment& fragment = graph.fragments[index];
+        for (const gamedata::AttackStrike& strike : fragment.strikes) {
+            for (const gamedata::StrikeRow& row : strike.rows) {
+                const bool usable = std::all_of(row.needs.begin(), row.needs.end(), [&](std::uint32_t node) { return has_learned(skills, node); })
+                                    && std::none_of(row.forbids.begin(), row.forbids.end(), [&](std::uint32_t node) { return has_learned(skills, node); });
+                if (!usable) {
+                    continue;
+                }
+                const std::optional<std::uint32_t> rowIndex = m_combat->row_index(row.row);
+                if (!rowIndex) {
+                    return fragment.name + " row " + row.row;
+                }
+                if (rowEffects) {
+                    for (const std::string& status : m_combat->damage_row(*rowIndex).effects) {
+                        if (m_data->status(status) == nullptr) {
+                            return row.row + " status " + status;
+                        }
+                    }
+                }
+            }
+        }
+        for (const gamedata::FragmentCast& cast : fragment.casts) {
+            if (all_learned(skills, cast.needs) && none_learned(skills, cast.forbids) && m_data->spell(cast.spell) == nullptr) {
+                return fragment.name + " spell " + cast.spell;
+            }
+        }
+        for (const gamedata::AttackTransition& transition : fragment.transitions) {
+            if (transition.input == gamedata::AttackInput::ability || transition.to >= graph.fragments.size()
+                || graph.fragments[transition.to].name.rfind("Attack_", 0) == 0) {
+                continue;
+            }
+            if (seen.insert(transition.to).second) {
+                open.push_back(transition.to);
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+AbilityStrike Abilities::strike_of(std::uint64_t cast, SessionId session, std::uint32_t sequence, std::uint16_t input) const {
     const auto found = m_casts.find(cast);
     AbilityStrike result;
     result.valid = found != m_casts.end() && found->second.plan.sequence && has_data();
+    if (!result.valid) {
+        return result;
+    }
+    const Cast& played = found->second;
+    // An input number is a value of one client: it applies only in its session and its sequence. A later press of the session that the
+    // server refused closes the strikes of the cast from its input number on (finding M2-R6, the rule of contact_phase; a later press
+    // that the server accepted ends the visit of the cast in the sequence).
+    const unsigned steps = static_cast<std::uint16_t>(input - played.input);
+    if (played.session != session || played.sequence != sequence
+        || (played.refusedAt && static_cast<std::uint16_t>(*played.refusedAt - played.input) <= steps)) {
+        result.valid = false;
+    }
     return result;
 }
 
@@ -2410,6 +2506,12 @@ void Abilities::fragment_event(Entity& character, const SequenceEvent& event) {
     Cast& cast = found->second;
     switch (event.kind) {
     case SequenceEvent::Kind::payment:
+        return;
+    case SequenceEvent::Kind::start:
+        // The fragment of the cast started after a buffered window (finding M2-R5): the spells of the action now.
+        for (const std::string& spell : cast.plan.actionSpells) {
+            cast_spell_at(character, cast.number, spell);
+        }
         return;
     case SequenceEvent::Kind::strike:
         if (event.index < event.fragment->strikes.size()) {
@@ -2472,8 +2574,17 @@ void Abilities::follow_strike(Cast& cast, Entity& caster, const gamedata::Attack
             return; // A strike with damage: the contacts of the client are its hits.
         }
     }
-    std::set<EntityId> targets = cast.struck;
-    const std::array<float, 2> ahead = direction_of(cast.yaw);
+    // Each target passes the tests of now: the shape, the height, and the sight (code review of stage 3.3b-M2, finding M2-R4: a creature
+    // that a strike of the cast hit before gets no admission by that hit; it is a creature of the position index as each other one), and
+    // the pull takes the kAreaMost nearest ones for all its shapes (finding M2-R10: the limit of an area phase of the server).
+    // The axis of the shapes: the move of the caster since the press (its body faces it: the root motion of the action, and the homing
+    // of the client that turns it to a target), else the direction of the camera at the press (ability_rules::kFacingMove).
+    std::array<float, 2> ahead = direction_of(cast.yaw);
+    const float movedX = caster.position.x - cast.place.x;
+    const float movedY = caster.position.y - cast.place.y;
+    if (const float moved = std::hypot(movedX, movedY); moved >= ability_rules::kFacingMove) {
+        ahead = {movedX / moved, movedY / moved};
+    }
     float reach = 0.0F;
     for (const gamedata::StrikeRow* row : rows) {
         if (row->shape < strike.shapes.size()) {
@@ -2481,6 +2592,7 @@ void Abilities::follow_strike(Cast& cast, Entity& caster, const gamedata::Attack
             reach = std::max(reach, shape.offset[2] + shape.halfHeight + shape.radius);
         }
     }
+    std::vector<std::pair<float, EntityId>> eligible;
     if (reach > 0.0F) {
         m_world.for_each_near(caster.position, reach + ability_rules::kShapeSlack, [&](Entity& entity) {
             if (entity.kind != EntityKind::creature || entity.creature.dead || entity.creature.immune()
@@ -2503,12 +2615,54 @@ void Abilities::follow_strike(Cast& cast, Entity& caster, const gamedata::Attack
                     const state::WorldPosition from{caster.position.x, caster.position.y, caster.position.z + 1.5F};
                     const state::WorldPosition to{entity.position.x, entity.position.y, entity.position.z + 1.0F};
                     if (m_world.navigation().sees(from, to)) {
-                        targets.insert(entity.id);
+                        eligible.emplace_back(horizontal_distance(caster.position, entity.position), entity.id);
                     }
                     return;
                 }
             }
         });
+    }
+    // A creature that a strike of the cast hit: the homing of the client turns the body to its target (ability_rules::kHomingTurnCosine).
+    // In front of the axis within that angle, it gets the shapes on the line to it (its distance in the reach of a shape), at the height
+    // of the shapes and in sight. A creature behind the caster, or out of the reach, gets nothing (finding M2-R4).
+    for (const EntityId id : cast.struck) {
+        if (std::any_of(eligible.begin(), eligible.end(), [id](const auto& entry) { return entry.second == id; })) {
+            continue;
+        }
+        Entity* creature = m_world.creatures().find(id);
+        if (creature == nullptr || creature->creature.dead || creature->creature.immune()
+            || std::fabs(creature->position.z - caster.position.z) > ability_rules::kShapeHeight) {
+            continue;
+        }
+        const float dx = creature->position.x - caster.position.x;
+        const float dy = creature->position.y - caster.position.y;
+        const float away = std::hypot(dx, dy);
+        if (away <= 0.0F || (dx * ahead[0] + dy * ahead[1]) / away < ability_rules::kHomingTurnCosine) {
+            continue;
+        }
+        const bool reached = std::any_of(rows.begin(), rows.end(), [&](const gamedata::StrikeRow* row) {
+            if (row->shape >= strike.shapes.size()) {
+                return false;
+            }
+            const gamedata::AttackShape& shape = strike.shapes[row->shape];
+            const float extent = shape.halfHeight + shape.radius + ability_rules::kShapeSlack;
+            return away >= shape.offset[2] - extent && away <= shape.offset[2] + extent;
+        });
+        const state::WorldPosition from{caster.position.x, caster.position.y, caster.position.z + 1.5F};
+        const state::WorldPosition to{creature->position.x, creature->position.y, creature->position.z + 1.0F};
+        if (reached && m_world.navigation().sees(from, to)) {
+            eligible.emplace_back(away, id);
+        }
+    }
+    std::sort(eligible.begin(), eligible.end());
+    if (eligible.size() > ability_rules::kAreaMost) {
+        m_counts.followOverLimit += eligible.size() - ability_rules::kAreaMost;
+        eligible.resize(ability_rules::kAreaMost);
+    }
+    std::vector<EntityId> targets;
+    targets.reserve(eligible.size());
+    for (const auto& [away, id] : eligible) {
+        targets.push_back(id);
     }
     for (const EntityId id : targets) {
         Entity* creature = m_world.creatures().find(id);

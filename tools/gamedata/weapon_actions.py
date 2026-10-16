@@ -327,6 +327,12 @@ def node_tests(element: ElementTree.Element, negated: bool, tests: list[tuple[st
 
 # The input of a condition of a transition inside an ability (the input names of the action lists of the player).
 ABILITY_INPUTS = {"attack_primary_virtual": "attack", "block_press_virtual": "block", "character_collided": "collided"}
+# The weapons whose abilities the backend plays as fragments (stage 3.3b-M2), and their abilities whose damage is the area of a spell of
+# the server (no strike: Shockwave, Path of Destiny). For these weapons the sources must have the fragment of each ability, each fragment
+# that its action selects, and a strike of each other ability (code review of stage 3.3b-M2, finding M2-R7): else the tool stops and the
+# old file stays.
+FRAGMENT_WEAPONS = {"greataxe", "warhammer"}
+AREA_ABILITIES = {"ability_warhammer_shockwave", "ability_warhammer_pathofdestiny"}
 # The ability action list of each weapon tag (the hatchet has the tag Axe).
 ABILITY_LISTS = {"sword": "playeractions_ability_sword", "rapier": "playeractions_ability_rapier", "axe": "playeractions_ability_hatchet",
                  "flail": "playeractions_ability_flail", "spear": "playeractions_ability_spear",
@@ -504,7 +510,13 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
     seen: dict[str, str] = {START: "basic"}
     queue: list[tuple[str, str]] = [(START, "basic")]
     exported_abilities = []
+    strict = weapon_tag in FRAGMENT_WEAPONS
     for entry in sorted(weapon_abilities, key=lambda item: item["name"].lower()):
+        if strict:
+            for name in [entry["fragment"]] + [selection[0] for selection in entry["selections"]]:
+                if body_variant(name) is None:
+                    raise Failure(f"the ability {entry['ability']} of {label} plays the fragment {name}, which the animation databases do not "
+                                  "have: the sources are not complete")
         if body_variant(entry["fragment"]) is None:
             continue
         roots = [entry["fragment"]] + [selection[0] for selection in entry["selections"]]
@@ -706,6 +718,29 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
                 for kind, value, negated in term:
                     if kind == "node" and not negated:
                         use(value, "motion", f"{entry['name']} {condition}")
+    if strict:
+        # Each ability of these weapons that does damage with its strikes has a strike in the fragments that it can play: its fragment,
+        # its selections, and the fragments of its transitions inside the ability (finding M2-R7: an attachment file with no clip of the
+        # ability gave a contact ability with no strike).
+        by_name = {fragment["name"]: fragment for fragment in fragments}
+        for entry in exported_abilities:
+            if entry["ability"].lower() in AREA_ABILITIES:
+                continue
+            open_names = [entry["fragment"]] + [selection[0] for selection in entry["selections"]]
+            reached: set[str] = set()
+            strikes = 0
+            while open_names:
+                name = open_names.pop()
+                if name in reached or name not in by_name:
+                    continue
+                reached.add(name)
+                strikes += len(by_name[name]["strikes"])
+                for transition in by_name[name]["transitions"]:
+                    if transition[3] != "ability" and not transition[4].startswith("Attack_"):
+                        open_names.append(transition[4])
+            if strikes == 0:
+                raise Failure(f"the ability {entry['ability']} of {label} has no damage clip: the attachment database of the weapon is "
+                              "not complete")
     return fragments, exported_abilities, uses
 
 

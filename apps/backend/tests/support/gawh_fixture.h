@@ -50,6 +50,10 @@ inline constexpr const char* kGravityHold = "Status_Passive_GreatAxe_Gravity_Roo
 inline constexpr const char* kFortifyBuff = "WarHammer_ClearOut_FortifyBuff";
 inline constexpr const char* kSprintStatus = "WarHammer_Pass_SprintDmgReduction";
 inline constexpr const char* kShieldSpell = "Spell_Upgrade_GreatAxe_Maelstrom_ProjectileConsume";
+/** The nodes of Wrecking Ball (stage 3.3b-M2b): Safety Measures (the fortify at a hit) and Breathing Room (the sphere of the strike). */
+inline constexpr const char* kSafetyMeasures = "Upgrade_WarHammer_Wreck_Fortify";
+inline constexpr const char* kBreathingRoom = "Upgrade_WarHammer_Wreck_Pushback";
+inline constexpr const char* kWreckFortify = "WarHammer_WreckingBall_Fortify";
 /** The block press (block_press_virtual, bit 484). */
 inline constexpr unsigned kBlockBit = 484;
 
@@ -57,7 +61,7 @@ const char* const kAxeNodes[] = {"Ability_Greataxe_Reap", "Ability_Greataxe_Exec
                                  "Ability_Greataxe_Charge", "Ability_Greataxe_Maelstorm", kCollector, kGravity, kFatalAttraction,
                                  kUnendingWinds, kAbsorb, kDmgPerDistance, kSwingAttack, kAddGrit, kSpeed};
 const char* const kHammerNodes[] = {"Ability_WarHammer_MightyGavel", "Ability_Warhammer_ArmorBreaker", "Ability_WarHammer_ClearOut",
-                                    kFortifyAoe, kGuardedSprint};
+                                    kFortifyAoe, kGuardedSprint, kSafetyMeasures, kBreathingRoom};
 
 /** A start window of an ability (the condition CanAttack_<ability> of the action lists): a press of its key in the window. */
 inline gamedata::AttackTransition ability_window(gamedata::TransitionKind kind, float start, float end, const char* to, const char* ability) {
@@ -116,6 +120,16 @@ inline gamedata::AttackShape capsule(float radius, float halfHeight, float along
     shape.halfHeight = halfHeight;
     shape.offset[2] = along;
     shape.joint = "master_root";
+    return shape;
+}
+
+/** A sphere of a damage clip at the root of the character (no joint), `up` meters above it, with the scale of the data. */
+inline gamedata::AttackShape sphere(float radius, float up, float scale) {
+    gamedata::AttackShape shape;
+    shape.type = "MeleeAttackShapeCastTypeSphere";
+    shape.radius = radius;
+    shape.offset[2] = up;
+    shape.scale[0] = shape.scale[1] = shape.scale[2] = scale;
     return shape;
 }
 
@@ -313,6 +327,14 @@ inline gamedata::WeaponActionSet hammer_graph() {
         with_mark(af::fragment("Ability_WarHammer_ClearOut", 2.636364F, {},
                                {strike_of("atk1", 0.733333F, 0.933333F, {shaped("Warhammer_Damage_ClearOut", {}, {}, 0)}, {capsule(0.7F, 0.6F, 0.8F)})}),
                   1.7F),
+        // Wrecking Ball (the clips of the attachment of the game data): the base clip (WreckingBallBase: the capsule at the joint of the
+        // weapon) and the clip of Breathing Room (WreckingBallAOE: the sphere at the root), one damage key, the same row.
+        with_mark(af::fragment("Ability_WarHammer_WreckingBall", 2.0F, {},
+                               {strike_of("atk1", 0.8F, 0.966667F,
+                                          {shaped("Warhammer_Damage_WreckingBall", {"Ability_WarHammer_WreckingBall"}, {kBreathingRoom}, 0),
+                                           shaped("Warhammer_Damage_WreckingBall", {"Ability_WarHammer_WreckingBall", kBreathingRoom}, {}, 1)},
+                                          {capsule(0.7F, 0.6F, 0.3F), sphere(1.5F, 0.5F, 2.0F)})}),
+                  1.633333F),
     };
     gamedata::AbilityAction::Cast fortify;
     fortify.spell = "WarHammer_Spell_ClearOut_Fortify";
@@ -320,7 +342,8 @@ inline gamedata::WeaponActionSet hammer_graph() {
     fortify.marker = "WarHammer_SpellMarker_ClearOutFortify";
     hammer.abilities = {action_of("Ability_WarHammer_ArmorBreaker", "Ability_WarHammer_BlockBreaker"),
                         action_of("Ability_WarHammer_ClearOut", "Ability_WarHammer_ClearOut", {}, {fortify}),
-                        action_of("Ability_WarHammer_MightyGavel", "Ability_WarHammer_MightyGavel")};
+                        action_of("Ability_WarHammer_MightyGavel", "Ability_WarHammer_MightyGavel"),
+                        action_of("Ability_WarHammer_WreckingBall", "Ability_WarHammer_WreckingBall")};
     return hammer;
 }
 
@@ -382,6 +405,7 @@ inline gamedata::AbilityTables gawh_abilities(bool armorBreakerRule = true) {
     rows.push_back(hold);
     rows.push_back(status(kFortifyBuff, 4.0F, cells({{"PhysicalArmor", 0.2F}}, {{"EffectCategories", "Buff+ArmorFortify"}})));
     rows.push_back(status(kSprintStatus, -1.0F, cells({{"ABSSlash", 0.1F}}, {{"EffectCategories", "Buff+Fortify"}})));
+    rows.push_back(status(kWreckFortify, 7.0F, cells({{"PhysicalArmor", 0.2F}}, {{"EffectCategories", "Buff+ArmorFortify"}})));
     rows.push_back(status("Status_Upgrade_Greataxe_GravityWell_ArmorInWell", -1.0F, cells({{"PhysicalArmor", 0.1F}}, {{"EffectCategories", "Buff+ArmorFortify"}})));
     tables.statusEffects = numbered(std::move(rows));
     tables.spells.push_back({kShieldSpell, 2.0F, 1.0F, 0.0F, 0, 0.0F, 1125.0F,
@@ -405,6 +429,12 @@ inline gamedata::AbilityTables gawh_abilities(bool armorBreakerRule = true) {
                                                       {"DamageTableRow", "Warhammer_Damage_ClearOut,Warhammer_Damage_ClearOut_Perk"},
                                                       {"InAction", "Ability_WarHammer_ClearOut"}, {"InSequence", "Ability_WarHammer_ClearOut"},
                                                       {"CastSpell", "WarHammer_Spell_ClearOut_Fortify"}})});
+    // Safety Measures: the fortify on the caster at a hit of Wrecking Ball (the row of the game data, InSequence of the ability).
+    tables.abilityRows.push_back({kSafetyMeasures, cells({{"OnHit", 1.0F}, {"InSequenceTime", 0.1F}},
+                                                         {{"WeaponTag", "Warhammer"}, {"RequiredAbilityId", "Ability_WarHammer_WreckingBall"},
+                                                          {"DamageTableRow", "Warhammer_Damage_WreckingBall,Warhammer_Damage_WreckingBall_Push"},
+                                                          {"InSequence", "Ability_WarHammer_WreckingBall"}, {"SelfApplyStatusEffect", kWreckFortify},
+                                                          {"CooldownId", "Ability_WarHammer_WreckingBall"}})});
     // Guarded Sprint: the status action of the action list of the hammer (the node, a movement tag, not Dodging, the hammer).
     gamedata::ActionStatus sprint;
     sprint.list = "playeractions_ability_warhammer";

@@ -27,7 +27,7 @@
 //
 // creature worldPosAbs (the exact position: the client does not move a creature to the
 //          ground), rotation (the direction of the creature), lookDir, teleportAndMigrationId,
-//          timeAnchor, dataBits, moreDataBits (both 0), globalFragTags (the tags of the weapons
+//          timeAnchor, dataBits (the two target bits below), moreDataBits (0), globalFragTags (the tags of the weapons
 //          of the creature, which select the variant of a fragment), and the scope fields
 //          scopeData, scopeInfoBlob, and scopeTimeBlobEx (protocol notes 4.14 and 4.17). No
 //          later time anchor. For an action of the server (the death action, an attack, a
@@ -112,6 +112,16 @@ constexpr std::uint8_t kDataBitsCanSprint = 0x40;
 constexpr std::uint8_t kDataBitsCanRun = 0x80;
 constexpr std::uint8_t kMoreDataBitsCanNavigate = 0x01;
 constexpr std::uint8_t kMoreDataBitsCanDodge = 0x02;
+// The target bits of an entity (stage 3.3b-M2b, protocol notes 4.34). The client copies dataBits and moreDataBits into one
+// 16-bit value of its action list state ((moreDataBits << 8) | dataBits, client code at image RVA 0x2A2AF07). At each state
+// that it applies (0x2A2BC20) it gives bit 0 to the camera lock target of the entity (getter 0x2A279B0, setter of the actor
+// 0x4848AD0: CameraLockTargetComponent) and bit 1 to the homing target (getter 0x2A27A90, setter 0x48496E0: the
+// HomingTargetComponent writes the targetable flag of its client facet, 0x6928AB0). With bit 1 at 0 the Homing clips of an
+// ability (Wrecking Ball, Mighty Gavel) find no target: the candidate handler 0x67A8A10 refuses the creature (live trace of
+// stage 3.3b-M2b). The server of the game sets the homing bit at the start of the entity from m_notTargetableOnInit of the
+// server facet of the slice (0x68689D0: the bit is its negation; false for the wolf slices).
+constexpr std::uint8_t kDataBitsCameraLockTarget = 0x01;
+constexpr std::uint8_t kDataBitsHomingTarget = 0x02;
 /** Height range of an absolute world position on the wire (client reader at image RVA 0x2A433D0). */
 constexpr float kWorldHeightMin = -100.0F;
 constexpr float kWorldHeightMax = 1000.0F;
@@ -246,7 +256,9 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, const wor
     write_yaw_rotation(state.field(0, kRotation), entity.creature.yaw);
     state.field(0, kLookDirection).u8(kLookDirectionNorth);
     state.field(0, kTeleportId).u8(1);
-    state.field(0, kDataBits).u8(0);
+    // A creature is a camera lock target and a homing target of the players (the target bits above). The client refuses a dead
+    // creature as a homing target itself (m_isNotTargetableWhenDead of the client facet of the slice).
+    state.field(0, kDataBits).u8(kDataBitsCameraLockTarget | kDataBitsHomingTarget);
     state.field(0, kMoreDataBits).u8(0);
     // The action of the state (creature_scope). The scope fields go out only when the action
     // changed for the session: the client keeps its action and plays it with no jump.
