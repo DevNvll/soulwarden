@@ -41,6 +41,14 @@ is an observer
 of the world: it sends each entity of its interest table to its client, in the owner view
 for its own character and in the observer view for each other entity.
 
+The client asks for the use of an object of the world (the key E or T at a lore page or a
+person) in its input report. The interaction system of the world checks the request against
+the interaction data of the game (`interaction-data.json`: the object, its option, the 3D
+range, its limits) and the session replies (accepted or refused). A read lore page is a row of
+the database: the journal of the character keeps it. The state of an object (on or off, its
+users) goes to each session near it as the record of the level object of the client
+([Interactions](systems/interactions.md), protocol notes 4.35).
+
 The game server refuses a registration with a character that the database does not have, or
 with a character of a different account (the client shows a connection error). A character
 is in one session at most: a newer session of the character takes it, and the client of the
@@ -54,7 +62,9 @@ the attributes, the skills, the nodes and the ability bars (`assign_node`,
 `set_ability_bar`), the cooldowns (`reset_cooldowns`), the status effects (`apply_status`,
 `remove_status`), the cast of an ability and the spell entities (`cast_ability`,
 `end_spells`), a shot of the weapon in the hand (`shoot`), and the health of a character, for the
-creatures near it, and for a travel. The state of a character has its DLC (member `ownership`, stage 1.1b). The backend
+creatures near it, and for a travel, and the interaction commands (`set_object_enabled` for an object 30 m or less from the
+character, `cancel_interaction`; stage 2.5a). The state of a character has its DLC (member `ownership`, stage 1.1b) and its
+interactions (member `interactions`: its committed interaction and the objects near it, stage 2.5a). The backend
 also answers the entitlement service of the client (the sync and the list of the entitlements of the account, protocol
 notes 2 and 4.29).
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
@@ -114,6 +124,7 @@ tools/gamedata/projectiles.sh      # one time: projectile data (profiles, slices
 tools/gamedata/weapon-actions.sh   # one time: the attack graphs of the melee weapons (without them a melee hit has the light or the heavy row of its weapon); needs an Oodle library
 tools/gamedata/perks.sh            # one time: perk data (perks, buckets, item perk places, consumables, equip load; without it an item has no perk)
 tools/gamedata/places.sh           # one time: travel places (without them the travel list is empty); needs an Oodle library
+tools/gamedata/interactions.sh     # one time: the interaction objects of the world (without them each use of an object is refused); 24 MB, 4 minutes; needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
@@ -160,7 +171,9 @@ It also has the commands for the items and the coin of a character: `items CHARA
 on|off`, and for its equipment: `equipment CHARACTER`, `equip CHARACTER BAGSLOT [SLOT]`, and
 `unequip CHARACTER SLOT [BAGSLOT]` (`SLOT` is a slot number of the paperdoll: 1 chest, 24
 weapon 1; `tools/world --help` has the list). A command for a character that is not in the
-world changes its rows in the database. For a fight: `ignore CHARACTER on|off` (the
+world changes its rows in the database. For the objects of the world (stage 2.5a):
+`interactions CHARACTER [METERS]`, `object CHARACTER KEY on|off`, and `interaction cancel
+CHARACTER`. For a fight: `ignore CHARACTER on|off` (the
 creatures ignore a character), `heal CHARACTER` (its full health; a dead character lives
 again at its place), `hurt CHARACTER AMOUNT` (its health goes down), and `message CHARACTER
 TYPE HEX` (one message with bytes of the caller to the client of a character). For the
@@ -373,6 +386,15 @@ button on "Confirm").
   `tools/gamedata/places.sh --list` prints the places and writes no file. Without the file
   the backend starts, the travel list is empty, and a travel takes only a position in
   numbers.
+- `tools/gamedata/interactions.sh` makes the interaction objects
+  (`~/.local/share/soulwarden/gamedata/interaction-data.json`, stage 2.5a): each placement of the
+  level data whose slice has an Interact component (43,225 objects in the supported build: 1,157
+  lore pages, 146 persons, 40,768 gathering nodes, 136 shrines), with its ids on the wire, its
+  place, its options with the rows of the user interface database, and the achievement of each
+  lore page (protocol notes 4.35, [Interactions](systems/interactions.md)). `--region NAME` and
+  `--radius METERS` write a smaller file, `--list KIND` prints the objects of a kind. Without
+  the file the backend starts and refuses each use of an object: a talk with a person then
+  closes at once, and a read lore page is not kept.
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -528,6 +550,17 @@ button on "Confirm").
   with its full health (with no travel places: at the place of its death). A character is
   never dead after a login. Not yet: blocks, dodges, and the respawn points of the game
   (camps, houses).
+- Interactions (stage 2.5a). The client shows the prompt of an object and executes its option
+  at the key; the backend checks the request with the interaction data of the game and
+  replies. A lore page: E (Read) opens the journal on the page, T (Add To Journal) adds it, and
+  the page stays in the journal of the character (the achievement of the page, a row of the
+  database; after a restart the prompt shows "Already Read"). A talk with a person and the
+  animations of a chair, a bed, or a pet are accepted (a chair takes one character). Each
+  other option (storage, gathering, crafting, a shop, an inn, a teleport door) is refused: its
+  system is not there yet. In a development run, `tools/world interactions NAME` lists the
+  objects near a character with their state, `tools/world object NAME KEY on|off` hides or
+  shows the prompt of an object, and `tools/world interaction cancel NAME` ends the
+  interaction of a character ([Interactions](systems/interactions.md)).
 - Travel. The tab "Travel" of the tool window (F8) moves your character to a spirit shrine
   or to an inn of each territory, or to a position in numbers; `tools/world places` and
   `tools/world travel` do the same in a development run. The session continues: there is

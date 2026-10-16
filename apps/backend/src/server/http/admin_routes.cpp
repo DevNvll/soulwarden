@@ -67,6 +67,11 @@
 //          apply_status        status, and when necessary seconds, potency, count: a status
 //                              effect on the character (stage 3.3b-S1, world/statuses.h)
 //          remove_status       status (an id, or all): the status ends (stage 3.3b-S1)
+//          set_object_enabled  object (the key of an object of the interaction data), enabled (1 or 0): each Interact
+//                              component of the object is on or off (stage 2.5a); only an object 30 m or less from
+//                              the character (the list "interactions" of the state)
+//          cancel_interaction  no argument: the committed interaction of the character ends (stage 2.5a; its client
+//                              gets 3746)
 //        remove_creature, set_creature_health, and kill_creature change only a creature of
 //        the list of the character (150 m or less from it), and the character must be in the
 //        world: a different creature gives the reply 404, and nothing changes.
@@ -80,7 +85,9 @@
 //        The travel places of the game data: the id, the kind, the name, the territory, and the
 //        position of each one.
 // The state of a character that is in the world also has the creatures near it (the member
-// "creatures": each creature that is 150 m or less from the character, the nearest one first).
+// "creatures": each creature that is 150 m or less from the character, the nearest one first),
+// and its interactions (the member "interactions", stage 2.5a: its committed interaction and the
+// objects of the interaction data 30 m or less from it, with their state).
 //
 // Rules of each route:
 // - The request has the token of this start in the header X-Soulwarden-Admin. With no token or
@@ -109,7 +116,7 @@ constexpr std::size_t kLogIdLength = 8;
 struct NamedCommand {
     const char* name;
     commands::Command command;
-    /** Not null: the command is a creature command, which gets the rule of the admin interface. */
+    /** Not null: the command is a creature command or an object command, which gets the rule of the admin interface. */
     commands::CreatureCommand creature{nullptr};
 };
 
@@ -144,6 +151,9 @@ constexpr NamedCommand kCommands[] = {
     {"activate_rune", commands::activate_rune},
     {"apply_status", commands::apply_status},
     {"remove_status", commands::remove_status},
+    // The interaction commands (stage 2.5a): an object near the character, and its committed interaction.
+    {"set_object_enabled", nullptr, commands::set_object_enabled},
+    {"cancel_interaction", commands::cancel_interaction},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
@@ -253,6 +263,8 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 if (const auto ownership = commands::ownership_view(target, selected)) {
                     reply["ownership"] = *ownership;
                 }
+                // The interactions of the character (stage 2.5a): its committed interaction and the objects near it.
+                reply["interactions"] = commands::interactions_view(target, selected, commands::kAdminInteractionRange);
             }
         }
         return json_reply(200, reply.dump());

@@ -333,6 +333,9 @@ ABILITY_INPUTS = {"attack_primary_virtual": "attack", "block_press_virtual": "bl
 # old file stays.
 FRAGMENT_WEAPONS = {"greataxe", "warhammer"}
 AREA_ABILITIES = {"ability_warhammer_shockwave", "ability_warhammer_pathofdestiny"}
+# The fragments of an ability of these weapons that do no damage with a strike in the game data (a choice whose damage is a spell of the
+# server, or none). The list of the supported build is empty: each choice of the other abilities has a strike (finding M2b-R4).
+NO_STRIKE_FRAGMENTS: set[str] = set()
 # The ability action list of each weapon tag (the hatchet has the tag Axe).
 ABILITY_LISTS = {"sword": "playeractions_ability_sword", "rapier": "playeractions_ability_rapier", "axe": "playeractions_ability_hatchet",
                  "flail": "playeractions_ability_flail", "spear": "playeractions_ability_spear",
@@ -719,28 +722,36 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
                     if kind == "node" and not negated:
                         use(value, "motion", f"{entry['name']} {condition}")
     if strict:
-        # Each ability of these weapons that does damage with its strikes has a strike in the fragments that it can play: its fragment,
-        # its selections, and the fragments of its transitions inside the ability (finding M2-R7: an attachment file with no clip of the
-        # ability gave a contact ability with no strike).
+        # These weapons need their ability action list: with no list, the file would have no ability of the weapon and look complete
+        # (code review of stage 3.3b-M2b, finding M2b-R4).
+        if not weapon_abilities:
+            raise Failure(f"the game copy has no ability of {label} in the action list {ability_list}: the sources are not complete")
+        # Each choice of an ability of these weapons that does damage with its strikes has a strike in the fragments that it can play:
+        # the fragment of the action and each fragment that the action selects, each one with the fragments of its own transitions
+        # inside the ability (finding M2-R7: an attachment file with no clip of the ability gave a contact ability with no strike;
+        # finding M2b-R4: a strike of one choice does not prove a strike of a different choice, which plays alone).
         by_name = {fragment["name"]: fragment for fragment in fragments}
         for entry in exported_abilities:
             if entry["ability"].lower() in AREA_ABILITIES:
                 continue
-            open_names = [entry["fragment"]] + [selection[0] for selection in entry["selections"]]
-            reached: set[str] = set()
-            strikes = 0
-            while open_names:
-                name = open_names.pop()
-                if name in reached or name not in by_name:
+            for root in [entry["fragment"]] + [selection[0] for selection in entry["selections"]]:
+                if root.lower() in NO_STRIKE_FRAGMENTS:
                     continue
-                reached.add(name)
-                strikes += len(by_name[name]["strikes"])
-                for transition in by_name[name]["transitions"]:
-                    if transition[3] != "ability" and not transition[4].startswith("Attack_"):
-                        open_names.append(transition[4])
-            if strikes == 0:
-                raise Failure(f"the ability {entry['ability']} of {label} has no damage clip: the attachment database of the weapon is "
-                              "not complete")
+                open_names = [root]
+                reached: set[str] = set()
+                strikes = 0
+                while open_names:
+                    name = open_names.pop()
+                    if name in reached or name not in by_name:
+                        continue
+                    reached.add(name)
+                    strikes += len(by_name[name]["strikes"])
+                    for transition in by_name[name]["transitions"]:
+                        if transition[3] != "ability" and not transition[4].startswith("Attack_"):
+                            open_names.append(transition[4])
+                if strikes == 0:
+                    raise Failure(f"the fragment {root} of the ability {entry['ability']} of {label} has no damage clip: the attachment "
+                                  "database of the weapon is not complete")
     return fragments, exported_abilities, uses
 
 

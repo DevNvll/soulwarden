@@ -590,12 +590,25 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     // The earlier cast that this press closed, and the end of that close for its strikes: a refusal that shows that the client does not
     // play the press either (its own cooldown, no window of the fragment that plays) leaves the fragment of the earlier cast open (code
     // review of stage 3.3b-M2, finding M2-R6: the close is for a press that the client plays and the server refuses).
-    std::optional<std::uint64_t> closedCast;
+    // The refusal close of this press (code review of stage 3.3b-M2b, finding M2b-R3): the casts whose refusedAt this press set. It is a
+    // value of its own, apart from closedAt: a press that the client does not play (its cooldown) takes back only its own close, and a
+    // later refused press closes the cast again.
+    std::vector<std::uint64_t> refusedNow;
     const auto reopen = [&] {
-        if (closedCast) {
-            if (const auto earlier = m_casts.find(*closedCast); earlier != m_casts.end() && earlier->second.refusedAt == press.input) {
+        for (const std::uint64_t number : refusedNow) {
+            if (const auto earlier = m_casts.find(number); earlier != m_casts.end() && earlier->second.refusedAt == press.input) {
                 earlier->second.refusedAt.reset();
             }
+        }
+    };
+    const auto close_refused = [&](std::uint64_t number) {
+        const auto earlier = m_casts.find(number);
+        if (earlier != m_casts.end() && earlier->second.session == session && earlier->second.sequence == press.sequence
+            && !earlier->second.refusedAt
+            && std::find(refusedNow.begin(), refusedNow.end(), number) == refusedNow.end()) {
+            // A refusal of this press keeps it; the acceptance, the client cooldown, and `casting` take it back (reopen).
+            earlier->second.refusedAt = press.input;
+            refusedNow.push_back(number);
         }
     };
     // A later press of the session, accepted or refused, ends the contact windows of the earlier cast (code review of
@@ -606,10 +619,14 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         if (earlier != m_casts.end() && earlier->second.session == session && earlier->second.sequence == press.sequence
             && !earlier->second.closedAt) {
             earlier->second.closedAt = press.input;
-            // A refusal of this press keeps it; the acceptance takes it back (below).
-            earlier->second.refusedAt = press.input;
-            closedCast = earlier->first;
         }
+        close_refused(*known->second.cast);
+    }
+    // The cast whose fragment still plays in the sequence of the character: with a buffered press, the newest cast of the character is
+    // a later one, and the fragment that plays is of an earlier cast (finding M2b-R3).
+    if (const AttackVisit* playing = m_world.combat().sequences().newest(character->characterId);
+        playing != nullptr && !playing->ended && playing->cast != 0) {
+        close_refused(playing->cast);
     }
     // Each press ends the aim of an earlier key (stage 3.3b-S6; the confirm of an aim ends it before its press).
     if (const auto known = m_characters.find(character->characterId); known != m_characters.end()) {
@@ -774,8 +791,17 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
             phase = planned->phases.erase(phase);
         }
         for (const gamedata::AbilityAction::Cast& cast : entry->casts) {
-            if (cast.marker.empty() && all_learned(character->skills, cast.needs) && none_learned(character->skills, cast.forbids)
-                && perks_hold(cast.perks, cast.perkForbids) && m_data->spell(cast.spell) != nullptr) {
+            if (!all_learned(character->skills, cast.needs) || !none_learned(character->skills, cast.forbids)
+                || !perks_hold(cast.perks, cast.perkForbids)) {
+                continue;
+            }
+            // Each spell of the action that the cast plays must be in the data, at the start and at a mark (code review of stage
+            // 3.3b-M2b, finding M2b-R5: a missing row of the shield of Maelstrom with Absorb gave a cast with its cooldown and no shield).
+            if (m_data->spell(cast.spell) == nullptr) {
+                log::write("world: ability: the action of %s casts the spell %s, which the data does not have", rule->name, cast.spell.c_str());
+                return refuse(CastVerdict::noRule);
+            }
+            if (cast.marker.empty()) {
                 planned->actionSpells.push_back(cast.spell);
             }
         }
@@ -897,12 +923,8 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         timer.clientEnd = now;
     }
     state.cooldowns[ability] = timer;
-    // The press is accepted: the strikes of the earlier cast stay open in the sequence until the next fragment starts (finding M2-R6).
-    if (state.cast) {
-        if (const auto earlier = m_casts.find(*state.cast); earlier != m_casts.end() && earlier->second.refusedAt == press.input) {
-            earlier->second.refusedAt.reset();
-        }
-    }
+    // The press is accepted: the strikes of the earlier casts stay open in the sequence until the next fragment starts (finding M2-R6).
+    reopen();
     state.cast = cast.number;
     const std::uint64_t number = cast.number;
     Cast& stored = m_casts.emplace(number, std::move(cast)).first->second;
@@ -911,12 +933,13 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     // The fragment of the cast starts in the sequence (stage 3.3b-M2): at the press, or later in a buffered window of the fragment that
     // played. The timed phases of the plan come that much later.
     bool startsLater = false;
+    AbilityStart started;
     if (sequenced) {
-        const AbilityStart start = m_world.combat().sequences_of_world().start_ability(character->characterId, session, press.sequence, press.input,
-                                                                                      Combat::weapon_key(*character), graph, ability, stored.plan.fragment,
-                                                                                      number, now);
-        stored.plan.delay = std::chrono::milliseconds(static_cast<long long>(start.delaySteps) * 1000 / ability_rules::kStepsInSecond);
-        if (start.verdict == AbilityStart::Verdict::later) {
+        started = m_world.combat().sequences_of_world().start_ability(character->characterId, session, press.sequence, press.input,
+                                                                      Combat::weapon_key(*character), graph, ability, stored.plan.fragment,
+                                                                      number, now);
+        stored.plan.delay = std::chrono::milliseconds(static_cast<long long>(started.delaySteps) * 1000 / ability_rules::kStepsInSecond);
+        if (started.verdict == AbilityStart::Verdict::later) {
             ++m_counts.delayedStarts;
             startsLater = true;
         }
@@ -995,7 +1018,14 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     // The spells of the action at its start (stage 3.3b-M2: the shield of Maelstrom with Absorb). A fragment that waits for a buffered
     // window gets them at its real start (the sequence event `start`, fragment_event; code review of stage 3.3b-M2, finding M2-R5): a
     // start that a weapon change, a death, or a travel cancelled makes no spell.
-    if (!startsLater) {
+    if (!startsLater && sequenced && started.visit != 0 && !stored.plan.actionSpells.empty()) {
+        // A start at the step of the press: the spells of the action at the due time of its visit on the world clock, through the path of
+        // a waiting item (code review of stage 3.3b-M2b, finding M2b-R1: a client whose input numbers ran ahead of the world clock got the
+        // shield of Maelstrom at once; the time of an input step alone is no proof of the world time).
+        m_world.combat().run_event(character->characterId, session,
+                                   SequenceEvent{SequenceEvent::Kind::start, number, started.visit, &graph->fragments[stored.plan.fragment], 0,
+                                                 started.due, started.generation});
+    } else if (!startsLater) {
         for (const std::string& spell : stored.plan.actionSpells) {
             cast_spell_at(*character, number, spell);
         }

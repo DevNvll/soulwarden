@@ -13,7 +13,8 @@
 //          to the remote player slice (sub id 100) itself, when it has its own player entity
 //          (client code at image RVA 0x1747C60).
 // A creature has only the observer view: AssetId (the slice of the creature, with the sub id
-// of the asset catalog of the game) and GdeRef.
+// of the asset catalog of the game) and GdeRef. The same for an object of the level data (stage 2.5a): the slice of its
+// placement and its managed actor id.
 
 namespace soulwarden::backend::server::rep {
 namespace {
@@ -46,6 +47,14 @@ hub::Bytes encode_metadata_state(const world::Entity& entity, View view, const w
         // Development aid: the slice of a command (tools/world probe).
         state.field(0, kAssetId).raw(entity.probe.asset);
         state.field(0, kAssetId).u32(entity.probe.subId);
+        state.field(0, kGdeRef).raw(entity.actor.bytes);
+        return state.finish();
+    }
+    if (entity.kind == world::EntityKind::object) {
+        // An object of the level data (stage 2.5a): the slice of its placement and its managed actor id (live check L2: the
+        // client applies the record to the object that it made from the level data, with no second body).
+        state.field(0, kAssetId).raw(entity.object.asset);
+        state.field(0, kAssetId).u32(entity.object.subId);
         state.field(0, kGdeRef).raw(entity.actor.bytes);
         return state.finish();
     }

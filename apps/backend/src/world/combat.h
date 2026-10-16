@@ -526,6 +526,13 @@ public:
      * @param inputSequence The number of the input sequence of the client (AttackTrack::sequence).
      */
     void step(SessionId session, std::uint32_t inputSequence, std::uint16_t input, const AttackBits& bits);
+    /**
+     * Runs an item of the fragment of an ability (not a payment) at its due time on the world clock (code review of stage 3.3b-M2,
+     * finding M2-R1), with the tolerance of a contact: at once when it is due, else in a timer that runs it only when its visit lives
+     * and no end of the sequence came after it (finding M2b-R2). The step of a client and the immediate start of an ability (finding
+     * M2b-R1) use it.
+     */
+    void run_event(const std::string& characterId, SessionId session, const SequenceEvent& event);
     /** Ends the sequence of the basic attacks of a character (an accepted ability, a death, a travel). */
     void end_sequence(const std::string& characterId, SequenceEnd why);
     /** The sequence of the attacks and of the abilities of the world (stage 3.3b-M2: an accepted press starts the fragment of its ability). */

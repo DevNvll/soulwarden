@@ -74,7 +74,8 @@ World::World(const WorldClock& clock,
       m_runes(*this),
       m_statuses(*this),
       m_spells(*this, options.spellData),
-      m_projectiles(*this, options.projectileData, options.combatTables) {
+      m_projectiles(*this, options.projectileData, options.combatTables),
+      m_interactions(*this, options.interactionData) {
     m_random = options.randomSeed;
 }
 
@@ -262,8 +263,12 @@ void World::remove_entity(EntityId id) {
     if (found == m_entities.end()) {
         return;
     }
-    const Entity& entity = found->second;
+    Entity& entity = found->second;
     m_index.erase(id, entity.position);
+    // The committed interaction of a character ends with its entity (stage 2.5a: the users of the object).
+    if (entity.kind == EntityKind::player) {
+        m_interactions.left(entity);
+    }
     // The auras that follow the entity end with it (stage 3.3b-S2b: no aura stays with no attachment).
     if (entity.kind == EntityKind::creature || entity.kind == EntityKind::player) {
         m_spells.target_left(id);
@@ -315,6 +320,13 @@ void World::healed_player(SessionId session, EntityId target, float amount) {
     const auto sink = m_sinks.find(session);
     if (sink != m_sinks.end() && sink->second != nullptr) {
         sink->second->healed_player(target, amount);
+    }
+}
+
+void World::interaction_cancelled(SessionId session) {
+    const auto sink = m_sinks.find(session);
+    if (sink != m_sinks.end() && sink->second != nullptr) {
+        sink->second->interaction_cancelled();
     }
 }
 
@@ -519,7 +531,11 @@ Entity* World::make_probe(const ProbeBody& body, const state::WorldPosition& pos
     if (!valid_position(position)) {
         return nullptr;
     }
-    const ActorId actor = m_ids.next(ActorKind::otherEntity);
+    // An actor id of the command (a level placement) must not be the id of an entity of the world.
+    if (body.actor && m_entities.count(entity_group_id(*body.actor)) != 0) {
+        return nullptr;
+    }
+    const ActorId actor = body.actor ? *body.actor : m_ids.next(ActorKind::otherEntity);
     Entity& entity = m_entities[entity_group_id(actor)];
     entity.id = entity_group_id(actor);
     entity.actor = actor;
@@ -601,6 +617,25 @@ bool World::hostile(const Entity& a, const Entity& b) const {
 void World::set_test_friends(const std::string& characterA, const std::string& characterB) {
     m_testFriends.insert({characterA, characterB});
     m_testFriends.insert({characterB, characterA});
+}
+
+Entity& World::make_object(const ObjectBody& body, const ActorId& actor, const state::WorldPosition& position) {
+    Entity& entity = m_entities[entity_group_id(actor)];
+    entity.id = entity_group_id(actor);
+    entity.actor = actor;
+    entity.kind = EntityKind::object;
+    entity.object = body;
+    entity.name = "object";
+    entity.position = position;
+    const Revision revision = ++m_revision;
+    entity.positionRevision = revision;
+    entity.changed[ComponentKey::metadata] = revision;
+    entity.changed[ComponentKey::interact] = revision;
+    m_index.insert(entity.id, entity.position);
+    log::write("world: object entity %016llx (actor %s) of the interaction data, %zu bound(s), at %.2f %.2f %.2f",
+               static_cast<unsigned long long>(entity.id), actor_text(entity.actor).c_str(), body.bounds.size(),
+               static_cast<double>(position.x), static_cast<double>(position.y), static_cast<double>(position.z));
+    return entity;
 }
 
 bool World::remove_probe(EntityId id) {
@@ -777,6 +812,8 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     // finding S6-R8: a confirm after the travel would use the place before it).
     m_combat.end_sequence(entity->characterId, SequenceEnd::travel);
     m_abilities.cancel_aim(entity->characterId);
+    // The committed interaction of the character ends (stage 2.5a): the session sends 3746 and 6709 (RepSession::traveled).
+    m_interactions.traveled(*entity);
     // The creatures of the new place: the spawn point rule runs in this tick, not at its interval.
     m_creatures.scan_soon();
     // No creature of the new place takes the character at once, and the creatures of the old place lose it.

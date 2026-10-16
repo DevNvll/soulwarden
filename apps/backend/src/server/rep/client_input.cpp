@@ -16,8 +16,8 @@ constexpr std::uint32_t kEntryWord2C = 0x10;
 constexpr std::uint32_t kEntryStepTime = 0x20;
 constexpr std::uint32_t kEntryLook = 0x40;
 constexpr std::uint32_t kEntryCamera = 0x80;
-/** An object of the entry (entry +0x140, client reader at image RVA 0x35EBC30). Its meaning is not known. */
-constexpr std::uint32_t kEntryObject140 = 0x100;
+/** The interaction block of the entry (entry +0x140, client reader at image RVA 0x35EBC30; stage 2.5a, InputInteraction). */
+constexpr std::uint32_t kEntryInteraction = 0x100;
 /** The first mask bit of the fields after the block. The later fields have no fixed bit. */
 constexpr unsigned kFirstTailBit = 9;
 // Flags of an entry that add a field before the position of the character (client reader at
@@ -102,6 +102,8 @@ struct EntryBase {
     std::uint64_t flags{0};
     /** Value of entry +0x380. A value that is not 0 adds two fields. */
     std::uint8_t value380{0};
+    /** The interaction block (mask bit 8): an entry with no bit 8 has the block of the entry before it. */
+    std::optional<InputInteraction> interaction;
 };
 
 /** @return True when the two action words that start at word `firstWord` have the bit of an action. */
@@ -149,15 +151,25 @@ bool read_flag(hub::Reader& reader, bool& value) {
     return byte <= 1;
 }
 
-void skip_text(hub::Reader& reader) {
-    reader.raw(reader.size());
+/** Reads a text of an interaction block. @return False for a text that is longer than kMaxInteractionText. */
+bool skip_interaction_text(hub::Reader& reader) {
+    const std::uint32_t length = reader.size();
+    if (length > kMaxInteractionText) {
+        return false;
+    }
+    reader.raw(length);
+    return true;
 }
 
 /**
- * Reads the object of mask bit 8 (client reader at image RVA 0x35EBC30). The backend uses none
- * of its fields. @return False for a flag that is not 0 or 1.
+ * Reads the interaction block of mask bit 8 (client reader at image RVA 0x35EBC30; InputInteraction in client_input.h).
+ * @param block Gets the request, or no value for a block whose flag is 0.
+ * @return False for a flag that is not 0 or 1, or a text that is too long. A body that ends in the block is not an error here: the
+ *         caller looks at reader.ok().
  */
-bool skip_object140(hub::Reader& reader) {
+bool read_interaction(hub::Reader& reader, std::optional<InputInteraction>& block) {
+    block.reset();
+    const std::size_t start = reader.position();
     bool present = false;
     bool flag = false;
     if (!read_flag(reader, present)) {
@@ -166,18 +178,28 @@ bool skip_object140(hub::Reader& reader) {
     if (!present) {
         return true;
     }
-    reader.raw(16 + 8 + 8);    // +0x10, +0x20, +0x28
-    reader.raw(1 + 1 + 8 + 4); // +0x30, +0x31, +0x38, +0x40
-    skip_text(reader);         // +0x48
-    reader.raw(4 + 4);         // +0x70, +0x74
-    reader.f32();              // +0x78
-    if (!read_flag(reader, flag)) { // +0x80
+    InputInteraction request;
+    const auto actor = reader.raw(request.actor.size()); // +0x10
+    request.group = reader.u64();                       // +0x20
+    request.target = reader.u64();                      // +0x28
+    request.action = reader.u8();                       // +0x30
+    request.baseAction = reader.u8();                   // +0x31
+    request.optionEntity = reader.u64();                // +0x38
+    reader.u32();                                       // +0x40
+    if (!skip_interaction_text(reader)) {               // +0x48
         return false;
     }
-    for (int text = 0; text < 4; ++text) { // +0x88, +0xB0, +0xD8, +0x100
-        skip_text(reader);
+    reader.raw(4 + 4);                                  // +0x70, +0x74
+    reader.f32();                                       // +0x78
+    if (!read_flag(reader, request.committed)) {        // +0x80
+        return false;
     }
-    reader.f32(); // +0x7C
+    for (int text = 0; text < 4; ++text) {              // +0x88, +0xB0, +0xD8, +0x100
+        if (!skip_interaction_text(reader)) {
+            return false;
+        }
+    }
+    request.holdTime = reader.f32(); // +0x7C
     bool vectors = false;
     if (!read_flag(reader, vectors)) { // +0x81
         return false;
@@ -188,21 +210,36 @@ bool skip_object140(hub::Reader& reader) {
     if (!read_flag(reader, flag)) { // +0x150
         return false;
     }
-    reader.raw(4 + 1 + 4); // +0x154, +0x158, +0x15C
-    reader.raw(4 * 4);     // +0x128, +0x44, +0x160, +0x164
-    reader.size64();       // +0x168
-    reader.u32();          // +0x170
-    reader.size();         // +0x1A0
-    skip_text(reader);     // +0x178
-    reader.raw(4 + 1);     // +0x1A4, +0x1A8
+    reader.u32();                              // +0x154
+    request.requiredItemCount = reader.u8();   // +0x158
+    request.optionId = reader.u32();           // +0x15C
+    reader.raw(4 * 4);                         // +0x128, +0x44, +0x160, +0x164
+    request.requiredCurrency = reader.size64(); // +0x168
+    reader.u32();                              // +0x170
+    request.requiredLevel = reader.size();     // +0x1A0
+    if (!skip_interaction_text(reader)) {      // +0x178
+        return false;
+    }
+    reader.raw(4 + 1); // +0x1A4, +0x1A8
     if (!read_flag(reader, flag)) { // +0x1A9
         return false;
     }
-    reader.u32();      // +0x1E8
-    skip_text(reader); // +0x1C0
+    reader.u32(); // +0x1E8
+    if (!skip_interaction_text(reader)) { // +0x1C0
+        return false;
+    }
     reader.raw(4 + 8); // +0x1F0, +0x1F8
     reader.u32();      // +0x200
-    return read_flag(reader, flag); // +0x204
+    if (!read_flag(reader, flag)) { // +0x204
+        return false;
+    }
+    if (reader.ok()) {
+        std::copy(actor.begin(), actor.end(), request.actor.begin());
+        const auto all = reader.consumed_since(start);
+        request.bytes.assign(all.begin(), all.end());
+        block = std::move(request);
+    }
+    return true;
 }
 
 std::array<float, 3> read_vector(hub::Reader& reader) {
@@ -251,10 +288,15 @@ void read_tail(hub::Reader& reader, std::uint32_t mask, EntryBase& base, ClientI
     if (input.targetKind != kInputTargetNone) {
         reader.raw(kTargetDataSize);
     }
-    if ((mask & kEntryObject140) != 0 && !skip_object140(reader)) {
+    if ((mask & kEntryInteraction) != 0 && !read_interaction(reader, base.interaction)) {
         input.tail = reader.ok() ? InputTail::badValue : InputTail::shortBody;
         return;
     }
+    if (!reader.ok()) {
+        input.tail = InputTail::shortBody;
+        return;
+    }
+    step.interaction = base.interaction;
     if ((input.flags & kFlagActionReport) != 0) {
         reader.size64();
         reader.size64();

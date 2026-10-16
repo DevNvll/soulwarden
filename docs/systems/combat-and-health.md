@@ -195,9 +195,13 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   fragment of an ability to the abilities system at their times (`SequenceEvent`), each with its due time on the world clock: the
   due time of the visit and the time of the item, with the tolerance of a contact (one step and `attack_rules::kWorldEarly`). An
   input number that reaches an item earlier (a faster client, the gap fill) does not run it: the item waits for its due time, and
-  it runs only when no end of the sequence interrupted its visit (finding M2-R1; case RH1). The start of a fragment that waited for a
-  buffered window is an item too (`SequenceEvent::Kind::start`: the spells of its action, finding M2-R5). The block press (bit 484)
-  is a bit of the step (`AttackBits::block`).
+  it runs only when no end of the sequence interrupted its visit (finding M2-R1; case RH1), and only when no end of the sequence
+  came after it at all (`SequenceEvent::generation`, `State::generation`; code review of stage 3.3b-M2b, finding M2b-R2, case RX2:
+  a travel or a change of the weapon after the visit had ended at the end of its fragment, also with a later basic attack). An end
+  of the sequence at rest (no visit plays) counts too (`AttackSequences::end`). One function runs each item at its due time
+  (`Combat::run_event`). The start of a fragment that waited for a buffered window is an item too (`SequenceEvent::Kind::start`: the
+  spells of its action, finding M2-R5), and the start of a fragment at the step of the press too (finding M2b-R1, case RX5: the
+  spells of the action wait for the due time of the visit). The block press (bit 484) is a bit of the step (`AttackBits::block`).
 - The damage of an attack is computed in one function (`Combat::damage`), from the combat
   tables (game data) and the entity of the attacker: the weapon of the item, its gear score,
   the damage row of the light or of the heavy attack, the attributes and the level of the

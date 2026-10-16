@@ -292,6 +292,10 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         return group == 0 && field == 0 ? 2 : group == 0 && field == 1 ? 1 : -1;
     case 13: // PositionInTheWorld (stage 3.3b-S2b, the trap): the position (x, y, a u16 height) and the rotation.
         return group == 0 && field == 0 ? 10 : group == 0 && field == 1 ? rotation_size(rest) : -1;
+    case 3752: // Interactor (stage 2.5a): the cached object G (u64), and the enabled flag of group 1.
+        return group == 0 && field == 0 ? 8 : group == 1 && field == 0 ? 1 : -1;
+    case 2930: // Interact (stage 2.5a): Enabled (a flag) and HasInteractors (u32); CooldownUpdates is not sent.
+        return group == 0 && field == 0 ? 1 : group == 0 && field == 1 ? 4 : -1;
     default:
         return -1;
     }
@@ -316,7 +320,10 @@ inline unsigned group_count(std::uint32_t type) {
     case 13:
     case 3133:
     case 3210:
+    case 2930:
         return 1;
+    case 3752:
+        return 2;
     case 4236:
         return 4;
     case 3935:

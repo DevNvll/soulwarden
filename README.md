@@ -35,6 +35,8 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Critical hits. Each hit can be critical with the critical chance of your weapon and of your nodes, perks, and effects; a critical hit shows the orange damage number and does the critical damage of the weapon. A hit from behind a creature (135 degrees or more from its front, for a wolf) and an arrow or a shot in the head of a creature are always critical.
 - The passive nodes of the great axe and the war hammer, from the rows of the game data: the effects on your own character after a hit or when creatures are near you (Mauler's Fury, Greed, Hammer Time, Safety Measures, Center of Attention), the effects on the creature (the exhaust of Exhaustive Attacks, the slow of Aftershock), the shorter cooldowns, the heals of a part of the damage, the armor penetration, and the critical nodes. In a development run, `tools/world passives NAME` lists each node with what the backend does with it. Another player sees the icons of your public effects at your name plate.
 - The heals of the life staff. Divine Embrace (its key on the bar, then LCTRL for yourself or a click for a friend) heals after its cast of 1 second; Sacred Ground (its key, then LCTRL or a click) puts a holy area at your feet that heals you each second for 12 seconds; the Beacon heals each second. Your heals scale with the base damage of your staff, its gear score, and your Focus. You see a green number for each heal, and a green number at the feet of a friend that you heal. Effects that lower healing (Disease) and the heal nodes (Divine Blessing: more healing on a target below half health; Anointed) count. Potions, food, and the life steal of a perk heal through the same rules.
+- Lore pages. Press E (Read) at a lore page: the journal opens on the page, and the page stays in the journal of your character, also after a restart and on the next day. T (Add To Journal) adds the page with no read. The prompt then shows "Already Read". The server checks each use of an object (the object, its option, your distance, and its limits) with the data of the game: 43,225 objects of the world (1,157 lore pages, 146 persons, gathering nodes, shrines, doors) are in the interaction data.
+- Talks with the persons of the settlements, and the sit and pet animations of the objects that have them: the server accepts them, and a chair takes one character at a time.
 - Travel to any spirit shrine or inn of the world, 161 places in 16 territories, with no new login.
 - A tool window on F8 that gives items, sets levels and skills, spawns or kills creatures, heals your character, moves it to a travel place, and makes each kill drop loot.
 
@@ -51,6 +53,7 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Some creatures are not in the world. The client shows no body for 50 of their 553 models, so 1,541 spawn points stay empty.
 - Only kills give experience. No quest and no gathering gives experience yet.
 - No quests, no ranged weapons, and no magic. People in the settlements say only their first line: talk to them and press E or Escape to end the talk.
+- Storage sheds, chests, gathering nodes, crafting stations, shops, inns, and teleport doors do not work yet: the server refuses their use (a window of the client can open and stays empty). A lore page gives no experience yet.
 - No world clock, so some sessions are dark.
 - One player. In a development run a second character can stand in the world, and that is all.
 
@@ -75,7 +78,7 @@ tools/build-soulwarden-game-hook.sh
 tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh     # the backend tests, with no game process
 
-tools/gamedata/appearance.sh         # fifteen game data tools, one time each
+tools/gamedata/appearance.sh         # sixteen game data tools, one time each
 tools/gamedata/slice_ids.sh
 tools/gamedata/items.sh
 tools/gamedata/progression.sh
@@ -88,6 +91,7 @@ tools/gamedata/spells.sh
 tools/gamedata/projectiles.sh
 tools/gamedata/weapon-actions.sh
 tools/gamedata/places.sh
+tools/gamedata/interactions.sh
 tools/gamedata/heights.sh
 tools/gamedata/navigation.sh
 
@@ -115,10 +119,11 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | `projectiles.sh` | A shot of a bow, a musket, a staff, or a gauntlet does nothing; with a file from before stage 3.3b-S2b the musket trap and the Beacon do nothing, and the Ice Pylon does not shoot: run the tool again |
 | `weapon-actions.sh` | Each melee hit has the damage of the light or of the heavy attack of its weapon: no ender, no full charge, and the second quick thrust of the rapier does not hit |
 | `places.sh` | The travel list is empty, and you travel only to a position in numbers. You come back at the place of your death |
+| `interactions.sh` | The server refuses each use of an object: a talk with a person closes at once, and a lore page that you read does not stay in the journal |
 | `heights.sh` | With no navigation data, creatures do not leave their place. They attack only when you are in their reach |
 | `navigation.sh` | Creatures go on a straight line on the terrain, through walls and rocks, and they see you through a wall. A creature on a floor of a building does not leave its place |
 
-Some tables of the game have Oodle compression. `creatures.sh`, `places.sh`, `spells.sh`, `projectiles.sh`, and `weapon-actions.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute, and `heights.sh` for about two minutes (it needs no Oodle library). `navigation.sh` needs the Oodle library and a C and a C++ compiler, and it runs for about 45 minutes with 8 processes. It makes the navigation data of the whole world from the collision shapes of the game copy, and then the folder of `heights.sh` again. When it stops, run it again: it makes only the regions that are not complete. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
+Some tables of the game have Oodle compression. `creatures.sh`, `places.sh`, `interactions.sh` (about 4 minutes), `spells.sh`, `projectiles.sh`, and `weapon-actions.sh` need an Oodle library, which you give them with `SOULWARDEN_OODLE_LIB=/path/to/liboo2core.so`. `creatures.sh` runs for about one minute, and `heights.sh` for about two minutes (it needs no Oodle library). `navigation.sh` needs the Oodle library and a C and a C++ compiler, and it runs for about 45 minutes with 8 processes. It makes the navigation data of the whole world from the collision shapes of the game copy, and then the folder of `heights.sh` again. When it stops, run it again: it makes only the regions that are not complete. The slice, item, and progression tools take the Windows library in `SOULWARDEN_OODLE_DLL`.
 
 ## The tool window
 

@@ -41,6 +41,15 @@ Usage:
                                                 for each new place, 5 to 10 looks in a second): the
                                                 way of a creature in a live fight. --tsv: the places
                                                 as a file for tools/research/nav_draw.py
+  tools/world interactions CHARACTER [METERS]   the interactions of a character (stage 2.5a): its committed
+                                                interaction and each object of the interaction data near
+                                                it (default 30 m) with the state of each Interact
+                                                component (on or off, the users, the options)
+  tools/world object CHARACTER KEY on|off       enable or disable an object (KEY: its placement UUID):
+                                                each session near it gets the state; its prompt goes
+                                                away, and a request is refused
+  tools/world interaction cancel CHARACTER      end the committed interaction of a character: its client
+                                                gets the message 3746
   tools/world heal CHARACTER                    give a character its full health. A dead character
                                                 lives again at its place (the death screen closes)
   tools/world ignore CHARACTER on|off           the creatures ignore the character (on), or not
@@ -62,12 +71,14 @@ Usage:
 A probe entity (development aid, live check L4 of stage 3.3b-S2a): an entity of a slice of the game whose
 states are only the fragments of the command. Each session near it gets its record (the metadata state of
 the slice and the fragments), and its stop at the removal:
-  tools/world probe CHARACTER ASSET [DX DY DZ] [--sub N] [--radius METERS] [--fragment SLOT:TYPE:HEX]...
+  tools/world probe CHARACTER ASSET [DX DY DZ] [--sub N] [--radius METERS] [--actor HEX32] [--fragment SLOT:TYPE:HEX]...
                                                 make a probe near a character (ASSET: the 32 hexadecimal
                                                 digits of the asset id of the slice, or its text form
                                                 D60BAED0-C08F-514F-9ECD-9BB5E20F7E9D; --sub: the sub id,
                                                 default 2; --radius: the interest distance, default
-                                                50 m). The reply has the entity id and the actor id
+                                                50 m; --actor: the actor id of the probe, for example the
+                                                managed actor id of a level placement; default: an id of
+                                                the allocator). The reply has the entity id and the actor id
   tools/world probe fragment ENTITY SLOT TYPE HEX
                                                 give a probe one more fragment (or a new one for a slot)
   tools/world probe remove ENTITY               remove a probe: each observer gets the stop
@@ -353,7 +364,9 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         document = json.loads(body)
     except ValueError:
         document = {"message": body}
-    if isinstance(document, dict) and "weapons" in document:
+    if isinstance(document, dict) and "objectEntities" in document and "objects" in document:
+        show_interactions(document)
+    elif isinstance(document, dict) and "weapons" in document:
         show_progress(document)
     elif isinstance(document, dict) and "entitlements" in document and "achievements" in document:
         show_ownership(document)
@@ -596,6 +609,30 @@ def abilities_text(abilities: dict) -> str:
                f"movements started ({abilities['forced']['replaced']} replaced, {abilities['forced']['refused']} not taken), "
                f"{abilities['forced']['steps']} steps, {abilities['forced']['blocked']} stopped by a wall or a drop, the largest "
                f"number at one time {abilities['forced']['largest']}" if "forced" in abilities else ""))
+
+
+def show_interactions(document: dict) -> None:
+    """Prints the interactions of a character (stage 2.5a): its committed interaction and the objects near it."""
+    if not document.get("inWorld"):
+        print("the character is not in the world")
+        return
+    if not document.get("data"):
+        print("the backend has no interaction data: make the file with tools/gamedata/interactions.sh")
+    active = document.get("active")
+    if active:
+        print(f"committed interaction: {active['option']} (action {active['action']}) at the {active['kind']} {active['object']} "
+              f"for {active['seconds']:.1f} s")
+    else:
+        print("committed interaction: none")
+    for entry in document["objects"]:
+        states = ", ".join(f"slot {bound['slot']} {'on' if bound['enabled'] else 'OFF'} users {bound['users']} "
+                           f"({'/'.join(bound['options'])})" for bound in entry["bounds"])
+        print(f"{entry['key']}  {entry['kind']:<15} {entry['distance']:6.1f} m  {entry['slice'].rsplit('/', 1)[-1]:<48} {states}")
+    counts = document.get("counts", {})
+    work = document.get("work", {})
+    print(f"{len(document['objects'])} objects in {document['radius']:.0f} m ({work.get('cells', 0)} cells, {work.get('bounds', 0)} "
+          f"bounds looked at); {document['objectEntities']} object entities; requests {counts.get('requests', {})}, "
+          f"begins {counts.get('begins', 0)}, ends {counts.get('ends', 0)}")
 
 
 def fetch(data_dir: Path, path: str) -> dict:
@@ -877,7 +914,7 @@ def main() -> None:
         if not re.fullmatch(r"[0-9a-f]{32}", asset):
             fail("give the asset id of the slice: 32 hexadecimal digits")
         rest = arguments[3:]
-        options = {"--sub": "2", "--radius": ""}
+        options = {"--sub": "2", "--radius": "", "--actor": ""}
         fragments: list[str] = []
         offsets: list[str] = []
         index = 0
@@ -902,6 +939,11 @@ def main() -> None:
         query = f"near={target}&asset={asset}&sub={whole(options['--sub'], 'the sub id')}&dx={dx}&dy={dy}&dz={dz}"
         if options["--radius"]:
             query += f"&radius={numbers([options['--radius']], 1)[0]}"
+        if options["--actor"]:
+            actor = options["--actor"].lower()
+            if not re.fullmatch(r"[0-9a-f]{32}", actor):
+                fail("give the actor id: 32 hexadecimal digits")
+            query += f"&actor={actor}"
         if fragments:
             query += "&fragments=" + ",".join(fragments)
         request(data_dir, "POST", f"/v1/dev/world/probe?{query}")
@@ -1138,6 +1180,16 @@ def main() -> None:
         else:
             x, y, z = numbers(words, 3)
             request(data_dir, "POST", f"/v1/dev/world/travel?character={target}&x={x}&y={y}&z={z}{screen}")
+    elif command == "interactions" and len(arguments) in (2, 3):
+        radius = f"&radius={numbers(arguments[2:], 1)[0]}" if len(arguments) == 3 else ""
+        request(data_dir, "GET", f"/v1/dev/interactions?character={character_id(data_dir, arguments[1])}{radius}")
+    elif command == "object" and len(arguments) == 4 and arguments[3] in ("on", "off"):
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", arguments[2]):
+            fail("give the key of the object: its placement UUID (tools/world interactions CHARACTER)")
+        request(data_dir, "POST", f"/v1/dev/interactions/object?character={character_id(data_dir, arguments[1])}"
+                                  f"&object={arguments[2].lower()}&enabled={1 if arguments[3] == 'on' else 0}")
+    elif command == "interaction" and len(arguments) == 3 and arguments[1] == "cancel":
+        request(data_dir, "POST", f"/v1/dev/interactions/cancel?character={character_id(data_dir, arguments[2])}")
     elif command == "heal" and len(arguments) == 2:
         request(data_dir, "POST", f"/v1/dev/world/heal?character={character_id(data_dir, arguments[1])}")
     elif command == "ignore" and len(arguments) == 3 and arguments[2] in ("on", "off"):

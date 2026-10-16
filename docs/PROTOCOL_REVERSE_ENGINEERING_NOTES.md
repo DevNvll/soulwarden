@@ -1258,7 +1258,7 @@ entry  := mask:3 bytes (little-endian) sequence:u16
           axes:4 bytes
           [f32 if bit 5: step time] [yaw:f32 pitch:f32 if bit 6] [camera position if bit 7]
           target                                                  (reader 0x2A25D90)
-          [object if mask bit 8]                                  (reader 0x35EBC30)
+          [interaction block if mask bit 8 (4.35)]                (reader 0x35EBC30)
           [size size size if flags bit 0: the action report]
           bit := 9
           [flags bit 11: position if mask bit 9; bit := 10]
@@ -1403,9 +1403,11 @@ file `~/Games/soulwarden/work/research/position.md`; evidence
   value of the entry is then the value of the default entry; static proof: no newest entry of
   the live runs had the flag with no field). This is not an error: the entity keeps its
   position.
-- The object of mask bit 8 and the fields of a value of entry +0x380 that is not 0 have
-  static proof only: no entry of a live run had one of them. The first two lists have static
-  proof only too (no ranged weapon in stage 3.2a). The third list has behavioral proof
+- The object of mask bit 8 is the interaction block (4.35): live proof of stage 2.5a (a block of
+  155 bytes at the key E of a lore page; an older entry with no bit 8 has the block of the entry
+  before it). The fields of a value of entry +0x380 that is not 0 have static proof only: no
+  entry of a live run had one of them. The first two lists have static proof only too (no
+  ranged weapon in stage 3.2a). The third list has behavioral proof
   (4.15): an entry with a contact item has the position of the character too, and it
   decodes with no byte left.
 
@@ -4577,7 +4579,11 @@ sends the end and waits:
 
 - 6705 of the own character: message 6709 at once, for the PlayerCutscene facet of the
   character. A call that names a different entity, or that is too short, gets nothing.
-- 2473: the backend has no interaction state; it accepts the message and changes nothing.
+- 2473 (stage 2.5a, 4.35): a body of exactly 48 bytes with the reference of the committed interaction of the character ends it
+  (`world/interactions.h`); a different reference, no interaction, or a short body changes nothing. Before stage 2.5a the backend
+  had no interaction state and changed nothing.
+- The request of the conversation (the block of the key E, action 63) gets 3743 result 1 from stage 2.5a. Result 2 closes the
+  conversation at once (live check L1 of stage 2.5a: 6705 comes, the prompt "Talk" is back).
 - A travel and a respawn send 3746 and 6709 before the messages of the travel (3951, 3954):
   a lock of a cause that the backend does not know ends at the latest there.
 - Only the session of the owner gets these messages. The backend has no conversation: the
@@ -5721,6 +5727,86 @@ TurnRate 0.2; MoveToTarget false).
   a wolf 3 m away at 35 degrees (before: straight), and Mighty Gavel moved 0.88 m and 0.27 m to the side to a wolf at 30 degrees
   (before: 2.07 m straight). The base clip of Wrecking Ball still gave no contact in 4 presses with the homing: open.
 
+### 4.35 Interactions: the request of a client, the reply, the cancels, the state of an object, the lore pages (live proof of stage 2.5a; static proof for the client code)
+
+Research: `~/Games/soulwarden/work/research/interaction-stage.md` (two passes) and `interaction.md`. The system: `world/interactions.h`,
+[Interactions](systems/interactions.md). Live checks L1 to L3 of stage 2.5a: `~/Games/soulwarden/work/evidence/interaction/implement/`
+(`LIVE-CHECKS.md`, `RESULT.md`).
+
+**The ids of a level object** (game data and client code; research Q1; live check L1). A placement of a layer
+(`*.capitals.json`) has a UUID. Its actor id: the 16 bytes of the UUID, the two halves of 8 bytes XOR together, the 8 result bytes in
+the reverse order, the low 3 bits of the first byte set to 3, then 8 zero bytes (a managed actor: the client makes the entity group
+from its level data; managed-id test 0x6165F20). G is the first 8 bytes, little-endian. The rule of 4.2 gives the instance ids and the
+facet targets: K = (the root entity of the slice) XOR G. Example (lore page `lore_00_aeternum_title_07_02` at 8838.85 4246.60 136.45,
+UUID `bdf81e34-8c29-69ca-08d8-d51e50b2600c`): actor `c3099bdc2acb20b50000000000000000`, G `b520cb2adc9b09c3`, the Interact component
+`d7d687636de982df` of the entity `Interactable` (slot 2), target `8cf752924a848ca2`, option entity `b520cb2edc9b09c3`. The client sent
+these values (live).
+
+**The request** (input report 1589, mask bit 8 of an entry; writer 0x35E67E0, reader 0x35EBC30; research K1). Big-endian numbers;
+`size` and `size64` are the prefix codes of the hub; a text is a size and its bytes; a flag is 0 or 1:
+
+```text
+present:u8                                    0: no request (the block ends)
+actor:16 bytes G:u64 target:u64               the object: the Interact component (record +0x10, +0x20, +0x28)
+action:u8 baseAction:u8 optionEntity:u64 u32  +0x30, +0x31, +0x38, +0x40
+text u32 u32 f32 committed:flag               +0x48, +0x70, +0x74, +0x78, +0x80
+text88 text text text holdTime:f32            +0x88 (the display key of the object: "@00_Aeternum_Title_07_02"), +0xB0, +0xD8, +0x100, +0x7C
+hasVectors:flag [6 f32]                        +0x81, +0x130, +0x140
+flag u32 requiredItemCount:u8 optionId:u32    +0x150, +0x154, +0x158, +0x15C (the CRC-32 of the lower-case option name)
+u32 tag:u32 u32 u32                           +0x128, +0x44, +0x160, +0x164
+requiredCurrency:size64 u32 requiredLevel:size text   +0x168, +0x170, +0x1A0, +0x178
+u32 u8 flag u32 text                          +0x1A4, +0x1A8, +0x1A9, +0x1E8, +0x1C0
+u32 u64 u32 flag                              +0x1F0, +0x1F8, +0x200, +0x204
+```
+
+- 131 bytes with empty texts and no vectors. Live: 155 bytes (the text of +0x88). ReadLore: action 47, base action 47, option
+  `ef696db1`, committed 1. AddLoreToJournal (the key T): action 50, base action 0, option `81e1dbd6`, committed 0. OpenConversation:
+  action 63, base 63, option `507cac68`.
+- The client executes the option at the key, before any reply (0x4916540, 0x4918560, 0x4917310, 0x4910750 in this order, live):
+  the journal opens; a one-shot shows its local notice ("NEW CHAPTER DISCOVERED", "DOCUMENT DISCOVERED").
+- An older entry with no bit 8 has the block of the entry before it (the newer one); the newest entry with no bit 8 has no request.
+  The client sends the block in each report while its request is current. The block goes away when the client clears its records:
+  the close of the journal (Escape), a reply, a cancel.
+- The backend reads the block (`InputInteraction`); a text above 1,024 bytes or a flag that is not 0 or 1 is not a block of the
+  client (the entry gives no step: a rule of this project).
+
+**The messages** (component messages of the Interactor facet of the character: `target = G + 6C5718DBFE6DF612`, `entity = G`):
+
+| Type | Direction | Body | Client code | Proof |
+| --- | --- | --- | --- | --- |
+| 3743 `InteractorComponentClientFacet_ReceiveInteractionResult` | server to owner | `target:u64 entity:u64 reference:32 bytes action:u8 result:u8 text:size(0) u32(0) 16 bytes(0)` (71 bytes); result 1 accepted, 2 refused | writer 0x35E6C80, reader 0x35EC230, handler 0x49175F0 (it compares the 32 bytes with its record; a different reference is ignored) | live: result 1 for the read (0x4917310 from 0x491768F; no second window), result 1 for the one-shot (the request clears: 0x490EE30 from 0x49179F7), result 2 for the read (the records clear; the journal stays open), result 1 for the conversation (no change), result 2 for the conversation (it closes) |
+| 2473 `InteractorComponentServerFacet_RequestCancelCommittedInteractionFromClient` | client to server | `target:u64 entity:u64 actor:16 bytes G:u64 target:u64` (48 bytes) | sender 0x490AD30 | live: after 6705 at the end of a conversation; after 3746; **not** at the close of the journal |
+| 3746 `InteractorComponentClientFacet_CancelCurrentInteraction` | server to owner | `target:u64 entity:u64` | handler 0x490EDA0 calls 0x4916150 | live: in an accepted read the client sends 2473 and clears its records; the journal stays open |
+
+**The states** (tools/st; research K3, K8):
+
+| Type | Slot | Fields | View | Proof |
+| --- | --- | --- | --- | --- |
+| 3752 `MB::InteractorComponentReplicatedState` (constructor 0x49193B0, apply 0x49199D0) | 26 of the player slice and of the remote player slice | group 0 field 0 `m_cachedCommittedInteractGDEID` u64 (reader 0x279E300); group 1 field 0 `m_enabled` (the backend sends none) | owner and each observer: the G of the object of the committed interaction, `00000000FFFFFFFF` after its end | live: `01 01 <G>` gives facet +0x408 the G (0x49199D0 on the Interactor facet); `01 01 00000000FFFFFFFF` the empty value |
+| 2930 `MB::InteractReplicatedState` (constructor 0x35E2C70, apply 0x35CB710) | the slot of each Interact component of the slice of the object (game data: 2 for a lore page, 4 for the commander, 5 and 6 for the storage sheds of the settlement) | field 0 `Enabled` (1 byte, reader 0x17B3CB0), field 1 `HasInteractors` (u32, reader 0x17B3620), field 2 `CooldownUpdates` (the backend sends none) | each observer of the object | live: Enabled false hides the prompt (the next object gets the focus), true restores it after a new focus; HasInteractors 1 on an unlimited page changes nothing that a player sees |
+
+**The record of a level object** (live check L2). A record with a new interest number, the metadata state (the slice asset of the
+placement with its sub id, and the managed actor id), and the state 2930 for the slot: the client applies it to the object that it
+made from the level data (0x35CB710 on its Interact facet; no line "Received repeated metadata"). The stop of the interest number
+does not remove the object, and the client keeps the last state of the record.
+
+**The lore page** (game data; live check L3). The slice of a lore page has `m_loreId` (`00_Aeternum_Title_07_02`); the row of
+`javelindata_loreitems` names its achievement (`Lore_unlock_00_Aeternum_Title_07_02`), and `javelindata_achievements` its bit
+(AchievementIndex 2032, Category Journal, GameEventId Read_LoreItem). The achievement state (slot 66, type 3210, 4.29) with the bit:
+the journal (Documents) shows the page, also a page that the client did not read in that run (live: bit 3519, "Tales of Everfall
+1/50"), and the prompt shows "Already Read" in place of "Add To Journal" at the next focus. The full form of the vector with a
+higher sequence during play works (live). A restart of the backend and a new world entry: the first record has the bit, and the
+journal has the page.
+
+**The rules of the backend** (stage 2.5a): the checks of [Interactions](systems/interactions.md) (the reference and the option of the
+data, the range `m_interactRangeSq` in 3D, the exact position, Enabled, the capacity, the requirements, a handler). The lore page
+(ReadLore, AddLoreToJournal) keeps the achievement of the page; the options of a presentation of the client (OpenConversation, the
+chair, the bed, the animations, the cinematic video) are accepted with no effect; each other option is refused (3743 result 2).
+
+**Not proved:** the arc and the line of sight of an object (no checked object has them; the backend refuses an object that needs
+them); the grammar of `CooldownUpdates`; the chairs (a bench showed an "E" mark and sent no request at the key E in one try); a
+server object (a station of a settlement: stage 2.5b).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are
@@ -5810,9 +5896,9 @@ TurnRate 0.2; MoveToTarget false).
     backend keeps the last accepted one until the reports are in the limits again. A teleport
     of the server to the last accepted position is later work: the travel of stage 3.4c
     (4.16) has the wire mechanism and the rule for the first reports after it.
-  - The object of mask bit 8, the fields of a value of entry +0x380 that is not 0, and the
-    first two lists of an input entry have static proof only: no entry of a live run had one
-    of them (4.7).
+  - The fields of a value of entry +0x380 that is not 0 and the first two lists of an input
+    entry have static proof only: no entry of a live run had one of them (4.7). The object of
+    mask bit 8 has live proof (the interaction block of stage 2.5a, 4.35).
   - A character on a mount needs a larger speed limit. The speed limits come from one live
     session on foot.
   - The movement of a remote player for an observer is not in the backend.

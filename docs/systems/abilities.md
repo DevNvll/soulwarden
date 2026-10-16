@@ -234,14 +234,17 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   - Each part of the fragments that the cast can play is in the data, or the press is refused (`noRule`) before the cooldown and the
     payment (code review of stage 3.3b-M2, finding M2-R8, `Abilities::missing_fragment_part`, case RH8): the chosen fragment and each
     fragment of a transition inside the ability; the usable rows of each strike in the combat tables, the status of each such row,
-    the spell of each cast of the fragment.
+    the spell of each cast of the fragment, and the spell of each cast of the action for the nodes and the perks of the character, at
+    its start and at a mark (code review of stage 3.3b-M2b, finding M2b-R5, case RX3: the shield of Maelstrom with Absorb).
   - The items of a fragment (the strikes with no damage, the spell casts, the marks) run at their due time on the world clock, also
     when an input number reaches them earlier (finding M2-R1, [Combat and health](combat-and-health.md), case RH1).
   - The strikes of the fragment of a cast end at a later press of the session that the server refused (finding M2-R6, the rule of the
     contact phases; `Abilities::strike_of`, `Cast::refusedAt`, case RH6), but not when the cause shows that the client does not play
-    the press either: its own cooldown, or no window of the fragment that plays (`casting`; case GH4). A later press that the server
-    accepted ends the visit of the cast at the start of the next fragment (a buffered press: the fragment plays on to the end of its
-    window).
+    the press either: its own cooldown, or no window of the fragment that plays (`casting`; case GH4). The exception is for that press
+    only: a later refused press closes the cast again (code review of stage 3.3b-M2b, finding M2b-R3, case RX1; `refusedAt` is apart
+    from `closedAt`). The close goes to the newest cast of the character and to the cast whose fragment still plays in the sequence (a
+    buffered press makes a later cast the newest one). A later press that the server accepted ends the visit of the cast at the start
+    of the next fragment (a buffered press: the fragment plays on to the end of its window).
   - The start of the fragment (`AttackSequences::start_ability`): at rest at the press. In a fragment that plays, at the first
     step in the next 20 steps at which the action of the ability can start: in an instant window of a transition to it at once,
     in a buffered window at the end of the window, at the mark CanTransition, or at the end of the fragment. With none, the

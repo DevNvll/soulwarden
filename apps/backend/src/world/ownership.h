@@ -28,6 +28,9 @@
 // The level, the experience, the points, and the skills of a character do not change: the expansion changes only the
 // limits (ProgressionTables::level_cap, rank_cap).
 //
+// Stage 2.5a: the system also keeps the achievements that a character earns in play (the read of a lore page,
+// unlock_achievement): their rows are in the same table, and the next world entry gives the entity their bits again.
+//
 // Each function names an account or a character by its id (roadmap, rule MP-9). World thread only: a route gives the
 // world a task (World::call).
 
@@ -68,6 +71,15 @@ public:
      */
     void entered(Entity& entity);
 
+    /**
+     * Gives a character an achievement of the game data that it earned in play (stage 2.5a: the read of a lore page; the
+     * achievement row of the page: javelindata_loreitems AchievementId, javelindata_achievements AchievementIndex). The row of
+     * `achievements` first, then the bit of the entity and the mark of its state: a database that did not take the row changes
+     * nothing. A second call changes nothing (the row and the bit are there).
+     * @return False when the database did not take the row.
+     */
+    [[nodiscard]] bool unlock_achievement(Entity& entity, const std::string& id, std::uint32_t index);
+
     /** @return The entitlement aliases of an account: its rows and the entitlements of the policy. */
     [[nodiscard]] std::vector<std::string> account_entitlements(const std::string& personaId);
 
@@ -77,6 +89,11 @@ public:
 private:
     /** @return The entitlement aliases of the policy (each one of the game data), or none with no tables. */
     [[nodiscard]] std::vector<std::string> policy_aliases() const;
+    /**
+     * @return The bit of an achievement id: the progression tables (the achievements of the entitlements), then the interaction
+     *         data (the lore pages, stage 2.5a). No value: the game data has no row of it (the row stays, with no bit).
+     */
+    [[nodiscard]] std::optional<std::uint32_t> achievement_bit(const std::string& id) const;
     /** @return The achievements that these entitlements give. */
     [[nodiscard]] std::vector<std::string> achievements_of(const std::vector<std::string>& aliases) const;
     /** Sets the bits of an entity from the aliases and the achievement ids; marks a state that changed. */

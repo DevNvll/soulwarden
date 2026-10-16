@@ -272,6 +272,12 @@ ABILITY_ATTACHMENT = """<AnimDB><FragmentList>
   <ProcLayer><Blend ExitTime="0.6"/><Procedural type="CAGE-CastSpell"><ProceduralParams><SpellName value="Test_Ground"/><Condition value=""/></ProceduralParams></Procedural></ProcLayer>
  </Fragment>
 </Ability_Test_Whirlwind>
+<Ability_Test_Whirlwind_Upgrade>
+ <Fragment Tags="2H_Melee+GreatAxe">
+  <ProcLayer><Blend ExitTime="0.5"/><Procedural type="CAGE-Damage"><ProceduralParams><DamageKey value="Atk1"/><DamageTableRow value="Test_Pull_Near"/><OffsetZ value="1.2"/></ProceduralParams></Procedural>
+   <Blend ExitTime="0.1"/><Procedural type=""><ProceduralParams/></Procedural></ProcLayer>
+ </Fragment>
+</Ability_Test_Whirlwind_Upgrade>
 </FragmentList></AnimDB>"""
 
 ABILITY_ACTIONS = """<ActionList>
@@ -342,9 +348,11 @@ def incomplete_sources() -> tuple[bool, str]:
     import json
     import os
     import tempfile
-    body = BODY.replace("TestAxe", "GreatAxe")
-    files = {tool.BODY_FOLDER + "player_greataxe.adb": body.encode(), tool.BODY_FOLDER + "player_2h_melee.adb": COMMON.encode(),
-             tool.ADB_FOLDER + "playermaleanims_2h_meleeattach.adb": ATTACHMENT.replace("TestAxe", "GreatAxe").encode(),
+    # The great sword: a weapon whose abilities the backend does not play as fragments, thus its sources need no ability action list
+    # (the great axe and the war hammer need one: finding M2b-R4, case "incomplete abilities").
+    body = BODY.replace("TestAxe", "Greatsword")
+    files = {tool.BODY_FOLDER + "player_greatsword.adb": body.encode(), tool.BODY_FOLDER + "player_2h_melee.adb": COMMON.encode(),
+             tool.ADB_FOLDER + "playermaleanims_2h_meleeattach.adb": ATTACHMENT.replace("TestAxe", "Greatsword").encode(),
              tool.ACTION_FOLDER + "playeractions_attack.actionlist": ACTIONS.encode(),
              tool.ANIMATION_FOLDER + "test/test_swing.caf": chunk_file(55, 1.0 / 30.0),
              tool.ANIMATION_FOLDER + "test/test_charge.caf": chunk_file(21, 1.0 / 30.0)}
@@ -352,7 +360,7 @@ def incomplete_sources() -> tuple[bool, str]:
     groups = parsed.find("FragmentList")
     groups.remove(groups.find("Attack_Primary"))
     variants = {"complete": dict(files),
-                "missing fragment": {**files, tool.BODY_FOLDER + "player_greataxe.adb": ElementTree.tostring(parsed)},
+                "missing fragment": {**files, tool.BODY_FOLDER + "player_greatsword.adb": ElementTree.tostring(parsed)},
                 "empty attachment": {**files, tool.ADB_FOLDER + "playermaleanims_2h_meleeattach.adb": b"<AnimDB><FragmentList/></AnimDB>"}}
     saved = (tool.Sources, tool.weapon_tag_sets, sys.argv, sys.stdout, sys.stderr)
     details = []
@@ -363,7 +371,7 @@ def incomplete_sources() -> tuple[bool, str]:
                 target = Path(folder) / "weapon-actions.json"
                 target.write_text("old file\n")
                 tool.Sources = lambda *_, files=sources: FakeSources(dict(files))
-                tool.weapon_tag_sets = lambda _: [("2H_Melee", "GreatAxe")]
+                tool.weapon_tag_sets = lambda _: [("2H_Melee", "Greatsword")]
                 sys.argv = ["weapon_actions.py", str(target)]
                 with open(os.devnull, "w") as quiet:
                     sys.stdout, sys.stderr = quiet, quiet
@@ -382,7 +390,9 @@ def incomplete_sources() -> tuple[bool, str]:
 def incomplete_abilities() -> tuple[bool, str]:
     """The whole tool with made-up sources of a great axe with an ability (code review of stage 3.3b-M2, finding M2-R7): a missing fragment
     of the ability, a missing fragment that its action selects, and an attachment file with no damage clip of the ability stop the tool with
-    status 1 and keep the old file; the complete sources write a new file with the ability, its selection, and its strike."""
+    status 1 and keep the old file; the same for an attachment file with no damage clip of one choice of the ability, and for no ability
+    action list of the weapon (code review of stage 3.3b-M2b, finding M2b-R4); the complete sources write a new file with the ability,
+    its selection, and its strike."""
     import json
     import os
     import tempfile
@@ -399,10 +409,20 @@ def incomplete_abilities() -> tuple[bool, str]:
     files = {body_path: body.encode(), tool.BODY_FOLDER + "player_2h_melee.adb": COMMON.encode(), attach_path: with_ability.encode(),
              tool.ACTION_FOLDER + "playeractions_attack.actionlist": ACTIONS.encode(),
              tool.ACTION_FOLDER + "playeractions_ability_greataxe.actionlist": ABILITY_ACTIONS.encode()}
+    # The damage of one choice of the ability only (code review of stage 3.3b-M2b, finding M2b-R4): the base fragment, or the fragment
+    # that the action selects, has no damage clip; and the ability action list of the weapon is not in the sources.
+    no_base_damage = ElementTree.fromstring(with_ability)
+    no_base_damage.find("FragmentList").remove(no_base_damage.find("FragmentList/Ability_Test_Whirlwind"))
+    no_selected_damage = ElementTree.fromstring(with_ability)
+    no_selected_damage.find("FragmentList").remove(no_selected_damage.find("FragmentList/Ability_Test_Whirlwind_Upgrade"))
     variants = {"complete": dict(files),
                 "missing ability fragment": {**files, body_path: ElementTree.tostring(no_root)},
                 "missing selected fragment": {**files, body_path: ElementTree.tostring(no_selection)},
-                "missing ability damage": {**files, attach_path: attachment.encode()}}
+                "missing ability damage": {**files, attach_path: attachment.encode()},
+                "missing base fragment damage": {**files, attach_path: ElementTree.tostring(no_base_damage)},
+                "missing selected fragment damage": {**files, attach_path: ElementTree.tostring(no_selected_damage)},
+                "missing ability action list": {path: data for path, data in files.items()
+                                                if path != tool.ACTION_FOLDER + "playeractions_ability_greataxe.actionlist"}}
     saved = (tool.Sources, tool.weapon_tag_sets, sys.argv, sys.stdout, sys.stderr)
     details = []
     passed = True

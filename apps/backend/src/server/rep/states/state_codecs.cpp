@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 21> codecs{{
+    static constexpr std::array<StateCodec, 22> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -53,6 +53,8 @@ std::span<const StateCodec> player_codecs() {
         // The movement of a character for its observers (stage 3.3b-S4: a dash): observer view only (the encoder gives the
         // owner no fragment).
         {world::ComponentKey::motion, kMovementSlot, kTypeMovementState, encode_observed_motion_state},
+        // The committed interaction (stage 2.5a): the owner and each observer (the remote player slice has slot 26 too).
+        {world::ComponentKey::interactor, kInteractorSlot, kTypeInteractorState, nullptr, encode_interactor_parts},
     }};
     return codecs;
 }
@@ -102,8 +104,19 @@ std::span<const StateCodec> probe_codecs() {
     return codecs;
 }
 
+std::span<const StateCodec> object_codecs() {
+    // The slot of each Interact state is a value of the slice of the object (game data): one fragment for each bound.
+    static constexpr std::array<StateCodec, 2> codecs{{
+        {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
+        {world::ComponentKey::interact, 0, kTypeInteractState, nullptr, nullptr, false, nullptr, encode_interact_states},
+    }};
+    return codecs;
+}
+
 std::span<const StateCodec> codecs_of(const world::Entity& entity) {
     switch (entity.kind) {
+    case world::EntityKind::object:
+        return object_codecs();
     case world::EntityKind::creature:
         return creature_codecs();
     case world::EntityKind::probe:

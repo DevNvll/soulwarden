@@ -14,7 +14,7 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
 | A remote player, development commands of the world | `tools/world`, protocol notes 4.9 |
 | Ids of an entity, check of the client messages | Protocol notes 4.2, `tools/gamedata/slice_ids.sh` |
 | Add a replicated state to the world | Protocol notes section 4, then `tools/st NAME_REGEX` |
-| An entity that is not a character or a creature: a spell, a probe | [Spell entities](spells.md), `World::make_spell`, `World::make_probe`, `codecs_of` in `server/rep/states/state_codecs.h` |
+| An entity that is not a character or a creature: a spell, a probe, an object of the level data | [Spell entities](spells.md), [Interactions](interactions.md), `World::make_spell`, `World::make_probe`, `World::make_object`, `codecs_of` in `server/rep/states/state_codecs.h` |
 
 ## Rules
 
@@ -42,6 +42,16 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   `m_sliceSpawnRadius` of the slice, 50 m for the vortex; not more than the distance of a
   character) and stops it at that distance plus 20 m. A new spell makes each session look for
   spells near its character in the same tick (`World::last_spell`), not in each tick.
+- An object (stage 2.5a, `EntityKind::object`, [Interactions](interactions.md)): an object of the
+  level data with a state of the server. Its actor id is the managed actor id of its placement
+  (game data), not an id of the allocator, and its entity id is G of that actor (an odd first
+  byte; the ids of the allocator have an even one). Only the interaction system makes it
+  (`World::make_object`). Its codecs (`object_codecs`): the metadata state and the Interact
+  state of each bound (the slots of the data). A session observes it at the distances of a
+  character (100 m, 120 m). The Interactor state of a character (slot 26) is in the player codecs
+  for the owner and each observer; it has no fragment for a character that had no interaction.
+- A probe can have a given actor id (`ProbeBody::actor`, `tools/world probe ... --actor HEX32`;
+  live check L2 of stage 2.5a: the record of a level placement).
 - The first record of a character has the states of the world that it has at the entry: the
   world marks the status state and the speed table at each entry (`kEnteredComponents` in
   `world/world.cpp`; code review of stage 3.3b-S1, finding F2, test case RS2). A status that

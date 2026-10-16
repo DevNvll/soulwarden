@@ -54,6 +54,8 @@ inline constexpr std::uint32_t kTypeDelayedEventState = 3139;   // MB::DelayedEv
 inline constexpr std::uint32_t kTypePositionInTheWorldState = 13; // MB::PositionInTheWorldReplicatedState (stage 3.3b-S2b)
 inline constexpr std::uint32_t kTypeEntitlementState = 3133;    // MB::EntitlementComponentReplicatedState (stage 1.1b)
 inline constexpr std::uint32_t kTypeAchievementState = 3210;    // MB::AchievementComponentReplicatedState (stage 1.1b)
+inline constexpr std::uint32_t kTypeInteractorState = 3752;     // MB::InteractorComponentReplicatedState (stage 2.5a)
+inline constexpr std::uint32_t kTypeInteractState = 2930;       // MB::InteractReplicatedState (stage 2.5a)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -91,6 +93,8 @@ inline constexpr std::uint32_t kStatMultiplierSlot = 43;
 /** The components Entitlement and Achievement of the player slice (stage 1.1b; research dlc-entitlements.md, Q2). */
 inline constexpr std::uint32_t kEntitlementSlot = 19;
 inline constexpr std::uint32_t kAchievementSlot = 66;
+/** The component Interactor of the entity RootPlayer of the player slice and of the remote player slice (stage 2.5a). */
+inline constexpr std::uint32_t kInteractorSlot = 26;
 
 enum class View {
     owner,
@@ -175,6 +179,11 @@ struct StateCodec {
 [[nodiscard]] std::span<const StateCodec> spell_codecs();
 /** @return The codecs of a probe entity (development aid, tools/world probe): only the metadata state. */
 [[nodiscard]] std::span<const StateCodec> probe_codecs();
+/**
+ * @return The codecs of an object entity (stage 2.5a): the metadata state (the slice and the managed actor id of the placement)
+ *         and the Interact state of each bound (the slots of the data). Only the observer view.
+ */
+[[nodiscard]] std::span<const StateCodec> object_codecs();
 /** @return The codecs of an entity of each kind. */
 [[nodiscard]] std::span<const StateCodec> codecs_of(const world::Entity& entity);
 /** @return The slot of the state of a codec for an entity. 0 for a state that is not the metadata state: no fragment. */
@@ -408,5 +417,13 @@ struct CreatureScope {
  * @param newestInput The newest input number that the session got from its client.
  */
 [[nodiscard]] hub::Bytes encode_movement_heartbeat(const world::WorldClock& clock, std::uint16_t newestInput);
+
+/**
+ * @return The Interactor state of a character (stage 2.5a, states/interaction_states.cpp): the G of the object of its committed
+ *         interaction, or the empty value after its end. No fragment for a character that had none.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_interactor_parts(const world::Entity& entity, View view, const PartsRequest& request);
+/** @return The Interact state of each bound of an object entity (stage 2.5a): Enabled and HasInteractors. */
+[[nodiscard]] std::vector<SlotState> encode_interact_states(const world::Entity& entity, View view, const PartsRequest& request);
 
 } // namespace soulwarden::backend::server::rep

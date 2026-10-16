@@ -65,6 +65,10 @@ public:
     [[nodiscard]] std::size_t position() const {
         return m_position;
     }
+    /** @return The bytes that the reader read from the position `start` to its position now. */
+    [[nodiscard]] std::span<const std::uint8_t> consumed_since(std::size_t start) const {
+        return start <= m_position ? m_data.subspan(start, m_position - start) : std::span<const std::uint8_t>{};
+    }
 
     std::uint8_t u8();
     std::uint16_t u16();

@@ -62,6 +62,10 @@ before a live test of the expansion. The wire contracts are in the protocol note
   must be an alias of the list. The tool stops when a rank limit of a row (MaxLevel, Expansion01MaxLevel) is not less than
   the number of the ranks of its table. A refused file gives no limits of an expansion: the backend works with no tables
   ([Level, attributes, and skills](progression-and-skills.md)).
+- The achievement state also has the achievements that a character earned in play (stage 2.5a: the read lore pages,
+  [Interactions](interactions.md)). Their rows are in the same table; the bit of an id comes from the progression tables, else from
+  the interaction data (`Ownership::achievement_bit`). With no progression tables a character still gets the bits of these rows
+  at its world entry. `Ownership::unlock_achievement` writes the row first, then the bit (case IT5).
 - The entitlement state (slot 19) and the achievement state (slot 66) are for the owner only; an observer gets neither. The
   first record of a character has both, before the level (the codec sequence). The sequence of a container is the world
   revision of the last change of the state.

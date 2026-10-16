@@ -28,6 +28,7 @@
 #include "gamedata/navigation_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/slice_ids.h"
+#include "gamedata/interaction_data.h"
 #include "gamedata/travel_places.h"
 #include "server/http/admin_access.h"
 #include "server/http/request_handler.h"
@@ -531,6 +532,19 @@ int main(int argc, char** argv) {
                    travelPlacesPath.c_str(),
                    travelPlaces.error().c_str());
     }
+    // The interaction objects of the world (stage 2.5a): the lore pages, the persons, and each other object of the level data
+    // that a player can use. With no file the backend refuses each request of an interaction.
+    const std::string interactionDataPath = (gameDataDirectory / gamedata::kInteractionDataFile).string();
+    gamedata::InteractionData interactionData;
+    if (interactionData.load(interactionDataPath)) {
+        log::write("backend: interaction data loaded from %s (%zu objects with %zu bounds, %zu options, %zu achievements)",
+                   interactionDataPath.c_str(), interactionData.objects().size(), interactionData.bound_count(),
+                   interactionData.options().size(), interactionData.achievements().size());
+    } else {
+        log::write("backend: no interaction data at %s (%s): each request of an interaction is refused, and a read lore page is "
+                   "not kept. Make the file with tools/gamedata/interactions.sh",
+                   interactionDataPath.c_str(), interactionData.error().c_str());
+    }
     // The readers of the game data files are done: the memory of the parsed documents (the
     // creature data of the whole world is a file of some megabytes) goes back to the system.
     release_free_memory();
@@ -562,6 +576,7 @@ int main(int argc, char** argv) {
     worldOptions.creatureData = &creatureData;
     worldOptions.combatTables = &combatTables;
     worldOptions.travelPlaces = &travelPlaces;
+    worldOptions.interactionData = &interactionData;
     worldOptions.lootTables = &lootTables;
     worldOptions.abilityData = &abilityData;
     worldOptions.spellData = &spellData;

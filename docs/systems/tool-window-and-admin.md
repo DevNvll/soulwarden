@@ -83,7 +83,12 @@ protocol notes (section 6).
   the weapon in the hand ([Projectiles](projectiles.md)); the tool window has no button for it. Stage 1.1b: the state of a
   character has the member `ownership` (the owned expansion with its limits, the entitlements of the account, the
   achievements, the rewards; [DLC and entitlements](dlc-and-entitlements.md)); there is no command that gives or takes an
-  entitlement, and the tool window does not show the member yet. The
+  entitlement, and the tool window does not show the member yet. Stage 2.5a: the commands
+  `set_object_enabled` (arguments `object`, the key of an object of the interaction data, and
+  `enabled`, 1 or 0; only an object 30 m or less from the character, the rule `nearCharacter`
+  of `commands::CreatureReach`) and `cancel_interaction` (no argument), and the member
+  `interactions` of the state (the committed interaction and the objects 30 m or less from the
+  character; [Interactions](interactions.md)); the tool window has no button for them. The
   perk roll of an item (`tools/world perkroll`) is a development
   route only. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn

@@ -72,7 +72,9 @@ of that system.
   has a sword of gear score 700 in weapon slot 1, FoodCONT5 in quick slot 17 (key 6), Mining 250, Riding 5, a flail node
   (Arcane Smite), and each character of the two accounts that entered has the amulet of a DLC pack (AmuletIsabellaT1); `Gearone` is a character of the creation with the armor and the sword
   of the archetype Soldier; from stage 3.3b-M2b `Soulwarden` has the 19 war hammer nodes of the build of the user (with
-  Breathing Room) and the bar Wrecking Ball, Shockwave, Path of Destiny. Make a new empty data directory or a new character only when the
+  Breathing Room) and the bar Wrecking Ball, Shockwave, Path of Destiny; from stage 2.5a `Soulwarden` has two lore pages in its
+  journal (the rows `Lore_unlock_00_Aeternum_Title_07_02`, the page at 8838.85 4246.60 136.45 near the start, and
+  `Lore_unlock_04_Everfall_Title_20_01`; delete the rows of `achievements` with `Lore%` for a test of a first read). Make a new empty data directory or a new character only when the
   test is about an empty database or about the creation. A database backup is not necessary.
   `sqlite3 ~/Games/soulwarden/work/dev-data/soulwarden.sqlite3 "update characters set position_x=null,
   position_y=null, position_z=null where name='Soulwarden'"` (with no run alive) puts the

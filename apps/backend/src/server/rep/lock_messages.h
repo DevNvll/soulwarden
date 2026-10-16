@@ -1,8 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <span>
 
 #include "server/hub/wire.h"
+#include "world/entity.h"
 #include "world/ids.h"
 
 // The messages that end a lock of the input of a client (protocol notes 4.20).
@@ -41,9 +44,22 @@
 //   InteractorComponentServerFacet_RequestCancelCommittedInteractionFromClient (type 2473,
 //   client sender at image RVA 0x490AD30):
 //     target:u64 entity:u64                 the Interactor facet of the character
-//     reference:32 bytes                    the object of the interaction
+//     reference := actor:16 bytes G:u64 target:u64   the object of the interaction (live check L1 of stage 2.5a: 48 bytes)
 //
-// The backend has no interaction state: it accepts the message and changes nothing.
+// Stage 2.5a: the interaction system ends the committed interaction of the character when the reference is its reference
+// (world/interactions.h); a body that is not 48 bytes, or a different reference, changes nothing.
+//
+// The reply of the server to a request of the client (the interaction block of its input report; stage 2.5a):
+//
+//   InteractorComponentClientFacet_ReceiveInteractionResult (type 3743, client writer 0x35E6C80, reader 0x35EC230, handler
+//   0x49175F0):
+//     target:u64 entity:u64                 the Interactor facet of the character
+//     reference:32 bytes                    the reference of the block (the handler compares all 32 bytes with its record)
+//     action:u8 result:u8                   the action of the block; 1 accepted, 2 refused
+//     text:size (0)  u32 (0)  16 bytes (0)  (research K2: a body of 71 bytes)
+//
+// Result 1 keeps a committed record; for a one-shot it restores the committed record or clears the request. Result 2 clears
+// both records (live check L1: a conversation closes; the journal of a lore page stays open, a local window).
 //
 // The server ends an interaction of the client:
 //
@@ -65,6 +81,7 @@ inline constexpr std::uint32_t kTypeCutsceneEnded = 6705;            // PlayerCu
 inline constexpr std::uint32_t kTypeCutsceneEndFinalized = 6709;     // PlayerCutsceneComponentClientFacet_OnServerCutsceneEndRequestFinalized
 inline constexpr std::uint32_t kTypeCancelCommittedInteraction = 2473; // InteractorComponentServerFacet_RequestCancelCommittedInteractionFromClient
 inline constexpr std::uint32_t kTypeCancelCurrentInteraction = 3746; // InteractorComponentClientFacet_CancelCurrentInteraction
+inline constexpr std::uint32_t kTypeInteractionResult = 3743;       // InteractorComponentClientFacet_ReceiveInteractionResult
 
 /**
  * Ids of the components PlayerCutscene and Interactor of the entity RootPlayer in
@@ -80,5 +97,19 @@ inline constexpr std::uint64_t kInteractorComponent = 0x6C5718DBFE6DF612ULL;
 
 /** @return The body of the message "cancel current interaction" for the client of a character. */
 [[nodiscard]] hub::Bytes cancel_interaction_body(world::EntityId character);
+
+/** The body of the message 2473 of a client: its component call and the reference of its interaction. */
+struct InteractionCancel {
+    std::uint64_t target{0};
+    std::uint64_t entity{0};
+    world::InteractionReference reference;
+};
+
+/** @return The message 2473 of a body of exactly 48 bytes, or no value (a short or a long body is not the message). */
+[[nodiscard]] std::optional<InteractionCancel> read_interaction_cancel(std::span<const std::uint8_t> body);
+
+/** @return The body of the reply 3743 for the client of a character (71 bytes). */
+[[nodiscard]] hub::Bytes interaction_result_body(world::EntityId character, const world::InteractionReference& reference,
+                                                 std::uint8_t action, bool accepted);
 
 } // namespace soulwarden::backend::server::rep

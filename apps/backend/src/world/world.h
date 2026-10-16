@@ -33,6 +33,7 @@
 #include "world/gear.h"
 #include "world/health.h"
 #include "world/ids.h"
+#include "world/interactions.h"
 #include "world/inventory.h"
 #include "world/load_meter.h"
 #include "world/navigation.h"
@@ -178,6 +179,12 @@ public:
     }
 
     /**
+     * The world ended the committed interaction of the character of this session (stage 2.5a, world/interactions.h: a command,
+     * the death): the session tells its client (message 3746; the client then sends 2473). A sink with no client does nothing.
+     */
+    virtual void interaction_cancelled() {}
+
+    /**
      * Development aid (tools/world message): the session sends its client one message with a
      * type and a body of the caller. It is for a live check of a message that has no code yet.
      * A sink with no client does nothing.
@@ -260,6 +267,11 @@ struct WorldOptions {
     const gamedata::LootTables* lootTables{nullptr};
     /** The ability data (game data, stage 3.3a). Null: the backend refuses each ability press. */
     const gamedata::AbilityData* abilityData{nullptr};
+    /**
+     * The interaction objects of the world (game data, stage 2.5a). Null or not loaded: the backend refuses each request of an
+     * interaction (3743 result 2), and the lock of a conversation works as before.
+     */
+    const gamedata::InteractionData* interactionData{nullptr};
     /** The perk data (game data, stage 1.3b). Null: an item has no perk, and no perk has an effect. */
     const gamedata::PerkData* perkData{nullptr};
     /** The spell entity data (game data, stage 3.3b-S2a). Null or not loaded: a spell entity has its hits and no record. */
@@ -592,6 +604,14 @@ public:
     bool remove_probe(EntityId id);
 
     /**
+     * Makes the entity of an object of the level data (stage 2.5a). Only the interaction system calls it (world/interactions.h).
+     * Its actor id is the managed actor id of its placement (game data), not an id of the allocator: the client has the object
+     * from its level data, and it applies the states of the record to that object (live check L2). The entity id is G of
+     * that actor; it has an odd first byte, and an id of the allocator has an even one.
+     */
+    Entity& make_object(const ObjectBody& body, const ActorId& actor, const state::WorldPosition& position);
+
+    /**
      * Makes the entity of a spell (stage 3.3b-S2a). Only the spell system calls it (world/spells.h). Its actor id comes from
      * the id allocator; the sessions near it look for it in the same tick (last_spell).
      */
@@ -726,6 +746,13 @@ public:
     [[nodiscard]] Runes& runes() {
         return m_runes;
     }
+    /** @return The interaction system (stage 2.5a): the use of the objects of the level data, the state of each object. */
+    [[nodiscard]] Interactions& interactions() {
+        return m_interactions;
+    }
+    [[nodiscard]] const Interactions& interactions() const {
+        return m_interactions;
+    }
     /** @return The spell entities of the world (stage 3.3b-S2a): the vortex of Gravity Well. */
     [[nodiscard]] Spells& spells() {
         return m_spells;
@@ -765,6 +792,8 @@ public:
      * the health system calls it. No effect for a session that the world does not know.
      */
     void healed_player(SessionId session, EntityId target, float amount);
+    /** Gives a session the end of the committed interaction of its character (SessionSink::interaction_cancelled; stage 2.5a). */
+    void interaction_cancelled(SessionId session);
     /**
      * Development aid: gives the session of a character one message for its client
      * (SessionSink::development_message).
@@ -837,6 +866,8 @@ private:
     /** The friend pairs of a test fixture (set_test_friends), each pair in both sequences. */
     std::set<std::pair<std::string, std::string>> m_testFriends;
     Projectiles m_projectiles;
+    /** The interactions of the characters and the states of the objects (stage 2.5a). */
+    Interactions m_interactions;
     Revision m_lastSpell{0};
 };
 

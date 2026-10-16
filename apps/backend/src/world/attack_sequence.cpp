@@ -94,6 +94,12 @@ std::int32_t press_target(const gamedata::AttackFragment& fragment, float t) {
     return -1;
 }
 
+/** Adds an item of a fragment with the count of the ends of the sequence now (code review of stage 3.3b-M2b, finding M2b-R2). */
+void push_event(const AttackSequences::State& state, std::vector<SequenceEvent>& events, SequenceEvent event) {
+    event.generation = state.generation;
+    events.push_back(event);
+}
+
 } // namespace
 
 const char* sequence_end_text(SequenceEnd end) {
@@ -232,7 +238,7 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
             state.pendingAbility = -1;
             state.pendingCast = 0;
             start_visit(state, fragment, -1, at, now, due, cast);
-            events.push_back(SequenceEvent{SequenceEvent::Kind::start, cast, state.visits.back().number, &actions.fragments[fragment], 0, due});
+            push_event(state, events, SequenceEvent{SequenceEvent::Kind::start, cast, state.visits.back().number, &actions.fragments[fragment], 0, due});
             continue;
         }
         AttackVisit* visit = !state.visits.empty() && !state.visits.back().ended ? &state.visits.back() : nullptr;
@@ -261,7 +267,7 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
         // Each item has its due time on the world clock: the due time of the visit and the time of the item (finding M2-R1).
         const auto due = [visit](float time) { return visit->dueAt + seconds_time(time); };
         while (visit->paid < fragment.payments.size() && fragment.payments[visit->paid].time <= t + kClockEpsilon) {
-            events.push_back(SequenceEvent{SequenceEvent::Kind::payment, visit->cast, visit->number, &fragment,
+            push_event(state, events, SequenceEvent{SequenceEvent::Kind::payment, visit->cast, visit->number, &fragment,
                                            static_cast<std::uint32_t>(visit->paid), due(fragment.payments[visit->paid].time)});
             ++visit->paid;
         }
@@ -270,21 +276,21 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
             for (std::uint32_t index = 0; index < fragment.strikes.size() && index < 64; ++index) {
                 if ((visit->strikesPassed & (1ULL << index)) == 0 && fragment.strikes[index].start <= t + kClockEpsilon) {
                     visit->strikesPassed |= 1ULL << index;
-                    events.push_back(SequenceEvent{SequenceEvent::Kind::strike, visit->cast, visit->number, &fragment, index,
+                    push_event(state, events, SequenceEvent{SequenceEvent::Kind::strike, visit->cast, visit->number, &fragment, index,
                                                    due(fragment.strikes[index].start)});
                 }
             }
             for (std::uint32_t index = 0; index < fragment.casts.size() && index < 32; ++index) {
                 if ((visit->castsPassed & (1U << index)) == 0 && fragment.casts[index].time <= t + kClockEpsilon) {
                     visit->castsPassed |= 1U << index;
-                    events.push_back(SequenceEvent{SequenceEvent::Kind::cast, visit->cast, visit->number, &fragment, index,
+                    push_event(state, events, SequenceEvent{SequenceEvent::Kind::cast, visit->cast, visit->number, &fragment, index,
                                                    due(fragment.casts[index].time)});
                 }
             }
             for (std::uint32_t index = 0; index < fragment.markers.size() && index < 32; ++index) {
                 if ((visit->markersPassed & (1U << index)) == 0 && fragment.markers[index].time <= t + kClockEpsilon) {
                     visit->markersPassed |= 1U << index;
-                    events.push_back(SequenceEvent{SequenceEvent::Kind::marker, visit->cast, visit->number, &fragment, index,
+                    push_event(state, events, SequenceEvent{SequenceEvent::Kind::marker, visit->cast, visit->number, &fragment, index,
                                                    due(fragment.markers[index].time)});
                 }
             }
@@ -542,6 +548,9 @@ AbilityStart AttackSequences::start_ability(const std::string& characterId, Sess
         start_visit(*state, fragment, -1, input, now, due, cast);
         state->hasInput = true;
         state->lastInput = input;
+        result.visit = state->visits.back().number;
+        result.due = due;
+        result.generation = state->generation;
         return result;
     }
     state->pendingAbility = static_cast<std::int32_t>(fragment);
@@ -777,7 +786,18 @@ void AttackSequences::end(const std::string& characterId, SequenceEnd why) {
     }
     if (!found->second.visits.empty() && !found->second.visits.back().ended) {
         reset(found->second, why, found->second.lastInput);
+        return;
     }
+    // At rest: no visit plays, but an item of a visit that ended at the end of its fragment can wait for its due time (the pull of Reap,
+    // the ground of Mighty Gavel). The end cancels it (code review of stage 3.3b-M2b, finding M2b-R2), and a press that waits too.
+    found->second.pendingAbility = -1;
+    found->second.pendingCast = 0;
+    ++found->second.generation;
+}
+
+std::optional<std::uint32_t> AttackSequences::generation_of(const std::string& characterId) const {
+    const auto found = m_states.find(characterId);
+    return found == m_states.end() ? std::nullopt : std::optional<std::uint32_t>(found->second.generation);
 }
 
 void AttackSequences::forget(const std::string& characterId) {

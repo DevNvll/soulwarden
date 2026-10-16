@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <array>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -196,6 +197,70 @@ struct InputContactItem {
 };
 
 /**
+ * The interaction block of an input entry (mask bit 8; stage 2.5a; server/rep/client_input.h, InputInteraction): the fields that
+ * the backend reads, and the parts of a test of the reader. The other values are 0 and the other texts are empty.
+ */
+struct InteractionBlock {
+    std::array<std::uint8_t, 16> actor{};
+    std::uint64_t group{0};
+    std::uint64_t target{0};
+    std::uint8_t action{0};
+    std::uint8_t baseAction{0};
+    std::uint64_t optionEntity{0};
+    bool committed{false};
+    std::uint32_t optionId{0};
+    /** The text +0x88 (the client sends the display key of the object there, live check L1). */
+    std::string text88;
+    bool vectors{false};
+    /** A value that is not 0 or 1 for the committed flag (a test of the reader). */
+    std::uint8_t committedByte{0xFF};
+    /** The text +0x48 (a test of the limit of a text). */
+    std::string text48;
+};
+
+/** Writes a present interaction block (client writer at image RVA 0x35E67E0). */
+inline void write_interaction_block(server::hub::Writer& out, const InteractionBlock& block) {
+    out.u8(1);
+    out.raw(block.actor);
+    out.u64(block.group);
+    out.u64(block.target);
+    out.u8(block.action);
+    out.u8(block.baseAction);
+    out.u64(block.optionEntity);
+    out.u32(0);
+    out.string(block.text48);
+    out.u32(0);
+    out.u32(0);
+    out.f32(0.0F);
+    out.u8(block.committedByte != 0xFF ? block.committedByte : block.committed ? 1 : 0);
+    out.string(block.text88);
+    out.string("");
+    out.string("");
+    out.string("");
+    out.f32(0.0F); // holdTime
+    out.u8(block.vectors ? 1 : 0);
+    if (block.vectors) {
+        out.zeros(24);
+    }
+    out.u8(0);           // +0x150
+    out.u32(0);          // +0x154
+    out.u8(0);           // +0x158 requiredItemCount
+    out.u32(block.optionId);
+    out.zeros(16);       // +0x128, +0x44, +0x160, +0x164
+    out.size64(0);       // requiredCurrency
+    out.u32(0);          // +0x170
+    out.size(0);         // requiredLevel
+    out.string("");      // +0x178
+    out.zeros(5);        // +0x1A4, +0x1A8
+    out.u8(0);           // +0x1A9
+    out.u32(0);          // +0x1E8
+    out.string("");      // +0x1C0
+    out.zeros(12);       // +0x1F0, +0x1F8
+    out.u32(0);          // +0x200
+    out.u8(0);           // +0x204
+}
+
+/**
  * The fields of one input entry that a test sets (server/rep/client_input.h, protocol notes
  * 4.7). The default is the entry of the older tests: the look direction and the camera
  * position, no flags, and no position of the character.
@@ -230,6 +295,12 @@ struct InputEntry {
      * its two vectors (155 bytes). 3: a present flag that is not 0 or 1.
      */
     int object140{-1};
+    /**
+     * The interaction block of mask bit 8 (stage 2.5a): with a value, the entry has the bit and this block (it replaces
+     * `object140`). `noInteraction`: the entry has the bit and the block with the flag 0.
+     */
+    std::optional<InteractionBlock> interaction;
+    bool noInteraction{false};
     /** The entry has the world position of flag bit 11, the two fields of flag bit 8, and the value of flag bit 14. */
     bool position360{false};
     bool positionPair{false};
@@ -321,7 +392,14 @@ inline void write_input_entry(server::hub::Writer& w, const InputEntry& entry, c
     if (entry.targetKind != 3) {
         fields.zeros(17);
     }
-    if (entry.object140 >= 0) {
+    if (entry.interaction || entry.noInteraction) {
+        mask |= 0x100;
+        if (entry.interaction) {
+            write_interaction_block(fields, *entry.interaction);
+        } else {
+            fields.u8(0);
+        }
+    } else if (entry.object140 >= 0) {
         mask |= 0x100;
         // present, then (client reader at image RVA 0x35EBC30): 32 + 14 bytes, a text, 8
         // bytes, f32, flag, four texts, f32, the flag of the vectors, [24 bytes], 10 + 16

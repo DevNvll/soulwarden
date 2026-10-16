@@ -122,6 +122,51 @@ struct InputShot {
     std::uint32_t row{0};
 };
 
+/**
+ * The interaction block of an input entry (mask bit 8, entry +0x140; client writer at image RVA 0x35E67E0, reader 0x35EBC30;
+ * research interaction-stage.md, Q2; protocol notes 4.35): the request of the client for the use of an object. All fixed-width
+ * numbers are big-endian, `size` and `size64` are the prefix codes of the hub, a text is a size and its bytes, a flag is 0 or 1.
+ *
+ *   present:u8 (0: no request, and the block ends)
+ *   object := actor:16 bytes G:u64 target:u64       the actor id, the entity group id, and the facet target of the Interact
+ *                                                   component of the object (record +0x10, +0x20, +0x28)
+ *   action:u8 baseAction:u8 optionEntity:u64 u32    (+0x30, +0x31, +0x38, +0x40)
+ *   text u32 u32 f32 committed:flag                 (+0x48, +0x70, +0x74, +0x78, +0x80)
+ *   text text text text holdTime:f32                (+0x88, +0xB0, +0xD8, +0x100, +0x7C)
+ *   hasVectors:flag [6 f32 if set]                  (+0x81, +0x130, +0x140)
+ *   flag u32 requiredItemCount:u8 optionId:u32      (+0x150, +0x154, +0x158, +0x15C)
+ *   u32 tag:u32 u32 u32                             (+0x128, +0x44, +0x160, +0x164)
+ *   requiredCurrency:size64 u32 requiredLevel:size text   (+0x168, +0x170, +0x1A0, +0x178)
+ *   u32 u8 flag u32 text                            (+0x1A4, +0x1A8, +0x1A9, +0x1E8, +0x1C0)
+ *   u32 u64 u32 flag                                (+0x1F0, +0x1F8, +0x200, +0x204)
+ *
+ * The option id is the CRC-32 of the lower-case option name (client hash 0x12F4730). Each value of the block is a claim of the
+ * client: the world finds the object, the option, and the requirements in its own data (world/interactions.h).
+ */
+struct InputInteraction {
+    std::array<std::uint8_t, 16> actor{};
+    std::uint64_t group{0};
+    std::uint64_t target{0};
+    std::uint8_t action{0};
+    std::uint8_t baseAction{0};
+    std::uint64_t optionEntity{0};
+    bool committed{false};
+    float holdTime{0.0F};
+    std::uint32_t optionId{0};
+    std::uint8_t requiredItemCount{0};
+    std::uint64_t requiredCurrency{0};
+    std::uint32_t requiredLevel{0};
+    /** The wire form of the present block, from its flag: two requests are the same request when these bytes are equal. */
+    std::vector<std::uint8_t> bytes;
+
+    bool operator==(const InputInteraction& other) const {
+        return bytes == other.bytes;
+    }
+};
+
+/** Longest text of an interaction block that the backend reads (bytes): a rule of this project; the client sends option and key names. */
+inline constexpr std::uint32_t kMaxInteractionText = 1024;
+
 /** What the backend reads of each entry of a report for the attacks of the character. */
 struct InputStep {
     /** Input number of the entry. */
@@ -168,6 +213,12 @@ struct InputStep {
     /** The block press came ("block_press_virtual", bit 484; stage 3.3b-M2): a transition of an ability on IfInput block_press_virtual. */
     bool blockPress{false};
     std::vector<InputContact> contacts;
+    /**
+     * The interaction request of the entry (stage 2.5a): the block of mask bit 8. An entry with no bit 8 has the block of the entry
+     * before it in the message (the newer entry), and the newest entry with no bit 8 has none (the default entry). No value: the
+     * client requests no interaction at this input.
+     */
+    std::optional<InputInteraction> interaction;
 };
 
 /** The newest input entry of one input report. */

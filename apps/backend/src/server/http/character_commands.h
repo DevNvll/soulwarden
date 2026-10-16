@@ -340,6 +340,27 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
 /** @return The JSON form of one kind of the creature data, with its health at its level. */
 [[nodiscard]] nlohmann::json creature_kind_json(const gamedata::CreatureData& data, const gamedata::CreatureKind& kind);
 
+// The interaction commands (stage 2.5a, world/interactions.h, server/http/interaction_commands.cpp).
+
+/** The objects of the admin state of a character: each object of the interaction data this near to it (meters, horizontal). */
+inline constexpr float kAdminInteractionRange = 30.0F;
+
+/**
+ * @return The interactions of a character (world thread): its committed interaction ("active": the object key, the kind, the
+ *         option, the seconds), each object of the interaction data that is `radius` or less from it with the state of each
+ *         bound (enabled, users, options), the work of the lookup, and the counts of the requests by verdict.
+ */
+[[nodiscard]] nlohmann::json interactions_view(world::World& world, const std::string& character, float radius);
+/**
+ * set_object_enabled: `object` (the key of an object of the interaction data: its placement UUID) and `enabled` (1 or 0). Each
+ * Interact component of the object is on or off: each session near it gets the state, and a disabled object refuses each
+ * request. The admin rule (`nearCharacter`): the object must be kAdminInteractionRange or less from the character.
+ */
+[[nodiscard]] WorldCommand set_object_enabled(const std::string& character, const Arguments& arguments, CreatureReach reach,
+                                              service::HttpResponse& refusal);
+/** cancel_interaction: no argument. The committed interaction of the character ends; its client gets the message 3746. */
+[[nodiscard]] WorldCommand cancel_interaction(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+
 /** @return The bag, the equipment, and the coin of a character (world thread), or no value when the store does not have it. */
 [[nodiscard]] std::optional<nlohmann::json> items_view(world::World& world, const std::string& character);
 

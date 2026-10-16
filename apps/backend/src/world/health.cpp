@@ -40,6 +40,10 @@ HealthResult Health::apply(Entity& target, float damage) {
         m_world.spells().caster_died(target.id);
         // The auras that follow the character end (code review of stage 3.3b-S2b, finding F3).
         m_world.spells().target_died(target.id);
+        // The committed interaction of the character ends (stage 2.5a): its client gets 3746.
+        if (target.kind == EntityKind::player) {
+            m_world.interactions().died(target);
+        }
     }
     return result;
 }

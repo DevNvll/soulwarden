@@ -193,6 +193,7 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | The passive rules of the weapon trees and the perks: the one evaluator, its events, conditions, and effects, the list of the rules that it does not apply | [Passive rules](docs/systems/passive-rules.md) |
 | The rewards of a kill and the respawn of a creature | [Rewards](docs/systems/rewards.md) |
 | Travel, the travel places, a conversation and the lock of the input | [Travel and conversations](docs/systems/travel-and-conversations.md) |
+| The use of an object of the world: the request and the reply, the checks, the interaction data, the state of an object, the lore pages and the journal, a handler of a later stage | [Interactions](docs/systems/interactions.md) |
 | The tool window (F8) and the admin interface | [Tool window and admin](docs/systems/tool-window-and-admin.md) |
 | Player identity, accounts, the character creation, the main menu | [Identity and characters](docs/systems/identity-and-characters.md) |
 | The DLC for each player: the entitlements of an account, the achievements of a character, the expansion limits, the rewards of the DLC packs, the entitlement routes | [DLC and entitlements](docs/systems/dlc-and-entitlements.md) |

@@ -49,10 +49,12 @@ client (a conversation, a cutscene). The wire contracts are in the protocol note
   conversation with a person (the key E, "Talk") is a player cutscene of the client: at its
   end the client sends 6705 and keeps the input of its character blocked until the answer
   6709, which the session sends at once (a travel does not free it). The client also sends
-  2473 (the end of its committed interaction): the backend has no interaction state and
-  changes nothing. A call that names a different entity gets nothing. Only the session of
-  the owner gets 6709 and 3746. The backend has no conversation content, no lore content,
-  and no interaction of an object: a new message of these systems keeps this answer.
+  2473 (the end of its committed interaction): from stage 2.5a it ends the interaction of the
+  character in the interaction system ([Interactions](interactions.md); the request of the
+  conversation gets 3743 result 1, and a refusal would close the conversation). A call that
+  names a different entity gets nothing. Only the session of the owner gets 6709 and 3746. The
+  backend has no conversation content: a new message of the conversation keeps this answer.
+  A travel and a respawn also end the interaction of the character in the world.
 - The travel places are game data (`travel-places.json`, `gamedata::TravelPlaces`): the
   spirit shrines and the inns of the territories, each with an id, a name, a territory, and
   a position. A command names a place by its id, or it gives the three numbers of a
@@ -93,7 +95,8 @@ tools/world travel NAME 8866 4250 137.9   # move a character to a position (--sc
 - A conversation (the key E at a person, "Talk") locks the input of the character until
   the answer 6709. In a test: the camera of the conversation shows the person; E goes to
   the next text, and the conversation ends at the last one. A lore page ("E Read") opens
-  the journal: two Escape keys close it (the first one goes back one step).
+  the journal: two Escape keys close it (the first one goes back one step). From stage 2.5a
+  the read keeps the page in the journal of the character ([Interactions](interactions.md)).
 - After a travel the creatures of the new place come only after the first position report
   of the client from the place (20 s at most): `tools/world creatures` lists them at once,
   the interest table of the session later.

@@ -14,6 +14,7 @@
 #include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
+#include "gamedata/interaction_data.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/perk_data.h"
 #include "gamedata/projectile_data.h"
@@ -78,9 +79,12 @@ struct ServerHost {
     gamedata::ProjectileData projectiles;
     /** The weapon actions (stage 3.3b-M1). They are empty until a case sets them: a melee hit then uses the rule of stage 3.2a. */
     gamedata::WeaponActions weaponActions;
+    /** The interaction data (stage 2.5a). It is empty until a case sets it: each request of an interaction is then refused. */
+    gamedata::InteractionData interactions;
     world::World world{clock, store, tables,
-                       with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities, perks, spells,
-                                      projectiles, weaponActions)};
+                       with_interactions(with_game_data(catalog, progression, creatures, combat, places, terrain, navigation, loot, abilities,
+                                                        perks, spells, projectiles, weaponActions),
+                                         interactions)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -236,6 +240,11 @@ struct ServerHost {
         return options;
     }
 
+    static world::WorldOptions with_interactions(world::WorldOptions options, const gamedata::InteractionData& interactions) {
+        options.interactionData = &interactions;
+        return options;
+    }
+
     explicit ServerHost(const std::string& serverVersion = "test-version") {
         service::RepServerOptions options;
         options.serverVersion = serverVersion;
@@ -244,9 +253,13 @@ struct ServerHost {
     explicit ServerHost(const service::RepServerOptions& options) {
         start(options);
     }
+    /** A host with a database file (stage 2.5a: a new start of the backend with the same database). */
+    ServerHost(const service::RepServerOptions& options, const std::string& database) {
+        start(options, database);
+    }
 
-    void start(const service::RepServerOptions& options) {
-        if (!store.open(":memory:")) {
+    void start(const service::RepServerOptions& options, const std::string& database = ":memory:") {
+        if (!store.open(database)) {
             throw std::runtime_error("test host: the store did not open");
         }
         server = std::make_unique<service::RepServer>(transport, world, options);

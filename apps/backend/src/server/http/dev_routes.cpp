@@ -51,7 +51,7 @@
 //   GET  /v1/dev/loot/roll?kind=KIND[&level=N][&count=N][&forced=1][&character=ID]
 //                                                        roll the loot table of a kind many times
 //                                                        and count the items (nothing is given)
-//   POST /v1/dev/world/probe?near=ID&asset=HEX32&sub=N[&dx=N&dy=N&dz=N][&radius=N][&fragments=SLOT:TYPE:HEX,...]
+//   POST /v1/dev/world/probe?near=ID&asset=HEX32&sub=N[&dx=N&dy=N&dz=N][&radius=N][&actor=HEX32][&fragments=SLOT:TYPE:HEX,...]
 //                                                        a probe entity (live check L4 of stage 3.3b-S2a): an
 //                                                        entity of a slice of the game (asset id and sub id)
 //                                                        whose states are the fragments of the command; the reply
@@ -109,6 +109,11 @@
 //                                                        a creature takes an effect of the ability
 //                                                        data, or a knockdown or a stagger (stage 3.3a)
 // The abilities of a character (world/abilities.h, stage 3.3a):
+//   GET  /v1/dev/interactions?character=ID[&radius=N]    the interactions of a character (stage 2.5a): its committed
+//                                                        interaction and the objects near it (default 30 m)
+//   POST /v1/dev/interactions/object?character=ID&object=KEY&enabled=0|1
+//                                                        enable or disable an object of the interaction data
+//   POST /v1/dev/interactions/cancel?character=ID        end the committed interaction of a character (3746)
 //   GET  /v1/dev/abilities?character=ID                  the cooldowns of the character and the
 //                                                        counts of the abilities
 //   POST /v1/dev/abilities/reset?character=ID            each cooldown of the character ends
@@ -151,6 +156,8 @@ const char* kind_text(world::EntityKind kind) {
         return "probe";
     case world::EntityKind::spell:
         return "spell";
+    case world::EntityKind::object:
+        return "object";
     case world::EntityKind::player:
         break;
     }
@@ -502,6 +509,11 @@ service::HttpResponse make_probe(const Services& services, const RouteContext& c
     const auto sub = query_integer(request, "sub", 0, 0xFFFFFFFFULL);
     const auto radius = query_number(request, "radius");
     const auto list = query_text(request, "fragments");
+    const auto actorText = query_text(request, "actor");
+    std::optional<std::vector<std::uint8_t>> actorBytes = actorText ? hex_bytes(*actorText) : std::nullopt;
+    if (actorText && (!actorBytes || actorBytes->size() != 16)) {
+        return message(400, "actor must be 32 hexadecimal digits");
+    }
     std::optional<std::vector<std::uint8_t>> assetBytes = asset ? hex_bytes(*asset) : std::nullopt;
     if (!nearCharacter || nearCharacter->empty() || !assetBytes || assetBytes->size() != 16 || !sub) {
         return message(400, "give near=ID (a character in the world), asset=HEX (32 digits), and sub=N");
@@ -549,6 +561,11 @@ service::HttpResponse make_probe(const Services& services, const RouteContext& c
     if (radius) {
         body.interestRadius = *radius;
     }
+    if (actorBytes) {
+        world::ActorId actor;
+        std::copy(actorBytes->begin(), actorBytes->end(), actor.bytes.begin());
+        body.actor = actor;
+    }
     return in_world(services, [nearCharacter = *nearCharacter, body, offset0 = offset[0], offset1 = offset[1], offset2 = offset[2],
                                fragments = std::move(fragments)](world::World& target) mutable {
         const world::Entity* reference = target.find_character(nearCharacter);
@@ -559,7 +576,7 @@ service::HttpResponse make_probe(const Services& services, const RouteContext& c
                                             reference->position.z + offset2};
         const world::Entity* probe = target.make_probe(body, position, std::move(fragments));
         if (probe == nullptr) {
-            return message(400, "the position is not a position of the world");
+            return message(400, "the position is not a position of the world, or the actor id is the id of an entity");
         }
         char group[17];
         std::snprintf(group, sizeof(group), "%016llx", static_cast<unsigned long long>(probe->id));
@@ -872,6 +889,25 @@ void register_dev_routes(Router& router, const Services& services) {
             return json_reply(200, commands::abilities_json(target, character).dump());
         });
     });
+    // The interaction base (stage 2.5a): the objects near a character with their state, the enable of an object, and the end of
+    // the committed interaction of a character.
+    router.add("GET", "", "/v1/dev/interactions", "dev.interactions", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        const auto radius = commands::QueryArguments(context.request).number("radius", 0.0F, 2000.0F);
+        if (commands::QueryArguments(context.request).has("radius") && !radius) {
+            return message(400, "radius must be 0 to 2000 m");
+        }
+        return in_world(services, [character = *character, radius = radius.value_or(30.0F)](world::World& target) {
+            return json_reply(200, commands::interactions_view(target, character, radius).dump());
+        });
+    });
+    router.add("POST", "", "/v1/dev/interactions/object", "dev.interactions_object",
+               creature_route(services, commands::set_object_enabled));
+    router.add("POST", "", "/v1/dev/interactions/cancel", "dev.interactions_cancel", command_route(services, commands::cancel_interaction));
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));
     router.add("POST", "", "/v1/dev/abilities/cast", "dev.abilities_cast", command_route(services, commands::cast_ability));
     router.add("POST", "", "/v1/dev/spells/end", "dev.spells_end", command_route(services, commands::end_spells));

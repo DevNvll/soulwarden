@@ -103,6 +103,14 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   row statuses, the slices of the spells of an action, and `GawhShop::press`, `step`, `contact_at`. The state decoder of the
   tests reads the fields 1 and 2 of slot 46 (`progress_wire::ability_value_size`); the bundle decoder needs this to read a
   record of a character with a hit count.
+- Stage 2.5a adds the cases IT1 to IT11 (`tests/interaction_tests.cpp`: the interaction base) and RX1 to RX5
+  (`tests/review_wrecking_tests.cpp`: the corrections of the code review of stage 3.3b-M2b, findings M2b-R1 to M2b-R5; each one fails
+  on the tree of stage 3.3b-M2b and passes with the correction; RX4 runs `check_weapon_actions_tool.py`). The fixture of the IT cases
+  is in its file (`Shop`: made-up objects of the form of `interaction-data.json`, two players near them, a block of the client for an
+  option, `ServerHost(options, database)` for a database file). The input builder of the tests writes a full interaction block
+  (`InteractionBlock`, `InputEntry::interaction`), and the state decoder knows the states 3752 and 2930. IT10 runs
+  `tools/gamedata/check_interactions_tool.py`. IT5 adds a trigger to a database file (a refused row); IT8 has a time limit of 300 ms
+  for 400,000 lookups and of 2 s for 300 reports with a catalog of 90,008 objects.
 - Stage 3.3b-M2b adds the cases GH20 (Wrecking Ball in the fragment of the data) and GH21 (the target bits of a creature) to
   `tests/gawh_tests.cpp`; GH21 and the stored bytes of CR2 fail on the tree of stage 3.3b-M2. The hammer graph of `GawhShop` has
   the fragment of Wrecking Ball with its two clips (the base capsule and the sphere of Breathing Room) and the rule row of Safety

@@ -134,6 +134,12 @@ struct SequenceEvent {
      * that sends its numbers faster than 30 in a second, or the gap fill): the item then waits for this time (Combat::step).
      */
     WorldClock::time_point due{};
+    /**
+     * The count of the ends of the sequence when the item came (State::generation; code review of stage 3.3b-M2b, finding M2b-R2): an
+     * item that waits for its due time runs only when no end of the sequence came after it (a travel, a change of the weapon, a death),
+     * also when its visit had ended before at the end of its fragment.
+     */
+    std::uint32_t generation{0};
 };
 
 /** Where the fragment of an ability starts after its press (AttackSequences::start_ability). */
@@ -150,6 +156,14 @@ struct AbilityStart {
     /** The input step of the start, and its steps after the press. */
     std::uint16_t input{0};
     unsigned delaySteps{0};
+    /**
+     * A start at the step of the press (not a dry run): the visit of the fragment, its due time on the world clock, and the count of the
+     * ends of the sequence (code review of stage 3.3b-M2b, finding M2b-R1: the spells of the action start at the due time of the visit).
+     * 0: no visit.
+     */
+    std::uint32_t visit{0};
+    WorldClock::time_point due{};
+    std::uint32_t generation{0};
 };
 
 /** Why a sequence ended (for the counts and the log). */
@@ -314,8 +328,13 @@ public:
     /** @return The newest visit of a character, or null. */
     [[nodiscard]] const AttackVisit* newest(const std::string& characterId) const;
 
-    /** Ends the sequence of a character (a weapon change, an accepted ability, a death, a travel). */
+    /**
+     * Ends the sequence of a character (a weapon change, an accepted ability, a death, a travel). Also at rest (no visit plays): each
+     * item of an earlier visit that waits for its due time is cancelled (the count of the ends goes up; finding M2b-R2).
+     */
     void end(const std::string& characterId, SequenceEnd why);
+    /** @return The count of the ends of the sequence of a character (State::generation), or no value with no state. */
+    [[nodiscard]] std::optional<std::uint32_t> generation_of(const std::string& characterId) const;
     /** Removes the state of a character that left the world (its entity is gone). */
     void forget(const std::string& characterId);
     /** @return The number of the targets that a strike of a visit hit. */

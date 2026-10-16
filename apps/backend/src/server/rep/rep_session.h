@@ -161,6 +161,9 @@ public:
     /** The character of this session died: the client gets the message "on player death". */
     void died(float respawnSeconds) override;
 
+    /** The world ended the committed interaction of the character (stage 2.5a): the client gets the message 3746. */
+    void interaction_cancelled() override;
+
     /** Development aid: the client gets one message with a type and a body of a command (tools/world message). */
     void development_message(std::uint32_t type, const std::vector<std::uint8_t>& body) override;
 
@@ -356,7 +359,10 @@ private:
      * which the session sends at once.
      */
     void handle_cutscene_ended(std::span<const std::uint8_t> body);
-    /** The end of an interaction of the client: the backend has no interaction state, and nothing changes. */
+    /**
+     * The end of an interaction of the client (2473, stage 2.5a): the world ends the committed interaction of the character
+     * when the reference is its reference. A body that is not 48 bytes changes nothing.
+     */
     void handle_interaction_cancel(std::span<const std::uint8_t> body);
     /**
      * Ends each lock of the input that the client of the own character can have: a committed
@@ -382,6 +388,11 @@ private:
     void handle_attacks(const ClientInput& input);
     /** Gives the press of a key of the ability bar to the world (stage 3.3a), and writes a refusal to the log. */
     void press_ability(const ClientInput& input, const InputStep& step);
+    /**
+     * The interaction request of a new input step (stage 2.5a): a change of the block of the client goes to the world
+     * (world/interactions.h), and the client gets the reply 3743 (result 1 or 2). The same block again is no new request.
+     */
+    void observe_interaction(const InputStep& step);
     /** Gives one melee contact to the world, and writes the result to the log. */
     void claim_hit(const InputStep& step, const InputContact& contact);
     /** A shot item of a new input step (stage 3.3b-S3): the projectile of a ranged or magic attack, or of Gravity Well. */
@@ -513,6 +524,8 @@ private:
     /** Numbers of the ends of a cutscene that the client sent, and of the ends of an interaction, for the log line at its end. */
     std::uint32_t m_cutsceneEnds{0};
     std::uint32_t m_interactionEnds{0};
+    /** Number of the interaction requests of the client (stage 2.5a), for the log line at its end. */
+    std::uint32_t m_interactionRequests{0};
     /**
      * True from the first input report with a camera: the loading screen of the client is
      * gone, and the client has its local player entity. The client needs it before it gets
@@ -520,6 +533,8 @@ private:
      */
     bool m_cameraSeen{false};
 
+    /** The interaction block of the last new input step of the client (the transport history of the requests). No value: none. */
+    std::optional<InputInteraction> m_interactionBlock;
     /** Newest input report of the client and the time of the last log line for it. */
     ClientInput m_input;
     carrier::Clock::time_point m_lastInputLog{};

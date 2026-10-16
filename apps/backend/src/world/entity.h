@@ -21,9 +21,9 @@
 // the replication layer of the game server makes the bytes for each session that observes
 // the entity (server/rep/states).
 //
-// An entity is the character of a player, a creature, or a spell (EntityKind). A creature and a
-// spell have no character, no account, and no session: their key is their entity id. A function
-// for a character (World::find_character, each system with a character id) never finds them.
+// An entity is the character of a player, a creature, a spell, or an object of the level data (EntityKind). A creature, a
+// spell, and an object have no character, no account, and no session: their key is their entity id. A function for a
+// character (World::find_character, each system with a character id) never finds them.
 
 namespace soulwarden::backend::world {
 
@@ -44,6 +44,13 @@ enum class EntityKind {
      * fragments) and its stop. Only a development command makes it.
      */
     probe,
+    /**
+     * An object of the level data that a player can use (stage 2.5a, world/interactions.h): a lore page, a person. The client
+     * makes the object itself from the level data; the entity carries the state of the server (Enabled, HasInteractors of
+     * each Interact component) to each session near it, with the managed actor id of its placement. The interaction system
+     * makes it when the state of the object first differs from the level data, and keeps it while the backend runs.
+     */
+    object,
 };
 
 /** The component states of an entity that the replication layer sends. Each system adds its keys. */
@@ -105,6 +112,13 @@ enum class ComponentKey {
     entitlements,
     /** The achievements of a character (stage 1.1b): the bit vector. Only the owner gets it. */
     achievements,
+    /**
+     * The Interactor state of a character (stage 2.5a, slot 26, type 3752): the G of the object of its committed interaction.
+     * The owner and each observer get it.
+     */
+    interactor,
+    /** The Interact states of an object (stage 2.5a, type 2930): Enabled and HasInteractors of each Interact component. */
+    interact,
 };
 
 /**
@@ -932,6 +946,52 @@ struct SpellBody {
     std::vector<SpellTrigger> triggers;
 };
 
+/** The reference of an object in a request of a client (stage 2.5a): its actor id, its G, and the facet target of a bound. */
+struct InteractionReference {
+    std::array<std::uint8_t, 16> actor{};
+    std::uint64_t group{0};
+    std::uint64_t target{0};
+
+    bool operator==(const InteractionReference&) const = default;
+};
+
+/**
+ * The active interaction of a character (stage 2.5a, world/interactions.h): one committed use of an object (a lore page that
+ * the client reads, a conversation). Only the interaction system changes it. It is a value of the world, not of the database:
+ * a restart of the backend or a new world entry has no active interaction (research interaction-stage.md, the temporary state).
+ */
+struct ActiveInteraction {
+    /** The object and the bound of the interaction data, and the option row. */
+    std::uint32_t object{0};
+    std::uint32_t bound{0};
+    std::uint32_t option{0};
+    InteractionReference reference;
+    std::uint8_t action{0};
+    /** The start on the world clock, and the number of the use (a new use has a new number). */
+    WorldClock::time_point started{};
+    std::uint64_t serial{0};
+};
+
+/** The server state of one Interact component of an object entity (stage 2.5a): a copy of the values of the interaction system. */
+struct ObjectBound {
+    /** The slot of the state 2930 in the record (game data). */
+    std::uint32_t slot{0};
+    /** Enabled (field 0): false hides the prompt of the client (live check L2). */
+    bool enabled{true};
+    /** HasInteractors (field 1): the number of characters that use the bound. */
+    std::uint32_t users{0};
+};
+
+/** The values of an object entity (EntityKind::object, stage 2.5a). */
+struct ObjectBody {
+    /** The index of the object in the interaction data. */
+    std::uint32_t index{0};
+    /** The slice asset id of the placement and its sub id: the metadata state of the record. */
+    std::array<std::uint8_t, 16> asset{};
+    std::uint32_t subId{2};
+    std::vector<ObjectBound> bounds;
+};
+
 /** Development aid: the slice of a probe entity (EntityKind::probe) and its interest distance. */
 struct ProbeBody {
     /** The asset id of the slice (the 16 bytes of the asset catalog) and its sub id. */
@@ -939,6 +999,11 @@ struct ProbeBody {
     std::uint32_t subId{2};
     /** A session starts to observe the probe at this distance (meters), and it stops 20 m farther. */
     float interestRadius{50.0F};
+    /**
+     * The actor id of the probe (stage 2.5a, live check L2: the record of a level placement with its managed actor id). No value:
+     * an id of the id allocator.
+     */
+    std::optional<ActorId> actor;
 };
 
 struct Entity {
@@ -957,6 +1022,8 @@ struct Entity {
     SpellBody spell;
     /** Development aid: the slice of a probe entity. */
     ProbeBody probe;
+    /** Objects (stage 2.5a): the object of the interaction data and the state of its bounds. */
+    ObjectBody object;
     /** The session of the client that plays this character. 0: no session. */
     SessionId owner{0};
 
@@ -1037,6 +1104,13 @@ struct Entity {
      */
     std::vector<std::uint32_t> entitlements;
     std::vector<std::uint32_t> achievements;
+    /**
+     * The committed interaction of the character (stage 2.5a): a copy of the value of the interaction system. No value: none.
+     * `interactionEnded` is the world revision of the last end of one (the Interactor state of a session that got the begin
+     * before it has the empty value first: research K8).
+     */
+    std::optional<ActiveInteraction> interaction;
+    Revision interactionEnded{0};
     /** Development aid: fragments of a command, one for each slot at most. Empty in a product run. */
     std::vector<RawFragment> rawFragments;
 

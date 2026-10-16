@@ -220,7 +220,11 @@ backend. The tool of each system is also in the document of that system.
   for the great axe and the war hammer (`FRAGMENT_WEAPONS`: the backend plays their abilities as fragments) when the fragment of an
   ability or a fragment that its action selects is not in the sources, and when an ability has no strike in the fragments that it
   can play, but for `AREA_ABILITIES` (Shockwave and Path of Destiny: the area of a spell of the server) (case "incomplete
-  abilities", RH7); from stage 3.3b-M2 the file has the format 2: the abilities of each
+  abilities", RH7); from the code review of stage 3.3b-M2b (finding M2b-R4, stage 2.5a) the tool stops also when the ability action
+  list of these weapons is not in the sources, and when one choice of an ability (its fragment, or one fragment that its action
+  selects, each with the fragments of its own transitions) has no strike: a strike of one choice does not prove a strike of a
+  different one (`NO_STRIKE_FRAGMENTS` is the list of the exceptions: empty in the supported build; case "incomplete abilities", RX4;
+  the file of the game copy is the same with this rule); from stage 3.3b-M2 the file has the format 2: the abilities of each
   weapon (the action of the ability action list with its cooldown, its fragment, the fragments that it selects with
   ChangeActionFragment and their node and perk conditions, and its spells with CastSpell and the mark of their condition), the
   start windows of the abilities in each fragment (CanAttack_<ability>), the transitions inside an ability with their condition
@@ -244,7 +248,18 @@ backend. The tool of each system is also in the document of that system.
   format 1 the players have the limits of no expansion and get no DLC; the tool stops for a link
   that does not resolve (`check_progression_tool.py`, case DL9; [DLC and
   entitlements](../systems/dlc-and-entitlements.md)); without it the backend sends the stored
-  values of a character and refuses a command or a request that needs a table).
+  values of a character and refuses a command or a request that needs a table), and `interaction-data.json` (stage 2.5a,
+  `tools/gamedata/interactions.sh`: each placement of the 1,334 layers of the 49 regions whose slice has an Interact component,
+  with its key (the UUID), its kind (a table of the tool from the option names), its slice asset, its managed actor id (the UUID
+  rule), and each bound with its slot, its facet target and the instance id of the entity of each option (the XOR rule), its place
+  (the m_worldTM of the entity, turned by the rotation of the placement), its range, capacity, line of sight, arc, the
+  requirements, and the achievement of a lore page (`javelindata_loreitems`, `javelindata_achievements`); the option rows of
+  `uidatabase.uidb`; 43,225 objects, 43,485 bounds, 75 options, 1,152 achievements, 24 MB, about 4 minutes with 4 processes; the
+  file lists the placements that are not objects with the cause (182,417 plots, 42,205 placements whose slice has no Interact
+  component, the PrefabSpawner children of stage 2.5b) and the 58 names of the data with no row; the tool stops with no file for a
+  source that is not complete or not consistent (`check_interactions_tool.py`, case IT10); the backend refuses a file whose form,
+  indexes, or counts are not correct, as a whole; without it the backend refuses each request of an interaction, and a read lore
+  page is not kept: [Interactions](../systems/interactions.md)).
 
 ## Commands
 
@@ -262,12 +277,16 @@ tools/gamedata/spells.sh             # one time: spell entity data for the backe
 tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots; 72 KB, 10 s); needs an Oodle source
 tools/gamedata/weapon-actions.sh     # one time: the attack graphs and the abilities of the melee weapons for the backend (fragments, transitions, strikes, lengths; 0.4 MB, 5 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
+tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, ...; 24 MB, 4 minutes); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
 ```
 
 ## Traps
 
+- Stage 2.5a adds `interaction-data.json`. With no file the backend works as before for the other systems: each request of an
+  interaction is refused (a conversation then closes at once: make the file). The other files of the tools are equal to the files
+  of stage 3.3b-M2b (also `weapon-actions.json` with the stricter checks of finding M2b-R4).
 - Stage 3.3b-M2 changes four files. `weapon-actions.json` format 2 (the abilities and their fragments; the backend reads a file of
   format 1 too, and then the six abilities of stage 3.3b-M2 are refused: `noRule`). `combat-tables.json` format 3 (`rowEffects`:
   the StatusEffect of each damage row with EffectOnlyOnDamage, `[row, [status, ...], onlyOnDamage]`: the root of Gravity on the

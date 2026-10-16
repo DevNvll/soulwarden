@@ -185,7 +185,7 @@ below is the layout after the port.
 | 2.2 | World time and weather | 2.1 | S | verified | | |
 | 2.3 | Exact position and full movement | 0.4, 0.6b | L | verified (position) | 2.3a done | |
 | 2.4 | Other entities and area of interest | 2.1, 0.6b | L | verified | | |
-| 2.5 | Interaction base | 2.4 | M | verified | | |
+| 2.5 | Interaction base | 2.4 | M | verified | 2.5a done | |
 | 2.6 | Death, respawn, camps, fast travel | 2.3, 2.5 | M | verified | | |
 | 2.7 | Map, territories, markers | 2.1 | M | verified | | |
 | 2.8 | Notices and HUD services | 2.1 | S | verified | | |
@@ -247,17 +247,18 @@ stage with a letter is a part of the system with that number.
 | 10 | 1.3b | Itemization: the perks, the gems, the gear score, and the rarity of an item instance; the effect of the gear on the attributes, the armor, and the damage; the heartrune; the use of potions and food (research file `itemization.md`) | 3.3a | done |
 | 11 | 3.3b | Abilities, the shared parts (research file `abilities-shared.md`): part S1 (the status effects of a player), part S2a (the first spell entity: the vortex of Gravity Well; the speed of a status), part S4 (the forced movement: the pull and the push of a hit, the dash of the caster, the counter of Riposte), part S3 (the projectiles of the basic attacks of the bow and the fire staff, and the check of a ranged hit), and part S2b (the spell entities of three kinds: the Pylon of the ice gauntlet, the trap of the musket, the Beacon of the life staff) | 1.3b | S1, S2a, S4, S3, S2b done |
 | 12 | 1.1b | The DLC for each player: each account and each character owns the expansion (Rise of the Angry Earth) and the DLC packs of the client data, with no purchase and no setting: the limits of the expansion (level, gear score, trade skills), the flail tree, the content of the expansion (research file `dlc-entitlements.md`) | 3.3b | done (the ownership, the limits, the flail tree, the amulet of a DLC pack; the content of the expansion keeps its own stages) |
-| 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | S5 done (the critical hits, a hit from behind, the headshot of a projectile, and one evaluator of the passive rules of the data); S6 done (one heal path, the heal base of an ability, Divine Embrace, Sacred Ground, the heal pulses of the Beacon, the outgoing and the received heal parts, the number of the owner and the notice of the healer); M1 done (the basic attacks of the eight melee weapons from the attack graph of the data: the light chain with its ender, the partial and the full charge, the fast sub-hits, one hit of each target for each strike; the level part of the heal base; the corrections of the review of S6); M2 done (the abilities of the build of the user are complete: the twelve abilities of the great axe and the war hammer play the fragments of the data with their pulls, pushes, spins, branches, spells, and hit counts, and each node of the two trees acts or is in the list with its cause: grit, block, stamina; the corrections of the review of M1); M2b done (Wrecking Ball hits again: the development character has the build of the user with Breathing Room, and each creature is a homing target and a camera lock target, dataBits 0x03 of its movement state; the corrections of the review of M2); the abilities of the build of the user are complete; M3 open |
-| 14 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`) | 3.3b | research |
-| 15 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
-| 16 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
-| 17 | 3.6 | Gathering and fishing (research file `gathering-stage.md`) | 2.5 | research |
-| 18 | 3.7 | Crafting, refining, repair, salvage (research file `crafting-stage.md`) | 3.6 | research |
-| 19 | 5.1 | Shops (research file `shops-stage.md`) | 2.5 | research |
-| 20 | 5.6 | Cosmetics and transmog (research file `cosmetics-stage.md`) | 5.1 | research |
-| 21 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" (research file `quest-engine.md`) | 5.6 | research |
-| 22 | 3.3c | Abilities of the other weapons: the sword and shield, the rapier, the hatchet, the spear, the greatsword, the flail (melee parts M4 to M9b), the bow, the musket, the blunderbuss (ranged parts R1 to R7), the fire staff, the life staff, the ice gauntlet, the void gauntlet (magic runs M1 to M9); the dagger is not in it: the client cannot use its abilities (research files `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`) | 1.8 | research |
-| 23 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 3.3c | open |
+| 13 | 3.3b | Abilities, the rest of the build of the user: part S5 (critical hits and the passive events), part S6 (the heals of an ability), and the great axe and war hammer parts M1 (the basic combos, the charged heavy attacks), M2 (the rest of the abilities and nodes of the build), and M3 (the other abilities of the two weapons) (research files `abilities-shared.md`, `abilities-melee.md`) | 1.1b | S5 done (the critical hits, a hit from behind, the headshot of a projectile, and one evaluator of the passive rules of the data); S6 done (one heal path, the heal base of an ability, Divine Embrace, Sacred Ground, the heal pulses of the Beacon, the outgoing and the received heal parts, the number of the owner and the notice of the healer); M1 done (the basic attacks of the eight melee weapons from the attack graph of the data: the light chain with its ender, the partial and the full charge, the fast sub-hits, one hit of each target for each strike; the level part of the heal base; the corrections of the review of S6); M2 done (the abilities of the build of the user are complete: the twelve abilities of the great axe and the war hammer play the fragments of the data with their pulls, pushes, spins, branches, spells, and hit counts, and each node of the two trees acts or is in the list with its cause: grit, block, stamina; the corrections of the review of M1); M2b done (Wrecking Ball hits again: the development character has the build of the user with Breathing Room, and each creature is a homing target and a camera lock target, dataBits 0x03 of its movement state; the corrections of the review of M2; the five findings of the review of M2b, a part of them on the corrections of M2-R1, R6, R7, and R8, are corrected in stage 2.5a: cases RX1 to RX5); the abilities of the build of the user are complete; M3 open |
+| 14 | 2.5 | Interaction base: the use of an object or a person (the prompt, the timed interaction, the checks), with an interface for the later systems (research file `interaction-stage.md`): part 2.5a (the objects of the level data and the checked use, the lore pages as the first result) and part 2.5b (the stations of a settlement, the camps, the timed use) | 3.3b | 2.5a done (the request and the reply of the client, the checks of the data, the interaction data of the whole world, the state of an object, the lore pages in the journal of the character, the commands; the corrections of the review of 3.3b-M2b); 2.5b open |
+| 15 | 3.4f | Creatures with ranged attacks and abilities: the archers and the casters of the data shoot and cast (a server projectile with its record for each observer, its hit on a player, a miss behind a wall), the dodge of the player against a projectile, and the stamina model that the dodge needs; project rules where the data is silent (the distance band, the choice of melee or ranged, the repeat time); block, encounter abilities, and summons wait (research file `creature-ranged.md`) | 2.5 | research |
+| 16 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions | 2.5 | research |
+| 17 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | research |
+| 18 | 3.6 | Gathering and fishing (research file `gathering-stage.md`) | 2.5 | research |
+| 19 | 3.7 | Crafting, refining, repair, salvage (research file `crafting-stage.md`) | 3.6 | research |
+| 20 | 5.1 | Shops (research file `shops-stage.md`) | 2.5 | research |
+| 21 | 5.6 | Cosmetics and transmog (research file `cosmetics-stage.md`) | 5.1 | research |
+| 22 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" (research file `quest-engine.md`) | 5.6 | research |
+| 23 | 3.3c | Abilities of the other weapons: the sword and shield, the rapier, the hatchet, the spear, the greatsword, the flail (melee parts M4 to M9b), the bow, the musket, the blunderbuss (ranged parts R1 to R7), the fire staff, the life staff, the ice gauntlet, the void gauntlet (magic runs M1 to M9); the dagger is not in it: the client cannot use its abilities (research files `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`) | 1.8 | research |
+| 24 | 1.9 | Acceptance test of milestone 1, with the regression of all stages before it | 3.3c | open |
 
 Decisions of the user (2026-10-14): the abilities come directly after loot and experience
 ("prioritize the abilities", "after loot and experience"), and itemization after the
@@ -274,6 +275,8 @@ and it uses the events of the systems before it. A research thread for each stag
 rows 11 to 19 started on 2026-10-15.
 
 Decisions of the user (2026-10-15, later): "i want the full game with dlc. for any player, auto unlock the dlc" (row 12), and "use your best judgement for the rest". Decisions of the orchestrator from that: the build of the user first (rows 11 and 13), then the interaction base and the rest of the order, and the other weapons after the quest engine (row 22); the critical hits and the heals of an ability use approximations from the inputs of the game data, because the formulas were only in the original server (research file `crit-heal-formulas.md`): an independent roll for each hit with the chance of the data, one additive pool of critical bonuses on the multiplier of the weapon, and a heal base that scales with Focus as damage scales with its attribute; each one is a project rule in the document of its system. The user first asked for a pause after row 13 ("when done with abilities stuff, pause the implementation") and then cancelled it ("ignore the pause command and keep working even when you finish abilities"): the work continues with row 14.
+
+Decision of the orchestrator (2026-10-16, from the priority of the user: combat first): part 3.3b-M2b found that no creature makes a ranged attack (the creature data tool keeps only the melee attacks), so stage 3.4f (row 15) comes directly after the interaction base, before the chests.
 
 After stage 1.9, the sequence is the sequence of the summary table, with these changes:
 the other parts of the systems 3.1 to 3.7 come before milestone 4, and milestone 6 comes
@@ -917,11 +920,22 @@ the player can interact, die, and travel. All later milestones need this one.
 
 - Client evidence: `Interactor`, `InteractorUI`, `Interact`, `UIActionManager`,
   `CameraLock`.
-- Research (`interaction.md`, verified): the interaction request and the reply; the prompt on the screen; timed
-  interactions; the stations and doors of a settlement.
+- Research (`interaction.md`, `interaction-stage.md`, verified): the interaction request and the reply; the prompt on the
+  screen; timed interactions; the stations and doors of a settlement.
 - Implementation: an interaction service that other systems register with (storage, shops,
   crafting stations, gathering, conversations).
 - Test: the prompt shows at a station, and the E key opens its window.
+- Stage 2.5a (done, 2026-10-16; [Interactions](systems/interactions.md), protocol notes 4.35; result:
+  `~/Games/soulwarden/work/evidence/interaction/implement/RESULT.md`): the interaction block of the input report is read; the
+  interaction system checks each request against the interaction data of the game (`tools/gamedata/interactions.sh`: 43,225
+  objects of the level data with the ids of the client) and the session replies 3743; 2473 with its reference ends the committed
+  interaction; the state of an object (Enabled, HasInteractors) goes to each session near it as the record of the level object of
+  the client, and the Interactor state of a character to its owner and its observers. The first result: a lore page (E Read, T Add
+  To Journal) keeps its achievement in the database, and the journal of the character has the page after a restart. The
+  conversations and the animations of the client are accepted; each other option is refused until its stage. The commands list,
+  enable, and cancel. The corrections of the code review of stage 3.3b-M2b (findings M2b-R1 to M2b-R5, cases RX1 to RX5).
+- Stage 2.5b (open): the stations of a settlement (a server object with its BuildableController), the camps, the timed use (the
+  powderkeg), the range loss, the removal of a source, and the service handoff.
 
 ### 2.6 Death, respawn, camps, fast travel
 

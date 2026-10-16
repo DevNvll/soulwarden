@@ -574,11 +574,12 @@ void RepSession::log_message_counts() const {
                    m_travels,
                    static_cast<unsigned long long>(m_track.count(world::PositionVerdict::beforeTravel)));
     }
-    if (m_cutsceneEnds != 0 || m_interactionEnds != 0) {
+    if (m_cutsceneEnds != 0 || m_interactionEnds != 0 || m_interactionRequests != 0) {
         log::write("rep: locks of the input of the client in the session: %u end(s) of a cutscene answered, %u end(s) of an "
-                   "interaction",
+                   "interaction, %u interaction request(s)",
                    m_cutsceneEnds,
-                   m_interactionEnds);
+                   m_interactionEnds,
+                   m_interactionRequests);
     }
     if (m_damageMarks != 0 || m_deaths != 0 || m_respawns != 0 || m_healNotices != 0) {
         log::write("rep: health of the character in the session: %llu damage mark(s) sent, %u death(s), %u respawn(s), %llu notice(s) of a "
@@ -647,7 +648,8 @@ void RepSession::replicate(carrier::Clock::time_point now) {
         }
         if (entity->kind == world::EntityKind::creature) {
             add_creature_record(*entity, *m_observer.find(id), batch);
-        } else if (entity->kind == world::EntityKind::spell || entity->kind == world::EntityKind::probe) {
+        } else if (entity->kind == world::EntityKind::spell || entity->kind == world::EntityKind::probe
+                   || entity->kind == world::EntityKind::object) {
             add_observer_record(*entity, *m_observer.find(id), batch);
         } else {
             send_record(*entity, *m_observer.find(id), now);
@@ -952,6 +954,18 @@ void RepSession::update_interest(carrier::Clock::time_point now, const world::En
                                static_cast<double>(distance),
                                static_cast<long long>(
                                    std::chrono::duration_cast<std::chrono::milliseconds>(m_clock.now() - entity.spell.started).count()));
+                }
+            }
+            return;
+        }
+        if (entity.kind == world::EntityKind::object) {
+            // An object of the level data with a state of the server (stage 2.5a): its record has the state of now, also when
+            // the client has an older one (the client keeps the last state of a stopped record: live check L2).
+            if (distance <= m_world.interest_enter(entity)) {
+                const std::uint32_t interest = m_observer.add(entity.id);
+                if (interest != 0) {
+                    log::write("rep: object %016llx comes into the interest table (interest %u, %.1f m)",
+                               static_cast<unsigned long long>(entity.id), interest, static_cast<double>(distance));
                 }
             }
             return;
@@ -1350,6 +1364,7 @@ void RepSession::handle_attacks(const ClientInput& input) {
         for (const InputContact& contact : step.contacts) {
             claim_hit(step, contact);
         }
+        observe_interaction(step);
     };
     // The steps of a report are newest first.
     const InputStep& newest = input.steps.front();
@@ -1394,6 +1409,53 @@ void RepSession::press_ability(const ClientInput& input, const InputStep& step) 
                    static_cast<unsigned>(step.abilityKey),
                    static_cast<unsigned>(step.sequence));
     }
+}
+
+void RepSession::observe_interaction(const InputStep& step) {
+    if (step.interaction == m_interactionBlock) {
+        return; // The client sends its request in each input: the same request is no new request.
+    }
+    m_interactionBlock = step.interaction;
+    if (!step.interaction) {
+        // The client ended its request (the close of the journal of a lore page: live check L1).
+        m_world.interactions().request_ended(m_id);
+        return;
+    }
+    const InputInteraction& block = *step.interaction;
+    world::InteractionRequest request;
+    request.object.actor = block.actor;
+    request.object.group = block.group;
+    request.object.target = block.target;
+    request.action = block.action;
+    request.baseAction = block.baseAction;
+    request.optionEntity = block.optionEntity;
+    request.optionId = block.optionId;
+    request.committed = block.committed;
+    request.input = step.sequence;
+    // The world finds the character from the session and checks the request (world/interactions.h).
+    const world::InteractionVerdict verdict = m_world.interactions().request(m_id, request);
+    ++m_interactionRequests;
+    if (verdict == world::InteractionVerdict::same || verdict == world::InteractionVerdict::notInWorld) {
+        return;
+    }
+    const bool accepted = verdict == world::InteractionVerdict::accepted;
+    send_message(kTypeInteractionResult, interaction_result_body(m_observer.own(), request.object, block.action, accepted));
+    log::write("rep: interaction request (input %u): object %016llx target %016llx action %u base %u option %08x: %s, reply %u "
+               "(result %u)",
+               static_cast<unsigned>(step.sequence), static_cast<unsigned long long>(block.group),
+               static_cast<unsigned long long>(block.target), static_cast<unsigned>(block.action),
+               static_cast<unsigned>(block.baseAction), block.optionId, world::interaction_verdict_text(verdict),
+               kTypeInteractionResult, accepted ? 1U : 2U);
+}
+
+void RepSession::interaction_cancelled() {
+    // The call comes from the world (a command, the death of the character).
+    if (!m_inWorld || m_closing) {
+        return;
+    }
+    send_message(kTypeCancelCurrentInteraction, cancel_interaction_body(m_observer.own()));
+    log::write("rep: the world ended the interaction of the character: message \"cancel current interaction\" (type %u) sent",
+               kTypeCancelCurrentInteraction);
 }
 
 void RepSession::shoot(const InputStep& step, const InputShot& item, std::uint32_t ordinal) {
@@ -1662,22 +1724,27 @@ void RepSession::handle_cutscene_ended(std::span<const std::uint8_t> body) {
 
 void RepSession::handle_interaction_cancel(std::span<const std::uint8_t> body) {
     const world::Entity* own = m_world.find(m_observer.own());
-    const auto call = read_component_call(body);
     if (own == nullptr) {
         return;
     }
-    if (!call) {
-        log::write("rep: end of an interaction (type %u, %zu bytes) is too short: no change", kTypeCancelCommittedInteraction,
+    // The full body: the component call and the 32 bytes of the reference (research K2). A short body is not the message.
+    const auto cancel = read_interaction_cancel(body);
+    if (!cancel) {
+        log::write("rep: end of an interaction (type %u, %zu bytes) is not 48 bytes: no change", kTypeCancelCommittedInteraction,
                    body.size());
         return;
     }
-    if (!own_call(*own, *call, kTypeCancelCommittedInteraction, "end of an interaction")) {
+    if (!own_call(*own, ComponentCall{cancel->target, cancel->entity}, kTypeCancelCommittedInteraction, "end of an interaction")) {
         return;
     }
-    // The backend has no interaction of a character: the client ended its own one.
     ++m_interactionEnds;
-    log::write("rep: the client ended its interaction (type %u): the backend has no interaction state, no change",
-               kTypeCancelCommittedInteraction);
+    // The world ends the committed interaction of the character when the reference is its reference: a late cancel, or the
+    // answer of the client to 3746, changes nothing (research K7).
+    const bool ended = m_world.interactions().client_cancel(m_id, cancel->reference);
+    log::write("rep: the client ended its interaction (type %u) with the object %016llx target %016llx: %s",
+               kTypeCancelCommittedInteraction, static_cast<unsigned long long>(cancel->reference.group),
+               static_cast<unsigned long long>(cancel->reference.target),
+               ended ? "the interaction ended" : "not the interaction of the character, no change");
 }
 
 void RepSession::end_input_lock(const char* cause) {

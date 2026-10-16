@@ -56,6 +56,16 @@ std::vector<std::string> Ownership::account_entitlements(const std::string& pers
     return joined(m_store.list_entitlements(personaId), policy_aliases());
 }
 
+std::optional<std::uint32_t> Ownership::achievement_bit(const std::string& id) const {
+    if (tables() != nullptr) {
+        if (const gamedata::AchievementRow* row = tables()->achievement(id)) {
+            return row->index;
+        }
+    }
+    const gamedata::InteractionData* interactions = m_world.interactions().data();
+    return interactions != nullptr ? interactions->achievement_index(id) : std::nullopt;
+}
+
 void Ownership::set_bits(Entity& entity, const std::vector<std::string>& aliases, const std::vector<std::string>& achievements) {
     // A row that the game data does not have stays in the store, with no bit on the wire.
     std::set<std::uint32_t> entitlementBits;
@@ -66,10 +76,10 @@ void Ownership::set_bits(Entity& entity, const std::vector<std::string>& aliases
                 entitlementBits.insert(row->index);
             }
         }
-        for (const std::string& id : achievements) {
-            if (const gamedata::AchievementRow* row = tables()->achievement(id)) {
-                achievementBits.insert(row->index);
-            }
+    }
+    for (const std::string& id : achievements) {
+        if (const std::optional<std::uint32_t> bit = achievement_bit(id)) {
+            achievementBits.insert(*bit);
         }
     }
     const std::vector<std::uint32_t> entitlementList(entitlementBits.begin(), entitlementBits.end());
@@ -114,6 +124,9 @@ bool Ownership::grant_account(const std::string& personaId, const char* source) 
 
 void Ownership::entered(Entity& entity) {
     if (tables() == nullptr) {
+        // No expansion data: no grant, but the achievements that the character earned in play (a lore page, stage 2.5a)
+        // come from their rows.
+        set_bits(entity, {}, m_store.list_achievements(entity.characterId));
         return;
     }
     const std::vector<std::string> policy = policy_aliases();
@@ -183,6 +196,24 @@ void Ownership::give_rewards(const Entity& entity, const std::vector<std::string
         log::write("ownership: no reward of %s for character %s (%s): the next world entry tries again", alias.c_str(),
                    entity.characterId.c_str(), cause);
     }
+}
+
+bool Ownership::unlock_achievement(Entity& entity, const std::string& id, std::uint32_t index) {
+    std::vector<std::string> added;
+    if (!m_store.grant_achievements(entity.characterId, {id}, &added)) {
+        log::write("ownership: the database did not take the achievement %s of character %s: no change", id.c_str(),
+                   entity.characterId.c_str());
+        return false;
+    }
+    const auto place = std::lower_bound(entity.achievements.begin(), entity.achievements.end(), index);
+    if (place == entity.achievements.end() || *place != index) {
+        entity.achievements.insert(place, index);
+        m_world.touch(entity.id, ComponentKey::achievements);
+    }
+    if (!added.empty()) {
+        log::write("ownership: character %s got the achievement %s (bit %u)", entity.characterId.c_str(), id.c_str(), index);
+    }
+    return true;
 }
 
 std::optional<OwnershipView> Ownership::view(const std::string& characterId) {
