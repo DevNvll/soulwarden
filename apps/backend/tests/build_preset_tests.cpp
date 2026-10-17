@@ -421,9 +421,10 @@ void catalog_format(const Options& options) {
     };
     json old = document;
     old["format"] = 2;
-    old["columns"].erase(old["columns"].begin() + 14);
+    // From stage U4 the tool writes format 5: the columns from place 14 on (the upgrade, the two armor appearances) go out.
+    old["columns"].erase(old["columns"].begin() + 14, old["columns"].end());
     for (json& row : old["items"]) {
-        row.erase(row.begin() + 14);
+        row.erase(row.begin() + 14, row.end());
     }
     old.erase("artifactObjectives");
     check(load(old) == std::make_pair(true, 0U), "a file of format 2 (stage 2.2) loads: no item has an upgrade gear score");

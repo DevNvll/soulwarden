@@ -21,7 +21,7 @@ file stays.
   store-table            a store table (MasterItemDefinitions_MTX_*) with no column NotDroppable (the one exception of the game
                          data): status 0, the file has its items with Nonremovable and no NotDroppable
 
-The cases of stage B0 (format 3, from stage B4 format 4: the column maxCraftUpgradeGS and the member artifactObjectives; case BP1 of the backend loads the
+The cases of stage B0 (format 3, from stage B4 format 4, from stage U4 format 5: the column maxCraftUpgradeGS and the member artifactObjectives; case BP1 of the backend loads the
 file of the case "upgrade"):
 
   upgrade               a made-up artifact bow with MaxCraftUpgradeGS 800, a ring with an empty cell, and a store table with no such
@@ -42,7 +42,7 @@ inventory screen of the client):
                         float32: 80), a ring with the override 0 (its Weight 1), and an ore with no stats row (Weight 7)
   weight-missing        a stats table with no column WeightOverride: status 1, the old file stays
 
-The cases of stage B4 (format 4: the member trinkets, the stat lines of the jewelry; case BR1 of the backend loads the file of the case
+The cases of stage B4 (format 4, from stage U4 format 5: the member trinkets, the stat lines of the jewelry; case BR1 of the backend loads the file of the case
 "trinket"):
 
   trinket               an amulet (TrinketBonus 0.01, ScaleHealthPerGS 0.625), a ring (ScaleDamagePerGS 1.25, the cells of a float32),
@@ -54,6 +54,14 @@ The cases of the code review of stage B4 (finding B4-R4; case BZ4 of the backend
 
   trinket-missing-row   a jewelry item (the amulet) names an armor stats row that the source does not have: status 1, the old file stays
   trinket-missing-table the jewelry master rows and no table of the type ArmorItemDefinitions: status 1, the old file stays
+
+The cases of stage U4 (format 5: the columns armorAppearanceM and armorAppearanceF, the clothing of the main menu; case ME8 of the
+backend loads the file of the case "appearance"):
+
+  appearance            a helm with the names of a male and a female row, a skin hat with no tag Armor (its names), a sword with empty
+                        cells, and a house item: format 5, the two texts of each master row, and empty texts for the house item
+  appearance-missing    a master table with no column ArmorAppearanceF: status 1, the old file stays
+  appearance-invalid    a cell ArmorAppearanceM with a number: status 1, the old file stays
 
 Usage: check_item_catalog_tool.py FOLDER [CASE ...]
 Status 0: each case has the expected result. Each line starts with "ok" or "FAIL".
@@ -79,6 +87,12 @@ SOURCE_CASES = ("missing-nonremovable", "missing-notdroppable", "invalid-flag", 
 UPGRADE_CASES = ("upgrade-invalid", "upgrade-missing", "objective-broken", "objective-bit-limit", "objective-conflict")
 WEIGHT_CASES = ("weight", "weight-missing")
 TRINKET_CASES = ("trinket", "trinket-missing", "trinket-invalid", "trinket-missing-row", "trinket-missing-table")
+APPEARANCE_CASES = ("appearance", "appearance-missing", "appearance-invalid")
+# The made-up items of the cases of stage U4 (the ids of the backend case ME8) and their expected names [M, F].
+APPEARANCES = {"ReviewHelm": ["m_Review_Helm", "f_Review_Helm"], "ReviewSkinHat": ["Skin_Review_Hat", "Skin_Review_Hat"],
+               "ReviewSword": ["", ""], "House_ReviewTable": ["", ""]}
+# The format of the file of the tool.
+FORMAT = 5
 # The made-up jewelry of the cases of stage B4 (the ids of the backend case BR1) and their expected rows of trinkets.
 TRINKETS = [["ReviewAmulet", 0.01, 0.625, 0.0, 0.0], ["ReviewRing", 0.01, 0.0, 1.25, 0.0], ["ReviewEarring", 0.01, 0.0, 0.0, 0.625]]
 # The made-up items of the cases of stage U3 and their expected weights (tenths).
@@ -104,7 +118,8 @@ HOUSE_CHAIR = "House_ReviewChair"
 def master_row(item_id: str, item_type: str, item_class: str, stack: int, **cells) -> dict:
     row = {"ItemID": item_id, "Name": f"@{item_id}", "ItemType": item_type, "ItemClass": item_class, "Tier": 1, "Weight": 1,
            "MaxStackSize": stack, "Durability": 1000 if stack == 1 else 0, "MinGearScore": 75 if stack == 1 else 0,
-           "MaxGearScore": 75 if stack == 1 else 0, "GearScoreOverride": 0, "BindOnPickup": False, "MaxCraftUpgradeGS": ""}
+           "MaxGearScore": 75 if stack == 1 else 0, "GearScoreOverride": 0, "BindOnPickup": False, "MaxCraftUpgradeGS": "",
+           "ArmorAppearanceM": "", "ArmorAppearanceF": ""}
     row.update(cells)
     return row
 
@@ -200,7 +215,8 @@ def upgrade_case(folder: Path, case: str) -> tuple[bool, str]:
     column = document["columns"].index("maxCraftUpgradeGS") if "maxCraftUpgradeGS" in document["columns"] else -1
     upgrades = {row[0]: row[column] for row in document["items"]} if column >= 0 else {}
     objectives = document.get("artifactObjectives")
-    passed = (status == 0 and document.get("format") == 4 and column == len(document["columns"]) - 1
+    # The loader of the backend reads the column at the place 14 (format 3 to 5).
+    passed = (status == 0 and document.get("format") == FORMAT and column == 14
               and all(len(row) == len(document["columns"]) for row in document["items"])
               and upgrades.get(UPGRADE_BOW) == 800 and upgrades.get(PLAIN_RING) == 0 and upgrades.get(STORE_HAT) == 0
               and objectives == [[UPGRADE_BOW, OBJECTIVE, OBJECTIVE_ACHIEVEMENT, OBJECTIVE_INDEX]])
@@ -285,8 +301,46 @@ def trinket_case(folder: Path, case: str) -> tuple[bool, str]:
         return False, f"status {status}, no file"
     document = json.loads(target.read_text(encoding="utf-8"))
     trinkets = document.get("trinkets")
-    return (status == 0 and document.get("format") == 4 and trinkets == TRINKETS,
+    return (status == 0 and document.get("format") == FORMAT and trinkets == TRINKETS,
             f"status {status}, format {document.get('format')}, trinkets {trinkets}; the file {target.name}")
+
+
+def appearance_case(folder: Path, case: str) -> tuple[bool, str]:
+    """A case of stage U4. @return Passed, and the detail."""
+    rows = [master_row("ReviewHelm", "Armor", "EquippableHead+Armor+Light", 1, ArmorAppearanceM="m_Review_Helm",
+                       ArmorAppearanceF="f_Review_Helm"),
+            master_row("ReviewSkinHat", "Armor", "EquippableHead", 1, ArmorAppearanceM="Skin_Review_Hat", ArmorAppearanceF="Skin_Review_Hat"),
+            master_row("ReviewSword", "Weapon", "Weapon+EquippableMainHand+Sword+Melee", 1)]
+    for row in rows:
+        row.update(Nonremovable=False, NotDroppable=False)
+    if case == "appearance-missing":
+        for row in rows:
+            del row["ArmorAppearanceF"]
+    if case == "appearance-invalid":
+        rows[0]["ArmorAppearanceM"] = 7
+    sheets = {"ReviewItems": FakeSheet("ReviewItems", rows)}
+    kinds = {"ReviewItems": tool.MASTER_TYPE}
+    for name in tool.HOUSE_TABLES:
+        house = [{"HouseItemID": "DEFAULTS"}]
+        if name == tool.HOUSE_TABLES[0]:
+            house.append({"HouseItemID": "House_ReviewTable", "Name": "@table", "ItemType": "HousingItem", "Tier": 1, "Weight": 10,
+                          "MaxStackSize": 1, "BindOnPickup": False})
+        sheets[name] = FakeSheet(name, house)
+        kinds[name] = tool.HOUSE_TYPE
+    target = folder / f"item-catalog-{case}.json"
+    target.write_text(OLD_FILE, encoding="utf-8")
+    status = run_sheets(target, sheets, kinds)
+    kept = target.read_text(encoding="utf-8") == OLD_FILE
+    if case != "appearance":
+        return status == 1 and kept, f"status {status}, the old file {'stays' if kept else 'was replaced'}"
+    if kept:
+        return False, f"status {status}, no file"
+    document = json.loads(target.read_text(encoding="utf-8"))
+    columns = document["columns"]
+    names = {row[0]: row[-2:] for row in document["items"]}
+    passed = (status == 0 and document.get("format") == FORMAT and columns[-2:] == ["armorAppearanceM", "armorAppearanceF"]
+              and all(len(row) == len(columns) for row in document["items"]) and names == APPEARANCES)
+    return passed, f"status {status}, format {document.get('format')}, names {names}; the file {target.name}"
 
 
 def run_tool(target: Path, rows: list[dict], table: str = "ReviewItems") -> int:
@@ -343,7 +397,8 @@ def main() -> int:
         return 2
     folder = Path(sys.argv[1])
     folder.mkdir(parents=True, exist_ok=True)
-    cases = sys.argv[2:] or ["protections", "control", *SOURCE_CASES, "upgrade", *UPGRADE_CASES, *WEIGHT_CASES, *TRINKET_CASES]
+    cases = sys.argv[2:] or ["protections", "control", *SOURCE_CASES, "upgrade", *UPGRADE_CASES, *WEIGHT_CASES, *TRINKET_CASES,
+                             *APPEARANCE_CASES]
     document = catalog()
     found = protections(document)
     failures = 0
@@ -351,7 +406,7 @@ def main() -> int:
         if case == "protections":
             target = folder / "item-catalog-protections.json"
             target.write_text(json.dumps(document) + "\n", encoding="utf-8")
-            passed = (document.get("format") == 4 and document.get("columns", [])[12:14] == ["nonRemovable", "notDroppable"]
+            passed = (document.get("format") == FORMAT and document.get("columns", [])[12:14] == ["nonRemovable", "notDroppable"]
                       and all(len(row) == len(document["columns"]) for row in document["items"])
                       and found.get(PROTECTED_HELM) == (True, False) and found.get(NO_DROP_ORE) == (False, True)
                       and found.get(NO_DROP_HIDE) == (False, True))
@@ -369,6 +424,8 @@ def main() -> int:
             passed, detail = weight_case(folder, case)
         elif case in TRINKET_CASES:
             passed, detail = trinket_case(folder, case)
+        elif case in APPEARANCE_CASES:
+            passed, detail = appearance_case(folder, case)
         else:
             passed, detail = False, "not a case of this check"
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")

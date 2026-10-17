@@ -69,6 +69,13 @@ struct ItemDefinition {
      * artifacts). 0: no upgrade (an empty cell, or a file of an earlier format). The limit of a give (Inventory::give_limit).
      */
     std::uint32_t maxCraftUpgradeGS{0};
+    /**
+     * The armor appearance of the item for a male body and for a female body (format 5, stage U4: the CRC-32 of the lower-case
+     * text of the cells ArmorAppearanceM and ArmorAppearanceF of the master row; the value `appearanceId` of the menu document).
+     * 0: an empty cell, or a file of an earlier format.
+     */
+    std::uint32_t armorAppearanceM{0};
+    std::uint32_t armorAppearanceF{0};
 
     /** @return True when a protection of the row keeps the item with its character. */
     [[nodiscard]] bool removal_protected() const {
@@ -124,11 +131,18 @@ public:
     /** Reads the file of the tool. @return False when the file is not there or has a different form. */
     [[nodiscard]] bool load(const std::string& path);
 
-    /** Sets the catalog with no file (tests). Item number K of the list gets the index K + 1. */
+    /** Sets the catalog with no file (tests). Item number K of the list gets the index K + 1. The items have their armor appearances. */
     void set(std::vector<ItemDefinition> items);
 
     [[nodiscard]] bool loaded() const {
         return !m_items.empty();
+    }
+    /**
+     * @return True when the items have their armor appearances (a file of format 5, stage U4, or `set`). A file of an earlier
+     *         format has none: the main menu then shows each character with no clothing.
+     */
+    [[nodiscard]] bool has_armor_appearances() const {
+        return m_hasArmorAppearances;
     }
     [[nodiscard]] std::size_t item_count() const {
         return m_items.size();
@@ -221,6 +235,7 @@ private:
     /** Lower-case ids of the backstories of the character creation. */
     std::unordered_set<std::string> m_creationBackstories;
     bool m_hasCreationBackstories{false};
+    bool m_hasArmorAppearances{false};
     /** The artifact objectives, with the lower-case item id and the achievement id as keys. */
     std::vector<ArtifactObjective> m_objectives;
     std::unordered_map<std::string, std::size_t> m_objectiveByItem;

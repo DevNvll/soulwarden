@@ -16,6 +16,9 @@ functions of the tool made-up tables, station rows, and station slices, and comp
   build           the whole build with the made-up sources: the supported recipes, the categories (members in the byte order of the ids),
                   the events of the recipes, a resource with a bucket that the bucket table does not have (a counted diagnostic)
   write           a run that stops leaves the earlier file; a run that completes replaces it (one file, through a temporary file)
+  incomplete      code review of stage 3.7a, finding CR7A-R3: an ingredient entry with the type Item, the quantity 1, and no id stops the
+                  tool (also Category_Only and Currency), and a run of the tool leaves the earlier file; an entry with an id and no type is
+                  not an ingredient (the client skips it), and the recipe keeps its other ingredients
 
 Usage: check_crafting_tool.py FOLDER [CASE ...]
 Status 0: each case has the expected result. Each line starts with "ok" or "FAIL".
@@ -23,6 +26,8 @@ Status 0: each case has the expected result. Each line starts with "ok" or "FAIL
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import struct
 import sys
@@ -38,7 +43,7 @@ from appearance_tables import Failure  # noqa: E402
 from check_ability_tool import FakeSheet  # noqa: E402
 from slice_ids import Element  # noqa: E402
 
-CASES = ("recipe", "causes", "stops", "stations", "build", "write")
+CASES = ("recipe", "causes", "stops", "stations", "build", "write", "incomplete")
 MARK = "earlier file\n"
 FAILED: list[str] = []
 
@@ -264,6 +269,29 @@ def case_write(folder: Path) -> None:
            "write: a run that completes replaces the file (format 1, 3 recipes)")
 
 
+def case_incomplete(folder: Path) -> None:
+    def with_recipe(**cells):
+        return made_up_sheets(Recipes=(tool.RECIPE_TYPE, FakeSheet("Recipes", [recipe_row(**cells)])))
+    for kind in ("Item", "Category_Only", "Currency"):
+        message = stops(lambda: build(with_recipe(Ingredient2="", Type2=kind, Qty2="1")))
+        report(message is not None and "Ingredient2 has no id" in message, f"incomplete: an entry of the type {kind} with no id stops the tool ({message})")
+    untyped = recipe_of(build(with_recipe(Type2="", Qty2="1")), "TestKnifeT1")
+    report(untyped["ingredients"] == [["Item", "TestFlintT1", 1]],
+           f"incomplete: an entry with an id and no type is not an ingredient (the client skips it): {untyped['ingredients']}")
+    target = folder / "crafting-data-incomplete.json"
+    target.write_text(MARK)
+    sheets = with_recipe(Ingredient2="", Type2="Item", Qty2="1")
+    sheet_of = {name.encode(): sheet for name, (_, sheet) in sheets.items()}
+    type_of = {name.encode(): kind for name, (kind, _) in sheets.items()}
+    with patch.object(tool, "Sources", lambda *arguments, **keywords: FakeSources(sheets, made_up_stations(), {})), \
+            patch.object(tool, "sheet_type", lambda data: type_of.get(data, "")), patch.object(tool, "Sheet", lambda data: sheet_of[data]), \
+            patch.object(sys, "argv", ["crafting.py", str(target)]), contextlib.redirect_stdout(io.StringIO()), \
+            contextlib.redirect_stderr(io.StringIO()):
+        status = tool.main()
+    report(status == 1 and target.read_text() == MARK,
+           f"incomplete: a run of the tool with such an entry has the status 1 ({status}) and leaves the earlier file")
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -284,6 +312,8 @@ def main() -> int:
             case_build()
         elif name == "write":
             case_write(folder)
+        elif name == "incomplete":
+            case_incomplete(folder)
         else:
             report(False, f"unknown case {name}")
     print(f"{len(FAILED)} failed")

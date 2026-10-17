@@ -17,6 +17,7 @@ the reward progress, the procedural items, salvage, and repair are the runs 3.7b
 | The crafting data (`crafting-data.json`) and its tool | `gamedata/crafting_data.h` (`CraftingData`, `Recipe`, `CraftingStation`), `tools/gamedata/crafting.sh` (`crafting.py`, `check_crafting_tool.py`), [Game data](../development/game-data.md), test case CRAFT-TOOL |
 | The station variants of decision D1 | `tools/gamedata/interactions.py` (`station_overrides`), `gamedata/interaction_data.h` (`SpawnedPlacement::authoredTemplate`), the log line of `main.cpp`, test case CRAFT-D1, the case "decision D1" of `check_interactions_tool.py` |
 | Two characters, the load | Test cases CRAFT-MP and CRAFT-LOAD |
+| The corrections of the code review of stage 3.7a (CR7A-R1 to CR7A-R4) | `tests/review_37a_tests.cpp`, test cases CRV1 to CRV4; `~/Games/soulwarden/work/evidence/crafting/37a/code-review/FINDINGS.md` |
 | The commands | `server/http/crafting_commands.cpp`, `server/http/character_commands.h`, `tools/world crafting`, `tools/world craft preview`, `tools/world craft stop`, test case CRAFT-CMD |
 | The research and the result | `~/Games/soulwarden/work/research/crafting-stage.md` (sections 1 to 4, 8 to 12), `crafting.md`; `~/Games/soulwarden/work/evidence/crafting/37a/implement/RESULT.md` |
 
@@ -56,8 +57,12 @@ decision of the user, decision of the orchestrator, decision of an agent.
     define membership) [game data; client code 0x5BA9FB0];
   - the plan of the whole batch on a copy (`Inventory::plan_craft`): the costs from the unlocked stacks of the bag, then of the quick slots
     1 to 4 (the cache of the client counts these: craftinginventorycache.luac, ResetCache), two ingredients of one item are one cost (one
-    stack pays a unit once), and the whole output of the batch must fit in the bag (500 slots) [client code; decision of an agent for the
-    order of the sources: the bag first]; the loot overflow of `Inventory::grant` does not apply to a paid craft [research];
+    stack pays a unit once), and the output of each job must fit in the bag (500 slots) [client code; decision of an agent for the
+    order of the sources: the bag first]; the loot overflow of `Inventory::grant` does not apply to a paid craft [research]. The plan makes
+    the jobs one after the other, each one with its costs and then its output, as the jobs of the batch run (code review of stage 3.7a,
+    finding CR7A-R1; test case CRV1): a bag that has no place for the output of a job before the last job refuses the batch at the request.
+    Before the correction the costs of all jobs left first and freed their slots: a bag with one free slot and stacks of 3 accepted 3 knives
+    and stopped after the first one. A plan of 10,000 jobs takes 2 ms (test case CRV1);
   - the coin for the fee of the batch.
 - The fee [client code 0x2E513A0, 0x2E57580; live check L3]: no fee when the Assembly of the station does not charge one
   (m_chargeCraftingFee: the camps have none); else the count times CraftingFee times the fee factor of the territory, to an integer, and
@@ -90,6 +95,10 @@ decision of the user, decision of the orchestrator, decision of an agent.
 - A refusal [live check L3]: the session sends the stop form of 2993 (an empty recipe, 0 of 0): the client ends its crafting (it sends
   2999), but its screen waits for its own 10 s timer and then shows "Crafting attempt failed." No change of the bag or the coin. A second
   request while a batch runs gets no message: the stop form would end the crafting of the batch in the client.
+- An accepted batch drops a progress of the character that the session did not send yet (code review of stage 3.7a, finding CR7A-R4;
+  test case CRV4) [decision of an agent]: a refused request and an accepted request in one tick (two reliable messages in order) gave the
+  stop form of the refusal after the acceptance; the client ends its crafting at it and sends 2999, which stopped the new batch before
+  its first item. The first job of the batch sends its own progress.
 - The empty storage search [live check L2; client code 0x2D13950]: the crafting screen of a station sends 7044 (a search UUID and its
   parameters); the session answers 7046 with that UUID and no result, and answers a 7039 with the same empty result. The craft takes the bag
   and the quick slots only: there is no storage before stage 5.2. A camp sends no search (craftingtreeview.luac).
@@ -117,7 +126,15 @@ decision of the user, decision of the orchestrator, decision of an agent.
 - No data: with no `crafting-data.json` the backend starts, and each request is refused with no change (the stop form). The loader refuses a
   file as a whole when a part is not complete or not consistent (two recipes with one CRC-32, a CRC that is not the CRC of the id, an
   ingredient type that is not a type of the client, a station row with no type, a recipe with no cause and no output, no quantity, no station
-  key, or a category with no item).
+  key, or a category with no item). It also refuses a recipe with no cause and a rule that this stage does not apply (code review of stage
+  3.7a, finding CR7A-R2; test case CRV2): an unlock (`known` false, `requiredAchievement`, `hiddenByAchievement`, `unlockedAchievement`), a
+  first-craft achievement, a procedural result, refining, craft-all, a temporary recipe, an event, a cooldown, perk items, a gear score rule,
+  SkipGrantItems, or world tags. The request checks do not test these rules: the cause list of the file is the gate, and an empty list
+  must agree with the rules of the recipe.
+- The data tool skips an ingredient entry with no type (the type Invalid: the client skips it; 88 entries of the supported build have an
+  id and no type). An entry with a type and no id stops the tool, and the earlier file stays (code review of stage 3.7a, finding CR7A-R3;
+  `check_crafting_tool.py`, case incomplete; test case CRV3) [decision of an agent: the supported build has no such entry]. Before the
+  correction the tool skipped it, and the recipe took one material less.
 
 ## Commands
 

@@ -11,6 +11,7 @@ protocol notes (sections 2.1, 2.2, and 3.4).
 | Player identity, accounts, the Steam id | Protocol notes sections 2.1 and 3.4, `tools/research/check_identity.py` |
 | Character creation, deletion, the body in the menu | Protocol notes section 2.2, `tools/scenarios/create.sh`, `tools/research/creation_params.py` |
 | Appearance of a character in the world | Protocol notes sections 2.2.5 and 4.5, `tools/gamedata/appearance.sh` |
+| The body of a character in the main menu: the menu document, its clothing (stage U4) | Protocol notes section 2.2.5, `state/creation_data.h` (`make_menu_document`, `kMenuSlotKeys`), `server/http/gateway_routes.cpp` (`published_data`), `world/inventory.h` (`menu_equipment`, `menu_appearance`), test cases ME1 to ME8 |
 
 ## Rules
 
@@ -21,6 +22,35 @@ protocol notes (sections 2.1, 2.2, and 3.4).
   row; the persona id of the account is the owner key of all player data.
 - The DLC (stage 1.1b): the token route gives each account the entitlements of the DLC, and a world entry gives each
   character the achievement of the expansion, with no purchase and no setting ([DLC and entitlements](dlc-and-entitlements.md)).
+- The menu document (stage U4). The main menu makes the body of a character from the member `PublishedData` of the
+  character list (`GET /prod/game/getlogininfo`). At each request of the list the backend makes this text for each
+  character with one writer (`state::make_menu_document`), from the values of the character: the name, the 12 appearance
+  names and the backstory of its creation data (a character with no creation data: the default appearance), the world id,
+  the level of its row, and the map `equipment`. The stored creation data does not change. The original server made the
+  text again from the character at each publish [client code: 0x67F0600 with
+  `PaperdollComponent::WriteEquipmentToPlayerSaveData`, loop 0x684E9B0, entry 0x673EE40]. The other members (the
+  position, the coin, the company name, the crest) have the values of a new character, as before [decision of the
+  orchestrator: the menu use of them is not known].
+- The map `equipment` of the menu document: one entry for each armor item of the paperdoll slots 0 to 4 in the store, in
+  the sequence of the slots. The key is the visual slot name `hat`, `shirt`, `gloves`, `pants`, `boots` [client code
+  0x673EE40: no entry for a slot above 4; game data: `m_paperdollVisualSlotMapping` of the player slice; the keys of 5 of 5
+  create requests]. The keys are code constants (`state::kMenuSlotKeys`): a wire text of the client [decision of the
+  orchestrator]. `appearanceId` is the CRC-32 of the lower-case name of `ArmorAppearanceM` (a male body) or
+  `ArmorAppearanceF` (a female body) of the item row [client code 0x673EE40: definition +0xDC and +0xE0; behavioral proof:
+  25 of 25 entries of 5 create requests of the client]. Only the gender name `Female` selects the F name
+  [decision of the orchestrator; the original test is "Male gives M, each other text gives F": the two rules differ only
+  for a text that is not a gender]. `itemName` is empty and the four dye bytes are 0 [client code: each writer of the
+  client and of the original server; the backend has no dye before stage 5.6].
+- An item with no look gets no entry: an item with no class tag `Armor` (a skin display item, a weapon), and an item row
+  with an empty name [decision of the orchestrator: the original server wrote the value 0, and the reaction of the menu to
+  0 is not known]. Thus the menu shows no weapon, no shield, no jewelry, no tool, and no item of the bag [client code
+  0x673EE40]. A character of the creation shows the armor of its archetype that it has, and no helmet: the backstory gives
+  the head item with the quantity 0 (before stage U4 the menu showed the helmet of the stored creation data).
+- More than one player and the cost (MP-1, MP-8): the route reads the store only (the inventory system writes the rows of a
+  change before it changes the entity, thus the rows are the equipment of the entity, also while the character is in the
+  world): for each character of the account one level query and one item query (the slots 0 to 4 of the paperdoll, on the
+  place index of the table; test case ME7). No world task, no scan of the world. Each account gets only its own characters
+  (test case ME4: two sessions).
 
 ## Commands
 
@@ -72,6 +102,12 @@ protocol notes (sections 2.1, 2.2, and 3.4).
   nothing when the list is not open. The body that the step shows first is not the same in
   each run. The mark in the name field is not a button: it does not erase the name, and
   `'text ...'` adds to the text that is in the field.
+- Character creation, the body type: the row "Body type" (`210 166`) opens a list of two
+  icons at its right: `363 166` is the male body, `413 166` the female body (stage U4:
+  `SOULWARDEN_CREATE_APPEARANCE='click 210 166;wait 4000;click 413 166;wait 4000'` made a
+  female character; the backend log line `world: appearance of character ...` starts with
+  1). The creation screens show no body in the pictures of gamescope (a dark screen with the
+  panels): check the gender in the log line.
 - "Confirm" of the delete popup of the main menu needs a long press: `'click 628 444 3000'`.
 - The first click on "Delete Character" of a row menu had no effect one time. A pointer move
   to the entry before the click opened the popup: `'move 382 415' 'wait 700' 'click 382 415'`.
@@ -85,9 +121,24 @@ protocol notes (sections 2.1, 2.2, and 3.4).
   world time). Now the client gets the world time at its world entry. For a view of the character from the front use
   `'look 1800 0' 'wheel 3'`.
 - A character that the backend seeded has no creation data and an empty `archetype`. The
-  backend makes creation data with the default appearance for its menu document: the menu
-  and the world show the same default body (male, grey hair, no clothing). The body is white
-  in the menu only when the backend has no appearance tables.
+  backend makes its menu document with the default appearance: the menu and the world show
+  the same default body (male, grey hair), with the armor that it wears (stage U4). The body
+  is white in the menu only when the backend has no appearance tables.
+- The menu document reads the paperdoll rows of the store, not the entity. A system that
+  changes the look of a worn item must write its row first (the inventory system does). If
+  a later stage keeps a look only in the entity (a transmog, a dye: stage 5.6), the route
+  must ask the world (`World::call`) for a character in the world.
+- The client keeps the map `equipment` as a hash map: the create requests have the order
+  `gloves`, `shirt`, `hat`, `boots`, `pants`. The backend writes the order of the slots, and
+  the menu accepts it (live check of stage U4). With the values and the order of a create
+  request the writer makes the document of the client byte for byte (5 of 5 captures).
+- An item catalog from before stage U4 (format 4 or older) has no armor appearance: the menu
+  shows each character with no clothing, and the backend log has one line at the start
+  (`the item catalog has no armor appearances`). Make the file again with
+  `tools/gamedata/items.sh`.
+- The body of the menu comes some seconds after the line `gateway.get_login_info` of the
+  backend log. A click on a row of the menu selects that character, and the body changes to
+  it (the client reads the document of the row again, 0x41F9E20). Wait 5 s before a picture.
 - The name check and the create ignore the letter case of a name, also for letters with an
   accent (the backend makes the compare, not SQLite). A query with `COLLATE NOCASE` in a
   tool finds only the ASCII case.

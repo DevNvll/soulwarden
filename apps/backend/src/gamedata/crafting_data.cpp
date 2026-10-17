@@ -69,6 +69,50 @@ bool number_in(const json& object, const char* member, std::uint64_t high, std::
     return true;
 }
 
+/**
+ * @return The first rule of a recipe that the backend of stage 3.7a does not apply (each one is a cause of the tool, crafting.py
+ *         recipe_entry), or null. The checks of the request do not test these rules: the cause list of the file is the gate.
+ */
+const char* unapplied_rule(const Recipe& recipe) {
+    if (recipe.procedural) {
+        return "IsProcedural";
+    }
+    if (recipe.refining) {
+        return "IsRefining";
+    }
+    if (recipe.craftAll) {
+        return "CraftAll";
+    }
+    if (!recipe.event.empty()) {
+        return "GameEventID";
+    }
+    if (!recipe.firstCraftAchievement.empty()) {
+        return "FirstCraftAchievementId";
+    }
+    if (recipe.cooldownSeconds > 0 || recipe.cooldownQuantity > 0) {
+        return "CooldownSeconds or CooldownQuantity";
+    }
+    if (recipe.perkItems > 0 || recipe.attributeSlots > 0 || recipe.perkCost > 0) {
+        return "MaxPerkItemsAllowed, AttributeOnlyPerkItemSlotCount, or PerkCost";
+    }
+    if (recipe.baseGearScore > 0) {
+        return "BaseGearScore";
+    }
+    if (!recipe.known || !recipe.requiredAchievement.empty() || !recipe.hiddenByAchievement.empty() || !recipe.unlockedAchievement.empty()) {
+        return "an unlock (bKnownByDefault false or an achievement)";
+    }
+    if (recipe.skipGrant) {
+        return "SkipGrantItems";
+    }
+    if (!recipe.worldTags.empty()) {
+        return "RequiredWorldTags";
+    }
+    if (recipe.temporary) {
+        return "IsTemporary";
+    }
+    return nullptr;
+}
+
 std::optional<IngredientType> ingredient_type(std::string_view text) {
     if (text == "Item") {
         return IngredientType::item;
@@ -224,6 +268,10 @@ bool CraftingData::parse(const std::string& text) {
             || !number_in(row, "baseTier", 100, recipe.baseTier) || !number_in(row, "perkItems", 100, recipe.perkItems)
             || !number_in(row, "attributeSlots", 100, recipe.attributeSlots) || !flag_in(row, "push", recipe.push)
             || !number_in(row, "perkCost", 1000000, recipe.perkCost) || !text_in(row, "event", recipe.event)
+            || !text_in(row, "requiredAchievement", recipe.requiredAchievement)
+            || !text_in(row, "hiddenByAchievement", recipe.hiddenByAchievement)
+            || !text_in(row, "unlockedAchievement", recipe.unlockedAchievement)
+            || !text_in(row, "firstCraftAchievement", recipe.firstCraftAchievement) || !text_in(row, "worldTags", recipe.worldTags)
             || !text_in(row, "expansion", recipe.expansion)
             || !number_in(row, "cooldownSeconds", 100000000, recipe.cooldownSeconds)
             || !number_in(row, "cooldownQuantity", 255, recipe.cooldownQuantity) || !flag_in(row, "skipGrant", recipe.skipGrant)) {
@@ -273,6 +321,12 @@ bool CraftingData::parse(const std::string& text) {
         }
         // A recipe that the backend crafts must be complete: an output, a quantity, an ingredient with a quantity, a station key.
         if (recipe.unsupported.empty()) {
+            // Code review of stage 3.7a, finding CR7A-R2: a recipe with no cause has no rule that this stage does not apply (the rules of
+            // the causes of the tool, crafting.py recipe_entry). A file whose causes and rules do not agree is not consistent: an empty
+            // cause list does not enable a recipe with such a rule.
+            if (const char* rule = unapplied_rule(recipe)) {
+                return fail(what + ": a recipe with no cause has the rule " + rule + ", which the backend does not apply");
+            }
             if (recipe.item.empty() || recipe.outputQty == 0 || recipe.ingredients.empty() || recipe.stations.empty()) {
                 return fail(what + ": a recipe with no cause has no output, no output quantity, no ingredient, or no station key");
             }

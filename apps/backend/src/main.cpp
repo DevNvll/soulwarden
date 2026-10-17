@@ -272,6 +272,10 @@ int main(int argc, char** argv) {
             log::write("backend: the item catalog has no backstory, or no list of the backstories of the character "
                        "creation: a new character gets no clothing. Make the file again with tools/gamedata/items.sh");
         }
+        if (!itemCatalog.has_armor_appearances()) {
+            log::write("backend: the item catalog has no armor appearances (a file from before stage U4): the main menu shows "
+                       "each character with no clothing. Make the file again with tools/gamedata/items.sh");
+        }
     } else {
         log::write("backend: no item catalog at %s: the backend gives no item, and each bag is empty for a client. "
                    "Make the file with tools/gamedata/items.sh",

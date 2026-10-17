@@ -15,7 +15,8 @@
 // A recipe has its causes ("unsupported"): the rules of the data that the backend has no code for yet (a reward event, a procedural
 // result, refining, a cooldown, perk items, an unlock). The crafting system refuses a recipe with a cause. The loader refuses the file as
 // a whole when a part is not complete or not consistent (two recipes with one CRC-32, an ingredient type that is not a type of the
-// client, a quantity of 0 for an item ingredient of a recipe with no cause, a station row with no type).
+// client, a quantity of 0 for an item ingredient of a recipe with no cause, a station row with no type, a recipe with no cause and a rule
+// of the data that the backend does not apply: code review of stage 3.7a, finding CR7A-R2).
 //
 // The cost of a lookup does not depend on the size of the data (MP-8): the recipes by their CRC-32 (the id of request 2997), the stations
 // by their name, and the members of a category by their CRC-32 are hash maps. Any thread after the load (read only).
@@ -75,6 +76,16 @@ struct Recipe {
     bool push{true};
     std::uint32_t perkCost{0};
     std::string event;
+    /**
+     * The achievement rules of the recipe (RequiredAchievementID, HiddenByAchievementID, UnlockedAchievementID, FirstCraftAchievementId)
+     * and its world tags (RequiredWorldTags). The backend has no rule for them yet: a recipe with one of them has a cause (code review of
+     * stage 3.7a, finding CR7A-R2: the loader compares them with the causes).
+     */
+    std::string requiredAchievement;
+    std::string hiddenByAchievement;
+    std::string unlockedAchievement;
+    std::string firstCraftAchievement;
+    std::string worldTags;
     std::string expansion;
     std::uint32_t cooldownSeconds{0};
     std::uint32_t cooldownQuantity{0};

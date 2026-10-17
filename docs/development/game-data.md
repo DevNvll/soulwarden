@@ -245,7 +245,9 @@ backend. The tool of each system is also in the document of that system.
   list of the backstories of the character creation; from stage 2.2, format 2, also the
   removal protections of each item (`nonRemovable`, `notDroppable`;
   `check_item_catalog_tool.py`, case RLB1); from stage B0, format 3, also the upgrade limit of
-  each item (`maxCraftUpgradeGS`) and the objective of each artifact (`artifactObjectives`);
+  each item (`maxCraftUpgradeGS`) and the objective of each artifact (`artifactObjectives`); from stage U4, format 5, also
+  the armor appearance names of each item for a male and a female body (`armorAppearanceM`, `armorAppearanceF`: the
+  clothing of the main menu);
   without it the backend gives no item,
   and a new character has no clothing), and `progression-tables.json` (the level table, the
   attribute and vitals values, the rank tables of the weapons and the trade skills, and the
@@ -352,6 +354,26 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage U4 changes `item-catalog.json` to format 5 (`tools/gamedata/items.sh`) and the checks of `crafting-data.json` (the code review of
+  stage 3.7a):
+  - `item-catalog.json` format 5: each item has two more columns at the end, `armorAppearanceM` and `armorAppearanceF`, the texts of the
+    cells ArmorAppearanceM and ArmorAppearanceF of the master row (`item_catalog.py`: `APPEARANCE_COLUMNS`, `appearance_names`; a house
+    item has two empty texts). The backend computes the CRC-32 of each lower-case name at the load (`ItemDefinition::armorAppearanceM`,
+    `armorAppearanceF`): the value `appearanceId` of the menu document ([Identity and characters](../systems/identity-and-characters.md)).
+    Retail: 43 master tables, each with both columns as text cells; 16,840 items with a name (14,992 armor rows of the paperdoll slots 0
+    to 4, each with both names, and 1,848 other rows, for example the skin display items, which have no look in the menu). A master table
+    with no such column, or a cell that is not a text, stops the tool, and the old file stays (`check_item_catalog_tool.py`: the cases
+    appearance, appearance-missing, appearance-invalid; test case ME8). The other members and the first 15 columns are the same as in
+    format 4 (a compare of the two files of the supported build). The loader takes the formats 1 to 5; a file of format 4 or older has no
+    armor appearance (`ItemCatalog::has_armor_appearances` false): the main menu shows each character with no clothing, and the start log
+    has one line. The loader refuses a file of format 5 with 15 columns, a file of format 4 with 17 columns, and a name that is not a text.
+    A backend from before stage U4 refuses a file of format 5: put the file and the backend of stage U4 together.
+  - `crafting-data.json` (still format 1): the loader refuses a recipe with no cause and a rule of a later stage (finding CR7A-R2: an unlock,
+    an achievement rule, a procedural result, refining, craft-all, a temporary recipe, an event, a cooldown, perk items, a gear score rule,
+    SkipGrantItems, world tags; test case CRV2), and it reads the members `requiredAchievement`, `hiddenByAchievement`,
+    `unlockedAchievement`, `firstCraftAchievement`, and `worldTags` (each file of the tool has them). `crafting.py` stops at an ingredient
+    entry with a type and no id, and the old file stays (finding CR7A-R3; `check_crafting_tool.py`, case incomplete; test case CRV3). The
+    supported build has no such entry and no such recipe: the file of stage 3.7a is the same, and it needs no new write.
 - Stage U3 changes four files (each in its old format; the backend of the stage loads the older files with the rules of before):
   - `creatures.json` (still format 4): the Homing clips of an attack (a fourth member of the attack: one row of 17 values for each
     clip), the members `reactionTable` and `additive` of a slice, `promotedElite` and `noReactions` of a kind (from its buff buckets),

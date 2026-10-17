@@ -340,6 +340,16 @@ button on "Confirm").
 - A new character starts in the town of the seeded character, with the items of its
   archetype that the game data gives it at the start: four armor pieces (chest, hands, legs,
   feet) and one sword, which it wears. The backend needs the item catalog for this.
+- The character list of the main menu shows each character with the armor that it wears:
+  the head, the chest, the hands, the legs, and the feet (stage U4). The backend makes the
+  text of the body of each character at each load of the list, from the appearance of the
+  creation and the armor of the character. Thus the menu shows a change of the equipment in
+  the world after a leave to the menu. A new character shows its four armor pieces and no
+  helmet (before stage U4 the menu showed the helmet of the archetype, which the character
+  does not get). The menu shows no weapon, no jewelry, and no tool, as the original game.
+  The backend needs the item catalog of stage U4 for this (`tools/gamedata/items.sh`): with
+  an older file the menu shows each character with no clothing, and the backend log says so
+  at the start.
 - The world shows the appearance of the creation only when the backend has the appearance
   tables. `tools/gamedata/appearance.sh` makes them from the game copy
   (`~/.local/share/soulwarden/gamedata/appearance-tables.json`, `SOULWARDEN_GAMEDATA_DIR`). The tool
@@ -359,7 +369,8 @@ button on "Confirm").
   the 2 house item tables of the game, with its index on the wire (protocol notes 4.10), its
   id, the text key of its name, its type, its class, its weight, its stack limit, its
   durability, and its gear score. From stage U3 the weight is the weight of the bag of the game: a weapon or an armor item has the
-  WeightOverride of its stats row (a rapier 2.5, not 4.0). Without the file the backend starts and gives no item,
+  WeightOverride of its stats row (a rapier 2.5, not 4.0). From stage U4 (format 5) each item also has the names of its armor
+  appearance for a male and a female body: the main menu shows the armor of a character with them. Without the file the backend starts and gives no item,
   and each bag is empty in the client. The pak entries of the tables have Oodle data: the
   tool needs an Oodle library (`SOULWARDEN_OODLE_DLL`) or the table files that
   `tools/research/pakx.py` extracted (`SOULWARDEN_DATATABLES_DIR`). The tool refuses a folder of
@@ -777,8 +788,9 @@ button on "Confirm").
   ([Gathering](systems/gathering.md)).
 - Crafting (stage 3.7a, [Crafting](systems/crafting.md)). At a crafting station (E: the crafting screen of the game) the CRAFT button of a
   recipe sends the craft request: the server checks the station of the use (its tier row), the recipe, the trade skill rank, the count,
-  the selected items, the materials of the recipe in the unlocked bag and quick slots, the place of the whole output in the bag, and the
-  fee of the station (0.01 coin for a fixed recipe; a camp has no fee). The first item comes 1 s after the request, the next ones of a
+  the selected items, the materials of the recipe in the unlocked bag and quick slots, the place of the output of each item of the count
+  in the bag (the server makes the items one after the other, thus a bag that is full before the last item refuses the whole count), and
+  the fee of the station (0.01 coin for a fixed recipe; a camp has no fee). The first item comes 1 s after the request, the next ones of a
   count in the next ticks; each one is one change of the store with its materials and its part of the fee. A stop (the end of the station
   use, the death, the leave, a command) keeps the completed items; a change of the bag during a count stops it before the next cost. Only
   the recipes with no rule of a later part of stage 3.7 are crafted: the flint tools, the fishing pole, and the wood sword. The storage
@@ -1068,13 +1080,13 @@ button on "Confirm").
   menu of an item (or a double click) puts it into its slot, the entry "Unequip" of an
   equipped item puts it back into the bag, and a drag between two weapon slots changes
   their items. Armor shows on the body, a weapon hangs on the hip or is in the hand, and the
-  HUD shows the active weapon. Not there yet: the draw and the sheathe as an action of the
-  server, the level and the attribute rules of an item, dyes and
-  skins, and the body of the character in the main menu after a change of equipment (the
-  menu shows the clothing of the creation).
+  HUD shows the active weapon. The main menu shows the armor that a character wears (stage
+  U4). Not there yet: the draw and the sheathe as an action of the server, the level and the
+  attribute rules of an item, dyes and skins (also in the main menu).
 - `SOULWARDEN_SEED_CHARACTER` (development aid) still gives an account with no character a
   character with no creation data. The backend gives it the default body in the menu and in
-  the world (male, no clothing). Without the appearance tables its body is white in the menu.
+  the world (male), with the armor that it wears. Without the appearance tables its body is
+  white in the menu.
 - The backend has no movement simulation and no collision data of the world. It checks the
   speed of a reported position, and it cannot find a position in a wall or below the ground.
   A character on a mount will need a larger speed limit. With `SOULWARDEN_EXACT_POSITION=0`, and

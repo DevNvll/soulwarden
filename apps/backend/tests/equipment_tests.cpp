@@ -1185,9 +1185,12 @@ void archetype_items(const Options&) {
         request.path = "/prod/game/worlds/" + state::local_world().worldId + "/characters";
         request.target = request.path;
         request.headers.emplace_back("x-nw-auth", encoding::local_jwt(json{{"personaId", account->personaId}}.dump()));
-        request.body = json{{"Name", name},
-                            {"CharacterCreationParams", state::make_creation_data(name, appearance, state::local_world().worldId, archetype)}}
-                           .dump();
+        state::MenuDocument document;
+        document.name = name;
+        document.appearance = appearance;
+        document.backstory = archetype;
+        document.worldId = state::local_world().worldId;
+        request.body = json{{"Name", name}, {"CharacterCreationParams", state::make_menu_document(document)}}.dump();
         std::string route;
         return router.dispatch(request, route);
     };
@@ -1322,9 +1325,12 @@ void creation_backstory(const Options&) {
         request.path = "/prod/game/worlds/" + state::local_world().worldId + "/characters";
         request.target = request.path;
         request.headers.emplace_back("x-nw-auth", encoding::local_jwt(json{{"personaId", account.personaId}}.dump()));
-        request.body = json{{"Name", name},
-                            {"CharacterCreationParams", state::make_creation_data(name, appearance, state::local_world().worldId, backstory)}}
-                           .dump();
+        state::MenuDocument document;
+        document.name = name;
+        document.appearance = appearance;
+        document.backstory = backstory;
+        document.worldId = state::local_world().worldId;
+        request.body = json{{"Name", name}, {"CharacterCreationParams", state::make_menu_document(document)}}.dump();
         std::string route;
         return router.dispatch(request, route);
     };

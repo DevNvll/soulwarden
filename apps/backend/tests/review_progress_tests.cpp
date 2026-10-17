@@ -17,6 +17,8 @@
 #include "core/encoding/base64.h"
 #include "gamedata/progression_tables.h"
 #include "middleware/compression/zlib.h"
+#include "server/http/router.h"
+#include "server/http/routes.h"
 #include "state/creation_data.h"
 #include "state/world.h"
 #include "support/cases.h"
@@ -174,35 +176,71 @@ std::string document_of(const std::string& creationData) {
     return std::string(document.begin(), document.end());
 }
 
-/** Q4: review finding 6, white space at the member of the level. */
+/**
+ * Q4: review finding 6, white space at the member of the level. From stage U4 the backend writes the menu document with its own
+ * writer: creation data of the client with white space at the colon of the member currentLevel reads as before, and the character
+ * list gives the level of the row (the backend does not read the member of the stored text).
+ */
 void menu_level_space(const Options&) {
-    state::AppearanceNames appearance;
-    appearance.fill("none");
-    appearance[state::kAppearanceGender] = "Male";
-    const std::string made = state::make_creation_data("Spacetest", appearance, state::local_world().worldId, "Archetype_Test");
-    const std::string plain = document_of(made);
+    state::MenuDocument values;
+    values.name = "Spacetest";
+    values.appearance.fill("none");
+    values.appearance[state::kAppearanceGender] = "Male";
+    values.backstory = "Archetype_Test";
+    values.worldId = state::local_world().worldId;
+    const std::string plain = document_of(state::make_menu_document(values));
     const std::string member = "\"currentLevel\":0";
     const std::size_t at = plain.find(member);
     bool allOk = at != std::string::npos;
+    ServerHost host;
+    state::AccountOrigin origin{};
+    const auto account = host.store.login_account(kSteamIdA, "Tester A", false, origin);
+    allOk = allOk && account.has_value();
+    server::http::Router router;
+    const server::http::Services services{host.store, "127.0.0.1:32210", "test-version", "", host.tables, host.world};
+    server::http::register_gateway_routes(router, services);
+    int number = 0;
     for (const char* form : {"\"currentLevel\": 0", "\"currentLevel\" : 0", "\"currentLevel\"\t:\r\n  0", "\"currentLevel\" :0"}) {
-        if (at == std::string::npos) {
+        if (!allOk) {
             break;
         }
         std::string spaced = plain;
         spaced.replace(at, member.size(), form);
         const std::vector<std::uint8_t> stored =
             compression::zlib_store(std::span(reinterpret_cast<const std::uint8_t*>(spaced.data()), spaced.size()));
-        const std::string data = encoding::base64(std::string(stored.begin(), stored.end()));
-        const std::string changed = document_of(state::with_current_level(data, 20));
-        std::string expected = spaced;
-        expected.replace(at + std::string(form).size() - 1, 1, "19");
-        allOk = allOk && state::read_creation_data(data).has_value() && changed == expected
-                && state::read_creation_data(state::with_current_level(data, 20)).has_value();
+        state::Character character;
+        character.characterId = "eeeeeeee-0000-4000-8000-00000000000" + std::to_string(++number);
+        character.personaId = account->personaId;
+        character.worldId = state::local_world().worldId;
+        character.name = "Spacetest" + std::to_string(number);
+        character.createdDate = "2026-01-01T00:00:00.000Z";
+        character.modifiedDate = character.createdDate;
+        character.creationParams = encoding::base64(std::string(stored.begin(), stored.end()));
+        state::ProgressRow row;
+        row.level = 20;
+        allOk = allOk && state::read_creation_data(character.creationParams).has_value()
+                && host.store.insert_character(character) == state::InsertResult::inserted
+                && host.store.set_progress(character.characterId, row);
     }
-    check(allOk,
+    service::HttpRequest request;
+    request.method = "GET";
+    request.host = "gateway.test";
+    request.path = "/prod/game/getlogininfo";
+    request.target = request.path;
+    request.headers.emplace_back("x-nw-auth", encoding::local_jwt(json{{"personaId", allOk ? account->personaId : ""}}.dump()));
+    std::string route;
+    const service::HttpResponse reply = router.dispatch(request, route);
+    const json body = json::parse(reply.body, nullptr, false);
+    int levels = 0;
+    if (allOk && reply.status == 200 && body.is_object()) {
+        for (const json& entry : body["LoginInfoList"]["Characters"]) {
+            const std::string document = entry.contains("PublishedData") ? document_of(entry["PublishedData"].get<std::string>()) : "";
+            levels += document.find("\"currentLevel\":19,") != std::string::npos ? 1 : 0;
+        }
+    }
+    check(allOk && levels == 4,
           "creation data with white space before or after the colon of the member currentLevel (a space, a tab, a line "
-          "end): the menu document gets the level of the screen minus 1, no other byte changes, and the creation data "
-          "reads as before");
+          "end) reads as before, and the character list gives each such character the level of its row minus 1 (19 for 20)");
 }
 
 } // namespace

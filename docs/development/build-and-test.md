@@ -150,6 +150,12 @@ python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/
   the note of the list, which BR14 tests). Build the copy with `-DCMAKE_CXX_FLAGS=-DSOULWARDEN_B4_BASELINE`. The correction of case HS7
   (finding B3-R4) is proved with a copy of the tree of stage B4 whose position check has no haste allowance (`PositionTrack::judge`
   with `kWindowSpeed` only): the corrected HS7 fails (11 refused reports with the haste), the old one passes.
+- Stage U4 uses the mark `SOULWARDEN_U4_BASELINE` (proof on a copy of the tree of stage 3.7a): in `tests/menu_equipment_tests.cpp` it
+  gives the names of the stage (`state::MenuDocument`, `make_menu_document`, `world::menu_equipment`) the behavior of the old tree (the
+  stored creation data with the level of the row, no entry, no appearance column, no count of the item queries), so that each case ME1 to
+  ME8 runs and fails there. The cases of the code review of stage 3.7a (`tests/review_37a_tests.cpp`, CRV1 to CRV4) need no mark: each
+  one fails on the old tree (CRV3 there: the tool check has no case `incomplete`). Copy the two test files and their registration in
+  `tests/cases.cpp` into the copy, and build it with `-DCMAKE_CXX_FLAGS=-DSOULWARDEN_U4_BASELINE`.
 - The Windows headers of the MinGW build define `near` and `far` as macros: a member or a variable with such a name in a file that a
   route includes after them does not compile (`SOULWARDEN_BACKEND_TARGET=windows`; stage 3.5b.1: `ChestsView::nearby`). Build the
   Windows target before a commit of a new header.

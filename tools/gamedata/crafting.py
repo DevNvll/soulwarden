@@ -33,7 +33,8 @@ The tool stops with status 1 and one message, and writes no file, when a source 
 a needed table or column is not there, when two recipe rows have one id (case folded) or two ids have one CRC-32, when an ingredient
 type is a text that is not "", "Item", "Category_Only", or "Currency", when a quantity, a fee, a level, or a gear score is not a whole
 number of 0 or more or is above the limit of the request of the client (an ingredient quantity of 50,000, a level of 1,000, a gear
-score of 10,000; research crafting.md 4.1), when a flag cell has a text that is not a flag, when a station row has no name or no type,
+score of 10,000; research crafting.md 4.1), when an ingredient entry has a type and no id (code review of stage 3.7a, finding CR7A-R3; an
+entry with no type is not an ingredient, as in the client), when a flag cell has a text that is not a flag, when a station row has no name or no type,
 or when the station database has no row. A reference that does not resolve (an output or an ingredient that is not an item, a category
 with no item, a station key that no row permits, an event with no row, a perk bucket with no row) is a cause of the recipe or a counted
 diagnostic, not a stop: the retail data has some of them. tools/gamedata/check_crafting_tool.py is the check of these rules.
@@ -372,9 +373,14 @@ def recipe_entry(identifier: str, sheet: Sheet, row: int, tables: Tables, catego
         if kind not in INGREDIENT_TYPES and kind != "":
             raise Failure(f"{what}: Type{index} has the text {kind!r}, which is not an ingredient type ({', '.join(INGREDIENT_TYPES)})")
         quantity = whole(cell(f"Qty{index}"), f"{what}: Qty{index}", QUANTITY_LIMIT)
-        # A blank type is the type Invalid (0): the entry is not an ingredient (client 0x5C47AC0 skips it).
-        if not kind or not name:
+        # A blank type is the type Invalid (0): the entry is not an ingredient (client 0x5C47AC0 skips it), also with an id (88 entries of
+        # the supported build).
+        if not kind:
             continue
+        # Code review of stage 3.7a, finding CR7A-R3: an entry with a type and no id is not complete. Before, the tool skipped it, and the
+        # recipe took one material less. The supported build has no such entry: the tool stops, and the old file stays.
+        if not name:
+            raise Failure(f"{what}: Type{index} is {kind!r} and Ingredient{index} has no id")
         entry["ingredients"].append([kind, name, quantity])
         if quantity == 0:
             # A blank or 0 quantity (retail rows of the dungeon tables): no rule of the client for the cost of such an entry.

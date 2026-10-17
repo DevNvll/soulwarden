@@ -48,13 +48,14 @@ different backstory.
 The tool needs only the standard library of Python and the module appearance_tables.py of
 this folder (pak entry reader).
 
-Output: {"format": 4, "count": N, "tables": [{"name", "rows", "first", "last"}, ...],
+Output: {"format": 5, "count": N, "tables": [{"name", "rows", "first", "last"}, ...],
 "columns": [...], "items": [[...], ...], "backstories": {"<id>": [[item id, quantity, gear
 score], ...], ...}, "creationBackstories": ["<id>", ...], "artifactObjectives": [[item id, objective id, achievement id,
 achievement index], ...], "trinkets": [[item id, TrinketBonus, ScaleHealthPerGS, ScaleDamagePerGS, ScaleCDRPerGS], ...]}. `count` is the length of the list of the client with entry 0. Entry
 number K of `items` (from 0) is the item with the index K + 1. The columns are: id, name (the
 text key of the display name), type, class, tier, weight (tenths), maxStack, durability,
-minGearScore, maxGearScore, gearScoreOverride, bindOnPickup, nonRemovable, notDroppable, maxCraftUpgradeGS. The
+minGearScore, maxGearScore, gearScoreOverride, bindOnPickup, nonRemovable, notDroppable, maxCraftUpgradeGS, armorAppearanceM,
+armorAppearanceF. The
 nonRemovable and notDroppable columns (format 2, stage 2.2: code review of stage 3.5b.2, finding LB-R1) are the removal protections
 of the row (the columns Nonremovable and NotDroppable; a cell can be a text, a number, or a flag):
 the backend keeps such an item with its character (no discard, no give into a loot bag). A
@@ -87,6 +88,13 @@ ScaleCDRPerGS] for each master row whose stats row (ItemStatsRef, a table of the
 and a scale above 0 (the amulets, rings, and earrings of the game). Client code 0x3636A50: each stat line of an item is gear score x
 scale x TrinketBonus x 0.01 (a max health, a base damage, and a cooldown reduction multiplier: the tooltip of the client,
 dynamictooltip_itemstats). An armor stats table with no such column, or a cell that is not a number of 0 or more, stops the tool.
+
+Format 5 (stage U4, the clothing of the main menu): two more columns of each item, armorAppearanceM and armorAppearanceF: the text
+of the cells ArmorAppearanceM and ArmorAppearanceF of the master row (the names of the armor appearance rows of a male body and of
+a female body; a house item has none). The backend gives the main menu of the client the lower-case CRC-32 of the name of each armor
+item of the paperdoll slots 0 to 4 (the rule of the original server, 0x673EE40; 25 of 25 entries of the create requests of the
+client). Each master table of the supported build has both columns as text cells (43 tables; 14,992 armor rows of the slots 0 to 4,
+each with both names). A master table with no such column, and a cell that is not a text, stop the tool: the old file stays.
 
 A backstory has one entry for
 each item of its column InventoryItem: a quantity of 0 is an item that only the character
@@ -154,7 +162,10 @@ OODLE = 15
 HEADER_SIZE = 0x5C
 CELL_TEXT, CELL_NUMBER, CELL_FLAG = 1, 2, 3
 COLUMNS = ["id", "name", "type", "class", "tier", "weight", "maxStack", "durability", "minGearScore",
-           "maxGearScore", "gearScoreOverride", "bindOnPickup", "nonRemovable", "notDroppable", "maxCraftUpgradeGS"]
+           "maxGearScore", "gearScoreOverride", "bindOnPickup", "nonRemovable", "notDroppable", "maxCraftUpgradeGS",
+           "armorAppearanceM", "armorAppearanceF"]
+# The armor appearance names of a master item row (format 5, stage U4): a male body, a female body.
+APPEARANCE_COLUMNS = ("ArmorAppearanceM", "ArmorAppearanceF")
 # The largest gear score of an upgrade of a master item row (format 3, stage B0).
 UPGRADE_COLUMN = "MaxCraftUpgradeGS"
 # The master tables that can have no upgrade column: the prefix of the table names. The 22 store tables of the game copy
@@ -433,6 +444,21 @@ def upgrade_gear_score(sheet: Sheet, row: int, item_id: str) -> int:
     raise Failure(f"the cell {UPGRADE_COLUMN} of {item_id} in {sheet.name} has the value {value!r}, which is not a whole gear score")
 
 
+def appearance_names(sheet: Sheet, row: int, item_id: str) -> list[str]:
+    """@return The cells ArmorAppearanceM and ArmorAppearanceF of a master row (format 5): the texts, empty for an empty cell. A master
+    table with no such column, and a cell that is not a text, are a Failure (the rule of finding WT-R3: a blank cell is not the same as a
+    missing column)."""
+    names: list[str] = []
+    for column in APPEARANCE_COLUMNS:
+        if column not in sheet.columns:
+            raise Failure(f"the item table {sheet.name} has no column {column} (the armor appearance of its items)")
+        value = sheet.cell(row, column)
+        if not isinstance(value, str) or isinstance(value, bool):
+            raise Failure(f"the cell {column} of {item_id} in {sheet.name} has the value {value!r}, which is not a text")
+        names.append(value)
+    return names
+
+
 def artifact_objectives(objectives: list[Sheet], tasks: list[Sheet], achievements: list[Sheet], item_ids: set[str]) -> list[list]:
     """@return [item id, objective id, achievement id, achievement index] for each objective of the type Artifact (format 3), in the
     sequence of the objective tables. A Failure for a link that does not resolve (see the text at the top)."""
@@ -603,7 +629,7 @@ def build_catalog(contents: list[bytes]) -> dict:
                           whole(sheet.cell(row, "GearScoreOverride")), bool(sheet.cell(row, "BindOnPickup")),
                           *(flag(sheet.cell(row, column), f"the cell {column} of {item_id} in {sheet.name}") if column else False
                             for column in protections),
-                          upgrade_gear_score(sheet, row, item_id)])
+                          upgrade_gear_score(sheet, row, item_id), *appearance_names(sheet, row, item_id)])
         # A table with no row that gets an index has no range.
         tables.append({"name": sheet.name, "rows": sheet.row_count, "first": first, "last": len(items)})
     for name in HOUSE_TABLES:
@@ -623,11 +649,11 @@ def build_catalog(contents: list[bytes]) -> dict:
                 items.append([item_id, sheet.cell(row, "Name"), sheet.cell(row, "ItemType"), "",
                               whole(sheet.cell(row, "Tier")), whole(sheet.cell(row, "Weight")),
                               whole(sheet.cell(row, "MaxStackSize")), 0, 0, 0, 0,
-                              bool(sheet.cell(row, "BindOnPickup")), False, False, 0])
+                              bool(sheet.cell(row, "BindOnPickup")), False, False, 0, "", ""])
         tables.append({"name": sheet.name, "rows": sheet.row_count, "first": first, "last": len(items)})
     item_ids = {item[0].lower() for item in items}
     backstories = backstory_items(stories, item_ids)
-    return {"format": 4, "count": len(items) + 1, "tables": tables, "columns": COLUMNS, "items": items,
+    return {"format": 5, "count": len(items) + 1, "tables": tables, "columns": COLUMNS, "items": items,
             "backstories": backstories, "creationBackstories": creation_backstories(stories),
             "artifactObjectives": artifact_objectives(objectives, tasks, achievements, item_ids), "trinkets": trinkets}
 
@@ -672,7 +698,8 @@ def main() -> int:
     print(f"{target}: {len(catalog['items'])} items in {len(catalog['tables'])} tables, the list of the client has "
           f"{catalog['count']} entries, the items of {len(catalog['backstories'])} backstories, "
           f"{len(catalog['creationBackstories'])} backstories of the character creation, "
-          f"{sum(1 for item in catalog['items'] if item[-1] != 0)} items with an upgrade gear score, "
+          f"{sum(1 for item in catalog['items'] if item[COLUMNS.index('maxCraftUpgradeGS')] != 0)} items with an upgrade gear score, "
+          f"{sum(1 for item in catalog['items'] if item[-2] or item[-1])} items with an armor appearance, "
           f"{len(catalog['artifactObjectives'])} artifact objectives, {len(catalog['trinkets'])} items with trinket stat lines "
           f"(source: {source[1]})")
     if not catalog["backstories"]:

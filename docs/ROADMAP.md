@@ -603,7 +603,8 @@ tool window, and a new character starts with the original first quest.
     weapon as actions; the attack actions; the level and attribute rules of an item and the
     attribute numbers of the panel (1.5); perks, durability loss, repair, dyes, skins,
     loadouts; the equip load as a movement rule; the ammunition slots; the body of the
-    character in the main menu after a change of equipment; the head armor and the weapons
+    character in the main menu after a change of equipment (stage U4 added it: the menu
+    document with the armor of the paperdoll); the head armor and the weapons
     of an archetype, which the game data gives with the quantity 0 at the start (systems 1.8
     and 4.3).
   - Evidence: `~/Games/soulwarden/work/evidence/equipment/implement/` (`RESULT.md`).

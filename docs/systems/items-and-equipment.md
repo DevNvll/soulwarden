@@ -15,7 +15,8 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 | A whole build in one step (the build preset), the gear score limit of a give | [Build presets](build-presets.md), `Inventory::plan_build`, `Inventory::give_limit`, test cases BP1 to BP9 |
 | The weight of the bag and its limits (encumbered, overencumbered) | `Inventory::encumbrance` (`world/inventory.h`), `tools/gamedata/item_catalog.py` (`item_weight`), `EquipLoadData::encumbranceMax` (`gamedata/perk_data.h`), test cases CF6, CF13 |
 | The perks of an item instance: the places, the swap, the give with perks, the perk command, the loot roll | Protocol notes 4.23, `world/item.h` (`ItemInstance::perks`), `world/inventory.h` (`checked_perks`, `set_perks`, `resolve_perks`), `gamedata/perk_data.h`, `world/perk_roll.h`, test cases IZ1 to IZ3 |
-| The plan of a craft (stage 3.7a): the costs from the unlocked bag and the quick slots, the whole output with the cause ItemCreated | `Inventory::plan_craft`, `coin_written`, [Crafting](crafting.md), test case CRAFT2 |
+| The plan of a craft (stage 3.7a): the costs from the unlocked bag and the quick slots, the output of each job with the cause ItemCreated | `Inventory::plan_craft`, `coin_written`, [Crafting](crafting.md), test cases CRAFT2, CRV1 |
+| The look of the armor in the main menu (stage U4) | `world::menu_appearance`, `world::menu_equipment` (`world/inventory.h`), the columns `armorAppearanceM` and `armorAppearanceF` of the item catalog (format 5), [Identity and characters](identity-and-characters.md), test cases ME1 to ME8 |
 
 ## Rules
 
@@ -81,10 +82,18 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 - The plan of a craft (stage 3.7a, `Inventory::plan_craft`, [Crafting](crafting.md)): the costs of a job (the quantities of the recipe)
   come from the unlocked stacks of the bag in the order of the slots, then from the quick slots 14 to 17 [client: the cache of the crafting
   screen counts the unlocked bag slots and quick slots 1 to 4; the order is a decision of an agent]; a stack that goes to 0 leaves an empty
-  slot (the cause ItemRemoved). The output of the whole plan goes into the bag (stacks of the item first, then empty slots, also a slot
-  that a cost freed) with the cause ItemCreated (3: the result screen of the client takes it); a plan whose output does not fit is refused
-  (`bagFull`), and the loot overflow of `grant` does not apply. A missing quantity is `missingMaterials`. The crafting system writes the
-  rows of a plan and the coin of the fee in one transaction (`write`, `coin_written`, `finish`).
+  slot (the cause ItemRemoved). The output of the job goes into the bag (stacks of the item first, then empty slots, also a slot that a
+  cost freed) with the cause ItemCreated (3: the result screen of the client takes it); a plan whose output does not fit is refused
+  (`bagFull`), and the loot overflow of `grant` does not apply. A missing quantity is `missingMaterials`. The plan of a batch makes its
+  jobs one after the other in this order, as the jobs of the batch run (code review of stage 3.7a, finding CR7A-R1; test case CRV1):
+  a bag that has no place for the output of a job before the last job refuses the whole batch. Before the correction the costs of all
+  jobs left first, and a batch was accepted and then stopped at a job. The crafting system writes the rows of a plan and the coin of the
+  fee in one transaction (`write`, `coin_written`, `finish`).
+- The look of an item in the main menu (stage U4, [Identity and characters](identity-and-characters.md)): an item of the paperdoll slots
+  0 to 4 with the class tag `Armor` has the CRC-32 of the lower-case name of its cell `ArmorAppearanceM` (a male body) or
+  `ArmorAppearanceF` (a female body) [client code 0x673EE40; game data: the master item tables, 14,992 armor rows of these slots, each
+  with both names]. Each other item (a weapon, jewelry, a tool, a skin display item with no tag `Armor`, a row with an empty name) has
+  no look in the menu (`world::menu_appearance`). Gear score, perks, durability, and tier do not change the look.
 - The gear score of an equipped item (stage 1.1b): an equip of an item above the MaxEquipGS of the owned expansion (800;
   game data, the rule of the client in `equipmentcommon.lua`) is refused (`gearScoreAboveLimit`, the message "equip item
   fail" for a request of a client). With no expansion data there is no such limit. The item level of a gear score (the first
@@ -245,6 +254,10 @@ tools/world equipment NAME           # the equipment of a character
   stage U3). Make the file again with `tools/gamedata/items.sh`.
 - The inventory screen (Tab) shows the weight of the bag at the top right (`200.0/200.0`; red above the limit) and of each section.
   It is the only view of the weight of the client: compare it with the sum of the server before a test at the limit.
+- The main menu reads the armor of a character from its paperdoll rows in the store (stage U4). A system that changes the look of a
+  worn item must write the row first (the inventory system writes the rows of a change before it changes the entity).
+- An item catalog from before stage U4 has no armor appearance names: the main menu shows each character with no clothing (the
+  backend log says it at the start). Make the file again with `tools/gamedata/items.sh`.
 - `tools/gamedata/items.sh` writes the catalog to the common game data folder: the next start
   of the user reads it too. The backend that the user starts then gives items only through
   a development run or a later tool window: a start of the user has no development commands.

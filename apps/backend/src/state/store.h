@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -322,6 +323,15 @@ public:
 
     /** @return The item instances of a character, in the sequence of container and slot. */
     [[nodiscard]] std::vector<ItemRow> list_items(const std::string& characterId);
+    /**
+     * @return The item instances of a character in the slots `firstSlot` to `lastSlot` of one container, in the sequence of the slots
+     *         (stage U4: the armor of the paperdoll for the menu document). One query on the index of the places.
+     */
+    [[nodiscard]] std::vector<ItemRow> list_slots(const std::string& characterId, int container, std::uint32_t firstSlot, std::uint32_t lastSlot);
+    /** @return The number of item queries (list_items, list_slots) of this store: the cost check of a route (test case ME7). */
+    [[nodiscard]] std::uint64_t item_queries() const {
+        return m_itemQueries.load();
+    }
 
     /**
      * Changes the item instances of a character in one transaction: removes the rows with the
@@ -460,6 +470,7 @@ private:
     /** Number of open batches (0 or 1). */
     unsigned m_batch{0};
     sqlite3* m_database{nullptr};
+    std::atomic<std::uint64_t> m_itemQueries{0};
 };
 
 /** @return A random version-4 UUID in lower-case text. */

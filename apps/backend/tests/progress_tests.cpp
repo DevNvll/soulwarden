@@ -401,20 +401,25 @@ std::string document_of(const std::string& creationData) {
 /** A8: the level of a character in its menu document. */
 void menu_level(const Options&) {
     using nlohmann::json;
-    state::AppearanceNames appearance;
-    appearance.fill("none");
-    appearance[state::kAppearanceGender] = "Male";
-    const std::string made = state::make_creation_data("Leveltest", appearance, state::local_world().worldId, "Archetype_Test");
-    const std::string level20 = state::with_current_level(made, 20);
+    // Stage U4: the one writer of the menu document writes the member (before: a byte change of the stored creation data).
+    state::MenuDocument values;
+    values.name = "Leveltest";
+    values.appearance.fill("none");
+    values.appearance[state::kAppearanceGender] = "Male";
+    values.backstory = "Archetype_Test";
+    values.worldId = state::local_world().worldId;
+    const std::string made = state::make_menu_document(values);
+    values.level = 20;
+    const std::string level20 = state::make_menu_document(values);
+    values.level = 0;
+    const std::string level0 = state::make_menu_document(values);
     const auto read = state::read_creation_data(level20);
     check(document_of(made).find("\"currentLevel\":0,") != std::string::npos
               && document_of(level20).find("\"currentLevel\":19,") != std::string::npos
               && document_of(level20).size() == document_of(made).size() + 1 && read && read->archetype == "Archetype_Test"
-              && document_of(state::with_current_level(level20, 1)) == document_of(made),
-          "the menu document of a character gets the level of the screen minus 1 in its member currentLevel (19 for "
-          "level 20), and no other byte changes: the creation data reads as before");
-    check(state::with_current_level("not creation data", 5) == "not creation data" && state::with_current_level("", 5).empty(),
-          "a text that is not creation data stays as it is");
+              && document_of(level0) == document_of(made),
+          "the menu document of a character has the level of the screen minus 1 in its member currentLevel (19 for level 20; "
+          "0 for the level 1 and for no level), and the creation data reads as before");
 
     // The character list of the gateway has the level of the row of each character.
     ServerHost host;

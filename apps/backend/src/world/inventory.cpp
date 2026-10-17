@@ -7,6 +7,7 @@
 #include <set>
 
 #include "core/logging/log.h"
+#include "gamedata/perk_data.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -474,34 +475,20 @@ Inventory::Plan Inventory::plan_craft(const std::string& characterId, const std:
                           return std::tolower(static_cast<unsigned char>(one)) == std::tolower(static_cast<unsigned char>(two));
                       });
         };
-        // The costs: the unlocked stacks of the bag first, then the quick slots (the sources of the cache of the client).
+        const auto usable = [&](const BagSlot& slot, const std::string& id) {
+            return slot.item && (slot.item->flags & kItemLocked) == 0 && same_item(*slot.item, id);
+        };
+        // The materials of the whole batch first, in one count: a batch with too few of them is refused before the plan of its jobs.
         for (const CraftCost& cost : costs) {
-            std::uint64_t left = static_cast<std::uint64_t>(cost.quantity) * jobs;
-            const auto take = [&](BagSlot& slot) {
-                if (left == 0 || !slot.item || (slot.item->flags & kItemLocked) != 0 || !same_item(*slot.item, cost.itemId)) {
-                    return false;
-                }
-                const std::uint32_t taken = static_cast<std::uint32_t>(std::min<std::uint64_t>(left, slot.item->quantity));
-                slot.item->quantity -= taken;
-                if (slot.item->quantity == 0) {
-                    slot.item.reset();
-                }
-                slot.action = sync::kItemRemoved;
-                left -= taken;
-                return true;
-            };
-            for (std::uint32_t index = 0; index < items.bag.slots.size() && left > 0; ++index) {
-                if (take(items.bag.slots[index])) {
-                    touched.bag.insert(index);
-                }
+            std::uint64_t have = 0;
+            for (const BagSlot& slot : items.bag.slots) {
+                have += usable(slot, cost.itemId) ? slot.item->quantity : 0;
             }
-            for (std::uint32_t slot = paperdoll::kQuickFirst; slot <= paperdoll::kQuickLast && left > 0; ++slot) {
+            for (std::uint32_t slot = paperdoll::kQuickFirst; slot <= paperdoll::kQuickLast; ++slot) {
                 const auto found = items.equipment.slots.find(slot);
-                if (found != items.equipment.slots.end() && take(found->second)) {
-                    touched.equipment.insert(slot);
-                }
+                have += found != items.equipment.slots.end() && usable(found->second, cost.itemId) ? found->second.item->quantity : 0;
             }
-            if (left > 0) {
+            if (have < static_cast<std::uint64_t>(cost.quantity) * jobs) {
                 return ItemError::missingMaterials;
             }
         }
@@ -510,9 +497,72 @@ Inventory::Plan Inventory::plan_craft(const std::string& characterId, const std:
         if (total == 0 || total > kGiveLimit) {
             return ItemError::badQuantity;
         }
+        // Code review of stage 3.7a, finding CR7A-R1: the jobs of a batch run one after the other (Crafting::run plans one job at a time:
+        // the costs of the job, then its output). The plan of the batch makes the same steps in the same order on the copy: a batch whose
+        // bag has no place for the output of a job before its last job is refused at the request (bagFull), not accepted and stopped at
+        // that job. Before: the costs of all jobs left first, and the slots that they freed took the whole output.
+        // The cost: each job looks at the bag once for its output; the stacks of a cost are consumed in the order of the slots, thus the
+        // search of a cost goes on from the slot of the job before (not when the output is the item of a cost: its stacks can grow).
+        const bool resume = std::none_of(costs.begin(), costs.end(), [&](const CraftCost& cost) {
+            return cost.itemId.size() == output.itemId.size()
+                   && std::equal(cost.itemId.begin(), cost.itemId.end(), output.itemId.begin(), [](char one, char two) {
+                          return std::tolower(static_cast<unsigned char>(one)) == std::tolower(static_cast<unsigned char>(two));
+                      });
+        });
+        std::vector<std::uint32_t> from(costs.size(), 0);
         GiveOptions options;
         options.action = sync::kItemCreated;
-        return give_into(items.bag, touched.bag, output.itemId, static_cast<std::uint32_t>(total), options);
+        std::set<std::uint32_t> outputSlots;
+        for (std::uint32_t job = 0; job < jobs; ++job) {
+            // The costs of one job: the unlocked stacks of the bag first, then the quick slots (the sources of the cache of the client).
+            for (std::size_t index = 0; index < costs.size(); ++index) {
+                const CraftCost& cost = costs[index];
+                std::uint64_t left = cost.quantity;
+                const auto take = [&](BagSlot& slot) {
+                    if (left == 0 || !usable(slot, cost.itemId)) {
+                        return false;
+                    }
+                    const std::uint32_t taken = static_cast<std::uint32_t>(std::min<std::uint64_t>(left, slot.item->quantity));
+                    slot.item->quantity -= taken;
+                    if (slot.item->quantity == 0) {
+                        slot.item.reset();
+                    }
+                    slot.action = sync::kItemRemoved;
+                    left -= taken;
+                    return true;
+                };
+                std::uint32_t& slot = from[index];
+                if (!resume) {
+                    slot = 0;
+                }
+                while (slot < items.bag.slots.size() && left > 0) {
+                    if (take(items.bag.slots[slot])) {
+                        touched.bag.insert(slot);
+                    }
+                    // A slot that gave all its units (or had none) has no unit for a later job.
+                    if (left > 0) {
+                        ++slot;
+                    }
+                }
+                for (std::uint32_t quick = paperdoll::kQuickFirst; quick <= paperdoll::kQuickLast && left > 0; ++quick) {
+                    const auto found = items.equipment.slots.find(quick);
+                    if (found != items.equipment.slots.end() && take(found->second)) {
+                        touched.equipment.insert(quick);
+                    }
+                }
+                if (left > 0) {
+                    return ItemError::missingMaterials;
+                }
+            }
+            // The output of the job: stacks of the item first, then empty slots, also a slot that a cost freed.
+            outputSlots.clear();
+            const ItemError error = give_into(items.bag, outputSlots, output.itemId, output.quantity, options);
+            if (error != ItemError::none) {
+                return error;
+            }
+            touched.bag.insert(outputSlots.begin(), outputSlots.end());
+        }
+        return ItemError::none;
     });
 }
 
@@ -1512,6 +1562,33 @@ std::vector<state::ItemRow> start_items(const gamedata::ItemCatalog& catalog, st
         }
     }
     return rows;
+}
+
+std::uint32_t menu_appearance(const gamedata::ItemDefinition& item, bool female) {
+    if (!gamedata::class_has_tags(item.itemClass, "Armor")) {
+        return 0;
+    }
+    return female ? item.armorAppearanceF : item.armorAppearanceM;
+}
+
+std::vector<state::MenuEquipment> menu_equipment(const gamedata::ItemCatalog& catalog,
+                                                 const std::vector<state::ItemRow>& rows,
+                                                 bool female) {
+    std::vector<state::MenuEquipment> entries;
+    for (const state::ItemRow& row : rows) {
+        if (row.container != state::kContainerPaperdoll || row.slot >= state::kMenuSlotKeys.size()) {
+            continue;
+        }
+        const gamedata::ItemDefinition* definition = catalog.find(row.itemId);
+        const std::uint32_t appearance = definition != nullptr ? menu_appearance(*definition, female) : 0;
+        if (appearance != 0) {
+            entries.push_back({row.slot, appearance});
+        }
+    }
+    std::sort(entries.begin(), entries.end(), [](const state::MenuEquipment& left, const state::MenuEquipment& right) {
+        return left.slot < right.slot;
+    });
+    return entries;
 }
 
 ItemResult Inventory::pay(const std::string& characterId,

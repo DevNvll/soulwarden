@@ -792,14 +792,14 @@ bool Store::set_character_position(const std::string& characterId, const WorldPo
     return sqlite3_step(statement.handle) == SQLITE_DONE && sqlite3_changes(m_database) == 1;
 }
 
-std::vector<ItemRow> Store::list_items(const std::string& characterId) {
-    std::lock_guard lock(m_mutex);
+namespace {
+
+/** The columns of an item row, in the order of read_item_rows. */
+constexpr const char* kItemColumns = "SELECT instance_id, container, slot, item_id, quantity, gear_score, durability, "
+                                     "max_durability, flags, chrono, perk1, perk2, perk3, perk4, perk5 FROM items ";
+
+std::vector<ItemRow> read_item_rows(const Statement& statement) {
     std::vector<ItemRow> rows;
-    Statement statement(m_database,
-                        "SELECT instance_id, container, slot, item_id, quantity, gear_score, durability, "
-                        "max_durability, flags, chrono, perk1, perk2, perk3, perk4, perk5 FROM items "
-                        "WHERE character_id=?1 ORDER BY container, slot");
-    statement.bind(1, characterId);
     while (sqlite3_step(statement.handle) == SQLITE_ROW) {
         ItemRow row;
         row.instanceId = column_text(statement.handle, 0);
@@ -818,6 +818,28 @@ std::vector<ItemRow> Store::list_items(const std::string& characterId) {
         rows.push_back(std::move(row));
     }
     return rows;
+}
+
+} // namespace
+
+std::vector<ItemRow> Store::list_items(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    ++m_itemQueries;
+    Statement statement(m_database, (std::string(kItemColumns) + "WHERE character_id=?1 ORDER BY container, slot").c_str());
+    statement.bind(1, characterId);
+    return read_item_rows(statement);
+}
+
+std::vector<ItemRow> Store::list_slots(const std::string& characterId, int container, std::uint32_t firstSlot, std::uint32_t lastSlot) {
+    std::lock_guard lock(m_mutex);
+    ++m_itemQueries;
+    Statement statement(m_database,
+                        (std::string(kItemColumns) + "WHERE character_id=?1 AND container=?2 AND slot BETWEEN ?3 AND ?4 ORDER BY slot").c_str());
+    statement.bind(1, characterId);
+    sqlite3_bind_int(statement.handle, 2, container);
+    sqlite3_bind_int64(statement.handle, 3, firstSlot);
+    sqlite3_bind_int64(statement.handle, 4, lastSlot);
+    return read_item_rows(statement);
 }
 
 bool Store::write_items(const std::string& characterId,

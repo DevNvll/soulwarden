@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "gamedata/item_catalog.h"
+#include "state/creation_data.h"
 #include "state/store.h"
 #include "world/entity.h"
 #include "world/item.h"
@@ -195,6 +196,26 @@ inline constexpr std::uint32_t kGiveLimit = 100000;
  *         character. Any thread: the function reads only the catalog.
  */
 [[nodiscard]] std::vector<state::ItemRow> start_items(const gamedata::ItemCatalog& catalog, std::string_view backstory);
+
+/**
+ * @return The look of an item in the main menu of the client (stage U4): the value `appearanceId` of its entry of the map `equipment`
+ *         of the menu document, or 0 for no look. The rule of the original server (0x673EE40): an item with the class tag Armor has the
+ *         armor appearance of its row for the body (ArmorAppearanceM for a male body, ArmorAppearanceF for a female body). An item with
+ *         no tag Armor (a skin display item, a weapon) or with an empty cell has no look (the original server wrote the value 0: a
+ *         decision of an agent, the reaction of the menu to 0 is not known).
+ */
+[[nodiscard]] std::uint32_t menu_appearance(const gamedata::ItemDefinition& item, bool female);
+
+/**
+ * @return The entries of the map `equipment` of the menu document of a character (stage U4): one for each item of the paperdoll slots
+ *         0 to 4 (state::kMenuSlotKeys) with a look (menu_appearance), in the sequence of the slots. A row of the bag, of a different
+ *         slot (a weapon, jewelry, a tool), or of an item that the catalog does not have gets no entry. Any thread: the function reads
+ *         only the catalog.
+ * @param rows Item rows of the character (the paperdoll rows of the store).
+ */
+[[nodiscard]] std::vector<state::MenuEquipment> menu_equipment(const gamedata::ItemCatalog& catalog,
+                                                               const std::vector<state::ItemRow>& rows,
+                                                               bool female);
 
 /**
  * The weight of the bag of a character against its limit (stage U3, research creature-combat-feel.md Q4). The client computes the
@@ -471,10 +492,11 @@ public:
      */
     [[nodiscard]] ItemError check_build(const std::vector<BuildItem>& items, std::string& detail) const;
     /**
-     * Plans `jobs` craft jobs (stage 3.7a, world/crafting.h): the costs of each job taken from the unlocked stacks of the bag and of the
-     * quick slots (a stack that goes to 0 leaves its slot empty), then the output of all jobs into the bag (stacks of the item first,
-     * then empty slots, also a slot that a cost freed) with the cause ItemCreated. The whole output must fit (bagFull: the loot overflow
-     * of grant does not apply to a paid craft), and each cost must be there (missingMaterials). No write, no change of the entity.
+     * Plans `jobs` craft jobs (stage 3.7a, world/crafting.h), one after the other as the jobs of a batch run (code review of stage 3.7a,
+     * finding CR7A-R1): for each job its costs from the unlocked stacks of the bag and of the quick slots (a stack that goes to 0 leaves
+     * its slot empty), then its output into the bag (stacks of the item first, then empty slots, also a slot that a cost freed) with the
+     * cause ItemCreated. The output of each job must fit (bagFull: the loot overflow of grant does not apply to a paid craft), and the
+     * costs of all jobs must be there (missingMaterials). No write, no change of the entity.
      */
     [[nodiscard]] Plan plan_craft(const std::string& characterId, const std::vector<CraftCost>& costs, const CraftOutput& output,
                                   std::uint32_t jobs);

@@ -41,7 +41,10 @@ constexpr TypeId kTextType{0x03, 0xAA, 0xAB, 0x3F, 0x5C, 0x47, 0x5A, 0x66,
 constexpr TypeId kSaveDataType{0x14, 0x4C, 0x75, 0x76, 0x7F, 0xBA, 0x42, 0x50,
                                0xB0, 0xC8, 0xF0, 0x68, 0x03, 0x65, 0x7D, 0x79};
 constexpr std::uint8_t kSaveDataVersion = 3;
-/** A signed 32-bit number: {72B9409A-7D1A-4831-9CFE-FCB3FADD3426}. The client writes the value 0 as one byte. */
+/**
+ * The number of `startingFaction`: {72B9409A-7D1A-4831-9CFE-FCB3FADD3426}. The client writes one value byte (0). The public engine
+ * source names this type id `unsigned char` (an inference: not proved in the client).
+ */
 constexpr TypeId kIntegerType{0x72, 0xB9, 0x40, 0x9A, 0x7D, 0x1A, 0x48, 0x31,
                               0x9C, 0xFE, 0xFC, 0xB3, 0xFA, 0xDD, 0x34, 0x26};
 /** The list of the field appearanceData: {7EF0E808-E5B8-5116-BB2B-00A1610BF1D3}. */
@@ -50,6 +53,27 @@ constexpr TypeId kAppearanceDataType{0x7E, 0xF0, 0xE8, 0x08, 0xE5, 0xB8, 0x51, 0
 /** The map of the field equipment: {44C93A82-1897-56D6-8CF7-4BC0289915DE}. */
 constexpr TypeId kEquipmentType{0x44, 0xC9, 0x3A, 0x82, 0x18, 0x97, 0x56, 0xD6,
                                 0x8C, 0xF7, 0x4B, 0xC0, 0x28, 0x99, 0x15, 0xDE};
+// The elements of one entry of the map `equipment` (the create requests of the client; stage U4, protocol notes 2.2.5).
+/** One pair of the map: {EFF030FB-3358-5613-8740-93041334C206}. The key is the field `value1`, the value the field `value2`. */
+constexpr TypeId kEquipmentPairType{0xEF, 0xF0, 0x30, 0xFB, 0x33, 0x58, 0x56, 0x13,
+                                    0x87, 0x40, 0x93, 0x04, 0x13, 0x34, 0xC2, 0x06};
+/** EquipmentSaveData: {903C9703-A791-454D-A576-45EDE8405B70}, class version 1. */
+constexpr TypeId kEquipmentSaveDataType{0x90, 0x3C, 0x97, 0x03, 0xA7, 0x91, 0x45, 0x4D,
+                                        0xA5, 0x76, 0x45, 0xED, 0xE8, 0x40, 0x5B, 0x70};
+constexpr std::uint8_t kEquipmentSaveDataVersion = 1;
+/** AZ::Crc32: {9F4E062E-06A0-46D4-85DF-E0DA96467D3A}, a class with one field `value`. */
+constexpr TypeId kCrc32Type{0x9F, 0x4E, 0x06, 0x2E, 0x06, 0xA0, 0x46, 0xD4,
+                            0x85, 0xDF, 0xE0, 0xDA, 0x96, 0x46, 0x7D, 0x3A};
+/** The number of the field `value` of AZ::Crc32: {43DA906B-7DEF-4CA8-9790-854106D3F983}, four value bytes (big-endian). */
+constexpr TypeId kCrcValueType{0x43, 0xDA, 0x90, 0x6B, 0x7D, 0xEF, 0x4C, 0xA8,
+                               0x97, 0x90, 0x85, 0x41, 0x06, 0xD3, 0xF9, 0x83};
+/** DyeData: {2FA619C9-D71E-4E88-9BE9-16056F7E38FA}, class version 3, one field for each of the four dye channels. */
+constexpr TypeId kDyeDataType{0x2F, 0xA6, 0x19, 0xC9, 0xD7, 0x1E, 0x4E, 0x88,
+                              0x9B, 0xE9, 0x16, 0x05, 0x6F, 0x7E, 0x38, 0xFA};
+constexpr std::uint8_t kDyeDataVersion = 3;
+/** The palette index of one dye channel: {FAAD7488-08C8-5FCB-8FEE-AB1EBE4726B3}, one value byte. */
+constexpr TypeId kDyeChannelType{0xFA, 0xAD, 0x74, 0x88, 0x08, 0xC8, 0x5F, 0xCB,
+                                 0x8F, 0xEE, 0xAB, 0x1E, 0xBE, 0x47, 0x26, 0xB3};
 
 /** Names of the appearance fields of PlayerSaveData, in the order of the appearance state. */
 constexpr std::array<std::uint32_t, kAppearanceFieldCount> kAppearanceFieldNames{
@@ -74,6 +98,20 @@ constexpr std::uint32_t kGuildCrestFieldName = 0x04DFB561; // guildCrestName
 constexpr std::uint32_t kStartingFactionFieldName = 0x1BCB3A6D; // startingFaction
 constexpr std::uint32_t kAppearanceDataFieldName = 0x0BE96AA4; // appearanceData
 constexpr std::uint32_t kEquipmentFieldName = 0xD338D583; // equipment
+constexpr std::uint32_t kPairFieldName = 0x41405E39; // element
+constexpr std::uint32_t kPairKeyFieldName = 0xA2756C5A; // value1
+constexpr std::uint32_t kPairValueFieldName = 0x3B7C3DE0; // value2
+constexpr std::uint32_t kItemNameFieldName = 0xF45D1CCE; // itemName
+constexpr std::uint32_t kAppearanceIdFieldName = 0xCDCEA5F5; // appearanceId
+constexpr std::uint32_t kCrcValueFieldName = 0x1D775834; // value
+constexpr std::uint32_t kDyeSettingsFieldName = 0x17454143; // dyeSettings
+/** The four dye channels of DyeData, in the order of the client. */
+constexpr std::array<std::uint32_t, 4> kDyeChannelFieldNames{
+    0x51E3A083, // m_rColorId
+    0x65B89FCC, // m_gColorId
+    0x2D5891A8, // m_bColorId
+    0xA3D7964B, // m_aColorId
+};
 // Values that the client writes for a new character (protocol notes 2.2.5).
 constexpr std::string_view kCompanyNameSuffix = "'s Company";
 constexpr std::string_view kMaleEntityClass = "PlayerMale";
@@ -293,6 +331,35 @@ void text_field(std::vector<std::uint8_t>& stream, std::uint32_t name, std::stri
 }
 
 /**
+ * Adds one entry of the map `equipment`: the pair of the key and the EquipmentSaveData, in the form of the create request of the
+ * client (258 bytes for the key "gloves").
+ */
+void equipment_entry(std::vector<std::uint8_t>& stream, std::string_view key, std::uint32_t appearanceId) {
+    begin_element(stream, kPairFieldName, 0, kEquipmentPairType);
+    text_field(stream, kPairKeyFieldName, key);
+    begin_element(stream, kPairValueFieldName, kEquipmentSaveDataVersion, kEquipmentSaveDataType);
+    // Each writer of the client and the publish of the original server leave the item id empty (0x673EE40, 0x2EB0FE0).
+    text_field(stream, kItemNameFieldName, "");
+    begin_element(stream, kAppearanceIdFieldName, 0, kCrc32Type);
+    const std::array<char, 4> value{static_cast<char>(appearanceId >> 24),
+                                    static_cast<char>(appearanceId >> 16),
+                                    static_cast<char>(appearanceId >> 8),
+                                    static_cast<char>(appearanceId)};
+    begin_element(stream, kCrcValueFieldName, 0, kCrcValueType, std::string_view(value.data(), value.size()));
+    stream.push_back(kElementEnd); // End of `value`.
+    stream.push_back(kElementEnd); // End of `appearanceId`.
+    // The backend has no dye (stage 5.6): the palette index 0 (no dye) in each channel, as the client writes it for a new character.
+    begin_element(stream, kDyeSettingsFieldName, kDyeDataVersion, kDyeDataType);
+    for (const std::uint32_t channel : kDyeChannelFieldNames) {
+        begin_element(stream, channel, 0, kDyeChannelType, std::string_view("\0", 1));
+        stream.push_back(kElementEnd);
+    }
+    stream.push_back(kElementEnd); // End of `dyeSettings`.
+    stream.push_back(kElementEnd); // End of `value2`.
+    stream.push_back(kElementEnd); // End of the pair.
+}
+
+/**
  * Adds a byte string as a JSON string with the rules of the JSON writer of the client: a
  * byte below 0x20 is an escape, a quote and a backslash get a backslash, and each other byte
  * stays as it is.
@@ -340,91 +407,51 @@ void append_json_bytes(std::string& document, std::span<const std::uint8_t> byte
 
 } // namespace
 
-std::string make_creation_data(const std::string& characterName,
-                               const AppearanceNames& appearance,
-                               const std::string& worldId,
-                               const std::string& backstory) {
+bool female_body(const AppearanceNames& appearance) {
+    return appearance[kAppearanceGender] == kFemaleGender;
+}
+
+std::string make_menu_document(const MenuDocument& values) {
     std::vector<std::uint8_t> stream{kStreamTagBinary};
     for (int shift = 24; shift >= 0; shift -= 8) {
         stream.push_back(static_cast<std::uint8_t>(kStreamVersion >> shift));
     }
     // The fields have the order of the create request of the client.
     begin_element(stream, 0, kSaveDataVersion, kSaveDataType);
-    text_field(stream, kPlayerNameFieldName, characterName);
-    text_field(stream, kCompanyNameFieldName, characterName + std::string(kCompanyNameSuffix));
-    text_field(stream,
-               kEntityClassFieldName,
-               appearance[kAppearanceGender] == kFemaleGender ? kFemaleEntityClass : kMaleEntityClass);
+    text_field(stream, kPlayerNameFieldName, values.name);
+    text_field(stream, kCompanyNameFieldName, values.name + std::string(kCompanyNameSuffix));
+    text_field(stream, kEntityClassFieldName, female_body(values.appearance) ? kFemaleEntityClass : kMaleEntityClass);
     text_field(stream, kGuildCrestFieldName, "");
     for (std::size_t field = 0; field < kAppearanceFieldCount; ++field) {
-        text_field(stream, kAppearanceFieldNames[field], appearance[field]);
+        text_field(stream, kAppearanceFieldNames[field], values.appearance[field]);
     }
-    text_field(stream, kBackstoryFieldName, backstory);
+    text_field(stream, kBackstoryFieldName, values.backstory);
     begin_element(stream, kStartingFactionFieldName, 0, kIntegerType, std::string_view("\0", 1));
     stream.push_back(kElementEnd);
     begin_element(stream, kAppearanceDataFieldName, 0, kAppearanceDataType);
     stream.push_back(kElementEnd);
     begin_element(stream, kEquipmentFieldName, 0, kEquipmentType);
-    stream.push_back(kElementEnd);
+    for (const MenuEquipment& entry : values.equipment) {
+        if (entry.slot < kMenuSlotKeys.size()) {
+            equipment_entry(stream, kMenuSlotKeys[entry.slot], entry.appearanceId);
+        }
+    }
+    stream.push_back(kElementEnd); // End of the map.
     stream.push_back(kElementEnd); // End of the root element.
     stream.push_back(kElementEnd); // End of the stream.
 
     std::string document = R"({"currency":0,"visualsBlob":)";
     append_json_bytes(document, stream);
-    document += R"(,"position":{"x":0.0,"y":0.0,"z":0.0},"currentLevel":0,"worldId":")";
+    // The member currentLevel is the level of the screen minus 1 (protocol notes 2.2.5 and 4.12).
+    document += R"(,"position":{"x":0.0,"y":0.0,"z":0.0},"currentLevel":)";
+    document += std::to_string(values.level == 0 ? 0 : values.level - 1);
+    document += R"(,"worldId":")";
     // A world id is a UUID text: it needs no escape.
-    document += worldId;
+    document += values.worldId;
     document += "\"}";
     const std::vector<std::uint8_t> compressed = compression::zlib_store(
         std::span(reinterpret_cast<const std::uint8_t*>(document.data()), document.size()));
     return encoding::base64(std::string(compressed.begin(), compressed.end()));
-}
-
-std::string with_current_level(const std::string& text, std::uint32_t level) {
-    std::string compressed;
-    if (text.empty() || !encoding::base64_decode(text, compressed)) {
-        return text;
-    }
-    std::vector<std::uint8_t> document;
-    if (!compression::zlib_decode(
-            std::span(reinterpret_cast<const std::uint8_t*>(compressed.data()), compressed.size()),
-            kMaxDocumentBytes,
-            document)) {
-        return text;
-    }
-    // The member is after the bytes of the object stream: the last one in the document is it.
-    // A JSON document can have white space before and after the colon of a member.
-    static constexpr std::string_view kMember = "\"currentLevel\"";
-    const std::string_view view(reinterpret_cast<const char*>(document.data()), document.size());
-    const std::size_t member = view.rfind(kMember);
-    if (member == std::string_view::npos) {
-        return text;
-    }
-    const auto skip_space = [&view](std::size_t position) {
-        while (position < view.size()
-               && (view[position] == ' ' || view[position] == '\t' || view[position] == '\r' || view[position] == '\n')) {
-            ++position;
-        }
-        return position;
-    };
-    std::size_t first = skip_space(member + kMember.size());
-    if (first >= view.size() || view[first] != ':') {
-        return text;
-    }
-    first = skip_space(first + 1);
-    std::size_t last = first;
-    while (last < view.size() && view[last] >= '0' && view[last] <= '9') {
-        ++last;
-    }
-    if (last == first) {
-        return text;
-    }
-    const std::string number = std::to_string(level == 0 ? 0 : level - 1);
-    std::vector<std::uint8_t> changed(document.begin(), document.begin() + static_cast<std::ptrdiff_t>(first));
-    changed.insert(changed.end(), number.begin(), number.end());
-    changed.insert(changed.end(), document.begin() + static_cast<std::ptrdiff_t>(last), document.end());
-    const std::vector<std::uint8_t> stored = compression::zlib_store(changed);
-    return encoding::base64(std::string(stored.begin(), stored.end()));
 }
 
 std::optional<CreationData> read_creation_data(const std::string& text) {

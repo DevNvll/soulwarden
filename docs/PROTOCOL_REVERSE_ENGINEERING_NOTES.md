@@ -338,31 +338,75 @@ character list), zlib and base64 writer 0x16A6030 and reader 0x171A500.
   | `backstory` | text | The archetype. Buttons 1 to 7: `Archetype_Soldier`, `Archetype_Destroyer`, `Archetype_Ranger`, `Archetype_Musketeer`, `Archetype_Occultist`, `Archetype_Mystic`, `Archetype_Swordsman`. |
   | `startingFaction` | int | 0 |
   | `appearanceData` | container | empty |
-  | `equipment` | map | 5 entries with the keys `gloves`, `shirt`, `hat`, `boots`, `pants`. Each value is an `EquipmentSaveData`: `itemName` (empty), `appearanceId` (a 32-bit number), `dyeSettings` (4 numbers, all 0). This is the clothing of the archetype. |
+  | `equipment` | map | 5 entries with the keys `gloves`, `shirt`, `hat`, `boots`, `pants`. Each value is an `EquipmentSaveData`: `itemName` (empty), `appearanceId` (a 32-bit number), `dyeSettings` (4 numbers, all 0). This is the clothing of the archetype, also the head item that the backstory gives with the quantity 0. |
 
-- **`PublishedData` of a character of the login information is the same text.** The backend
-  sends the stored `CharacterCreationParams` with no change. It sends the stored text only
-  when it can read it: a row with a different text (a database from before the check of the
-  create route) gets creation data that the backend makes (next item). The reaction of the
-  client to `PublishedData` that is not creation data is not known. With the stored text,
-  the menu shows the body of the character with its skin tone and face, and with the
-  clothing of the archetype (the headgear can hide the hair). A character with no
-  `PublishedData` has a white body in the menu. The level number of the row is the member
-  `currentLevel` plus 1. From stage 1.5 on the backend writes the level of the character
-  into this member of the text that it sends (the level of the screen minus 1) and sends the
-  document again as stored data of the zlib form; the other bytes of the document do not
-  change (behavioral proof: the row shows "21", and the body has its clothing).
-- **Creation data that the backend makes.** A character that the backend seeded has no
-  creation data. For its `PublishedData` the backend makes the same document
-  (`make_creation_data` in `state/creation_data.cpp`): the zlib stream has stored blocks
-  (header `78 01`), and the object stream has each field of the table in the same sequence,
-  with the names of the default appearance of 4.5 from the appearance tables, an empty
-  `backstory`, and an `equipment` map with no entry. The client accepts this text: the menu
-  shows the body with skin, face, and hair, and with underwear (behavioral proof: a seeded
-  character of a test account, and the seeded character of a database from before this
-  support). Up to the value of `race`, the bytes were equal to a capture of a character with
-  the same name. Without the appearance tables the backend sends no `PublishedData` for such
-  a character.
+- **`PublishedData` of a character of the login information: the menu document (stage U4).** The main menu makes the
+  body of a character from this text: the gender, the appearance names, and the map `equipment` (the clothing). The
+  level number of the row is the member `currentLevel` plus 1 (behavioral proof of stage 1.5: the row shows "21"). A
+  character with no `PublishedData` has a white body in the menu. The original server made the text again from the
+  character at each publish (static proof: the publish function 0x67F0600 of `PlayerComponent`, text
+  "PublishCharacterMetadata failed to serialize PlayerSaveData!" 0x8558768, calls
+  `PaperdollComponent::WriteEquipmentToPlayerSaveData`, RTTI text 0xA254730, loop 0x684E9B0, entry lambda 0x673EE40). From
+  stage U4 the backend makes the text at each request of the character list with one writer (`make_menu_document` in
+  `state/creation_data.cpp`) from the values of the character: the name (`playerName`, and `<name>'s Company`), the 12
+  appearance names and the backstory of the stored creation data (a character with no creation data: the names of the
+  default appearance of 4.5 and an empty backstory), the world id, `currentLevel` = the level of the row minus 1, and the
+  map `equipment` from the paperdoll rows of the store. The other fields have the values of the table above. The zlib
+  stream has stored blocks (header `78 01`); the client accepts it (behavioral proof from the seeded characters of the
+  stages before U4: the menu showed the body with skin, face, and hair). The stored `CharacterCreationParams` does not change. Without the appearance
+  tables a character with no creation data gets no `PublishedData`.
+- **The map `equipment` (stage U4).** One entry for each armor item of the paperdoll slots 0 to 4, in the sequence of the
+  slots. Evidence: static proof (0x673EE40), behavioral proof (5 create requests), live proof of stage U4 (the menu shows
+  the armor; pictures of the result of stage U4).
+
+  | Key | Paperdoll slot | Evidence |
+  | --- | --- | --- |
+  | `hat` | 0 head | static (0x673EE40 finds the visual slot name in the map at paperdoll component +0x23F8; the text `hat` 0x831C8F0 also sets the hair rule in 0x6956C40), game data (`m_paperdollVisualSlotMapping` of `slices/player.dynamicslice`), behavioral (5 of 5 create requests) |
+  | `shirt` | 1 chest | the same |
+  | `gloves` | 2 hands | the same |
+  | `pants` | 3 legs | the same |
+  | `boots` | 4 feet | the same |
+
+  - The original server writes no entry for a slot above 4 (static proof, 0x673EE40): the menu has no weapon, shield,
+    jewelry, paint, or tool. The backend writes no entry for an item with no look (an item with no class tag `Armor`, or
+    an empty name; a decision of an agent that the orchestrator took: the original server wrote the value 0, and the
+    reaction of the menu to 0 is not known).
+  - `appearanceId` (`AZ::Crc32`, reflection 0x36FC490) = the CRC-32 (zlib polynomial) of the lower-case text of the
+    cell `ArmorAppearanceM` (a male body) or `ArmorAppearanceF` (a female body) of the master item row. Static proof:
+    0x673EE40 takes definition +0xDC when the gender text of the save data is `Male` (text 0x7FC5ED8), else +0xE0, for
+    an item with the class tag 124 `armor` (bit test 0x5C5E550); the create function 0x2EB0FE0 uses the same fields.
+    Behavioral proof: 25 of 25 entries of the 5 create requests (Ranger, Soldier, and Musketeer male; Mystic and
+    Destroyer female) are equal to the rule (`m_Archetype_Ranger_gloves`: `4A435DB3`). The backend selects F only for
+    the gender text `Female`. The loader of the fields +0xDC and +0xE0 was not found (inference: the two columns).
+  - `itemName` is empty, and the 4 dye bytes are 0: each writer of the client (0x2EB0FE0) and of the original server
+    (0x673EE40) leaves the item id empty. The original server writes the 4 dye bytes of the item (item +0x170), and a
+    transmog appearance in place of the row when the item has one (item +0x218, setting `javelin.enable-transmog`): the
+    backend has no dye and no transmog before stage 5.6.
+  - The bytes of one entry (the entry `gloves` of a create request, 258 bytes; the key byte `5E` is `0x58 | length`):
+
+    ```text
+    48 41405E39 {EFF030FB-3358-5613-8740-93041334C206}            element: one pair
+      5E A2756C5A {03AAAB3F-5C47-5A66-9EBC-D5FA4DB353C9} "gloves" 00     value1: the key, a text
+      C8 3B7C3DE0 01 {903C9703-A791-454D-A576-45EDE8405B70}     value2: EquipmentSaveData, class version 1
+        58 F45D1CCE {03AAAB3F-5C47-5A66-9EBC-D5FA4DB353C9} 00   itemName: an empty text
+        48 CDCEA5F5 {9F4E062E-06A0-46D4-85DF-E0DA96467D3A}      appearanceId: AZ::Crc32
+          5C 1D775834 {43DA906B-7DEF-4CA8-9790-854106D3F983} 4A 43 5D B3 00   value: 4 bytes, big-endian
+        00
+        C8 17454143 03 {2FA619C9-D71E-4E88-9BE9-16056F7E38FA}   dyeSettings: DyeData, class version 3
+          59 51E3A083 {FAAD7488-08C8-5FCB-8FEE-AB1EBE4726B3} 00 00   m_rColorId (then m_gColorId 65B89FCC,
+                                                                      m_bColorId 2D5891A8, m_aColorId A3D7964B)
+        00
+      00
+    00
+    ```
+
+  - The client keeps the map as a hash map (insert 0x2EA46D0): the create requests have the order `gloves`, `shirt`,
+    `hat`, `boots`, `pants`. The menu accepts the order of the slots (live proof of stage U4). With the values and the
+    order of a create request the writer of the backend makes the document of the client byte for byte (5 of 5).
+  - Not found: the loop of the client that reads the map in the menu (after 0x41F9E20 keeps the save data at component
+    +0x1B8); the apply functions 0x6956C40 (slot name and appearance name) and 0x6957C00 (slot name, appearance row, and
+    dye) of `CustomizableCharacterComponent` have no direct caller in the analysis. The reaction of the menu to an
+    `itemName` with a value, to `appearanceId` 0, to a CRC that is not a row, and to a different key is not known.
 - The appearance state of the world (4.5) has list indexes, not names. Index = position of
   the name in a list of the character creation databases of the game: gender in `Male`,
   `Female`; `race` in the list `Races` of the gender; skin tone, hairstyle, facial hair, and

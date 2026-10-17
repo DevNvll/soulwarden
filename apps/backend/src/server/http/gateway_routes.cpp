@@ -143,22 +143,39 @@ json world_json(const Services& services) {
 }
 
 /**
- * @return The text for PublishedData of a character: its creation data. A character that the
- *         backend seeded has none and gets creation data with the default appearance. An empty
- *         text when the backend has no appearance tables for the names of that appearance.
+ * @return The text for PublishedData of a character: its menu document, made at each request with the one writer from the values
+ *         of the character (stage U4; the original server made the text from the character at each publish, 0x67F0600). The
+ *         appearance names and the backstory come from its creation data, which does not change; a character that the backend
+ *         seeded has none and gets the default appearance. An empty text for such a character when the backend has no appearance
+ *         tables.
  */
 std::string published_data(const Services& services, const state::Character& character) {
-    // The create route keeps only creation data that it can read. A row from before that
-    // check can have a different text: the client does not get such a text.
-    // The document has the level of the character for the character list of the main menu
-    // (the member `currentLevel`, protocol notes 2.2.5 and 4.12): the level of its row.
-    const std::uint32_t level = services.store.progress(character.characterId).level;
-    if (state::read_creation_data(character.creationParams)) {
-        return state::with_current_level(character.creationParams, level);
+    state::MenuDocument document;
+    document.name = character.name;
+    document.worldId = character.worldId;
+    // The create route keeps only creation data that it can read. A row from before that check can have a different text: the
+    // client does not get such a text, and the row gets the default appearance.
+    if (const auto creationData = state::read_creation_data(character.creationParams)) {
+        document.appearance = creationData->appearance;
+        document.backstory = creationData->archetype;
+    } else if (const auto names = services.appearanceTables.names(state::kDefaultAppearance)) {
+        document.appearance = *names;
+    } else {
+        return {};
     }
-    const auto names = services.appearanceTables.names(state::kDefaultAppearance);
-    return names ? state::with_current_level(state::make_creation_data(character.name, *names, character.worldId), level)
-                 : std::string{};
+    // The level of the row for the character list of the main menu (the member `currentLevel`, protocol notes 2.2.5 and 4.12).
+    document.level = services.store.progress(character.characterId).level;
+    // The clothing of the menu body: the armor rows of the paperdoll in the store. The inventory system writes the rows of a change
+    // before it changes the entity, thus the rows are the equipment of the entity, also while the character is in the world, and
+    // this thread reads no world state. One item query for each character (the place index of the table), no scan of the world.
+    // The catalog is a read-only object that the backend loads at its start.
+    const gamedata::ItemCatalog* catalog = services.world.options().itemCatalog;
+    if (catalog != nullptr && catalog->loaded()) {
+        const std::vector<state::ItemRow> armor = services.store.list_slots(
+            character.characterId, state::kContainerPaperdoll, 0, static_cast<std::uint32_t>(state::kMenuSlotKeys.size() - 1));
+        document.equipment = world::menu_equipment(*catalog, armor, state::female_body(document.appearance));
+    }
+    return state::make_menu_document(document);
 }
 
 json character_json(const Services& services, const state::Character& character) {
@@ -180,8 +197,8 @@ json character_json(const Services& services, const state::Character& character)
         {"OwnerState", "ACTIVE"},
     };
     // The menu makes the body of the character from this text (client reader at image RVA
-    // 0x171A500 and 0x16B3850). It has the same form as the creation data of the create
-    // request. Without it the menu shows a white body.
+    // 0x171A500 and 0x16B3850): the appearance and the clothing. It has the same form as the
+    // creation data of the create request. Without it the menu shows a white body.
     const std::string publishedData = published_data(services, character);
     if (!publishedData.empty()) {
         document["PublishedData"] = publishedData;

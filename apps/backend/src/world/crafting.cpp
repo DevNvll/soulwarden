@@ -342,6 +342,10 @@ CraftVerdict Crafting::request(SessionId session, const CraftRequest& request) {
     job.output = output.itemId;
     job.outputQty = output.quantity;
     job.accepted = m_world.clock().now();
+    // Code review of stage 3.7a, finding CR7A-R4: a progress that the session did not send yet is a final progress of a request before
+    // this one (the stop form of a refusal in the same tick; a batch that runs refuses a request). The client ends its crafting at such a
+    // progress and sends 2999, which would stop this batch: the progress goes away. The first job of this batch sends its own progress.
+    character->craftProgress = CraftProgress{};
     character->craftJob = job;
     m_active[character->id] = character->characterId;
     ++m_counts.verdicts[static_cast<std::size_t>(CraftVerdict::accepted)];

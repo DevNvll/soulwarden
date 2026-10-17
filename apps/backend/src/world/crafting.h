@@ -28,8 +28,9 @@
 //      a type of the station row (client 0x2E5ED00), the trade skill rank is at RecipeLevel or more, the recipe needs no expansion.
 //   4. The count is 1 to 10,000 (the reader of the client), there are no perk items and no upgrade, and the entries name, in the order
 //      of the recipe, the item of each item ingredient or a member of each category ingredient (one entry for each ingredient).
-//   5. The plan of the whole batch on a copy (Inventory::plan_craft): the costs of the recipe times the count from the unlocked stacks of
-//      the bag and of the quick slots, and the output of all jobs into the bag; and the coin of the fee of the batch.
+//   5. The plan of the whole batch on a copy (Inventory::plan_craft), job by job in the order of the jobs (code review of stage 3.7a,
+//      finding CR7A-R1): the costs of each job from the unlocked stacks of the bag and of the quick slots, then its output into the bag;
+//      and the coin of the fee of the batch.
 // An accepted request is a batch (decision D5 of the orchestrator, option A): the server reserves nothing but checks the whole batch, and
 // each job of the batch is one transaction (its costs, its output, its part of the fee). The first job completes one craft time after the
 // request (the client setting javelin.crafting-duration-seconds, 1.0 s; the server facet schedules its delayed execution with it after
@@ -43,6 +44,8 @@
 // record of the items the session sends progress 2993 with the count of the completed jobs (completed = total ends the crafting of the
 // client, which then sends 2999). A refusal sends the stop form of 2993 (an empty recipe, 0 of 0; live check L3: the client stops its
 // crafting and shows "Crafting attempt failed." at the end of its own 10 s timer). A second request while a batch runs gets no message.
+// An accepted batch drops a progress of the character that the session did not send yet (code review of stage 3.7a, finding CR7A-R4: the
+// stop form of a refused request before it in the same tick would end the crafting of the client, and its 2999 the new batch).
 //
 // The cost depends on the requests and the active batches, not on the size of the world (MP-8): a request finds its recipe, its station
 // row, and a category member in hash maps, the station of the use through the active interaction of the character, and the plan looks only

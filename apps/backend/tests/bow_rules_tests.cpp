@@ -151,6 +151,11 @@ void data_formats(const Options& options) {
     twice["trinkets"].push_back(document["trinkets"][0]);
     json older = noMember;
     older["format"] = 3;
+    // From stage U4 the tool writes format 5: the two armor appearance columns go out for a file of format 3.
+    older["columns"].erase(older["columns"].begin() + 15, older["columns"].end());
+    for (json& row : older["items"]) {
+        row.erase(row.begin() + 15, row.end());
+    }
     check(!load(noMember) && !load(unknownItem) && !load(negative) && !load(twice) && load(older),
           "a file of format 4 with no trinkets, with an item that the list does not have, with a negative value, or with an item two times does "
           "not load; a file of format 3 loads (no line)");

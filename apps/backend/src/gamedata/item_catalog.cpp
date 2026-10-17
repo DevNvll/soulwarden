@@ -15,14 +15,17 @@ namespace {
 using nlohmann::json;
 
 /** Columns of one item of the file, in this sequence (tools/gamedata/item_catalog.py). */
-constexpr std::array<const char*, 15> kColumns{"id",         "name",         "type",         "class",
+constexpr std::array<const char*, 17> kColumns{"id",         "name",         "type",         "class",
                                                "tier",       "weight",       "maxStack",     "durability",
                                                "minGearScore", "maxGearScore", "gearScoreOverride", "bindOnPickup",
-                                               "nonRemovable", "notDroppable", "maxCraftUpgradeGS"};
+                                               "nonRemovable", "notDroppable", "maxCraftUpgradeGS", "armorAppearanceM",
+                                               "armorAppearanceF"};
 /** A file of the tool from before stage 2.2 (format 1) has the first 12 columns only (no removal protection). */
 constexpr std::size_t kColumnsBefore22 = 12;
 /** A file of format 2 (stage 2.2) has the first 14 columns (no upgrade gear score: stage B0 adds it, format 3). */
 constexpr std::size_t kColumnsBeforeB0 = 14;
+/** A file of format 3 or 4 has the first 15 columns (no armor appearance: stage U4 adds the two columns, format 5). */
+constexpr std::size_t kColumnsBeforeU4 = 15;
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -63,17 +66,23 @@ bool ItemCatalog::load(const std::string& path) {
         || !document["columns"].is_array() || !document["items"].is_array()) {
         return false;
     }
-    // The file must have the columns that this code reads, in the same sequence: all of them (format 3, stage B0), the 14 columns of a file
-    // of stage 2.2 (format 2: no upgrade gear score), or the 12 columns of a file from before stage 2.2 (format 1: no removal protection).
+    // The file must have the columns that this code reads, in the same sequence: all of them (format 5, stage U4), the 15 columns of a file
+    // of format 3 or 4 (no armor appearance), the 14 columns of a file of stage 2.2 (format 2: no upgrade gear score), or the 12 columns of a
+    // file from before stage 2.2 (format 1: no removal protection).
     // The format of the file selects the layout (code review of stage 2.2, finding WT-R4): a file with fewer columns than its format is not
     // complete and does not load.
     // Format 4 (stage B4): the columns of format 3 and the member trinkets (the stat lines of the jewelry).
+    // Format 5 (stage U4): the members of format 4 and two more columns, the armor appearance names of each item.
     std::uint32_t format = 1;
-    if (document.contains("format") && (!read_number(document["format"], format) || format < 1 || format > 4)) {
+    if (document.contains("format") && (!read_number(document["format"], format) || format < 1 || format > 5)) {
         return false;
     }
     const json& columns = document["columns"];
-    if (columns.size() != (format >= 3 ? kColumns.size() : format == 2 ? kColumnsBeforeB0 : kColumnsBefore22)) {
+    if (columns.size()
+        != (format >= 5   ? kColumns.size()
+            : format >= 3 ? kColumnsBeforeU4
+            : format == 2 ? kColumnsBeforeB0
+                          : kColumnsBefore22)) {
         return false;
     }
     for (std::size_t column = 0; column < columns.size(); ++column) {
@@ -82,13 +91,15 @@ bool ItemCatalog::load(const std::string& path) {
         }
     }
     const bool protections = columns.size() >= kColumnsBeforeB0;
-    const bool upgrades = columns.size() == kColumns.size();
+    const bool upgrades = columns.size() >= kColumnsBeforeU4;
+    const bool appearances = columns.size() == kColumns.size();
     std::vector<ItemDefinition> items;
     items.reserve(document["items"].size());
     for (const json& row : document["items"]) {
         if (!row.is_array() || row.size() != columns.size() || !row[0].is_string() || !row[1].is_string()
             || !row[2].is_string() || !row[3].is_string() || !row[11].is_boolean()
-            || (protections && (!row[12].is_boolean() || !row[13].is_boolean()))) {
+            || (protections && (!row[12].is_boolean() || !row[13].is_boolean()))
+            || (appearances && (!row[15].is_string() || !row[16].is_string()))) {
             return false;
         }
         ItemDefinition item;
@@ -108,6 +119,13 @@ bool ItemCatalog::load(const std::string& path) {
         }
         if (upgrades && !read_number(row[14], item.maxCraftUpgradeGS)) {
             return false;
+        }
+        // The value of the client is the AZ::Crc32 of the lower-case name (25 of 25 entries of the create requests of the client).
+        if (appearances) {
+            const std::string& male = row[15].get_ref<const std::string&>();
+            const std::string& female = row[16].get_ref<const std::string&>();
+            item.armorAppearanceM = male.empty() ? 0 : item_id_crc(male);
+            item.armorAppearanceF = female.empty() ? 0 : item_id_crc(female);
         }
         items.push_back(std::move(item));
     }
@@ -252,6 +270,7 @@ bool ItemCatalog::load(const std::string& path) {
         }
     }
     set(std::move(items));
+    m_hasArmorAppearances = appearances;
     set_artifact_objectives(std::move(objectives));
     m_trinkets = std::move(trinkets);
     m_backstories = std::move(backstories);
@@ -274,6 +293,7 @@ void ItemCatalog::set_trinkets(std::unordered_map<std::string, TrinketStats> tri
 
 void ItemCatalog::set(std::vector<ItemDefinition> items) {
     m_items = std::move(items);
+    m_hasArmorAppearances = true;
     build_keys();
 }
 
