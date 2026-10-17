@@ -304,6 +304,23 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         static constexpr int kWidths[] = {1, 4, 4, 1, 4, 4, 1, 8, 4};
         return group == 1 && field < 9 ? kWidths[field] : -1;
     }
+    case 205: { // Crafting (stage 3.7b): field 0, the cooldown map (13-byte entries); field 1, the gear score bonus map (3-byte entries).
+        if (group != 0 || field > 1) {
+            return -1;
+        }
+        server::hub::Reader reader(rest);
+        if (reader.size() != 0) {
+            return -1;
+        }
+        if (reader.u8() == 1) {
+            reader.size64();
+        }
+        const std::uint32_t count = reader.size();
+        if (!reader.ok()) {
+            return -1;
+        }
+        return static_cast<int>(reader.position() + (field == 0 ? 13U : 3U) * count);
+    }
     case 982: { // LootTracker (stage 3.5b.1): field 0, the full form of the map (changes 0, no version, count, 58-byte entries).
         if (group != 0 || field != 0) {
             return -1;
@@ -426,6 +443,7 @@ inline unsigned group_count(std::uint32_t type) {
     case 982:
     case 2938:
     case 2027:
+    case 205:
         return 1;
     case 3752:
     case 81:

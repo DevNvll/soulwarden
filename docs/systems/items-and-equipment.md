@@ -88,7 +88,9 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   jobs one after the other in this order, as the jobs of the batch run (code review of stage 3.7a, finding CR7A-R1; test case CRV1):
   a bag that has no place for the output of a job before the last job refuses the whole batch. Before the correction the costs of all
   jobs left first, and a batch was accepted and then stopped at a job. The crafting system writes the rows of a plan and the coin of the
-  fee in one transaction (`write`, `coin_written`, `finish`).
+  fee in one transaction (`write`, `coin_written`, `finish`). From stage 3.7b the output has its cause (`CraftOutput::action`): ItemAdded
+  (0) for a job before the last job of a craft-all batch, else ItemCreated (the result screen of a refining batch: [Crafting](crafting.md)),
+  and the output of a job can have extra units (decision D2).
 - The look of an item in the main menu (stage U4, [Identity and characters](identity-and-characters.md)): an item of the paperdoll slots
   0 to 4 with the class tag `Armor` has the CRC-32 of the lower-case name of its cell `ArmorAppearanceM` (a male body) or
   `ArmorAppearanceF` (a female body) [client code 0x673EE40; game data: the master item tables, 14,992 armor rows of these slots, each

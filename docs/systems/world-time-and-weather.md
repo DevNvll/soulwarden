@@ -36,6 +36,8 @@ in the protocol notes (section 4.43). The research is `~/Games/soulwarden/work/r
   column `world_time.run_ns`, schema 13: the stored value plus the world clock since the start). It is saved with the position (each
   60 s and at an orderly stop), so a stop stops it too and a crash loses 60 s at most. A respawn of a gathering node is a time of this
   clock: a restart keeps the remaining time, and the downtime does not count (decision of the orchestrator; [Gathering](gathering.md)).
+  The end of the cooldown window of a recipe (stage 3.7b, [Crafting](crafting.md)) is a time of this clock too (a decision of an agent, as
+  the respawn of a node): the table `craft_cooldowns`; the state 205 gives the client the end on its synced wall clock.
 - The command for the world (rule MP-2): `WorldTime::set` writes the row first. A write that the database refuses changes nothing
   (the error `storage`, the reply 500). A time that is not a time of the day changes nothing (the reply 400). The character of the
   command names who gives it (rule MP-9): the time changes for each player.

@@ -477,6 +477,13 @@ inline constexpr float kAdminGatheringRange = 30.0F;
 [[nodiscard]] WorldCommand craft_preview(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /** stop_craft: the craft batch of the character stops (the completed jobs stay; its client gets the final progress). */
 [[nodiscard]] WorldCommand stop_craft(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * set_craft_cooldown (stage 3.7b, a harness command): `recipe` (a RecipeID with a cooldown), `used` (0 to its CooldownQuantity), `seconds`
+ * (the time to the end of the window; 0: no window). The row, then the entity and its Crafting state.
+ */
+[[nodiscard]] WorldCommand set_craft_cooldown(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/** set_craft_seed (stage 3.7b, a harness command): `seed`, the next state of the generator of the world (a seeded craft batch). */
+[[nodiscard]] WorldCommand set_craft_seed(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
 // The loot bag commands (stage 3.5b.2, world/loot_bags.h, server/http/loot_bag_commands.cpp).
 

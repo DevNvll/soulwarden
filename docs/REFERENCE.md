@@ -138,7 +138,7 @@ tools/gamedata/interactions.sh     # one time: the interaction objects of the wo
 tools/gamedata/chests.sh           # one time: the chests of the world (without them no chest opens); 3.6 MB; needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/gathering.sh        # one time, after heights.sh: the gathering nodes of the world (without them each gather is refused); 40 MB, 1 minute; needs an Oodle library
-tools/gamedata/crafting.sh         # one time: the recipes, the station rows, the ingredient categories (without it each craft is refused); 9 MB, 5 s; needs an Oodle library
+tools/gamedata/crafting.sh         # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits (without it each craft is refused; format 2 of stage 3.7b for refining); 9 MB, 5 s; needs an Oodle library
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
 ```
@@ -495,9 +495,11 @@ button on "Confirm").
 - `tools/gamedata/crafting.sh` makes the crafting data (stage 3.7a; `~/.local/share/soulwarden/gamedata/crafting-data.json`): the
   recipes of the CraftingRecipeData tables (their stations, ingredients, outputs, fees, options, and the causes of a recipe that the
   backend does not craft yet), the rows of the crafting station database, the ingredient categories of the items, the events of the
-  recipes, and the resource items. `--recipe ID` prints recipes and writes no file. Without the file the backend starts and refuses each
-  craft with no change ([Crafting](systems/crafting.md)). The interaction data of stage 3.7a (`interactions.sh`) gives the stations of a
-  tier with no row of the game data (decision D1) the next tier.
+  recipes, and the resource items; from stage 3.7b (format 2) the RollBonus of each rank of each trade skill, the bit of each first-craft
+  achievement, the bonus values of the items, and the tier lists of a recipe. `--recipe ID` prints recipes and writes no file. Without
+  the file the backend starts and refuses each craft with no change ([Crafting](systems/crafting.md)); with a file of format 1 there is no
+  refining and no reward progress. The interaction data of stage 3.7a (`interactions.sh`) gives the stations of a tier with no row of the
+  game data (decision D1) the next tier.
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -797,6 +799,16 @@ button on "Confirm").
   search of the crafting screen gets an empty result (no storage yet). In a development run `tools/world crafting NAME` shows the station
   of the use and the batch, `tools/world craft preview NAME RECIPE [COUNT]` the plan of a recipe (no change), and `tools/world craft stop
   NAME` stops a batch; the admin interface has `craft_preview` and `stop_craft`.
+- Refining and the reward progress (stage 3.7b, [Crafting](systems/crafting.md)). The refining recipes and the other recipes with a fixed
+  result and a reward event (948 recipes with the crafting data of format 2). Each job of a craft gives the trade skill experience of its
+  event (the reward times the units of the ingredients) in its transaction, and the first job of a recipe that the character never crafted
+  three times that (the first-craft achievement of the recipe, written in the same transaction; the screen then shows no first-craft
+  bonus). The bonus items: the chance of the screen (the recipe, the materials, the RollBonus of the rank, the ROL effects) times the output
+  gives the expected extra units of a job (decision D2: the whole part, and one more unit with the chance of the rest). A recipe with a
+  cooldown (CooldownQuantity crafts in CooldownSeconds) keeps its window in the table `craft_cooldowns` on the run clock of the world (the
+  time that the backend ran), and the client gets the Crafting state 205. In a development run `tools/world craft preview NAME RECIPE
+  [COUNT] [--seed N]` shows the chance, the extra units, the experience, and the cooldown; `tools/world craft seed NAME N` and `tools/world
+  craft cooldown NAME RECIPE USED SECONDS` are development aids (admin: `set_craft_seed`, `set_craft_cooldown`).
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
   abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar
   of the HUD goes away at full mana ([Combat and health](systems/combat-and-health.md)).

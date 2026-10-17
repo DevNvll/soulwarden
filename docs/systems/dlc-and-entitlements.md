@@ -72,6 +72,10 @@ before a live test of the expansion. The wire contracts are in the protocol note
   [Interactions](interactions.md)). Their rows are in the same table; the bit of an id comes from the progression tables, else from
   the interaction data (`Ownership::achievement_bit`). With no progression tables a character still gets the bits of these rows
   at its world entry. `Ownership::unlock_achievement` writes the row first, then the bit (case IT5).
+- The achievement state also has the first-craft achievements of the recipes (stage 3.7b, [Crafting](crafting.md)): the first job of a
+  recipe writes the row (`FC_IngotT2`) in its transaction (`Ownership::write_achievements`), and the bit (AchievementIndex: 5330) comes from
+  the crafting data (the fourth source of `Ownership::achievement_bit`). The crafting screen of the client reads the bit: with it the
+  screen shows no first-craft bonus (live check L4 of stage 3.7b).
 - The entitlement state (slot 19) and the achievement state (slot 66) are for the owner only; an observer gets neither. The
   first record of a character has both, before the level (the codec sequence). The sequence of a container is the world
   revision of the last change of the state.

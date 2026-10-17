@@ -378,21 +378,27 @@ void older_schemas(const Options& options) {
                               && store.write_gathering_node(node) && store.list_gathering_nodes().size() == 1
                               && store.list_gathering_nodes()[0].respawnRunNs == 5000 && store.delete_gathering_node(node.key)
                               && store.list_gathering_nodes().empty();
+        // Schema version 14 (stage 3.7b): the cooldown of a recipe of a character (the delete of the character removes it).
+        const bool cooled = store.write_craft_cooldown(kCharacterA, state::CraftCooldownRow{"TestRecipe", 3, 9000})
+                            && store.list_craft_cooldowns(kCharacterA).size() == 1 && store.list_craft_cooldowns(kCharacterA)[0].used == 3
+                            && store.list_craft_cooldowns(kCharacterA)[0].endRunNs == 9000;
         const bool deleted = store.delete_character(kCharacterA) == state::DeleteResult::deleted && store.list_items(kCharacterA).empty()
                              && store.list_loot_claims(kCharacterA).empty() && store.list_loot_bags().empty()
                              && store.currency(kCharacterA, state::kCurrencyCoin) == 0 && store.progress(kCharacterA).level == 1
                              && store.list_skills(kCharacterA).ranks.empty() && store.list_skills(kCharacterA).nodes.empty()
                              && store.list_skills(kCharacterA).bars.empty() && store.list_achievements(kCharacterA).empty()
                              && store.list_entitlement_rewards(kCharacterA).empty()
-                             && store.list_entitlements(player.account.personaId).size() == 1;
-        check(made && opened && schema_version(path) == 13 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
-                  && timed && gathered && deleted,
+                             && store.list_entitlements(player.account.personaId).size() == 1
+                             && store.list_craft_cooldowns(kCharacterA).empty();
+        check(made && opened && schema_version(path) == 14 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
+                  && timed && gathered && cooled && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 13: its character row and its item stay (the item with no perk), its persona has an account, "
+                  + " opens and gets version 14: its character row and its item stay (the item with no perk), its persona has an account, "
                     "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
                     "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, a loot "
                     "claim with a kept item (stage 3.5b.1), the part of a loot bag with a stored instance (stage 3.5b.2) and its fast end, the world time (stage 2.2), "
-                    "the run clock and a depleted gathering node (stage 3.6a), and the delete of a character removes the rows of the character (the entitlement of the account stays)");
+                    "the run clock and a depleted gathering node (stage 3.6a), the cooldown of a recipe (stage 3.7b), and the delete of a "
+                    "character removes the rows of the character (the entitlement of the account stays)");
     }
 }
 

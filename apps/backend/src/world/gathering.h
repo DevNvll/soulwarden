@@ -299,6 +299,13 @@ public:
     /** @return A node with a state of the server, or null. */
     [[nodiscard]] const GatherNode* node(const std::string& key) const;
 
+    /**
+     * @return The sum of a column of the status rows of a character: its statuses that run (a food, a potion, the statuses of its gear),
+     *         times the potency and the stacks, and the threshold abilities of its attributes. A gathering uses EFF, ROL, MULT, INS of its
+     *         trade skill; a craft (stage 3.7b) uses ROL of the trade skill of the recipe (the roll bonus of the bonus items).
+     */
+    [[nodiscard]] float effect_sum(const Entity& character, const std::string& column) const;
+
 private:
     struct Due {
         std::string key;
@@ -349,7 +356,6 @@ private:
     void respawn(GatherNode& node);
     /** @return True when a kept roll is for the node as it is now (its generation, not depleted). */
     [[nodiscard]] bool roll_current(const KeptRoll& roll) const;
-    [[nodiscard]] float effect_sum(const Entity& character, const std::string& column) const;
     [[nodiscard]] std::int64_t wall_ms(WorldClock::time_point time) const;
 
     World& m_world;

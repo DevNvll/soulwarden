@@ -81,6 +81,10 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   An entitlement with the reward type Entitlement must name its child entitlements ("A+B"), and each child must be an
   alias of the list; an empty list is refused. The tool stops when the MaxLevel or the Expansion01MaxLevel of a row is not
   less than the number of the ranks of its table (finding F3, test case RD3).
+- The trade skill experience of a craft (stage 3.7b, [Crafting](crafting.md)): each job of a craft batch gives the experience of the event of
+  its recipe through `Skills::plan_experience` (the rules of `add_experience` on a copy): the crafting system writes the rows in the
+  transaction of the job and finishes the plan after the commit. The first job of a recipe that the character never crafted gives three
+  times the base (the first-craft bonus of the client). Test case CRAFTB2.
 - The effect of a learned node (stage 3.3b-S5): the evaluator of the passive rules applies the row of each learned node of
   the tree of the weapon of a hit, and the fixed stats of the nodes of the weapon in the hand go into the gear values
   ([Passive rules](passive-rules.md)). A change of the learned nodes of a character in the world (an assignment, a reset of a

@@ -177,6 +177,9 @@ constexpr NamedCommand kCommands[] = {
     // The crafting (stage 3.7a): the plan of a recipe (no change) and the stop of a craft batch.
     {"craft_preview", commands::craft_preview},
     {"stop_craft", commands::stop_craft},
+    // Stage 3.7b: the cooldown of a recipe of a character, and the seed of the generator of the world (a seeded craft batch).
+    {"set_craft_cooldown", commands::set_craft_cooldown},
+    {"set_craft_seed", commands::set_craft_seed},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */

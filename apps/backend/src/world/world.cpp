@@ -271,6 +271,8 @@ Entity& World::make_entity(const state::Character& character) {
     m_chests.entered(entity);
     // The states of the loot bags of the character (stage 3.5b.2): its LootTracker entries and its storage map.
     m_lootBags.entered(entity);
+    // The cooldowns of the recipes of the character (stage 3.7b): its rows with an active window, and its Crafting state.
+    m_crafting.entered(entity);
     log::write("world: entity %016llx (actor %s) of character %s (%s) at %.2f %.2f %.2f",
                static_cast<unsigned long long>(entity.id),
                actor_text(entity.actor).c_str(),

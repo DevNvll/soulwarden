@@ -115,7 +115,8 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   3.3a), the charge state of the heart rune (stage 1.3b, slot 48), the speed table (stage
   3.3b-S2a, slot 43; [Status effects](status-effects.md)), and the Stamina state (stage 3.4f-B,
   slot 42, type 4297; [Stamina and dodge](stamina-and-dodge.md)), and the LootTracker state (slot 33, type 982) and the Gathering state
-  (slot 36, type 81) of stage 3.5b.1 ([Chests](chests.md)) are for the owner only.
+  (slot 36, type 81) of stage 3.5b.1 ([Chests](chests.md)), and the Crafting state (slot 63, type 205) of stage 3.7b ([Crafting](crafting.md):
+  the cooldowns of the recipes; no fragment in the first record of a character with no active cooldown) are for the owner only.
   The status state of a creature (stage 3.3a) has only the observer view. The status state of
   a player (stage 3.3b-S1, slot 44) has the two views: the owner gets its maps, an observer the
   public statuses ([Status effects](status-effects.md)). The Player state of the owner has the

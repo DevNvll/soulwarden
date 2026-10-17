@@ -64,6 +64,7 @@ inline constexpr std::uint32_t kTypeStaminaState = 4297;        // MB::StaminaCo
 inline constexpr std::uint32_t kTypeGatheringState = 81;        // MB::GatheringComponentReplicatedState (stage 3.5b.1)
 inline constexpr std::uint32_t kTypeLootTrackerState = 982;     // MB::LootTrackerComponentReplicatedState (stage 3.5b.1)
 inline constexpr std::uint32_t kTypeGlobalStorageState = 2938;  // MB::GlobalStorageComponentReplicatedState (stage 3.5b.2)
+inline constexpr std::uint32_t kTypeCraftingState = 205;         // MB::CraftingComponentReplicatedState (stage 3.7b)
 inline constexpr std::uint32_t kTypeLootDropState = 2027;       // MB::LootDropReplicatedState (stage 3.5b.2)
 inline constexpr std::uint32_t kTypeGatherableState = 12;       // MB::GatherableControllerReplicatedState (stage 3.6a)
 
@@ -116,6 +117,8 @@ inline constexpr std::uint32_t kGatheringSlot = 36;
  */
 inline constexpr std::uint32_t kSelectedContainerSlot = 76;
 inline constexpr std::uint32_t kGlobalStorageSlot = 77;
+/** The Crafting component of the player slice (stage 3.7b; live check L1 of stage 3.7a: slot 63, type 205). */
+inline constexpr std::uint32_t kCraftingSlot = 63;
 
 enum class View {
     owner,
@@ -376,6 +379,12 @@ void write_place_rotation(hub::Writer& writer, std::array<float, 4> rotation);
  *         the actor of each of its loot bags to its items. Owner only; no fragment in the first record of a character with no bag.
  */
 [[nodiscard]] std::vector<hub::Bytes> encode_global_storage_state(const world::Entity& entity, View view, const PartsRequest& request);
+/**
+ * @return The Crafting state of a character (stage 3.7b, slot 63, type 205; states/crafting_state.cpp): the cooldown map of its recipes
+ *         (the end on the synced wall clock in nanoseconds) and the empty gear score bonus map. Owner only; no fragment in the first record
+ *         of a character with no active cooldown.
+ */
+[[nodiscard]] std::vector<hub::Bytes> encode_crafting_state(const world::Entity& entity, View view, const PartsRequest& request);
 /** @return The LootDrop state of a loot bag (stage 3.5b.2, type 2027): m_rarityLevel. Observer view (the bag has no owner). */
 [[nodiscard]] hub::Bytes encode_loot_drop_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /**

@@ -175,6 +175,11 @@ public:
     };
 
     /**
+     * Plans a gain of experience of a weapon mastery or a trade skill (stage 3.7b: the trade skill experience of a craft job), with the
+     * rules of add_experience, and no write: the craft job writes the rows in its transaction (write) and finishes the plan after the commit.
+     */
+    [[nodiscard]] Plan plan_experience(const std::string& characterId, std::string_view id, std::uint64_t amount);
+    /**
      * Plans weapon trees (the build preset): for each tree the rank of set_rank, the reset of the tree (its nodes and its bar go,
      * with no cost: a rank change that frees the points), each node with the checks of assign (one point, the node that it needs,
      * the points of the row before it and of its tree), and each place of the bar with the checks of set_bar. No write.
@@ -196,6 +201,9 @@ private:
     Plan stage(const std::string& characterId, Change&& apply);
     /** The trees of a build on a skill set (plan_trees, check_trees). */
     [[nodiscard]] ProgressError trees_into(SkillSet& skills, Touched& touched, const std::vector<TreeBuild>& trees) const;
+    /** The experience of add_experience on a skill set. */
+    [[nodiscard]] ProgressError experience_into(SkillSet& skills, Touched& touched, SkillResult& result, std::string_view id,
+                                                std::uint64_t amount) const;
     /** The rank of set_rank on a skill set. */
     [[nodiscard]] ProgressError rank_into(SkillSet& skills, Touched& touched, SkillResult& result, std::string_view id,
                                           gamedata::ProgressionKind kind, std::uint32_t rank, std::uint64_t points) const;

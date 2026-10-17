@@ -615,12 +615,18 @@ int main(int argc, char** argv) {
     // The crafting data (stage 3.7a): the recipes, the station rows, the ingredient categories. With no file each craft request is refused
     // with no change.
     gamedata::CraftingData craftingData;
-    if (craftingData.load(gameDataDirectory.string())) {
-        log::write("backend: crafting data loaded from %s (%zu recipes, %zu of them crafted in this stage, %zu station rows, %zu ingredient "
-                   "categories; %zu authored station keys with no row)",
-                   (gameDataDirectory / gamedata::kCraftingDataFile).string().c_str(), craftingData.recipes().size(),
-                   craftingData.supported_count(), craftingData.stations().size(), craftingData.category_count(),
-                   craftingData.missing_stations().size());
+    // Code review of stage U4, finding U4-R1: a file whose recipes with no cause have an output with a gear score range and no override in
+    // the item catalog (the rule of stage 3.7c) is refused as a whole.
+    if (craftingData.load(gameDataDirectory.string()) && craftingData.match_catalog(itemCatalog)) {
+        log::write("backend: crafting data loaded from %s (format %llu: %zu recipes, %zu of them crafted in this stage, %zu station rows, %zu "
+                   "ingredient categories; %zu authored station keys with no row)",
+                   (gameDataDirectory / gamedata::kCraftingDataFile).string().c_str(), static_cast<unsigned long long>(craftingData.format()),
+                   craftingData.recipes().size(), craftingData.supported_count(), craftingData.stations().size(),
+                   craftingData.category_count(), craftingData.missing_stations().size());
+        if (craftingData.format() < 2) {
+            log::write("backend: the crafting data has the format 1 (stage 3.7a): no refining, no reward progress, and no cooldown. Make the "
+                       "file again with tools/gamedata/crafting.sh");
+        }
     } else {
         log::write("backend: no crafting data at %s (%s): each craft request is refused with no change. Make the file with "
                    "tools/gamedata/crafting.sh",

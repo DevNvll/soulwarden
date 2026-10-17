@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 27> codecs{{
+    static constexpr std::array<StateCodec, 28> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -63,6 +63,8 @@ std::span<const StateCodec> player_codecs() {
         // The loot bags (stage 3.5b.2): owner only (the remote player slice has no storage component).
         {world::ComponentKey::selectedContainer, kSelectedContainerSlot, kTypeContainerState, nullptr, encode_selected_container_state, true},
         {world::ComponentKey::globalStorage, kGlobalStorageSlot, kTypeGlobalStorageState, nullptr, encode_global_storage_state, true},
+        // The cooldowns of the recipes (stage 3.7b): owner only (the remote player slice has no Crafting component).
+        {world::ComponentKey::crafting, kCraftingSlot, kTypeCraftingState, nullptr, encode_crafting_state, true},
     }};
     return codecs;
 }

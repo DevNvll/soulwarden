@@ -2,6 +2,7 @@
 
 #include <array>
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -14,7 +15,9 @@
 #include "world/interactions.h"
 #include "world/inventory.h"
 
-// The crafting of fixed recipes at a station and at a camp (stage 3.7a, docs/systems/crafting.md, protocol notes 4.50).
+// The crafting of fixed recipes at a station and at a camp (stage 3.7a, docs/systems/crafting.md, protocol notes 4.50), and from stage 3.7b
+// refining and the reward progress (protocol notes 4.51): the bonus items of decision D2, the trade skill experience of the event, the
+// first-craft bonus with its achievement, and the cooldown of a recipe (the Crafting state 205).
 //
 // The client opens its crafting screen at a station use (the interaction base: action 20, OpenCrafting; the Assembly gives the station
 // key) and sends request 2997 for a craft: the recipe (CRC-32 of its id), the count, the fee and the gear score that it computed, the perk
@@ -47,6 +50,12 @@
 // An accepted batch drops a progress of the character that the session did not send yet (code review of stage 3.7a, finding CR7A-R4: the
 // stop form of a refused request before it in the same tick would end the crafting of the client, and its 2999 the new batch).
 //
+// Stage 3.7b, for each job of a batch (one transaction with its costs and its output): the extra units of decision D2 (the expected extra
+// units e of the request: floor(e) and one more with the chance of the rest, from the one random source of the world), the trade skill
+// experience (the reward of the event times the units of the ingredients; the first job of a recipe whose first-craft achievement the
+// character does not have adds (3 - 1) times that and writes the achievement), and the cooldown row of the recipe. The request checks the
+// crafts that are left in the cooldown window. The output of a job before the last job of a craft-all batch has the cause ItemAdded.
+//
 // The cost depends on the requests and the active batches, not on the size of the world (MP-8): a request finds its recipe, its station
 // row, and a category member in hash maps, the station of the use through the active interaction of the character, and the plan looks only
 // at the bag and the quick slots of that character; a batch is one timer of the world. World thread only.
@@ -72,7 +81,53 @@ inline constexpr std::size_t kMaxPerkItems = 4;
 inline constexpr std::uint8_t kMaxUpgrade = 5;
 inline constexpr std::size_t kMaxIngredients = 7;
 inline constexpr std::uint32_t kMaxIngredientQuantity = 50000;
+/**
+ * The first-craft multiplier of the trade skill experience (stage 3.7b): the default of the client setting
+ * javelin.crafting-first-craft-bonus-exp-multiplier (3, registered at 0x6171316 and 0x617133F). The crafting screen adds one job's base
+ * experience times (multiplier - 1) to a batch (craftingscreenv4.luac; live check L4: "Base 132 XP, First Craft 88 XP (x2), Total 220").
+ */
+inline constexpr std::uint64_t kFirstCraftMultiplier = 3;
+/** The scale of the roll bonus points in the bonus item chance (client 0x2E4FF50: chance + points x 0.0001). */
+inline constexpr double kRollBonusScale = 0.0001;
 } // namespace crafting_rules
+
+/**
+ * The bonus item chance of a craft (stage 3.7b; client 0x2E4FF50 with 0x5C52A40 and 0x2E57A70; live check L4) and the extra output of
+ * decision D2 of the orchestrator (option A).
+ */
+struct CraftYield {
+    /**
+     * The chance of the recipe and of the materials (0x5C52A40): BonusItemChance; the ExtraBonusItemChance of the item of the first
+     * ingredient when it is an item; for each later category ingredient, the tier list value of the tier of its selected item above
+     * (BonusItemChanceIncrease) or below (BonusItemChanceDecrease) the base tier (the item of the first ingredient), and its
+     * ExtraBonusItemChance.
+     */
+    double materialChance{0.0};
+    /**
+     * The roll bonus points (0x2E57A70): the materials (IngredientBonusPrimary of the first entry, IngredientBonusSecondary of each other
+     * one), and with no DisallowBonusesToGS the RollBonus of the rank of the trade skill and the ROL effects of the trade skill.
+     */
+    std::int32_t materialPoints{0};
+    std::int32_t rankPoints{0};
+    std::int32_t effectPoints{0};
+    /** max(0, materialChance + points x 0.0001), to 6 decimals: the client shows it x 100 ("%.0f%%"). */
+    double chance{0.0};
+    /** Decision D2: the expected extra units of one job (OutputQty x chance) and the largest extra of one job (its ceiling). */
+    double extraUnits{0.0};
+    std::uint32_t maxExtra{0};
+};
+
+/** The trade skill experience of one job of a recipe for a character (stage 3.7b; the reward of the event of the recipe). */
+struct CraftExperience {
+    /** The progression of the event (a trade skill; empty: no experience). */
+    std::string progression;
+    /** floor(the reward of the event x the units of the ingredients of one job): the base of one job (live check L4: 11 x 4 = 44). */
+    std::uint64_t perJob{0};
+    /** The first-craft achievement of the recipe that the character does not have (empty: none), its bit, and its extra experience. */
+    std::string firstCraft;
+    std::uint32_t firstCraftBit{0};
+    std::uint64_t firstCraftExtra{0};
+};
 
 /** One ingredient entry of request 2997 (a claim of the client). */
 struct CraftIngredientClaim {
@@ -128,8 +183,10 @@ enum class CraftVerdict : std::uint8_t {
     notEnoughCoin,
     /** A different item error of the plan (the catalog has no output item). */
     planFailed,
+    /** Stage 3.7b: the count is above the crafts that are left in the cooldown window of the recipe. */
+    cooldown,
 };
-inline constexpr std::size_t kCraftVerdictCount = 19;
+inline constexpr std::size_t kCraftVerdictCount = 20;
 
 [[nodiscard]] const char* craft_verdict_text(CraftVerdict verdict);
 
@@ -169,6 +226,14 @@ struct CraftPreview {
     std::uint32_t gearScore{0};
     /** The slots of the bag that the plan of the batch changes (no value: no plan). */
     std::vector<std::uint32_t> slots;
+    /** Stage 3.7b: the bonus item chance and the extra units of one job, the experience of one job, the crafts left in the cooldown window. */
+    CraftYield yield;
+    CraftExperience experience;
+    /** The crafts that are left in the cooldown window (no value: the recipe has no cooldown) and the seconds to its end (0: no window). */
+    std::optional<std::uint32_t> cooldownLeft;
+    double cooldownSeconds{0.0};
+    /** A seeded preview: the extra units of each job of the batch with the generator of the world at that seed (no change of the world). */
+    std::vector<std::uint32_t> draws;
 };
 
 struct CraftingCounts {
@@ -187,6 +252,13 @@ struct CraftingCounts {
     std::uint64_t slotVisits{0};
     /** The requests whose fee claim differs from the fee of the server (the server takes its own fee). */
     std::uint64_t feeClaimsDiffer{0};
+    /** Stage 3.7b: the extra units of decision D2, the trade skill experience, the first crafts, the cooldown rows that the jobs wrote. */
+    std::uint64_t bonusUnits{0};
+    std::uint64_t experience{0};
+    std::uint64_t firstCrafts{0};
+    std::uint64_t cooldownWrites{0};
+    /** The cooldown rows that the world entries read (each one of an active window), and the jobs that the timers ran. */
+    std::uint64_t cooldownLoads{0};
 };
 
 /** The crafting of a character for a reader (a command). */
@@ -219,13 +291,36 @@ public:
     void left(Entity& character);
     /** A command: the batch of a character stops. @return False: no batch. */
     bool stop(const std::string& characterId);
+    /** The entity of a character comes into the world: the cooldowns of its recipes (their rows) with an active window (stage 3.7b). */
+    void entered(Entity& character);
+    /**
+     * A command (stage 3.7b, the harness): sets the cooldown of a recipe of a character: `used` crafts in a window that ends `seconds` from
+     * now (0: no window). The row first, then the entity and its Crafting state. @return An empty text, or the cause of a refusal.
+     */
+    std::string set_cooldown(const std::string& characterId, const std::string& recipeId, std::uint32_t used, double seconds);
+
+    /**
+     * @return The bonus item chance and the extra units of one job of a recipe for a character with these selected items (the item of
+     *         each ingredient, in the order of the recipe): the rules of the client (CraftYield).
+     */
+    [[nodiscard]] CraftYield yield_of(const Entity& character, const gamedata::Recipe& recipe, const std::vector<std::string>& selected) const;
+    /** @return The trade skill experience of one job of a recipe for a character (CraftExperience). */
+    [[nodiscard]] CraftExperience experience_of(const Entity& character, const gamedata::Recipe& recipe) const;
+    /** @return The crafts that are left in the cooldown window of a recipe for a character (CooldownQuantity with no active window). */
+    [[nodiscard]] std::uint32_t cooldown_left(const Entity& character, const gamedata::Recipe& recipe) const;
+    /**
+     * @return The extra units of one job (decision D2): floor(e), and one more unit when one draw of the generator is below the rest (no
+     *         draw for a whole e).
+     */
+    [[nodiscard]] static std::uint32_t draw_extra(double extraUnits, const std::function<float()>& draw);
 
     /**
      * @return The plan of a recipe for a character (a command, the development routes and the tool window): the checks of a request with
      *         the station of its use (no station: the verdict noStation, and the plan with no station check), the first member of each
      *         category, and the plan of the batch on a copy. No change.
      */
-    [[nodiscard]] CraftPreview preview(const std::string& characterId, const std::string& recipeId, std::uint32_t quantity);
+    [[nodiscard]] CraftPreview preview(const std::string& characterId, const std::string& recipeId, std::uint32_t quantity,
+                                       std::optional<std::uint64_t> seed = std::nullopt);
     [[nodiscard]] CraftingView view(const std::string& characterId) const;
 
     [[nodiscard]] const CraftingCounts& counts() const {
@@ -242,7 +337,8 @@ private:
     /** The checks 1 to 4 of a request (and of a command), and the costs and the output of one job. */
     CraftVerdict check(Entity& character, const gamedata::Recipe*& recipe, const CraftRequest* request, std::uint32_t quantity,
                        std::optional<StationContext>& station, const gamedata::CraftingStation*& row, std::vector<CraftCost>& costs,
-                       CraftOutput& output, std::string& detail, bool needStation) const;
+                       CraftOutput& output, std::vector<std::string>& selected, std::string& detail, bool needStation) const;
+
     CraftVerdict refuse(CraftVerdict verdict, Entity* character, SessionId session, const CraftRequest& request, const std::string& detail);
     /** The timer of a batch: its next jobs. */
     void run(const std::string& characterId, std::uint64_t serial);

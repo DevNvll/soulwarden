@@ -4,6 +4,7 @@
 #include <set>
 
 #include "core/logging/log.h"
+#include "world/crafting.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -69,7 +70,14 @@ std::optional<std::uint32_t> Ownership::achievement_bit(const std::string& id) c
         }
     }
     const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
-    return catalog != nullptr ? catalog->objective_achievement_index(id) : std::nullopt;
+    if (catalog != nullptr) {
+        if (const std::optional<std::uint32_t> bit = catalog->objective_achievement_index(id)) {
+            return bit;
+        }
+    }
+    // Stage 3.7b: the first-craft achievement of a recipe (the crafting data: FirstCraftAchievementId and its AchievementIndex).
+    const gamedata::CraftingData* crafting = m_world.crafting().data();
+    return crafting != nullptr ? crafting->achievement_index(id) : std::nullopt;
 }
 
 bool Ownership::write_achievements(const std::string& characterId, const std::vector<std::string>& ids) {

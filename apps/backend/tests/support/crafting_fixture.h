@@ -19,6 +19,7 @@
 #include "support/chest_fixture.h"
 #include "support/item_decoder.h"
 #include "support/station_fixture.h"
+#include "support/test_progression.h"
 
 namespace soulwarden::backend::tests::crafting {
 
@@ -72,7 +73,8 @@ inline nlohmann::json recipe_json(const std::string& id, std::vector<std::string
             {"baseTier", 0},     {"disallowBonuses", false},         {"perkItems", 0},         {"attributeSlots", 0}, {"push", true},
             {"perkCost", 0},     {"event", ""},                      {"requiredAchievement", ""}, {"hiddenByAchievement", ""},
             {"unlockedAchievement", ""}, {"firstCraftAchievement", ""}, {"expansion", ""}, {"worldTags", ""}, {"cooldownSeconds", 0},
-            {"cooldownQuantity", 0}, {"skipGrant", false},          {"bonusChance", 0.0},     {"unsupported", causes}};
+            {"cooldownQuantity", 0}, {"skipGrant", false},          {"bonusChance", 0.0},     {"bonusIncrease", nlohmann::json::array()},
+            {"bonusDecrease", nlohmann::json::array()},             {"unsupported", causes}};
 }
 
 /**
@@ -281,6 +283,114 @@ struct Crafter : Shop {
         if (!host.world.inventory().give(character, item, quantity).ok()) {
             throw std::runtime_error(std::string("crafting test: the give of ") + item + " failed");
         }
+    }
+};
+
+// Stage 3.7b (tests/refining_tests.cpp): the made-up data of refining and of the reward progress. All ids and values are made up.
+
+/** The bits of the two first-craft achievements of the refining data (made up). */
+inline constexpr std::uint32_t kFirstCraftBit = 5330;
+inline constexpr std::uint32_t kFirstCraftCooldownBit = 5335;
+
+/** The items of the crafting tests and the items of refining: ores of the tiers 0, 1, 3, 5 (the members of TestOreCat), a rare ore. */
+inline std::vector<gamedata::ItemDefinition> refine_items() {
+    using chests::chest_item;
+    std::vector<gamedata::ItemDefinition> items = craft_items();
+    for (const auto& [id, tier] : std::vector<std::pair<const char*, std::uint32_t>>{{"TestOre", 1}, {"TestRareOre", 1}, {"TestOreLow", 0},
+                                                                                     {"TestOreMid", 3}, {"TestOreTop", 5}, {"TestRefined", 2},
+                                                                                     {"TestRefinedB", 2}, {"TestRefinedC", 5}}) {
+        items.push_back(chest_item(id, "Resource", "Resource", tier, 1000));
+    }
+    return items;
+}
+
+/** One refining recipe of the made-up data (format 2): refining and craft-all, the trade skill Smelting, the tier lists of the game data. */
+inline nlohmann::json refine_json(const std::string& id, nlohmann::json ingredients, const std::string& item, std::uint32_t outputQty,
+                                  double bonusChance, const std::string& event = "", const std::string& firstCraft = "",
+                                  std::uint32_t cooldownSeconds = 0, std::uint32_t cooldownQuantity = 0, bool disallowBonuses = false) {
+    nlohmann::json recipe = recipe_json(id, {"blacksmith2"}, std::move(ingredients), item, outputQty, 1, {}, "Smelting", 0);
+    recipe["refining"] = true;
+    recipe["craftAll"] = true;
+    recipe["tax"] = false;
+    recipe["bonusChance"] = bonusChance;
+    recipe["bonusIncrease"] = {0.25, 0.5, 0.75, 1.0};
+    recipe["bonusDecrease"] = {-0.05, -0.1, -0.15, -0.2, -0.25};
+    recipe["event"] = event;
+    recipe["firstCraftAchievement"] = firstCraft;
+    recipe["cooldownSeconds"] = cooldownSeconds;
+    recipe["cooldownQuantity"] = cooldownQuantity;
+    recipe["disallowBonuses"] = disallowBonuses;
+    return recipe;
+}
+
+/**
+ * The made-up crafting data of format 2: the data of craft_document and the refining recipes TestRefine (4 TestOre: 1 TestRefined; the
+ * event Craft_TestSmelting, 11 for each unit; the first craft FC_TestRefine), TestRefineCat (4 TestOre and one member of TestOreCat),
+ * TestRefineCd (5 TestOre and 2 TestRareOre: TestRefinedC; BonusItemChance -0.25; 10 crafts in 86,400 s; the event Craft_TestCd, 3000 for
+ * each unit; the first craft FC_TestRefineCd), TestRefineTriple (2 TestOre: 3 TestRefined; 0.5), TestRefineHigh (1 TestOre: 1 TestRefined;
+ * 1.4), TestRefineFlat (1 TestOre; 0.3; DisallowBonusesToGS). The RollBonus of the rank r of Smelting is 500 + 10 r (0 at rank 0).
+ */
+inline std::string refine_document() {
+    using nlohmann::json;
+    json document = json::parse(craft_document());
+    document["format"] = 2;
+    document["categories"]["testorecat"] = {"TestOre", "TestOreLow", "TestOreMid", "TestOreTop"};
+    const json four = json::array({json::array({"Item", "TestOre", 4})});
+    document["recipes"].push_back(refine_json("TestRefine", four, "TestRefined", 1, 0.0, "Craft_TestSmelting", "FC_TestRefine"));
+    document["recipes"].push_back(refine_json("TestRefineCat", json::array({json::array({"Item", "TestOre", 4}),
+                                                                            json::array({"Category_Only", "TestOreCat", 1})}),
+                                              "TestRefinedB", 1, 0.0));
+    document["recipes"].push_back(refine_json("TestRefineCd", json::array({json::array({"Item", "TestOre", 5}), json::array({"Item", "TestRareOre", 2})}),
+                                              "TestRefinedC", 1, -0.25, "Craft_TestCd", "FC_TestRefineCd", 86400, 10));
+    document["recipes"].push_back(refine_json("TestRefineTriple", json::array({json::array({"Item", "TestOre", 2})}), "TestRefined", 3, 0.5));
+    document["recipes"].push_back(refine_json("TestRefineHigh", json::array({json::array({"Item", "TestOre", 1})}), "TestRefined", 1, 1.4));
+    document["recipes"].push_back(refine_json("TestRefineFlat", json::array({json::array({"Item", "TestOre", 1})}), "TestRefined", 1, 0.3, "", "",
+                                              0, 0, true));
+    document["events"] = {{"Craft_TestSmelting", {{"progression", "Smelting"}, {"reward", 11.0}, {"xp", 0.0}, {"standing", 0.0}}},
+                          {"Craft_TestCd", {{"progression", "Smelting"}, {"reward", 3000.0}, {"xp", 0.0}, {"standing", 0.0}}}};
+    json ranks = json::array();
+    for (int rank = 0; rank <= 250; ++rank) {
+        ranks.push_back(rank == 0 ? 0 : 500 + 10 * rank);
+    }
+    document["ranks"] = {{"Smelting", ranks}};
+    document["achievements"] = {{"FC_TestRefine", kFirstCraftBit}, {"FC_TestRefineCd", kFirstCraftCooldownBit}};
+    document["materials"] = {{"TestRareOre", {0, 10, 5}}, {"TestOreTop", {1, 0, 0}}};
+    return document.dump();
+}
+
+/** The progression tables of the tests with the trade skill Smelting: the ranks 0 to 250, rank r needs 108 + 6 r experience. */
+inline gamedata::ProgressionData refine_progression() {
+    gamedata::ProgressionData data = test_progression();
+    gamedata::RankTable ranks;
+    for (std::uint32_t rank = 0; rank <= 250; ++rank) {
+        ranks.experience.push_back(108 + 6 * rank);
+    }
+    data.progressions.push_back({"Smelting", 0, gamedata::ProgressionKind::tradeSkill, 250, ranks});
+    return data;
+}
+
+/** A crafting host with the data of refining (format 2), its items, and the progression tables with Smelting. */
+struct Refiner : Crafter {
+    explicit Refiner(bool withB = true, const std::string& database = ":memory:", bool existing = false)
+        : Crafter(withB, false, database, existing) {
+        host.catalog.set(refine_items());
+        host.progression.set(refine_progression());
+        if (!host.progression.loaded()) {
+            throw std::runtime_error("refining test: the progression tables were not set");
+        }
+        if (!host.crafting.set(refine_document())) {
+            throw std::runtime_error("refining test: the crafting data was not set: " + host.crafting.error());
+        }
+    }
+    /** The rank and the experience of Smelting of a character (the entity, or the rows). */
+    std::pair<std::uint32_t, std::uint64_t> smelting(const char* character) {
+        const std::optional<world::SkillView> view = host.world.skills().view(character);
+        if (!view) {
+            return {0, 0};
+        }
+        const auto found = view->skills.progressions.find(gamedata::progression_id("Smelting"));
+        return found == view->skills.progressions.end() ? std::pair<std::uint32_t, std::uint64_t>{0, 0}
+                                                        : std::pair<std::uint32_t, std::uint64_t>{found->second.rank, found->second.points};
     }
 };
 

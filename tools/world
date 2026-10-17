@@ -68,10 +68,18 @@ Usage:
                                                 REGION#RECORD, or a G) respawns after SECONDS (not the rule of the data)
   tools/world crafting CHARACTER                the crafting of a character (stage 3.7a): the station of its use (the Assembly
                                                 key, its row, the fee flag), its craft batch, and the counts
-  tools/world craft preview CHARACTER RECIPE [COUNT]
+  tools/world craft preview CHARACTER RECIPE [COUNT] [--seed N]
                                                 the plan of a recipe (a RecipeID) for the character with the station of its use:
-                                                the checks of a request, the costs, the output, the fee, the bag slots (no change)
+                                                the checks of a request, the costs, the output, the fee, the bag slots; stage 3.7b:
+                                                the bonus item chance, the extra units of each job (decision D2), the trade skill
+                                                experience with the first-craft bonus, the cooldown; --seed: the extra units of
+                                                each job of the batch with the generator of the world at that seed (no change)
   tools/world craft stop CHARACTER              the craft batch of a character stops (the completed jobs stay)
+  tools/world craft cooldown CHARACTER RECIPE USED SECONDS
+                                                DEVELOPMENT AID (stage 3.7b): the cooldown window of a recipe: USED crafts, SECONDS
+                                                to its end (0: no window)
+  tools/world craft seed CHARACTER N            DEVELOPMENT AID (stage 3.7b): the next state of the generator of the world (a
+                                                seeded craft batch: compare with craft preview --seed N)
   tools/world interaction cancel CHARACTER      end the committed interaction of a character: its client
                                                 gets the message 3746
   tools/world fixture CHARACTER NAME [DX DY DZ] [--yaw DEGREES] [--permission N]
@@ -907,10 +915,18 @@ def show_crafting(document: dict) -> None:
               f"each gives {batch['outputQty']} {batch['output']}, fee paid {batch['feePaid'] / 100:.2f}, {batch['seconds']:.1f} s")
     else:
         print("batch: none")
+    if batch and "extraUnits" in batch:
+        print(f"  bonus: {batch['extraUnits']:.4f} extra unit(s) for each job, {batch['bonusGiven']} given; experience {batch['experience']} "
+              f"for each job, {batch['experienceGiven']} given" + (f"; first craft {batch['firstCraft']}" if batch.get("firstCraft") else ""))
+    for cooldown in document.get("cooldowns", []):
+        print(f"cooldown: {cooldown['recipe']} {cooldown['used']} of {cooldown['quantity']} used, "
+              + (f"{cooldown['secondsLeft']:.0f} s to the end of the window" if cooldown["active"] else "the window ended"))
     counts = document["counts"]
     print(f"requests {counts['requests']} {counts['verdicts']}, batches {counts['batches']}, jobs {counts['jobs']}, ends {counts['ends']}, "
           f"items {counts['itemsCreated']}, fees {counts['feesPaid'] / 100:.2f}, client stops {counts['clientStops']} (no batch "
-          f"{counts['idleStops']}), active {counts['activeBatches']}; visits: jobs {counts['jobVisits']}, bag slots {counts['slotVisits']}")
+          f"{counts['idleStops']}), active {counts['activeBatches']}; visits: jobs {counts['jobVisits']}, bag slots {counts['slotVisits']}"
+          + (f"; bonus units {counts['bonusUnits']}, experience {counts['experience']}, first crafts {counts['firstCrafts']}, cooldown rows "
+             f"{counts['cooldownWrites']}" if "bonusUnits" in counts else ""))
 
 
 def show_craft_preview(document: dict) -> None:
@@ -922,6 +938,21 @@ def show_craft_preview(document: dict) -> None:
           f"batch {document['fee'] / 100:.2f}; bag slots of the plan {document['slots']}")
     print("  " + station_text(document.get("station")) + "; recipe station keys " + ", ".join(document.get("stations", []))
           + ("; causes: " + "; ".join(document["causes"]) if document.get("causes") else ""))
+    bonus = document.get("bonus")
+    if bonus:
+        print(f"  bonus items: chance {bonus['percent']:.2f} % (materials {bonus['materialChance']:.4f}; points: materials "
+              f"{bonus['materialPoints']}, rank {bonus['rankPoints']}, effects {bonus['effectPoints']}); {bonus['extraUnits']:.4f} extra "
+              f"unit(s) for each job (decision D2), {bonus['maxExtra']} at most")
+    experience = document.get("experience")
+    if experience and experience["progression"]:
+        print(f"  experience: {experience['perJob']} {experience['progression']} for each job"
+              + (f", first craft {experience['firstCraft']} +{experience['firstCraftExtra']}" if experience["firstCraft"] else "")
+              + f": {experience['batch']} for the batch")
+    if document.get("cooldown"):
+        print(f"  cooldown: {document['cooldown']['left']} left in the window, {document['cooldown']['secondsLeft']:.0f} s to its end")
+    seeded = document.get("seeded")
+    if seeded:
+        print(f"  seed {seeded['seed']}: extra units of each job {seeded['draws']}: {seeded['bonus']} bonus, {seeded['total']} in all")
 
 
 def fetch(data_dir: Path, path: str) -> dict:
@@ -1546,11 +1577,30 @@ def main() -> None:
         request(data_dir, "GET", f"/v1/dev/gathering?character={character_id(data_dir, arguments[1])}{radius}")
     elif command == "crafting" and len(arguments) == 2:
         request(data_dir, "GET", f"/v1/dev/crafting?character={character_id(data_dir, arguments[1])}")
-    elif command == "craft" and len(arguments) in (4, 5) and arguments[1] == "preview":
+    elif command == "craft" and len(arguments) >= 4 and arguments[1] == "preview":
+        words = list(arguments)
+        seed = ""
+        if "--seed" in words:
+            at = words.index("--seed")
+            if at + 1 >= len(words):
+                fail("--seed needs a number")
+            seed = f"&seed={whole(words[at + 1], 'the seed')}"
+            del words[at:at + 2]
+        if len(words) not in (4, 5):
+            fail("tools/world craft preview CHARACTER RECIPE [COUNT] [--seed N]")
+        if not re.fullmatch(r"[A-Za-z0-9_]+", words[3]):
+            fail("RECIPE is a RecipeID of the crafting data (letters, digits, _)")
+        quantity = f"&quantity={whole(words[4], 'the count')}" if len(words) == 5 else ""
+        request(data_dir, "POST", f"/v1/dev/crafting/preview?character={character_id(data_dir, words[2])}&recipe={words[3]}{quantity}{seed}")
+    elif command == "craft" and len(arguments) == 6 and arguments[1] == "cooldown":
         if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[3]):
             fail("RECIPE is a RecipeID of the crafting data (letters, digits, _)")
-        quantity = f"&quantity={whole(arguments[4], 'the count')}" if len(arguments) == 5 else ""
-        request(data_dir, "POST", f"/v1/dev/crafting/preview?character={character_id(data_dir, arguments[2])}&recipe={arguments[3]}{quantity}")
+        if not re.fullmatch(r"[0-9]+(\.[0-9]+)?", arguments[5]):
+            fail("SECONDS must be a number, 0 or more")
+        request(data_dir, "POST", f"/v1/dev/crafting/cooldown?character={character_id(data_dir, arguments[2])}&recipe={arguments[3]}"
+                                  f"&used={whole(arguments[4], 'the used crafts')}&seconds={arguments[5]}")
+    elif command == "craft" and len(arguments) == 4 and arguments[1] == "seed":
+        request(data_dir, "POST", f"/v1/dev/crafting/seed?character={character_id(data_dir, arguments[2])}&seed={whole(arguments[3], 'the seed')}")
     elif command == "craft" and len(arguments) == 3 and arguments[1] == "stop":
         request(data_dir, "POST", f"/v1/dev/crafting/stop?character={character_id(data_dir, arguments[2])}")
     elif command == "interaction" and len(arguments) == 3 and arguments[1] == "cancel":

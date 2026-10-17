@@ -161,6 +161,12 @@ struct CraftCost {
 struct CraftOutput {
     std::string itemId;
     std::uint32_t quantity{0};
+    /**
+     * The cause of the output slots (stage 3.7b): ItemCreated (3), or ItemAdded (0) for a job before the last job of a craft-all batch (live
+     * check L4: the result screen of a craft-all recipe counts the items at the first update with the cause 3 or 32 whose count reaches the
+     * base count of the batch; an update with the cause 0 does not start it).
+     */
+    std::uint8_t action{sync::kItemCreated};
 };
 
 /** One entry of a drop request: a quantity of the item instance in a slot. */

@@ -511,7 +511,7 @@ Inventory::Plan Inventory::plan_craft(const std::string& characterId, const std:
         });
         std::vector<std::uint32_t> from(costs.size(), 0);
         GiveOptions options;
-        options.action = sync::kItemCreated;
+        options.action = output.action;
         std::set<std::uint32_t> outputSlots;
         for (std::uint32_t job = 0; job < jobs; ++job) {
             // The costs of one job: the unlocked stacks of the bag first, then the quick slots (the sources of the cache of the client).

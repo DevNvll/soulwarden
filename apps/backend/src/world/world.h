@@ -399,7 +399,14 @@ public:
      *         world (splitmix64). World thread only.
      */
     [[nodiscard]] float random_unit() {
-        std::uint64_t value = (m_random += 0x9E3779B97F4A7C15ULL);
+        return next_unit(m_random);
+    }
+    /**
+     * @return The next number of the generator of the world from a state that it changes (random_unit; stage 3.7b: the seeded preview of
+     *         a craft batch runs the generator of the world on its own state, with no change of the world).
+     */
+    [[nodiscard]] static float next_unit(std::uint64_t& state) {
+        std::uint64_t value = (state += 0x9E3779B97F4A7C15ULL);
         value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
         value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
         value ^= value >> 31;

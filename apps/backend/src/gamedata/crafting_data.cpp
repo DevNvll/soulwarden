@@ -1,6 +1,7 @@
 #include "gamedata/crafting_data.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -16,8 +17,13 @@ namespace {
 
 using nlohmann::json;
 
-/** The form of the file that this code reads (tools/gamedata/crafting.py). */
-constexpr std::uint64_t kFormat = 1;
+/** The forms of the file that this code reads (tools/gamedata/crafting.py): 1 (stage 3.7a) and 2 (stage 3.7b). */
+constexpr std::uint64_t kFirstFormat = 1;
+constexpr std::uint64_t kFormat = 2;
+/** The limit of a RollBonus and of a bonus item value of an item (the tables have 0 to 2,500; the tool refuses more than 1,000,000). */
+constexpr double kLargestBonus = 1000000.0;
+/** The client reads an achievement vector of 0x2000000 bytes at most (gamedata/progression_tables.h, kAchievementBitLimit). */
+constexpr std::uint64_t kLargestAchievementBit = 0x2000000ULL * 8 - 1;
 /** The limits of the request reader of the client (research crafting.md 4.1) and of the tables. */
 constexpr std::uint64_t kLargestQuantity = 50000;
 constexpr std::uint64_t kLargestLevel = 1000;
@@ -70,27 +76,30 @@ bool number_in(const json& object, const char* member, std::uint64_t high, std::
 }
 
 /**
- * @return The first rule of a recipe that the backend of stage 3.7a does not apply (each one is a cause of the tool, crafting.py
- *         recipe_entry), or null. The checks of the request do not test these rules: the cause list of the file is the gate.
+ * @return The first rule of a recipe that the backend does not apply (each one is a cause of the tool, crafting.py recipe_entry), or null.
+ *         The checks of the request do not test these rules: the cause list of the file is the gate. A file of format 1 (stage 3.7a) has
+ *         the rules of stage 3.7a: refining, craft-all, an event, a first-craft achievement, and a cooldown are not applied in it.
  */
-const char* unapplied_rule(const Recipe& recipe) {
+const char* unapplied_rule(const Recipe& recipe, std::uint64_t format) {
     if (recipe.procedural) {
         return "IsProcedural";
     }
-    if (recipe.refining) {
-        return "IsRefining";
-    }
-    if (recipe.craftAll) {
-        return "CraftAll";
-    }
-    if (!recipe.event.empty()) {
-        return "GameEventID";
-    }
-    if (!recipe.firstCraftAchievement.empty()) {
-        return "FirstCraftAchievementId";
-    }
-    if (recipe.cooldownSeconds > 0 || recipe.cooldownQuantity > 0) {
-        return "CooldownSeconds or CooldownQuantity";
+    if (format < kFormat) {
+        if (recipe.refining) {
+            return "IsRefining";
+        }
+        if (recipe.craftAll) {
+            return "CraftAll";
+        }
+        if (!recipe.event.empty()) {
+            return "GameEventID";
+        }
+        if (!recipe.firstCraftAchievement.empty()) {
+            return "FirstCraftAchievementId";
+        }
+        if (recipe.cooldownSeconds > 0 || recipe.cooldownQuantity > 0) {
+            return "CooldownSeconds or CooldownQuantity";
+        }
     }
     if (recipe.perkItems > 0 || recipe.attributeSlots > 0 || recipe.perkCost > 0) {
         return "MaxPerkItemsAllowed, AttributeOnlyPerkItemSlotCount, or PerkCost";
@@ -165,12 +174,69 @@ bool CraftingData::parse(const std::string& text) {
         return fail("the file is not a JSON object");
     }
     std::uint64_t format = 0;
-    if (!document.contains("format") || !whole_in(document["format"], 1000, format) || format != kFormat) {
-        return fail("the file does not have the format 1");
+    if (!document.contains("format") || !whole_in(document["format"], 1000, format) || (format != kFirstFormat && format != kFormat)) {
+        return fail("the file does not have the format 1 or 2");
     }
+    m_format = format;
     for (const char* member : {"stations", "missingStations", "recipes", "categories"}) {
         if (!document.contains(member)) {
             return fail(std::string("the file has no member ") + member);
+        }
+    }
+    if (format == kFormat) {
+        for (const char* member : {"events", "ranks", "achievements", "materials"}) {
+            if (!document.contains(member) || !document[member].is_object()) {
+                return fail(std::string("the file of format 2 has no object ") + member);
+            }
+        }
+        // The events of the recipes: the trade skill and the reward of one unit, the character experience, the standing.
+        for (const auto& [id, value] : document["events"].items()) {
+            CraftEvent event;
+            if (!value.is_object() || !text_in(value, "progression", event.progression)) {
+                return fail("the event " + id + " has no progression text");
+            }
+            for (const auto& [member, target] : {std::pair<const char*, float*>{"reward", &event.reward}, {"xp", &event.experience},
+                                                 {"standing", &event.standing}}) {
+                if (!value.contains(member) || !value[member].is_number() || !std::isfinite(value[member].get<double>())
+                    || value[member].get<double>() < 0.0 || value[member].get<double>() > kLargestBonus) {
+                    return fail("the event " + id + ": " + member + " is not a number of 0 to 1000000");
+                }
+                *target = static_cast<float>(value[member].get<double>());
+            }
+            m_events[lower_ascii(id)] = event;
+        }
+        // The RollBonus of each rank of each trade skill (the rows 0 to N).
+        for (const auto& [skill, values] : document["ranks"].items()) {
+            if (!values.is_array() || values.empty()) {
+                return fail("the rank table " + skill + " is not a list of ranks");
+            }
+            std::vector<float>& ranks = m_ranks[lower_ascii(skill)];
+            for (const json& value : values) {
+                if (!value.is_number() || !std::isfinite(value.get<double>()) || value.get<double>() < 0.0 || value.get<double>() > kLargestBonus) {
+                    return fail("the rank table " + skill + " has a RollBonus that is not a number of 0 to 1000000");
+                }
+                ranks.push_back(static_cast<float>(value.get<double>()));
+            }
+        }
+        for (const auto& [id, value] : document["achievements"].items()) {
+            std::uint64_t index = 0;
+            if (!whole_in(value, kLargestAchievementBit, index)) {
+                return fail("the achievement " + id + " has no bit of the achievement vector");
+            }
+            m_achievements[lower_ascii(id)] = static_cast<std::uint32_t>(index);
+        }
+        for (const auto& [item, values] : document["materials"].items()) {
+            std::array<std::uint64_t, 3> parts{};
+            if (!values.is_array() || values.size() != 3) {
+                return fail("the material " + item + " is not [EXTRA, PRIMARY, SECONDARY]");
+            }
+            for (std::size_t index = 0; index < 3; ++index) {
+                if (!whole_in(values[index], static_cast<std::uint64_t>(kLargestBonus), parts[index])) {
+                    return fail("the material " + item + " has a value that is not a whole number of 0 to 1000000");
+                }
+            }
+            m_materials[lower_ascii(item)] = MaterialBonus{static_cast<std::int32_t>(parts[0]), static_cast<std::int32_t>(parts[1]),
+                                                           static_cast<std::int32_t>(parts[2])};
         }
     }
     // The station rows.
@@ -277,6 +343,35 @@ bool CraftingData::parse(const std::string& text) {
             || !number_in(row, "cooldownQuantity", 255, recipe.cooldownQuantity) || !flag_in(row, "skipGrant", recipe.skipGrant)) {
             return fail(what + ": a member is not there or has a wrong form");
         }
+        if (row.contains("disallowBonuses") && !flag_in(row, "disallowBonuses", recipe.disallowBonuses)) {
+            return fail(what + ": disallowBonuses is not a flag");
+        }
+        // The bonus item values (format 2; a file of format 1 can have bonusChance).
+        if (row.contains("bonusChance")) {
+            if (!row["bonusChance"].is_number() || !std::isfinite(row["bonusChance"].get<double>())
+                || std::fabs(row["bonusChance"].get<double>()) > kLargestBonus) {
+                return fail(what + ": bonusChance is not a finite number");
+            }
+            recipe.bonusChance = static_cast<float>(row["bonusChance"].get<double>());
+        }
+        for (const auto& [member, target] : {std::pair<const char*, std::vector<float>*>{"bonusIncrease", &recipe.bonusIncrease},
+                                             {"bonusDecrease", &recipe.bonusDecrease}}) {
+            if (!row.contains(member)) {
+                if (format == kFormat) {
+                    return fail(what + ": the member " + member + " is not there");
+                }
+                continue;
+            }
+            if (!row[member].is_array()) {
+                return fail(what + ": " + member + " is not a list");
+            }
+            for (const json& value : row[member]) {
+                if (!value.is_number() || !std::isfinite(value.get<double>()) || std::fabs(value.get<double>()) > kLargestBonus) {
+                    return fail(what + ": " + member + " has a value that is not a finite number");
+                }
+                target->push_back(static_cast<float>(value.get<double>()));
+            }
+        }
         if (row.contains("outputQty") && !row["outputQty"].is_null()) {
             std::uint64_t value = 0;
             if (!whole_in(row["outputQty"], kLargestQuantity, value)) {
@@ -324,8 +419,29 @@ bool CraftingData::parse(const std::string& text) {
             // Code review of stage 3.7a, finding CR7A-R2: a recipe with no cause has no rule that this stage does not apply (the rules of
             // the causes of the tool, crafting.py recipe_entry). A file whose causes and rules do not agree is not consistent: an empty
             // cause list does not enable a recipe with such a rule.
-            if (const char* rule = unapplied_rule(recipe)) {
+            if (const char* rule = unapplied_rule(recipe, format)) {
                 return fail(what + ": a recipe with no cause has the rule " + rule + ", which the backend does not apply");
+            }
+            // Stage 3.7b (format 2): the rules of the event, the first craft, the cooldown, and refining need their data (the tool gives a
+            // recipe with incomplete data a cause): an event of the file with no character experience and a trade skill with a rank table,
+            // the bit of the first-craft achievement, a cooldown with a time and a count, the rank table of the trade skill of refining.
+            if (format == kFormat) {
+                if (!recipe.event.empty()) {
+                    const CraftEvent* reward = event(recipe.event);
+                    if (reward == nullptr || reward->experience != 0.0F || (!reward->progression.empty() && !has_ranks(reward->progression))) {
+                        return fail(what + ": a recipe with no cause has the event " + recipe.event
+                                    + " with no row, with character experience, or with a progression with no rank table");
+                    }
+                }
+                if (!recipe.firstCraftAchievement.empty() && !achievement_index(recipe.firstCraftAchievement)) {
+                    return fail(what + ": a recipe with no cause has the first-craft achievement " + recipe.firstCraftAchievement + " with no bit");
+                }
+                if ((recipe.cooldownSeconds > 0) != (recipe.cooldownQuantity > 0)) {
+                    return fail(what + ": a recipe with no cause has a cooldown with only a time or only a count");
+                }
+                if (recipe.refining && !has_ranks(recipe.skill)) {
+                    return fail(what + ": a refining recipe with no cause has no rank table of its trade skill " + recipe.skill);
+                }
             }
             if (recipe.item.empty() || recipe.outputQty == 0 || recipe.ingredients.empty() || recipe.stations.empty()) {
                 return fail(what + ": a recipe with no cause has no output, no output quantity, no ingredient, or no station key");
@@ -390,6 +506,55 @@ std::string CraftingData::first_member(std::string_view category) const {
 std::size_t CraftingData::member_count(std::string_view category) const {
     const auto found = m_categories.find(lower_ascii(category));
     return found != m_categories.end() ? found->second.size() : 0;
+}
+
+const CraftEvent* CraftingData::event(std::string_view id) const {
+    const auto found = m_events.find(lower_ascii(id));
+    return found != m_events.end() ? &found->second : nullptr;
+}
+
+std::optional<float> CraftingData::roll_bonus(std::string_view tradeskill, std::uint32_t rank) const {
+    const auto found = m_ranks.find(lower_ascii(tradeskill));
+    if (found == m_ranks.end() || found->second.empty()) {
+        return std::nullopt;
+    }
+    return found->second[std::min<std::size_t>(rank, found->second.size() - 1)];
+}
+
+bool CraftingData::has_ranks(std::string_view tradeskill) const {
+    return m_ranks.contains(lower_ascii(tradeskill));
+}
+
+std::optional<std::uint32_t> CraftingData::achievement_index(std::string_view id) const {
+    const auto found = m_achievements.find(lower_ascii(id));
+    return found != m_achievements.end() ? std::optional<std::uint32_t>(found->second) : std::nullopt;
+}
+
+MaterialBonus CraftingData::material(std::string_view itemId) const {
+    const auto found = m_materials.find(lower_ascii(itemId));
+    return found != m_materials.end() ? found->second : MaterialBonus{};
+}
+
+bool CraftingData::match_catalog(const ItemCatalog& catalog) {
+    // Code review of stage U4, finding U4-R1 (the rule of the tool, crafting.py CAUSE_RANGE): an output with a gear score range and no
+    // override needs the craft gear score rule of stage 3.7c. A recipe with no cause must not have such an output.
+    if (!m_loaded || !catalog.loaded()) {
+        return true;
+    }
+    for (const Recipe& recipe : m_recipes) {
+        if (!recipe.unsupported.empty()) {
+            continue;
+        }
+        const ItemDefinition* output = catalog.find(recipe.item);
+        if (output != nullptr && output->maxGearScore != 0 && output->gearScoreOverride == 0) {
+            const std::string cause = "the recipe " + recipe.id + " has no cause, and its output " + output->id
+                                      + " has a gear score range and no override in the item catalog (the rule of stage 3.7c)";
+            *this = CraftingData{};
+            m_error = cause;
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace soulwarden::backend::gamedata

@@ -178,6 +178,12 @@ enum class ComponentKey {
      * docs/systems/gathering.md): Healthy 4 or Depleted 8. Each observer gets it (the node state is shared: research Q1).
      */
     gatherable,
+    /**
+     * The Crafting state of a character (stage 3.7b, slot 63, type 205; docs/systems/crafting.md): the cooldown map of the recipes (field 0)
+     * and the gear score bonus map of the trade skills (field 1, empty in this stage). Only the owner gets it; a character with no cooldown
+     * has no fragment in its first record.
+     */
+    crafting,
 };
 
 /**
@@ -231,6 +237,41 @@ struct CraftJob {
     /** The fee that the completed jobs paid (wire hundredths of a coin). */
     std::uint64_t feePaid{0};
     WorldClock::time_point accepted{};
+    /** Stage 3.7b: a craft-all recipe (CraftAll): each job before the last one gives its output with the cause ItemAdded (live check L4). */
+    bool craftAll{false};
+    /**
+     * Decision D2 of the orchestrator (option A): the expected extra units of one job (OutputQty x the bonus item chance of the request) and
+     * the largest extra of one job (its ceiling: the plan of the request reserves it). The extra units that the completed jobs gave.
+     */
+    double extraUnits{0.0};
+    std::uint32_t maxExtra{0};
+    std::uint32_t bonusGiven{0};
+    /**
+     * The trade skill experience of one job (the progression of the event of the recipe), the first-craft achievement of the recipe (empty:
+     * none, or the character had it at the request) and the extra experience of the first craft. The experience of the completed jobs.
+     */
+    std::string progression;
+    std::uint64_t experience{0};
+    std::string firstCraft;
+    std::uint64_t firstCraftExtra{0};
+    std::uint64_t experienceGiven{0};
+    /** The cooldown of the recipe (CooldownSeconds and CooldownQuantity; 0: none). */
+    std::uint32_t cooldownSeconds{0};
+    std::uint32_t cooldownQuantity{0};
+};
+
+/**
+ * The cooldown of a recipe of a character (stage 3.7b; the crafting system changes it; the rows of `craft_cooldowns`). The window starts at
+ * the first craft after the end of the last window: `used` counts the crafts in the window (CooldownQuantity at most), and the window ends
+ * CooldownSeconds later (game data; live check L6: the client shows "TIME per N items" with N = CooldownQuantity - used, and it ends the
+ * window itself at the end). The end is a time of the run clock of the world (the store) and of the world clock (the rules and the state).
+ */
+struct CraftCooldown {
+    /** The recipe id text. */
+    std::string recipe;
+    std::uint32_t used{0};
+    std::uint64_t endRunNs{0};
+    WorldClock::time_point end{};
 };
 
 /**
@@ -1640,6 +1681,8 @@ struct Entity {
     /** The craft batch of the character and the progress for its client (stage 3.7a): the crafting system changes them. */
     std::optional<CraftJob> craftJob;
     CraftProgress craftProgress;
+    /** The cooldowns of the recipes of the character by the CRC-32 of the recipe (stage 3.7b): the crafting system changes them. */
+    std::map<std::uint32_t, CraftCooldown> craftCooldowns;
     /** The loot claims of the character on the chests near it (stage 3.5b.1): a copy of the values of the chest system. */
     std::vector<LootTrackerEntry> lootTracker;
     /** The LootTracker entries of the loot bags of the character (stage 3.5b.2): a copy of the values of the loot bag system. */

@@ -309,43 +309,54 @@ ProgressError Skills::rank_into(SkillSet& skills,
 SkillResult Skills::add_experience(const std::string& characterId, std::string_view id, std::uint64_t amount) {
     const std::string what = "gain of " + std::to_string(amount) + " experience of " + std::string(id);
     return change(characterId, what.c_str(), [&](SkillSet& skills, Touched& touched, SkillResult& result) {
-        const gamedata::ProgressionRow* row = tables()->progression(id);
-        if (row == nullptr) {
-            return ProgressError::unknownProgression;
-        }
-        if (amount == 0 || amount > kSkillExperienceLimit) {
-            return ProgressError::badAmount;
-        }
-        const auto found = skills.progressions.find(row->wireId);
-        ProgressionRank value = found == skills.progressions.end() ? ProgressionRank{} : found->second;
-        const std::uint16_t before = value.rank;
-        value.points += amount;
-        // The counter is wider than the rank on the wire, and the largest rank is a rank on the
-        // wire: the loop has an end for each table, also for one that no loader checked.
-        const std::uint32_t largest = std::min(tables()->rank_cap(*row), gamedata::kLargestRank);
-        std::uint32_t rank = value.rank;
-        while (rank < largest && rank < row->ranks.experience.size() && value.points >= row->ranks.experience[rank]) {
-            value.points -= row->ranks.experience[rank];
-            ++rank;
-        }
-        value.rank = static_cast<std::uint16_t>(rank);
-        if (rank >= largest) {
-            value.points = 0;
-        }
-        if (value.rank == 0 && value.points == 0) {
-            skills.progressions.erase(row->wireId);
-        } else {
-            skills.progressions[row->wireId] = value;
-        }
-        touched.ranks = true;
-        if (row->kind == gamedata::ProgressionKind::weapon) {
-            touched.points = touched.points || value.rank != before;
-            result.freePoints = skills.free_points(row->wireId);
-        }
-        result.rank = value.rank;
-        result.points = value.points;
-        return ProgressError::none;
+        return experience_into(skills, touched, result, id, amount);
     });
+}
+
+Skills::Plan Skills::plan_experience(const std::string& characterId, std::string_view id, std::uint64_t amount) {
+    return stage(characterId, [&](SkillSet& skills, Touched& touched, SkillResult& result) {
+        return experience_into(skills, touched, result, id, amount);
+    });
+}
+
+ProgressError Skills::experience_into(SkillSet& skills, Touched& touched, SkillResult& result, std::string_view id,
+                                      std::uint64_t amount) const {
+    const gamedata::ProgressionRow* row = tables()->progression(id);
+    if (row == nullptr) {
+        return ProgressError::unknownProgression;
+    }
+    if (amount == 0 || amount > kSkillExperienceLimit) {
+        return ProgressError::badAmount;
+    }
+    const auto found = skills.progressions.find(row->wireId);
+    ProgressionRank value = found == skills.progressions.end() ? ProgressionRank{} : found->second;
+    const std::uint16_t before = value.rank;
+    value.points += amount;
+    // The counter is wider than the rank on the wire, and the largest rank is a rank on the
+    // wire: the loop has an end for each table, also for one that no loader checked.
+    const std::uint32_t largest = std::min(tables()->rank_cap(*row), gamedata::kLargestRank);
+    std::uint32_t rank = value.rank;
+    while (rank < largest && rank < row->ranks.experience.size() && value.points >= row->ranks.experience[rank]) {
+        value.points -= row->ranks.experience[rank];
+        ++rank;
+    }
+    value.rank = static_cast<std::uint16_t>(rank);
+    if (rank >= largest) {
+        value.points = 0;
+    }
+    if (value.rank == 0 && value.points == 0) {
+        skills.progressions.erase(row->wireId);
+    } else {
+        skills.progressions[row->wireId] = value;
+    }
+    touched.ranks = true;
+    if (row->kind == gamedata::ProgressionKind::weapon) {
+        touched.points = touched.points || value.rank != before;
+        result.freePoints = skills.free_points(row->wireId);
+    }
+    result.rank = value.rank;
+    result.points = value.points;
+    return ProgressError::none;
 }
 
 SkillResult Skills::assign(const std::string& characterId, std::uint32_t pool, std::uint32_t node, std::uint32_t count) {

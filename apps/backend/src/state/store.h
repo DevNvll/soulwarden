@@ -191,6 +191,18 @@ struct GatheringNodeRow {
     std::int64_t depletedAt{0};
 };
 
+/**
+ * The cooldown of a recipe of a character (stage 3.7b, table `craft_cooldowns`; docs/systems/crafting.md): the crafts in the window of the
+ * recipe (CooldownQuantity at most) and the end of the window on the run clock of the world (nanoseconds; world_time.run_ns: the downtime
+ * of the backend does not count). The character id is the owner key: the rows go with the character.
+ */
+struct CraftCooldownRow {
+    /** The recipe id text (RecipeID of the game table). */
+    std::string recipe;
+    std::uint32_t used{0};
+    std::uint64_t endRunNs{0};
+};
+
 struct LootClaimRow {
     std::string objectKey;
     /** 1 Rolled (the roll is kept: `items`), 2 Looted (the InstancedLootState of the client). */
@@ -437,6 +449,10 @@ public:
      *         ran with this world. No value: no row.
      */
     [[nodiscard]] std::optional<std::uint64_t> world_run_time(const std::string& worldKey);
+    /** @return The recipe cooldowns of a character (stage 3.7b, table `craft_cooldowns`), in the sequence of the recipe ids. */
+    [[nodiscard]] std::vector<CraftCooldownRow> list_craft_cooldowns(const std::string& characterId);
+    /** Writes (inserts or replaces) the cooldown of a recipe of a character. In a batch: a savepoint of its transaction. */
+    [[nodiscard]] bool write_craft_cooldown(const std::string& characterId, const CraftCooldownRow& row);
     /** @return The depleted gathering nodes of the world (stage 3.6a, table `gathering_nodes`), in the sequence of their keys. */
     [[nodiscard]] std::vector<GatheringNodeRow> list_gathering_nodes();
     /** Writes the row of a depleted node (in a batch: a savepoint; the items and the experience of a gather commit with it). */

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the crafting data of the backend (stage 3.7a, docs/systems/crafting.md): one JSON file, crafting-data.json.
+"""Write the crafting data of the backend (stages 3.7a and 3.7b, docs/systems/crafting.md): one JSON file, crafting-data.json.
 
 The backend reads GAMEDATA_DIR/crafting-data.json at its start. Without the file the backend starts and works, and each craft request is
 refused with no change (docs/systems/crafting.md). The file is game data: it stays outside the repository.
@@ -21,13 +21,22 @@ The sources (all in the pak files of the game copy; research crafting-stage.md s
   4. The master item tables (MasterItemDefinitions) and the house item tables (HouseItems, HouseItemsMTX): the items of the ingredients
      and of the outputs, the IngredientCategories of each item (the members of a category ingredient; the UI table
      javelindata_craftingcategories does not define membership), the tier, and the gear score values of an output.
-  5. The game events (GameEventData): the event of a recipe (its trade skill experience is stage 3.7b).
+  5. The game events (GameEventData): the event of a recipe: its trade skill experience (CategoricalProgressionId,
+     CategoricalProgressionReward; stage 3.7b), the character experience (UniversalExpAmount), and the territory standing.
   6. The resource items (ResourceItemDefinitions: ResourceID, PerkBucket, GemPerk, SocketType) and the perk buckets (PerkBucketData):
      the perk bucket of each resource must be a bucket of the data (the charms are stage 3.7c).
+  7. Stage 3.7b: the rank tables of the trade skills (TradeskillRankData; the table name is the trade skill): the RollBonus of each
+     rank (the bonus item chance of a craft, client 0x2E57A70); the achievement tables (AchievementData): the bit (AchievementIndex) of
+     each first-craft achievement of a recipe (FirstCraftAchievementId; the crafting screen reads the bit of the character); the
+     bonus item values of the master items (ExtraBonusItemChance, IngredientBonusPrimary, IngredientBonusSecondary; client 0x5C52A40,
+     0x2E57A70) and the tier lists of a recipe (BonusItemChanceIncrease, BonusItemChanceDecrease).
 
-The support of stage 3.7a (the field "unsupported" of a recipe: each cause that the backend has no rule for yet; an empty list is a
-recipe that the backend crafts): the fixed recipes with no reward event, no cooldown, no perk items, no gear score rule, no unlock, and
-item ingredients or category ingredients. The causes name the later run that adds the rule (crafting.md, the plan for 3.7b to 3.7e).
+The support (the field "unsupported" of a recipe: each cause that the backend has no rule for yet; an empty list is a recipe that the
+backend crafts): stage 3.7a crafts the fixed recipes with item ingredients or category ingredients; stage 3.7b adds refining, craft-all,
+the trade skill experience of the event, the first-craft bonus, and the cooldown. A reward event with no row, with character experience,
+or with a progression that has no rank table; a first-craft achievement with no row; a cooldown with only a time or only a count; and a
+refining recipe whose trade skill has no rank table stay causes. The territory standing of an event is not given (the backend has no
+territory standing: docs/systems/crafting.md). The causes name the later run that adds the rule (crafting.md, the plan for 3.7c to 3.7e).
 
 The tool stops with status 1 and one message, and writes no file, when a source that it needs is not there or does not decode, when
 a needed table or column is not there, when two recipe rows have one id (case folded) or two ids have one CRC-32, when an ingredient
@@ -40,17 +49,21 @@ with no item, a station key that no row permits, an event with no row, a perk bu
 diagnostic, not a stop: the retail data has some of them. tools/gamedata/check_crafting_tool.py is the check of these rules.
 
 Output (one line of JSON):
-  {"format": 1,
+  {"format": 2,
    "stations": [{"name", "types": [KEY, ...], "discount", "mannequin"}, ...],
    "missingStations": {KEY: [SLICE, ...], ...},
    "recipes": [{"id", "crc", "table", "category", "group", "known", "listed", "skill", "level", "stations": [KEY, ...],
                 "ingredients": [[TYPE, ID, QUANTITY], ...], "item", "outputQty", "procedural", "refining", "craftAll", "temporary",
                 "fee", "tax", "baseGearScore", "baseTier", "disallowBonuses", "perkItems", "attributeSlots", "push", "perkCost",
                 "event", "requiredAchievement", "hiddenByAchievement", "unlockedAchievement", "firstCraftAchievement", "expansion",
-                "worldTags", "cooldownSeconds", "cooldownQuantity", "skipGrant", "bonusChance", "unsupported": [CAUSE, ...]}, ...],
+                "worldTags", "cooldownSeconds", "cooldownQuantity", "skipGrant", "bonusChance", "bonusIncrease": [NUMBER, ...],
+                "bonusDecrease": [NUMBER, ...], "unsupported": [CAUSE, ...]}, ...],
    "categories": {CATEGORY: [ITEM, ...], ...},          (CATEGORY in lower case; the items in the byte order of their ids)
    "events": {EVENT: {"id", "progression", "reward", "xp", "standing"}, ...},
    "resources": {ITEM: {"bucket", "gemPerk", "socket"}, ...},
+   "ranks": {TRADESKILL: [ROLL_BONUS, ...], ...},          (the RollBonus of the ranks 0 to N of each rank table)
+   "achievements": {ACHIEVEMENT: INDEX, ...},               (the bit of each first-craft achievement of a recipe)
+   "materials": {ITEM: [EXTRA_CHANCE, PRIMARY, SECONDARY], ...},   (the items with a bonus item value that is not 0)
    "counts": {...}}
   KEY is a station key in lower case. TYPE is "Item", "Category_Only", or "Currency". "crc" is the CRC-32 of the lower-case recipe id
   (the recipe id of request 2997; client 0x4485AF0). "outputQty" is null for a blank cell.
@@ -81,13 +94,15 @@ from interactions import ASSEMBLY_CLASS, CRAFTING_STATIONS, STATION_ENTRY, child
 from item_catalog import HOUSE_TABLES, HOUSE_TYPE, MASTER_TYPE, Sheet, sheet_type  # noqa: E402
 
 OUTPUT_NAME = "crafting-data.json"
-FORMAT = 1
+FORMAT = 2
 STATION_SLICES = "slices/structures/settlements/stations/"
 WANTED = (TABLES_FOLDER, CRAFTING_STATIONS, STATION_SLICES)
 RECIPE_TYPE = "CraftingRecipeData"
 EVENT_TYPE = "GameEventData"
 RESOURCE_TYPE = "ResourceItemDefinitions"
 BUCKET_TYPE = "PerkBucketData"
+RANK_TYPE = "TradeskillRankData"
+ACHIEVEMENT_TYPE = "AchievementData"
 INGREDIENTS = 7
 STATION_COLUMNS = 4
 # The ingredient types of the data and of the request (client enum 0x4F43EE7: Invalid 0, Item 1, Currency 2, CategoryAny 3, CategoryOnly
@@ -104,24 +119,30 @@ RECIPE_COLUMNS = ("RecipeID", "CraftingCategory", "CraftingGroup", "bKnownByDefa
                   "CraftingFee", "UseCraftingTax", "Tradeskill", "RecipeLevel", "OutputQty", "ItemID", "SkipGrantItems", "BaseGearScore",
                   "BaseTier", "DisallowBonusesToGS", "RequiredAchievementID", "HiddenByAchievementID", "UnlockedAchievementID",
                   "FirstCraftAchievementId", "GameEventID", "CooldownSeconds", "CooldownQuantity", "BonusItemChance", "PerkCost",
-                  "RequiredExpansion") \
+                  "RequiredExpansion", "BonusItemChanceIncrease", "BonusItemChanceDecrease") \
     + tuple(f"StationType{index}" for index in range(1, STATION_COLUMNS + 1)) \
     + tuple(f"{prefix}{index}" for index in range(1, INGREDIENTS + 1) for prefix in ("Ingredient", "Type", "Qty"))
 ITEM_COLUMNS = ("ItemID", "IngredientCategories", "Tier", "GearScoreOverride", "MinGearScore", "MaxGearScore")
+# The bonus item columns of an item (client 0x5C52A40, 0x2E57A70). Some master tables (the store tables) do not have them: 0.
+BONUS_COLUMNS = ("ExtraBonusItemChance", "IngredientBonusPrimary", "IngredientBonusSecondary")
+# The limit of a bonus item value of an item and of the RollBonus of a rank (the client adds them as integers; the tables have 0 to 2,500).
+BONUS_LIMIT = 1000000
 EVENT_COLUMNS = ("EventID", "CategoricalProgressionId", "CategoricalProgressionReward", "UniversalExpAmount", "TerritoryStanding")
 NAME_FIELD = field_id("Name")
 TYPES_FIELD = field_id("CraftingTypes")
 MANNEQUIN_FIELD = field_id("MannequinTag")
 DISCOUNT_FIELD = field_id("AzothDiscountPercent")
 
-# The causes of a recipe that the backend of stage 3.7a does not craft, with the run that adds the rule (crafting.md, the plan).
+# The causes of a recipe that the backend does not craft, with the run that adds the rule (crafting.md, the plan). Stage 3.7b applies
+# refining, craft-all, the reward event, the first-craft achievement, and the cooldown: these stay causes only for data with no rule.
 CAUSE_PROCEDURAL = "procedural result (stage 3.7c)"
-CAUSE_REFINING = "refining (stage 3.7b)"
-CAUSE_CRAFT_ALL = "craft-all result presentation (stage 3.7b)"
-CAUSE_EVENT = "reward event (stage 3.7b)"
-CAUSE_FIRST_CRAFT = "first-craft achievement (stage 3.7b)"
-CAUSE_COOLDOWN = "cooldown (stage 3.7b)"
-CAUSE_CURRENCY = "currency ingredient (stage 3.7b)"
+CAUSE_EVENT_ROW = "reward event with no row of the event tables"
+CAUSE_EVENT_XP = "reward event with character experience (no rule)"
+CAUSE_EVENT_SKILL = "reward event of a progression with no rank table"
+CAUSE_FIRST_CRAFT_ROW = "first-craft achievement with no row of the achievement tables"
+CAUSE_COOLDOWN_PART = "a cooldown with only a time or only a count (no rule)"
+CAUSE_NO_RANKS = "refining with no rank table of its trade skill"
+CAUSE_CURRENCY = "currency ingredient (stage 3.7c: the Azoth balance)"
 CAUSE_PERKS = "perk items or Azoth upgrade (stage 3.7c)"
 CAUSE_GEAR_SCORE = "craft gear score rule (stage 3.7c)"
 CAUSE_UNLOCK = "recipe unlock or achievement rule (a later stage)"
@@ -239,13 +260,15 @@ class Tables:
         self.events: dict[str, dict] = {}
         self.resources: dict[str, dict] = {}
         self.buckets: set[str] = set()
+        self.ranks: dict[str, list[float]] = {}
+        self.achievements: dict[str, int] = {}
         found = set()
         for path in sources.paths(TABLES_FOLDER, ".datasheet"):
             data = sources.read(path)
             if data is None:
                 continue
             kind = sheet_type(data)
-            if kind not in (RECIPE_TYPE, MASTER_TYPE, HOUSE_TYPE, EVENT_TYPE, RESOURCE_TYPE, BUCKET_TYPE):
+            if kind not in (RECIPE_TYPE, MASTER_TYPE, HOUSE_TYPE, EVENT_TYPE, RESOURCE_TYPE, BUCKET_TYPE, RANK_TYPE, ACHIEVEMENT_TYPE):
                 continue
             sheet = Sheet(data)
             if kind == HOUSE_TYPE:
@@ -263,8 +286,12 @@ class Tables:
                 self._resources(sheet, path)
             elif kind == BUCKET_TYPE:
                 self._buckets(sheet, path)
+            elif kind == RANK_TYPE:
+                self._ranks(sheet, path)
+            elif kind == ACHIEVEMENT_TYPE:
+                self._achievements(sheet, path)
         sources.check_complete()
-        for kind in (RECIPE_TYPE, MASTER_TYPE, EVENT_TYPE, RESOURCE_TYPE, BUCKET_TYPE):
+        for kind in (RECIPE_TYPE, MASTER_TYPE, EVENT_TYPE, RESOURCE_TYPE, BUCKET_TYPE, RANK_TYPE, ACHIEVEMENT_TYPE):
             if kind not in found:
                 raise Failure(f"the game copy has no table of the type {kind}")
 
@@ -291,7 +318,9 @@ class Tables:
                 "tier": whole(sheet.source(row, "Tier"), f"{what}: Tier", 100),
                 "override": whole(sheet.source(row, "GearScoreOverride"), f"{what}: GearScoreOverride", GEAR_SCORE_LIMIT),
                 "min": whole(sheet.source(row, "MinGearScore"), f"{what}: MinGearScore", GEAR_SCORE_LIMIT),
-                "max": whole(sheet.source(row, "MaxGearScore"), f"{what}: MaxGearScore", GEAR_SCORE_LIMIT)}
+                "max": whole(sheet.source(row, "MaxGearScore"), f"{what}: MaxGearScore", GEAR_SCORE_LIMIT),
+                "bonus": [whole(sheet.source(row, column), f"{what}: {column}", BONUS_LIMIT) if column in sheet.columns else 0
+                          for column in BONUS_COLUMNS]}
 
     def _house(self, sheet: Sheet, path: str) -> None:
         need(sheet, path, ("HouseItemID",))
@@ -324,6 +353,52 @@ class Tables:
             identifier = sheet.source(row, "PerkBucketID").strip()
             if identifier:
                 self.buckets.add(identifier.lower())
+
+    def _ranks(self, sheet: Sheet, path: str) -> None:
+        """The RollBonus of each rank of a trade skill: the rows 0 to N with no gap (the table name is the trade skill). A table with no
+        column RollBonus (AzothStaff, Riding) has the bonus 0 for each rank (the default of the client reader)."""
+        need(sheet, path, ("Level",))
+        has_bonus = "RollBonus" in sheet.columns
+        values: dict[int, float] = {}
+        for row in range(sheet.row_count):
+            text = sheet.source(row, "Level").strip()
+            if not text:
+                continue
+            level = whole(text, f"{path}: Level", LEVEL_LIMIT)
+            if level in values:
+                raise Failure(f"{path}: two rows of the rank {level}")
+            values[level] = number(sheet.source(row, "RollBonus"), f"{path}: the rank {level}: RollBonus") if has_bonus else 0.0
+            if not 0 <= values[level] <= BONUS_LIMIT:
+                raise Failure(f"{path}: the rank {level}: RollBonus is outside 0 to {BONUS_LIMIT}")
+        if sorted(values) != list(range(len(values))):
+            raise Failure(f"{path}: the ranks are not 0 to {len(values) - 1} with no gap")
+        if sheet.name.lower() in (name.lower() for name in self.ranks):
+            raise Failure(f"{path}: two rank tables of the trade skill {sheet.name}")
+        self.ranks[sheet.name] = [values[level] for level in range(len(values))]
+
+    def _achievements(self, sheet: Sheet, path: str) -> None:
+        need(sheet, path, ("AchievementID", "AchievementIndex"))
+        for row in range(sheet.row_count):
+            identifier = sheet.source(row, "AchievementID").strip()
+            if identifier and identifier.lower() not in self.achievements:
+                self.achievements[identifier.lower()] = whole(sheet.source(row, "AchievementIndex"), f"{path}: the achievement {identifier}",
+                                                              0x2000000 * 8 - 1)
+
+    def event(self, identifier: str) -> dict | None:
+        """@return The values of an event of a recipe (the trade skill, its reward, the character experience, the standing), or None."""
+        event = self.events.get(identifier.lower())
+        if event is None:
+            return None
+        sheet, row, what = event["sheet"], event["row"], f"{event['path']}: the event {event['id']}"
+        return {"id": event["id"], "progression": sheet.source(row, "CategoricalProgressionId").strip(),
+                "reward": number(sheet.source(row, "CategoricalProgressionReward"), f"{what}: CategoricalProgressionReward"),
+                "xp": number(sheet.source(row, "UniversalExpAmount"), f"{what}: UniversalExpAmount"),
+                "standing": number(sheet.source(row, "TerritoryStanding"), f"{what}: TerritoryStanding")}
+
+
+def number_list(text: str, what: str) -> list[float]:
+    """@return The numbers of a list cell ("0.25,0.5,0.75,1"); a blank cell is an empty list."""
+    return [round(number(part, what), 6) for part in text.split(",") if part.strip()]
 
 
 def recipe_entry(identifier: str, sheet: Sheet, row: int, tables: Tables, categories: dict[str, list[str]],
@@ -365,7 +440,9 @@ def recipe_entry(identifier: str, sheet: Sheet, row: int, tables: Tables, catego
         "cooldownSeconds": whole(cell("CooldownSeconds"), f"{what}: CooldownSeconds", 100000000),
         "cooldownQuantity": whole(cell("CooldownQuantity"), f"{what}: CooldownQuantity", 255),
         "skipGrant": flag(cell("SkipGrantItems"), f"{what}: SkipGrantItems"),
-        "bonusChance": round(number(cell("BonusItemChance"), f"{what}: BonusItemChance"), 6), "unsupported": []}
+        "bonusChance": round(number(cell("BonusItemChance"), f"{what}: BonusItemChance"), 6),
+        "bonusIncrease": number_list(cell("BonusItemChanceIncrease"), f"{what}: BonusItemChanceIncrease"),
+        "bonusDecrease": number_list(cell("BonusItemChanceDecrease"), f"{what}: BonusItemChanceDecrease"), "unsupported": []}
     causes: list[str] = entry["unsupported"]
     for index in range(1, INGREDIENTS + 1):
         name = cell(f"Ingredient{index}")
@@ -393,9 +470,16 @@ def recipe_entry(identifier: str, sheet: Sheet, row: int, tables: Tables, catego
             causes.append(CAUSE_CURRENCY)
     if not entry["ingredients"]:
         causes.append(CAUSE_NO_INGREDIENT)
-    for test, cause in ((procedural, CAUSE_PROCEDURAL), (entry["refining"], CAUSE_REFINING), (entry["craftAll"], CAUSE_CRAFT_ALL),
-                        (bool(entry["event"]), CAUSE_EVENT), (bool(entry["firstCraftAchievement"]), CAUSE_FIRST_CRAFT),
-                        (entry["cooldownSeconds"] > 0 or entry["cooldownQuantity"] > 0, CAUSE_COOLDOWN),
+    # Stage 3.7b: the event, the first-craft achievement, the cooldown, and refining have a rule; only data with no rule is a cause.
+    event = tables.event(entry["event"]) if entry["event"] else None
+    ranks = {name.lower() for name in tables.ranks}
+    for test, cause in ((procedural, CAUSE_PROCEDURAL), (bool(entry["event"]) and event is None, CAUSE_EVENT_ROW),
+                        (event is not None and event["xp"] != 0, CAUSE_EVENT_XP),
+                        (event is not None and bool(event["progression"]) and event["progression"].lower() not in ranks, CAUSE_EVENT_SKILL),
+                        (bool(entry["firstCraftAchievement"]) and entry["firstCraftAchievement"].lower() not in tables.achievements,
+                         CAUSE_FIRST_CRAFT_ROW),
+                        ((entry["cooldownSeconds"] > 0) != (entry["cooldownQuantity"] > 0), CAUSE_COOLDOWN_PART),
+                        (entry["refining"] and entry["skill"].lower() not in ranks, CAUSE_NO_RANKS),
                         (perk_items > 0 or entry["attributeSlots"] > 0 or entry["perkCost"] > 0, CAUSE_PERKS),
                         (entry["baseGearScore"] > 0, CAUSE_GEAR_SCORE),
                         (not entry["known"] or bool(entry["requiredAchievement"]) or bool(entry["hiddenByAchievement"])
@@ -447,18 +531,22 @@ def build(sources: Sources) -> dict:
         recipes.append(entry)
     events = {}
     missing_events = 0
+    achievements: dict[str, int] = {}
     for entry in recipes:
         if entry["event"]:
-            event = tables.events.get(entry["event"].lower())
+            event = tables.event(entry["event"])
             if event is None:
                 missing_events += 1
                 continue
-            sheet, row, what = event["sheet"], event["row"], f"{event['path']}: the event {event['id']}"
-            events[event["id"]] = {
-                "progression": sheet.source(row, "CategoricalProgressionId").strip(),
-                "reward": number(sheet.source(row, "CategoricalProgressionReward"), f"{what}: CategoricalProgressionReward"),
-                "xp": number(sheet.source(row, "UniversalExpAmount"), f"{what}: UniversalExpAmount"),
-                "standing": number(sheet.source(row, "TerritoryStanding"), f"{what}: TerritoryStanding")}
+            events[event["id"]] = {key: event[key] for key in ("progression", "reward", "xp", "standing")}
+            if not math.isfinite(event["reward"]) or event["reward"] < 0:
+                raise Failure(f"the event {event['id']}: CategoricalProgressionReward is not a number of 0 or more")
+        if entry["firstCraftAchievement"]:
+            index = tables.achievements.get(entry["firstCraftAchievement"].lower())
+            if index is not None:
+                achievements[entry["firstCraftAchievement"]] = index
+    # The bonus item values of the items (only the items with a value that is not 0: the client reads 0 for the others).
+    materials = {item["id"]: item["bonus"] for item in sorted(tables.items.values(), key=lambda value: value["id"].encode()) if any(item["bonus"])}
     resources = {}
     missing_buckets = 0
     for resource in sorted(tables.resources.values(), key=lambda value: value["id"].encode()):
@@ -476,9 +564,11 @@ def build(sources: Sources) -> dict:
               "campSupported": sum(1 for entry in camp if not entry["unsupported"]), "stations": len(stations),
               "missingStations": len(missing), "categories": len(categories), "items": len(tables.items),
               "houseItems": len(tables.house_items), "events": len(events), "missingEvents": missing_events,
-              "resources": len(resources), "missingBuckets": missing_buckets, "byCause": dict(sorted(by_cause.items()))}
+              "resources": len(resources), "missingBuckets": missing_buckets, "rankTables": len(tables.ranks),
+              "achievements": len(achievements), "materials": len(materials), "byCause": dict(sorted(by_cause.items()))}
     return {"format": FORMAT, "stations": stations, "missingStations": missing, "recipes": recipes, "categories": categories,
-            "events": events, "resources": resources, "counts": counts}
+            "events": events, "resources": resources, "ranks": dict(sorted(tables.ranks.items())), "achievements": dict(sorted(achievements.items())),
+            "materials": materials, "counts": counts}
 
 
 def write(target: Path, document: dict) -> None:
@@ -521,9 +611,10 @@ def main() -> int:
         print(f"crafting: {target}: {error}. No file was written.", file=sys.stderr)
         return 1
     counts = document["counts"]
-    print(f"{target}: {counts['recipes']} recipes ({counts['supported']} that the backend crafts in stage 3.7a; {counts['campRecipes']} "
+    print(f"{target}: {counts['recipes']} recipes ({counts['supported']} that the backend crafts in stage 3.7b; {counts['campRecipes']} "
           f"with a camp key, {counts['campSupported']} of them supported), {counts['stations']} station rows, {counts['categories']} "
-          f"ingredient categories, {counts['events']} events, {counts['resources']} resource items")
+          f"ingredient categories, {counts['events']} events, {counts['resources']} resource items, {counts['rankTables']} rank tables, "
+          f"{counts['achievements']} first-craft achievements, {counts['materials']} items with a bonus item value")
     if document["missingStations"]:
         print("  station keys of the slices with no row of the station database: "
               + ", ".join(f"{key} ({len(paths)} slice(s))" for key, paths in document["missingStations"].items()))

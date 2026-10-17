@@ -14,7 +14,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 13;
+constexpr int kSchemaVersion = 14;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -303,10 +303,25 @@ CREATE TABLE IF NOT EXISTS gathering_nodes(
 );
 )sql";
 
+/**
+ * Version 14 (stage 3.7b: refining and the reward progress, docs/systems/crafting.md). The cooldown of each recipe of a character
+ * (`craft_cooldowns`: the crafts in the window and its end on the run clock of the world, as the respawn of a gathering node).
+ */
+constexpr const char* kMigration14CraftCooldowns = R"sql(
+CREATE TABLE IF NOT EXISTS craft_cooldowns(
+    character_id TEXT NOT NULL,
+    recipe TEXT NOT NULL,
+    used INTEGER NOT NULL,
+    end_run_ns INTEGER NOT NULL,
+    PRIMARY KEY(character_id, recipe)
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
-                                            "loot_claims",   "loot_claim_items",    "loot_bags",          "loot_bag_items"};
+                                            "loot_claims",   "loot_claim_items",    "loot_bags",          "loot_bag_items",
+                                            "craft_cooldowns"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -541,6 +556,13 @@ bool Store::migrate() {
     if (version < 13) {
         // Stage 3.6a: the run clock of the world and the depleted gathering nodes.
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration13Gathering) || !execute("PRAGMA user_version=13") || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 14) {
+        // Stage 3.7b: the recipe cooldowns of the characters.
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration14CraftCooldowns) || !execute("PRAGMA user_version=14") || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
         }
@@ -1419,6 +1441,39 @@ bool Store::set_world_time(const std::string& worldKey, std::uint64_t position, 
     const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
     if (!ok) {
         log::write("store: no write of the world time of %s: %s", worldKey.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::vector<CraftCooldownRow> Store::list_craft_cooldowns(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<CraftCooldownRow> rows;
+    Statement statement(m_database, "SELECT recipe, used, end_run_ns FROM craft_cooldowns WHERE character_id=?1 ORDER BY recipe");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        CraftCooldownRow row;
+        row.recipe = column_text(statement.handle, 0);
+        row.used = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 1), 0, 0xFFFFFFFF));
+        row.endRunNs = static_cast<std::uint64_t>(std::max<sqlite3_int64>(0, sqlite3_column_int64(statement.handle, 2)));
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+bool Store::write_craft_cooldown(const std::string& characterId, const CraftCooldownRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "INSERT INTO craft_cooldowns(character_id, recipe, used, end_run_ns) VALUES(?1, ?2, ?3, ?4) "
+                                    "ON CONFLICT(character_id, recipe) DO UPDATE SET used=excluded.used, end_run_ns=excluded.end_run_ns");
+    statement.bind(1, characterId);
+    statement.bind(2, row.recipe);
+    sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(row.used));
+    sqlite3_bind_int64(statement.handle, 4, static_cast<sqlite3_int64>(row.endRunNs));
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of the cooldown of %s of character %s: %s", row.recipe.c_str(), characterId.c_str(), sqlite3_errmsg(m_database));
     }
     return end_write(ok);
 }
