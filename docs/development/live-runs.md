@@ -260,7 +260,7 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   development run starts the two products in `apps/*/dist` and the game data folder
   (`~/.local/share/soulwarden/gamedata`). Thus a build changes only the next release, not the game
   of the user. An entry from before the releases starts the working copy: do
-  `tools/steam-shortcut.py add` again. They do not share the data directory: a development run uses the
+  `tools/steam-shortcut.py add` again (it also replaces an entry of an older project name). They do not share the data directory: a development run uses the
   development data directory (`tools/dev-run.sh` stops with a message when a game that is
   not a development run uses its data directory).
 - A start with `SOULWARDEN_COMPAT_DIR=~/Games/soulwarden/proton/1063730` uses the prefix of the user:

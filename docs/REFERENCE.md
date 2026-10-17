@@ -162,7 +162,8 @@ details are in [Build and test](development/build-and-test.md), section "Release
 `tools/steam-shortcut.py add` puts the launcher of the current release in the Steam library as
 a non-Steam game, and the launcher of the working copy when there is no release (`--launcher
 release` or `--launcher working-copy` selects one; `show` lists the entries, `remove` removes the
-entry). Do it with Steam closed, or start
+entry). `add` also replaces an older entry of the tool (an older launcher name or project name),
+with its last play time and its library images. Do it with Steam closed, or start
 Steam again directly after it: Steam reads its shortcut file only at its start. The tool
 keeps a copy of the file from before each change in `~/.local/share/soulwarden/backup`.
 

@@ -100,6 +100,13 @@ not change.
   release (`--launcher release`) or of the working copy (`--launcher working-copy`). With no option,
   it selects the release when one exists. The entry names the link `current`: `activate` and
   `rollback` need no change of the entry. Steam must be closed for a change of the entry.
+- `add` replaces the Soulwarden entry, and `remove` removes it. The tool finds the entry by the
+  two launcher paths, and it also finds an older entry of the tool: a launcher that is a link to
+  the launcher of the working copy (an older file name), or the name "New World: Aeternum (NAME)"
+  with the launcher `linux-compat/run-NAME.sh` (an older project name, or a different checkout).
+  One entry stays. It keeps the last play time, and the library images of the old entry get the id
+  of the new entry (an image of the image cache of Steam replaces each image that it has). Do not
+  write an older project name into the repository: the rule finds it by the form.
 
 ```sh
 tools/release.sh                            # install: a release of the commit, and it becomes current

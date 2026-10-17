@@ -29,6 +29,11 @@ The cases (each prints "ok NAME: ..." or "FAIL NAME: ..."):
                      game data folder; SOULWARDEN_GAMEDATA_DIR; the working copy (no game data folder): the default
   shortcut ...       tools/steam-shortcut.py with a made-up Steam directory: the entry of the current release, the
                      change to the working copy, show, no release, remove, the backup of each change
+  shortcut older ... an older entry of the tool (an older project name: "New World: Aeternum (NAME)" with the
+                     launcher linux-compat/run-NAME.sh, here a made-up name; or a link to the launcher of the
+                     working copy): add replaces it (one entry, the last play time, the images move to the new
+                     id, the image cache replaces the images that it has), remove removes it, show marks it; an
+                     entry of the same name form with a different launcher stays
   backend start      (with --backend) the backend of the current release starts with no game, with
                      SOULWARDEN_HARNESS not set, on a free loopback port, answers /healthz, and stops
 
@@ -176,9 +181,9 @@ class Fixture:
         return subprocess.run([str(self.repo / "tools/release.sh"), *arguments], env=env or self.env,
                               capture_output=True, text=True, check=False)
 
-    def shortcut(self, *arguments: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    def shortcut(self, *arguments: str, env: dict | None = None, steam: str = "steam") -> subprocess.CompletedProcess:
         return subprocess.run(["python3", "-B", str(self.repo / "tools/steam-shortcut.py"), *arguments,
-                               "--steam-dir", str(self.work / "steam")], env=env or self.env,
+                               "--steam-dir", str(self.work / steam)], env=env or self.env,
                               capture_output=True, text=True, check=False)
 
     def current(self) -> str | None:
@@ -433,9 +438,9 @@ def check_launcher_cases(fixture: Fixture, results: Results, release_tool) -> No
                  f"{chosen.get('gamedata')}; working copy: {masked(plain.get('gamedata', ''))}")
 
 
-def check_shortcut_cases(fixture: Fixture, results: Results) -> None:
-    tool = load("steam_shortcut_check", fixture.repo / "tools/steam-shortcut.py")
-    steam = fixture.work / "steam"
+def made_up_steam(steam: Path, tool, entries: list) -> Path:
+    """A made-up Steam directory: an account, its shortcuts.vdf with these entries, and an image cache with
+    the capsule and an icon of the game. Returns the configuration folder of the account."""
     steam_id = (0x01100001 << 32) | 4242  # made up: the account 4242
     (steam / "config").mkdir(parents=True)
     (steam / "config" / "loginusers.vdf").write_text(
@@ -443,13 +448,26 @@ def check_shortcut_cases(fixture: Fixture, results: Results) -> None:
         f'\t\t"MostRecent"\t\t"1"\n\t\t"Timestamp"\t\t"1700000000"\n\t}}\n}}\n')
     config = steam / "userdata" / str(steam_id & 0xFFFFFFFF) / "config"
     config.mkdir(parents=True)
-    other = tool.make_entry("Made-up other game", '"/opt/made-up/run"', '"/opt/made-up"', "", 7)
-    shortcuts = config / "shortcuts.vdf"
-    shortcuts.write_bytes(tool.dump_map([(tool.TYPE_MAP, "shortcuts", [(tool.TYPE_MAP, "0", other)])]))
+    items = [(tool.TYPE_MAP, str(index), entry) for index, entry in enumerate(entries)]
+    (config / "shortcuts.vdf").write_bytes(tool.dump_map([(tool.TYPE_MAP, "shortcuts", items)]))
     cache = steam / "appcache" / "librarycache" / str(tool.GAME_APP_ID)
     cache.mkdir(parents=True)
     (cache / "library_capsule.jpg").write_bytes(b"made-up capsule")
     (cache / "icon.jpg").write_bytes(b"made-up icon")
+    return config
+
+
+def shortcut_entries(tool, config: Path) -> list:
+    top, _ = tool.parse_map((config / "shortcuts.vdf").read_bytes(), 0)
+    return [entry for _, _, entry in next(value for kind, key, value in top if key == "shortcuts")]
+
+
+def check_shortcut_cases(fixture: Fixture, results: Results) -> None:
+    tool = load("steam_shortcut_check", fixture.repo / "tools/steam-shortcut.py")
+    steam = fixture.work / "steam"
+    other = tool.make_entry("Made-up other game", '"/opt/made-up/run"', '"/opt/made-up"', "", 7)
+    config = made_up_steam(steam, tool, [other])
+    shortcuts = config / "shortcuts.vdf"
     backups = fixture.data / "backup"
 
     def entries() -> list:
@@ -511,6 +529,72 @@ def check_shortcut_cases(fixture: Fixture, results: Results) -> None:
                  f"status {removed.returncode}, {len(entries())} entry, {len(copies)} backups")
 
 
+def check_older_entry_cases(fixture: Fixture, results: Results) -> None:
+    tool = load("steam_shortcut_check", fixture.repo / "tools/steam-shortcut.py")
+    backups = fixture.data / "backup"
+    release_exe = f'"{fixture.root}/current/{LAUNCHER}"'
+    other = tool.make_entry("Made-up other game", '"/opt/made-up/run"', '"/opt/made-up"', "", 7)
+    # The same name form, with a launcher that is not a launcher of the tool: it stays.
+    decoy = tool.make_entry("New World: Aeternum (Decoy)", '"/opt/made-up/decoy/run.sh"', '"/opt/made-up/decoy"', "", 9)
+    # An older launcher name in the working copy: a link to the launcher (the form of the main checkout).
+    link = fixture.repo / "linux-compat" / "run-oldname.sh"
+    link.symlink_to("run-soulwarden.sh")
+    old_exe = f'"{link}"'
+    old = tool.make_entry("New World: Aeternum (Oldname)", old_exe, f'"{fixture.repo}"', "", 4321)
+    config = made_up_steam(fixture.work / "steam-older", tool, [other, old, decoy])
+    grid = config / "grid"
+    grid.mkdir()
+    old_id = tool.shortcut_id(old_exe, "New World: Aeternum (Oldname)")
+    for suffix, content in (("p.jpg", b"old capsule"), ("_hero.jpg", b"old hero"), ("_logo.png", b"old logo"),
+                            ("_icon.jpg", b"old icon")):
+        (grid / f"{old_id}{suffix}").write_bytes(content)
+    count = len(list(backups.iterdir())) if backups.is_dir() else 0
+    added = fixture.shortcut("add", steam="steam-older")
+    entries = shortcut_entries(tool, config)
+    found = [entry for entry in entries if tool.field(entry, "Exe") in (release_exe, old_exe)]
+    entry = found[0] if found else []
+    new_id = tool.shortcut_id(release_exe, tool.DEFAULT_NAME)
+
+    def image(app_id: int, suffix: str) -> bytes | None:
+        path = grid / f"{app_id}{suffix}"
+        return path.read_bytes() if path.is_file() else None
+
+    left = sorted(path.name for path in grid.iterdir() if path.name.startswith(str(old_id)))
+    results.case("shortcut older entry", added.returncode == 0 and len(entries) == 3 and len(found) == 1
+                 and tool.field(entry, "Exe") == release_exe and tool.field(entry, "AppName") == tool.DEFAULT_NAME
+                 and tool.field(entry, "LastPlayTime") == 4321 and entries[0] == other and decoy in entries
+                 and image(new_id, "_hero.jpg") == b"old hero" and image(new_id, "_logo.png") == b"old logo"
+                 and image(new_id, "p.jpg") == b"made-up capsule" and image(new_id, "_icon.jpg") == b"made-up icon"
+                 and tool.field(entry, "icon") == str(grid / f"{new_id}_icon.jpg") and not left
+                 and len(list(backups.iterdir())) == count + 1,
+                 f"status {added.returncode}, {len(entries)} entries, {len(found)} Soulwarden entry, LastPlayTime "
+                 f"{tool.field(entry, 'LastPlayTime')}, moved hero {image(new_id, '_hero.jpg') == b'old hero'}, "
+                 f"images of the old id left {left}, decoy kept {decoy in entries}")
+
+    # The older entry of a different checkout: the name form and run-NAME.sh, with no file.
+    elsewhere = '"/made-up/checkout/linux-compat/run-oldname.sh"'
+    old = tool.make_entry("New World: Aeternum (Oldname)", elsewhere, '"/made-up/checkout"', "", 4321)
+    config = made_up_steam(fixture.work / "steam-elsewhere", tool, [other, old, decoy])
+    grid = config / "grid"
+    grid.mkdir()
+    old_id = tool.shortcut_id(elsewhere, "New World: Aeternum (Oldname)")
+    (grid / f"{old_id}_hero.jpg").write_bytes(b"old hero")
+    removed = fixture.shortcut("remove", steam="steam-elsewhere")
+    entries = shortcut_entries(tool, config)
+    results.case("shortcut older entry remove", removed.returncode == 0 and entries == [other, decoy]
+                 and not (grid / f"{old_id}_hero.jpg").exists(),
+                 f"status {removed.returncode}, {len(entries)} entries left (the other game and the decoy), "
+                 f"images of the old id left {(grid / f'{old_id}_hero.jpg').exists()}")
+
+    # A link to the launcher of the working copy with a name of a different form.
+    linked = tool.make_entry("Made-up old name", old_exe, f'"{fixture.repo}"', "", 5)
+    made_up_steam(fixture.work / "steam-link", tool, [other, linked, decoy])
+    listed = fixture.shortcut("show", steam="steam-link")
+    marks = [line for line in listed.stdout.splitlines() if "<- Soulwarden launcher" in line]
+    results.case("shortcut older entry show", listed.returncode == 0 and len(marks) == 1 and "Made-up old name" in marks[0]
+                 and "(older entry)" in marks[0], f"status {listed.returncode}, {len(marks)} marked entry")
+
+
 def check_backend_case(fixture: Fixture, results: Results) -> None:
     release = (fixture.root / "current").resolve()
     executable = fixture.root / "current" / BACKEND
@@ -568,6 +652,7 @@ def main() -> int:
         check_release_cases(fixture, results)
         check_launcher_cases(fixture, results, release_tool)
         check_shortcut_cases(fixture, results)
+        check_older_entry_cases(fixture, results)
         if backend is not None:
             check_backend_case(fixture, results)
     finally:
