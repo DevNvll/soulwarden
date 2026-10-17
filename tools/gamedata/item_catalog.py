@@ -74,6 +74,14 @@ The client shows the perks 2 to 5 of an artifact only when the character has tha
 the tooltip says "Equip to view task." with no bit). An objective whose tasks, item, or achievement do not resolve, an
 objective with no equip item or with two, and two objectives of one item stop the tool.
 
+The weight (stage U3, the weight limit of the bag): the weight of a master row is the WeightOverride of its stats row (the
+cell ItemStatsRef names a row of a table of the type WeaponItemDefinitions or ArmorItemDefinitions, column WeaponID) when that
+value is above 0, cut to whole tenths; else the cell Weight of the master row. Live check of stage U3 (the inventory screen of the
+client): a great axe (Weight 80, override 80) and a rapier (Weight 40, override 25) show 10.5; a light helm (Weight 20, override
+15.09) adds 1.5, and medium gloves (Weight 30, override 26.76) add 2.6 (cut, not rounded). A weapon or armor table with no column
+WeaponID or WeightOverride stops the tool. The format stays 3: a file from before has the Weight of each master row (a bag with
+weapons or armor is heavier for the server than for the client).
+
 A backstory has one entry for
 each item of its column InventoryItem: a quantity of 0 is an item that only the character
 creation screen shows, and a gear score of 0 is the value of the item table.
@@ -107,6 +115,12 @@ MASTER_TYPE = "MasterItemDefinitions"
 HOUSE_TYPE = "VariationData"
 HOUSE_TABLES = ("HouseItems", "HouseItemsMTX")
 BACKSTORY_TYPE = "BackstoryDefinition"
+# The stats tables of the weapons and of the armor (stage U3): the weight of an item is the WeightOverride of its stats row.
+STATS_TYPES = ("WeaponItemDefinitions", "ArmorItemDefinitions")
+STATS_ID = "WeaponID"
+WEIGHT_OVERRIDE = "WeightOverride"
+# A float32 cell of a whole number can be a little below it (80 as 79.99999): the cut adds this first.
+WEIGHT_EPSILON = 1.0e-3
 # The objectives of the artifacts (format 3, stage B0): the objective rows, their tasks, and the achievement table.
 OBJECTIVES_TYPE = "Objectives"
 TASKS_TYPE = "ObjectiveTasks"
@@ -308,6 +322,30 @@ def whole(value) -> int:
     return int(value) if isinstance(value, (int, float)) else 0
 
 
+def weight_overrides(sheets: list[Sheet]) -> dict[str, int]:
+    """@return The weight of each stats row (its id in lower case) with a WeightOverride above 0, cut to whole tenths. The first row of
+    an id wins (the tables in the byte order of their names)."""
+    overrides: dict[str, int] = {}
+    for sheet in sorted(sheets, key=lambda table: table.name.encode("utf-8")):
+        for column in (STATS_ID, WEIGHT_OVERRIDE):
+            if column not in sheet.columns:
+                raise Failure(f"the stats table {sheet.name} has no column {column}")
+        for row in range(sheet.row_count):
+            identifier = sheet.cell(row, STATS_ID)
+            value = sheet.cell(row, WEIGHT_OVERRIDE)
+            if isinstance(identifier, str) and identifier and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+                overrides.setdefault(identifier.lower(), int(value + WEIGHT_EPSILON))
+    return overrides
+
+
+def item_weight(sheet: Sheet, row: int, overrides: dict[str, int]) -> int:
+    """@return The weight of a master row in tenths: the override of its stats row, or its cell Weight."""
+    reference = sheet.cell(row, "ItemStatsRef")
+    if isinstance(reference, str) and reference.lower() in overrides:
+        return overrides[reference.lower()]
+    return whole(sheet.cell(row, "Weight"))
+
+
 def flag(value, where: str = "a cell") -> bool:
     """@return The value of a flag cell. The item tables have a flag as a flag, a number (0 or 1), or a text ("" or "1").
     A different value (finding WT-R3) is a Failure: the tool writes no file."""
@@ -452,11 +490,14 @@ def build_catalog(contents: list[bytes]) -> dict:
     objectives: list[Sheet] = []
     tasks: list[Sheet] = []
     achievements: list[Sheet] = []
+    stats: list[Sheet] = []
     for data in contents:
         kind = sheet_type(data)
         try:
             if kind == MASTER_TYPE:
                 masters.append(Sheet(data))
+            elif kind in STATS_TYPES:
+                stats.append(Sheet(data))
             elif kind == BACKSTORY_TYPE:
                 stories.append(Sheet(data))
             elif kind == OBJECTIVES_TYPE:
@@ -478,6 +519,7 @@ def build_catalog(contents: list[bytes]) -> dict:
         raise Failure("two item tables have the same table name")
     # The client keeps the tables in a map with the table name as the key: bytes, then length.
     masters.sort(key=lambda sheet: sheet.name.encode("utf-8"))
+    overrides = weight_overrides(stats)
     items: list[list] = []
     tables: list[dict] = []
     seen: set[int] = set()
@@ -493,7 +535,7 @@ def build_catalog(contents: list[bytes]) -> dict:
             item_id = sheet.cell(row, "ItemID")
             seen.add(item_id_crc(item_id))
             items.append([item_id, sheet.cell(row, "Name"), item_type, sheet.cell(row, "ItemClass"),
-                          whole(sheet.cell(row, "Tier")), whole(sheet.cell(row, "Weight")),
+                          whole(sheet.cell(row, "Tier")), item_weight(sheet, row, overrides),
                           whole(sheet.cell(row, "MaxStackSize")), whole(sheet.cell(row, "Durability")),
                           whole(sheet.cell(row, "MinGearScore")), whole(sheet.cell(row, "MaxGearScore")),
                           whole(sheet.cell(row, "GearScoreOverride")), bool(sheet.cell(row, "BindOnPickup")),

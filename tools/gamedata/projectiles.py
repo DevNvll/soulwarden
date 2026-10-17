@@ -69,7 +69,9 @@ a number of the ranged attack data or of a projectile slice is not a finite numb
 clip is not a number, when a SliceOverride of a clip or the prefab of a spell shot names no slice with a projectile component,
 when a player weapon profile (PLAYER_PROFILES) has no shot of its light or heavy row, and when the ammunition of an empty slot
 of a weapon whose shot takes the slice of its ammunition has no slice, when an action of REQUIRED_ABILITY_ACTIONS has no fragment
-or no clip and no cast of an ability (stage B1), when a cast condition is not an AND of learned-node tests (code review of stage 3.3b-S3, finding F7;
+or no clip and no cast of an ability (stage B1), when a ranged clip of the fragment of such an action has no damage row or no attack of its
+profile in the source, when a cast of such an action is not the spell of an ability shot of the output (code review of stage B1, finding
+B1-R8), when a cast condition is not an AND of learned-node tests (code review of stage 3.3b-S3, finding F7;
 tools/gamedata/check_projectile_tool.py). An ammunition prefab that names no slice is -1 (the siege and creature ammunition of
 the game copy: 9 rows): no shot of a player takes it.
 
@@ -418,7 +420,13 @@ def read_ability_actions(sources: Sources, rows: dict[str, tuple[str, str, str]]
                 if kind == "CAGE-RangedAttack":
                     row = rows.get(values.get("DamageTableRow", "").strip().lower())
                     attack = values.get("RangedAttackName", "").strip()
-                    if row is None or row[2] not in ABILITY_ATTACK_TYPES or (profile, attack.lower()) not in attack_names:
+                    resolved = row is not None and (profile, attack.lower()) in attack_names
+                    # A clip of a required action with no damage row or no attack in the source stops the tool (code review of stage B1,
+                    # finding B1-R8: a source with no row of the third clip of Rapid Shot gave an action of two clips).
+                    if not resolved and name in REQUIRED_ABILITY_ACTIONS:
+                        raise Failure(f"{adb_path}: the clip {attack or '(no attack)'} ({values.get('DamageTableRow', '').strip() or 'no row'}) "
+                                      f"of {fragment} of the ability action {name} has no damage row or no attack of its profile in the source")
+                    if not resolved or row[2] not in ABILITY_ATTACK_TYPES:
                         continue
                     try:
                         charge = round(float(values.get("ChargeValue", "0") or 0), 6)
@@ -631,6 +639,17 @@ def build_document(sources: Sources) -> dict:
             clip_count += 1
     shot_rows = sorted(shots.values(), key=lambda entry: (entry[0].lower(), entry[1].lower(), entry[2].lower(), entry[5].lower()))
     check_joins(shot_rows, light_heavy, weapons, ammo, profiles)
+    # Each cast of a required ability action must be the projectile spell of an ability shot of the output (the 11th value true: the backend
+    # finds it with ProjectileData::ability_shot). Code review of stage B1, finding B1-R8: a source with no row of the projectile spells of
+    # Explosive Arrow gave an action whose casts had no shot, and the backend refused the ability.
+    ability_spells = {entry[5].lower() for entry in shot_rows if entry[5] and len(entry) > 10 and entry[10]}
+    for action in ability_actions:
+        if action[0] not in REQUIRED_ABILITY_ACTIONS:
+            continue
+        for cast in action[6]:
+            if cast[1].lower() not in ability_spells:
+                raise Failure(f"the cast {cast[1]} of the ability action {action[0]} has no projectile shot (no row of the spell tables, or its "
+                              "profile, its attack, its damage row, or its slice is not in the source)")
     spells_of_shots = {entry[5].lower() for entry in shot_rows}
     known = {str(sheet.cell(row, "SpellID")).strip().lower() for sheet in sheets[SPELL_TYPE] for row in range(sheet.row_count)}
     # Each required ability spell must be a row of the source and a shot of the output (code review of stage 1.1b, finding F4: a

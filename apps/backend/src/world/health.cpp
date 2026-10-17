@@ -39,6 +39,9 @@ HealthResult Health::apply(Entity& target, float damage) {
         // A dodge of the character ends at its death (stage 3.4f-B).
         if (target.kind == EntityKind::player) {
             m_world.stamina().interrupted(target.characterId, "the death of the character");
+            // The aim of an ability and the shots of a volley that did not fly end at the death (code review of stage B1, finding B1-R3: a
+            // shot item after a revival confirmed the old aim of Penetrating Shot).
+            m_world.abilities().died(target);
         }
         // The spells of the character whose row has EndOnCasterDeath end (stage 3.3b-S2a).
         m_world.spells().caster_died(target.id);

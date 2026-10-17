@@ -9,6 +9,7 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
 | Task | Start here |
 | --- | --- |
 | A melee attack of a player on a creature: the contact report of the client, the hit check, the damage rule, the damage number | Protocol notes 2.3, 4.7, and 4.15, `apps/backend/src/world/combat.h`, `gamedata/combat_tables.h`, `server/rep/client_input.h`, `server/rep/combat_messages.h`, `server/http/aws_routes.cpp`, `tools/gamedata/combat.sh`, `tools/research/input_packet.py --contacts` |
+| The weapon switch in a swing, the press after CanTransition, the attack from rest of an overencumbered character (stage U3) | `Combat::select_weapon`, `Combat::step_switch`, `switch_rules` (`world/combat.h`), `AttackFragment::switchBuffer`, `switchAt` (`gamedata/weapon_actions.h`), `AttackBits::attackAllowed`, test cases CF6 to CF8, MB4 |
 | The basic attacks of a melee weapon (stage 3.3b-M1): the light chain, the partial and the full charge, the sub-hits, the strike of a contact, the ends of a sequence | Protocol notes 4.32, `world/attack_sequence.h` (`AttackSequences`), `world/combat.h` (`Combat::step`, `claim_strike`, `row_for`), `gamedata/weapon_actions.h`, `tools/gamedata/weapon-actions.sh` (`weapon_actions.py`), test cases MB1 to MB9 |
 | A hit of an ability: the contact of an ability phase, the hit of an area, the weaken of a creature | Protocol notes 4.22, [Abilities](abilities.md), `world/combat.h` (`Combat::claim`, `Combat::strike`), `world/abilities.h` (`Abilities::contact_phase`), test cases AB4, AB5 |
 | A hit of a projectile of a ranged or magic basic attack (the bow, the fire staff) | Protocol notes 4.27, [Projectiles](projectiles.md), `world/projectiles.h`, test cases PJ3, PJ8 |
@@ -196,6 +197,26 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
     came later.
   - The end (M1-R5): a visit that ended has no contact more than 2 steps after its end. The loader refuses a strike that starts
     after the end of a fragment of a known length.
+- The weapon switch (stage U3, research Q6; game data: the marks CanUnsheathe_Buffer, CanUnsheathe, and CanTransition in the ProcLayer of
+  each fragment of the weapon actions, `AttackFragment::switchBuffer` and `switchAt`, the smaller of the two last marks; the grid rules
+  62 Attack -> Sheathe and 116 Sheathe -> Attack; live checks SW-L1 to SW-L3). A key of a weapon slot (`Combat::select_weapon`) at rest
+  switches the weapon at the step of the key. A key in a swing waits for the switch mark of the fragment that plays (the war hammer
+  swing 1.133 s, the great axe swing 1.1 s): the switch comes at that step when the buffer mark (0.4 s, 0.3 s) opens within 20 steps of
+  the key (BackTicks 20 of the key input); until then the old swing plays and hits. A key with no such mark in its 20 steps is lost:
+  the weapon stays, as in the client (live check SW-L3: the client kept the war hammer in its bar). At the switch the weapon of the
+  world changes (the damage, the passive rules), and the attack sequence ends. A press from the key to 3 steps after the switch starts
+  nothing then: it is kept, and the first light swing of the new weapon starts 3 steps after the switch (live check SW-L1: the great axe
+  swing at the key step + 3; SW-L2: a press 21 steps before the switch still played). An ability press in that time is refused
+  (`CastVerdict::switching`). The log lines: `world: weapon: NAME switches to slot S at input N (the key at input K, D steps before)`
+  and `world: weapon: NAME, the key of input N is lost: ...`. Test cases CF7 and MB4.
+- The press after CanTransition (stage U3, research Q6; game data: the mark CanTransition of a fragment; live check CT-L1): a chain
+  press at or after the CanTransition time of the fragment that plays gets the first fragment of the chain as its other fragment (the
+  visit keeps both, and the first hit selects one, M1-R3). In CT-L1 the client always played the chain (the war hammer C2 and then
+  Strike2 for a press 1.033 s to 1.33 s after the swing start; the great axe the same at 1.2 s), and the server accepted the hits of
+  Strike2. Test case CF8.
+- The weight (stage U3, [Items and equipment](items-and-equipment.md)): a press at rest of an overencumbered character (above 1.5 x the
+  limit) starts no attack (`AttackBits::attackAllowed`; the client shows "Overencumbered - Cannot attack" and plays no swing); a chain
+  of an attack that plays goes on. Test case CF6.
 - The fragments of the abilities (stage 3.3b-M2; [Abilities](abilities.md)): an accepted press of an ability of the great axe
   or the war hammer starts the fragment of its action as a visit of the sequence with the cast (`AttackSequences::start_ability`).
   The fragments of one ability keep its cast (the exit of Whirlwind, the uppercut of Charge). A contact of an ability visit is a

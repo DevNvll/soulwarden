@@ -145,7 +145,10 @@ and the stop are in [World and sessions](world-and-sessions.md).
 - The burst phase runs at the start of the spell: the area of the offense of the slice (the radius and the damage row of its
   `ExplosionDamage`: 2.5 m and `Bow_ExplosionShot_Explosion`, or 1.25 m and `_Explosion_Dmg`) hits each enemy creature whose body (its
   capsule) reaches into the sphere, with no wall between (`PhasePlan::bodies`) [agent decision from the live run: the point of the
-  collision is on the surface of the capsule of the direct target]. The direct target also takes the burst [build sheet: the text
+  collision is on the surface of the capsule of the direct target]. The plan keeps the radius of the offense (`PhasePlan::radius`) for
+  the query of the position index and for the distance to each body [code review of stage B1, finding B1-R7, test case BRV7: the area
+  took the Radius of the spell row, and a creature outside the offense took the explosion when the two values did not agree]. The
+  game data has the same radius in the slice and in the spell row: the result with that data does not change. The direct target also takes the burst [build sheet: the text
   "deals 50 % on hit, then explodes on impact dealing an additional 135 %"].
 - The end: after the Duration of the spell row (1 s), on the world clock. A caster that leaves the world ends it.
 - Each session near the point observes the record (rule MP-10, test case BW9: the same bytes for two sessions).

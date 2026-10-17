@@ -227,6 +227,14 @@ bool read_fragment(const json& value, AttackFragment& out, bool format2) {
         || !value["strikes"].is_array() || !value["payments"].is_array() || !value["dodge"].is_array()) {
         return false;
     }
+    // Stage U3: the switch marks [buffer, condition] (-1: none), a member of a file of a newer tool.
+    if (value.contains("switch")) {
+        const json& marks = value["switch"];
+        if (!marks.is_array() || marks.size() != 2 || !number_of(marks[0], out.switchBuffer) || !number_of(marks[1], out.switchAt)
+            || (out.switchBuffer < 0.0F && out.switchBuffer != -1.0F) || (out.switchAt < 0.0F && out.switchAt != -1.0F)) {
+            return false;
+        }
+    }
     for (const json& item : value["transitions"]) {
         AttackTransition transition;
         if (!read_transition(item, transition, format2)) {

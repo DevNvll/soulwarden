@@ -366,6 +366,28 @@ void Inventory::load(Entity& entity) {
                static_cast<unsigned long long>(entity.wallet.coin % 100));
 }
 
+Encumbrance Inventory::encumbrance(const Entity& entity) const {
+    Encumbrance result;
+    const gamedata::PerkData* perks = m_world.perk_data();
+    result.max = perks != nullptr && perks->loaded() ? perks->tables().equipLoad.encumbranceMax : gamedata::EquipLoadData{}.encumbranceMax;
+    if (m_catalog == nullptr) {
+        return result;
+    }
+    for (const BagSlot& slot : entity.bag.slots) {
+        if (!slot.item) {
+            continue;
+        }
+        const gamedata::ItemDefinition* definition = m_catalog->find(slot.item->itemId);
+        if (definition != nullptr) {
+            result.current += static_cast<std::uint64_t>(definition->weight) * slot.item->quantity;
+        }
+    }
+    const double current = static_cast<double>(result.current);
+    result.encumbered = result.max >= 0.0F && current > static_cast<double>(result.max);
+    result.overencumbered = result.max >= 0.0F && current > static_cast<double>(result.max) * kEncumbranceImmobilized;
+    return result;
+}
+
 std::optional<Holdings> Inventory::holdings(const std::string& characterId) {
     Holdings holdings;
     if (const Entity* entity = m_world.find_character(characterId)) {

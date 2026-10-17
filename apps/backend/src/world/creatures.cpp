@@ -25,12 +25,88 @@ constexpr std::uint32_t kReactionChain = 3;
 constexpr std::chrono::milliseconds kReactionLimit{2000};
 
 /**
- * @return The reaction fragment of a power level of a hit (the table BaseAI_ReactionTableHarness of the action lists, game data): power 0
- *         and 1 play r_R1_F, power 2 to 4 their own fragment, and a larger power r_R4_F (power 5 has r_R4_F_Overhead, which the slices
- *         of the data do not name). r_R0_F is the fragment of the additive table (the action ReactionAdditive).
+ * @return The reaction fragment of a power level of a hit for a slice with no reaction table (a file of a tool from before stage U3; the
+ *         rule of user test 2 with the base table BaseAI_ReactionTableHarness): power 0 and 1 play r_R1_F, power 2 to 4 their own
+ *         fragment, and a larger power r_R4_F. A slice with a table uses its rows (select_row).
  */
 std::size_t reaction_level(std::uint32_t power) {
     return power <= 1 ? 1 : std::min<std::size_t>(power, 4);
+}
+
+constexpr float kDegrees = 57.2957795F;
+
+/**
+ * @return The angle of the source of a hit from the front of a creature (stage U3, research Q2; the angle of the damage context, client
+ *         code 0x2C07B70), in degrees from -180 to 180: positive for a source to the right of the creature (the sign of damaged_right; the
+ *         turn of AlignToDirection, client code 0x2B9F1C0, and live check LC-Q2-1). A source at the creature (nearer than 5 cm): 0, the
+ *         front.
+ */
+float hit_angle(const Entity& entity, const state::WorldPosition& source) {
+    const float dx = source.x - entity.position.x;
+    const float dy = source.y - entity.position.y;
+    if (std::hypot(dx, dy) < 0.05F) {
+        return 0.0F;
+    }
+    // The yaw of a creature: degrees, 0 to the north, larger to the west (counterclockwise). Its front is (-sin, cos), its right (cos, sin).
+    const float yaw = entity.creature.yaw / kDegrees;
+    const float front = -std::sin(yaw) * dx + std::cos(yaw) * dy;
+    const float right = std::cos(yaw) * dx + std::sin(yaw) * dy;
+    return std::atan2(right, front) * kDegrees;
+}
+
+/** @return True when an angle holds a condition of a row: no range (each angle), or min - tolerance < angle < max + tolerance. */
+bool angle_holds(const std::vector<gamedata::AngleRange>& ranges, float angle) {
+    if (ranges.empty()) {
+        return true;
+    }
+    return std::any_of(ranges.begin(), ranges.end(), [angle](const gamedata::AngleRange& range) {
+        return angle > range.min - range.tolerance && angle < range.max + range.tolerance;
+    });
+}
+
+/**
+ * @return The first row of a reaction table that holds for a hit (client code 0x2B9F1C0; research Q2, item 4): its power is the power
+ *         of the hit, or each power (-1), or the largest power of the table for a hit with a larger power; and its angle condition holds.
+ *         Null: no row holds (the action keeps its own fragment).
+ */
+const gamedata::ReactionRow* select_row(const gamedata::ReactionTable& table, std::int32_t power, float angle) {
+    const std::int32_t level = table.largestPower >= 0 && power > table.largestPower ? table.largestPower : power;
+    for (const gamedata::ReactionRow& row : table.rows) {
+        if ((row.power == -1 || row.power == level) && angle_holds(row.angles, angle)) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
+/**
+ * @return The time from the start of a reaction to its end with the clip HitStun (stage U3, research Q3; client code 0x2559640): the clip
+ *         at `start` sets the play speed of the rest of the fragment to (length - start) / (hitStun / 30 - start), from 0.001 to 3.0 (3.0
+ *         when the divisor is 0 or less), so that the fragment ends at the hit stun. The client does it only for its own character; the
+ *         server of the game did it for a creature (an inference of the research: the "_AI" hit stun of the rows and the clips in the
+ *         creature fragments; a decision of the orchestrator).
+ */
+float hit_stun_length(float length, float start, std::uint32_t stunFrames) {
+    const float rest = length - start;
+    if (!(rest > 0.0F)) {
+        return length;
+    }
+    const float stun = static_cast<float>(stunFrames) / 30.0F;
+    if (stun - start <= 0.0F) {
+        return start + rest / 3.0F;
+    }
+    return std::clamp(stun, start + rest / 3.0F, start + rest / 0.001F);
+}
+
+/** @return The push scales of a reaction action for a creature (stage U3, research Q5): the conditional PromotedElite of a promoted elite. */
+const gamedata::PushScale& push_scale(const gamedata::ReactionTable& table, const Creature& creature, bool limited) {
+    if (limited) {
+        const gamedata::PushScale& entry = table.push("ReactionLimiter_Active");
+        if (entry.name == "ReactionLimiter_Active") {
+            return entry;
+        }
+    }
+    return creature.kind->promotedElite ? table.push("PromotedElite") : table.push("Default");
 }
 
 template <std::size_t N>
@@ -87,7 +163,7 @@ void SpawnGrid::build(const std::vector<gamedata::SpawnPoint>& points) {
 }
 
 Creatures::Creatures(World& world, const gamedata::CreatureData* data)
-    : m_world(world), m_data(data), m_behavior(world, *this), m_forced(world, *this) {
+    : m_world(world), m_data(data), m_behavior(world, *this), m_forced(world, *this), m_attackMotion(world, *this) {
     load_points();
 }
 
@@ -364,8 +440,8 @@ std::chrono::milliseconds Creatures::reaction_length(const Entity& entity, const
 }
 
 CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, EntityId threat, const HitReaction& reaction,
-                               std::optional<std::chrono::milliseconds>* push) {
-    std::optional<std::chrono::milliseconds> pushFor;
+                               HitPush* push) {
+    HitPush pushed;
     CreatureResult result;
     Entity* entity = find(id);
     if (entity == nullptr) {
@@ -398,7 +474,6 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, Ent
         }
     }
     if (result.error == CreatureError::none && !entity->creature.dead) {
-        const gamedata::CreatureSlice& body = *entity->creature.body;
         // A stun that ends at the next hit (the stun of Shockwave) ends now (stage 3.3a).
         const auto breaks = std::find_if(entity->creature.effects.begin(), entity->creature.effects.end(),
                                          [](const CreatureEffect& effect) { return effect.stun && effect.endsOnHit; });
@@ -406,76 +481,198 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, Ent
             breaks->ends = m_world.clock().now();
             sweep(*entity);
         }
-        // A creature that plays an attack does not stop it for a hit: the reaction would take
-        // the action of the attack away, and a player that hits fast would stop each attack. A
-        // creature that an effect holds keeps the action of the effect (the stun, the knockdown).
-        // User test 2 (UT2-9): the reaction of the damage row of the hit, by the rule of the action Reaction of the action lists (game data,
-        // reaction_allowed): no reaction for a tick of a damage over time and for NoReaction, the fragment r_R{power}_F of the slice for
-        // PowerLevel_AI, the length of that fragment (UT2-7; the action ends at IfFragmentDone), and a hit stun of HitStun_AI frames (the
-        // behavior waits for it: the reaction plays, and a step does not end it at once). The push of the impact of the row is an activity of
-        // the reaction (or of the action Pushable for a row with NoReaction): with neither, the hit moves nothing.
-        const WorldClock::time_point now = m_world.clock().now();
-        const bool canReact = body.hitAction && !entity->creature.mind.attack && !entity->creature.mind.shooting && !entity->creature.held(now);
-        if (reaction.plays && canReact && reaction_allowed(*entity, reaction, now)) {
-            const std::chrono::milliseconds length = reaction_length(*entity, reaction);
-            // A reaction that starts while the reaction before it plays is the next one of the chain.
-            Creature& creature = entity->creature;
-            const bool chained = creature.action && creature.action->action == *body.hitAction && creature.action->ends && now < *creature.action->ends;
-            creature.reactionChain = chained ? creature.reactionChain + 1 : 1;
-            if (start_action(*entity, *body.hitAction, length)) {
-                ++m_counts.reactions;
-                pushFor = length;
-                if (reaction.power) {
-                    const std::size_t level = reaction_level(*reaction.power);
-                    if (body.reactions[level] >= 0) {
-                        creature.action->fragment = static_cast<std::uint32_t>(body.reactions[level]);
-                        ++m_counts.reactionsOfPower;
-                    }
-                }
-                const auto stun = std::chrono::milliseconds(static_cast<long long>(reaction.stunFrames) * 1000 / 30);
-                if (stun.count() > 0) {
-                    creature.hitStunUntil = std::max(creature.hitStunUntil.value_or(now), now + stun);
-                    ++m_counts.hitStuns;
-                }
-                // The limit of the chain (the action Reaction, game data): the third chained reaction of a Solo type (of a heavy attack for a
-                // Solo+ or a named type), or the first one of an elite type, holds the limit for the reaction and 2 s after it
-                // (AI_Reaction_Limiter, duration 2.0).
-                const std::string& type = creature.kind->creatureType;
-                const bool solo = type_in(type, kLightReactionTypes);
-                const bool soloPlus = !solo && type_in(type, kHeavyReactionTypes);
-                if (reaction.ruled
-                    && ((creature.reactionChain >= kReactionChain && (solo || (soloPlus && reaction.attack == HitReaction::Attack::heavy)))
-                        || (creature.reactionChain >= 1 && type_in(type, kLimitedReactionTypes)))) {
-                    // The limit holds while the reaction plays and 2 s after its real exit (action_exits: code review of user test 2,
-                    // finding U2-R3); until that exit the end of the limit is the natural end of the reaction plus 2 s.
-                    creature.reactionLimitUntil = now + length + kReactionLimit;
-                    creature.reactionLimitAction = creature.action->generation;
-                    creature.reactionChain = 0;
-                    ++m_counts.reactionLimits;
-                }
-                log::write("world: reaction: creature %016llx (%s) plays the reaction of %s (fragment %u) for %.2f s, a hit stun of %.2f s%s",
-                           static_cast<unsigned long long>(entity->id), creature.kind->id.c_str(),
-                           reaction.power ? ("power " + std::to_string(*reaction.power)).c_str() : "the action Reaction", creature.action->fragment,
-                           std::chrono::duration<double>(length).count(), std::chrono::duration<double>(stun).count(),
-                           creature.reactionLimitUntil && *creature.reactionLimitUntil > now ? ", the reaction limit holds" : "");
-            }
-        } else {
-            ++m_counts.hitsWithNoReaction;
-            if (!reaction.ruled) {
-                pushFor = reaction_length(*entity, reaction); // The rule of stage 3.3b-S4: each hit pushes (a command).
-            } else if (reaction.pushable && !entity->creature.mind.attack && !entity->creature.mind.shooting) {
-                pushFor = kPushableTime; // The action Pushable: a row with NoReaction, no grit.
-            }
-        }
+        react(*entity, reaction, pushed);
         // The creature takes the attacker as its target, or the threat of the hit (stage 3.3b-S2b: the Pylon that shot it).
         if (threat != 0 || attacker != 0) {
             m_behavior.hurt_by(*entity, threat != 0 ? threat : attacker);
         }
     }
     if (push != nullptr) {
-        *push = pushFor;
+        *push = pushed;
     }
     return result;
+}
+
+void Creatures::react(Entity& entity, const HitReaction& reaction, HitPush& push) {
+    Creature& creature = entity.creature;
+    const gamedata::CreatureSlice& body = *creature.body;
+    const WorldClock::time_point now = m_world.clock().now();
+    // The end of the reaction limit (the exit of the tag ReactionLimiter_Active, game data): the count of the chained reactions starts
+    // again (ResetReactionCount OnExit of ReactionLimiter_Active, baseai_reaction.actionlist; stage U3).
+    if (creature.reactionLimitUntil && now >= *creature.reactionLimitUntil && !creature.reactionLimitAction) {
+        creature.reactionLimitUntil.reset();
+        creature.reactionChain = 0;
+        ++m_counts.chainResets;
+    }
+    const bool limited = creature.reactionLimitUntil.has_value();
+    // The grit of an attack: a creature of the backend that plays an attack, a shot, a cast, or a status action has grit (the ActivateGrit
+    // clips of the attacks, game data). A hit then plays no full reaction (the reaction would take the action of the attack away, and a
+    // player that hits fast would stop each attack), but the additive reaction (stage U3). A creature that an effect holds keeps the action
+    // of the effect (the stun, the knockdown).
+    const bool grit = creature.mind.attack.has_value() || creature.mind.shooting;
+    const bool held = creature.held(now);
+    const bool canReact = body.hitAction && !grit && !held;
+    const float angle = reaction.source ? hit_angle(entity, *reaction.source) : 0.0F;
+    // User test 2 (UT2-9) and stage U3: the reaction of the damage row of the hit, by the rule of the action Reaction of the action lists
+    // (game data, reaction_allowed): no reaction for a tick of a damage over time and for NoReaction; the row of the reaction table of the
+    // slice for the power and the side of the hit (research Q2); its length with the hit stun (research Q3); a hit stun of HitStun_AI frames
+    // (the behavior waits for it). The push of the impact of the row is an activity of the reaction (or of the additive reaction, or of the
+    // action Pushable for a row with NoReaction): with none, the hit moves nothing.
+    if (reaction.plays && canReact && reaction_allowed(entity, reaction, now)) {
+        const ReactionPlan plan = plan_reaction(entity, reaction, angle);
+        if (start_action(entity, *body.hitAction, plan.length)) {
+            ++m_counts.reactions;
+            push.length = plan.length;
+            if (plan.fragment) {
+                creature.action->fragment = *plan.fragment;
+                ++m_counts.reactionsOfPower;
+            }
+            if (plan.turn) {
+                // AlignToDirection of the row (client code 0x2B9F1C0): the creature turns so that the hit comes from AlignOffsetAngle.
+                creature.yaw = std::fmod(creature.yaw + *plan.turn + 360.0F, 360.0F);
+                creature.mind.sentYaw = creature.yaw;
+                ++m_counts.reactionTurns;
+            }
+            if (body.reactionTable) {
+                const gamedata::PushScale& scale = push_scale(*body.reactionTable, creature, false);
+                push.scale = scale.scale;
+                push.pushBack = scale.pushBack;
+            }
+            const auto stun = std::chrono::milliseconds(static_cast<long long>(reaction.stunFrames) * 1000 / 30);
+            if (stun.count() > 0) {
+                creature.hitStunUntil = std::max(creature.hitStunUntil.value_or(now), now + stun);
+                ++m_counts.hitStuns;
+            }
+            // The chain (stage U3, a decision of the orchestrator: the reading of the data): each full reaction since the last reset counts,
+            // also this one. The limit of the chain (the action Reaction, game data): the third reaction of a Solo type (of a heavy attack
+            // for a Solo+ or a named type), or the first one of an elite type, holds the limit for the reaction and 2 s after it
+            // (AI_Reaction_Limiter, duration 2.0).
+            ++creature.reactionChain;
+            const std::string& type = creature.kind->creatureType;
+            const bool solo = type_in(type, kLightReactionTypes);
+            const bool soloPlus = !solo && type_in(type, kHeavyReactionTypes);
+            if (reaction.ruled
+                && ((creature.reactionChain >= kReactionChain && (solo || (soloPlus && reaction.attack == HitReaction::Attack::heavy)))
+                    || (creature.reactionChain >= 1 && type_in(type, kLimitedReactionTypes)))) {
+                // The limit holds while the reaction plays and 2 s after its real exit (action_exits: code review of user test 2,
+                // finding U2-R3); until that exit the end of the limit is the natural end of the reaction plus 2 s.
+                creature.reactionLimitUntil = now + plan.length + kReactionLimit;
+                creature.reactionLimitAction = creature.action->generation;
+                ++m_counts.reactionLimits;
+            }
+            log::write("world: reaction: creature %016llx (%s) plays the reaction of %s (fragment %u, %s %.0f degrees) for %.2f s%s, a hit "
+                       "stun of %.2f s, the chain %u%s",
+                       static_cast<unsigned long long>(entity.id), creature.kind->id.c_str(),
+                       reaction.power ? ("power " + std::to_string(*reaction.power)).c_str() : "the action Reaction", creature.action->fragment,
+                       plan.side, static_cast<double>(angle), std::chrono::duration<double>(plan.length).count(),
+                       plan.clip ? " (the HitStun clip)" : "", std::chrono::duration<double>(stun).count(), creature.reactionChain,
+                       creature.reactionLimitUntil && *creature.reactionLimitUntil > now ? ", the reaction limit holds" : "");
+        }
+        return;
+    }
+    ++m_counts.hitsWithNoReaction;
+    if (!reaction.ruled) {
+        push.length = reaction_length(entity, reaction); // The rule of stage 3.3b-S4: each hit pushes (a command).
+        return;
+    }
+    if (reaction.pushable) {
+        if (!grit) {
+            push.length = kPushableTime; // The action Pushable: a row with NoReaction, no grit (no ReactionMotion conditional).
+        }
+        return;
+    }
+    // The additive reaction (stage U3, research Q5; game data: the action Reaction_Additive of baseai_reaction.actionlist, a decision of the
+    // orchestrator after live check LC-Q5-2): a hit with a reaction row that plays no full reaction by the rule (the type, the attack, the
+    // limit), or that comes in an attack of the creature (grit) with a power above 0. Not for a NoReaction kind (AI_NoReactions), a dead
+    // creature, or a creature that a stun or a knockdown holds (a project rule: the backend has no breakout).
+    const std::uint32_t power = reaction.power.value_or(0);
+    if (!body.additive || !reaction.plays || creature.kind->noReactions || held
+        || (reaction_allowed(entity, reaction, now) && !(grit && power > 0))) {
+        return;
+    }
+    const gamedata::AdditiveReaction& additive = *body.additive;
+    const gamedata::ReactionRow* row = select_row(additive, static_cast<std::int32_t>(power), angle);
+    const std::int32_t fragment = row != nullptr && row->fragment >= 0 ? row->fragment : body.actions[additive.action].fragmentIndex;
+    const float length = row != nullptr && row->length > 0.0F ? row->length : -1.0F;
+    // The action ends at IfFragmentDone with ExitOffsetSeconds (0.2 s): its push (ReactionMotion) runs to that end.
+    const auto plays = std::chrono::milliseconds(
+        std::max<long long>(std::lround((length > 0.0F ? std::max(length - additive.exit, 0.05F) : 0.5F) * 1000.0F), 50));
+    CreatureAdditive record;
+    record.scope = additive.scope;
+    record.record.action = additive.action;
+    record.record.fragment = static_cast<std::uint32_t>(fragment);
+    record.record.generation = static_cast<std::uint16_t>(++creature.actions);
+    record.record.started = now;
+    record.record.ends = now + plays;
+    record.record.tags = body.tags;
+    record.record.changed = m_world.touch(entity.id, ComponentKey::movement);
+    creature.additive = record;
+    m_additives.insert(entity.id);
+    ++m_counts.additiveReactions;
+    // ResetReactionCount OnEnter of the additive reaction with grit active and no limiter (game data): a hit in an attack of the creature
+    // starts the chain again.
+    if (grit && !limited && creature.reactionChain != 0) {
+        creature.reactionChain = 0;
+        ++m_counts.chainResets;
+    }
+    // In the limit a melee hit gives AI_Reaction_Limiter again (EffectsToApplyOnEnter of the additive reaction for a hit that is not ranged,
+    // not on an elite type; game data): the limit holds 2 s after the hit.
+    if (limited && !reaction.ranged && !type_in(creature.kind->creatureType, kLimitedReactionTypes) && !creature.reactionLimitAction) {
+        creature.reactionLimitUntil = std::max(*creature.reactionLimitUntil, now + kReactionLimit);
+    }
+    const gamedata::PushScale& scale = push_scale(additive, creature, limited);
+    push.length = plays;
+    push.scale = scale.scale;
+    push.pushBack = scale.pushBack;
+    push.additive = true;
+    log::write("world: reaction: creature %016llx (%s) plays the additive reaction (fragment %d in scope %u, %.0f degrees) for %.2f s, push "
+               "scale %.2f%s",
+               static_cast<unsigned long long>(entity.id), creature.kind->id.c_str(), fragment, additive.scope, static_cast<double>(angle),
+               std::chrono::duration<double>(plays).count(), static_cast<double>(scale.pushBack),
+               grit ? " (a hit in its attack)" : limited ? " (the reaction limit holds)" : "");
+}
+
+Creatures::ReactionPlan Creatures::plan_reaction(const Entity& entity, const HitReaction& reaction, float angle) const {
+    ReactionPlan plan;
+    const gamedata::CreatureSlice& body = *entity.creature.body;
+    plan.length = reaction_length(entity, reaction);
+    if (!reaction.power) {
+        return plan; // A command, or a row of an older tool: the fragment of the action Reaction.
+    }
+    if (!body.reactionTable) {
+        // A file of a tool from before stage U3: the rule of user test 2 (the front fragment of the power).
+        const std::size_t level = reaction_level(*reaction.power);
+        if (body.reactions[level] >= 0) {
+            plan.fragment = static_cast<std::uint32_t>(body.reactions[level]);
+        }
+        return plan;
+    }
+    const gamedata::ReactionRow* row = select_row(*body.reactionTable, static_cast<std::int32_t>(*reaction.power), angle);
+    if (row == nullptr) {
+        plan.side = "no row";
+        return plan; // No row holds: the action keeps its own fragment (client code 0x2B9F1C0).
+    }
+    plan.side = row->angles.empty()                                                  ? "each side"
+                : angle_holds(row->angles, 0.0F)                                     ? "front"
+                : angle_holds(row->angles, 180.0F) || angle_holds(row->angles, -180.0F) ? "back"
+                : angle > 0.0F                                                       ? "right"
+                                                                                     : "left";
+    if (row->fragment >= 0) {
+        plan.fragment = static_cast<std::uint32_t>(row->fragment);
+    }
+    if (row->length > 0.0F) {
+        const float length = row->hitStun >= 0.0F ? hit_stun_length(row->length, row->hitStun, reaction.stunFrames) : row->length;
+        plan.clip = row->hitStun >= 0.0F;
+        plan.length = std::chrono::milliseconds(std::max<long long>(std::lround(std::max(length - body.reactionTable->exit, 0.0F) * 1000.0F), 1));
+    }
+    if (row->align) {
+        // The turn of AlignToDirection: AlignOffsetAngle - angle about the up axis (counterclockwise: the yaw of the creature).
+        float turn = std::fmod(row->alignOffset - angle + 540.0F, 360.0F) - 180.0F;
+        if (std::fabs(turn) > 0.5F) {
+            plan.turn = turn;
+        }
+    }
+    return plan;
 }
 
 CreatureResult Creatures::play(EntityId id, const std::string& action, std::optional<float> seconds,
@@ -637,6 +834,11 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
         const WorldClock::time_point before = same->ends;
         same->ends = std::max(same->ends, effect.ends);
         same->source = effect.source;
+        // The damage of a tick goes with its source (code review of stage B1, finding B1-R4): the refresh takes the damage snapshot of the new
+        // source (its forced row with its own weapon, its type, its rune charge). The cadence of the ticks stays (no extra tick).
+        same->tickDamage = effect.tickDamage;
+        same->tickType = effect.tickType;
+        same->tickCharge = effect.tickCharge;
         end = same->ends;
         if (same->nextTick && same->tickRate.count() > 0 && *same->nextTick >= before && *same->nextTick < same->ends) {
             due(*same->nextTick, entity.id, same->serial);
@@ -1037,6 +1239,21 @@ void Creatures::end_actions() {
             start_action(*entity, *entity->creature.body->stunAction);
         }
     }
+    // The end of the additive reactions (stage U3): each observer gets the movement state with no record of the additive scope (the
+    // client resets the record of a scope with no bit in the mask, client code 0x2A2ACD0). A dead creature has no additive reaction.
+    for (auto playing = m_additives.begin(); playing != m_additives.end();) {
+        Entity* entity = find(*playing);
+        if (entity != nullptr && entity->creature.additive && !entity->creature.dead && entity->creature.additive->record.ends
+            && now < *entity->creature.additive->record.ends) {
+            ++playing;
+            continue;
+        }
+        if (entity != nullptr && entity->creature.additive) {
+            entity->creature.additive.reset();
+            m_world.touch(entity->id, ComponentKey::movement);
+        }
+        playing = m_additives.erase(playing);
+    }
 }
 
 std::size_t Creatures::reset_spawn_points() {
@@ -1076,8 +1293,10 @@ void Creatures::entity_removed(const Entity& entity) {
     }
     m_creatures.erase(entity.id);
     m_acting.erase(entity.id);
+    m_additives.erase(entity.id);
     m_behavior.removed(entity);
     m_forced.removed(entity.id);
+    m_attackMotion.removed(entity.id);
     if (entity.creature.spawnPoint && m_points[*entity.creature.spawnPoint].entity == entity.id) {
         m_points[*entity.creature.spawnPoint].entity = 0;
     }
@@ -1093,6 +1312,8 @@ void Creatures::tick() {
     // The forced movements (stage 3.3b-S4) before the behavior: a creature whose movement ended takes its next step in
     // this tick.
     m_forced.tick();
+    // The homing of the attacks (stage U3) before the contacts of the behavior: a contact tests the place of the homing.
+    m_attackMotion.tick();
     // The behavior first: a contact of an attack is due at the latest at the end of its action.
     m_behavior.tick();
     end_actions();

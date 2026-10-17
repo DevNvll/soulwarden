@@ -357,7 +357,8 @@ button on "Confirm").
   (`~/.local/share/soulwarden/gamedata/item-catalog.json`): each item of the 43 item tables and
   the 2 house item tables of the game, with its index on the wire (protocol notes 4.10), its
   id, the text key of its name, its type, its class, its weight, its stack limit, its
-  durability, and its gear score. Without the file the backend starts and gives no item,
+  durability, and its gear score. From stage U3 the weight is the weight of the bag of the game: a weapon or an armor item has the
+  WeightOverride of its stats row (a rapier 2.5, not 4.0). Without the file the backend starts and gives no item,
   and each bag is empty in the client. The pak entries of the tables have Oodle data: the
   tool needs an Oodle library (`SOULWARDEN_OODLE_DLL`) or the table files that
   `tools/research/pakx.py` extracted (`SOULWARDEN_DATATABLES_DIR`). The tool refuses a folder of
@@ -414,7 +415,9 @@ button on "Confirm").
   the backend starts, and the world has no creature. From user test 2 the tool also reads the animation files of the creatures
   (`animations/gameplay/character/npc/**.caf`): each model has the length of each reaction fragment (`reactionLengths`), and an
   attack with no end blend has the length of its animation. With a file from before, a reaction lasts 1.5 s and an attack its
-  last contact plus 0.9 s.
+  last contact plus 0.9 s. From stage U3 the file also has the Homing clips of each attack, the reaction table and the additive
+  reaction of each model, and the promoted elite kinds; with a file from before, a creature plays the front reaction for each side,
+  its attack does not go to its target, and a light hit on a Solo+ creature does nothing.
 - `tools/gamedata/heights.sh` makes the terrain heights
   (`~/.local/share/soulwarden/gamedata/heights`, one file for each of the 49 regions of the
   world, 136 MB): the height of the terrain at each meter, from the height maps of the game
@@ -769,6 +772,15 @@ button on "Confirm").
   respawn time (6 minutes for most spawners, protocol notes 4.21) when you are 150 m or less
   from its point; a creature that you removed does not come back by itself: the button
   "Reset" makes each spawn point that waits free at once.
+- The reactions and the attacks of the creatures, and the weight of the bag (stage U3; `docs/systems/creatures.md`,
+  `creature-behavior.md`, `items-and-equipment.md`). A creature plays the reaction row of the side and the power of a hit (a wolf
+  turns to the hit), a reaction with a hit stun clip lasts the hit stun of the damage row (a heavy arrow on the Inquisitor Cleric:
+  0.73 s and 0.73 m), each full reaction counts for the reaction limit, and a hit that plays no full reaction (a light hit on a Solo+
+  creature, a hit in an attack, the reaction limit) plays the additive reaction: a short flinch over the run or the attack, with a
+  push of 0.35 m for a light arrow that does not stop the run. A promoted elite moves 0.15 of a push. The attack of a creature moves
+  it to its target in its Homing clips (a wolf bite ends near you). Above the weight limit of the bag (200.0) the server casts no
+  ability and starts no dodge; above 300.0 your character starts no attack from rest. A weapon key in a swing switches at the switch
+  mark of the swing, and a click in that time gives the first swing of the new weapon.
 - Melee attacks. With the combat tables, a melee attack of your character that touches a
   creature lowers its health: a click of the left pointer button is a light attack, and a
   hold is a heavy attack. The damage number shows at the creature, the creature plays its

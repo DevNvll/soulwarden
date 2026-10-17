@@ -525,6 +525,10 @@ def build_data(sources: Sources) -> dict:
                 # Each value of the row Player is a column of its table (finding F14): an absent column is not 0.
                 require(sheet, ENCUMBRANCE_COLUMNS.values())
                 encumbrance = {member: rounded(number(sheet, row, column)) for member, column in ENCUMBRANCE_COLUMNS.items()}
+                # Stage U3 (research creature-combat-feel.md Q4): the limit of the weight of the bag (tenths; 2000 in the supported
+                # build). The client tests the weight against it (client code 0x48D7170, 0x48D1830).
+                if "EncumbranceBaseMax" in sheet.columns:
+                    encumbrance["encumbranceMax"] = rounded(number(sheet, row, "EncumbranceBaseMax"))
     if encumbrance is None:
         raise Failure("the encumbrance table has no row Player")
     for member in ("equipLoadMax", "ratioMedium", "ratioHeavy"):

@@ -316,9 +316,19 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   other node (a bush next to a tree takes the focus), and press W for about 0.1 s (`tools/hx 'key 0x57 120'`) so that the
   character turns to the camera. A travel does not turn the character. `tools/gamedata/gathering.sh --region REGION --near X Y
   METERS` lists the nodes near a place with their kind and their G.
-- An encumbered character plays no ability (user test 2: three presses of Wrecking Ball at rest gave no action of layer 0, and the
-  server cast each one). Take the materials out of the bag before a test of an ability (`tools/world take Soulwarden SLOT`); the HUD
-  shows "Encumbered - movement slowed" in the frames. The backend has no weight rule.
+- An encumbered character plays no ability (user test 2: three presses of Wrecking Ball at rest gave no action of layer 0). From stage
+  U3 the server refuses such a press too (`encumbered`), and an overencumbered character starts no attack from rest. Take the materials
+  out of the bag before a test of an ability (`tools/world take Soulwarden SLOT`); the HUD shows "Encumbered - movement slowed" in the
+  frames. Read the weight of the client on the inventory screen (Tab, top right) before a test at the limit: the base weight of the
+  development character changes between runs (26.1 and 36.6 in the runs of stage U3).
+- The session writes the log line of a refused ability press only for the first press of each cause: a second refused press has no
+  line. Count the refusals with `tools/world list` (the line `abilities: ... refused presses: N CAUSE`) and the dodges with the line
+  `stamina: dodges: N CAUSE`. An accepted cast has the line `world: ability: NAME casts ABILITY`.
+- An alpha wolf of level 65 does not see the character at 16 m: start its fight with a light arrow (`tools/world shoot Soulwarden
+  --yaw DEGREES --light` with `tools/world ignore Soulwarden off`). With `ignore on` the hit gives no target, and the wolf stays.
+- A test of a hit on a running creature: shoot when the creature has run some meters (the evidence tool `run_shot.py` of stage U3
+  polls `tools/world list`, 70 ms for each poll). The run of a wolf is a step of about 1.8 m each 0.2 s on the server; a picture loop
+  gives about 5 different pictures each second (two pictures 17 ms apart, then 200 ms).
 - `tools/hx` waits 30 s for the result and then prints `harness: no result`, but the harness of the client runs the whole command
   list: a list of 60 s goes on in the game. Read the log after the end of the list, or send parts of less than 30 s.
 - A test of the press of an ability in a swing: `python3 -B fragment_sampler.py "mousedown left;wait 117;mouseup left;R1;key 0x51

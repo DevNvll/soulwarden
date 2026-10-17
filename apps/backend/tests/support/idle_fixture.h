@@ -40,7 +40,7 @@ inline std::uint64_t limits_of(world::Creatures& creatures) {
     return creatures.counts().reactionLimits;
 }
 inline bool pushed(const world::HitResult& hit) {
-    return hit.push.has_value();
+    return hit.push.length.has_value();
 }
 inline bool push_for(world::Creatures& creatures, world::Entity& creature, const gamedata::DamageImpact& impact, const state::WorldPosition& source,
               std::chrono::milliseconds length) {

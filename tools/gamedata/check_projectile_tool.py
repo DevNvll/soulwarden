@@ -26,10 +26,16 @@ backend runs it (case PJ11).
                           status 1, the old file stays
   cast-condition          the condition of a cast of Explosive Arrow is a test of a tag, not an AND of learned-node tests: status 1,
                           the old file stays (stage B1)
+  missing-bow-cast-spell  the spell table has no row of the two projectile spells of Explosive Arrow (the casts of Bow_SpreadShot):
+                          status 1, the old file stays (code review of stage B1, finding B1-R8)
+  missing-bow-clip-row    the damage table has no row Bow_RapidAttack_KnockBack (the third clip of Bow_RapidShot): status 1, the old
+                          file stays (B1-R8)
 
 The valid case also has the bow action list (stage B1): the actions Bow_Penetrating_Shoot (the variant Bow+PenetratingAim of the
 fragment Bow_Shoot_UpperBody, by the tag that the action sets), Bow_SpreadShot (two casts with node conditions), and Bow_RapidShot
-(three clips), with their transitions to an ability and the shots of their clips (the 11th value true, no spell).
+(three clips), with their transitions to an ability and the shots of their clips (the 11th value true, no spell), and the rows of the
+two projectile spells of Explosive Arrow: each cast of an action is the spell of an ability shot of the output (code review of stage B1,
+finding B1-R8).
 
 Each case but missing-required-row has a row of each ability spell that the backend launches (REQUIRED_ABILITY_SHOTS of the
 tool), with the slice of the test and an ability damage row: the valid case has their shots.
@@ -61,6 +67,8 @@ TEXT = uuid.UUID("03aaab3f-5c47-5a66-9ebc-d5fa4db353c9")
 ADB = "animations/mannequin/adb/player/player_bow.adb"
 ACTIONS = "sharedassets/springboardentitites/playerdata/cage/playeractions_ability_bow.actionlist"
 SLICE = "slices/items/weapons/test_arrow.dynamicslice"
+# The projectile spells of the two casts of the fragment of Explosive Arrow (stage B1).
+BOW_CAST_SPELLS = ("Spell_Ability_Bow_Explosive_Base", "Spell_Ability_Bow_Explosive_Upgrade")
 
 
 def element(name=None, value=None, kind=None, children=()) -> Element:
@@ -167,8 +175,16 @@ def tables(case: str) -> dict:
     # the source). The case missing-ability-prefab gives the Beacon a prefab that names no slice; missing-required-row has no
     # row of the Pylon projectile.
     damage.append({"DamageID": "TestAbilityDamage", "WeaponCategory": "LifeMagic", "AttackType": "Ability"})
-    for row in ("Bow_Penetrating_Attack", "Bow_RapidAttack_Standard", "Bow_RapidAttack_KnockBack"):
+    for row in ("Bow_Penetrating_Attack", "Bow_RapidAttack_Standard", "Bow_RapidAttack_KnockBack", "Bow_ExplosionShot_Projectile"):
+        if case == "missing-bow-clip-row" and row == "Bow_RapidAttack_KnockBack":
+            continue
         damage.append({"DamageID": row, "WeaponCategory": "Bow", "AttackType": "Ability"})
+    # The projectile spells of the casts of Explosive Arrow (code review of stage B1, finding B1-R8): the case missing-bow-cast-spell has none.
+    if case != "missing-bow-cast-spell":
+        for name in BOW_CAST_SPELLS:
+            spells.append({"SpellID": name, "SpellPrefabPath": "Items/Weapons/test_arrow", "CastingTypes": "Projectile",
+                           "RangedAttackProfile": "Bow", "RangedAttackName": "ExplosionShot", "DamageTableRow": "Bow_ExplosionShot_Projectile",
+                           "ManaCost": ""})
     for name in tool.REQUIRED_ABILITY_SHOTS:
         if case == "missing-required-row" and name == "IceMagic_Pylon_Projectile":
             continue
@@ -257,17 +273,23 @@ def main() -> int:
     rapid = actions.get("Bow_RapidShot", [None] * 8)
     penetrating = actions.get("Bow_Penetrating_Shoot", [None] * 8)
     spread = actions.get("Bow_SpreadShot", [None] * 8)
+    # Each cast of an action is the spell of an ability shot of the output (code review of stage B1, finding B1-R8).
+    cast_spells = sorted(cast[1] for entry in actions.values() for cast in entry[6])
+    ability_spells = {shot[5] for shot in shots if shot[5] and len(shot) > 10 and shot[10]}
+    joined = cast_spells == sorted(BOW_CAST_SPELLS) and all(spell in ability_spells for spell in cast_spells)
     stage_b1 = (document.get("format") == 2 and clips == [("PenetratingShot", "Bow_Penetrating_Attack"), ("TripleShot", "Bow_RapidAttack_KnockBack"),
                                                          ("TripleShot", "Bow_RapidAttack_Standard")]
                 and rapid[1] == "Ability_Bow_RapidShot" and rapid[4] == 2.6 and [clip[0] for clip in rapid[5]] == [0.3333, 0.8667, 1.7333]
                 and rapid[7] == [["Ability_Bow_SplinterShot", "buffered", 1.8681], ["Ability_Bow_SplinterShot", "instant", 2.6]]
                 and penetrating[3] == "Bow+PenetratingAim" and penetrating[5] == [[0.0333, "PenetratingShot", "Bow_Penetrating_Attack", 0.0, True]]
                 and spread[6] == [[0.4667, "Spell_Ability_Bow_Explosive_Base", ["Ability_Bow_SplinterShot"], ["Upgrade_Bow_SplinterShot_FiveA"]],
-                                  [0.4667, "Spell_Ability_Bow_Explosive_Upgrade", ["Ability_Bow_SplinterShot", "Upgrade_Bow_SplinterShot_FiveA"], []]])
-    print(f"{'ok  ' if stage_b1 else 'FAIL'}  valid (stage B1): the ability actions {sorted(actions)}, the clip shots {clips}")
+                                  [0.4667, "Spell_Ability_Bow_Explosive_Upgrade", ["Ability_Bow_SplinterShot", "Upgrade_Bow_SplinterShot_FiveA"], []]]
+                and joined)
+    print(f"{'ok  ' if stage_b1 else 'FAIL'}  valid (stage B1): the ability actions {sorted(actions)}, the clip shots {clips}, "
+          f"the casts with an ability shot {joined}")
     failures += 0 if stage_b1 else 1
     ability = sorted(shot[5] for shot in shots if shot[5])
-    passed = (status == 0 and basic == expected_shots and ability == sorted(tool.REQUIRED_ABILITY_SHOTS)
+    passed = (status == 0 and basic == expected_shots and ability == sorted(tool.REQUIRED_ABILITY_SHOTS + BOW_CAST_SPELLS)
               and document.get("weapons") == [["TestBow", "Bow", "Arrow"]]
               and document.get("ammo") == [["DefaultArrow", "Arrow", 1.2, 0]] and len(document.get("slices", [])) == 1
               and document["attacks"][0][:6] == ["Bow", "Basic", False, 100.0, 0.15, 2.0])
@@ -275,7 +297,7 @@ def main() -> int:
     failures += 0 if passed else 1
     for case in ("missing-column", "range-not-finite", "bad-charge", "missing-ammo-prefab", "empty-projectile-slice",
                  "no-animation-database", "missing-slice-override", "partial-basic-sources", "missing-ability-prefab",
-                 "missing-required-row", "missing-ability-action", "cast-condition"):
+                 "missing-required-row", "missing-ability-action", "cast-condition", "missing-bow-cast-spell", "missing-bow-clip-row"):
         status, text = run(work, case)
         passed = status == 1 and text == MARK
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, file {'kept' if text == MARK else 'replaced'}")

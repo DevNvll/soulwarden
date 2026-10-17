@@ -254,7 +254,28 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
     }
     // A dodge input ends an attack only when the stamina system can start the dodge (code review of stage 3.4f-B, finding CS-R2).
     AttackBits checked = bits;
+    // Stage U3: the weapon switch of a key (the change at the start of the switch of the client; the presses in its time are kept).
+    const std::string before = weapon_key(*character);
+    step_switch(*character, inputSequence, input, checked);
+    if (weapon_key(*character) != before) {
+        item = weapon_in_hand(*character);
+        weapon = item != nullptr && has_tables() ? m_tables->weapon_of(item->itemId) : nullptr;
+        actions = weapon != nullptr ? actions_of(*weapon) : nullptr;
+    }
     checked.dodgeAllowed = m_world.stamina().can_dodge(*character, bits.locked);
+    // Stage U3 (research Q4): a press at rest starts no attack while the bag is over 1.5 x its weight limit (the client refuses it too).
+    if (bits.press && actions != nullptr) {
+        const Encumbrance weight = m_world.inventory().encumbrance(*character);
+        checked.attackAllowed = !weight.overencumbered;
+        const AttackVisit* playing = m_sequences.newest(character->characterId);
+        if (weight.overencumbered && (playing == nullptr || playing->ended)) {
+            const std::string mark = log::session_mark(character->owner, character->characterId);
+            const log::Context context(mark);
+            log::write("world: attack: %s, input %u: a press at rest starts no attack: the bag is over 1.5 x its weight limit (%.1f of %.1f)",
+                       character->name.c_str(), static_cast<unsigned>(input), static_cast<double>(weight.current) / 10.0,
+                       static_cast<double>(weight.max) / 10.0);
+        }
+    }
     const std::vector<SequenceEvent> events =
         m_sequences.step(character->characterId, session, inputSequence, input, checked, weapon_key(*character), actions,
                          m_world.clock().now(), facts_of(*character));
@@ -423,21 +444,151 @@ const ItemInstance* Combat::weapon_in_hand(const Entity& attacker) {
     return slot ? equipment.item(*slot) : nullptr;
 }
 
-void Combat::select_weapon(SessionId session, unsigned key) {
+void Combat::select_weapon(SessionId session, unsigned key, std::optional<std::uint16_t> input, std::uint32_t inputSequence) {
     Entity* entity = m_world.entity_of(session);
     if (entity == nullptr || key < 1 || key > paperdoll::kMainHand3 - paperdoll::kMainHand1 + 1) {
         return;
     }
     const std::uint32_t slot = paperdoll::kMainHand1 + key - 1;
-    if (entity->equipment.item(slot) != nullptr && entity->combat.selectedWeapon != slot) {
-        entity->combat.selectedWeapon = slot;
-        // The attack of the weapon before the change ends (stage 3.3b-M1).
-        m_sequences.end(entity->characterId, SequenceEnd::weapon);
-        // The perks of a weapon with OnActive count only while it is in the hand (stage 1.3b).
-        m_world.gear().refresh(*entity);
-        // The window of a counter ends with the weapon of its cast (finding F2 of the review of stage 3.3b-S4).
-        m_world.abilities().weapon_changed(*entity);
+    if (entity->equipment.item(slot) == nullptr) {
+        return;
     }
+    if (!input) {
+        entity->combat.weaponSwitch.reset();
+        change_weapon(*entity, slot);
+        return;
+    }
+    // Stage U3: a key of the weapon in the hand, or of the weapon that a switch already changed to, asks for nothing (the client has
+    // Use_MainHandSlot_N only for a slot that is not active).
+    const std::optional<CombatState::WeaponSwitch>& pending = entity->combat.weaponSwitch;
+    const bool held = weapon_slot_in_hand(*entity) == slot;
+    if ((held && !pending) || (pending && pending->slot == slot)) {
+        return;
+    }
+    if (pending && pending->at) {
+        return; // The switch started: the client takes no key in its first 3 steps (grid rule 116).
+    }
+    CombatState::WeaponSwitch request;
+    request.slot = slot;
+    request.key = *input;
+    request.inputSequence = inputSequence;
+    request.pressKept = pending && pending->pressKept;
+    entity->combat.weaponSwitch = request;
+    ++m_switchCounts.keys;
+}
+
+void Combat::change_weapon(Entity& entity, std::uint32_t slot) {
+    if (entity.combat.selectedWeapon == slot) {
+        return;
+    }
+    entity.combat.selectedWeapon = slot;
+    // The attack of the weapon before the change ends (stage 3.3b-M1).
+    m_sequences.end(entity.characterId, SequenceEnd::weapon);
+    // The perks of a weapon with OnActive count only while it is in the hand (stage 1.3b).
+    m_world.gear().refresh(entity);
+    // The window of a counter ends with the weapon of its cast (finding F2 of the review of stage 3.3b-S4).
+    m_world.abilities().weapon_changed(entity);
+}
+
+bool Combat::switching(const Entity& character) {
+    return character.combat.weaponSwitch.has_value();
+}
+
+void Combat::step_switch(Entity& character, std::uint32_t inputSequence, std::uint16_t input, AttackBits& bits) {
+    std::optional<CombatState::WeaponSwitch>& pending = character.combat.weaponSwitch;
+    if (!pending) {
+        return;
+    }
+    const std::string mark = log::session_mark(character.owner, character.characterId);
+    if (pending->inputSequence != inputSequence) {
+        pending.reset(); // An input of a different sequence of the client: the key is not of it.
+        return;
+    }
+    const unsigned sinceKey = static_cast<std::uint16_t>(input - pending->key);
+    if (sinceKey > 0x7FFF) {
+        return; // A step before the key (a gap fill).
+    }
+    if (!pending->at) {
+        // The step of the switch (game data: grid rule 62 Attack -> Sheathe; live checks SW-L1 to SW-L3).
+        const AttackVisit* visit = m_sequences.newest(character.characterId);
+        const AttackSequences::State* state = m_sequences.state_of(character.characterId);
+        const bool playing = visit != nullptr && !visit->ended && state != nullptr && state->actions != nullptr
+                             && visit->fragment < state->actions->fragments.size();
+        std::optional<std::uint16_t> due;
+        if (!playing) {
+            // At rest: the switch at the key, while the key is in its 20 steps (BackTicks of Use_MainHandSlot_N).
+            if (sinceKey <= switch_rules::kKeySteps) {
+                due = input;
+            }
+        } else {
+            const gamedata::AttackFragment& fragment = state->actions->fragments[visit->fragment];
+            if (fragment.switchAt >= 0.0F) {
+                // The step whose clock reaches the mark: the clock of a fragment that starts at s is (k - s + 1) / 30 at the step k.
+                const auto step_of = [&](float time) {
+                    return static_cast<std::uint16_t>(visit->start + static_cast<std::uint16_t>(
+                                                                         std::max(std::ceil(time * attack_rules::kStepsInSecond - 0.001F), 1.0F))
+                                                      - 1);
+                };
+                const std::uint16_t condition = step_of(fragment.switchAt);
+                const std::uint16_t buffer = fragment.switchBuffer >= 0.0F ? step_of(fragment.switchBuffer) : condition;
+                const auto after_key = [&](std::uint16_t step) { return static_cast<std::uint16_t>(step - pending->key); };
+                const std::uint16_t opens = after_key(buffer) <= 0x7FFF ? buffer : pending->key;
+                if (after_key(opens) <= switch_rules::kKeySteps || after_key(condition) > 0x7FFF || after_key(condition) <= switch_rules::kKeySteps) {
+                    due = after_key(condition) <= 0x7FFF ? condition : pending->key;
+                }
+            }
+        }
+        if (!due) {
+            if (sinceKey > switch_rules::kKeySteps) {
+                // No window started in the 20 steps of the key: the client loses the key (live check SW-L3).
+                const log::Context context(mark);
+                log::write("world: weapon: %s, the key of input %u is lost: no switch window of the swing that plays started in its %u steps "
+                           "(the weapon stays)",
+                           character.name.c_str(), static_cast<unsigned>(pending->key), static_cast<unsigned>(switch_rules::kKeySteps));
+                pending.reset();
+                ++m_switchCounts.lost;
+                return;
+            }
+        } else if (static_cast<std::uint16_t>(input - *due) <= 0x7FFF) {
+            pending->at = input;
+            const std::uint32_t slot = pending->slot;
+            const bool kept = pending->pressKept;
+            change_weapon(character, slot);
+            // change_weapon ends the sequence; the switch stays for its first 3 steps.
+            character.combat.weaponSwitch = CombatState::WeaponSwitch{slot, pending ? pending->key : input, inputSequence, input, kept};
+            ++m_switchCounts.switches;
+            const log::Context context(mark);
+            log::write("world: weapon: %s switches to slot %u at input %u (the key at input %u, %u steps before)%s", character.name.c_str(),
+                       static_cast<unsigned>(slot), static_cast<unsigned>(input), static_cast<unsigned>(character.combat.weaponSwitch->key),
+                       sinceKey, kept ? "; a kept press starts the first attack 3 steps later" : "");
+        }
+    }
+    // Until 3 steps after the switch the presses start nothing and are kept (the old weapon has no chain and no new attack while the switch
+    // waits; grid rule 116: the first attack of the new weapon 3 steps after the switch, live check SW-L1).
+    const unsigned sinceSwitch = pending->at ? static_cast<std::uint16_t>(input - *pending->at) : 0U;
+    if (pending->at && (pending->pressKept || bits.press) && !bits.hold && sinceSwitch + 1 >= switch_rules::kFirstAttackSteps) {
+        // A kept press with the button released: the light swing of the new weapon starts 3 steps after the switch (live checks SW-L1 try 3
+        // and SW-L2: the swing 467 of the great axe at the switch + 3, no charge). The sequence starts the charge at this step and takes its
+        // swing at the next step with no hold (the transition notHeld).
+        bits.press = true;
+        ++m_switchCounts.firstAttacks;
+        pending.reset();
+        return;
+    }
+    if (!pending->at || sinceSwitch < switch_rules::kFirstAttackSteps) {
+        if (bits.press) {
+            pending->pressKept = true;
+            bits.press = false;
+            ++m_switchCounts.pressesKept;
+        }
+        return;
+    }
+    // A kept press with the button held: the charge of the new weapon starts 3 steps after the switch.
+    if (pending->pressKept && !bits.press) {
+        bits.press = true;
+        ++m_switchCounts.firstAttacks;
+    }
+    pending.reset();
 }
 
 float Combat::defense_factor(std::uint32_t typeIndex, const gamedata::DefenseRow* defense, float armor, float penetration) const {
@@ -930,7 +1081,10 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
                       static_cast<double>(critical.chance), static_cast<double>(critical.roll), static_cast<double>(critical.multiplier));
     }
     const Damage dealt = result.damage;
-    const HitReaction reaction = hit_reaction(row);
+    HitReaction reaction = hit_reaction(row);
+    // Stage U3 (research Q2): the source of the hit for the side of the reaction (the point of the push direction).
+    reaction.source = row.impact && row.impact->fromAttacker ? attackerPlace : from;
+    reaction.ranged = use.kind == HitKind::projectile;
     result = apply_hit(attacker, target, dealt, itemId, row.id, what, use.threat, flags, note[0] != '\0' ? note : nullptr, reaction);
     result.critical = critical;
     result.behind = hit.behind;
@@ -946,8 +1100,9 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     // The impact of the row (stage 3.3b-S4): a creature that lives after the hit moves by it (a pull, a push), for the length of the
     // reaction that the hit started at most (user test 2, UT2-4: the client pushes in the reaction, or in the action Pushable of a row with
     // NoReaction; a hit with neither moves nothing).
-    if (row.impact && !hurt->creature.dead && result.push) {
-        m_world.creatures().impact(*hurt, *row.impact, from, attackerPlace, row.id, *result.push);
+    if (row.impact && !hurt->creature.dead && result.push.length) {
+        m_world.creatures().impact(*hurt, *row.impact, from, attackerPlace, row.id, *result.push.length, result.push.scale,
+                                   result.push.pushBack, result.push.additive);
     }
     // The heart rune charge of the hit (AttackRuneCharge of the row), and the perks and the passive rules of a hit (stage 1.3b,
     // stage 3.3b-S5).
@@ -1049,7 +1204,7 @@ HitResult Combat::apply_hit(Entity& attacker, Entity& target, const Damage& dama
     result.healthBefore = target.vitals.health;
     const EntityId targetId = target.id;
     const ActorId targetActor = target.actor;
-    std::optional<std::chrono::milliseconds> push;
+    HitPush push;
     const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt, attacker.id, threat, reaction, &push);
     if (hurt.error != CreatureError::none || hurt.entity == nullptr) {
         if (hurt.error == CreatureError::immune) {

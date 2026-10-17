@@ -167,6 +167,13 @@ struct AttackFragment {
     float length{0.0F};
     /** The time of the named mark CanTransition. Below 0: none. */
     float canTransition{-1.0F};
+    /**
+     * Stage U3 (research creature-combat-feel.md Q6; game data: grid rule 62 Attack -> Sheathe, the marks of the swings): the start of
+     * the buffer CanUnsheathe_Buffer, and the first start of CanUnsheathe or CanTransition (the switch of the weapon in this fragment).
+     * Below 0: none (a file of an older tool, or a fragment with no mark: a key in it is lost, live check SW-L3).
+     */
+    float switchBuffer{-1.0F};
+    float switchAt{-1.0F};
     std::vector<AttackTransition> transitions;
     std::vector<AttackStrike> strikes;
     std::vector<AttackPayment> payments;

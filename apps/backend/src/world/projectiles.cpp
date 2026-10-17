@@ -583,6 +583,29 @@ ShotResult Projectiles::launch_character(const std::string& characterId, const S
     return fire(*character, launch);
 }
 
+const gamedata::ProjectileSlice* Projectiles::spell_slice(const gamedata::ShotRule& rule, const gamedata::WeaponRow* weapon, float* factor) const {
+    if (factor != nullptr) {
+        *factor = 1.0F;
+    }
+    if (!has_data()) {
+        return nullptr;
+    }
+    const gamedata::ProjectileSlice* slice = m_data->slice(rule.slice);
+    if (rule.slice < 0) {
+        // A ranged clip of an ability fragment (stage B1: Penetrating Shot, Rapid Shot): the slice and the damage modifier of the
+        // ammunition of an empty slot of the ammunition type of the weapon of the cast (DefaultArrow: client code; the rule of a
+        // basic shot, which the backend has no equipped ammunition for).
+        const gamedata::RangedWeapon* ranged = weapon != nullptr ? m_data->weapon(weapon->id) : nullptr;
+        const char* fallback = ranged != nullptr ? default_ammo(ranged->ammoType) : nullptr;
+        const gamedata::AmmoRow* ammo = fallback != nullptr ? m_data->ammo(gamedata::progression_id(fallback)) : nullptr;
+        slice = ammo != nullptr ? m_data->slice(ammo->slice) : nullptr;
+        if (factor != nullptr && ammo != nullptr) {
+            *factor = ammo->damageModifier;
+        }
+    }
+    return slice != nullptr && slice->speed > 0.0F ? slice : nullptr;
+}
+
 ShotResult Projectiles::launch_spell(const SpellShot& shot) {
     ShotResult result;
     const auto refuse = [&](ShotVerdict verdict) {
@@ -597,20 +620,10 @@ ShotResult Projectiles::launch_spell(const SpellShot& shot) {
         return refuse(ShotVerdict::noData);
     }
     const gamedata::RangedAttack* attack = m_data->attack(shot.rule->profile, gamedata::progression_id(shot.rule->attack));
-    const gamedata::ProjectileSlice* slice = m_data->slice(shot.rule->slice);
     float factor = 1.0F;
-    if (shot.rule->slice < 0) {
-        // A ranged clip of an ability fragment (stage B1: Penetrating Shot, Rapid Shot): the slice and the damage modifier of the
-        // ammunition of an empty slot of the ammunition type of the weapon of the cast (DefaultArrow: client code; the rule of a
-        // basic shot, which the backend has no equipped ammunition for).
-        const gamedata::RangedWeapon* ranged = shot.weapon.row != nullptr ? m_data->weapon(shot.weapon.row->id) : nullptr;
-        const char* fallback = ranged != nullptr ? default_ammo(ranged->ammoType) : nullptr;
-        const gamedata::AmmoRow* ammo = fallback != nullptr ? m_data->ammo(gamedata::progression_id(fallback)) : nullptr;
-        slice = ammo != nullptr ? m_data->slice(ammo->slice) : nullptr;
-        factor = ammo != nullptr ? ammo->damageModifier : 1.0F;
-    }
+    const gamedata::ProjectileSlice* slice = spell_slice(*shot.rule, shot.weapon.row, &factor);
     const std::optional<std::uint32_t> rowIndex = m_combat->row_index(shot.row.empty() ? shot.rule->row : shot.row);
-    if (attack == nullptr || slice == nullptr || !(slice->speed > 0.0F) || !rowIndex) {
+    if (attack == nullptr || slice == nullptr || !rowIndex) {
         return refuse(ShotVerdict::unsupported);
     }
     const float size = std::hypot(shot.direction[0], shot.direction[1], shot.direction[2]);

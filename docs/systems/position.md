@@ -41,6 +41,10 @@ contracts are in the protocol notes (sections 4.6 and 4.7).
   the field for 1 s. The log of a session names its source, and each change of it. A position
   of the client never goes back to its own client as a new position (the movement state is
   not marked).
+- The weight of the bag (stage U3, [Items and equipment](items-and-equipment.md)): the check has only upper limits, and the client
+  makes the speed of an encumbered character itself. The check accepts the slow walk of an overencumbered client (live: 1.57 m/s at
+  300.2 before the stage; backward 0.62 m/s at 300.4 after it) and its jog (5.4 m/s at 200.2 and at 300.4 forward: the client did not
+  make the forward jog slower in the run of stage U3, open). The server does not set the speed.
 - The envelope of a dash (stage 3.3b-S4, [Forced movement](forced-movement.md)): in an accepted cast with a movement of
   the caster (Charge), the check takes `MotionAllowance` from the abilities system: the window accepts the distance of
   the envelope more (14.73 m x 1.3), and one step the speed of the envelope (18.07 m/s x 1.3): the fast step only in the

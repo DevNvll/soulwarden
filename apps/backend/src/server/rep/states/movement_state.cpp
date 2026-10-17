@@ -232,6 +232,51 @@ hub::Bytes encode_observed_motion_state(const world::Entity& entity, View view, 
     return encode_movement_state(entity, View::observer, clock);
 }
 
+namespace {
+
+/** Writes one scope record: start count, fragment index + 1, action index + 1, playback speed 1.0, option 0 (client reader 0x2A75F70). */
+void write_scope_record(hub::Writer& record, const world::CreatureAction& action) {
+    record.u16(action.generation);
+    record.size(action.fragment + 1);
+    record.size(action.action + 1);
+    record.u16(kPlaybackNormal);
+    record.u8(0); // The first option of the fragment.
+}
+
+/** Writes the four time fields of scope 0: the time of the action in ticks of 1/30 s, the low byte first. */
+void write_scope_time(StateWriter& state, std::chrono::steady_clock::duration elapsedTime) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsedTime).count();
+    const std::uint64_t ticks =
+        std::min<std::uint64_t>(static_cast<std::uint64_t>(std::max<long long>(elapsed, 0)) * kActionTicksPerSecond / 1000, 0xFFFFFFFFULL);
+    state.field(0, kScopeTimeLow).u8(static_cast<std::uint8_t>(ticks));
+    state.field(0, kScopeTimeByte1).u8(static_cast<std::uint8_t>(ticks >> 8));
+    state.field(0, kScopeTimeByte2).u8(static_cast<std::uint8_t>(ticks >> 16));
+    state.field(0, kScopeTimeByte3).u8(static_cast<std::uint8_t>(ticks >> 24));
+}
+
+/** @return A float as a 16-bit float (IEEE half, rounded to the nearest; the client reader 0x14087AE90 makes a float of it). */
+std::uint16_t half_of(float value) {
+    if (!(value > 0.0F)) {
+        return 0;
+    }
+    if (value >= 65504.0F) {
+        return 0x7BFF;
+    }
+    int exponent = 0;
+    const float mantissa = std::frexp(value, &exponent); // value = mantissa x 2^exponent, mantissa in [0.5, 1)
+    const int biased = exponent - 1 + 15;
+    if (biased <= 0) {
+        // A subnormal half: value / 2^-24.
+        return static_cast<std::uint16_t>(std::lround(std::ldexp(value, 24)));
+    }
+    std::uint32_t fraction = static_cast<std::uint32_t>(std::lround((mantissa * 2.0F - 1.0F) * 1024.0F));
+    std::uint32_t bits = static_cast<std::uint32_t>(biased) << 10;
+    bits += fraction; // A fraction of 1024 carries into the exponent.
+    return static_cast<std::uint16_t>(std::min<std::uint32_t>(bits, 0x7BFFU));
+}
+
+} // namespace
+
 CreatureScope creature_scope(const world::Creature& creature, bool first) {
     CreatureScope scope;
     if (first && creature.spawnAction && !(creature.dead && creature.action)) {
@@ -250,6 +295,12 @@ CreatureScope creature_scope(const world::Creature& creature, bool first) {
         scope.action = &*creature.idle;
     }
     scope.key = scope.action != nullptr ? 0x10000U | scope.action->generation : kScopeNone;
+    // The additive reaction (stage U3): a record of its own scope over the action of scope 0 (a walk, an attack, the idle). Not in the first
+    // record of the spawn action, and not for a dead creature.
+    if (creature.additive && !creature.dead && !scope.fromStart) {
+        scope.additive = &*creature.additive;
+        scope.key |= 0x80000000U | (static_cast<std::uint32_t>(creature.additive->record.generation & 0x3FFFU) << 17);
+    }
     return scope;
 }
 
@@ -277,14 +328,39 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, const wor
     // time (0x2A2BC20, the test at 0x2A2C28D with the constant -0.5 at 0x7F4016C). A push sends a state each 50 ms: one arrow gave three
     // reactions. The locomotion, the idle record, and the actions with no end keep one record (user test 1: a looping fragment is not
     // started again).
-    const bool timed = scope.action != nullptr && !scope.fromStart && creature.action && scope.action == &*creature.action
-                       && creature.action->ends.has_value();
+    // An additive reaction is a one-shot record too (stage U3): while it plays, each state has both records.
+    const bool timed = (scope.action != nullptr && !scope.fromStart && creature.action && scope.action == &*creature.action
+                        && creature.action->ends.has_value())
+                       || scope.additive != nullptr;
     if (since != 0 && (keepScope || (sent != kScopeUnknown && scope.key == sent && !timed))) {
         write_time_anchor(state, clock);
         return state.finish();
     }
     const world::CreatureAction* selected = scope.action;
     const bool fromStart = scope.fromStart;
+    if (scope.additive != nullptr) {
+        // Stage U3 (research Q5, live check LC-Q5-2; client code 0x2A2ACD0, 0x2A75F70, 0x14087AE90): the mask has the bit of scope 0 (the
+        // action of the server, when one plays: else the client plays its idle) and the bit of the scope of the additive reaction; the
+        // blob has one record for each bit, in the order of the scopes; the times of scope 0 are its four time fields, and the time of a
+        // scope of 2 or more is one 16-bit float (seconds, the high byte first) in scopeTimeBlobEx, one for each such scope in the mask.
+        const world::CreatureAdditive& additive = *scope.additive;
+        hub::Writer records;
+        if (selected != nullptr) {
+            write_scope_record(records, *selected);
+        }
+        write_scope_record(records, additive.record);
+        state.field(0, kScopeData).size((selected != nullptr ? kScopeFullBody : 0U) | (1U << additive.scope));
+        hub::Writer& blob = state.field(0, kScopeInfoBlob);
+        blob.size(static_cast<std::uint32_t>(records.data().size()));
+        blob.raw(records.data());
+        hub::Writer& times = state.field(0, kScopeTimeBlob);
+        times.size(2);
+        times.u16(half_of(std::max(std::chrono::duration<float>(clock.now() - additive.record.started).count(), 0.0F)));
+        state.field(0, kGlobalFragTags).raw(selected != nullptr ? selected->tags : additive.record.tags);
+        write_scope_time(state, selected != nullptr && !fromStart ? clock.now() - selected->started : std::chrono::steady_clock::duration{});
+        write_time_anchor(state, clock);
+        return state.finish();
+    }
     if (selected == nullptr) {
         // No action of the server: the scope fields with no record. The client ends the action
         // of a record that it kept from an earlier state, and it plays its idle action. Without

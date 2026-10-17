@@ -35,7 +35,9 @@
 //               stops the creature, and the movement ends there. The height is the height of the floor.
 //   Rules.      A dead creature and a creature on its way back (immune) do not move. A new impact replaces the movement
 //               that runs (the client starts its reaction motion again). While it moves, the behavior does not move the
-//               creature and starts no attack; at its end the creature goes on with its path when it is near it (user test
+//               creature and starts no attack (but for the push of an additive reaction, stage U3: the behavior and the homing
+//               go on and the push adds to them; it does not replace the push of a full reaction that runs); at its end the
+//               creature goes on with its path when it is near it (user test
 //               2, UT2-4: the navigation keeps a path that is navigation_rules::kOffPath or less away, and takes the free
 //               straight line at once for one that is farther), and its trail gets the new place (Behavior::moved_by_force).
 //
@@ -72,6 +74,9 @@ struct ForcedCounts {
     std::uint64_t started{0};
     std::uint64_t replaced{0};
     std::uint64_t refused{0};
+    /** Pushes of an additive reaction that started (stage U3), and that did not start because the push of a full reaction runs. */
+    std::uint64_t additive{0};
+    std::uint64_t keptFull{0};
     /** Steps (new places), steps that waited for the navigation data, movements that a wall or a drop stopped, and that ended. */
     std::uint64_t steps{0};
     std::uint64_t waits{0};
@@ -92,10 +97,15 @@ public:
      * @param attacker The place of the attacker (a row with UseAttackerPosForReaction takes the direction from it).
      * @param row The id of the damage row (for the log).
      * @param length The longest time of the movement: the length of the reaction of the hit (Creatures::reaction_length).
+     * @param scale The Scale of the ReactionMotion of the action that the hit started (stage U3, research Q5): it scales the displacement.
+     * @param pushBack Its PushBackScale: it scales only a displacement away from the source (a push, not a pull; client code 0x48A0690).
+     * @param additive True for the push of an additive reaction (ForcedMove::additive): the behavior goes on, and the push adds to its
+     *                 movement. It does not replace the push of a full reaction that runs.
      * @return True when the creature moves.
      */
     bool impact(Entity& creature, const gamedata::DamageImpact& impact, const state::WorldPosition& source,
-                const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length);
+                const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length, float scale = 1.0F,
+                float pushBack = 1.0F, bool additive = false);
 
     /** The creature system calls it in each tick: one step of each creature that a force moves. */
     void tick();

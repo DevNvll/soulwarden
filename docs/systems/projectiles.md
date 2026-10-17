@@ -205,6 +205,18 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   system launches it, through `launch_spell` with the clip as the rule; the slice of the ammunition (DefaultArrow: `basic_arrow`) and
   its damage modifier (1.2) are those of a basic arrow. The loader refuses a clip shot that no ability action names, and an action
   clip that is not a shot ([Game data](../development/game-data.md), format 2).
+- The press of a bow ability checks the slice of each shot before its cooldown with the rule of `launch_spell`
+  (`Projectiles::spell_slice`: the slice of the rule, or the slice of the default ammunition of the weapon for a clip, with a speed
+  above 0). A shot with no such slice refuses the press [code review of stage B1, finding B1-R6, test case BRV6: a DefaultArrow with no
+  slice gave the cooldown of Rapid Shot, and each shot then failed in `launch_spell`].
+- The origin of the shot item of a bow ability has the wall test of a basic shot (the real segment from the launch place of the server:
+  `Navigation::line_stop`). An origin behind a wall is not refused: the arrow starts at the launch place of the server [code review of
+  stage B1, finding B1-R9, test case BRV9; [Abilities](abilities.md)].
+- The projectile tool stops, and the old file stays, when a ranged clip of the fragment of a required bow action
+  (`REQUIRED_ABILITY_ACTIONS`) has no damage row or no attack of its profile in the source, and when a cast of such an action is not
+  the spell of an ability shot of the output [code review of stage B1, finding B1-R8: a source with no third clip row gave a Rapid
+  Shot of two arrows, and a source with no row of the spells of Explosive Arrow gave casts with no shot; the tool cases
+  missing-bow-clip-row and missing-bow-cast-spell of `tools/gamedata/check_projectile_tool.py`, case PJ11].
 - The row of a shot can differ from the row of its rule (`SpellShot::row`): the override of a node (Blood Soaked Arrow:
   `Bow_Penetrating_AttackA1` in place of `Bow_Penetrating_Attack`) [game data].
 - The pierce (`SpellShot::pierce`, Penetrating Shot) [game data; build sheet Q3; agent decision for the order]. Each segment of the

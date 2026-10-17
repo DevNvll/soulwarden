@@ -520,7 +520,7 @@ void Behavior::think(Entity& creature, float seconds) {
     // A stun or a knockdown of an ability holds the creature: no movement and no attack (stage
     // 3.3a). It keeps its target. A forced movement (a pull, a push; stage 3.3b-S4) moves it: the
     // behavior waits for its end.
-    if (creature.creature.held(now) || creature.creature.forced) {
+    if (creature.creature.held(now) || creature.creature.held_by_force()) {
         return;
     }
     // The hit stun of the last hit (user test 2, UT2-9: HitStun_AI of the damage row): the reaction plays; no step, no turn, no attack.
@@ -726,7 +726,7 @@ void Behavior::go_home(Entity& creature, float seconds) {
         mind.attack.reset();
         mind.shooting = false;
     }
-    if (creature.creature.forced) {
+    if (creature.creature.held_by_force()) {
         return; // A forced movement that started before the way back ends first (the movement system ends it).
     }
     if (hit_stunned(creature, now)) {
@@ -959,7 +959,7 @@ void Behavior::roam(Entity& creature, float seconds) {
     const WorldClock::time_point now = m_world.clock().now();
     // An effect of an ability that holds the creature or keeps it at its place stops its walk too, and the hit stun of a hit (a passive
     // creature takes no target: its reaction plays to its hit stun; code review of user test 2, finding U2-R5).
-    if (now < mind.roamWaitUntil || creature.creature.held(now) || creature.creature.rooted(now) || creature.creature.forced
+    if (now < mind.roamWaitUntil || creature.creature.held(now) || creature.creature.rooted(now) || creature.creature.held_by_force()
         || hit_stunned(creature, now)) {
         return;
     }
@@ -1136,6 +1136,8 @@ void Behavior::start_attack(Entity& creature, Entity& target, std::uint32_t atta
     mind.attackEnds = now + length;
     ++mind.attacks;
     ++m_counts.attacks;
+    // Stage U3 (research Q1): the Homing clips of the attack move and turn the creature on the world clock (world/attack_motion.h).
+    m_creatures.attack_motion().start(creature, target.id, attackIndex);
     for (std::uint32_t index = 0; index < attack.contacts.size(); ++index) {
         if (attack.contacts[index].repeat) {
             continue; // The second hit volume of one swing: one hit.
@@ -1383,7 +1385,7 @@ bool Behavior::command_shot(Entity& creature, EntityId target) {
     const gamedata::CreatureSlice& body = *creature.creature.body;
     Entity* character = fightable(target);
     if (creature.creature.dead || !body.basicShot || character == nullptr || character->kind != EntityKind::player
-        || creature.creature.held(m_world.clock().now()) || creature.creature.forced) {
+        || creature.creature.held(m_world.clock().now()) || creature.creature.held_by_force()) {
         return false;
     }
     // The creature takes the character as its target (the step of the behavior then ends the action of the shot, and the fight goes on
@@ -1604,7 +1606,7 @@ bool Behavior::command_area(Entity& creature, EntityId target) {
     Entity* character = fightable(target);
     const std::vector<std::uint32_t> usable = usable_areas(body);
     if (creature.creature.dead || usable.empty() || character == nullptr || character->kind != EntityKind::player
-        || creature.creature.held(m_world.clock().now()) || creature.creature.forced) {
+        || creature.creature.held(m_world.clock().now()) || creature.creature.held_by_force()) {
         return false;
     }
     CreatureMind& mind = creature.creature.mind;
@@ -1849,7 +1851,7 @@ void Behavior::status_mark(const PendingStatus& pending) {
 
 bool Behavior::command_status_action(Entity& creature, std::string_view action) {
     const gamedata::CreatureSlice& body = *creature.creature.body;
-    if (creature.creature.dead || creature.creature.held(m_world.clock().now()) || creature.creature.forced) {
+    if (creature.creature.dead || creature.creature.held(m_world.clock().now()) || creature.creature.held_by_force()) {
         return false;
     }
     for (std::uint32_t index = 0; index < body.statusActions.size(); ++index) {

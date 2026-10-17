@@ -254,6 +254,10 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
             if (!bits.press || pressUsed) {
                 return;
             }
+            if (!bits.attackAllowed) {
+                ++m_counts.overencumbered; // Stage U3: the client plays no swing (Prevent_Attack), and the server starts no attack.
+                return;
+            }
             pressUsed = true;
             // From rest: the first fragment of the graph. A press just after the end of a fragment can be the next step of its
             // chain (the band of the length): the visit gets that fragment as its other one.
@@ -386,8 +390,13 @@ void AttackSequences::advance(State& state, std::uint16_t input, const AttackBit
         if (taken != nullptr) {
             std::int32_t alternate = -1;
             if (takes_press(taken->input)) {
-                // A press near the end of the fragment: the client can be at rest already (a new attack).
-                if (fragment.length > 0.0F && std::fabs(t - fragment.length) < attack_rules::kLengthBand && taken->to != actions.start) {
+                // A press near the end of the fragment: the client can be at rest already (a new attack). Stage U3 (research
+                // creature-combat-feel.md Q6, UT2-12; game data: the swings unset AttackAction at CanTransition, Attack_Start_Charge needs
+                // Not AttackAction, grid rule 57 Attack -> Attack is Always): a press at or after the mark CanTransition can be the chain
+                // or a new attack; the first hit selects (finding M1-R3). Live check CT-L1: the client took the chain in 5 of 5 tries.
+                const bool afterTransition = fragment.canTransition >= 0.0F && t >= fragment.canTransition - kClockEpsilon;
+                if (((fragment.length > 0.0F && std::fabs(t - fragment.length) < attack_rules::kLengthBand) || afterTransition)
+                    && taken->to != actions.start) {
                     alternate = static_cast<std::int32_t>(actions.start);
                 }
             } else if (visit->alternate >= 0 && taken->input != gamedata::AttackInput::terms) {

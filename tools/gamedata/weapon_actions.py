@@ -109,6 +109,9 @@ BASE_FILES = {"1h_melee": ("player_1h_melee.adb", "playermaleanims_1h_meleeattac
 EXCLUDED_TAGS = frozenset({"dagger"})
 CONDITIONS = {"canattack_heavy": "virtual", "canattack_primary": "virtual", "canattack_primary_rapier": "press",
               "attack_heavy_notheld": "notHeld", "attack_primary_released": "released", "": "always", "test_alwaystrue": "always"}
+# Stage U3 (research creature-combat-feel.md Q6): the CAGE-Named marks of a swing for the switch of the weapon (grid rule 62 Attack ->
+# Sheathe: the buffer CanUnsheathe_Buffer, the condition CanUnsheathe or CanTransition).
+SWITCH_MARKS = ("CanUnsheathe_Buffer", "CanUnsheathe")
 SHAPE_FIELDS = ("MeleeAttackShapeCastType", "MeleeAttackShapeRadius", "MeleeAttackCapsuleHalfHeight", "MeleeAttackBoxDimensionsX",
                 "MeleeAttackBoxDimensionsY", "MeleeAttackBoxDimensionsZ", "OffsetX", "OffsetY", "OffsetZ", "ScaleX", "ScaleY", "ScaleZ",
                 "JointName")
@@ -542,6 +545,7 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
         payments = []
         dodge = []
         markers = []
+        switch_marks: dict[str, float] = {}
         can_transition = None
         for clip in variant["procedural"]:
             kind, params = clip["type"], clip["params"]
@@ -603,6 +607,11 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
                                      rounded(float(params.get("CostMultiplier") or 1.0)), params.get("Condition", "").strip()])
             elif kind == "CAGE-Named":
                 named_clip = params.get("Name", "")
+                if named_clip in SWITCH_MARKS:
+                    # Stage U3 (research creature-combat-feel.md Q6; game data: grid rule 62 Attack -> Sheathe): the marks at which a
+                    # key of a weapon switches in a swing.
+                    switch_marks.setdefault(named_clip, rounded(clip["start"]))
+                    switch_marks[named_clip] = min(switch_marks[named_clip], rounded(clip["start"]))
                 if named_clip in ("CanDodgeCancel", "CanDodgeBuffer"):
                     dodge.append([rounded(clip["start"]), None if clip["end"] is None else rounded(clip["end"]),
                                   named_clip == "CanDodgeBuffer"])
@@ -676,7 +685,12 @@ def build_weapon(tags: tuple[str, ...], body: dict, common: dict, attachment: di
                 counts["clips"] += 1
         length = fragment_length(variant, animations)
         counts["lengthsNotKnown"] += 1 if length == 0.0 else 0
-        fragments.append({"name": name, "tags": variant["tagText"], "file": variant["file"], "length": length,
+        # Stage U3: [the start of the buffer CanUnsheathe_Buffer, the first start of CanUnsheathe or CanTransition] (-1: none).
+        conditions = [switch_marks[mark] for mark in ("CanUnsheathe", "CanTransition") if mark in switch_marks]
+        if can_transition is not None:
+            conditions.append(can_transition)
+        switch = [switch_marks.get("CanUnsheathe_Buffer", -1.0), min(conditions) if conditions else -1.0]
+        fragments.append({"name": name, "tags": variant["tagText"], "file": variant["file"], "length": length, "switch": switch,
                           "canTransition": can_transition, "transitions": transitions,
                           "strikes": [[key, rounded(value["start"]), rounded(value["end"]), value["rows"], value["shapes"]]
                                       for key, value in sorted(strikes.items(), key=lambda item: (item[1]["start"], item[0]))],

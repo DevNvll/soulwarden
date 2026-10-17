@@ -677,6 +677,49 @@ struct ForcedMove {
     bool away{false};
     /** The travel that the movement made so far (meters, on the line of the data: a wall can make it shorter). */
     float travelled{0.0F};
+    /**
+     * True for the push of an additive reaction (stage U3, live check LC-Q5-2): the behavior goes on (a run, an attack, its homing), and
+     * the push adds to its movement. False: the push of a full reaction, of a pull, or of the action Pushable holds the behavior.
+     */
+    bool additive{false};
+};
+
+/**
+ * The additive reaction of a creature (stage U3, research Q5; game data: the action Reaction_Additive of the action lists, its fragment in
+ * the scope "Additive" of the controller): a record in its own scope over the action of scope 0 (a walk, an attack). The client reads one
+ * record and one time for each scope of the mask of a movement state (client code 0x2A2ACD0). `record.ends` is its end on the world clock.
+ */
+struct CreatureAdditive {
+    CreatureAction record;
+    /** The scope of the record (CreatureSlice::additive: the wolf 4). */
+    std::uint32_t scope{0};
+};
+
+/**
+ * The homing of an attack of a creature (stage U3, research Q1; game data: the Homing clips of the attack fragment): the server moves and
+ * turns the creature on the world clock with the rule of the client (world/attack_motion.h). The client does not do it for a creature (live
+ * check LC-Q1-2).
+ */
+struct HomingMove {
+    /** The attack (index in CreatureSlice::attacks), the start count of its action, its target, and its start on the world clock. */
+    std::uint32_t attack{0};
+    std::uint16_t generation{0};
+    EntityId target{0};
+    WorldClock::time_point attackStarted{};
+    /** The clip that runs (`running`), else the next clip to start. */
+    std::uint32_t clip{0};
+    bool running{false};
+    WorldClock::time_point clipStarted{};
+    WorldClock::time_point stepped{};
+    /** The place of the creature at the start of the clip, and the last place of the target that passed the wedge of the clip. */
+    state::WorldPosition origin;
+    state::WorldPosition aim;
+    /** The direction of the creature at the start of the clip: the direction of the wedge of its target (client code 0x2561C10). */
+    float scanYaw{0.0F};
+    bool turnDone{false};
+    bool moveDone{false};
+    /** The travel of the clips of the attack (meters, for the log). */
+    float travelled{0.0F};
 };
 
 /**
@@ -750,10 +793,12 @@ struct Creature {
      */
     std::optional<WorldClock::time_point> hitStunUntil;
     /**
-     * The chained reactions of the creature (user test 2: Chained_Reaction_Count of the action Reaction; a reaction that starts while the
-     * reaction before it plays is one more in the chain, a decision of an agent: the count is a value of the behavior tree, which is not in
-     * the game files) and the end of the reaction limit (the tag ReactionLimiter_Active: the reaction of the third chained reaction and the
-     * status AI_Reaction_Limiter of 2 s after it, game data). While it holds, a light or heavy attack plays no reaction.
+     * The chained reactions of the creature (Chained_Reaction_Count of the action Reaction, a value of the damage context of the creature:
+     * client code 0x2B56630 calls +0x120 of that object; stage U3, a decision of the orchestrator with the reading of the data): each full
+     * reaction since the last reset counts, also the one that starts. The resets (game data, ResetReactionCount of
+     * baseai_reaction.actionlist): a hit in an attack of the creature (the additive reaction with grit and no limit), a broken guard (not
+     * in the backend), and the end of the limit. The end of the reaction limit (the tag ReactionLimiter_Active: the third reaction of a
+     * Solo type and the status AI_Reaction_Limiter of 2 s after it, game data). While it holds, a light or heavy attack plays no reaction.
      */
     std::uint32_t reactionChain{0};
     std::optional<WorldClock::time_point> reactionLimitUntil;
@@ -793,10 +838,18 @@ struct Creature {
     std::optional<WorldClock::time_point> knockedUntil;
     /**
      * The forced movement of the creature (stage 3.3b-S4): a pull or a push of a hit. While it runs, the behavior does not
-     * move the creature and starts no attack. No value: none.
+     * move the creature and starts no attack (held_by_force), but for the push of an additive reaction. No value: none.
      */
     std::optional<ForcedMove> forced;
+    /** The additive reaction that plays (stage U3). No value: none. */
+    std::optional<CreatureAdditive> additive;
+    /** The homing of the attack that plays (stage U3). No value: none. */
+    std::optional<HomingMove> homing;
 
+    /** @return True while a forced movement holds the behavior: a pull or a push that is not the push of an additive reaction. */
+    [[nodiscard]] bool held_by_force() const {
+        return forced && !forced->additive;
+    }
     /** @return True while an effect holds the creature: no movement and no attack (a stun, a knockdown). */
     [[nodiscard]] bool held(WorldClock::time_point now) const {
         if (knockedUntil && now < *knockedUntil) {
@@ -1114,6 +1167,24 @@ struct CombatState {
      * sheathe bits and the active bits of the paperdoll state do not follow it yet (roadmap 3.1).
      */
     std::uint32_t selectedWeapon{0};
+    /**
+     * The switch of the weapon that a key asked for (stage U3, research creature-combat-feel.md Q6; game data: the switch action
+     * Unsheathe_MainHand_N_UB and grid rule 62; live checks SW-L1 to SW-L3). The weapon changes at the start of the switch: at the key at
+     * rest, in a swing at its switch mark (CanUnsheathe, CanTransition) when a buffer or a condition window of the swing starts in the 20
+     * steps of the key (else the key is lost). A press in the time of the switch is kept: the first attack of the new weapon starts 3 steps
+     * after the switch. No value: none.
+     */
+    struct WeaponSwitch {
+        std::uint32_t slot{0};
+        /** The input step of the key, and the input sequence of its client. */
+        std::uint16_t key{0};
+        std::uint32_t inputSequence{0};
+        /** The step of the switch: set when the weapon changed. */
+        std::optional<std::uint16_t> at;
+        /** A press came after the key: the first attack of the new weapon. */
+        bool pressKept{false};
+    };
+    std::optional<WeaponSwitch> weaponSwitch;
     /**
      * The hits of the last cast of each ability whose row has TrackHitCount (stage 3.3b-M2): the ability (the CRC-32 of its id text)
      * and the count, 255 at most. The abilities system sets them (Abilities: 0 at an accepted press, one more at each accepted hit of

@@ -15,6 +15,7 @@
 #include "gamedata/creature_data.h"
 #include "world/behavior.h"
 #include "world/entity.h"
+#include "world/attack_motion.h"
 #include "world/forced_motion.h"
 #include "world/hit_reaction.h"
 #include "world/ids.h"
@@ -205,6 +206,13 @@ struct CreatureCounts {
     std::uint64_t hitStuns{0};
     std::uint64_t reactionLimits{0};
     std::uint64_t idleRecords{0};
+    /**
+     * Stage U3: the turns of AlignToDirection, the additive reactions, the resets of the chain (the end of the limit, a hit in an attack),
+     * and the homing of the attacks (world/attack_motion.h has its own counts).
+     */
+    std::uint64_t reactionTurns{0};
+    std::uint64_t additiveReactions{0};
+    std::uint64_t chainResets{0};
     /** The largest number of creatures in the world at one time. */
     std::size_t largest{0};
     /** Number of scans of the spawn point rule. */
@@ -299,12 +307,12 @@ public:
      * @param attacker The entity of the character that did the damage. 0: a command.
      * @param threat The entity that the creature takes as its target in the place of the attacker (stage 3.3b-S2b: the Pylon
      *        whose shot did the damage). 0: the attacker.
-     * @param reaction The reaction of the damage row of the hit (user test 2).
-     * @param push Gets the longest time of the push of the impact of the hit (HitResult::push): the reaction that started, or the
-     *        action Pushable. No value: no push.
+     * @param reaction The reaction of the damage row of the hit (user test 2; stage U3: its source and its side).
+     * @param push Gets the push of the impact of the hit (HitResult::push): the longest time (the reaction that started, the additive
+     *        reaction, or the action Pushable; no value: no push) and the push scales of that action (stage U3).
      */
     CreatureResult hurt(EntityId id, float damage, EntityId attacker = 0, EntityId threat = 0, const HitReaction& reaction = {},
-                        std::optional<std::chrono::milliseconds>* push = nullptr);
+                        HitPush* push = nullptr);
     /**
      * @return The length of the reaction of a hit on a creature (user test 2, UT2-4 and UT2-7): the length of the reaction fragment of its
      *         power in the slice (CreatureSlice::reactionLengths), else kReactionTime. The push of the hit lasts this time at most.
@@ -367,12 +375,24 @@ public:
      * @return True when the creature moves.
      */
     bool impact(Entity& entity, const gamedata::DamageImpact& impact, const state::WorldPosition& source,
-                const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length = kReactionTime) {
-        return m_forced.impact(entity, impact, source, attacker, row, length);
+                const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length = kReactionTime,
+                float scale = 1.0F, float pushBack = 1.0F, bool additive = false) {
+        return m_forced.impact(entity, impact, source, attacker, row, length, scale, pushBack, additive);
     }
     /** @return The forced movement of the creatures (the pulls and the pushes that run). */
     [[nodiscard]] const ForcedMotion& forced() const {
         return m_forced;
+    }
+    /** @return The homing of the attacks of the creatures (stage U3). */
+    [[nodiscard]] AttackMotion& attack_motion() {
+        return m_attackMotion;
+    }
+    [[nodiscard]] const AttackMotion& attack_motion() const {
+        return m_attackMotion;
+    }
+    /** @return The number of creatures with an additive reaction that plays (stage U3). */
+    [[nodiscard]] std::size_t additive_count() const {
+        return m_additives.size();
     }
 
     /**
@@ -521,8 +541,20 @@ private:
     void set_waiting(std::uint32_t point, bool waiting);
     /** The point waits its respawn time (stage 2.2: a cooldown flag of a spawner with a time constraint), as after a death. */
     void start_cooldown(std::uint32_t point, const char* cause);
-    /** Removes the action of each creature whose action has an end that came. */
+    /** Removes the action of each creature whose action has an end that came, and each additive reaction whose end came (stage U3). */
     void end_actions();
+    /** The plan of a full reaction (stage U3): its fragment (no value: the fragment of the action), its length, its turn, its side. */
+    struct ReactionPlan {
+        std::optional<std::uint32_t> fragment;
+        std::chrono::milliseconds length{kReactionTime};
+        std::optional<float> turn;
+        bool clip{false};
+        const char* side{"front"};
+    };
+    /** @return The plan of the full reaction of a hit at an angle (the row of the reaction table of the slice, research Q2 and Q3). */
+    [[nodiscard]] ReactionPlan plan_reaction(const Entity& entity, const HitReaction& reaction, float angle) const;
+    /** The reaction of a creature that lives after a hit (hurt): the full reaction, the additive one, or Pushable, and the push. */
+    void react(Entity& entity, const HitReaction& reaction, HitPush& push);
     /**
      * The due list of the effects (stage 3.4f-D; before: a look at each creature with an effect in each tick): the ends and the ticks whose
      * time came. The cost depends on the due entries, not on the creatures with an effect.
@@ -559,6 +591,8 @@ private:
     std::set<EntityId> m_creatures;
     /** The creatures whose action has an end. */
     std::set<EntityId> m_acting;
+    /** The creatures with an additive reaction that plays (stage U3): end_actions looks only at these. */
+    std::set<EntityId> m_additives;
     /**
      * The due list of the effects (stage 3.4f-D): at its time, a look at a creature (its ends: serial 0), or a tick of one effect (its
      * serial). An old entry (an effect that ended, a renewed end) changes nothing.
@@ -577,6 +611,8 @@ private:
     Behavior m_behavior;
     /** The forced movement of the creatures (stage 3.3b-S4): a part of this system. */
     ForcedMotion m_forced;
+    /** The homing of the attacks of the creatures (stage U3): a part of this system. */
+    AttackMotion m_attackMotion;
 };
 
 } // namespace soulwarden::backend::world

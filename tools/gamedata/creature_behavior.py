@@ -221,6 +221,20 @@ REACTION_FRAGMENTS = ("r_R0_F", "r_R1_F", "r_R2_F", "r_R3_F", "r_R4_F")
 # weapon_actions.py for the player).
 CREATURE_ANIMATION_FOLDER = "animations/gameplay/character/npc/"
 MOTION_CHUNK = 0x3002
+# Stage U3 (research creature-combat-feel.md Q1): the Homing clips of an attack fragment (ProcLayer/Procedural type="Homing"). The
+# start of a clip is the sum of the Blend ExitTime values before it in its layer; its own duration is the ExitTime of the next Blend (no
+# next Blend: to the end of the fragment). The values of a clip in the file, in this order (the member `homing` of an attack). The client
+# applies a clip only to its own character (client code 0x255A140, 0x2564FC0, 0x2565210; live check LC-Q1-2): the server moves a creature.
+HOMING_CLIP = "Homing"
+HOMING_NUMBERS = ("MoveToDistance", "MoveToDuration", "MoveToVelocity", "MaxMoveDistance", "TurnRate", "Radius", "MaxAngle", "Height")
+HOMING_FLAGS = ("MoveToTarget", "UseExponential", "LockInitialTargetPos", "AllowMovementAfterReachingTargetPos", "AllowUpwardsMovement",
+                "UseRadiusforAITarget", "AllowRotationAfterReachingTargetAngle")
+# Stage U3 (Q3): the HitStun clip of a reaction fragment (client code 0x2559640: the rest of the reaction plays so that it ends at the hit
+# stun of the hit). Its start is the sum of the Blend ExitTime values before it.
+HIT_STUN_CLIP = "HitStun"
+# Stage U3: the two reaction actions of an action table (the full reaction and the additive one).
+REACTION_ACTION = "Reaction"
+ADDITIVE_ACTION = "Reaction_Additive"
 
 
 def walk(element):
@@ -646,7 +660,8 @@ class Animations:
         for fragment in (listed if listed is not None else []):
             for variant in fragment.findall("Fragment"):
                 tags = {name.lower() for name in tag_names(variant.get("Tags", ""))} | {name.lower() for name in extra_tags}
-                entry = {"tags": tags, "contacts": [], "ranged": [], "casts": [], "named": [], "end": None, "clips": []}
+                entry = {"tags": tags, "contacts": [], "ranged": [], "casts": [], "named": [], "end": None, "clips": [], "homing": [],
+                         "hitStun": None}
                 for layer_number, layer in enumerate(variant.findall("AnimLayer")):
                     if layer_number == 0:
                         entry["clips"] = animation_clips(layer)
@@ -670,7 +685,14 @@ class Animations:
                     # A time of a ranged event needs each ExitTime before it as a finite number (code review of stage 3.4f-A, finding
                     # CR-R6): a text that is not a number gives the event no time (None), not the time 0.
                     broken = False
-                    for item in layer:
+                    items = list(layer)
+                    for position, item in enumerate(items):
+                        if item.tag == "Procedural" and item.get("type") == HOMING_CLIP:
+                            # Stage U3 (Q1): a Homing clip of the fragment: its start, its own duration, and its values.
+                            entry["homing"].append(homing_clip(items, position, None if broken else time))
+                        elif item.tag == "Procedural" and item.get("type") == HIT_STUN_CLIP and entry["hitStun"] is None and not broken:
+                            # Stage U3 (Q3): the HitStun clip (its start; client code 0x2559640 scales the rest of the reaction).
+                            entry["hitStun"] = time
                         if item.tag == "Blend":
                             strict = strict_number(item.get("ExitTime"))
                             broken = broken or strict is None
@@ -699,6 +721,46 @@ class Animations:
             for name, entries in self.variants(sub.get("File", ""), more, depth + 1).items():
                 fragments.setdefault(name, []).extend(entries)
         return fragments
+
+
+def homing_clip(items: list, position: int, start: float | None) -> dict:
+    """@return One Homing clip of a ProcLayer (stage U3): its start (no value: a time before it is not a finite number), its own duration
+    (the ExitTime of the next Blend; no value: to the end of the fragment), the numbers of HOMING_NUMBERS (no value: not a finite number),
+    and the flags of HOMING_FLAGS."""
+    following = next((later for later in items[position + 1:] if later.tag == "Blend"), None)
+    duration: float | None = -1.0  # No next Blend: the clip lasts to the end of the fragment.
+    if following is not None:
+        duration = strict_number(following.get("ExitTime"))
+        duration = max(duration, 0.0) if duration is not None else None
+    parameters = items[position].find("ProceduralParams")
+    values = {value.tag: value.get("value", "") for value in parameters} if parameters is not None else {}
+    clip = {"start": start, "duration": duration}
+    for name in HOMING_NUMBERS:
+        clip[name] = strict_number(values.get(name))
+    for name in HOMING_FLAGS:
+        clip[name] = values.get(name, "").strip().lower() == "true"
+    return clip
+
+
+def homing_member(clips: list[dict]) -> tuple[list[list] | None, str]:
+    """@return The member `homing` of an attack (stage U3): one list for each clip of the selected variant, [start, duration (-1: to the
+    end of the fragment), MoveToTarget, MoveToDistance, MoveToDuration, MoveToVelocity, MaxMoveDistance, TurnRate, UseExponential, Radius,
+    MaxAngle, Height, LockInitialTargetPos, AllowMovementAfterReachingTargetPos, AllowUpwardsMovement, UseRadiusforAITarget,
+    AllowRotationAfterReachingTargetAngle] (flags as 0 or 1), in the sequence of their starts; or no value and the cause (a time or a
+    value that is not a finite number: the attack gets no homing)."""
+    rows = []
+    for clip in clips:
+        if clip["start"] is None or clip["duration"] is None or any(clip[name] is None for name in HOMING_NUMBERS):
+            return None, "a Homing clip has a time or a value that is not a finite number"
+        flag = {name: 1 if clip[name] else 0 for name in HOMING_FLAGS}
+        rows.append([rounded(clip["start"]), rounded(clip["duration"]) if clip["duration"] >= 0.0 else -1.0, flag["MoveToTarget"],
+                     rounded(clip["MoveToDistance"]), rounded(clip["MoveToDuration"]), rounded(clip["MoveToVelocity"]),
+                     rounded(clip["MaxMoveDistance"]), rounded(clip["TurnRate"]), flag["UseExponential"], rounded(clip["Radius"]),
+                     rounded(clip["MaxAngle"]), rounded(clip["Height"]), flag["LockInitialTargetPos"],
+                     flag["AllowMovementAfterReachingTargetPos"], flag["AllowUpwardsMovement"], flag["UseRadiusforAITarget"],
+                     flag["AllowRotationAfterReachingTargetAngle"]])
+    rows.sort(key=lambda row: row[0])
+    return rows, ""
 
 
 def number_of(value: str | None) -> float:
@@ -786,6 +848,13 @@ class Behavior:
         # TIME_AFTER_CONTACT), and the reaction fragments with a length and with none.
         self.attack_lengths = {"endBlend": 0, "animation": 0, "guess": 0}
         self.reaction_lengths = {"known": 0, "unknown": 0}
+        # Stage U3: the attacks with Homing clips, the clips, the clips that move (MoveToTarget), and the attacks whose clips have a value
+        # that is not a finite number (no homing).
+        self.homing_counts = {"attacks": 0, "clips": 0, "moving": 0, "leftOut": 0}
+        # Stage U3: the reaction tables of the slices (the rows in the file, the rows that never hold in the backend, the side fragments
+        # with no variant that take the front fragment of their power), and the slices with an additive reaction.
+        self.reaction_table_counts = {"slices": 0, "rows": 0, "neverRows": 0, "noVariant": 0, "additive": 0, "hitStunClips": 0,
+                                      "missingTables": 0}
 
     def release(self, values: dict, references: dict, main_hand: dict | None, rows: dict) -> tuple[dict | None, str]:
         """@return The joins of one release of a ranged attack (see the head of the file), or no value and the cause."""
@@ -869,6 +938,67 @@ class Behavior:
             lengths.append(rounded(min(length, LONGEST_ATTACK)) if length is not None else -1.0)
         return lengths
 
+    def fragment_facts(self, databases: list[str], tags: set[str], name: str) -> tuple[bool, float | None, float | None]:
+        """@return For one fragment name: a variant of the tags in one database (True), the length of that variant (no value: not known),
+        and the start of its HitStun clip (no value: none). The first database that has a variant gives it."""
+        for database in databases:
+            variant = select(self.animations.variants(database).get(name.lower(), []), tags, False)
+            if variant is not None:
+                return True, self.animations.fragment_length(variant), variant["hitStun"]
+        return False, None, None
+
+    def table_member(self, action: dict, positions: dict[str, int], databases: list[str], tags: set[str]) -> dict:
+        """@return The member of one reaction action (stage U3, research Q2, Q3, Q5): {"rows": [[power (-1: each power), angle ranges
+        ([[min, max, tolerance], ...] in degrees; no value: each angle), fragment index, length (-1: not known), start of the HitStun clip
+        (-1: none), AlignToDirection (0 or 1), AlignOffsetAngle (degrees)], ...] in the sequence of the table (a row whose condition never
+        holds in the backend is not in the list: the first row that holds wins, client code 0x2B9F1C0), "motion": [[name, Scale,
+        PushBackScale], ...] (the entries of ReactionMotion: Default first), "exit": ExitOffsetSeconds of IfFragmentDone}.
+
+        The fragment of a row: its index in the fragment list of the slice. A name that the list does not have keeps the fragment of the
+        action (client code 0x2B9F1C0). A name of the list with no variant of the tags in the databases of the slice takes the fragment
+        of the front row of the same power (a project rule until live check LC-Q2-2: what the client shows for a fragment with no variant
+        is not known)."""
+        rows = []
+        raw = action["table"]
+
+        def holds(condition) -> bool | None:
+            kind = condition[0]
+            if kind == "tag":
+                return condition[1].lower() in tags
+            return None if kind == "angles" else kind == "always"
+
+        def front_of(power: int) -> str | None:
+            for row in raw:
+                if row[0] == power and row[1][0] == "angles" and any(low - tol <= 0.0 <= high + tol for low, high, tol in row[1][1]):
+                    return row[2]
+            return None
+
+        for power, condition, name, align, offset in raw:
+            state = holds(condition)
+            if state is False:
+                self.reaction_table_counts["neverRows"] += 1
+                continue
+            angles = condition[1] if condition[0] == "angles" else None
+            fragment = name
+            index = positions.get(fragment.lower(), -1)
+            if index < 0:
+                fragment = action["fragment"]
+                index = action["fragmentIndex"]
+            found, length, stun = self.fragment_facts(databases, tags, fragment)
+            if not found:
+                front = front_of(power)
+                if front is not None and front.lower() != fragment.lower() and positions.get(front.lower(), -1) >= 0:
+                    self.reaction_table_counts["noVariant"] += 1
+                    fragment = front
+                    index = positions[front.lower()]
+                    found, length, stun = self.fragment_facts(databases, tags, fragment)
+            if stun is not None:
+                self.reaction_table_counts["hitStunClips"] += 1
+            rows.append([power, angles, index, rounded(min(length, LONGEST_ATTACK)) if length is not None else -1.0,
+                         rounded(stun) if stun is not None else -1.0, 1 if align else 0, rounded(offset)])
+            self.reaction_table_counts["rows"] += 1
+        return {"rows": rows, "motion": action["motion"], "exit": rounded(action["exit"])}
+
     def tag_bits(self, controller_path: str) -> TagBits | None:
         controller = read_xml(self.sources, controller_path, "the action list component of a slice")
         entry = controller.find("Tags") if controller is not None else None
@@ -879,10 +1009,12 @@ class Behavior:
             self._tags[path] = TagBits(self.sources, path)
         return self._tags[path]
 
-    def read(self, roots: list, controller_path: str, actions: list[list], slice_path: str = "", markers: dict | None = None) -> dict:
+    def read(self, roots: list, controller_path: str, actions: list[list], slice_path: str = "", markers: dict | None = None,
+             reactions: dict | None = None) -> dict:
         """@return The members of a slice for its behavior: "behavior" (when the slice has the values), "tags" (when
         the slice has a tag), "attacks", and "noAttack" (the cause, for a slice with no attack: not a member of
-        the file). `actions` is the action table of the slice."""
+        the file). `actions` is the action table of the slice. `reactions` (stage U3, creature_data.read_reactions): the fragment list,
+        the scopes, and the reaction actions of the slice; with it the members "reactionTable" and "additive"."""
         result: dict = {}
         behavior = read_behavior(roots)
         if behavior is not None:
@@ -916,6 +1048,27 @@ class Behavior:
         reaction_lengths = self.reaction_lengths_of(databases, tags | read_default_tags(roots))
         if any(length > 0.0 for length in reaction_lengths):
             result["reactionLengths"] = reaction_lengths
+        # Stage U3: the reaction table of the action Reaction of the slice (the side, the power, the length, the HitStun clip, the push
+        # scales) and the additive reaction (the action Reaction_Additive in its own scope). The tags of the reaction lengths select the
+        # variants.
+        if reactions:
+            reaction_tags = tags | read_default_tags(roots)
+            for action in reactions["actions"].values():
+                if action["table"] is None:
+                    self.reaction_table_counts["missingTables"] += 1
+            full = reactions["actions"].get(REACTION_ACTION)
+            if full is not None and full["table"]:
+                result["reactionTable"] = self.table_member(full, reactions["positions"], databases, reaction_tags)
+                self.reaction_table_counts["slices"] += 1
+            additive = reactions["actions"].get(ADDITIVE_ACTION)
+            # The scope of the additive fragment: 2 or more (the client reads the time of such a scope from scopeTimeBlobEx, client
+            # code 0x2A2ACD0; the time fields of scope 1 are not known). Scope 0 is the full body: no additive reaction.
+            if additive is not None and additive["table"] and 2 <= additive["scope"] < 16:
+                member = self.table_member(additive, reactions["positions"], databases, reaction_tags)
+                member["action"] = additive["index"]
+                member["scope"] = additive["scope"]
+                result["additive"] = member
+                self.reaction_table_counts["additive"] += 1
         if rows is None:
             result["noAttack"] = "the slice names no damage table"
             return result
@@ -964,7 +1117,18 @@ class Behavior:
                                  row["type"], wire, category, row["id"], rounded(row["charge"])])
             if not usable or not contacts:
                 continue
-            attacks.append([index, rounded(min(self.attack_length(chosen, contacts[-1][0]), LONGEST_ATTACK)), contacts])
+            attack = [index, rounded(min(self.attack_length(chosen, contacts[-1][0]), LONGEST_ATTACK)), contacts]
+            # Stage U3 (Q1): the Homing clips of the selected variant (the variant of the creature in its own database). The server moves
+            # and turns the creature by them (the client does not: live check LC-Q1-2). No clip: no member (the old form).
+            homing, cause = homing_member(chosen["homing"] if chosen is not None else [])
+            if homing is None:
+                self.homing_counts["leftOut"] += 1
+            elif homing:
+                attack.append(homing)
+                self.homing_counts["attacks"] += 1
+                self.homing_counts["clips"] += len(homing)
+                self.homing_counts["moving"] += sum(1 for row in homing if row[2] == 1)
+            attacks.append(attack)
         if attacks:
             result["attacks"] = attacks
         # The variant of a ranged attack: the tags of the weapons and the default tags of the slice (stage 3.4f-A, research

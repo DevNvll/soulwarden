@@ -35,6 +35,13 @@ file of the case "upgrade"):
   objective-conflict    a second artifact (a made-up ring) with an objective of the same achievement and a different bit: status 1, the
                         old file stays (finding B0-R5)
 
+The cases of stage U3 (the weight of the bag: the WeightOverride of the stats row of a weapon or an armor item; live check of the
+inventory screen of the client):
+
+  weight                a rapier (Weight 40, override 25), gloves (Weight 30, override 26.76: 26, cut), an axe (override 79.99999 of a
+                        float32: 80), a ring with the override 0 (its Weight 1), and an ore with no stats row (Weight 7)
+  weight-missing        a stats table with no column WeightOverride: status 1, the old file stays
+
 Usage: check_item_catalog_tool.py FOLDER [CASE ...]
 Status 0: each case has the expected result. Each line starts with "ok" or "FAIL".
 """
@@ -57,6 +64,9 @@ from check_ability_tool import FakeSheet  # noqa: E402
 OLD_FILE = "old file\n"
 SOURCE_CASES = ("missing-nonremovable", "missing-notdroppable", "invalid-flag", "store-table")
 UPGRADE_CASES = ("upgrade-invalid", "upgrade-missing", "objective-broken", "objective-bit-limit", "objective-conflict")
+WEIGHT_CASES = ("weight", "weight-missing")
+# The made-up items of the cases of stage U3 and their expected weights (tenths).
+WEIGHTS = {"ReviewRapier": 25, "ReviewGloves": 26, "ReviewAxe": 80, "ReviewRing": 1, "ReviewOre": 7}
 # The made-up items and rows of the cases of stage B0 (the ids of the backend case BP1).
 UPGRADE_BOW = "ReviewArtifactBow"
 PLAIN_RING = "ReviewPlainRing"
@@ -181,6 +191,39 @@ def upgrade_case(folder: Path, case: str) -> tuple[bool, str]:
     return passed, f"status {status}, format {document.get('format')}, upgrades {upgrades}, objectives {objectives}; the file {target.name}"
 
 
+def weight_case(folder: Path, case: str) -> tuple[bool, str]:
+    """A case of stage U3. @return Passed, and the detail."""
+    rows = [master_row("ReviewRapier", "Weapon", "EquippableMainHand+Weapon+Rapier", 1, Weight=40, ItemStatsRef="ReviewRapierStats"),
+            master_row("ReviewGloves", "Armor", "EquippableHands+Armor+Medium", 1, Weight=30, ItemStatsRef="reviewglovesstats"),
+            master_row("ReviewAxe", "Weapon", "EquippableTwoHand+Weapon+GreatAxe", 1, Weight=80, ItemStatsRef="ReviewAxeStats"),
+            master_row("ReviewRing", "Armor", "EquippableRing+Jewelry", 1, Weight=1, ItemStatsRef="ReviewRingStats"),
+            master_row("ReviewOre", "Resource", "Resource", 100, Weight=7, ItemStatsRef="")]
+    for row in rows:
+        row.update(Nonremovable=False, NotDroppable=False)
+    weapons = [{"WeaponID": "ReviewRapierStats", "WeightOverride": 25.0}, {"WeaponID": "ReviewAxeStats", "WeightOverride": 79.99999}]
+    armor = [{"WeaponID": "ReviewGlovesStats", "WeightOverride": 26.758445}, {"WeaponID": "ReviewRingStats", "WeightOverride": 0.0}]
+    if case == "weight-missing":
+        armor = [{"WeaponID": row["WeaponID"]} for row in armor]
+    sheets = {"ReviewItems": FakeSheet("ReviewItems", rows), "ReviewWeapons": FakeSheet("ReviewWeapons", weapons),
+              "ReviewArmor": FakeSheet("ReviewArmor", armor)}
+    kinds = {"ReviewItems": tool.MASTER_TYPE, "ReviewWeapons": "WeaponItemDefinitions", "ReviewArmor": "ArmorItemDefinitions"}
+    for name in tool.HOUSE_TABLES:
+        sheets[name] = FakeSheet(name, [{"HouseItemID": "DEFAULTS"}])
+        kinds[name] = tool.HOUSE_TYPE
+    target = folder / f"item-catalog-{case}.json"
+    target.write_text(OLD_FILE, encoding="utf-8")
+    status = run_sheets(target, sheets, kinds)
+    kept = target.read_text(encoding="utf-8") == OLD_FILE
+    if case != "weight":
+        return status == 1 and kept, f"status {status}, the old file {'stays' if kept else 'was replaced'}"
+    if kept:
+        return False, f"status {status}, no file"
+    document = json.loads(target.read_text(encoding="utf-8"))
+    column = document["columns"].index("weight")
+    weights = {row[0]: row[column] for row in document["items"]}
+    return status == 0 and weights == WEIGHTS, f"status {status}, the weights {weights}"
+
+
 def run_tool(target: Path, rows: list[dict], table: str = "ReviewItems") -> int:
     """Runs the main function of the tool with one made-up master table (and the two house tables) into `target`. @return Its status."""
     sheets = {table: FakeSheet(table, rows)}
@@ -235,7 +278,7 @@ def main() -> int:
         return 2
     folder = Path(sys.argv[1])
     folder.mkdir(parents=True, exist_ok=True)
-    cases = sys.argv[2:] or ["protections", "control", *SOURCE_CASES, "upgrade", *UPGRADE_CASES]
+    cases = sys.argv[2:] or ["protections", "control", *SOURCE_CASES, "upgrade", *UPGRADE_CASES, *WEIGHT_CASES]
     document = catalog()
     found = protections(document)
     failures = 0
@@ -257,6 +300,8 @@ def main() -> int:
             passed, detail = source_case(folder, case)
         elif case == "upgrade" or case in UPGRADE_CASES:
             passed, detail = upgrade_case(folder, case)
+        elif case in WEIGHT_CASES:
+            passed, detail = weight_case(folder, case)
         else:
             passed, detail = False, "not a case of this check"
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")

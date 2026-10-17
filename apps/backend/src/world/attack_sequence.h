@@ -98,6 +98,13 @@ struct AttackBits {
      * stay. True with no stamina system (a test of the sequence alone).
      */
     bool dodgeAllowed{true};
+    /**
+     * Stage U3 (research Q4; game data: Not Prevent_Attack of Attack_Start_Charge, the condition IfEncumbered immobilized="true"): a press
+     * at rest can start an attack. False: the bag of the character is over 1.5 x its weight limit (the combat system sets it from
+     * Inventory::encumbrance); the client shows "Overencumbered - Cannot attack" and plays no swing. The chain of a swing that plays has no
+     * weight test in the data: it stays.
+     */
+    bool attackAllowed{true};
 };
 
 /**
@@ -252,6 +259,8 @@ struct SequenceCounts {
     std::uint64_t paymentsWithCondition{0};
     /** The items of a fragment of an ability that waited for their due time on the world clock (finding M2-R1). */
     std::uint64_t delayedEvents{0};
+    /** Stage U3: the presses at rest that started no attack (the bag over 1.5 x its weight limit). */
+    std::uint64_t overencumbered{0};
     std::uint64_t ends[kSequenceEndCount]{};
 };
 

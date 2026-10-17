@@ -156,6 +156,11 @@ struct EquipLoadData {
     /** The part of the damage (EquipLoadDamageMult*) and the factor of the heal (EquipLoadHealMult*) of each load. */
     std::array<float, 3> damage{};
     std::array<float, 3> heal{1.0F, 1.0F, 1.0F};
+    /**
+     * Stage U3 (research Q4; game data: EncumbranceBaseMax of the row Player): the limit of the weight of the bag (tenths). The default
+     * is the value of the supported build, for a file of a tool from before stage U3.
+     */
+    float encumbranceMax{2000.0F};
 };
 
 /** The data as plain values: the content of the file, and what a test sets. */

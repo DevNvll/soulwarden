@@ -175,6 +175,29 @@ inline constexpr std::uint32_t kGiveLimit = 100000;
  */
 [[nodiscard]] std::vector<state::ItemRow> start_items(const gamedata::ItemCatalog& catalog, std::string_view backstory);
 
+/**
+ * The weight of the bag of a character against its limit (stage U3, research creature-combat-feel.md Q4). The client computes the
+ * weight itself (client code 0x48C7530: Weight x quantity of each slot of the bag, not of the paperdoll) and the limit (0x48D1830: the base
+ * EncumbranceBaseMax of the row Player and the server field Bonus Max Encumbrance, which the backend does not send: 0). Encumbered
+ * (0x48D7170): the limit is not negative and below the weight. No state or status carries it.
+ */
+struct Encumbrance {
+    /** The weight of the bag and the limit, in tenths (the screen shows them / 10: 200.0). */
+    std::uint64_t current{0};
+    float max{0.0F};
+    /** Over the limit: no ability, no dodge (and no sprint, no jump: the client). */
+    bool encumbered{false};
+    /** Over 1.5 x the limit (the Encumbrance Immobilization Modifier): also no light or heavy attack from rest. */
+    bool overencumbered{false};
+};
+
+/**
+ * The Encumbrance Immobilization Modifier (game data: sharedassets/genericassets/playerbaseattributes.pbadb, PlayerAttributeData; the
+ * condition IfEncumbered immobilized="true" of the player action lists takes it, client code 0x2C0EB40). A code constant with the value of
+ * the data: the tools have no reader of that file (research Q4).
+ */
+inline constexpr float kEncumbranceImmobilized = 1.5F;
+
 class Inventory {
 public:
     /** @param catalog The item catalog, or null: then the system gives no item. */
@@ -200,6 +223,13 @@ public:
 
     /** @return The bag, the equipment, and the coin of a character, or no value when the store does not have the character. */
     [[nodiscard]] std::optional<Holdings> holdings(const std::string& characterId);
+
+    /**
+     * @return The weight of the bag of a character against its limit (stage U3; Encumbrance): the catalog weight x the quantity of each
+     *         slot of the bag; the limit of the perk data (EncumbranceBaseMax, 2000 with no file). The test of a limit is `weight > max x
+     *         scale` (research Q4: the HUD and 0x48D7170). No catalog: never encumbered.
+     */
+    [[nodiscard]] Encumbrance encumbrance(const Entity& entity) const;
 
     /**
      * Gives a quantity of an item to a character. The quantity goes to the stacks of the item

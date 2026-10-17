@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 
 #include "core/logging/log.h"
@@ -240,6 +241,10 @@ const char* cast_verdict_text(CastVerdict verdict) {
         return "the character has less mana than the cost";
     case CastVerdict::aimChanged:
         return "the place of the bar has a different ability than the aim";
+    case CastVerdict::encumbered:
+        return "the bag of the character is over its weight limit (encumbered)";
+    case CastVerdict::switching:
+        return "the switch of the weapon holds the abilities";
     }
     return "unknown";
 }
@@ -692,6 +697,19 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     if (press.locked) {
         return refuse(CastVerdict::locked);
     }
+    // Stage U3 (research Q4, live check LW2): the client plays no ability with its bag over the weight limit. The press does not close the
+    // earlier cast and keeps the aim (the client plays nothing).
+    if (m_world.inventory().encumbrance(*character).encumbered) {
+        reopen();
+        keep_aim();
+        return refuse(CastVerdict::encumbered);
+    }
+    // Stage U3 (research Q6, live check SW-L2): the switch of a weapon holds each ability of the client.
+    if (session != 0 && Combat::switching(*character)) {
+        reopen();
+        keep_aim();
+        return refuse(CastVerdict::switching);
+    }
     // The ability of the key: the place of the bar of the weapon in the hand.
     const ItemInstance* item = Combat::weapon_in_hand(*character);
     const gamedata::WeaponRow* weapon = item != nullptr ? m_combat->weapon_of(item->itemId) : nullptr;
@@ -1000,6 +1018,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     cast.itemId = item->itemId;
     cast.slot = Combat::weapon_slot_in_hand(*character).value_or(0);
     cast.gearScore = item->gearScore;
+    cast.weaponKey = Combat::weapon_key(*character);
     if (const std::optional<Conversion> conversion = m_world.gear().conversion(*item, cast.slot)) {
         cast.conversionType = conversion->type;
         cast.conversionPart = conversion->part;
@@ -1219,12 +1238,20 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
         }
     }
     if (volley != nullptr) {
+        // An item in the lock of the session (the loading screen of a travel) is no shot, and it changes nothing of the volley (code review of
+        // stage B1, finding B1-R1).
+        if (shot.locked) {
+            ++m_counts.volleyRefused;
+            return;
+        }
         // The shot is a claim of the client: an origin far from the character, or with a wall between, is the launch place of the server;
-        // a direction that is not a direction is the direction of the press.
+        // a direction that is not a direction is the direction of the press. The wall test is on the real segment from the launch place to
+        // the origin (Navigation::line_stop, as for a basic shot; code review of stage B1, finding B1-R9: the eye height of `sees` took
+        // the line above a low wall).
         state::WorldPosition launch = own->position;
         launch.z += 1.5F;
         state::WorldPosition origin = shot.origin;
-        if (!valid_position(origin) || distance3(origin, own->position) > kShotOrigin || !m_world.navigation().sees(launch, origin)) {
+        if (!valid_position(origin) || distance3(origin, own->position) > kShotOrigin || m_world.navigation().line_stop(launch, origin)) {
             origin = launch;
         }
         std::array<float, 3> direction = shot.direction;
@@ -1235,8 +1262,7 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
         } else {
             direction = {direction[0] / size, direction[1] / size, direction[2] / size};
         }
-        volley->lastShotInput = shot.input;
-        volley_shot(*volley, index, origin, direction);
+        volley_shot(*volley, index, origin, direction, shot.input);
         return;
     }
     const Entity* character = own;
@@ -1379,6 +1405,13 @@ bool Abilities::resolve_volley(CastPlan& plan, const Entity& character, std::str
         }
         return clipRow;
     };
+    // Each shot must be launchable with the weapon of the cast: the attack of its rule in its profile, and a projectile slice with a speed (the
+    // slice of the rule, or of the default ammunition of the weapon for a clip: Projectiles::spell_slice, the rule of launch_spell). Else the
+    // press is refused before the cooldown (code review of stage B1, finding B1-R6: a DefaultArrow with no slice gave a cooldown and no arrow).
+    const auto launchable = [&](const gamedata::ShotRule& rule) {
+        return projectiles->attack(rule.profile, gamedata::progression_id(rule.attack)) != nullptr
+               && m_world.projectiles().spell_slice(rule, weapon) != nullptr;
+    };
     VolleyPlan& volley = *plan.volley;
     volley.shots.clear();
     for (const gamedata::ActionClip& clip : action->clips) {
@@ -1387,9 +1420,15 @@ bool Abilities::resolve_volley(CastPlan& plan, const Entity& character, std::str
         shot.attack = clip.attack;
         shot.clipRow = clip.row;
         shot.row = row_of(clip.row);
-        if (projectiles->ability_clip(ranged->profile, gamedata::progression_id(clip.attack), gamedata::progression_id(clip.row)) == nullptr
-            || !m_combat->row_index(shot.row)) {
+        const gamedata::ShotRule* rule =
+            projectiles->ability_clip(ranged->profile, gamedata::progression_id(clip.attack), gamedata::progression_id(clip.row));
+        if (rule == nullptr || !m_combat->row_index(shot.row)) {
             missing = "clip " + clip.attack + " (" + shot.row + ") of " + action->action;
+            return false;
+        }
+        if (!launchable(*rule)) {
+            missing = "launchable projectile slice (the slice of the default ammunition of the weapon, with a speed) of the clip " + clip.attack
+                      + " of " + action->action;
             return false;
         }
         volley.shots.push_back(std::move(shot));
@@ -1403,6 +1442,10 @@ bool Abilities::resolve_volley(CastPlan& plan, const Entity& character, std::str
         const gamedata::SpellRow* spell = m_data->spell(cast.spell);
         if (rule == nullptr || spell == nullptr || !m_combat->row_index(rule->row)) {
             missing = "projectile spell " + cast.spell + " of " + action->action;
+            return false;
+        }
+        if (!launchable(*rule)) {
+            missing = "launchable projectile slice (with a speed) of the projectile spell " + cast.spell + " of " + action->action;
             return false;
         }
         ShotPlan shot;
@@ -1424,10 +1467,13 @@ bool Abilities::resolve_volley(CastPlan& plan, const Entity& character, std::str
                 missing = "explosion (SecondarySpellID " + std::string(secondary) + " and the offense of its slice in the spell data) of " + cast.spell;
                 return false;
             }
+            // The radius of the area is the radius of that offense, with its row (code review of stage B1, finding B1-R7: the area took the
+            // Radius of the spell row; the game data has the same values: 2.5 m and 1.25 m).
             for (PhasePlan& phase : plan.phases) {
                 if (phase.kind == PhaseKind::burst) {
                     phase.spell = std::string(m_data->spell(secondary)->id);
                     phase.row = offense->row;
+                    phase.radius = offense->radius;
                 }
             }
         }
@@ -1441,24 +1487,47 @@ bool Abilities::resolve_volley(CastPlan& plan, const Entity& character, std::str
 }
 
 std::optional<std::size_t> Abilities::volley_next(const Cast& cast, std::uint32_t attack, std::uint32_t row, std::uint16_t input) const {
-    if (!cast.plan.volley || cast.shotsTaken >= cast.plan.volley->shots.size()) {
+    if (!cast.plan.volley || cast.shotsClosed) {
         return std::nullopt;
     }
-    const ShotPlan& next = cast.plan.volley->shots[cast.shotsTaken];
-    // The attack of the item, and the row of a clip (a projectile spell has the row 0 on the wire: live check of stage 3.3b-S3).
-    if (gamedata::progression_id(next.attack) != attack || (next.spell.empty() ? gamedata::progression_id(next.clipRow) : 0U) != row) {
+    // One shot for each input step: an item of the input step of a shot that flew is not a new shot (a repeated item, a second item of the step).
+    if (std::find(cast.shotInputs.begin(), cast.shotInputs.end(), input) != cast.shotInputs.end()) {
         return std::nullopt;
     }
-    // One shot for each input step: a second item of the step of the last shot is not a new shot (a repeated item).
-    if (cast.lastShotInput && *cast.lastShotInput == input) {
-        return std::nullopt;
+    const WorldClock::time_point now = m_world.clock().now();
+    const WorldClock::time_point begun = cast.started + cast.plan.delay;
+    // The input step of the item from the press (the client counts kStepsInSecond steps in one second; the numbers wrap at 65536).
+    const auto steps = static_cast<long long>(static_cast<std::int16_t>(static_cast<std::uint16_t>(input - cast.input)));
+    const std::vector<ShotPlan>& shots = cast.plan.volley->shots;
+    std::optional<std::size_t> best;
+    long long bestAway = 0;
+    for (std::size_t index = 0; index < shots.size(); ++index) {
+        // Each shot of the plan one time; a shot that did not come does not block a later one (code review of stage B1, finding B1-R2).
+        if (index < cast.shotsDone.size() && cast.shotsDone[index]) {
+            continue;
+        }
+        const ShotPlan& shot = shots[index];
+        // The attack of the item, and the row of a clip (a projectile spell has the row 0 on the wire: live check of stage 3.3b-S3).
+        if (gamedata::progression_id(shot.attack) != attack || (shot.spell.empty() ? gamedata::progression_id(shot.clipRow) : 0U) != row) {
+            continue;
+        }
+        // Not before the time of the clip on the world clock (less ability_rules::kShotEarly), and not after the end of the action of the cast
+        // (plus ability_rules::kShotLate; code review of stage B1, finding B1-R1).
+        const WorldClock::time_point due = begun + shot.at;
+        const WorldClock::time_point latest = begun + std::max(shot.at, cast.plan.length) + ability_rules::kShotLate;
+        if (now + ability_rules::kShotEarly < due || now > latest) {
+            continue;
+        }
+        // Two open shots with the same attack and row (the two Standard arrows of Rapid Shot): the item takes the shot whose time is nearest
+        // to its input step.
+        const long long expected = std::lround(std::chrono::duration<double>(cast.plan.delay + shot.at).count() * ability_rules::kStepsInSecond);
+        const long long away = std::llabs(steps - expected);
+        if (!best || away < bestAway) {
+            best = index;
+            bestAway = away;
+        }
     }
-    // Not before the time of the clip on the world clock (less ability_rules::kShotEarly).
-    const WorldClock::time_point due = cast.started + cast.plan.delay + next.at;
-    if (m_world.clock().now() + ability_rules::kShotEarly < due) {
-        return std::nullopt;
-    }
-    return cast.shotsTaken;
+    return best;
 }
 
 Abilities::Cast* Abilities::volley_cast(SessionId session, const std::string& characterId, std::uint32_t attack, std::uint32_t row,
@@ -1471,6 +1540,11 @@ Abilities::Cast* Abilities::volley_cast(SessionId session, const std::string& ch
     if (found == m_casts.end() || found->second.session != session || !found->second.plan.volley) {
         return nullptr;
     }
+    // The weapon of the cast (its slot and its instance) must be in the hand (code review of stage B1, finding B1-R1).
+    const Entity* caster = m_world.find(found->second.caster);
+    if (caster == nullptr || !holds_cast_weapon(found->second, *caster)) {
+        return nullptr;
+    }
     const std::optional<std::size_t> next = volley_next(found->second, attack, row, input);
     if (!next) {
         return nullptr;
@@ -1479,11 +1553,26 @@ Abilities::Cast* Abilities::volley_cast(SessionId session, const std::string& ch
     return &found->second;
 }
 
-void Abilities::volley_shot(Cast& cast, std::size_t index, const state::WorldPosition& origin, const std::array<float, 3>& direction) {
-    if (!cast.plan.volley || index >= cast.plan.volley->shots.size() || index != cast.shotsTaken) {
+void Abilities::volley_shot(Cast& cast, std::size_t index, const state::WorldPosition& origin, const std::array<float, 3>& direction,
+                            std::optional<std::uint16_t> input) {
+    if (!cast.plan.volley || index >= cast.plan.volley->shots.size() || cast.shotsClosed) {
         return;
     }
+    cast.shotsDone.resize(cast.plan.volley->shots.size(), false);
+    if (cast.shotsDone[index]) {
+        return;
+    }
+    // The weapon of the cast must be in the hand, also for a shot of the server (code review of stage B1, finding B1-R1).
+    const Entity* holder = m_world.find(cast.caster);
+    if (holder == nullptr || !holds_cast_weapon(cast, *holder)) {
+        close_volley(cast, "the weapon of the cast is not in the hand");
+        return;
+    }
+    cast.shotsDone[index] = true;
     ++cast.shotsTaken;
+    if (input) {
+        cast.shotInputs.push_back(*input);
+    }
     const ShotPlan& plan = cast.plan.volley->shots[index];
     const gamedata::ProjectileData* projectiles = m_world.options().projectileData;
     const gamedata::WeaponRow* weapon = m_combat->weapon_of(cast.itemId);
@@ -1596,10 +1685,39 @@ void Abilities::throw_spell(Cast& cast, const state::WorldPosition& origin, cons
 }
 
 void Abilities::cancel_aim(const std::string& characterId) {
+    end_aim(characterId, "a change of its bar, its nodes, or its place");
+}
+
+void Abilities::died(const Entity& character) {
+    end_aim(character.characterId, "its death");
+}
+
+void Abilities::end_aim(const std::string& characterId, const char* why) {
     const auto known = m_characters.find(characterId);
-    if (known != m_characters.end() && known->second.aim) {
+    if (known == m_characters.end()) {
+        return;
+    }
+    if (known->second.aim) {
         known->second.aim.reset();
-        log::write("world: ability: the aim of character %s ends (a change of its bar, its nodes, or its place)", characterId.c_str());
+        log::write("world: ability: the aim of character %s ends (%s)", characterId.c_str(), why);
+    }
+    // The shots of the volley of the cast that did not fly end with the action (code review of stage B1, findings B1-R1 and B1-R3).
+    if (known->second.cast) {
+        if (const auto found = m_casts.find(*known->second.cast); found != m_casts.end()) {
+            close_volley(found->second, why);
+        }
+    }
+}
+
+void Abilities::close_volley(Cast& cast, const char* why) {
+    if (!cast.plan.volley || cast.shotsClosed) {
+        return;
+    }
+    cast.shotsClosed = true;
+    const std::size_t open = cast.plan.volley->shots.size() - std::min(cast.shotsTaken, cast.plan.volley->shots.size());
+    if (open > 0) {
+        log::write("world: ability: the volley of %s of character %s ends (%s): %zu shot(s) that did not fly do not fly", ability_name(cast.plan.kind),
+                   cast.characterId.c_str(), why, open);
     }
 }
 
@@ -2130,19 +2248,22 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
     // capsule reaches into its sphere: the query reaches the largest capsule of the creature data farther.
     std::vector<std::pair<float, EntityId>> found_;
     const float reach = phase.bodies ? m_world.projectiles().capsule_reach() : 0.0F;
-    m_world.for_each_near(center, spell->radius + reach, [&](Entity& entity) {
+    // The radius of the offense of the slice when the plan has it (the explosion of Explosive Arrow; code review of stage B1, finding B1-R7),
+    // else the radius of the spell row.
+    const float radius = phase.radius.value_or(spell->radius);
+    m_world.for_each_near(center, radius + reach, [&](Entity& entity) {
         ++m_counts.areaLooked;
         if (entity.kind != EntityKind::creature || entity.creature.dead || std::fabs(entity.position.z - center.z) > height) {
             return;
         }
         if (phase.bodies) {
             const float away = capsule_distance(capsule_of(entity), center);
-            if (away <= spell->radius) {
+            if (away <= radius) {
                 found_.emplace_back(away, entity.id);
             }
             return;
         }
-        if (horizontal_distance(entity.position, center) <= spell->radius) {
+        if (horizontal_distance(entity.position, center) <= radius) {
             found_.emplace_back(horizontal_distance(entity.position, center), entity.id);
         }
     });
@@ -2189,7 +2310,7 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
                static_cast<double>(center.x),
                static_cast<double>(center.y),
                static_cast<double>(center.z),
-               static_cast<double>(spell->radius),
+               static_cast<double>(radius),
                found_.size(),
                hits);
 }
@@ -2452,8 +2573,10 @@ void Abilities::change_mana(Entity& character, float amount, const char* what) {
 }
 
 bool Abilities::holds_cast_weapon(const Cast& cast, const Entity& character) const {
+    // The slot and the instance of the weapon (code review of stage B1, finding B1-R5: the item id and the slot alone took a different
+    // instance of the same rapier for the weapon of the cast).
     const ItemInstance* item = Combat::weapon_in_hand(character);
-    return item != nullptr && item->itemId == cast.itemId && Combat::weapon_slot_in_hand(character).value_or(0) == cast.slot;
+    return item != nullptr && item->itemId == cast.itemId && Combat::weapon_key(character) == cast.weaponKey;
 }
 
 void Abilities::weapon_changed(Entity& character) {
@@ -2467,7 +2590,15 @@ void Abilities::weapon_changed(Entity& character) {
         return;
     }
     const auto found = m_casts.find(*state->second.cast);
-    if (found == m_casts.end() || found->second.plan.window.empty() || found->second.countered || holds_cast_weapon(found->second, character)) {
+    if (found == m_casts.end()) {
+        return;
+    }
+    // The shots of a volley that did not fly end with the weapon of its cast (code review of stage B1, finding B1-R1). A projectile that flies
+    // already flies on.
+    if (found->second.plan.volley && !holds_cast_weapon(found->second, character)) {
+        close_volley(found->second, "a change of the weapon");
+    }
+    if (found->second.plan.window.empty() || found->second.countered || holds_cast_weapon(found->second, character)) {
         return;
     }
     // The window of a counter ends with the weapon of its cast (finding F2 of the review of stage 3.3b-S4).

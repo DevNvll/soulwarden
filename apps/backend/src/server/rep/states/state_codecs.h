@@ -436,8 +436,13 @@ struct CreatureScope {
     const world::CreatureAction* action{nullptr};
     /** True: the record has the time 0 (the spawn action of a first record). */
     bool fromStart{false};
-    /** The key of this scope for the comparison with the key that the session sent last: kScopeNone or the start count. */
+    /**
+     * The key of this scope for the comparison with the key that the session sent last: kScopeNone or the start count (bit 16 and bits 0
+     * to 15), and the start count of an additive reaction that plays (bit 31 and bits 17 to 30; stage U3).
+     */
     std::uint32_t key{kScopeNone};
+    /** The additive reaction that plays (stage U3): a record in its own scope. Null: none. */
+    const world::CreatureAdditive* additive{nullptr};
 };
 
 /**

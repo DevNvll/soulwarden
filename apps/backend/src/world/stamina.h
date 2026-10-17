@@ -83,8 +83,13 @@ enum class DodgeVerdict : std::uint8_t {
     noStamina,
     /** A dodge plays and the press is not in a window CanDodgeCancel of its fragment. */
     dodging,
+    /**
+     * Stage U3 (research Q4; game data: Not IfEncumbered of the actions Dodge, Dodge_Stunlock and of CanDodgeCancel): the bag of the
+     * character is over its weight limit (Inventory::encumbrance). The client plays no dodge ("Encumbered - Cannot run, dodge, or jump").
+     */
+    encumbered,
 };
-inline constexpr std::size_t kDodgeVerdictCount = 9;
+inline constexpr std::size_t kDodgeVerdictCount = 10;
 
 /** @return A short text for a log line, for example "the character is exhausted". */
 [[nodiscard]] const char* dodge_verdict_text(DodgeVerdict verdict);

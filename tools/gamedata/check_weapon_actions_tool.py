@@ -57,6 +57,8 @@ BODY = """<AnimDB><FragmentList>
   <ProcLayer><Blend ExitTime="0"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="CanDodgeCancel"/></ProceduralParams></Procedural>
    <Blend ExitTime="0.2666"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="CanDodgeBuffer"/></ProceduralParams></Procedural>
    <Blend ExitTime="0.3667"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="CanTransition"/></ProceduralParams></Procedural></ProcLayer>
+  <ProcLayer><Blend ExitTime="0.4"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="CanUnsheathe_Buffer"/></ProceduralParams></Procedural>
+   <Blend ExitTime="0.2"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="CanUnsheathe"/></ProceduralParams></Procedural></ProcLayer>
   <ProcLayer><Blend ExitTime="0"/><Procedural type="PayStaminaCost"><ProceduralParams><CostID value="Test_Cost"/><CostMultiplier value="1"/><Condition value="Test_Stance_Active"/></ProceduralParams></Procedural></ProcLayer>
  </Fragment>
  <Fragment Tags="2H_Melee"><AnimLayer/><ProcLayer><Blend ExitTime="0.1"/><Procedural type="CAGE-Damage"><ProceduralParams><DamageKey value="x"/><DamageTableRow value="Generic_Row"/></ProceduralParams></Procedural></ProcLayer></Fragment>
@@ -208,6 +210,8 @@ def main() -> int:
           and clips == [["2H_Melee+TestAxe", "Attack_Primary", "atk3", "Test_Odd", "the condition TestStateCondition is not an AND of node tests"]]
           and primary["payments"] == [[0.0, "stamina", "Test_Cost", 1.0, "Test_Stance_Active"]]
           and primary["dodge"] == [[0.0, 0.2666, False], [0.2666, 0.6333, True]] and primary["canTransition"] == 0.6333
+          # Stage U3: the switch marks [the buffer CanUnsheathe_Buffer, the first of CanUnsheathe and CanTransition]; none: -1.
+          and primary["switch"] == [0.4, 0.6] and by_name["Attack_Start_Charge"]["switch"] == [-1.0, -1.0]
           and primary["transitions"][0][:5] == ["buffered", 0.333333, 0.666667, "virtual", "Attack_Start_Charge_C2"]
           and primary["transitions"][0][6] is None)
     results.append(("graph", ok, f"fragments {list(by_name)}, not exported {not_exported}, strikes {sorted(strikes)}, clips not exported {len(clips)}"))

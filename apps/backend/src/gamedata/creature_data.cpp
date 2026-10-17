@@ -273,6 +273,95 @@ bool read_status_action(const json& row, CreatureStatusAction& action) {
     return true;
 }
 
+/** Reads a flag of the tool: 0 or 1. */
+bool read_flag(const json& value, bool& flag) {
+    std::uint32_t number = 0;
+    if (!read_number(value, number) || number > 1) {
+        return false;
+    }
+    flag = number == 1;
+    return true;
+}
+
+/**
+ * Reads one Homing clip of an attack (stage U3): [start, duration (-1: to the end), MoveToTarget, MoveToDistance, MoveToDuration,
+ * MoveToVelocity, MaxMoveDistance, TurnRate, UseExponential, Radius, MaxAngle, Height, LockInitialTargetPos,
+ * AllowMovementAfterReachingTargetPos, AllowUpwardsMovement, UseRadiusforAITarget, AllowRotationAfterReachingTargetAngle]. A start or a
+ * distance below 0 and a duration below 0 that is not -1 are faults of the file. The data has exponential clips with a TurnRate above 1
+ * (1080, 3.0: 169 slices): the turn takes the whole angle (world/attack_motion.cpp).
+ */
+bool read_homing(const json& row, HomingClip& clip) {
+    if (!row.is_array() || row.size() != 17 || !read_real(row[0], clip.start) || !read_real(row[1], clip.duration)
+        || !read_flag(row[2], clip.moveToTarget) || !read_real(row[3], clip.moveToDistance) || !read_real(row[4], clip.moveToDuration)
+        || !read_real(row[5], clip.moveToVelocity) || !read_real(row[6], clip.maxMoveDistance) || !read_real(row[7], clip.turnRate)
+        || !read_flag(row[8], clip.exponential) || !read_real(row[9], clip.radius) || !read_real(row[10], clip.maxAngle)
+        || !read_real(row[11], clip.height) || !read_flag(row[12], clip.lockTarget) || !read_flag(row[13], clip.moveAfterTarget)
+        || !read_flag(row[14], clip.upwards) || !read_flag(row[15], clip.useRadius) || !read_flag(row[16], clip.turnAfterTarget)) {
+        return false;
+    }
+    return clip.start >= 0.0F && (clip.duration >= 0.0F || clip.duration == -1.0F) && clip.moveToDistance >= 0.0F
+           && clip.moveToDuration >= 0.0F && clip.moveToVelocity >= 0.0F && clip.maxMoveDistance >= 0.0F && clip.turnRate >= 0.0F
+           && clip.radius >= 0.0F && clip.maxAngle >= 0.0F && clip.height >= 0.0F;
+}
+
+/**
+ * Reads one reaction action of a slice (stage U3): {"rows": [[power, angles or null, fragment, length, hit stun, align, offset], ...],
+ * "motion": [[name, scale, push back], ...], "exit": seconds}. A power below -1 or above 9, a fragment below -1, an angle range that is
+ * not [min, max, tolerance] with min <= max, and a motion with no Default first are faults of the file.
+ */
+bool read_reaction_table(const json& entry, ReactionTable& table) {
+    if (!entry.is_object() || !entry.contains("rows") || !entry["rows"].is_array() || !entry.contains("motion")
+        || !entry["motion"].is_array() || entry["motion"].empty() || !entry.contains("exit") || !read_real(entry["exit"], table.exit)
+        || table.exit < 0.0F) {
+        return false;
+    }
+    for (const json& cell : entry["rows"]) {
+        ReactionRow row;
+        if (!cell.is_array() || cell.size() != 7 || !cell[0].is_number_integer() || !cell[2].is_number_integer()
+            || !read_real(cell[3], row.length) || !read_real(cell[4], row.hitStun) || !read_flag(cell[5], row.align)
+            || !read_real(cell[6], row.alignOffset)) {
+            return false;
+        }
+        const std::int64_t power = cell[0].get<std::int64_t>();
+        const std::int64_t fragment = cell[2].get<std::int64_t>();
+        if (power < -1 || power > 9 || fragment < -1 || fragment > kMaxFragmentIndex
+            || (row.length != -1.0F && (row.length <= 0.0F || row.length > kLongestReaction)) || (row.hitStun != -1.0F && row.hitStun < 0.0F)) {
+            return false;
+        }
+        row.power = static_cast<std::int32_t>(power);
+        row.fragment = static_cast<std::int32_t>(fragment);
+        if (!cell[1].is_null()) {
+            if (!cell[1].is_array() || cell[1].empty()) {
+                return false;
+            }
+            for (const json& range : cell[1]) {
+                AngleRange angles;
+                if (!range.is_array() || range.size() != 3 || !read_real(range[0], angles.min) || !read_real(range[1], angles.max)
+                    || !read_real(range[2], angles.tolerance) || angles.min > angles.max || angles.tolerance < 0.0F) {
+                    return false;
+                }
+                row.angles.push_back(angles);
+            }
+        }
+        table.rows.push_back(std::move(row));
+    }
+    for (const json& cell : entry["motion"]) {
+        PushScale push;
+        if (!cell.is_array() || cell.size() != 3 || !cell[0].is_string() || !read_real(cell[1], push.scale) || !read_real(cell[2], push.pushBack)) {
+            return false;
+        }
+        push.name = cell[0].get<std::string>();
+        table.motion.push_back(std::move(push));
+    }
+    if (table.motion.front().name != "Default") {
+        return false;
+    }
+    for (const ReactionRow& row : table.rows) {
+        table.largestPower = std::max(table.largestPower, row.power);
+    }
+    return true;
+}
+
 /** Reads one projectile slice [path, asset, sub, root, slot, speed, extra, time for max, [accel], flying, stuck] (stage 3.4f-A). */
 bool read_projectile(const json& row, ProjectileSliceData& projectile) {
     std::string asset;
@@ -382,6 +471,24 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
             slice.reactionLengths[power] = static_cast<float>(length);
         }
     }
+    // Stage U3: the reaction table of the action Reaction and the additive reaction (its action and its scope). A file of an older tool
+    // has neither: the backend keeps the rule of user test 2.
+    if (entry.contains("reactionTable")) {
+        ReactionTable table;
+        if (!read_reaction_table(entry["reactionTable"], table)) {
+            return false;
+        }
+        slice.reactionTable = std::move(table);
+    }
+    if (entry.contains("additive")) {
+        AdditiveReaction additive;
+        const json& member = entry["additive"];
+        if (!read_reaction_table(member, additive) || !member.contains("action") || !read_number(member["action"], additive.action)
+            || !member.contains("scope") || !read_number(member["scope"], additive.scope) || additive.scope < 2 || additive.scope >= 16) {
+            return false;
+        }
+        slice.additive = std::move(additive);
+    }
     // The spawn action: a member of a slice that needs it. A member with a wrong form is a fault.
     if (entry.contains("spawnAction") && (!entry["spawnAction"].is_string() || entry["spawnAction"].get<std::string>().empty())) {
         return false;
@@ -468,10 +575,18 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
         for (const json& row : entry["attacks"]) {
             // [action, time, [[contact time, reach, factor, added, type, type number, category, row, hit rune charge], ...]]
             // A file of a tool from before stage 1.3b has no rune charge (8 values): a hit then gives no charge.
+            // Stage U3: a fourth member, the Homing clips of the fragment ([clip, ...]); a file of an older tool has none.
             CreatureAttack attack;
-            if (!row.is_array() || row.size() != 3 || !read_number(row[0], attack.action) || !read_real(row[1], attack.length)
-                || !row[2].is_array()) {
+            if (!row.is_array() || (row.size() != 3 && row.size() != 4) || !read_number(row[0], attack.action) || !read_real(row[1], attack.length)
+                || !row[2].is_array() || (row.size() == 4 && !row[3].is_array())) {
                 return false;
+            }
+            if (row.size() == 4) {
+                for (const json& cell : row[3]) {
+                    if (!read_homing(cell, attack.homing.emplace_back())) {
+                        return false;
+                    }
+                }
             }
             for (const json& cell : row[2]) {
                 CreatureContact contact;
@@ -576,6 +691,16 @@ bool read_kind(const json& entry, CreatureKind& kind) {
     if (entry.contains("damage") && !read_real(entry["damage"], kind.damageFactor)) {
         return false;
     }
+    // Stage U3: the marks of the buff buckets (a member only with the value true).
+    for (const auto& [key, mark] : {std::pair<const char*, bool*>{"promotedElite", &kind.promotedElite},
+                                    std::pair<const char*, bool*>{"noReactions", &kind.noReactions}}) {
+        if (entry.contains(key)) {
+            if (!entry[key].is_boolean()) {
+                return false;
+            }
+            *mark = entry[key].get<bool>();
+        }
+    }
     return true;
 }
 
@@ -660,6 +785,16 @@ std::optional<std::uint32_t> CreatureSlice::find_action(std::string_view name) c
         }
     }
     return std::nullopt;
+}
+
+const PushScale& ReactionTable::push(std::string_view name) const {
+    static const PushScale kDefault{"Default", 1.0F, 1.0F};
+    for (const PushScale& entry : motion) {
+        if (entry.name == name) {
+            return entry;
+        }
+    }
+    return motion.empty() ? kDefault : motion.front();
 }
 
 const CreatureSlice::Component* CreatureSlice::find(std::uint64_t group, std::uint64_t target) const {
@@ -1055,6 +1190,24 @@ bool CreatureData::check() {
                           + " has an attack whose action, time, or contacts do not fit together";
                 return false;
             }
+            // Stage U3: each value of a Homing clip is a finite number that is not negative (read_homing). The retail data has authored values
+            // with no upper limit that the backend can use (a TurnRate of 900400, an own duration of 66329 s, a MoveToDuration of 75 s on a
+            // clip that only turns, clips that start after the end of the attack of the tool): the file keeps them, and the world limits
+            // each step (the end of the attack ends the homing).
+            for (const HomingClip& clip : attack.homing) {
+                const auto finite = [](float value) { return std::isfinite(value) && value >= 0.0F; };
+                if (!finite(clip.start) || (clip.duration != -1.0F && !finite(clip.duration)) || !finite(clip.moveToDistance)
+                    || !finite(clip.moveToDuration) || !finite(clip.moveToVelocity) || !finite(clip.maxMoveDistance) || !finite(clip.turnRate)
+                    || !finite(clip.radius) || !finite(clip.maxAngle) || !finite(clip.height)) {
+                    m_error = "slice " + std::to_string(index) + " has a Homing clip with a value that is not a finite number of 0 or more";
+                    return false;
+                }
+            }
+        }
+        // Stage U3: the additive reaction names an action of the table with a fragment.
+        if (slice.additive && (slice.additive->action >= slice.actions.size() || slice.actions[slice.additive->action].fragmentIndex < 0)) {
+            m_error = "slice " + std::to_string(index) + " names an additive reaction whose action has no fragment";
+            return false;
         }
         // The ranged attacks (stage 3.4f-A): the action of the attack has a fragment, each release is in the time of its attack,
         // names a projectile slice of the file, and has values of their ranges. A release that does not fit is a fault of the file.

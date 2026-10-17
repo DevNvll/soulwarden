@@ -46,6 +46,8 @@ const char* dodge_verdict_text(DodgeVerdict verdict) {
         return "the character has no stamina";
     case DodgeVerdict::dodging:
         return "a dodge plays (not in a window CanDodgeCancel)";
+    case DodgeVerdict::encumbered:
+        return "the bag of the character is over its weight limit (encumbered)";
     }
     return "unknown";
 }
@@ -194,6 +196,9 @@ DodgeVerdict Stamina::start_checks(const Entity& character, bool locked) const {
     }
     if (load_of(character) == gamedata::LoadClass::overburdened) {
         return DodgeVerdict::overburdened;
+    }
+    if (m_world.inventory().encumbrance(character).encumbered) {
+        return DodgeVerdict::encumbered; // Stage U3: the bag over its weight limit (research Q4).
     }
     if (character.vitals.exhausted) {
         return DodgeVerdict::exhausted;

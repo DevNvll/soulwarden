@@ -19,6 +19,22 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 
 ## Rules
 
+- The homing of an attack (stage U3, research Q1; game data: the Procedural clips of the type Homing in the ProcLayer of each attack
+  fragment; client code 0x255A140, 0x2564160, 0x2565210, 0x25666A0; `world/attack_motion.h`, `Behavior::start_attack`). The client
+  applies a Homing clip only to its own character and puts a creature at the place of the server (live checks LC-Q1-1 and LC-Q1-2):
+  thus the server moves and turns the creature in the clips of its attack. A clip starts at the sum of the Blend ExitTime before it
+  and lasts to the ExitTime of the next Blend (-1: to the end of the attack). At its start the target must be in the wedge of the clip
+  (Radius, Height, MaxAngle), else the clip does nothing. The turn: TurnRate degrees each second, or 1 - (1 - TurnRate)^(30 dt) of the
+  angle with UseExponential (a rate above 1 counts as 1). The move with MoveToTarget: to MoveToDistance from the target, at most
+  MaxMoveDistance from the place at the start; u = min(t / MoveToDuration, 1), w = u^2 (3 - 2u), each step at most MaxMoveDistance /
+  MoveToDuration x dt. Steps of 50 ms on the line of the navigation (a wall ends the move); the record of the attack stays. The ends: the
+  clip, the end or the replacement of the attack, the death, the way back, a stun or a knockdown, and the push of a full reaction (the
+  push of an additive reaction adds to the homing). The log line at the end: `world: homing: creature ... moved 0.85 m in the attack
+  Attack_Bite (2 clip(s)): its clips ended`. Live (stage U3): before, a wolf bit from 1.6 m and its body came back to its place after
+  the bite, and a ghost swiped from 1.6 m and came back the same way; after, the wolf ends its bite near the character and the ghost
+  follows a side step of 1 m (homing 0.47 m to 1.36 m). The root motion of the animations (phase B of the research) is not done: the
+  client plays a remote lunge in place (LC-Q1-1). Test cases CF1 (the time rule, two sessions) and CF9 (the load: 200 homings in a world
+  of 4,200 creatures).
 - The behavior of a creature (protocol notes 4.17; project rules, in `world/behavior.h`, with
   each constant in the namespace `world::behavior_rules`). The game files give the values of
   a slice (the vision, the leash, the speeds, the attacks) and no rule. A creature at rest

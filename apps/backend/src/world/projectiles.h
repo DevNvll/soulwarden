@@ -429,6 +429,14 @@ public:
      * Shot): the slice and the damage modifier of the ammunition of an empty slot of the weapon (DefaultArrow), and a pierce.
      */
     ShotResult launch_spell(const SpellShot& shot);
+    /**
+     * @return The projectile slice of a shot of launch_spell with the weapon of a cast (code review of stage B1, finding B1-R6: the press of a
+     *         bow ability checks it before its cooldown): the slice of the rule, or for a ranged clip of an ability (slice -1) the slice of
+     *         the ammunition of an empty slot of the ammunition type of the weapon (DefaultArrow), with the damage modifier of that
+     *         ammunition in `factor`. Null: no data, no such slice, or a slice with no speed (launch_spell refuses such a shot).
+     */
+    [[nodiscard]] const gamedata::ProjectileSlice* spell_slice(const gamedata::ShotRule& rule, const gamedata::WeaponRow* weapon,
+                                                               float* factor = nullptr) const;
     /** The world calls it in each tick: each projectile in the air flies to the time of the world clock. */
     void tick();
     /** The entity of a character left the world: its projectiles end with no hit. */

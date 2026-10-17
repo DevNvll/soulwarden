@@ -110,6 +110,8 @@ def sheets(case: str) -> dict:
     result[tool.CONSUMABLE_TYPE] = [FakeSheet("Consumables", consumables)]
     encumbrance = dict(zip(tool.ENCUMBRANCE_COLUMNS.values(), [500, 26, 46, 100, 0.15, 0, -0.15, 1.3, 1, 0.7]))
     encumbrance["ContainerTypeID"] = "Player"
+    # Stage U3: the limit of the weight of the bag (EncumbranceBaseMax; the valid document has it).
+    encumbrance["EncumbranceBaseMax"] = 2000
     if case == "missing-damageLight":
         del encumbrance["EquipLoadDamageMultFast"]
     result[tool.ENCUMBRANCE_TYPE] = [FakeSheet("Encumbrance", [encumbrance])]
@@ -128,7 +130,8 @@ def valid_values(document: dict, case: str) -> list[str]:
     if case == "valid":
         if document["format"] != 2:
             wrong.append(f"the format {document['format']}")
-        if document["encumbrance"]["damageLight"] != 0.15 or document["encumbrance"]["healHeavy"] != 0.7:
+        if (document["encumbrance"]["damageLight"] != 0.15 or document["encumbrance"]["healHeavy"] != 0.7
+                or document["encumbrance"].get("encumbranceMax") != 2000):
             wrong.append(f"the encumbrance {document['encumbrance']}")
         if document["affixes"] != {"TestAffix": {"MODStrength": 5.0}} or document["abilities"] != {"TestAbility": {"BaseDamage": 0.2}}:
             wrong.append(f"the affix and the ability {document['affixes']} {document['abilities']}")

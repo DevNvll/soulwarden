@@ -555,6 +555,7 @@ def read_tables(sources: Sources) -> dict:
                     name = str(sheet.cell(row, "VitalsID"))
                     bases.setdefault(name_crc(name), {"id": name, "family": str(sheet.cell(row, "Family")),
                                                       "creatureType": str(sheet.cell(row, "CreatureType")),
+                                                      "buffBuckets": str(sheet.cell(row, "BuffBuckets") or ""),
                                                       "healthMod": float(sheet.cell(row, "HealthMod") or 0.0),
                                                       "damageMod": float(sheet.cell(row, "DamageMod") or 0.0),
                                                       "name": str(sheet.cell(row, "DisplayName"))})
@@ -576,6 +577,65 @@ def read_tables(sources: Sources) -> dict:
         if not rows:
             raise Failure(f"the game copy has no {what} table")
     return {"variants": variants, "bases": bases, "categories": categories, "levels": levels, "modifiers": modifiers}
+
+
+# Stage U3 (research creature-combat-feel.md Q5): the status effects of the buff buckets of a base vitals row that the reaction actions of
+# the creature action lists test (the named conditions of baseai_reaction.actionlist): PromotedElite (IfHasStatusEffect
+# AI_Elite_Unbreakable_Grit_Buff: the push of a full reaction x 0.15, of an additive reaction x 0) and the NoReaction part AI_NoReactions (no
+# reaction and no additive reaction). The member of a kind is the mark with the value true.
+BUFF_BUCKET_TYPE = "BuffBucketData"
+KIND_MARK_STATUSES = {"AI_Elite_Unbreakable_Grit_Buff": "promotedElite", "AI_NoReactions": "noReactions"}
+
+
+def read_buff_buckets(sources: Sources) -> dict[str, dict]:
+    """@return The buff buckets of the game data (BuffBucketData): the bucket id to {"type": TableType (AND or OR), "buffs": [(id,
+    BuffType), ...]}. No table: no bucket (each kind has no mark)."""
+    buckets: dict[str, dict] = {}
+    for path in sources.paths(TABLES_FOLDER, ".datasheet"):
+        if "buffbucket" not in path.rsplit("/", 1)[-1]:
+            continue
+        data = sources.read(path)
+        if data is None or sheet_type(data) != BUFF_BUCKET_TYPE:
+            continue
+        try:
+            sheet = Sheet(data)
+            for row in range(sheet.row_count):
+                buffs = []
+                for index in range(1, 7):
+                    buff = str(sheet.cell(row, f"Buff{index}") or "").strip()
+                    if buff and buff != "0":
+                        buffs.append((buff, str(sheet.cell(row, f"BuffType{index}") or "").strip().lower()))
+                buckets.setdefault(str(sheet.cell(row, "BuffBucketId")),
+                                   {"type": str(sheet.cell(row, "TableType") or "").strip().upper(), "buffs": buffs})
+        except (struct.error, ValueError, IndexError, TypeError) as error:
+            raise Failure(f"{path}: the table did not parse: {error}") from error
+    return buckets
+
+
+def bucket_statuses(buckets: dict[str, dict], bucket: str, depth: int = 0) -> set[str]:
+    """@return The status effects that a buff bucket gives for certain: each status of an AND bucket (and of its inner buckets), and of an
+    OR bucket only the statuses that each of its choices gives (the server of the game rolls one choice; the backend has no roll: a status
+    of only some choices is not certain; a decision of an agent)."""
+    entry = buckets.get(bucket)
+    if entry is None or depth > 6:
+        return set()
+    parts = []
+    for buff, kind in entry["buffs"]:
+        parts.append({buff} if kind == "statuseffect" else bucket_statuses(buckets, buff, depth + 1) if kind == "buffbucket" else set())
+    if not parts:
+        return set()
+    if entry["type"] == "OR":
+        return set.intersection(*parts)
+    return set.union(*parts)
+
+
+def kind_marks(base: dict, buckets: dict[str, dict]) -> list[str]:
+    """@return The marks of KIND_MARK_STATUSES that the buff buckets of a base vitals row give for certain (bucket_statuses)."""
+    statuses: set[str] = set()
+    for bucket in base.get("buffBuckets", "").split(","):
+        if bucket.strip():
+            statuses |= bucket_statuses(buckets, bucket.strip())
+    return sorted(KIND_MARK_STATUSES[status] for status in statuses if status in KIND_MARK_STATUSES)
 
 
 def read_names(sources: Sources) -> dict[str, str]:
@@ -908,7 +968,138 @@ def marker_statuses(action: ElementTree.Element) -> list[tuple[str, list[str]]]:
     return found
 
 
-def read_action_table(sources: Sources, roots: list[Element], markers: dict | None = None) -> list[list] | None:
+def reaction_condition(element: ElementTree.Element | None, named: dict[str, ElementTree.Element], depth: int = 0) -> tuple:
+    """@return The condition of a row of a reaction table (stage U3): ("always",), ("angles", [[min, max, tolerance], ...]) for an
+    IfDamagedByAngle or an Or of them (degrees; client code 0x2C07B70: true when min - tolerance < angle < max + tolerance), ("tag",
+    name) for an IfMannequinTag (the tags of the slice decide), or ("never", text) for a condition that the backend does not have (a
+    blocked hit, a marker, a hit volume): such a row does not hold. An IfExternalCondition names a condition of the <Conditions> of the
+    table file."""
+    if element is None:
+        return ("always",)
+    if element.tag == "IfExternalCondition":
+        target = named.get(element.get("ConditionName", ""))
+        if target is None or depth > 4:
+            return ("never", f"the condition {element.get('ConditionName', '')} is not in the table")
+        return reaction_condition(target, named, depth + 1)
+    if element.tag == "IfDamagedByAngle":
+        values = [creature_behavior.strict_number(element.get(name)) for name in ("Min", "Max", "Tolerance")]
+        if any(value is None for value in values):
+            return ("never", "an angle that is not a finite number")
+        return ("angles", [[creature_behavior.rounded(value) for value in values]])
+    if element.tag == "Or" and len(list(element)) > 0 and all(child.tag == "IfDamagedByAngle" for child in element):
+        ranges = []
+        for child in element:
+            found = reaction_condition(child, named, depth + 1)
+            if found[0] != "angles":
+                return found
+            ranges.extend(found[1])
+        return ("angles", ranges)
+    if element.tag == "IfMannequinTag" and element.get("TagName"):
+        return ("tag", element.get("TagName", ""))
+    return ("never", element.tag)
+
+
+def read_reaction_table(sources: Sources, path: str, named_by: str) -> list[list] | None:
+    """@return The rows of a reaction table file (stage U3, research Q2; the client walks them in this order, client code 0x2B9F1C0):
+    [power (-1: "*"), condition (reaction_condition), fragment name, AlignToDirection, AlignOffsetAngle] for each ReactionTableData of
+    <Reactions>. A row with a power that is not "*" or a whole number from 0 to 9 does not hold (("never", ...)). No value: the action
+    names a table file that is not in the pak files of the game copy (the retail data has such a name: the withered beetle); the slice
+    then gets no table member, and the backend keeps the rule of user test 2 for it."""
+    if not sources.has(game_path(path)):
+        return None
+    table = read_xml(sources, path, named_by)
+    if table is None:
+        return []
+    named: dict[str, ElementTree.Element] = {}
+    conditions = table.find("Conditions")
+    for element in (list(conditions) if conditions is not None else []):
+        if element.get("Name"):
+            named.setdefault(element.get("Name", ""), element)
+    rows = []
+    reactions = table.find("Reactions")
+    for row in (reactions.findall("ReactionTableData") if reactions is not None else []):
+        text = row.get("PowerLevel", "").strip()
+        children = list(row)
+        condition = reaction_condition(children[0] if children else None, named)
+        if len(children) > 1:
+            condition = ("never", "more than one condition")
+        if text == "*":
+            power = -1
+        elif text.isdigit() and int(text) <= 9:
+            power = int(text)
+        else:
+            power, condition = -1, ("never", f"the power {text}")
+        offset = creature_behavior.strict_number(row.get("AlignOffsetAngle"))
+        rows.append([power, condition, row.get("Reaction", ""), row.get("AlignToDirection", "").strip().lower() == "true",
+                     offset if offset is not None else 0.0])
+    return rows
+
+
+def reaction_motion(action: ElementTree.Element) -> list[list]:
+    """@return The entries of the activity ReactionMotion of an action (stage U3, research Q5): [[name, Scale, PushBackScale], ...],
+    "Default" first (Scale and PushBackScale 1.0 when the attribute is not there: client code 0x48A0690). No activity: the default only."""
+    entries = [["Default", 1.0, 1.0]]
+    for motion in action.iter("ReactionMotion"):
+        for entry in motion:
+            if entry.tag not in ("Default", "Conditional"):
+                continue
+            scale = creature_behavior.strict_number(entry.get("Scale")) if entry.get("Scale") is not None else 1.0
+            push = creature_behavior.strict_number(entry.get("PushBackScale")) if entry.get("PushBackScale") is not None else 1.0
+            if scale is None or push is None:
+                raise Failure(f"the action {action.get('Name', '')} has a ReactionMotion value that is not a finite number")
+            name = "Default" if entry.tag == "Default" else entry.get("Name", "")
+            if entry.tag == "Default":
+                entries[0] = [name, creature_behavior.rounded(scale), creature_behavior.rounded(push)]
+            elif name:
+                entries.append([name, creature_behavior.rounded(scale), creature_behavior.rounded(push)])
+        break
+    return entries
+
+
+def read_reactions(sources: Sources, roots: list[Element], definitions: dict) -> dict | None:
+    """@return The reaction facts of a slice (stage U3) for creature_behavior.Behavior.read: {"positions": fragment name (lower case) to
+    its index in the fragment list of the controller, "actions": {name: {"index", "fragment", "fragmentIndex", "table" (rows of
+    read_reaction_table), "motion" (reaction_motion), "exit" (ExitOffsetSeconds of IfFragmentDone), "scope" (the index of the first scope
+    of the fragment of the action in the ScopeDefs of the controller; -1: not known)}}}. The scope of the additive fragment r_R0_F is
+    "Additive" (scope 4 of the wolf controller): the client plays a record of that scope over the action of scope 0 (client code
+    0x2A2ACD0). No controller or no definition: no value."""
+    controller_path = controller_path_of(roots)
+    controller = read_xml(sources, controller_path, "the action list component of the slice") if controller_path else None
+    if controller is None or not definitions:
+        return None
+    fragment_file = controller.find("Fragments")
+    names = read_tag_names(sources, fragment_file.get("filename", ""), game_path(controller_path)) if fragment_file is not None else []
+    positions: dict[str, int] = {}
+    for position, name in enumerate(names or []):
+        positions.setdefault(name.lower(), position)
+    scope_defs = controller.find("ScopeDefs")
+    scope_index = {child.tag.lower(): index for index, child in enumerate(list(scope_defs) if scope_defs is not None else [])}
+    fragment_defs = controller.find("FragmentDefs")
+    fragment_scopes = {child.tag.lower(): child.get("scopes", "") for child in (list(fragment_defs) if fragment_defs is not None else [])}
+    actions = {}
+    for name, found in definitions.items():
+        element = found["element"]
+        table_path = ""
+        for activity in element.iter("SetReactionFragment"):
+            default = activity.find("Default")
+            table_path = default.get("ReactionTablePath", "") if default is not None else ""
+            break
+        exit_offset = 0.0
+        for done in element.iter("IfFragmentDone"):
+            value = creature_behavior.strict_number(done.get("ExitOffsetSeconds"))
+            exit_offset = max(value, 0.0) if value is not None else 0.0
+            break
+        scopes = [scope.strip().lower() for scope in fragment_scopes.get(found["fragment"].lower(), "").split("+") if scope.strip()]
+        actions[name] = {"index": found["index"], "fragment": found["fragment"], "fragmentIndex": found["fragmentIndex"],
+                         "table": (read_reaction_table(sources, table_path, found["list"]) if table_path else []),
+                         "tablePath": game_path(table_path),
+                         "motion": reaction_motion(element), "exit": exit_offset,
+                         "scope": scope_index.get(scopes[0], -1) if scopes else -1}
+    return {"positions": positions, "actions": actions}
+
+
+def read_action_table(sources: Sources, roots: list[Element], markers: dict | None = None,
+                      reaction_definitions: dict | None = None) -> list[list] | None:
     """@return The action table of a creature slice: [action name, fragment name, fragment index, server started]
     for each action, or no value when the slice names no grid file. The position of an action in the list is its
     index on the wire: the scope record of a movement state has the index plus 1. A file that the slice, the
@@ -961,6 +1152,11 @@ def read_action_table(sources: Sources, roots: list[Element], markers: dict | No
             fragment = action.get("FragmentName", "")
             actions.append([name, fragment, fragments.get(fragment.lower(), -1),
                             action.get("ServerStarted", "").lower() in ("true", "1")])
+            if (reaction_definitions is not None and name in (creature_behavior.REACTION_ACTION, creature_behavior.ADDITIVE_ACTION)
+                    and name not in reaction_definitions and actions[-1][2] >= 0):
+                # Stage U3: the definition of the first reaction action with a fragment (the action that the backend plays).
+                reaction_definitions[name] = {"element": action, "index": len(actions) - 1, "fragment": fragment,
+                                     "fragmentIndex": actions[-1][2], "list": game_path(entry.get("Path", ""))}
             if markers is not None:
                 # Stage 3.4f-D: the statuses of the action at its marks (the status actions of creature_behavior.py).
                 linked = marker_statuses(action)
@@ -1293,6 +1489,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     `slices`). A spawn point has an index into `kinds`.
     """
     tables = read_tables(sources)
+    buckets = read_buff_buckets(sources)
     names = read_names(sources)
     catalog_data = sources.read(CATALOG_PATH)
     if catalog_data is None:
@@ -1377,11 +1574,14 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
             slice_index[path] = len(slices)
             slices.append(read_creature_slice(path, asset, roots))
             markers: dict = {}
+            definitions: dict = {}
             try:
-                slices[-1]["actions"] = read_action_table(sources, roots, markers) or []
+                slices[-1]["actions"] = read_action_table(sources, roots, markers, definitions) or []
                 reactions = read_reaction_fragments(sources, roots)
                 if reactions is not None and any(index >= 0 for index in reactions):
                     slices[-1]["reactions"] = reactions
+                # Stage U3: the reaction tables, the push scales, and the scope of the additive reaction.
+                reaction_facts = read_reactions(sources, roots, definitions)
                 # The hit facts (stage 3.3b-S5): the angles of a hit from behind and the head volume.
                 slices[-1].update(read_hit_facts(sources, path, roots, skeletons, hit_counts))
             except Failure as error:
@@ -1389,7 +1589,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
             # What the behavior of a creature with this slice needs: its sense and speed values, the
             # tags of its animation fragments, and its attacks.
             try:
-                slices[-1].update(behavior.read(roots, controller_path_of(roots), slices[-1]["actions"], path, markers))
+                slices[-1].update(behavior.read(roots, controller_path_of(roots), slices[-1]["actions"], path, markers, reaction_facts))
             except Failure as error:
                 raise Failure(f"the behavior data of {path} is not complete: {error}") from error
         return slice_index[path]
@@ -1509,6 +1709,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                         "name": names.get(category["name"].lstrip("@").lower(), "") if category else vitals_name,
                         "vitalsName": vitals_name,
                         "family": base["family"], "creatureType": base["creatureType"],
+                        "marks": kind_marks(base, buckets),
                         "health": round(base["healthMod"] * modifier[0], 6),
                         "damage": round(base["damageMod"] * modifier[1], 6),
                         "bodies": [list(body) for body in bodies], "levels": {}, "index": len(kinds)}
@@ -1568,6 +1769,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                                "damage": kind["damage"], "level": level,
                                "bodies": [[renumber[body], percent] for body, percent in kind["bodies"]],
                                "points": total})
+        # Stage U3 (research Q5): the marks of the buff buckets of the base vitals row, only when they hold.
+        for mark in kind["marks"]:
+            document_kinds[-1][mark] = True
     # The spawn action of the game data goes into the file only for a slice of the list: the
     # backend starts it for these, and it starts no action for a slice that shows without it.
     for body in used:
@@ -1658,7 +1862,15 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     # User test 2 (UT2-7): the sources of the lengths of the attacks and the reaction fragments with a length (each slice that the tool read).
     counts.update({"attackLengths": dict(getattr(behavior, "attack_lengths", {"endBlend": 0, "animation": 0, "guess": 0})),
                    "reactionLengths": dict(getattr(behavior, "reaction_lengths", {"known": 0, "unknown": 0})),
-                   "slicesWithReactionLengths": sum(1 for body in used if "reactionLengths" in slices[body])})
+                   "slicesWithReactionLengths": sum(1 for body in used if "reactionLengths" in slices[body]),
+                   # Stage U3: the Homing clips of the attacks, the reaction tables and the additive reactions, the kind marks.
+                   "homing": dict(getattr(behavior, "homing_counts", {})),
+                   "reactionTables": dict(getattr(behavior, "reaction_table_counts", {})),
+                   "slicesWithReactionTable": sum(1 for body in used if "reactionTable" in slices[body]),
+                   "slicesWithAdditive": sum(1 for body in used if "additive" in slices[body]),
+                   "kindsPromotedElite": sum(1 for kind in document_kinds if kind.get("promotedElite")),
+                   "kindsNoReactions": sum(1 for kind in document_kinds if kind.get("noReactions")),
+                   "spawnPointsPromotedElite": sum(kind["points"] for kind in document_kinds if kind.get("promotedElite"))})
     # The capsule of the character of a player (stage 3.4f-A): the target of a creature shot. No capsule: the backend uses its
     # default capsule.
     player_roots = sources.stream(PLAYER_SLICE)
@@ -1946,6 +2158,14 @@ def main() -> int:
           f"{lengths['guess']} the last contact plus {creature_behavior.TIME_AFTER_CONTACT} s; reaction fragments with a length: "
           f"{counts['reactionLengths']['known']} ({counts['reactionLengths']['unknown']} with none), "
           f"{counts['slicesWithReactionLengths']} slices")
+    homing = counts.get("homing", {})
+    tables = counts.get("reactionTables", {})
+    print(f"  homing (stage U3): {homing.get('attacks', 0)} attacks with {homing.get('clips', 0)} Homing clips "
+          f"({homing.get('moving', 0)} that move), {homing.get('leftOut', 0)} attacks with a clip that is not complete; reaction tables: "
+          f"{counts.get('slicesWithReactionTable', 0)} slices ({tables.get('rows', 0)} rows, {tables.get('neverRows', 0)} rows that never "
+          f"hold, {tables.get('noVariant', 0)} side fragments with no variant, {tables.get('hitStunClips', 0)} rows with a HitStun clip), "
+          f"additive reaction: {counts.get('slicesWithAdditive', 0)} slices; promoted elites: {counts.get('kindsPromotedElite', 0)} kinds "
+          f"({counts.get('spawnPointsPromotedElite', 0)} spawn points), no reactions: {counts.get('kindsNoReactions', 0)} kinds")
     near = counts["spawnPointsAtTerrainHeight"]
     print(f"  spawn points 0.3 m or less from the terrain height: {near['0.3']}; 1.0 m or less: {near['1.0']}")
     policies = counts["routePolicies"]

@@ -13,6 +13,7 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 | Items, the bag, the coin of a character | Protocol notes 4.10, `apps/backend/src/world/inventory.h`, `tools/world give`, `tools/gamedata/items.sh` |
 | Equipment: the paperdoll, equip and unequip, visible gear, the items of an archetype | Protocol notes 4.11, `apps/backend/src/world/inventory.h`, `server/rep/states/paperdoll_state.cpp`, `tools/world equip` |
 | A whole build in one step (the build preset), the gear score limit of a give | [Build presets](build-presets.md), `Inventory::plan_build`, `Inventory::give_limit`, test cases BP1 to BP9 |
+| The weight of the bag and its limits (encumbered, overencumbered) | `Inventory::encumbrance` (`world/inventory.h`), `tools/gamedata/item_catalog.py` (`item_weight`), `EquipLoadData::encumbranceMax` (`gamedata/perk_data.h`), test cases CF6, CF13 |
 | The perks of an item instance: the places, the swap, the give with perks, the perk command, the loot roll | Protocol notes 4.23, `world/item.h` (`ItemInstance::perks`), `world/inventory.h` (`checked_perks`, `set_perks`, `resolve_perks`), `gamedata/perk_data.h`, `world/perk_roll.h`, test cases IZ1 to IZ3 |
 
 ## Rules
@@ -90,8 +91,31 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 - The reward item of a DLC pack (stage 1.1b): each character gets one AmuletIsabellaT1 (the reward of the entitlement
   `STEAM_APP_ID.1200562`) one time, at a world entry, through `Inventory::give` in the transaction of its reward row.
 - A committed change of the paperdoll that changes the weapon in the hand (its slot or its instance) tells the abilities system
-  (`Abilities::weapon_changed`: the aim of an ability ends, the window of Riposte ends) after the refresh of the gear (code review of
-  stage B0, finding B0-R2; test case RQ2). A change with the same weapon in the hand tells nothing.
+  (`Abilities::weapon_changed`: the aim of an ability ends, the window of Riposte ends, the shots of a bow volley that did not fly
+  end) after the refresh of the gear (code review of stage B0, finding B0-R2; test case RQ2). A change with the same weapon in the
+  hand tells nothing. The abilities system compares the slot and the instance too (`Cast::weaponKey`): a new instance of the same
+  item in the same slot ends the window (code review of stage B1, finding B1-R5, test case BRV5: the check of the abilities
+  compared only the item id and the slot, and a preset with a new instance of the same rapier kept the window).
+- The weight of the bag (stage U3, research Q4; `Inventory::encumbrance`): the sum of the weight of each bag slot (the item weight of
+  the catalog in tenths, times the quantity). The equipment and the quick slots of the paperdoll do not count. The limit is
+  EncumbranceBaseMax of the row Player of the encumbrance table (2000 tenths: 200.0; perk data member `encumbranceMax`, default
+  2000). The character is encumbered above the limit (the client shows "Encumbered - Cannot run, dodge, or jump" and "Cannot use
+  abilities" at 200.2, not at 200.0), and overencumbered above 1.5 times the limit (the constant of `playerbaseattributes.pbadb`; the
+  client shows "Overencumbered - Cannot attack" at 300.2). Client code 0x48D7170 and 0x48D1830 test the weight against the limit.
+- The rules of the server for the weight (stage U3; a decision of the orchestrator from the client rule): an encumbered character
+  gets no ability cast and no dodge (the verdicts `encumbered` of `CastVerdict` and `DodgeVerdict`: no cast, no cooldown, no stamina
+  cost; one log line for the first press of a session with the cause), and an overencumbered character starts no attack from rest
+  (`AttackBits::attackAllowed`; the log line `a press at rest starts no attack: the bag is over 1.5 x its weight limit (X of Y)`). A
+  chain of an attack that plays goes on. The client sends the press of an ability and of a dodge when it is encumbered (live run
+  of stage U3: before the stage the server cast Rapid Shot and started a dodge that the client did not show). The position check
+  accepts the slow walk of the client (1.57 m/s at 300.2); the jog at 200.2 is not slower in the client (5.4 m/s; the research said
+  1.65 m/s: not seen).
+- The weight of an item (stage U3, live check of the inventory screen; `tools/gamedata/item_catalog.py`): the WeightOverride of the
+  stats row of the item (the cell ItemStatsRef of the master row names a row of the WeaponItemDefinitions or ArmorItemDefinitions
+  tables) when it is above 0, cut to whole tenths; else the cell Weight of the master row. The client showed 10.5 for a great axe
+  (Weight 80, override 80) and a rapier (Weight 40, override 25), 1.5 for a light helm (Weight 20, override 15.09), and 2.6 for medium
+  gloves (Weight 30, override 26.76). Before this rule the server counted the bag 1.5 heavier than the client and refused an ability
+  at 200.0 of the client. 25,645 items of the supported build have such a weight.
 
 ## Commands
 
@@ -206,6 +230,11 @@ tools/world equipment NAME           # the equipment of a character
 - A potion or a food with a level requirement above the level of the character: the client
   uses no such item (a quick slot key sends no bit). FoodCONT5 needs the level 65: with the
   expansion of stage 1.1b a character can have it (live proof: refused at 60, used at 65).
+- An item catalog of a tool from before stage U3 has the Weight of each master row: a bag with weapons or armor is heavier for the
+  server than for the client, and the server refuses an ability and a dodge that the client permits near the limit (live run of
+  stage U3). Make the file again with `tools/gamedata/items.sh`.
+- The inventory screen (Tab) shows the weight of the bag at the top right (`200.0/200.0`; red above the limit) and of each section.
+  It is the only view of the weight of the client: compare it with the sum of the server before a test at the limit.
 - `tools/gamedata/items.sh` writes the catalog to the common game data folder: the next start
   of the user reads it too. The backend that the user starts then gives items only through
   a development run or a later tool window: a start of the user has no development commands.

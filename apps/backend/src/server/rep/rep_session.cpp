@@ -1425,7 +1425,7 @@ void RepSession::handle_attacks(const ClientInput& input) {
     const auto now = m_clock.now();
     const auto take = [&](const InputStep& step) {
         if (step.weaponKey != 0) {
-            m_world.combat().select_weapon(m_id, step.weaponKey);
+            m_world.combat().select_weapon(m_id, step.weaponKey, step.sequence, m_attack.sequence());
         }
         // The weapon in the hand at each step (code review of stage 3.3b-S3, finding F3): a press fits only a shot of its weapon.
         const world::Entity* own = m_world.entity_of(m_id);

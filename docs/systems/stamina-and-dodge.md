@@ -45,7 +45,9 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
   rewind of the time; research task D).
 - The checks of a dodge (`Stamina::dodge`), in this sequence: the stamina data is there (`noData`), the character lives (`dead`),
   its input is not locked (`locked`: a travel that the client did not confirm), it is not overburdened (`overburdened`: the action
-  Dodge of the client has no fragment for that class), it is not exhausted (`exhausted`), its stamina is above 0 (`noStamina`: the
+  Dodge of the client has no fragment for that class), the bag is not over its weight limit (`encumbered`, stage U3: the client shows
+  "Encumbered - Cannot run, dodge, or jump" and plays no roll, but it sends the press; before the stage the server started the dodge
+  and took 45 stamina; [Items and equipment](items-and-equipment.md)), it is not exhausted (`exhausted`), its stamina is above 0 (`noStamina`: the
   condition IfStaminaValue above 0 of the action Dodge; live check LS6 accepts a dodge at 5). A press while a dodge plays: in a
   buffered window CanDodgeCancel of the fragment (0.267 s to 0.5 s) the next dodge starts at the end of the window (`buffered`; one
   for each window); in an instant window (0.5 s and later) at once; before a window and before the mark CanTransition: `dodging` (no

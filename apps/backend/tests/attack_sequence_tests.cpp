@@ -199,11 +199,27 @@ void sequence_ends(const Options&) {
               std::string(what) + ": the swing ends, a contact in its window is no hit (refused: no attack, or no strike)");
         attacker.idle(70);
     };
-    refused_at("a weapon change (key 2) in the swing", [&](std::uint16_t) {
+    // Stage U3 (research creature-combat-feel.md Q6, live checks SW-L2 and SW-L3): a weapon key in a swing waits for the switch mark of the
+    // swing; the made-up swing has no mark, thus the key is lost after its 20 steps, and the swing plays on: its strike hits (before stage
+    // U3 the key ended the swing at once).
+    {
+        const std::size_t from = range.a.got.size();
+        const std::uint16_t light = attacker.click();
         attacker.step({kActionWeapon2});
-    });
+        attacker.until(static_cast<std::uint16_t>(light + 9));
+        attacker.step({}, {contact_with(*wolf)});
+        check(amounts_of(range.a, from).size() == 1, "a weapon key (2) in a swing with no switch mark: the swing plays on, and its strike hits");
+        attacker.idle(70);
+    }
+    // A weapon key at rest switches at the key (live check SW-L1), and a key back switches again.
+    const std::string firstWeapon = world::Combat::weapon_key(*range.host.world.find_character(kCharacterA));
+    attacker.step({kActionWeapon2});
+    attacker.idle(5);
+    const std::string secondWeapon = world::Combat::weapon_key(*range.host.world.find_character(kCharacterA));
     attacker.step({kActionWeapon1});
     attacker.idle(10);
+    check(secondWeapon != firstWeapon && world::Combat::weapon_key(*range.host.world.find_character(kCharacterA)) == firstWeapon,
+          "a weapon key at rest switches at the key, and the key 1 switches back");
     // A dodge in the cancel window that starts with the swing: no end (the client plays no dodge there); the strike hits.
     {
         const std::size_t from = range.a.got.size();
@@ -242,10 +258,11 @@ void sequence_ends(const Options&) {
     note("ends: weapon " + std::to_string(counts.ends[static_cast<std::size_t>(world::SequenceEnd::weapon)]) + ", dodge "
          + std::to_string(counts.ends[static_cast<std::size_t>(world::SequenceEnd::dodge)]) + ", travel "
          + std::to_string(counts.ends[static_cast<std::size_t>(world::SequenceEnd::travel)]));
-    check(counts.ends[static_cast<std::size_t>(world::SequenceEnd::weapon)] >= 1 && counts.ends[static_cast<std::size_t>(world::SequenceEnd::dodge)] == 2
+    // Stage U3: no weapon key ended a swing here (the key in the swing was lost, the keys at rest ended no visit).
+    check(counts.ends[static_cast<std::size_t>(world::SequenceEnd::weapon)] == 0 && counts.ends[static_cast<std::size_t>(world::SequenceEnd::dodge)] == 2
               && counts.ends[static_cast<std::size_t>(world::SequenceEnd::travel)] == 1
               && counts.ends[static_cast<std::size_t>(world::SequenceEnd::ability)] == 1,
-          "the counts of the ends: a weapon change, two dodges, a travel, an ability");
+          "the counts of the ends: no weapon key ended a swing, two dodges, a travel, an ability");
     // A death: the sequence ends at the next step, and a dead character makes no hit.
     const std::uint16_t light = attacker.click();
     (void)range.host.world.health().hurt(kCharacterA, 1.0e9F);

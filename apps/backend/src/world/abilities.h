@@ -169,6 +169,13 @@ inline constexpr std::chrono::milliseconds kShotAimKeep{600000};
  * finding F1). Live check of stage B1: the client sent the arrows of Rapid Shot one input step before the times of the data.
  */
 inline constexpr std::chrono::milliseconds kShotEarly{250};
+/**
+ * A shot item of a cast of a ranged ability (stage B1) comes this much after the end of the action of the cast at most (CastPlan::length from
+ * the start of its fragment, or the time of its clip when that is later): the latest time of each shot (code review of stage B1, finding
+ * B1-R1: an item 30 s after the cast shot the arrow that did not fly). A decision of an agent: the client sends the items at the times of its
+ * clips (live check of stage B1), and the reports of a client on the loopback come with a delay far below this time.
+ */
+inline constexpr std::chrono::milliseconds kShotLate{2000};
 } // namespace ability_rules
 
 /** The abilities that this backend has (the build of stage 3.3a): the great axe and the war hammer. */
@@ -243,8 +250,19 @@ enum class CastVerdict : std::uint8_t {
      * review of stage 3.3b-S6, finding S6-R2).
      */
     aimChanged,
+    /**
+     * Stage U3 (research creature-combat-feel.md Q4; game data: IfEncumbered of each ability action and of CanAttack_<ability>): the bag of
+     * the character is over its weight limit. The client plays no ability ("Encumbered - Cannot use abilities"): no cast, no cost, no
+     * cooldown.
+     */
+    encumbered,
+    /**
+     * Stage U3 (research Q6; game data: each ability action is false while the switch of a weapon is pending, and the first action of the
+     * new weapon comes 3 steps after the switch, grid rule 116): the client plays no press.
+     */
+    switching,
 };
-inline constexpr std::size_t kCastVerdictCount = 13;
+inline constexpr std::size_t kCastVerdictCount = 15;
 
 /** @return A short text for a log line, for example "the cooldown runs". */
 [[nodiscard]] const char* cast_verdict_text(CastVerdict verdict);
@@ -367,6 +385,12 @@ struct PhasePlan {
      * capsule of 0.7 m was 1.6 m from the place of the wolf).
      */
     bool bodies{false};
+    /**
+     * Stage B1: the radius of the area from the offense of the slice of its spell (the explosion of Explosive Arrow: the radius of ExplosionDamage,
+     * with its damage row; code review of stage B1, finding B1-R7: the area took the Radius of the spell row). No value: the Radius of the spell
+     * row of the phase.
+     */
+    std::optional<float> radius;
     /**
      * A damage row whose impact (and no damage) the phase gives to each creature of its area (stage 3.3b-S4): the pull of
      * the vortex of Gravity Well (the child entity VortexPull of its slice: the row GreatAxe_GravityWell_Vortex, damage
@@ -598,8 +622,17 @@ public:
      * @return True when an aim of the session started its cast.
      */
     bool confirm(SessionId session, std::uint16_t input, bool self, float yaw, bool locked = false);
-    /** Ends the aim of a character (a change of its bar or of its nodes, a travel; code review of stage 3.3b-S6, S6-R2 and S6-R8). */
+    /**
+     * Ends the aim of a character (a change of its bar or of its nodes, a travel; code review of stage 3.3b-S6, S6-R2 and S6-R8), and the shots
+     * of the volley of its cast that did not fly (code review of stage B1, finding B1-R1: a shot item after a travel shot from the new place).
+     * A projectile that flies already flies on.
+     */
     void cancel_aim(const std::string& characterId);
+    /**
+     * A character died (Health::apply, the one path of a death; code review of stage B1, finding B1-R3): its aim ends (a shot item after a
+     * revival confirmed the old aim of Penetrating Shot), and the shots of the volley of its cast that did not fly end.
+     */
+    void died(const Entity& character);
     /**
      * Development aid (tools/world cast): the press of a key of the bar for a character with no client (a remote test
      * character). The same checks and the same cast as a press of a session; the server throws a projectile itself.
@@ -744,8 +777,9 @@ public:
      */
     bool countered(Entity& character, Entity& attacker, float reach);
     /**
-     * The weapon in the hand of a character changed (Combat::select_weapon): the window of a counter of its cast ends when the
-     * weapon of the cast is not in the hand (code review of stage 3.3b-S4, finding F2).
+     * The weapon in the hand of a character changed (Combat::select_weapon, Inventory::finish): the window of a counter of its cast ends when the
+     * weapon of the cast is not in the hand (code review of stage 3.3b-S4, finding F2), and the shots of the volley of the cast that did not
+     * fly end (code review of stage B1, finding B1-R1).
      */
     void weapon_changed(Entity& character);
     /** The world calls it in each tick: the mana regeneration of the characters whose mana is not full, and the dashes of the server. */
@@ -807,6 +841,11 @@ private:
         std::uint32_t slot{0};
         std::uint32_t gearScore{0};
         /**
+         * The weapon in the hand at the press: its slot and its instance (Combat::weapon_key; code review of stage B1, finding B1-R5: a
+         * different instance of the same item in the same slot is a different weapon).
+         */
+        std::string weaponKey;
+        /**
          * The conversion of the gem of the weapon instance at the press (code review of stage 3.3b-S1, finding F3): a
          * later hit of the cast keeps it, also when a different instance of the same item is in the slot then.
          */
@@ -835,9 +874,19 @@ private:
         std::set<EntityId> struck;
         /** Stage 3.3b-S6: the self cast confirm of an aimed heal (the caster is the target). */
         bool self{false};
-        /** Stage B1: the shots of the volley that flew, and the input number of the last shot item that the volley took. */
+        /**
+         * Stage B1: the count of the shots of the volley that flew, the shots of the plan that flew (an index of VolleyPlan::shots; each one
+         * one time), and the input numbers of the shot items that the volley took (code review of stage B1, finding B1-R2: a shot that did
+         * not come does not block a later one).
+         */
         std::size_t shotsTaken{0};
-        std::optional<std::uint16_t> lastShotInput;
+        std::vector<bool> shotsDone;
+        std::vector<std::uint16_t> shotInputs;
+        /**
+         * Stage B1: true after the end of the action of the cast before its last shot (a change of the weapon, a travel, a change of the bar
+         * or of the nodes, the death of the caster; code review of stage B1, finding B1-R1): the shots that did not fly do not fly.
+         */
+        bool shotsClosed{false};
     };
     /** The aim of an aimed ability (stage 3.3b-S6): the press that started it. */
     struct Aim {
@@ -858,8 +907,15 @@ private:
     };
 
     CastVerdict refuse(CastVerdict verdict);
-    /** @return True when the weapon of the cast (its item in its slot) is the weapon in the hand of the character. */
+    /**
+     * @return True when the weapon of the cast (its slot and its instance: Cast::weaponKey) is the weapon in the hand of the character (code
+     *         review of stage B1, finding B1-R5).
+     */
     [[nodiscard]] bool holds_cast_weapon(const Cast& cast, const Entity& character) const;
+    /** Ends the aim of a character and the shots of the volley of its cast that did not fly (cancel_aim, died). */
+    void end_aim(const std::string& characterId, const char* why);
+    /** Stage B1: the shots of the volley of a cast that did not fly end (code review of stage B1, finding B1-R1). */
+    void close_volley(Cast& cast, const char* why);
     /** @return The id text of an ability (the node of the progression tables), or an empty text. */
     [[nodiscard]] std::string ability_text(std::uint32_t ability) const;
     /** Puts the cooldowns of a character into its entity and marks the cooldown state. */
@@ -887,13 +943,23 @@ private:
      * transition to an ability at once). @return False with the missing part in `missing`.
      */
     [[nodiscard]] bool resolve_volley(CastPlan& plan, const Entity& character, std::string& missing) const;
-    /** Stage B1: the index of the shot of a volley cast that a shot item fits now (its attack, its row, its time, a new input), or none. */
+    /**
+     * Stage B1: the index of the shot of a volley cast that a shot item fits now, or none (code review of stage B1, findings B1-R1 and B1-R2):
+     * a shot of the plan that did not fly, with the attack and the row of the item, whose time window has the time now (from kShotEarly before
+     * its time to kShotLate after the end of the action), in a volley that did not end, and an item of an input step that no shot took. Of
+     * such shots the item takes the shot whose time is nearest to the input step of the item from the press.
+     */
     [[nodiscard]] std::optional<std::size_t> volley_next(const Cast& cast, std::uint32_t attack, std::uint32_t row, std::uint16_t input) const;
-    /** Stage B1: the cast of a session that waits for a shot of its volley with this attack and row now, or null. */
+    /** Stage B1: the cast of a session that waits for a shot of its volley with this attack and row now, with its weapon in the hand, or null. */
     [[nodiscard]] Cast* volley_cast(SessionId session, const std::string& characterId, std::uint32_t attack, std::uint32_t row, std::uint16_t input,
                                     std::size_t* index);
-    /** Stage B1: one shot of a volley flies (Projectiles::launch_spell): a clip, a pierce, or a projectile spell whose collision explodes. */
-    void volley_shot(Cast& cast, std::size_t index, const state::WorldPosition& origin, const std::array<float, 3>& direction);
+    /**
+     * Stage B1: one shot of a volley flies (Projectiles::launch_spell): a clip, a pierce, or a projectile spell whose collision explodes. A shot
+     * that flew, a volley that ended, or a weapon of the cast that is not in the hand: nothing. @param input The input number of the shot item
+     * (none: a shot of the server).
+     */
+    void volley_shot(Cast& cast, std::size_t index, const state::WorldPosition& origin, const std::array<float, 3>& direction,
+                     std::optional<std::uint16_t> input = std::nullopt);
     /** Stage B1: the projectile of a volley that explodes ended: at a collision (a creature, a wall, the ground) the explosion entity. */
     void volley_landed(std::uint64_t cast, const SpellLanding& landing);
     /** @return The source of the heals of a cast (stage 3.3b-S6): the caster, its heal base with the weapon of the cast, the row of the spell. */

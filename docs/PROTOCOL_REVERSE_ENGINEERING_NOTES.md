@@ -2059,6 +2059,15 @@ element for the client.
 `--dev-commands`): `items`, `give`, `take`, `coin`, `move`, `split`, `lock`. Each command
 names a character. A command for a character that is not in the world changes its rows.
 
+**The weight of the bag for the client** (stage U3; game data and live proof of the run `u3-after5`, the inventory screen; no
+client code address): the client counts the items of the bag (not the equipment, not the quick slots). The weight of a weapon or
+an armor item is the WeightOverride of its stats row (WeaponItemDefinitions or ArmorItemDefinitions, column WeaponID = ItemStatsRef
+of the master row) cut to whole tenths, when it is above 0; else the Weight of the master row. Live: a great axe (80, override 80)
+and a rapier (40, override 25) show 10.5; a light helm (20, override 15.09) adds 1.5; medium gloves (30, override 26.76) add 2.6.
+The limit 200.0 (EncumbranceBaseMax 2000) and 1.5 x the limit: the client shows "Encumbered" at 200.2 (not at 200.0) and
+"Overencumbered" at 300.2; it then sends the presses of an ability and a dodge, and plays nothing for them. Client code 0x48D7170
+and 0x48D1830 test the weight against the limit (research Q4). The rules of the server: [Items and equipment](systems/items-and-equipment.md).
+
 ### 4.11 Equipment: paperdoll state, equipment requests, visible gear
 
 Research files: `~/Games/soulwarden/work/research/equipment.md` (static proof, checked by a second
@@ -3098,8 +3107,42 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   table; live proof of the run `u2-after`): the rules are in [Creatures](systems/creatures.md). Live: a light attack of the great
   axe on a Faminegeist plays power 2 (`r_R2_F`, 0.83 s, a hit stun of 0.77 s, a push of 1.00 m in 0.82 s), its charged heavy attack
   power 3 (1.43 s, 0.93 s, 1.98 m); a heavy arrow on the Cleric power 3 (1.33 s, 1.33 m); an Elite takes no reaction and no push from
-  the attacks of the war hammer and the great axe. Not known: the semantics of Chained_Reaction_Count (a value of the behavior
-  tree), the unit of HitStun_AI (taken as frames of 1/30 s), and the reaction of a side or the back (the backend plays the front).
+  the attacks of the war hammer and the great axe. Not known: the unit of HitStun_AI (taken as frames of 1/30 s). The semantics of
+  Chained_Reaction_Count (a value of the behavior tree): stage U3 takes the reading of the data (each full reaction since the last
+  ResetReactionCount counts; a decision of the orchestrator).
+- **The reaction of stage U3** (research `creature-combat-feel.md` Q2, Q3, Q5; static proof of the client code and the game data,
+  live proof of the runs `u3-after*`; the rules are in [Creatures](systems/creatures.md)). The side: the client selects the first row
+  of the reaction table of the action whose power and angle condition hold (0x2B9F1C0); the angle of the damage context is from the
+  front of the creature (0x2C07B70), positive to its right: live check LC-Q2-1 (a light arrow from the right and from the left turned
+  the wolf 45 degrees to the source by AlignToDirection, AlignOffsetAngle 45 and -45 of the wolf rows). The server sends the fragment of the row as the fragment of the
+  scope record of the action `Reaction`. The length: the clip HitStun (0x2559640) sets the play speed of the rest of the fragment so
+  that it ends at HitStun / 30 s (speed 0.001 to 3.0); live: the Cleric under a heavy arrow 0.73 s and 0.73 m (before 1.33 s and 1.33
+  m), and it came to its cast distance under a heavy arrow each 2 s from 22 m.
+- **The additive scope record** (stage U3; static proof: the copy of the state 0x2A2ACD0, the record reader 0x2A75F70, the reset of a
+  scope with no bit 0x2A72DC0, the time reader 0x14087AE90; the scope order of the controller files; live proof LC-Q5-2). The action
+  `Reaction_Additive` plays in the scope "Additive" of the controller of the slice (the wolf: FullBody, Head, Tail, Mouth, Additive,
+  ... : scope 4; the Cleric: scope 5). Its fields:
+
+  ```text
+  32 scopeData        the mask: bit 0 when an action of scope 0 plays, and bit N of the additive scope
+  33 scopeInfoBlob    byte count; the records in the order of the scopes (scope 0 first, then scope N)
+  29 scopeTimeBlobEx  byte count, then for each scope 2 or more with a record, in order: its time as a 16-bit float, big-endian,
+                      in seconds (0x14087AE90: ntohs, half to float). A record with no time stops the read of the later scopes.
+  ```
+
+  The times of scope 0 stay in the fields 28, 38, 49, 50. The client keeps the record of a scope with no bit no more (0x2A72DC0): the
+  state after the end of the additive reaction has no bit N. Live: the client accepted the record of scope 4 at rest and in a run (no
+  log line of the client, no restart of the run, the flinch of the head and the shoulders at rest for 0.7 s). Encoder:
+  `server/rep/states/movement_state.cpp` (`write_scope_record`, `write_scope_time`); test case CF5 (the mask 0x10 with no action of
+  scope 0, one 16-bit time, A and B the same bytes).
+- **The homing of a creature attack** (stage U3; research Q1; static proof 0x255A140, 0x2564160, 0x255DA20, 0x2565210, 0x25653F0,
+  0x25666A0, 0x2A21FB0; live checks LC-Q1-1 and LC-Q1-2 with a trace of these addresses). The client enters the Homing clips of a
+  remote creature and asks for its AI target, but it does not call the move (0x2565210, 0x25653F0) or the accumulator (0x2A21FB0): a
+  creature has no AI target in the client, and the movement step runs only for the local player. It plays a remote lunge in place (no
+  root motion in the pose: LC-Q1-1, result (b)). Thus the server moves the creature in the clips with the time rule of the client code
+  ([Creature behavior](systems/creature-behavior.md)), and each observer gets the places in the movement states with the attack
+  record. Live: the bite of a wolf from 1.6 m ended near the character (before, the body came back to its place); a ghost followed a
+  side step of 1 m.
 
 **The world model for creatures** (project rules, roadmap MP-1 to MP-8).
 
@@ -3190,10 +3233,9 @@ world (6.4). The health command with `percent` 100 gives the exact maximum healt
 
 **Not known, not done.**
 
-- The homing of a creature attack (user test 2, UT2-8): the client moves the body of the creature to its target in the attack (the
-  Homing procedurals of the fragment: a ghost to 0.3 m) and puts it back at the end, the server keeps the place of the start. The
-  videos of user test 2 show the lunge and the return of a ghost. When the client puts the body back (at the end of the action or at
-  the next state) is not known, and a movement of the server could add to the movement of the client: not done.
+- The side fragment of a reaction whose slice has no variant of it (live check LC-Q2-2, not done): the backend then sends the front
+  fragment of the same power. The homing of a creature attack is done in stage U3 (above); the root motion of a remote creature is
+  not done (LC-Q1-1: the client plays the pose in place, thus not needed).
 - The option index and the tag bytes that the client itself has for an action. The scope
   record of the idle action that the client selects itself was not found at the decoded
   offsets in the first 0x2400 bytes of the movement facet and of the movement component.
@@ -5305,8 +5347,13 @@ DEGREES]` (a remote test character: the dash of the server).
 
 - The start of the client action Ability_Rapier_Riposte_Out: the numbers of its layer are not known (L8-B). The owner
   sees its loop and its idle pose; the hit, the stun, and the push of the counter show.
-- The PushBackScale of a promoted elite (0.15 and 0.0): each creature has the scale 1.0. (The action `Pushable` is done from
-  user test 2.)
+- The PushBackScale of a promoted elite: done in stage U3 (the scale of the entry of ReactionMotion of the action of the hit: Default,
+  PromotedElite for a kind with the status AI_Elite_Unbreakable_Grit_Buff in its buff buckets, ReactionLimiter_Active for the additive
+  reaction in the limit; client code 0x48A0690 applies PushBackScale only when D goes away from the source). Live (run `u3-after6`): a
+  heavy arrow pushes the promoted Wolf_Alpha_Named_08QP05 0.11 m (0.15 of 0.73 m) and the Solo+ Wolf_Alpha_16 0.73 m; a light arrow
+  plays the additive reaction and pushes them 0 m and 0.35 m (before the stage: 1.00 m each for the heavy arrow, nothing for the
+  light one). The push of an additive reaction does not hold the run of the creature (live check LC-Q5-2; [Forced
+  movement](systems/forced-movement.md)). (The action `Pushable` is done from user test 2.)
 - The part Z of an impact, and the part X in mode 1. No row of the abilities of this stage has them.
 - The length of the fragment of a reaction: done from user test 2 (the reaction lengths of the creature data).
 - The pull or the push of a character (a hit with an impact on a player).
@@ -5660,6 +5707,23 @@ claim limit 64 in 1 s; a press within 0.25 s of the length of a fragment keeps t
 ends (a weapon change, an accepted ability, a travel, a death, a reconnect, a dodge of the table). No message of the server:
 the client plays its own attack.
 
+**The weapon switch and the press after CanTransition** (stage U3, research Q6; game data: the marks CanUnsheathe_Buffer,
+CanUnsheathe, and CanTransition of the ProcLayer of each fragment, the grid rules 62 Attack -> Sheathe and 116 Sheathe ->
+Attack, BackTicks 20 of the key input; live proof of the run `u3-before2` with `SOULWARDEN_TRACE=6769980`, the action layer 0 of
+the own character: the war hammer charge 5054, swing 4602, C2 5046, Strike2 486, rest 4031; the great axe charge 5055, swing 467,
+C2 5049, Strike2 484, rest 4041):
+
+- SW-L1 (at rest, the war hammer in the hand, the key 1 and then a click): the great axe swing 467 starts at the key step + 3.
+- SW-L2 (the key 0.13 s into a war hammer swing, a press 0.37 s after the key): nothing at once; the great axe rest 4041 at 1.1 s
+  after the swing start (the mark CanUnsheathe 1.133 s), the great axe swing 467 at the switch + 3 from the kept press of 21 steps
+  before.
+- SW-L3 (the key in a held charge with no switch mark): the key is lost; the client keeps the war hammer in its bar.
+- CT-L1 (a second press 1.033 s to 1.33 s after the start of a war hammer swing; 1.2 s for the great axe): the client always plays
+  the chain (C2, then Strike2); the server accepts the hits of Strike2.
+
+The server follows these rules (`Combat::step_switch`, `switch_rules`; [Combat and health](systems/combat-and-health.md)); it sends
+no message for a switch (the paperdoll state of the weapon in the hand is not sent yet).
+
 **Not known, not done**: the contact of the spear in this client; the stamina (no model: the reachable stamina payments are 0,
 the greatsword pays 10 in its offense stance); the stances of the greatsword and the oils (FragTags); the length of a fragment
 with two clips of one animation that ends by a different rule (war hammer Attack_Heavy: 44 steps, the rule of the table gives
@@ -5730,7 +5794,7 @@ window of the charge and of the light swing played at the press; a press at 0.4 
 0.8 s) did not play: the release started it 1033 ms later and ended the fragment of Shockwave. The backend refuses such a press
 (`casting`). A client whose character carries more than its weight limit ("Encumbered") plays no ability at all, and the server
 of the release cast each press (live: three presses at rest, no action; after the removal of the materials the next press played):
-the backend has no weight rule (open). The refusal of the log of the user at input 5204 (a press 176 ms after a hit of the ghost on
+the backend had no weight rule (done in stage U3: the server refuses such a press, `encumbered`; 4.10). The refusal of the log of the user at input 5204 (a press 176 ms after a hit of the ghost on
 the character) has no cause in the server: the log lines of UT2-13 give the next one its visits.
 
 **The collision of Charge** (live proof): the client starts the uppercut at a collision with a creature (`character_collided`).

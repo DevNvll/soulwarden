@@ -25,10 +25,17 @@ float seconds_of(std::chrono::steady_clock::duration duration) {
 ForcedMotion::ForcedMotion(World& world, Creatures& creatures) : m_world(world), m_creatures(creatures) {}
 
 bool ForcedMotion::impact(Entity& entity, const gamedata::DamageImpact& impact, const state::WorldPosition& source,
-                          const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length) {
+                          const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length, float scale,
+                          float pushBack, bool additive) {
     Creature& creature = entity.creature;
     if (entity.kind != EntityKind::creature || creature.dead || creature.immune()) {
         ++m_counts.refused;
+        return false;
+    }
+    // The push of an additive reaction does not replace the push of a full reaction that runs (stage U3; a rule of an agent): the full
+    // reaction plays to its end, and its push with it.
+    if (additive && creature.held_by_force()) {
+        ++m_counts.keptFull;
         return false;
     }
     // The values for a target that is a creature: the "_AI" values of the row when it has them (client code at image
@@ -51,16 +58,24 @@ bool ForcedMotion::impact(Entity& entity, const gamedata::DamageImpact& impact, 
     }
     ForcedMove move;
     move.row = std::string(row);
+    move.additive = additive;
     const WorldClock::time_point now = m_world.clock().now();
     move.started = now;
     move.stepped = now;
     move.ends = now + std::max(length, forced_rules::kStep);
     move.start = entity.position;
+    // The push scales of the action of the hit (stage U3, research Q5; client code 0x48A0690): D = (dir * Y + side * X) * Scale, and
+    // D * PushBackScale when D goes away from the source (a push; a pull keeps its length). A promoted elite: 0.15 in a full reaction, 0 in
+    // an additive one.
     if (decay > 0.0F) {
         // direction * Y + side * X, side = direction x up = (dy, -dx). The vertical part (Z) is not a place of the
         // navigation: the creature stays on its floor.
-        const float ex = dx * distance[1] + dy * distance[0];
-        const float ey = dy * distance[1] - dx * distance[0];
+        float ex = (dx * distance[1] + dy * distance[0]) * scale;
+        float ey = (dy * distance[1] - dx * distance[0]) * scale;
+        if (pushBack != 1.0F && ex * dx + ey * dy > 0.0F) {
+            ex *= pushBack;
+            ey *= pushBack;
+        }
         move.distance = std::hypot(ex, ey);
         if (move.distance < forced_rules::kShortest) {
             return false;
@@ -69,20 +84,32 @@ bool ForcedMotion::impact(Entity& entity, const gamedata::DamageImpact& impact, 
         move.decay = std::min(decay, 1.0F);
     } else {
         move.constantSpeed = true;
-        move.speed = std::hypot(distance[0], distance[1], distance[2]);
+        move.speed = std::hypot(distance[0], distance[1], distance[2]) * std::fabs(scale);
         move.point = origin;
-        move.away = distance[1] > 0.0F;
+        move.away = distance[1] * scale > 0.0F;
+        if (move.away) {
+            move.speed *= pushBack;
+        }
         if (move.speed < forced_rules::kShortest || (!move.away && away <= forced_rules::kPointStop)) {
             return false;
         }
     }
     const bool replaced = creature.forced.has_value();
+    // The push of a full reaction replaces the homing of an attack (stage U3). The push of an additive reaction adds to the movement of
+    // the behavior and to the homing (live check LC-Q5-2: the client plays the additive reaction in its own scope over the run; a push
+    // that held the behavior stopped the run of the creature for the 0.7 s of the reaction).
+    if (!additive) {
+        m_creatures.attack_motion().stop(entity, "a push of a hit");
+    }
     creature.forced = move;
     m_moving.insert(entity.id);
     ++(replaced ? m_counts.replaced : m_counts.started);
+    if (additive) {
+        ++m_counts.additive;
+    }
     m_counts.largest = std::max(m_counts.largest, m_moving.size());
     // The path of the creature stays (user test 2, UT2-4): the navigation keeps it while the creature is near it.
-    log::write("world: force: creature %016llx (%s) moves by the impact of %s: %s %.2f m%s (%s), for %.2f s at most",
+    log::write("world: force: creature %016llx (%s) moves by the impact of %s: %s %.2f m%s (%s), for %.2f s at most%s",
                id_number(entity.id),
                creature.kind->id.c_str(),
                move.row.c_str(),
@@ -90,7 +117,8 @@ bool ForcedMotion::impact(Entity& entity, const gamedata::DamageImpact& impact, 
                static_cast<double>(move.constantSpeed ? move.speed : move.distance),
                move.constantSpeed ? "/s" : "",
                move.constantSpeed ? "no decay" : (std::string("decay ") + std::to_string(move.decay)).c_str(),
-               static_cast<double>(seconds_of(move.ends - now)));
+               static_cast<double>(seconds_of(move.ends - now)),
+               additive ? " (the push of an additive reaction: the behavior goes on)" : "");
     return true;
 }
 
@@ -200,10 +228,11 @@ void ForcedMotion::end(Entity& entity, const char* cause) {
     entity.creature.forced.reset();
     ++m_counts.ended;
     m_creatures.behavior().moved_by_force(entity);
+    // The push of an additive reaction gives its own travel: the creature ran too (its distance from the start has the run).
     log::write("world: force: creature %016llx (%s) stops after %.2f m in %.2f s (%s): %s, at %.2f %.2f %.2f",
                id_number(entity.id),
                entity.creature.kind->id.c_str(),
-               static_cast<double>(horizontal_distance(move.start, entity.position)),
+               static_cast<double>(move.additive ? move.travelled : horizontal_distance(move.start, entity.position)),
                static_cast<double>(seconds_of(m_world.clock().now() - move.started)),
                move.row.c_str(),
                cause,

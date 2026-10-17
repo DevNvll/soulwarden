@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "gamedata/combat_tables.h"
+#include "state/store.h"
 
 // The reaction of a creature to a hit (user test 2, UT2-9): the cells of the damage row of the hit (gamedata::DamageReaction). The
 // combat system makes it from the row, and the creature system plays it (Creatures::hurt). World thread only.
@@ -37,8 +38,32 @@ struct HitReaction {
      * fragment of the action Reaction.
      */
     std::optional<std::uint32_t> power;
-    /** The hit stun on a creature (HitStun_AI, else HitStun), in frames of 1/30 s. 0: none. */
+    /**
+     * The hit stun on a creature (HitStun_AI, else HitStun), in frames of 1/30 s (client code 0x2559640: the clip HitStun adds it to times
+     * x 30; game data: AdjustedHitStun 20 of the level table). 0: none.
+     */
     std::uint32_t stunFrames{0};
+    /**
+     * The source of the hit (stage U3, research Q2): the attacker of a melee hit, the point of a projectile, the center of an area; the
+     * attacker for a row with UseAttackerPosForReaction (the point of the push direction). Its angle from the front of the creature selects
+     * the side of the reaction. No value: the front (a command, a damage over time).
+     */
+    std::optional<state::WorldPosition> source;
+    /** True for a hit of a projectile (the additive reaction does not give the limiter again for a ranged hit; game data). */
+    bool ranged{false};
+};
+
+/**
+ * The push of a hit on a creature (user test 2, stage U3): the longest time of the push of the impact of the row (the reaction that the hit
+ * started, the additive reaction, or the action Pushable), and the push scales of that action (the entry of ReactionMotion: Scale and
+ * PushBackScale; client code 0x48A0690). No length: the hit moves nothing.
+ */
+struct HitPush {
+    std::optional<std::chrono::milliseconds> length;
+    float scale{1.0F};
+    float pushBack{1.0F};
+    /** True for the push of an additive reaction: it does not hold the behavior (ForcedMove::additive). */
+    bool additive{false};
 };
 
 /** The push of the action Pushable for a damage with no reaction (baseai_pushable.actionlist: ActiveTime 0.4, UsePushNoDecay). */

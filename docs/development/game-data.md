@@ -336,6 +336,26 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage U3 changes four files (each in its old format; the backend of the stage loads the older files with the rules of before):
+  - `creatures.json` (still format 4): the Homing clips of an attack (a fourth member of the attack: one row of 17 values for each
+    clip), the members `reactionTable` and `additive` of a slice, `promotedElite` and `noReactions` of a kind (from its buff buckets),
+    and the counts `homing`, `reactionTables`, `slicesWithReactionTable`, `slicesWithAdditive`, `kindsPromotedElite`,
+    `kindsNoReactions`, `spawnPointsPromotedElite` ([Creatures](../systems/creatures.md)). The loader takes each homing value that is
+    finite and not negative (the retail data has TurnRate 900400, a duration of 66329 s, MoveToDuration 75 s, exponential rates above
+    1, and clips after the end of their attack: a stricter loader refused the retail file, and the backend did not start). A
+    reaction table file that is not in the game copy gives no table (3 slices); an additive scope must be 2 to 15. Checks:
+    `check_creature_tool.py` cases `u3-*` (test case CF11), the loader cases of CF10.
+  - `weapon-actions.json` (still format 2): each fragment can have `switch` (`[CanUnsheathe_Buffer or -1, the smaller of CanUnsheathe
+    and CanTransition or -1]`: the war hammer swing `[0.4, 1.133333]`, the great axe swing `[0.3, 1.1]`; [Combat and
+    health](../systems/combat-and-health.md)). A file with no member: a key in a swing switches at once (the rule of before).
+  - `perk-data.json` (still format 2): the member `encumbranceMax` of the encumbrance row (EncumbranceBaseMax, 2000 tenths). No
+    member: 2000.
+  - `item-catalog.json` (still format 3): the column `weight` of a weapon or an armor item is the WeightOverride of its stats row,
+    cut to whole tenths (25,645 items; [Items and equipment](../systems/items-and-equipment.md)). A file from before has the Weight of
+    each master row: the server counts a bag with weapons or armor heavier than the client. Checks: `check_item_catalog_tool.py`
+    cases weight, weight-missing (test case CF13).
+  Write the four files again with `tools/gamedata/creatures.sh`, `tools/gamedata/weapon-actions.sh`, `tools/gamedata/perks.sh`, and
+  `tools/gamedata/items.sh`.
 - Stage B1 changes `projectile-data.json` (format 2) and `combat-tables.json` (still format 3). `projectiles.py`: the new member
   `abilityActions` (with its count) has the ability actions of the bow (`ABILITY_ACTION_SOURCES`: `playeractions_ability_bow.actionlist`
   and `player_bow.adb`; `REQUIRED_ABILITY_ACTIONS`: Bow_Penetrating_Shoot, Bow_SpreadShot, Bow_RapidShot): for each action its

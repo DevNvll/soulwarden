@@ -441,7 +441,7 @@ def check_review_ranged(work: Path) -> int:
             self.tables = type("Tables", (), {"types": {"Thrust": (5, "Physical")},
                                               "ammo": {"test_arrow": {"id": "Test_Arrow", "slice": REVIEW_ARROW}}})()
 
-        def read(self, roots, controller, actions, slice_path="", markers=None) -> dict:
+        def read(self, roots, controller, actions, slice_path="", markers=None, reactions=None) -> dict:
             rows = {} if state["case"] in ("review-missing-row", "review-other-action") else {
                 "test_row": {"ordinal": 0, "table": "TestBowDamageTable", "id": "Test_Row", "type": "Thrust", "factor": 0.35,
                              "added": 0.0, "charge": 0.0}}
@@ -647,6 +647,116 @@ def check_lengths() -> int:
     return failures
 
 
+def check_u3() -> int:
+    """The members of stage U3 (research creature-combat-feel.md; backend case CF11), with made-up sources:
+      u3-homing          a Homing clip of an attack fragment (its start, its own duration, its values) and the member `homing`; a clip
+                         with a value that is not a number gives no member
+      u3-reaction-table  the rows of a reaction table (the side conditions of <Conditions>, a tag condition, the block that never holds),
+                         the fragment of a name that the slice does not have (the fragment of the action), the length and the HitStun clip
+      u3-additive-scope  the scope of the fragment of the additive action in the ScopeDefs of the controller, the push scales of
+                         ReactionMotion, and ExitOffsetSeconds
+      u3-kind-marks      the marks of the buff buckets: an AND bucket with the status, an inner bucket, an OR bucket where only some choices
+                         give it (no mark)
+    @return The number of failures."""
+    import creature_behavior as cb
+    from xml.etree import ElementTree
+    failures = 0
+
+    def report(case: str, passed: bool, detail: str) -> None:
+        nonlocal failures
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
+        failures += 0 if passed else 1
+
+    database = ('<AnimDB><FragmentList>'
+                '<Attack_Lunge><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="test_lunge"/><Blend ExitTime="2.0"/>'
+                '<Animation name=""/></AnimLayer><ProcLayer><Blend ExitTime="1.225"/><Procedural type="Homing" contextType="HomingContext">'
+                '<ProceduralParams><MoveToTarget value="true"/><MoveToDistance value="0.75"/><MoveToDuration value="0.3333"/>'
+                '<MaxMoveDistance value="6"/><TurnRate value="0"/><UseExponential value="true"/><Radius value="10"/><MaxAngle value="30"/>'
+                '<Height value="5"/><UseRadiusforAITarget value="true"/></ProceduralParams></Procedural><Blend ExitTime="0.333333"/>'
+                '<Procedural type=""/></ProcLayer></Fragment></Attack_Lunge>'
+                '<Attack_Broken><Fragment Tags=""><ProcLayer><Blend ExitTime="0.2"/><Procedural type="Homing"><ProceduralParams>'
+                '<MoveToDistance value="near"/></ProceduralParams></Procedural></ProcLayer></Fragment></Attack_Broken>'
+                '<r_R3_F><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="x"/><Blend ExitTime="1.333"/><Animation name=""/>'
+                '</AnimLayer><ProcLayer><Blend ExitTime="0.183333"/><Procedural type="HitStun"/></ProcLayer></Fragment></r_R3_F>'
+                '<r_R3_R><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="x"/><Blend ExitTime="1.0"/><Animation name=""/>'
+                '</AnimLayer></Fragment></r_R3_R>'
+                '<r_R2_F><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="x"/><Blend ExitTime="0.9"/><Animation name=""/>'
+                '</AnimLayer></Fragment></r_R2_F>'
+                '<r_R0_F><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="x"/><Blend ExitTime="0.9"/><Animation name=""/>'
+                '</AnimLayer></Fragment></r_R0_F>'
+                '</FragmentList></AnimDB>').encode()
+    table = ('<ActionList><Conditions><Or Name="damaged_front"><IfDamagedByAngle Max="45" Min="0" Tolerance="0.01"/>'
+             '<IfDamagedByAngle Max="0" Min="-45" Tolerance="0.01"/></Or><IfDamagedByAngle Name="damaged_right" Max="135" Min="45" '
+             'Tolerance="0.01"/><IfDamaged Name="blocked" RequireDamageWasBlocked="true"/><IfMannequinTag Name="crawler_react" '
+             'TagName="Crawler"/></Conditions><Reactions>'
+             '<ReactionTableData PowerLevel="*" Reaction="r_R2_F"><IfExternalCondition ConditionName="crawler_react"/></ReactionTableData>'
+             '<ReactionTableData PowerLevel="0" Reaction="r_B1_F" AlignToDirection="true"><IfExternalCondition ConditionName="blocked"/>'
+             '</ReactionTableData>'
+             '<ReactionTableData PowerLevel="3" Reaction="r_R3_F"><IfExternalCondition ConditionName="damaged_front"/></ReactionTableData>'
+             '<ReactionTableData PowerLevel="3" Reaction="r_R3_R" AlignToDirection="true" AlignOffsetAngle="45">'
+             '<IfExternalCondition ConditionName="damaged_right"/></ReactionTableData>'
+             '<ReactionTableData PowerLevel="3" Reaction="r_R3_L"><IfDamagedByAngle Max="-45" Min="-135" Tolerance="0.01"/>'
+             '</ReactionTableData>'
+             '<ReactionTableData PowerLevel="5" Reaction="r_R4_F_Overhead"/>'
+             '</Reactions></ActionList>').encode()
+    files = {"animations/test/wolf.adb": database, "sharedassets/test/table.actionlist": table}
+
+    class U3Sources:
+        def read(self, path):
+            return files.get(path)
+
+        def has(self, path):
+            return path in files
+
+        def paths(self, prefix, suffix):
+            return sorted(name for name in files if name.startswith(prefix) and name.endswith(suffix))
+
+    behavior = cb.Behavior.__new__(cb.Behavior)
+    behavior.animations = cb.Animations(U3Sources())
+    behavior.reaction_table_counts = {"slices": 0, "rows": 0, "neverRows": 0, "noVariant": 0, "additive": 0, "hitStunClips": 0,
+                                      "missingTables": 0}
+    variants = behavior.animations.variants("animations/test/wolf.adb")
+    lunge = cb.select(variants["attack_lunge"], set(), False)
+    homing, cause = cb.homing_member(lunge["homing"])
+    broken, broken_cause = cb.homing_member(cb.select(variants["attack_broken"], set(), False)["homing"])
+    expected = [1.225, 0.333333, 1, 0.75, 0.3333, 0.0, 6.0, 0.0, 1, 10.0, 30.0, 5.0, 0, 0, 0, 1, 0]
+    report("u3-homing", homing == [expected] and broken is None and "not a finite number" in broken_cause,
+           f"{homing}; a clip with the distance 'near': {broken_cause}")
+    rows = cd.read_reaction_table(U3Sources(), "sharedassets/test/table.actionlist", "a test")
+    action = {"fragment": "r_R2_F", "fragmentIndex": 15, "table": rows, "motion": [["Default", 1.0, 1.0]], "exit": 0.0}
+    positions = {"r_r2_f": 15, "r_r3_f": 26, "r_r3_r": 29, "r_r3_l": 28, "r_b1_f": 40}
+    member = behavior.table_member(action, positions, ["animations/test/wolf.adb"], set())
+    crawler = behavior.table_member(action, positions, ["animations/test/wolf.adb"], {"crawler"})
+    got = member["rows"]
+    report("u3-reaction-table",
+           len(got) == 4 and got[0][:3] == [3, [[0.0, 45.0, 0.01], [-45.0, 0.0, 0.01]], 26] and got[0][3] == 1.333 and got[0][4] == 0.183333
+           and got[1][:5] == [3, [[45.0, 135.0, 0.01]], 29, 1.0, -1.0] and got[1][5:] == [1, 45.0]
+           and got[2][:3] == [3, [[-135.0, -45.0, 0.01]], 26] and got[3][:3] == [5, None, 15] and crawler["rows"][0][:3] == [-1, None, 15],
+           f"{got}; with the tag Crawler the first row {crawler['rows'][0]} (the block never holds; a side fragment with no variant takes the "
+           f"front fragment of its power; a name that the slice does not have: the fragment of the action)")
+    controller = ElementTree.fromstring('<ControllerDef><FragmentDefs><r_R0_F scopes="Additive"/><r_R2_F scopes="FullBody+Audio"/>'
+                                        '</FragmentDefs><ScopeDefs><FullBody/><Head/><Tail/><Mouth/><Additive/><LookPose/></ScopeDefs>'
+                                        '</ControllerDef>')
+    scope_defs = {child.tag.lower(): index for index, child in enumerate(controller.find("ScopeDefs"))}
+    scopes = {child.tag.lower(): child.get("scopes", "") for child in controller.find("FragmentDefs")}
+    additive = ElementTree.fromstring('<Action Name="Reaction_Additive" FragmentName="r_R0_F"><DeactivationCondition><IfFragmentDone '
+                                      'ExitOffsetSeconds="0.2"/></DeactivationCondition><Activities><ReactionMotion><Default Scale="1.0"/>'
+                                      '<Conditional Name="PromotedElite" Scale="1.0" PushBackScale="0.0"/></ReactionMotion></Activities>'
+                                      '</Action>')
+    motion = cd.reaction_motion(additive)
+    scope = scope_defs.get(scopes["r_r0_f"].split("+")[0].lower(), -1)
+    report("u3-additive-scope", scope == 4 and motion == [["Default", 1.0, 1.0], ["PromotedElite", 1.0, 0.0]],
+           f"the scope of r_R0_F {scope}, the motion {motion}")
+    buckets = {"Elite": {"type": "AND", "buffs": [("AI_Elite_Unbreakable_Grit_Buff", "statuseffect")]},
+               "Outer": {"type": "AND", "buffs": [("Elite", "buffbucket"), ("Other_Buff", "statuseffect")]},
+               "Roll": {"type": "OR", "buffs": [("Elite", "buffbucket"), ("Other_Buff", "statuseffect")]},
+               "Both": {"type": "OR", "buffs": [("Elite", "buffbucket"), ("Outer", "buffbucket")]}}
+    marks = [cd.kind_marks({"buffBuckets": text}, buckets) for text in ("Outer", "Roll", "Both", "")]
+    report("u3-kind-marks", marks == [["promotedElite"], [], ["promotedElite"], []],
+           f"{marks} (an inner AND bucket gives the mark; an OR bucket only when each choice gives it)")
+    return failures
+
+
 REVIEW_AREA_CASES = ("review-area-control", "review-area-nonfinite-time", "review-area-malformed-aim", "review-area-missing-row",
                      "review-area-unsupported")
 REVIEW_SHAMAN_ADB = "animations/test/shaman.adb"
@@ -698,7 +808,7 @@ def check_review_areas(work: Path) -> int:
             self.ranged_left_out = {}
             self.tables = type("Tables", (), {"types": {"Lightning": (9, "Elemental")}})()
 
-        def read(self, roots, controller, actions, slice_path="", markers=None) -> dict:
+        def read(self, roots, controller, actions, slice_path="", markers=None, reactions=None) -> dict:
             rows = {} if state["case"] == "review-area-missing-row" else {
                 "test_strike": {"ordinal": 0, "table": "TestShamanTable", "id": "Test_Strike", "type": "Lightning", "factor": 0.85,
                                 "added": 0.0, "charge": 0.0}}
@@ -811,7 +921,7 @@ def check_review_support(work: Path) -> int:
             self.ranged_left_out = {}
             self.tables = type("Tables", (), {"types": {"Lightning": (9, "Elemental")}})()
 
-        def read(self, roots, controller, actions, slice_path="", markers=None) -> dict:
+        def read(self, roots, controller, actions, slice_path="", markers=None, reactions=None) -> dict:
             rows = {"test_strike": {"ordinal": 0, "table": "TestShamanTable", "id": "Test_Strike", "type": "Lightning", "factor": 0.85,
                                     "added": 0.0, "charge": 0.0}}
             result = Behavior.read(self)
@@ -925,6 +1035,7 @@ def main() -> int:
     failures += check_review_support(work)
     failures += check_status_actions()
     failures += check_lengths()
+    failures += check_u3()
     return 1 if failures else 0
 
 

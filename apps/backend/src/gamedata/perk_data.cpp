@@ -177,7 +177,9 @@ bool read_equip_load(const json& row, EquipLoadData& load) {
            && member("damageLight", load.damage[0]) && member("damageMedium", load.damage[1])
            && member("damageHeavy", load.damage[2]) && member("healLight", load.heal[0])
            && member("healMedium", load.heal[1]) && member("healHeavy", load.heal[2]) && load.max > 0.0F
-           && load.ratioMedium > 0.0F && load.ratioHeavy >= load.ratioMedium;
+           && load.ratioMedium > 0.0F && load.ratioHeavy >= load.ratioMedium
+           // Stage U3: the limit of the bag weight, a member of a file of a newer tool (above 0).
+           && (!row.contains("encumbranceMax") || (member("encumbranceMax", load.encumbranceMax) && load.encumbranceMax > 0.0F));
 }
 
 bool read_generation(const json& value, PerkTables& tables) {

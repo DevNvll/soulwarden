@@ -11,6 +11,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 | --- | --- |
 | Creatures: the spawn points, the kinds, the record of a creature, health and death, the action of a creature (the scope fields, the locomotion of a walk), the commands | Protocol notes 4.14, `apps/backend/src/world/creatures.h`, `gamedata/creature_data.h`, `server/rep/states` (movement, vitals, marker; `creature_scope`), `server/http/creature_commands.cpp`, `tools/world creatures`, `tools/gamedata/creatures.sh`, `tools/research/creature_actions.py`, test cases UT2 and UT3 |
 | The end of an action and the idle record, the record of a timed action in each state, the reaction to a hit (the rule of the action lists, the power, the length, the hit stun, the limit), the push of a hit (user test 2) | Protocol notes 4.14 and 4.26, `world/creatures.h` (`Creatures::rest`, `hurt`, `reaction_allowed`, `reaction_length`), `world/hit_reaction.h`, `world/entity.h` (`Creature::idle`, `hitStunUntil`, `reactionChain`, `reactionLimitUntil`), `gamedata/creature_data.h` (`CreatureSlice::idleAction`, `reactionLengths`), `gamedata/combat_tables.h` (`DamageReaction`), `server/rep/states/movement_state.cpp`, test cases UX2 to UX6, UX8, UX9 |
+| The reaction of stage U3: the row of the reaction table for the side and the power, the length with the HitStun clip, the chain and its resets, the additive reaction in its own scope, the push scales, the kind marks | `Creatures::react`, `plan_reaction` (`world/creatures.cpp`: `hit_angle`, `select_row`, `hit_stun_length`, `push_scale`), `gamedata/creature_data.h` (`ReactionTable`, `ReactionRow`, `AdditiveReaction`, `CreatureKind::promotedElite`), `world/entity.h` (`CreatureAdditive`), `server/rep/states/movement_state.cpp` (the additive scope record), test cases CF2 to CF5, CF10, CF11 |
 | The creature data of the whole world: which entries are in, which slices are out, the spawn action of a slice, the picture check of the slices | Protocol notes 4.14, `tools/gamedata/creature_data.py`, `tools/gamedata/creature_slices.json`, `tools/research/creature_tour.py` |
 | The status effects of an ability on a creature: the stun, the root, the slow, the weaken, the knockdown and the stagger, the status state (the icons at the name plate) | Protocol notes 4.22, [Abilities](abilities.md), `world/creatures.h` (`Creatures::apply_effect`, `knock`), `world/entity.h` (`CreatureEffect`, `Creature::held`, `rooted`, `speed_factor`, `damage_factor`), `server/rep/states/status_state.cpp`, `tools/world creature effect`, test cases AB6 to AB8 |
 | The pull and the push of a hit (stage 3.3b-S4) | [Forced movement](forced-movement.md), `world/forced_motion.h`, `Creatures::impact`, test cases FM2 to FM8 |
@@ -50,11 +51,25 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   - The rules of the backend from before (decisions of stage 3.2a and 3.3a): no reaction while an attack, a shot, a cast, or a status
     action plays (the grit of the action list: an attack of a creature of the backend always has grit), and none while a stun or a
     knockdown holds the creature.
-  - The fragment (game data, the reaction table): power 0 and 1 play `r_R1_F`, power 2 to 4 `r_R2_F` to `r_R4_F`, power 5 `r_R4_F`
-    (its fragment `r_R4_F_Overhead` is in no slice of the data). `r_R0_F` is the fragment of the additive table. The backend plays
-    the fragment of the front (the table has one for each side: open).
-  - The length (game data, UT2-7): the length of that fragment in the slice (`CreatureSlice::reactionLengths`: its end blend, else the
-    end of its animation); the action ends at IfFragmentDone. With no length: `Creatures::kReactionTime` (1.5 s).
+  - The fragment (stage U3, research Q2; game data: the reaction table of the action `Reaction` of each slice, `CreatureSlice::
+    reactionTable`; client code 0x2B9F1C0): the first row of the table whose power is the power of the hit (or -1: each power; a power
+    above the largest power of the table takes the largest) and whose angle condition holds for the angle of the source. The angle is
+    from the front of the creature, positive to its right (`hit_angle`; the sign is the sign of damaged_right, live check LC-Q2-1); a
+    condition holds for min - tolerance < angle < max + tolerance (0.01 in the data). No row: the action keeps its own fragment. A row
+    whose fragment name the slice does not have gives the fragment of the action. A row with AlignToDirection turns the creature so that
+    the hit comes from AlignOffsetAngle (each wolf row: the offset 45 or -45 for the powers 0 to 3, 90 or -90 for the powers 4 and 5;
+    a light arrow from the right turns the wolf 45 degrees to the source).
+    The family tables differ: the wolf table gives power 0 to 2 the fragments `r_R2_*` (the rule of user test 2 gave `r_R1_F`). A slice
+    with no table (a file of a tool from before stage U3) keeps the rule of user test 2: power 0 and 1 `r_R1_F`, power 2 to 4 `r_R2_F`
+    to `r_R4_F`, power 5 `r_R4_F`, the front only. A side fragment with no variant in the slice: the front fragment of the same power
+    (a project rule; live check LC-Q2-2 is open).
+  - The length (stage U3, research Q3; client code 0x2559640; a decision of the orchestrator): a fragment with the clip HitStun
+    (Procedural type HitStun at the time s of the fragment of the length L) ends at the hit stun of the row: T = HitStun_AI / 30 s,
+    held between s + (L - s) / 3 and s + (L - s) / 0.001 (the play speed of the rest of the fragment is from 0.001 to 3.0), and s + (L
+    - s) / 3 when HitStun / 30 is not above s. The Inquisitor Cleric under a heavy arrow (22 frames): 0.73 s, and its push 0.73 m (before:
+    1.33 s, 1.33 m). The client does this only for its own character; the server of the game did it for a creature (an inference of
+    the research). A fragment with no clip keeps its length (UT2-7: the end blend, else the end of its animation; with no length
+    `Creatures::kReactionTime`, 1.5 s). The action ends at IfFragmentDone with the ExitOffsetSeconds of the table.
   - The hit stun (a decision of an agent: the unit of HitStun_AI is not proved; frames of 1/30 s, as the other frame values of the
     data): HitStun_AI frames from the hit (`Creature::hitStunUntil`; 18 frames, 0.6 s, for a light arrow); in it the behavior does not
     step, turn, or attack, and the reaction plays (before, the next step ended it after 200 ms at most).
@@ -64,8 +79,29 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
     (`Creature::reactionLimitUntil`). The 2 s start at the real exit of that reaction (game data: AI_Reaction_Limiter is in
     EffectsToApplyOnExit of the action `Reaction`): its natural end, a step, a new action, a stun, or the death
     (`Creatures::action_exits`, `Creature::reactionLimitAction`; code review of user test 2, finding U2-R3; test case RT3). Before
-    the exit the limit holds to the natural end plus 2 s. A reaction is chained when it starts while the reaction before it plays (a decision of an agent:
-    the count is a value of the behavior tree, which is not in the game files).
+    the exit the limit holds to the natural end plus 2 s.
+  - The chain (stage U3, research Q3; a decision of the orchestrator: the reading of the data): each full reaction since the last reset
+    counts (`Creature::reactionChain`; before, a reaction counted only when it started while the reaction before it played). The resets
+    (game data: ResetReactionCount): the end of the limit (OnExit of ReactionLimiter_Active), and a hit in an attack of the creature with
+    grit and no limit (OnEnter of the additive reaction). Three light arrows 0.8 s apart on a Solo wolf start the limit at the third.
+    The log line of a reaction gives the count (`the chain 2`).
+  - The additive reaction (stage U3, research Q5; game data: the action `Reaction_Additive` of `baseai_reaction.actionlist`, its table
+    of the fragments `r_R0_*` in the scope "Additive" of the slice; a decision of the orchestrator after live check LC-Q5-2): a hit
+    with a reaction row that plays no full reaction by the rule (a light hit on a Solo+ or an Elite type, the limit), or that comes in an
+    attack of the creature (grit) with a power above 0, plays the additive reaction: the row of its table for the side, in its own
+    scope (`Creature::additive`, `CreatureSlice::additive`: the scope of the controller, 4 for the wolf, 5 for the Cleric). The action,
+    the attack, or the run of the creature goes on; the client plays the flinch over it (live check LC-Q5-2: the client accepted the
+    record, the wolf at rest lowered its head and shoulders for 0.7 s, and the run of a promoted wolf went on with no restart). It plays
+    to the end of its fragment less ExitOffsetSeconds (0.9 - 0.2 s for the wolf). Its push: [Forced movement](forced-movement.md) (it
+    does not hold the behavior). In the limit a melee hit on a type that is not an elite type gives the limit again (the
+    EffectsToApplyOnEnter of the action: AI_Reaction_Limiter for a hit that is not ranged). No additive reaction for a kind with the
+    status AI_NoReactions, a dead creature, and a creature that a stun or a knockdown holds (a project rule: the backend has no
+    breakout).
+  - The kind marks (stage U3; game data: the buff buckets of the kind, `BuffBucketData`): a kind whose buckets give the status
+    AI_Elite_Unbreakable_Grit_Buff is a promoted elite (`CreatureKind::promotedElite`: the push scale PromotedElite, 0.15 of a push in a
+    full reaction and 0 in an additive one), a kind with AI_NoReactions plays no reaction (`noReactions`). The tool reads a bucket of the
+    type AND as the union of its statuses and a bucket of the type OR as their intersection (a mark only when each choice gives it).
+    The supported build: 96 promoted elite kinds (221 spawn points), 0 kinds with AI_NoReactions.
   - The push of the impact of the row is an activity of the reaction, or of the action Pushable (0.4 s, game data) for a row with
     NoReaction: a hit with neither moves nothing ([Forced movement](forced-movement.md)).
 - The end of an action (user test 2, UT2-2; client code 0x2A5D630, 0x6D899DD, 0x4838EE0, 0x2A2BC20; protocol notes 4.14). The client
@@ -362,6 +398,18 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
   slices whose variant of the action has no mark, the Grey Wolves with a Howl of damage). The loader refuses a status action whose action
   has no fragment, a mark after the end of its action or with no status, and a low-health part out of 0 to 1. A file of an older tool has
   no such member: no creature heals or buffs itself.
+- The members of stage U3 (`creature_behavior.py`, `creature_data.py`; the check cases `u3-*` of `check_creature_tool.py`, test case
+  CF11). An attack with Homing clips has a fourth member: one row of 17 values for each clip (start, duration or -1 to the end of the
+  attack, MoveToTarget, MoveToDistance, MoveToDuration, MoveToVelocity, MaxMoveDistance, TurnRate, UseExponential, Radius, MaxAngle,
+  Height, Lock, AllowMoveAfter, Upwards, UseRadius, RotateAfter; [Creature behavior](creature-behavior.md)). A slice has
+  `reactionTable` (the rows of the table of its action `Reaction`: power, the angle ranges, the fragment index, the length of its
+  variant, the time of its HitStun clip or -1, AlignToDirection, AlignOffsetAngle; `motion`, the entries of ReactionMotion with Scale
+  and PushBackScale, `Default` first; `exit`, ExitOffsetSeconds) and `additive` (the same for `Reaction_Additive`, with its action and
+  its scope, 2 to 15). A kind has `promotedElite` and `noReactions` (from `buffBuckets`). The counts of the supported build: `homing`
+  (2,075 attacks, 4,658 clips, 2,055 clips that move), `reactionTables` (502 slices, 13,477 rows, 3 missing tables), `slicesWithReactionTable`
+  (463), `slicesWithAdditive` (319), `kindsPromotedElite` (96), `spawnPointsPromotedElite` (221). A reaction table file that is not in
+  the game copy (3 slices, for example the withered beetle) gives the slice no table: it keeps the rule of user test 2. A file of a tool
+  from before stage U3 loads, with the rules of user test 2 and no homing.
 - `tools/research/creature_tour.py` is the picture check of the creature slices: `prepare
   GAMEDATA TOUR` makes a game data folder with one kind for each slice, `run TOUR OUT`
   makes one creature of each slice in front of the character of a live run and takes one
@@ -370,6 +418,15 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
   OUT` puts 25 pictures on one sheet. A person must look at each sheet.
 
 ## Traps
+
+- The homing values of the data are not small: TurnRate 900400 and a clip duration of 66329 s (clips with no end), MoveToDuration 75 s,
+  clips that start after the end of the attack, and TurnRate 1080 or 3.0 with UseExponential (a rate for each frame above 1 in 169
+  slices). The loader takes each finite value of 0 or more; the world limits an exponential rate to 1 and ends a clip at the end of
+  the attack (a backend that refused such a file did not start in the live run of stage U3).
+- A reaction from the side of a creature turns it (AlignToDirection): a wolf hit from its right by a heavy arrow turns to the source.
+  For a picture of a side reaction, take the picture from the side of the camera before the hit.
+- A light hit on a Solo+ creature (an alpha wolf) at rest plays the additive reaction: a short flinch of the head and the shoulders,
+  and a push of 0.35 m. At 10 pictures each second it is easy to miss: take the pictures from the side, near the creature.
 
 - The yaw of `tools/world creature spawn` turns to the west: `--yaw 270` looks east, `--yaw 90` west. A creature that looks away does
   not see the character (user test 2: a ghost with `--yaw 105` 3 m west of the character took no target for 40 s).

@@ -315,11 +315,11 @@ struct HitResult {
     std::string fragment;
     std::string row;
     /**
-     * The longest time of the push of the impact of the row (user test 2): the length of the reaction that the hit started, or the push of
-     * the action Pushable for a row with NoReaction. No value: the hit started no reaction, and the impact moves nothing (the push of the
-     * client is an activity of these two actions).
+     * The push of the impact of the row (user test 2, stage U3): its longest time (the length of the reaction that the hit started, of the
+     * additive reaction, or of the action Pushable for a row with NoReaction; no value: the impact moves nothing, the push of the client is
+     * an activity of these actions) and the push scales of that action (ReactionMotion: Scale, PushBackScale).
      */
-    std::optional<std::chrono::milliseconds> push;
+    HitPush push;
 };
 
 /**
@@ -531,6 +531,20 @@ struct CastConversion {
     std::string type;
     float part{0.0F};
 };
+/** The rules of the switch of a weapon (stage U3, research creature-combat-feel.md Q6; game data). */
+namespace switch_rules {
+/**
+ * The steps of the key of a weapon (BackTicks="20" of IfInput Use_MainHandSlot_N of Unsheathe_MainHand_N_UB): a switch window of the swing
+ * that plays must start in them (live check SW-L3: a key in a charge with no window was lost).
+ */
+inline constexpr unsigned kKeySteps = 20;
+/**
+ * The first attack of the new weapon starts this number of steps after the switch at the earliest (grid rule 116 Sheathe -> Dodge,Attack:
+ * CanDodgeCancel from 0.1 s; live check SW-L1: a press at the key + 2 started the swing at the key + 3).
+ */
+inline constexpr unsigned kFirstAttackSteps = 3;
+} // namespace switch_rules
+
 
 class Combat {
 public:
@@ -628,9 +642,29 @@ public:
     /**
      * A client selects the weapon of a key (1 or 2): the weapon slot of the paperdoll with
      * that number, when it has an item. The damage of the next attack is the damage of that
-     * weapon.
+     * weapon. Stage U3: a request (CombatState::weaponSwitch) that the input steps decide (step): the weapon changes at the start of the
+     * switch of the client, not at the key in a swing.
+     * @param input The input step of the key. No value: the switch at once (a command, a character with no client).
      */
-    void select_weapon(SessionId session, unsigned key);
+    void select_weapon(SessionId session, unsigned key, std::optional<std::uint16_t> input = std::nullopt,
+                       std::uint32_t inputSequence = 0);
+    /**
+     * @return True while the weapon switch of a character holds its attacks and its abilities (stage U3; game data: Attack_Start_Charge,
+     *         CanAttack_* and each ability action are false while the switch is pending, and the first attack of the new weapon comes 3 steps
+     *         after the switch, grid rule 116): from the key to 3 steps after the switch.
+     */
+    [[nodiscard]] static bool switching(const Entity& character);
+    /** The counts of the weapon switch (stage U3). */
+    struct SwitchCounts {
+        std::uint64_t keys{0};
+        std::uint64_t switches{0};
+        std::uint64_t lost{0};
+        std::uint64_t pressesKept{0};
+        std::uint64_t firstAttacks{0};
+    };
+    [[nodiscard]] const SwitchCounts& switch_counts() const {
+        return m_switchCounts;
+    }
 
     /**
      * @return The weapon that a character has in its hand: the item of the weapon slot that
@@ -752,10 +786,19 @@ private:
     HitResult claim_strike(SessionId session, const HitClaim& claim, AttackTrack& track, Entity& attacker, Entity& target,
                            const ItemInstance& item, const gamedata::WeaponRow& weapon, HitLimits& limits);
 
+    /** Changes the weapon in the hand of a character now (the start of a switch): the sequence ends, the gear and the counter follow. */
+    void change_weapon(Entity& entity, std::uint32_t slot);
+    /**
+     * One input step of a weapon switch (stage U3): the switch at its step (at rest at the key, in a swing at its switch mark), a key with
+     * no window in its 20 steps is lost, and a press until 3 steps after the switch is kept for the first attack of the new weapon.
+     */
+    void step_switch(Entity& character, std::uint32_t inputSequence, std::uint16_t input, AttackBits& bits);
+
     World& m_world;
     const gamedata::CombatTables* m_tables;
     const gamedata::WeaponActions* m_actions;
     AttackSequences m_sequences;
+    SwitchCounts m_switchCounts;
     /** Character id to the limits of the character. An entry with no value in its time window goes away. */
     std::unordered_map<std::string, HitLimits> m_limits;
 };

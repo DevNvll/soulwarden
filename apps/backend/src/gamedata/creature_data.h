@@ -157,6 +157,37 @@ inline constexpr float kContactGap = 0.15F;
 inline constexpr float kHeavyRatio = 1.5F;
 inline constexpr float kHeavyWeight = 0.5F;
 
+/**
+ * One Homing clip of an attack fragment (stage U3, research creature-combat-feel.md Q1; game data: ProcLayer/Procedural type="Homing" of
+ * the variant of the attack). The client applies a clip only to its own character (client code 0x255A140, 0x2564FC0, 0x2565210; live
+ * check LC-Q1-2: no call of the move for a creature): the server moves and turns the creature (world/attack_motion.h).
+ */
+struct HomingClip {
+    /** The start of the clip in the fragment (seconds) and its own duration (the ExitTime of the next Blend; below 0: to the end). */
+    float start{0.0F};
+    float duration{-1.0F};
+    /** MoveToTarget: the clip moves the creature (else it only turns it). */
+    bool moveToTarget{false};
+    /** The move: to MoveToDistance from the target, in MoveToDuration (the smoothstep of 0x2565210), at most MaxMoveDistance from the
+     *  origin of the clip (0: no limit); MoveToVelocity above 0 is the velocity rule (0x25653F0). */
+    float moveToDistance{0.0F};
+    float moveToDuration{0.0F};
+    float moveToVelocity{0.0F};
+    float maxMoveDistance{0.0F};
+    /** The turn: TurnRate degrees each second, or with UseExponential a part of the angle that is left for each 1/30 s (0x25666A0). */
+    float turnRate{0.0F};
+    bool exponential{false};
+    /** The wedge of the target at the start of the clip: Radius (with UseRadiusforAITarget), MaxAngle (to each side), Height. */
+    float radius{0.0F};
+    float maxAngle{0.0F};
+    float height{0.0F};
+    bool lockTarget{false};
+    bool moveAfterTarget{false};
+    bool upwards{false};
+    bool useRadius{false};
+    bool turnAfterTarget{false};
+};
+
 /** One attack of a slice: an action of its action table with one contact or more. */
 struct CreatureAttack {
     /** Index of the action in CreatureSlice::actions. */
@@ -170,6 +201,61 @@ struct CreatureAttack {
     std::uint32_t hits{0};
     /** True for a heavy attack of its slice (`kHeavyRatio`, `kHeavyWeight`). */
     bool heavy{false};
+    /** The Homing clips of the fragment of the attack, in the sequence of their starts (stage U3). Empty: none (a file of an older tool). */
+    std::vector<HomingClip> homing{};
+};
+
+/** An angle range of a condition of a reaction table row (degrees; client code 0x2C07B70: min - tolerance < angle < max + tolerance). */
+struct AngleRange {
+    float min{0.0F};
+    float max{0.0F};
+    float tolerance{0.0F};
+};
+
+/**
+ * One row of a reaction table (stage U3, research Q2; game data: ReactionTableData of the table that the activity SetReactionFragment of
+ * the action names). The client walks the rows in their order and takes the first one that holds (client code 0x2B9F1C0).
+ */
+struct ReactionRow {
+    /** The power of the row: -1 for each power ("*"). */
+    std::int32_t power{-1};
+    /** The angle ranges of its side condition (damaged_front, _back, _left, _right). Empty: each angle. */
+    std::vector<AngleRange> angles{};
+    /** The fragment index of the row (the tool takes the fragment of the action for a name that the slice does not have). */
+    std::int32_t fragment{-1};
+    /** The length of the variant of the fragment (seconds; below 0: not known) and the start of its HitStun clip (below 0: none). */
+    float length{-1.0F};
+    float hitStun{-1.0F};
+    /** AlignToDirection and AlignOffsetAngle (degrees): the creature turns so that the hit comes from the offset. */
+    bool align{false};
+    float alignOffset{0.0F};
+};
+
+/** One entry of the activity ReactionMotion of a reaction action (stage U3, research Q5): Default, or a conditional with its name. */
+struct PushScale {
+    std::string name;
+    float scale{1.0F};
+    /** PushBackScale: it scales only a displacement away from the source (client code 0x48A0690). */
+    float pushBack{1.0F};
+};
+
+/** A reaction action of a slice: its table, its push scales, and the ExitOffsetSeconds of its end (stage U3). */
+struct ReactionTable {
+    std::vector<ReactionRow> rows;
+    /** Default first. */
+    std::vector<PushScale> motion;
+    float exit{0.0F};
+    /** The largest power of a row with a power (the backend sets it at the load): a larger power takes it (research Q2, item 4). */
+    std::int32_t largestPower{-1};
+    /** @return The entry of a name, else the Default entry. */
+    [[nodiscard]] const PushScale& push(std::string_view name) const;
+};
+
+/** The additive reaction of a slice (stage U3): the action Reaction_Additive, its scope, and its table. */
+struct AdditiveReaction : ReactionTable {
+    std::uint32_t action{0};
+    /** The scope of its fragment in the scope definitions of the controller (the wolf: 4, "Additive"). */
+    std::uint32_t scope{0};
 };
 
 /**
@@ -466,6 +552,13 @@ struct CreatureSlice {
      */
     std::array<float, 5> reactionLengths{-1.0F, -1.0F, -1.0F, -1.0F, -1.0F};
     /**
+     * The reaction table of the action Reaction of the slice (stage U3): the side and the power select the row, its fragment, its length,
+     * and its HitStun clip. No value: a file of an older tool, or the slice has no table (the backend keeps the rule of user test 2).
+     */
+    std::optional<ReactionTable> reactionTable;
+    /** The additive reaction of the slice (stage U3). No value: none. */
+    std::optional<AdditiveReaction> additive;
+    /**
      * Index of the action "Idle" of the slice (user test 2, UT2-2): the action that the client of an observer selects itself when it gets
      * no state of the server (client code 0x4838EE0: the action whose name hash is the CRC-32 of "idle"). The server gives a creature its
      * record at the end of an action of the server, at the end of a walk, and at the end of a stun: the client then plays the idle and
@@ -580,6 +673,13 @@ struct CreatureKind {
     std::vector<CreatureBody> bodies;
     /** Number of spawn points of the kind in the file. */
     std::uint32_t points{0};
+    /**
+     * Stage U3 (research Q5; game data): the buff buckets of the base vitals row give the status AI_Elite_Unbreakable_Grit_Buff (the
+     * condition PromotedElite of the reaction actions: the push scales of the slice), or AI_NoReactions (the condition NoReaction: no
+     * reaction and no additive reaction). A file of an older tool: false.
+     */
+    bool promotedElite{false};
+    bool noReactions{false};
 };
 
 /** One place of the world where the game has a creature. */

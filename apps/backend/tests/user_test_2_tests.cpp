@@ -610,8 +610,11 @@ void reaction_rule(const Options&) {
          + std::to_string(started[3]) + std::to_string(started[4]));
     check(firstFragment == static_cast<std::uint32_t>(body.reactions[1]),
           "a row of power 0 plays r_R1_F (the reaction table of the action lists: power 0 and 1 play r_R1_F; r_R0_F is additive)");
-    check(started == std::vector<int>{1, 1, 1, 0, 0} && limits_of(creatures) == limits + 1,
-          "the third chained reaction starts the limit: the fourth and the fifth hit play no reaction");
+    // Stage U3 (a decision of the orchestrator: the reading of the data): each full reaction since the last reset counts, not only a
+    // reaction that starts while the one before plays. The reaction of the light row above is the first of the chain: the second of
+    // these hits is the third reaction, and it starts the limit.
+    check(started == std::vector<int>{1, 1, 0, 0, 0} && limits_of(creatures) == limits + 1,
+          "the third reaction since the last reset starts the limit: the third, fourth, and fifth hit play no full reaction");
     watch.steps(45); // 3 s: the end of the reaction and the 2 s of the limit.
     const std::uint64_t again = reactions_of(creatures);
     (void)shop.hit(*shop.creature(id), "Test_Power0");

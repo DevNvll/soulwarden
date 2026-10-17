@@ -58,9 +58,21 @@ of a movement in [Navigation](navigation.md), and the position check in [Positio
   movement that runs (the client starts its reaction motion again). A root, a stun, and a knockdown do not stop a forced
   movement (the vortex roots the creatures that it pulls; a decision of an agent from the design of the data).
 - The behavior. While a force moves a creature, the behavior does not move it and starts no attack (`Behavior::think`,
-  `go_home`, `roam`). At the end the creature goes on with its path (user test 2, UT2-4: the navigation keeps a path that is 1 m or
-  less away, `navigation_rules::kOffPath`, and takes the free straight line at once for one that is farther), and a
-  creature in a fight keeps the new place in its trail (`Behavior::moved_by_force`).
+  `go_home`, `roam`; `Creature::held_by_force`). At the end the creature goes on with its path (user test 2, UT2-4: the navigation
+  keeps a path that is 1 m or less away, `navigation_rules::kOffPath`, and takes the free straight line at once for one that is
+  farther), and a creature in a fight keeps the new place in its trail (`Behavior::moved_by_force`).
+- The push scales (stage U3, research Q5; game data: the activity ReactionMotion of the action of the hit; client code 0x48A0690): the
+  displacement is multiplied by Scale, and by PushBackScale when it goes away from the source (a push; a pull keeps its length). The
+  entry of the action is the first that holds of `ReactionLimiter_Active` (the additive table in the reaction limit), `PromotedElite`
+  (a kind with the status AI_Elite_Unbreakable_Grit_Buff in its buff buckets), and `Default`. A promoted elite moves 0.15 of a push in a
+  full reaction and nothing in an additive one. The log line of the reaction gives the scale (`push scale 0.15`).
+- The push of an additive reaction (stage U3; decision (c) of the orchestrator, and live check LC-Q5-2 for the run): a hit with no full
+  reaction plays the additive reaction ([Creatures](creatures.md)) and pushes with its push scale (a light arrow on a Solo+ wolf: 0.5
+  m/s for 0.7 s, 0.35 m). This push does not hold the behavior (`ForcedMove::additive`): the run, the attack, and the homing go on, and
+  the two movements add (each one takes its step from the place of the creature). Live check LC-Q5-2 showed the reason: a push that held
+  the behavior stopped the run of a wolf for the 0.7 s of the push, and the client showed the stop. A push of an additive reaction does
+  not replace the push of a full reaction that runs (a rule of an agent; `ForcedCounts::keptFull`). A full push stops the homing of an
+  attack; an additive push does not. Test case CF12.
 - The action of the creature during the movement: the reaction of the hit (stage 3.2a: `Reaction` for a creature that
   plays no attack). The movement keeps the action (`Gait::place`): the client plays the reaction while the creature
   slides on the line.
@@ -126,7 +138,9 @@ tools/gamedata/combat.sh [OUT.json]  # the combat tables with the member impacts
   (the data rule). With a heavy arrow each 2 s it goes back; it comes to its cast distance when the arrows stop or miss (user test 2,
   live run `u2-after`). A melee grunt (5.5 m/s) comes in 15 s to 20 s from 24 m.
 - The log line of a push gives its longest time (`for 1.33 s at most`), and the line of the reaction its power and its hit stun
-  (`world: reaction: creature ... plays the reaction of power 3 (fragment 19) for 1.33 s, a hit stun of 0.73 s`).
+  (`world: reaction: creature ... plays the reaction of power 3 (fragment 26, front 0 degrees) for 0.73 s (the HitStun clip), a hit stun
+  of 0.73 s, the chain 1`). The push of an additive reaction has the end `(the push of an additive reaction: the behavior goes on)`,
+  and its stop line gives the travel of the push only, not the distance from the start (the creature also ran).
 - A combat tables file of a tool from before stage 3.3b-S4 has no member `impacts`: the backend starts and no hit moves a
   creature. The start log then has the line `the combat tables have no impacts` (else `234 damage rows with an
   impact`). Make the file again with `tools/gamedata/combat.sh`.
