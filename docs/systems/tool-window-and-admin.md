@@ -33,7 +33,8 @@ protocol notes (section 6).
   (`model::command(character, ...)`): do not read the selected character at send time. The
   tabs: "Items", "Character" (with the health of the character, the button "Heal", which
   has the text "Revive" for a dead character, the mark "Creatures ignore this
-  character", and the mark "Each kill drops loot and coin"), "Skills", "Creatures", "Travel" (the position of the
+  character", the mark "Each kill drops loot and coin", the attributes, and at its end the group "Build presets" of stage B0:
+  [Build presets](build-presets.md)), "Skills", "Creatures", "Travel" (the position of the
   character, the list of the travel places with a filter and the distance of each place, a
   button "Travel" for the selected place, and a form with three numbers), and "World" (stage 2.2: the time of the world and
   its phase, a form with the hour and the minute and the button "Set", and the buttons 06:00, 12:00, 19:00, 00:00; the time

@@ -80,6 +80,16 @@ public:
      */
     [[nodiscard]] bool unlock_achievement(Entity& entity, const std::string& id, std::uint32_t index);
 
+    /**
+     * Writes the rows of achievements that a character gets with a change of more than one system (stage B0: the objective of each
+     * artifact of a build preset, world/build_presets.h), in one write (in a batch: a savepoint of its transaction). No change of an
+     * entity: `achievements_written` gives the bits after the commit.
+     * @return False when the database did not take the rows.
+     */
+    [[nodiscard]] bool write_achievements(const std::string& characterId, const std::vector<std::string>& ids);
+    /** Gives the entity of a character the bits of written achievements (each id with a bit of the game data) and marks its state. */
+    void achievements_written(Entity& entity, const std::vector<std::string>& ids);
+
     /** @return The entitlement aliases of an account: its rows and the entitlements of the policy. */
     [[nodiscard]] std::vector<std::string> account_entitlements(const std::string& personaId);
 
@@ -91,7 +101,8 @@ private:
     [[nodiscard]] std::vector<std::string> policy_aliases() const;
     /**
      * @return The bit of an achievement id: the progression tables (the achievements of the entitlements), then the interaction
-     *         data (the lore pages, stage 2.5a). No value: the game data has no row of it (the row stays, with no bit).
+     *         data (the lore pages, stage 2.5a), then the item catalog (the objectives of the artifacts, stage B0). No value: the game
+     *         data has no row of it (the row stays, with no bit).
      */
     [[nodiscard]] std::optional<std::uint32_t> achievement_bit(const std::string& id) const;
     /** @return The achievements that these entitlements give. */

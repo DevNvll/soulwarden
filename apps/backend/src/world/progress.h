@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -186,6 +187,53 @@ private:
         float manaPart{0.0F};
         float manaRatePart{0.0F};
     };
+
+public:
+    /**
+     * A change of the level and the attributes of a character that is made on a copy and not written (stage B0): one part of a change
+     * of more than one system (world/build_presets.h). Each change of this system is a plan, a write, and a finish (Inventory::Plan).
+     */
+    struct Plan {
+        std::string characterId;
+        ProgressError error{ProgressError::none};
+        bool inWorld{false};
+        Sheet before;
+        Sheet sheet;
+        /** A cost in coin (an attribute reset): the write takes it through the inventory system. */
+        std::uint64_t cost{0};
+
+        [[nodiscard]] bool ok() const {
+            return error == ProgressError::none;
+        }
+    };
+
+    /**
+     * Plans a level and the value of each attribute (the build preset): the checks of set_level (1 to the largest level of the owned
+     * expansion) and of set_attribute (each value from the minimum to the maximum of the attribute tables, and the points of all of
+     * them not more than the points of the level). The experience becomes the start of the level. No write.
+     * @param values The value of each attribute (index world::attribute::k*).
+     */
+    [[nodiscard]] Plan plan_sheet(const std::string& characterId, std::uint32_t level, const std::array<std::uint32_t, attribute::kCount>& values);
+    /**
+     * @return The first error of a level and attribute values on a character with nothing (the check of the build presets at the start
+     *         of the backend): the rules of plan_sheet. `noTables` with no progression tables.
+     */
+    [[nodiscard]] ProgressError check_sheet(std::uint32_t level, const std::array<std::uint32_t, attribute::kCount>& values) const;
+    /** Writes the row of a plan (in a batch: a savepoint). @return False: the database did not take it. */
+    [[nodiscard]] bool write(const Plan& plan);
+    /** Changes the entity of a written plan and marks its states. */
+    ProgressResult finish(Plan& plan, const char* what);
+
+private:
+    /** @return The plan of a change: `apply(Sheet&, std::uint64_t& cost)` on a copy, then the values that agree with the tables. */
+    template <class Change>
+    Plan stage(const std::string& characterId, bool needsTables, Change&& apply);
+    /** The level and the values of plan_sheet on a sheet. */
+    [[nodiscard]] ProgressError sheet_into(Sheet& sheet, std::uint32_t level, const std::array<std::uint32_t, attribute::kCount>& values) const;
+    /** The level of set_level on a sheet. */
+    [[nodiscard]] ProgressError level_into(Sheet& sheet, std::uint32_t level) const;
+    /** The value of one attribute of set_attribute on a sheet. */
+    [[nodiscard]] ProgressError attribute_into(Sheet& sheet, unsigned type, std::uint32_t value) const;
     /**
      * @return The MaxMana and ManaRate parts of the threshold abilities of the attributes of a sheet (stage 3.5b.2; the attribute tables,
      *         EquipAbilities: Focus 100 gives Foc_Bonus_100_1 with MaxMana 0.1 and ManaRate 0.2; the value with the bonus of the gear).

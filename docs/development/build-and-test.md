@@ -122,6 +122,12 @@ python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/
 
 ## Traps
 
+- The proof that a new case fails on the tree before a stage (stage B0): copy the earlier tree into a work folder, add the new test
+  files and their registration, and build the test program of the copy with `-DSOULWARDEN_B0_BASELINE` in `CXXFLAGS` (a work build
+  root, not the build folder of the repository). In `tests/build_preset_tests.cpp` and `tests/review_user_test_2_tests.cpp` this mark
+  removes the parts that need the new code (the build presets, the catalog format 3, the count `pushedOffPath`); the cases of a new
+  feature with no code before (BP3 to BP8) are not in such a build. The helpers of the creature cases of user test 2 (an idle wolf, a
+  passive creature on a wander) are in `tests/support/idle_fixture.h` (cases UX1 to UX9 and RT1 to RT6).
 - The Windows headers of the MinGW build define `near` and `far` as macros: a member or a variable with such a name in a file that a
   route includes after them does not compile (`SOULWARDEN_BACKEND_TARGET=windows`; stage 3.5b.1: `ChestsView::nearby`). Build the
   Windows target before a commit of a new header.

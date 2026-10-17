@@ -103,6 +103,22 @@ struct TravelPlace {
     float position[3]{};
 };
 
+/** One variant of a build preset (stage B0): the name of the command and the text of the window ("pve", "PvE tree"). */
+struct PresetVariant {
+    std::string name;
+    std::string label;
+};
+
+/** One build preset of the backend (stage B0, the route GET /admin/v1/catalog/presets). */
+struct Preset {
+    std::string name;
+    std::string title;
+    /** False: the check of the start of the backend disabled the preset (`cause` has the text). */
+    bool enabled{false};
+    std::string cause;
+    std::vector<PresetVariant> variants;
+};
+
 /** The last replies of the backend. */
 struct Snapshot {
     /** False: the launcher gave no token, and the window can do nothing. */
@@ -171,6 +187,10 @@ struct Snapshot {
     bool placesLoaded{false};
     bool placesDone{false};
 
+    /** The build presets of the backend (stage B0). `presetsDone`: the backend gave its list (a backend from before has none). */
+    std::vector<Preset> presets;
+    bool presetsDone{false};
+
     /**
      * The world time (stage 2.2, the member "worldTime" of the state): one value for the whole world. `hasWorldTime`: a backend from
      * before stage 2.2 has no such member.
@@ -216,6 +236,9 @@ void search_kinds(const std::string& text) noexcept;
 
 /** Asks for the travel places of the backend. The list does not change in one start: the window asks one time. */
 void load_places() noexcept;
+
+/** Asks for the build presets of the backend (stage B0). The list does not change in one start: the window asks one time. */
+void load_presets() noexcept;
 
 /**
  * Sends one command for a character. No effect while a command is with the backend.

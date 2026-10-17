@@ -229,6 +229,15 @@ not, as for the items):
   tools/world bar CHARACTER WEAPON SLOT ABILITY put an active ability that the character has on a
                                                 place (0 to 2) of the bar of a weapon (ABILITY: the
                                                 id text of its node, or none: an empty place)
+  tools/world presets                           the build presets (stage B0): enabled or the cause,
+                                                the variants, and the content of each preset
+  tools/world preset CHARACTER PRESET [VARIANT] give a character the whole build of a preset (stage
+                                                B0; bow-boltcaster with the variant pve or pvp; no
+                                                variant: the first one) in one transaction: the
+                                                equipment (the old items go into the bag), the
+                                                level, the attributes, the masteries, the trees, the
+                                                bars, and the consumables. A refused preset changes
+                                                nothing
 
 The creatures of the world (protocol notes 4.14):
   tools/world creatures [CHARACTER [RANGE]]     the creatures of the world. With a character: the
@@ -596,6 +605,27 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
             print(f"  {item['rolls']:>6} roll(s)  {item['quantity']:>7} x {item['item']}")
         print(f"{document['rollsWithLoot']} of {document['rolls']} rolls gave an item; "
               f"{len(document['items'])} different items")
+    elif isinstance(document, dict) and "changes" in document and "preset" in document:
+        where = "the character is in the world" if document["applied"] == "world" else "the rows only"
+        print(f"world: build preset {document['preset']} ({document['variant'] or 'the first variant'}) done ({where}):")
+        for change in document["changes"]:
+            print(f"  {change}")
+    elif isinstance(document, dict) and "presets" in document:
+        for preset in document["presets"]:
+            state = "enabled" if preset["enabled"] else f"DISABLED: {preset['cause']}"
+            variants = ", ".join(f"{variant['name']} ({variant['label']})" for variant in preset["variants"])
+            print(f"{preset['name']}: {preset['title']}; {state}; variants {variants}")
+            values = ", ".join(f"{name} {value}" for name, value in preset["attributes"].items())
+            print(f"  level {preset['level']}; {values}")
+            for item in preset["items"]:
+                perks = ", ".join(perk or "-" for perk in item["perks"]) if any(item["perks"]) else ""
+                gear = f" gear score {item['gearScore']}" if item["gearScore"] else ""
+                print(f"  {('slot ' + str(item['slot'])) if item['slot'] != 'bag' else 'bag':<8} {item['quantity']:>3} x "
+                      f"{item['item']}{gear}" + (f": {perks}" if perks else ""))
+            for variant in preset["variants"]:
+                for tree in variant["trees"]:
+                    print(f"  {variant['name']}: {tree['table']} level {tree['level']}, {len(tree['nodes'])} nodes, bar "
+                          + ", ".join(place or "-" for place in tree["bar"]))
     elif isinstance(document, dict) and "entity" in document:
         show(document)
     elif isinstance(document, dict) and "items" in document:
@@ -1307,6 +1337,14 @@ def main() -> None:
             fail("the weapon and the ability must be ids of the game tables")
         request(data_dir, "POST", f"/v1/dev/progress/bar?character={character_id(data_dir, arguments[1])}"
                                   f"&weapon={arguments[2]}&slot={whole(arguments[3], 'the place')}&ability={arguments[4]}")
+    elif command == "presets" and len(arguments) == 1:
+        request(data_dir, "GET", "/v1/dev/presets")
+    elif command == "preset" and len(arguments) in (3, 4):
+        if not all(re.fullmatch(r"[A-Za-z0-9_-]+", word) for word in arguments[2:]):
+            fail("the preset and the variant are names of `tools/world presets` (bow-boltcaster, pve)")
+        variant = f"&variant={arguments[3]}" if len(arguments) == 4 else ""
+        request(data_dir, "POST", f"/v1/dev/presets/apply?character={character_id(data_dir, arguments[1])}"
+                                  f"&preset={arguments[2]}{variant}")
     elif command == "cooldowns" and len(arguments) in (2, 3):
         target = character_id(data_dir, arguments[1])
         if len(arguments) == 3:

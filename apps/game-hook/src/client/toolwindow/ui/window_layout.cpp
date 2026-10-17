@@ -59,6 +59,14 @@ int g_worldHour = 12;
 int g_worldMinute = 0;
 /** The time of the last request for the travel places. Below 0: no request yet. */
 double g_placesAskedAt = -1.0;
+/** The build presets (stage B0): the time of the last request of the list, the selected preset and variant, and the confirm step. */
+double g_presetsAskedAt = -1.0;
+std::string g_selectedPreset;
+std::string g_selectedVariant;
+/** The character of an open confirm line: a change of the selected character closes it. */
+std::string g_presetConfirm;
+/** The result line of the last preset that refilled the form. */
+std::string g_presetFilled;
 
 /** The character that the values of the controls are for. */
 std::string g_formCharacter;
@@ -580,6 +588,112 @@ bool begin_value_row(const char* name, const char* now) {
     return true;
 }
 
+/**
+ * The group "Build presets" of the tab "Character" (stage B0): the presets of the backend, the choice of the variant (the tree), the
+ * button "Apply", one confirm line, and the result line. The command keeps the character of the snapshot that the window drew.
+ */
+void draw_presets() {
+    // The list does not change in one start: the window asks for it one time, and again each 5 s while the backend gave no list.
+    if (!g_data.presetsDone && (g_presetsAskedAt < 0.0 || ImGui::GetTime() - g_presetsAskedAt >= 5.0)) {
+        g_presetsAskedAt = ImGui::GetTime();
+        model::load_presets();
+    }
+    ImGui::SeparatorText("Build presets");
+    if (!g_data.presetsDone) {
+        ImGui::TextColored(kDimColor, "No list of the backend yet.");
+        return;
+    }
+    if (g_data.presets.empty()) {
+        ImGui::TextColored(kDimColor, "The backend has no build preset.");
+        return;
+    }
+    const model::Preset* preset = nullptr;
+    for (const model::Preset& entry : g_data.presets) {
+        if (entry.name == g_selectedPreset) {
+            preset = &entry;
+        }
+    }
+    if (preset == nullptr) {
+        preset = &g_data.presets.front();
+        g_selectedPreset = preset->name;
+        g_selectedVariant = preset->variants.empty() ? std::string{} : preset->variants.front().name;
+    }
+    const float line = ImGui::GetFontSize();
+    ImGui::BeginDisabled(g_data.busy);
+    ImGui::SetNextItemWidth(line * 24.0F);
+    if (ImGui::BeginCombo("##preset", (preset->title.empty() ? preset->name : preset->title).c_str())) {
+        for (const model::Preset& entry : g_data.presets) {
+            if (ImGui::Selectable((entry.title.empty() ? entry.name : entry.title).c_str(), entry.name == g_selectedPreset)) {
+                g_selectedPreset = entry.name;
+                g_selectedVariant = entry.variants.empty() ? std::string{} : entry.variants.front().name;
+                g_presetConfirm.clear();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    bool first = true;
+    for (const model::PresetVariant& variant : preset->variants) {
+        if (!first) {
+            ImGui::SameLine();
+        }
+        first = false;
+        if (ImGui::RadioButton(variant.label.c_str(), variant.name == g_selectedVariant)) {
+            g_selectedVariant = variant.name;
+            g_presetConfirm.clear();
+        }
+    }
+    if (!preset->enabled) {
+        ImGui::TextColored(kErrorColor, "The backend disabled this preset: %s", preset->cause.c_str());
+    }
+    std::string name;
+    for (const model::Character& character : g_data.characters) {
+        if (character.id == g_data.selected) {
+            name = character.name;
+        }
+    }
+    if (g_presetConfirm != g_data.selected) {
+        g_presetConfirm.clear();
+    }
+    ImGui::BeginDisabled(!preset->enabled);
+    if (g_presetConfirm.empty()) {
+        if (ImGui::Button("Apply##preset")) {
+            g_presetConfirm = g_data.selected;
+        }
+    } else {
+        // The confirm line: the command names the character of this frame.
+        ImGui::PushTextWrapPos(0.0F);
+        ImGui::TextColored(kErrorColor, "This replaces the equipment, the level, the attributes, and the trees of %s.", name.c_str());
+        ImGui::PopTextWrapPos();
+        if (ImGui::Button("Confirm##preset")) {
+            std::string label = "Apply the build preset " + preset->name;
+            for (const model::PresetVariant& variant : preset->variants) {
+                if (variant.name == g_selectedVariant) {
+                    label += " (" + variant.label + ")";
+                }
+            }
+            send("apply_preset", {{"preset", preset->name}, {"variant", g_selectedVariant}}, label);
+            g_presetConfirm.clear();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##preset")) {
+            g_presetConfirm.clear();
+        }
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    // The result line of the last preset command (the last line of the window has it too). A preset that the backend applied changes
+    // the level and the attributes: the fields of the form get the new values one time.
+    if (g_data.result.rfind("Apply the build preset", 0) == 0 && !g_data.resultIsError && g_data.result != g_presetFilled && !g_data.busy) {
+        g_presetFilled = g_data.result;
+        fill_form();
+    }
+    if (g_data.result.rfind("Apply the build preset", 0) == 0) {
+        ImGui::PushTextWrapPos(0.0F);
+        ImGui::TextColored(g_data.resultIsError ? kErrorColor : kDoneColor, "%s", g_data.result.c_str());
+        ImGui::PopTextWrapPos();
+    }
+}
+
 void draw_character() {
     char now[96];
     if (!g_data.tables) {
@@ -680,6 +794,7 @@ void draw_character() {
         ImGui::EndTable();
     }
     ImGui::EndDisabled();
+    draw_presets();
 }
 
 /** @return The value of the control of one skill row: the level now until the user changes it. */

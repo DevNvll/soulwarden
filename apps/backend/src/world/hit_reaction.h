@@ -16,8 +16,12 @@ namespace soulwarden::backend::world {
  * a command, and a row of a file of a tool from before user test 2.
  */
 struct HitReaction {
-    /** The attack type of the damage row (the column AttackType): the gates of the reaction rule of the action lists. */
-    enum class Attack : std::uint8_t { light, heavy, other };
+    /**
+     * The attack type of the damage row (the column AttackType): the gates of the reaction rule of the action lists. `ability`: the type
+     * Ability; `other`: each other type (Magic, MagicSpell, Heartgem, ...; code review of user test 2, finding U2-R2: the branch below power
+     * 1 of baseai_reaction.actionlist names only Ability).
+     */
+    enum class Attack : std::uint8_t { light, heavy, ability, other };
     /** False: the hit plays no reaction (a tick of a damage over time, which has no damage row; NoReaction of the row). */
     bool plays{true};
     /**

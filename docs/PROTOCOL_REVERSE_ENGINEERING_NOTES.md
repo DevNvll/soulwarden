@@ -6470,6 +6470,39 @@ same node after its respawn).
 - The use of field 1 of type 12 (replenishTime): the client does not restore a node at that time.
 - Fishing (3.6b); the durability loss (3.7); the quest, event, and special nodes (the rows with a rule that the backend cannot check).
 
+### 4.45 The build preset: the upgrade gear score and the objective achievement of an artifact (live proof of stage B0; static proof for the parser of the client; the preset is project data from the decisions of the user)
+
+Stage B0, the first part of the bow build of the user. Build sheet: `~/Games/soulwarden/work/research/bow-build.md`. Live checks U1,
+U2, U13 and the live proof: `~/Games/soulwarden/work/evidence/bow-build/b0/implement/RESULT.md` (test builds outside `dist`). Code:
+`world/build_presets.h`, `world/inventory.h` (`give_limit`, `plan_build`), `gamedata/item_catalog.h` (format 3),
+`world/ownership.h` (`write_achievements`), `tools/gamedata/item_catalog.py`. Document: [Build presets](systems/build-presets.md).
+Test cases BP1 to BP9. The preset uses no new message and no new state: the item, attribute, skill, ability, and achievement states
+of the earlier sections, from their encoders.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The client shows the perks of the places 2 to 5 of an artifact only when the character has the achievement of its objective: the bit of the AchievementIndex of `Achievement_Objective_<item>` in the achievement state (type 3210, slot 66, 4.29; the Boltcaster 12324, the Winged Leather Shoes 12314, the Endless Thirst earring 12338). With no bit each of these places shows "Equip to view task."; the place 1 shows. | Live proof (check U1: the bow, the shoes, and the earring, each with and with no bit; the bits came with `tools/world fragment NAME 66 3210`, and the next tooltip showed the change with no new world entry) | Not traced |
+| The tooltip of an artifact shows the fixed perks of its definition (Electrified, Bolt, Shirking Shock of the Boltcaster) also when the instance has only the places 4 and 5, as for each item (4.23, live check I2). | Live proof (check U1) | The rule of 4.23 |
+| An artifact with the gear score 800 (above the 700 of its row): the tooltip and the paperdoll show 800, the gear score of the character counts it, and the equip takes it (MaxEquipGS 800 of the owned expansion, 4.29). | Live proof (check U2: the bow, the shoes, the earring) | The equip check of 4.29 |
+| The parser of a master item row keeps the cell MaxCraftUpgradeGS only when it is not empty (a value with a presence byte); the 73 artifacts have 800, no other row has a value. | Static proof (the parser; the census of the game data) | `0x442DD20` (the store at +0x1997) |
+| The use of a weapon consumable (HoningStoneT5) from the bag: the action menu of the bag has "Use" and "Equip to Slot 1" to "Equip to Slot 4" (the quick slots); "Use" sends the use request 2917 with the bag slot (4.23), and the backend gives the status of the item (2400 s). | Live proof (check U13) | The request of 4.23 |
+
+**The data** (`item-catalog.json` format 3, [Game data](development/game-data.md)): the column `maxCraftUpgradeGS` of each item and
+the member `artifactObjectives` (`[item id, objective id, achievement id, achievement index]` for each of the 73 rows of the type
+Artifact of the tables `Objectives`: the item of the TaskEquipItem in its task tree, the AchievementIndex of the table
+`AchievementData`).
+
+**The rules** (the source of each rule is in [Build presets](systems/build-presets.md)): the gear score limit of a give is the larger
+of the largest gear score of the item row and its upgrade limit, the upgrade limit not above MaxEquipGS (a value outside the range
+gets the nearest value); the preset writes the achievement of the objective of each artifact of the build in its transaction.
+
+**Not known, not done** (stage B0): the code of the client that hides the places 2 to 5 (not traced: the live proof is enough for the
+preset); the objective progress of an artifact in play (the quest engine, stage 1.8); the gear system counts the perks of an artifact
+also with no objective achievement (the client shows them as locked); the jewelry stat lines and the attribute bonuses of the build
+(stage B4: the maximum health of the character is 5,109, the video shows 10,676).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

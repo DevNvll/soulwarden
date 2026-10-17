@@ -80,7 +80,8 @@ World::World(const WorldClock& clock,
       m_chests(*this, options.chestData),
       m_lootBags(*this),
       m_worldTime(*this),
-      m_gathering(*this, options.gatheringData) {
+      m_gathering(*this, options.gatheringData),
+      m_presets(*this, project_presets()) {
     m_random = options.randomSeed;
 }
 

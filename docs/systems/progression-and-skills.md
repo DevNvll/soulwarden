@@ -11,6 +11,7 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
 | Level, experience, attributes of a character | Protocol notes 4.12, `apps/backend/src/world/progress.h`, `server/rep/states/attribute_state.cpp`, `tools/world level`, `tools/gamedata/progression.sh` |
 | Weapon mastery, ability bar, trade skills | Protocol notes 4.13, `apps/backend/src/world/skills.h`, `server/rep/states/skill_states.cpp`, `tools/world mastery`, `tools/world node`, `tools/world bar`, `tools/research/ability_tables.py` |
 | The use of an ability of the bar (the cast, the cooldown) | [Abilities](abilities.md), protocol notes 4.22 |
+| The level, the attributes, and the trees of a build preset | [Build presets](build-presets.md), `Progress::plan_sheet`, `Skills::plan_trees` |
 
 ## Rules
 
@@ -39,6 +40,11 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   transaction. A weapon has one mastery point for each rank. A node that a character loses
   stays in its entity with the level 0 while the character is in the world: the client
   removes a node only when it gets it with the level 0.
+- The plan of a change (stage B0, [Build presets](build-presets.md)): `Progress::plan_sheet` (the level and the value of each
+  attribute: the rules of `set_level` and `set_attribute`) and `Skills::plan_trees` (for each tree the rank, the reset of the tree with
+  no cost, the nodes in sequence with the rules of `assign`, and the bar with the rules of `set_bar`) make the change on a copy with no
+  write. `write` puts the rows into the transaction of the caller, and `finish` changes the entity and marks the states. The single
+  commands use the same steps.
 - A request of a client for its attributes or its skills that the backend refuses changes
   nothing. The client has no failure message for these requests, and it changed its own
   values already: the session gets the state of the component again. Only the tree reset has

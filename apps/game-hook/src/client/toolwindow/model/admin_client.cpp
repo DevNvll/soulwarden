@@ -32,6 +32,7 @@ bool g_searchPending = false;
 std::string g_wantedKindSearch;
 bool g_kindSearchPending = false;
 bool g_placesPending = false;
+bool g_presetsPending = false;
 struct PendingCommand {
     /** The character that the window showed when the user gave the command. */
     std::string character;
@@ -354,6 +355,35 @@ void run_places() {
     ++g_version;
 }
 
+void run_presets() {
+    const network::BackendReply reply = request("GET", "/admin/v1/catalog/presets", {});
+    const json document = reply.status == 200 ? json::parse(reply.body, nullptr, false) : json();
+    const Guard guard;
+    g_snapshot.presets.clear();
+    // A reply that is not a list (no backend, a backend from before stage B0): the window asks again later.
+    g_snapshot.presetsDone = document.is_object();
+    const json& presets = member_of(document, "presets");
+    if (presets.is_array()) {
+        for (const json& entry : presets) {
+            Preset preset;
+            preset.name = text_of(entry, "name");
+            preset.title = text_of(entry, "title");
+            preset.enabled = flag_of(entry, "enabled");
+            preset.cause = text_of(entry, "cause");
+            const json& variants = member_of(entry, "variants");
+            if (variants.is_array()) {
+                for (const json& variant : variants) {
+                    preset.variants.push_back(PresetVariant{text_of(variant, "name"), text_of(variant, "label")});
+                }
+            }
+            if (!preset.name.empty()) {
+                g_snapshot.presets.push_back(std::move(preset));
+            }
+        }
+    }
+    ++g_version;
+}
+
 void run_command(const PendingCommand& command) {
     // The character is the character of the command, not the selected character of this
     // moment: a state reply for a different character can come while the command waits.
@@ -366,12 +396,20 @@ void run_command(const PendingCommand& command) {
     std::string text = problem_of(reply);
     if (reply.status == 200) {
         text = text_of(document, "applied") == "stored" ? "done (the character is not in the world: its rows changed)" : "done";
+        // A build preset (stage B0) names its changes: the window shows their count.
+        const json& changes = member_of(document, "changes");
+        if (changes.is_array()) {
+            text += ", " + std::to_string(changes.size()) + " changes";
+        }
     } else if (text.empty() || reply.status == 404) {
         const std::string message = text_of(document, "message");
         text = message.empty() ? "the backend gave the status " + std::to_string(reply.status) : message;
     }
     // The log names the command and the result. It has no token: the token is only in the request header.
     core::log::write("tool window: command %s: status %d", command.name.c_str(), reply.status);
+    // The state after the command comes before its result: a window that reads the result (a build preset fills its form again) has
+    // the new values then.
+    refresh_state();
     const Guard guard;
     g_snapshot.busy = false;
     g_snapshot.result = command.label + ": " + text;
@@ -391,6 +429,7 @@ DWORD WINAPI worker(LPVOID) noexcept {
             bool hasSearch = false;
             bool hasKindSearch = false;
             bool hasPlaces = false;
+            bool hasPresets = false;
             {
                 const Guard guard;
                 hasCommand = std::exchange(g_commandPending, false);
@@ -406,6 +445,7 @@ DWORD WINAPI worker(LPVOID) noexcept {
                     kindSearchText = g_wantedKindSearch;
                 }
                 hasPlaces = std::exchange(g_placesPending, false);
+                hasPresets = std::exchange(g_presetsPending, false);
             }
             if (hasCommand) {
                 run_command(command);
@@ -418,6 +458,9 @@ DWORD WINAPI worker(LPVOID) noexcept {
             }
             if (hasPlaces) {
                 run_places();
+            }
+            if (hasPresets) {
+                run_presets();
             }
             if (g_active.load() || hasCommand) {
                 refresh_state();
@@ -515,6 +558,16 @@ void load_places() noexcept {
     {
         const Guard guard;
         g_placesPending = true;
+    }
+    if (g_wake != nullptr) {
+        SetEvent(g_wake);
+    }
+}
+
+void load_presets() noexcept {
+    {
+        const Guard guard;
+        g_presetsPending = true;
     }
     if (g_wake != nullptr) {
         SetEvent(g_wake);

@@ -87,13 +87,16 @@ std::string slot_list(const std::set<std::uint32_t>& slots) {
  * @param loot True: a gear score of a loot roll (world/rewards.h). It is not below 1 and not above
  *        the largest gear score of the item; the smallest gear score of the item table is not a
  *        lower limit for it (the loot generation of the client, loot.md 2.1).
+ * @param limit The largest gear score (stage B0: the limit of a give, Inventory::give_limit). 0: the
+ *        largest gear score of the item table.
  */
 ItemInstance new_item(const gamedata::ItemDefinition& definition,
                       std::uint32_t quantity,
                       std::optional<std::uint32_t> gearScore,
                       std::uint32_t chrono,
                       bool loot = false,
-                      const PerkIds& perks = {}) {
+                      const PerkIds& perks = {},
+                      std::uint32_t limit = 0) {
     ItemInstance item;
     item.instance = new_instance();
     item.itemId = definition.id;
@@ -101,7 +104,7 @@ ItemInstance new_item(const gamedata::ItemDefinition& definition,
     item.quantity = quantity;
     if (definition.maxGearScore != 0) {
         const std::uint32_t low = loot ? 1U : definition.minGearScore;
-        const std::uint32_t high = std::max(definition.maxGearScore, low);
+        const std::uint32_t high = std::max(std::max(definition.maxGearScore, limit), low);
         const std::uint32_t standard = definition.gearScoreOverride != 0 ? definition.gearScoreOverride : definition.minGearScore;
         item.gearScore = std::clamp(gearScore.value_or(standard), low, high);
     }
@@ -157,7 +160,8 @@ std::uint32_t put(Bag& bag,
                   bool loot,
                   std::uint8_t action,
                   std::set<std::uint32_t>& changed,
-                  const PerkIds& perks = {}) {
+                  const PerkIds& perks = {},
+                  std::uint32_t limit = 0) {
     const std::uint32_t maxStack = std::clamp<std::uint32_t>(definition.maxStack, 1, kMaxItemQuantity);
     const std::uint8_t flags = definition.bindOnPickup ? kItemBound : 0;
     std::uint32_t left = quantity;
@@ -181,7 +185,7 @@ std::uint32_t put(Bag& bag,
         if (!target) {
             break;
         }
-        ItemInstance item = new_item(definition, std::min(left, maxStack), gearScore, bag.nextChrono++, loot, perks);
+        ItemInstance item = new_item(definition, std::min(left, maxStack), gearScore, bag.nextChrono++, loot, perks, limit);
         left -= item.quantity;
         BagSlot& slot = slot_at(bag, *target);
         slot.item = std::move(item);
@@ -252,6 +256,16 @@ const char* item_error_text(ItemError error) {
 
 Inventory::Inventory(World& world, state::Store& store, const gamedata::ItemCatalog* catalog)
     : m_world(world), m_store(store), m_catalog(catalog) {}
+
+std::uint32_t Inventory::give_limit(const gamedata::ItemDefinition& definition) const {
+    // The upgrade limit of the item table (MaxCraftUpgradeGS: 800 for an artifact) counts up to the largest gear score of an equipped
+    // item of the owned expansion (MaxEquipGS); with no expansion data it has no such limit. The gear score range of the item table
+    // stays the lower part: an item of the table keeps its range also when the expansion limit is lower.
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const std::uint32_t equip = tables != nullptr && tables->loaded() ? tables->max_equip_gear_score() : 0;
+    const std::uint32_t upgrade = equip != 0 ? std::min(definition.maxCraftUpgradeGS, equip) : definition.maxCraftUpgradeGS;
+    return std::max(definition.maxGearScore, upgrade);
+}
 
 Inventory::Carried Inventory::read_items(const std::string& characterId) const {
     Carried items;
@@ -372,69 +386,66 @@ std::optional<Holdings> Inventory::holdings(const std::string& characterId) {
 }
 
 template <class Change>
-ItemResult Inventory::change(const std::string& characterId, const char* what, Change&& apply, std::optional<std::uint64_t> coin) {
-    ItemResult result;
+Inventory::Plan Inventory::stage(const std::string& characterId, Change&& apply) {
+    Plan plan;
+    plan.characterId = characterId;
     Entity* entity = m_world.find_character(characterId);
-    // The log line names the session that plays the character.
-    const std::string mark = entity != nullptr ? log::session_mark(entity->owner, characterId) : std::string{};
-    const log::Context context(mark);
-    Carried items;
     if (entity != nullptr) {
-        items.bag = entity->bag;
-        items.equipment = entity->equipment;
-        result.inWorld = true;
+        plan.items.bag = entity->bag;
+        plan.items.equipment = entity->equipment;
+        plan.inWorld = true;
     } else if (m_store.find_character(characterId)) {
-        items = read_items(characterId);
+        plan.items = read_items(characterId);
     } else {
-        result.error = ItemError::unknownCharacter;
+        plan.error = ItemError::unknownCharacter;
+        return plan;
     }
     // The change is made on a copy: the items of the entity change only after the rows.
-    const Carried before = items;
-    Touched touched;
-    if (result.ok()) {
-        result.error = apply(items, touched);
-    }
-    if (!result.ok()) {
-        log::write("inventory: %s of character %s refused: %s", what, characterId.c_str(), item_error_text(result.error));
-        return result;
+    plan.before = plan.items;
+    plan.error = apply(plan.items, plan.touched);
+    if (!plan.ok()) {
+        return plan;
     }
     // A slot that the vector did not have is a new element for the client too.
-    for (std::size_t index = before.bag.slots.size(); index < items.bag.slots.size(); ++index) {
-        touched.bag.insert(static_cast<std::uint32_t>(index));
+    for (std::size_t index = plan.before.bag.slots.size(); index < plan.items.bag.slots.size(); ++index) {
+        plan.touched.bag.insert(static_cast<std::uint32_t>(index));
     }
     // The rows of the change. An item that left its place has its row removed, also when the
     // change puts it in a different place: the store removes each row of the change first,
     // and then writes the new rows. Thus an item that moves between the bag and the paperdoll
     // is one row at all times.
-    std::vector<std::string> removed;
-    std::vector<state::ItemRow> rows;
     const auto place = [&](const ItemInstance* old, const ItemInstance* now, int container, std::uint32_t slot) {
         if (old != nullptr && (now == nullptr || now->instance != old->instance)) {
-            removed.push_back(instance_text(old->instance));
+            plan.removed.push_back(instance_text(old->instance));
         }
         if (now != nullptr) {
-            rows.push_back(row_of(*now, container, slot));
+            plan.rows.push_back(row_of(*now, container, slot));
         }
     };
-    for (const std::uint32_t slot : touched.bag) {
-        place(slot < before.bag.slots.size() && before.bag.slots[slot].item ? &*before.bag.slots[slot].item : nullptr,
-              items.bag.slots[slot].item ? &*items.bag.slots[slot].item : nullptr,
+    for (const std::uint32_t slot : plan.touched.bag) {
+        place(slot < plan.before.bag.slots.size() && plan.before.bag.slots[slot].item ? &*plan.before.bag.slots[slot].item : nullptr,
+              plan.items.bag.slots[slot].item ? &*plan.items.bag.slots[slot].item : nullptr,
               state::kContainerBag,
               slot);
     }
-    for (const std::uint32_t slot : touched.equipment) {
-        place(before.equipment.item(slot), items.equipment.item(slot), state::kContainerPaperdoll, slot);
+    for (const std::uint32_t slot : plan.touched.equipment) {
+        place(plan.before.equipment.item(slot), plan.items.equipment.item(slot), state::kContainerPaperdoll, slot);
     }
+    return plan;
+}
+
+bool Inventory::write(const Plan& plan, std::optional<std::uint64_t> coin) {
     // All rows of the change are one transaction, with the coin of a grant.
-    if ((!removed.empty() || !rows.empty() || coin) && !m_store.write_items(characterId, removed, rows, coin)) {
-        result.error = ItemError::storeFailed;
-        log::write("inventory: %s of character %s refused: %s", what, characterId.c_str(), item_error_text(result.error));
-        return result;
-    }
-    if (entity != nullptr && coin && *coin != entity->wallet.coin) {
-        entity->wallet.coin = *coin;
-        m_world.touch(entity->id, ComponentKey::currency);
-    }
+    return (plan.removed.empty() && plan.rows.empty() && !coin) || m_store.write_items(plan.characterId, plan.removed, plan.rows, coin);
+}
+
+ItemResult Inventory::finish(Plan& plan, const char* what) {
+    ItemResult result;
+    result.inWorld = plan.inWorld;
+    const std::string& characterId = plan.characterId;
+    Entity* entity = plan.inWorld ? m_world.find_character(characterId) : nullptr;
+    Carried& items = plan.items;
+    const Touched& touched = plan.touched;
     if (entity != nullptr) {
         // One mark for each state that changed: each session that observes the entity gets
         // the slots that are newer than its last record.
@@ -485,6 +496,30 @@ ItemResult Inventory::change(const std::string& characterId, const char* what, C
 }
 
 template <class Change>
+ItemResult Inventory::change(const std::string& characterId, const char* what, Change&& apply, std::optional<std::uint64_t> coin) {
+    Entity* entity = m_world.find_character(characterId);
+    // The log line names the session that plays the character.
+    const std::string mark = entity != nullptr ? log::session_mark(entity->owner, characterId) : std::string{};
+    const log::Context context(mark);
+    Plan plan = stage(characterId, std::forward<Change>(apply));
+    if (plan.ok() && !write(plan, coin)) {
+        plan.error = ItemError::storeFailed;
+    }
+    if (!plan.ok()) {
+        ItemResult result;
+        result.error = plan.error;
+        result.inWorld = plan.inWorld;
+        log::write("inventory: %s of character %s refused: %s", what, characterId.c_str(), item_error_text(result.error));
+        return result;
+    }
+    if (entity != nullptr && coin && *coin != entity->wallet.coin) {
+        entity->wallet.coin = *coin;
+        m_world.touch(entity->id, ComponentKey::currency);
+    }
+    return finish(plan, what);
+}
+
+template <class Change>
 ItemResult Inventory::change_bag(const std::string& characterId, const char* what, Change&& apply) {
     return change(characterId, what, [&](Carried& items, Touched& touched) { return apply(items.bag, touched.bag); });
 }
@@ -495,40 +530,61 @@ ItemResult Inventory::give(const std::string& characterId,
                            const GiveOptions& options) {
     const std::string what = "give of " + std::to_string(quantity) + " " + std::string(itemId);
     return change_bag(characterId, what.c_str(), [&](Bag& bag, std::set<std::uint32_t>& changed) {
-        if (m_catalog == nullptr || !m_catalog->loaded()) {
-            return ItemError::noCatalog;
-        }
-        const gamedata::ItemDefinition* definition = m_catalog->find(itemId);
-        if (definition == nullptr) {
-            return ItemError::unknownItem;
-        }
-        if (definition->type.empty()) {
-            return ItemError::noItemType;
-        }
-        if (quantity == 0 || quantity > kGiveLimit) {
-            return ItemError::badQuantity;
-        }
-        PerkIds perks{};
-        if (options.perks) {
-            const std::optional<PerkIds> checked = checked_perks(*options.perks, *definition);
-            if (!checked) {
-                return ItemError::badPerk;
-            }
-            perks = *checked;
-        }
-        const std::uint8_t action = std::min(options.action, sync::kLargest);
-        const std::set<std::uint32_t> before = changed;
-        // All or nothing: the change is not written when the bag has no place for all of it.
-        if (put(bag, *definition, quantity, options.gearScore, false, action, changed, perks) != quantity) {
-            return ItemError::bagFull;
-        }
-        for (const std::uint32_t slot : changed) {
-            if (before.count(slot) == 0 && bag.slots[slot].item) {
-                resolve_perks(*bag.slots[slot].item);
-            }
-        }
-        return ItemError::none;
+        return give_into(bag, changed, itemId, quantity, options);
     });
+}
+
+ItemError Inventory::give_into(Bag& bag,
+                               std::set<std::uint32_t>& changed,
+                               std::string_view itemId,
+                               std::uint32_t quantity,
+                               const GiveOptions& options) const {
+    if (m_catalog == nullptr || !m_catalog->loaded()) {
+        return ItemError::noCatalog;
+    }
+    const gamedata::ItemDefinition* definition = m_catalog->find(itemId);
+    if (definition == nullptr) {
+        return ItemError::unknownItem;
+    }
+    if (definition->type.empty()) {
+        return ItemError::noItemType;
+    }
+    if (quantity == 0 || quantity > kGiveLimit) {
+        return ItemError::badQuantity;
+    }
+    PerkIds perks{};
+    if (options.perks) {
+        const std::optional<PerkIds> checked = checked_perks(*options.perks, *definition);
+        if (!checked) {
+            return ItemError::badPerk;
+        }
+        perks = *checked;
+    }
+    const std::uint8_t action = std::min(options.action, sync::kLargest);
+    const std::set<std::uint32_t> before = changed;
+    // The gear score of a give (stage B0): the range of the item table, to the upgrade limit of the item (give_limit). A value
+    // outside the range gets the nearest value of the range, as before stage B0 (a decision of an agent: the command makes a
+    // valid item, and the log line names the change).
+    const std::uint32_t limit = give_limit(*definition);
+    if (options.gearScore && definition->maxGearScore != 0
+        && (*options.gearScore > limit || *options.gearScore < definition->minGearScore)) {
+        log::write("inventory: the gear score %u of %s is outside its range %u to %u: the new item gets %u",
+                   *options.gearScore,
+                   definition->id.c_str(),
+                   definition->minGearScore,
+                   limit,
+                   std::clamp(*options.gearScore, definition->minGearScore, std::max(limit, definition->minGearScore)));
+    }
+    // All or nothing: the change is not written when the bag has no place for all of it.
+    if (put(bag, *definition, quantity, options.gearScore, false, action, changed, perks, limit) != quantity) {
+        return ItemError::bagFull;
+    }
+    for (const std::uint32_t slot : changed) {
+        if (before.count(slot) == 0 && bag.slots[slot].item) {
+            resolve_perks(*bag.slots[slot].item);
+        }
+    }
+    return ItemError::none;
 }
 
 std::optional<PerkIds> Inventory::checked_perks(const PerkIds& requested, const gamedata::ItemDefinition& definition) const {
@@ -1068,56 +1124,168 @@ ItemResult Inventory::equip(const std::string& characterId,
     const std::string what = "equip of bag slot " + std::to_string(bagSlot)
                              + (paperdollSlot ? " in paperdoll slot " + std::to_string(*paperdollSlot) : std::string{});
     return change(characterId, what.c_str(), [&](Carried& items, Touched& touched) {
-        if (m_catalog == nullptr || !m_catalog->loaded()) {
-            return ItemError::noCatalog; // The class of an item comes from the catalog.
+        return equip_into(items, touched, bagSlot, paperdollSlot, instance, quantity);
+    });
+}
+
+ItemError Inventory::equip_into(Carried& items,
+                                Touched& touched,
+                                std::uint32_t bagSlot,
+                                std::optional<std::uint32_t> paperdollSlot,
+                                const InstanceId* instance,
+                                std::optional<std::uint32_t> quantity) const {
+    if (m_catalog == nullptr || !m_catalog->loaded()) {
+        return ItemError::noCatalog; // The class of an item comes from the catalog.
+    }
+    if (paperdollSlot && !paperdoll::valid_slot(*paperdollSlot)) {
+        return ItemError::badEquipSlot;
+    }
+    if (bagSlot >= items.bag.slots.size()) {
+        return ItemError::badSlot;
+    }
+    BagSlot& source = items.bag.slots[bagSlot];
+    if (!source.item) {
+        return ItemError::emptySlot;
+    }
+    if (instance != nullptr && source.item->instance != *instance) {
+        return ItemError::wrongInstance;
+    }
+    // The full stack moves: a part of a stack has no rule in the backend yet.
+    if (quantity && *quantity != source.item->quantity) {
+        return ItemError::badQuantity;
+    }
+    const gamedata::ItemDefinition* definition = m_catalog->find(source.item->itemId);
+    if (definition == nullptr) {
+        return ItemError::unknownItem;
+    }
+    const auto slot = paperdollSlot ? paperdollSlot
+                                    : own_slot(definition->itemClass, [&](std::uint32_t candidate) {
+                                          return items.equipment.item(candidate) == nullptr;
+                                      });
+    if (!slot) {
+        return ItemError::noEquipSlot;
+    }
+    if (!paperdoll::slot_accepts(*slot, definition->itemClass)) {
+        return ItemError::slotRefusesItem;
+    }
+    // The largest gear score of an equipped item: MaxEquipGS of the owned expansion (stage 1.1b; the rule of the client,
+    // equipmentcommon ShowCannotEquipNotification: an item above it is not equipped). No expansion data: no limit.
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    const std::uint32_t limit = tables != nullptr && tables->loaded() ? tables->max_equip_gear_score() : 0;
+    if (limit != 0 && source.item->gearScore > limit) {
+        return ItemError::gearScoreAboveLimit;
+    }
+    // The item that is in the slot goes into the place of the new one.
+    EquipmentSlot& target = items.equipment.slots[*slot];
+    std::swap(source.item, target.item);
+    target.action = sync::kItemEquipped;
+    source.action = sync::kItemUnequipped;
+    touched.bag.insert(bagSlot);
+    touched.equipment.insert(*slot);
+    return ItemError::none;
+}
+
+Inventory::Plan Inventory::plan_build(const std::string& characterId, const std::vector<BuildItem>& build) {
+    return stage(characterId, [&](Carried& items, Touched& touched) { return build_into(items, touched, build); });
+}
+
+ItemError Inventory::check_build(const std::vector<BuildItem>& build, std::string& detail) const {
+    Carried items;
+    Touched touched;
+    if (const ItemError error = build_into(items, touched, build); error != ItemError::none) {
+        detail = "the items: " + std::string(item_error_text(error));
+        return error;
+    }
+    for (const BuildItem& entry : build) {
+        if (!entry.slot) {
+            continue;
         }
-        if (paperdollSlot && !paperdoll::valid_slot(*paperdollSlot)) {
-            return ItemError::badEquipSlot;
-        }
-        if (bagSlot >= items.bag.slots.size()) {
-            return ItemError::badSlot;
-        }
-        BagSlot& source = items.bag.slots[bagSlot];
-        if (!source.item) {
-            return ItemError::emptySlot;
-        }
-        if (instance != nullptr && source.item->instance != *instance) {
-            return ItemError::wrongInstance;
-        }
-        // The full stack moves: a part of a stack has no rule in the backend yet.
-        if (quantity && *quantity != source.item->quantity) {
-            return ItemError::badQuantity;
-        }
-        const gamedata::ItemDefinition* definition = m_catalog->find(source.item->itemId);
-        if (definition == nullptr) {
-            return ItemError::unknownItem;
-        }
-        const auto slot = paperdollSlot ? paperdollSlot
-                                        : own_slot(definition->itemClass, [&](std::uint32_t candidate) {
-                                              return items.equipment.item(candidate) == nullptr;
-                                          });
-        if (!slot) {
-            return ItemError::noEquipSlot;
-        }
-        if (!paperdoll::slot_accepts(*slot, definition->itemClass)) {
+        const ItemInstance* item = items.equipment.item(*entry.slot);
+        if (item == nullptr || item->itemId != entry.itemId) {
+            detail = "the item " + entry.itemId + " is not in slot " + std::to_string(*entry.slot);
             return ItemError::slotRefusesItem;
         }
-        // The largest gear score of an equipped item: MaxEquipGS of the owned expansion (stage 1.1b; the rule of the client,
-        // equipmentcommon ShowCannotEquipNotification: an item above it is not equipped). No expansion data: no limit.
-        const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
-        const std::uint32_t limit = tables != nullptr && tables->loaded() ? tables->max_equip_gear_score() : 0;
-        if (limit != 0 && source.item->gearScore > limit) {
-            return ItemError::gearScoreAboveLimit;
+        if (entry.gearScore && item->gearScore != *entry.gearScore) {
+            detail = "the gear score " + std::to_string(*entry.gearScore) + " of " + entry.itemId + " is outside its range (a give makes "
+                     + std::to_string(item->gearScore) + ")";
+            return ItemError::badQuantity;
         }
-        // The item that is in the slot goes into the place of the new one.
-        EquipmentSlot& target = items.equipment.slots[*slot];
-        std::swap(source.item, target.item);
-        target.action = sync::kItemEquipped;
-        source.action = sync::kItemUnequipped;
-        touched.bag.insert(bagSlot);
-        touched.equipment.insert(*slot);
+        if (item->perks != entry.perks) {
+            detail = "a perk of " + entry.itemId + " is not the stored perk (the swap of the game changes it)";
+            return ItemError::badPerk;
+        }
+    }
+    return ItemError::none;
+}
+
+ItemError Inventory::build_into(Carried& items, Touched& touched, const std::vector<BuildItem>& build) const {
+    {
+        for (const BuildItem& entry : build) {
+            GiveOptions options;
+            options.gearScore = entry.gearScore;
+            options.perks = entry.perks;
+            if (!entry.slot) {
+                // A stack of the bag: the give of a command (the stacks of the item that are not full first), up to the quantity of the
+                // build: the items of the bag with no perk count (a second apply gives no second stack; a decision of an agent).
+                std::uint32_t held = 0;
+                for (const BagSlot& slot : items.bag.slots) {
+                    if (slot.item && slot.item->itemId == entry.itemId && slot.item->perks == PerkIds{}) {
+                        held += slot.item->quantity;
+                    }
+                }
+                if (held >= entry.quantity) {
+                    continue;
+                }
+                if (const ItemError error = give_into(items.bag, touched.bag, entry.itemId, entry.quantity - held, options);
+                    error != ItemError::none) {
+                    return error;
+                }
+                continue;
+            }
+            // The slot has the item of the build already (the same item, gear score, and perks): it stays (a second apply, or a different
+            // variant, changes no item; a decision of an agent). A stack with fewer items than the build (the potions of a quick slot) gets
+            // the quantity of the build.
+            const auto held = items.equipment.slots.find(*entry.slot);
+            ItemInstance* there = held != items.equipment.slots.end() && held->second.item ? &*held->second.item : nullptr;
+            if (there != nullptr && there->itemId == entry.itemId && (!entry.gearScore || there->gearScore == *entry.gearScore)
+                && there->perks == entry.perks) {
+                if (there->quantity < entry.quantity) {
+                    const gamedata::ItemDefinition* definition = m_catalog != nullptr ? m_catalog->find(entry.itemId) : nullptr;
+                    if (definition == nullptr || entry.quantity > std::clamp<std::uint32_t>(definition->maxStack, 1, kMaxItemQuantity)) {
+                        return ItemError::badQuantity;
+                    }
+                    there->quantity = entry.quantity;
+                    held->second.action = sync::kItemAdded;
+                    touched.equipment.insert(*entry.slot);
+                }
+                continue;
+            }
+            // An item of the paperdoll: a new instance in a free slot of the bag (the give, not into a stack: the equip moves the
+            // whole stack of its slot), then the equip of that slot, which puts the old item of the paperdoll into it.
+            const std::optional<std::uint32_t> free = free_slot(items.bag);
+            if (!free) {
+                return ItemError::bagFull;
+            }
+            Bag single;
+            std::set<std::uint32_t> made;
+            single.nextChrono = items.bag.nextChrono;
+            if (const ItemError error = give_into(single, made, entry.itemId, entry.quantity, options); error != ItemError::none) {
+                return error;
+            }
+            if (made.size() != 1 || !single.slots[0].item) {
+                return ItemError::badQuantity; // The quantity of a slot of the paperdoll is one stack.
+            }
+            items.bag.nextChrono = single.nextChrono;
+            BagSlot& target = slot_at(items.bag, *free);
+            target.item = std::move(single.slots[0].item);
+            target.action = sync::kItemAdded;
+            touched.bag.insert(*free);
+            if (const ItemError error = equip_into(items, touched, *free, entry.slot, nullptr, std::nullopt); error != ItemError::none) {
+                return error;
+            }
+        }
         return ItemError::none;
-    });
+    }
 }
 
 ItemResult Inventory::unequip(const std::string& characterId,

@@ -88,12 +88,14 @@ protocol notes (sections 4.14, 4.17, and 4.19).
 - A forced movement (stage 3.3b-S4, [Forced movement](forced-movement.md)): while the pull or the push of a hit moves a
   creature (`Creature::forced`), the behavior does not move it and starts no attack, also on its way back and on a roam.
   At its end the creature goes on with its path (user test 2, UT2-4: no new search while it is 1 m or less from its path; the step
-  comes in the next step of the behavior; case UX5) and a creature in a fight
+  comes in the next step of the behavior; case UX5), but only when the straight line from its new place to the next corner of the
+  path, or to its next cell, is free (code review of user test 2, finding U2-R1; [Navigation](navigation.md)), and a creature in a fight
   keeps the new place in its trail (`Behavior::moved_by_force`).
 - The hit stun (user test 2, UT2-9, [Creatures](creatures.md)): for HitStun_AI frames after a hit that started a reaction
   (`Creature::hitStunUntil`) the behavior does not step, turn, or attack: the reaction plays, and the walk starts again after it (one
   new locomotion record, not one after each hit of a walk that the next step cut after 200 ms). A hit during an attack starts no
-  reaction and no hit stun (the grit of an attack).
+  reaction and no hit stun (the grit of an attack). The rule is also for a roam (a wander or a patrol of a passive creature, which
+  takes no target) and for the way back (`Behavior::hit_stunned`; code review of user test 2, finding U2-R5; test case RT5).
 - The length of an attack (user test 2, UT2-7, game data): the end blend of its fragment, else the end of its animation (the CAF file
   of the clip), else its last contact plus 0.9 s. At its end each observer gets the idle record ([Creatures](creatures.md)), and the
   pause of the attack starts.

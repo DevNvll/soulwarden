@@ -191,6 +191,7 @@ While the game of the user runs, the command does not change the current release
 | The world object, the entity table, sessions, component states, bundles | [World and sessions](docs/systems/world-and-sessions.md) |
 | The position of a character and the position report of the client | [Position](docs/systems/position.md) |
 | The bag, the coin, the equipment, the perks of an item instance | [Items and equipment](docs/systems/items-and-equipment.md) |
+| A whole build in one step (the build presets, the tool window group), the gear score limit of a give | [Build presets](docs/systems/build-presets.md) |
 | What the equipment and the effects give a character, the perks of a hit, the gem conversion | [Gear and perks](docs/systems/gear-and-perks.md) |
 | The use of a potion or a food, the effects on a character, the heart rune | [Consumables and the heart rune](docs/systems/consumables-and-heart-rune.md) |
 | The status effects of a player: the one owner, the stacks and ends, the values, the HUD icons, the name plate of an observer, the speed table | [Status effects](docs/systems/status-effects.md) |

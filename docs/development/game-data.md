@@ -244,7 +244,9 @@ backend. The tool of each system is also in the document of that system.
   item list with the index of each item on the wire, the items of each backstory, and the
   list of the backstories of the character creation; from stage 2.2, format 2, also the
   removal protections of each item (`nonRemovable`, `notDroppable`;
-  `check_item_catalog_tool.py`, case RLB1); without it the backend gives no item,
+  `check_item_catalog_tool.py`, case RLB1); from stage B0, format 3, also the upgrade limit of
+  each item (`maxCraftUpgradeGS`) and the objective of each artifact (`artifactObjectives`);
+  without it the backend gives no item,
   and a new character has no clothing), and `progression-tables.json` (the level table, the
   attribute and vitals values, the rank tables of the weapons and the trade skills, and the
   nodes of the weapon trees; from stage 1.3b also the mana regeneration of the row Player of
@@ -334,6 +336,24 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage B0 changes `item-catalog.json` (format 3). `item_catalog.py`: one more column of each item, `maxCraftUpgradeGS`, from the
+  cell MaxCraftUpgradeGS of the master row (0 for an empty cell; the 73 artifacts have 800, no other item has a value; client code:
+  the parser at the image RVA 0x442DD20+0x1997 keeps the value with a presence byte). The 22 store tables
+  (`MasterItemDefinitions_MTX_*`) have no such column (0); a different master table with no column, and a cell that is not a whole
+  number or an empty text, stop the tool. The new member `artifactObjectives` has `[item id, objective id, achievement id,
+  achievement index]` for each row of the type Artifact of the tables `Objectives`: the item of the TaskEquipItem in the task tree
+  of its Task (the columns SubTask1 to SubTask5 of the tables `ObjectiveTasks`) and the AchievementIndex of its AchievementId in the
+  tables `AchievementData` (73 rows; Boltcaster: `Achievement_Objective_Artifact_Set1_2hBow`). The tool stops for a task, an item,
+  or an achievement that does not resolve, for an objective with no equip item or with two, and for two objectives of one item
+  (`check_item_catalog_tool.py`: cases upgrade, upgrade-invalid, upgrade-missing, objective-broken). The other columns and members
+  are equal to the file of stage 2.2. The backend loads the formats 1 to 3: a file of an earlier format has no upgrade limit (a give
+  of an artifact then stops at the range of its row, 700 for each artifact) and no artifact objective: the check at the start disables
+  the build preset `bow-boltcaster` (its artifacts have 800), and a preset of artifacts at 700 would give no achievement (the client
+  then shows the perks 2 to 5 as locked). Write the file again with `tools/gamedata/items.sh`.
+- The code review of user test 2 (finding U2-R4) changes the loader of `combat-tables.json`: a file with the member `reactions`
+  must have one entry for each damage row (the tool writes one for each row); a file with a partial or an empty list is refused as
+  a whole (before, each missing row took the old full reaction). A file with no member keeps the old rule (test case RT4). The
+  files of user test 2 have each row: no new write.
 - User test 2 changes `creatures.json` (still format 4: the member `reactionLengths` of a slice, the attack lengths from the
   animation files, the counts `attackLengths`, `reactionLengths`, `slicesWithReactionLengths`; the tool now reads the CAF files of
   `animations/gameplay/character/npc/`, and a CAF file of a clip with no motion parameters chunk stops it) and `combat-tables.json`
@@ -346,8 +366,9 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   column of the events must be there (see above); the region files are in a set folder `gathering/SET/` with a digest in the document,
   and the tool publishes the manifest last. The files of the game data folder from before (`gathering/REGION.swgn`, no member
   `digest`) load as before with no digest check: the loader reads the same 295 rows (54 refused) and the 49 regions. A new write gives
-  the check. After a publication the tool keeps the set of the earlier manifest and removes the older sets and the region files of the
-  layout of before. The retail tables pass the new checks (the census of the supported build: the exceptions are GatherablesDunwood,
+  the check. After a publication the tool keeps each published set (code review of user test 2, finding U2-R6: a backend that runs
+  can hold any earlier manifest) and removes only the staging folders of stopped exports; `--prune` removes the sets that the manifest
+  does not name, only when no backend runs (cases `held-manifest` and `prune` of `check_gathering_tool.py`). The retail tables pass the new checks (the census of the supported build: the exceptions are GatherablesDunwood,
   QuestGatherables, and Gatherables_IsleOfNight; each event table has the reward column; the flag texts are "", "0", "1", and one
   "FALSE"). An export of the retail data with the new tool (into a work folder) has the same rows, events, tools, templates, capital
   nodes, and creature slices as the file of stage 3.6a, and its 49 region files have the same bytes; only the member `file` (the set

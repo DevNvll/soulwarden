@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -71,6 +72,21 @@ struct SkillResult {
     }
 };
 
+/**
+ * One weapon tree of a build (the build preset, stage B0; world/build_presets.h): the mastery rank, the nodes in a sequence that the
+ * rules of the tree accept, and the abilities of the bar. The plan replaces the tree: its old nodes and its bar go.
+ */
+struct TreeBuild {
+    /** The id text of the ability table ("BowAbilityTable"). */
+    std::string table;
+    /** The rank on the wire: the level of the screen minus 1. */
+    std::uint32_t rank{0};
+    /** The id texts of the nodes. */
+    std::vector<std::string> nodes;
+    /** The id text of the ability of each place of the bar; an empty text: an empty place. */
+    std::array<std::string, kBarSlots> bar;
+};
+
 /** The skills of a character, for a reader. */
 struct SkillView {
     SkillSet skills;
@@ -139,6 +155,56 @@ private:
         /** The nodes whose level changed: pool and node. */
         std::vector<std::pair<std::uint32_t, std::uint32_t>> nodes;
     };
+
+public:
+    /**
+     * A change of the skills of a character that is made on a copy and not written (stage B0): one part of a change of more than one
+     * system (world/build_presets.h). Each change of this system is a plan, a write, and a finish (Inventory::Plan).
+     */
+    struct Plan {
+        std::string characterId;
+        ProgressError error{ProgressError::none};
+        bool inWorld{false};
+        SkillSet skills;
+        Touched touched;
+        SkillResult result;
+
+        [[nodiscard]] bool ok() const {
+            return error == ProgressError::none;
+        }
+    };
+
+    /**
+     * Plans weapon trees (the build preset): for each tree the rank of set_rank, the reset of the tree (its nodes and its bar go,
+     * with no cost: a rank change that frees the points), each node with the checks of assign (one point, the node that it needs,
+     * the points of the row before it and of its tree), and each place of the bar with the checks of set_bar. No write.
+     */
+    [[nodiscard]] Plan plan_trees(const std::string& characterId, const std::vector<TreeBuild>& trees);
+    /**
+     * @return The first error of the trees on a character with no skill (the check of the build presets at the start of the backend):
+     *         the same rules as plan_trees. `noTables` with no progression tables.
+     */
+    [[nodiscard]] ProgressError check_trees(const std::vector<TreeBuild>& trees) const;
+    /** Writes the rows of a plan (in a batch: a savepoint). @return False: the database did not take them. */
+    [[nodiscard]] bool write(const Plan& plan);
+    /** Changes the entity of a written plan, marks its states, and refreshes the gear. */
+    SkillResult finish(Plan& plan, const char* what);
+
+private:
+    /** @return The plan of a change: `apply(SkillSet&, Touched&, SkillResult&)` on a copy. */
+    template <class Change>
+    Plan stage(const std::string& characterId, Change&& apply);
+    /** The trees of a build on a skill set (plan_trees, check_trees). */
+    [[nodiscard]] ProgressError trees_into(SkillSet& skills, Touched& touched, const std::vector<TreeBuild>& trees) const;
+    /** The rank of set_rank on a skill set. */
+    [[nodiscard]] ProgressError rank_into(SkillSet& skills, Touched& touched, SkillResult& result, std::string_view id,
+                                          gamedata::ProgressionKind kind, std::uint32_t rank, std::uint64_t points) const;
+    /** The node of assign on a skill set. */
+    [[nodiscard]] ProgressError assign_into(SkillSet& skills, Touched& touched, SkillResult& result, std::uint32_t pool,
+                                            std::uint32_t node, std::uint32_t count) const;
+    /** The place of the bar of set_bar on a skill set. */
+    [[nodiscard]] ProgressError bar_into(SkillSet& skills, Touched& touched, std::uint32_t table, std::uint32_t slot,
+                                         std::uint32_t ability) const;
 
     /** A change: `apply(SkillSet&, Touched&, SkillResult&)` gives a ProgressError. */
     template <class Change>

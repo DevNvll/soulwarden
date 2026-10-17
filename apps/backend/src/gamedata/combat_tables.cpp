@@ -466,6 +466,14 @@ bool CombatTables::load(const std::string& path) {
             }
             data.damageRows[row->second].reaction = reaction;
         }
+        // A file with the member has a reaction for each damage row (the tool writes one entry for each row): the old rule of a row with no
+        // reaction is for a file with no member only (code review of user test 2, finding U2-R4: a partial or empty list gave the missing rows
+        // the old full reaction).
+        for (const DamageRow& row : data.damageRows) {
+            if (!row.reaction) {
+                return fail("the damage row " + row.id + " has no reaction (the member reactions must have each damage row)");
+            }
+        }
     }
     // The critical values (stage 3.3b-S5): [[weapon id, critChance, critDamageMultiplier], ...] and [[row id, canCrit,
     // noHeadshot, noBackstab, dmgCoefHead, dmgCoefCrit], ...]. A file of a tool from before the stage has none: no critical hit.

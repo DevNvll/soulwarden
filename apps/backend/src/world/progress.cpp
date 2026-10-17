@@ -248,66 +248,54 @@ std::optional<ProgressView> Progress::view(const std::string& characterId) {
 }
 
 template <class Change>
-ProgressResult Progress::change(const std::string& characterId, const char* what, bool needsTables, Change&& apply) {
-    ProgressResult result;
+Progress::Plan Progress::stage(const std::string& characterId, bool needsTables, Change&& apply) {
+    Plan plan;
+    plan.characterId = characterId;
     Entity* entity = m_world.find_character(characterId);
-    // The log line names the session that plays the character.
-    const std::string mark = entity != nullptr ? log::session_mark(entity->owner, characterId) : std::string{};
-    const log::Context context(mark);
-    Sheet sheet;
     if (entity != nullptr) {
-        sheet.progression = entity->progression;
-        sheet.attributes = entity->attributes;
-        sheet.healthPart = entity->gear.healthPart;
-        sheet.manaPart = entity->gear.manaPart;
-        sheet.manaRatePart = entity->gear.manaRatePart;
-        result.inWorld = true;
+        plan.sheet.progression = entity->progression;
+        plan.sheet.attributes = entity->attributes;
+        plan.sheet.healthPart = entity->gear.healthPart;
+        plan.sheet.manaPart = entity->gear.manaPart;
+        plan.sheet.manaRatePart = entity->gear.manaRatePart;
+        plan.inWorld = true;
     } else if (m_store.find_character(characterId)) {
-        sheet = read_sheet(characterId, false);
+        plan.sheet = read_sheet(characterId, false);
     } else {
-        result.error = ProgressError::unknownCharacter;
+        plan.error = ProgressError::unknownCharacter;
     }
-    if (result.ok() && needsTables && tables() == nullptr) {
-        result.error = ProgressError::noTables;
+    if (plan.ok() && needsTables && tables() == nullptr) {
+        plan.error = ProgressError::noTables;
     }
     // The change is made on a copy: the values of the entity change only after the row.
-    const Sheet before = sheet;
-    std::uint64_t cost = 0;
-    if (result.ok()) {
-        result.error = apply(sheet, cost);
+    plan.before = plan.sheet;
+    if (plan.ok()) {
+        plan.error = apply(plan.sheet, plan.cost);
     }
-    if (result.ok()) {
-        settle(sheet);
-        state::ProgressRow row;
-        row.level = sheet.progression.level;
-        row.experience = sheet.progression.experience;
-        row.spent = sheet.attributes.spent;
-        if (cost != 0) {
-            // The coin of the cost and the row are one transaction. The inventory system
-            // changes the wallet.
-            const ItemResult paid = m_world.inventory().pay(characterId, cost, [&](std::uint64_t coin) {
-                return m_store.set_progress(characterId, row, coin);
-            });
-            if (paid.error == ItemError::notEnoughCoin) {
-                result.error = ProgressError::notEnoughCoin;
-            } else if (!paid.ok()) {
-                result.error = ProgressError::storeFailed;
-            }
-        } else if (!m_store.set_progress(characterId, row)) {
-            result.error = ProgressError::storeFailed;
-        }
+    if (plan.ok()) {
+        settle(plan.sheet);
     }
-    const Sheet& now = result.ok() ? sheet : before;
-    result.level = now.progression.level;
-    result.experience = now.progression.experience;
-    result.unspent = now.attributes.unspent;
-    if (!result.ok()) {
-        log::write("progress: %s of character %s refused: %s", what, characterId.c_str(), progress_error_text(result.error));
-        return result;
-    }
-    result.levelsGained = sheet.progression.level > before.progression.level
-                              ? sheet.progression.level - before.progression.level
-                              : 0;
+    return plan;
+}
+
+bool Progress::write(const Plan& plan) {
+    state::ProgressRow row;
+    row.level = plan.sheet.progression.level;
+    row.experience = plan.sheet.progression.experience;
+    row.spent = plan.sheet.attributes.spent;
+    return m_store.set_progress(plan.characterId, row);
+}
+
+ProgressResult Progress::finish(Plan& plan, const char* what) {
+    ProgressResult result;
+    result.inWorld = plan.inWorld;
+    const Sheet& sheet = plan.sheet;
+    const Sheet& before = plan.before;
+    result.level = sheet.progression.level;
+    result.experience = sheet.progression.experience;
+    result.unspent = sheet.attributes.unspent;
+    result.levelsGained = sheet.progression.level > before.progression.level ? sheet.progression.level - before.progression.level : 0;
+    Entity* entity = plan.inWorld ? m_world.find_character(plan.characterId) : nullptr;
     if (entity != nullptr) {
         // One mark for each state that changed.
         if (sheet.progression.level != before.progression.level
@@ -336,7 +324,7 @@ ProgressResult Progress::change(const std::string& characterId, const char* what
     }
     log::write("progress: %s of character %s: level %u, experience %u, %u spent and %u free attribute point(s) (%s)",
                what,
-               characterId.c_str(),
+               plan.characterId.c_str(),
                sheet.progression.level,
                sheet.progression.experience,
                spent_total(sheet.attributes),
@@ -345,16 +333,97 @@ ProgressResult Progress::change(const std::string& characterId, const char* what
     return result;
 }
 
+template <class Change>
+ProgressResult Progress::change(const std::string& characterId, const char* what, bool needsTables, Change&& apply) {
+    Entity* entity = m_world.find_character(characterId);
+    // The log line names the session that plays the character.
+    const std::string mark = entity != nullptr ? log::session_mark(entity->owner, characterId) : std::string{};
+    const log::Context context(mark);
+    Plan plan = stage(characterId, needsTables, std::forward<Change>(apply));
+    if (plan.ok() && plan.cost != 0) {
+        // The coin of the cost and the row are one transaction. The inventory system changes the wallet.
+        state::ProgressRow row;
+        row.level = plan.sheet.progression.level;
+        row.experience = plan.sheet.progression.experience;
+        row.spent = plan.sheet.attributes.spent;
+        const ItemResult paid = m_world.inventory().pay(characterId, plan.cost, [&](std::uint64_t coin) {
+            return m_store.set_progress(characterId, row, coin);
+        });
+        if (paid.error == ItemError::notEnoughCoin) {
+            plan.error = ProgressError::notEnoughCoin;
+        } else if (!paid.ok()) {
+            plan.error = ProgressError::storeFailed;
+        }
+    } else if (plan.ok() && !write(plan)) {
+        plan.error = ProgressError::storeFailed;
+    }
+    if (!plan.ok()) {
+        ProgressResult result;
+        result.error = plan.error;
+        result.inWorld = plan.inWorld;
+        result.level = plan.before.progression.level;
+        result.experience = plan.before.progression.experience;
+        result.unspent = plan.before.attributes.unspent;
+        log::write("progress: %s of character %s refused: %s", what, characterId.c_str(), progress_error_text(result.error));
+        return result;
+    }
+    return finish(plan, what);
+}
+
+ProgressError Progress::level_into(Sheet& sheet, std::uint32_t level) const {
+    if (level == 0 || level > tables()->level_cap()) {
+        return ProgressError::badLevel;
+    }
+    sheet.progression.level = level;
+    sheet.progression.experience = tables()->level(level)->experience;
+    return ProgressError::none;
+}
+
+ProgressError Progress::attribute_into(Sheet& sheet, unsigned type, std::uint32_t value) const {
+    Attributes& attributes = sheet.attributes;
+    if (type >= attribute::kCount || value < tables()->attribute_minimum() || value > tables()->attribute_maximum()) {
+        return ProgressError::badAttribute;
+    }
+    const std::uint32_t points = value - tables()->attribute_minimum();
+    const std::uint32_t others = spent_total(attributes) - attributes.spent[type];
+    if (others + points > tables()->attribute_points(sheet.progression.level)) {
+        return ProgressError::notEnoughPoints;
+    }
+    attributes.spent[type] = points;
+    return ProgressError::none;
+}
+
 ProgressResult Progress::set_level(const std::string& characterId, std::uint32_t level) {
     const std::string what = "level " + std::to_string(level);
-    return change(characterId, what.c_str(), true, [&](Sheet& sheet, std::uint64_t&) {
-        if (level == 0 || level > tables()->level_cap()) {
-            return ProgressError::badLevel;
+    return change(characterId, what.c_str(), true, [&](Sheet& sheet, std::uint64_t&) { return level_into(sheet, level); });
+}
+
+Progress::Plan Progress::plan_sheet(const std::string& characterId,
+                                    std::uint32_t level,
+                                    const std::array<std::uint32_t, attribute::kCount>& values) {
+    return stage(characterId, true, [&](Sheet& sheet, std::uint64_t&) { return sheet_into(sheet, level, values); });
+}
+
+ProgressError Progress::sheet_into(Sheet& sheet, std::uint32_t level, const std::array<std::uint32_t, attribute::kCount>& values) const {
+    if (const ProgressError error = level_into(sheet, level); error != ProgressError::none) {
+        return error;
+    }
+    // The new values together: the spent points of the old values do not count (a value that goes down first frees its points).
+    sheet.attributes.spent.fill(0);
+    for (unsigned type = 0; type < attribute::kCount; ++type) {
+        if (const ProgressError error = attribute_into(sheet, type, values[type]); error != ProgressError::none) {
+            return error;
         }
-        sheet.progression.level = level;
-        sheet.progression.experience = tables()->level(level)->experience;
-        return ProgressError::none;
-    });
+    }
+    return ProgressError::none;
+}
+
+ProgressError Progress::check_sheet(std::uint32_t level, const std::array<std::uint32_t, attribute::kCount>& values) const {
+    if (tables() == nullptr) {
+        return ProgressError::noTables;
+    }
+    Sheet sheet;
+    return sheet_into(sheet, level, values);
 }
 
 ProgressResult Progress::add_experience(const std::string& characterId, std::uint64_t amount) {
@@ -377,19 +446,7 @@ ProgressResult Progress::add_experience(const std::string& characterId, std::uin
 
 ProgressResult Progress::set_attribute(const std::string& characterId, unsigned type, std::uint32_t value) {
     const std::string what = "attribute " + std::to_string(type) + " to " + std::to_string(value);
-    return change(characterId, what.c_str(), true, [&](Sheet& sheet, std::uint64_t&) {
-        Attributes& attributes = sheet.attributes;
-        if (type >= attribute::kCount || value < tables()->attribute_minimum() || value > tables()->attribute_maximum()) {
-            return ProgressError::badAttribute;
-        }
-        const std::uint32_t points = value - tables()->attribute_minimum();
-        const std::uint32_t others = spent_total(attributes) - attributes.spent[type];
-        if (others + points > tables()->attribute_points(sheet.progression.level)) {
-            return ProgressError::notEnoughPoints;
-        }
-        attributes.spent[type] = points;
-        return ProgressError::none;
-    });
+    return change(characterId, what.c_str(), true, [&](Sheet& sheet, std::uint64_t&) { return attribute_into(sheet, type, value); });
 }
 
 ProgressResult Progress::spend(const std::string& characterId, std::span<const AttributeSpend> entries) {

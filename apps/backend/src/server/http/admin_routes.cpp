@@ -76,6 +76,10 @@
 //                              (stage 3.5b.1): the character can open the chest again
 //          set_world_time      time ("HH:MM" or "HH:MM:SS"): the time of the day of the whole world (stage 2.2): each
 //                              player gets it; the character of the command names who gives it
+//          apply_preset        preset (the name of a build preset, bow-boltcaster), variant (pve or pvp; no value: the
+//                              first variant): the whole build of the preset (stage B0): the equipment (the old items go
+//                              into the bag), the level, the attributes, the masteries, the trees, the bars, and the
+//                              consumables, in one transaction; a refused preset changes nothing (reply 409 with the cause)
 //        remove_creature, set_creature_health, and kill_creature change only a creature of
 //        the list of the character (150 m or less from it), and the character must be in the
 //        world: a different creature gives the reply 404, and nothing changes.
@@ -88,6 +92,9 @@
 //   GET  /admin/v1/catalog/places
 //        The travel places of the game data: the id, the kind, the name, the territory, and the
 //        position of each one.
+//   GET  /admin/v1/catalog/presets
+//        The build presets (stage B0): the name, the title, "enabled" (with the cause of a disabled
+//        preset), the variants, and the content of each one.
 // The state of a character that is in the world also has the creatures near it (the member
 // "creatures": each creature that is 150 m or less from the character, the nearest one first),
 // and its interactions (the member "interactions", stage 2.5a: its committed interaction and the
@@ -165,6 +172,8 @@ constexpr NamedCommand kCommands[] = {
     {"clear_chest_claim", commands::clear_chest_claim},
     // The world time (stage 2.2): a command for the whole world; the character names who gives it.
     {"set_world_time", commands::set_world_time},
+    // The build presets (stage B0): the whole build of a preset in one task of the world and one transaction.
+    {"apply_preset", commands::apply_preset},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
@@ -422,6 +431,15 @@ service::HttpResponse list_places(const Services& services, const AdminAccess& a
     return json_reply(200, commands::travel_places_json(services.world.options().travelPlaces).dump());
 }
 
+service::HttpResponse list_presets(const Services& services, const AdminAccess& access, const RouteContext& context) {
+    service::HttpResponse refusal;
+    if (!caller(access, context, refusal)) {
+        return refusal;
+    }
+    // The presets are project data with the check of the start (a task of the world: the check can run at the first use).
+    return in_world(services, [](world::World& target) { return json_reply(200, commands::presets_json(target).dump()); });
+}
+
 } // namespace
 
 void register_admin_routes(Router& router, const Services& services, const AdminAccess& access) {
@@ -433,6 +451,7 @@ void register_admin_routes(Router& router, const Services& services, const Admin
     router.add("GET", "", "/admin/v1/catalog/items", kAdminCatalogRoute, bind(search_items));
     router.add("GET", "", "/admin/v1/catalog/creatures", kAdminCreatureCatalogRoute, bind(search_creatures));
     router.add("GET", "", "/admin/v1/catalog/places", kAdminPlaceCatalogRoute, bind(list_places));
+    router.add("GET", "", "/admin/v1/catalog/presets", kAdminPresetCatalogRoute, bind(list_presets));
 }
 
 } // namespace soulwarden::backend::server::http

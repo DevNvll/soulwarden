@@ -749,6 +749,12 @@ struct Creature {
      */
     std::uint32_t reactionChain{0};
     std::optional<WorldClock::time_point> reactionLimitUntil;
+    /**
+     * The start count (CreatureAction::generation) of the reaction that holds the reaction limit while it plays (code review of user test 2,
+     * finding U2-R3): the status AI_Reaction_Limiter of 2 s starts at its real exit (EffectsToApplyOnExit of the action Reaction: its
+     * natural end, a step, or a new action), not at its natural end.
+     */
+    std::optional<std::uint16_t> reactionLimitAction;
     /** The behavior values of the creature. */
     CreatureMind mind;
     /**

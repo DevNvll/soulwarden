@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -61,6 +62,11 @@ struct ItemDefinition {
      */
     bool nonRemovable{false};
     bool notDroppable{false};
+    /**
+     * The largest gear score of an upgrade of the item (format 3, stage B0: the cell MaxCraftUpgradeGS of the master row; 800 for the
+     * artifacts). 0: no upgrade (an empty cell, or a file of an earlier format). The limit of a give (Inventory::give_limit).
+     */
+    std::uint32_t maxCraftUpgradeGS{0};
 
     /** @return True when a protection of the row keeps the item with its character. */
     [[nodiscard]] bool removal_protected() const {
@@ -76,6 +82,18 @@ struct BackstoryItem {
     std::uint32_t quantity{0};
     /** Gear score of the entry. 0: the value of the item table. */
     std::uint32_t gearScore{0};
+};
+
+/**
+ * The objective of an artifact (format 3, stage B0; the Objectives tables of the type Artifact): the item of its equip task and its
+ * achievement. The client shows the perks 2 to 5 of the artifact only when the character has the achievement (live check U1).
+ */
+struct ArtifactObjective {
+    std::string itemId;
+    std::string objectiveId;
+    std::string achievementId;
+    /** The AchievementIndex of the achievement table: the bit of the achievement state (slot 66). */
+    std::uint32_t achievementIndex{0};
 };
 
 /** @return The CRC-32 of an item id as the client computes it: only the letters A to Z go to lower case. */
@@ -151,6 +169,16 @@ public:
         return m_creationBackstories.size();
     }
 
+    /** @return The objective of an artifact (the compare ignores the case of the letters A to Z), or null. */
+    [[nodiscard]] const ArtifactObjective* artifact_objective(std::string_view itemId) const;
+    /** @return The bit of the achievement of an artifact objective, or no value. */
+    [[nodiscard]] std::optional<std::uint32_t> objective_achievement_index(std::string_view achievementId) const;
+    [[nodiscard]] std::size_t artifact_objective_count() const {
+        return m_objectives.size();
+    }
+    /** Sets the artifact objectives with no file (tests). */
+    void set_artifact_objectives(std::vector<ArtifactObjective> objectives);
+
 private:
     void build_keys();
 
@@ -164,6 +192,10 @@ private:
     /** Lower-case ids of the backstories of the character creation. */
     std::unordered_set<std::string> m_creationBackstories;
     bool m_hasCreationBackstories{false};
+    /** The artifact objectives, with the lower-case item id and the achievement id as keys. */
+    std::vector<ArtifactObjective> m_objectives;
+    std::unordered_map<std::string, std::size_t> m_objectiveByItem;
+    std::unordered_map<std::string, std::size_t> m_objectiveByAchievement;
 };
 
 } // namespace soulwarden::backend::gamedata

@@ -73,6 +73,12 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
   First the straight line, then A* on the cells. A step of a creature ends at a corner of
   its path: the client moves a creature on the straight line between two movement states.
   Test cases NV6 and NV10 have the limits with a time limit: a new rule keeps them.
+- A path after a short movement that the path did not make (a push of a hit, 0.01 m to 1 m from the place of the last step;
+  `navigation_rules::kMovedOffPath`, `kOffPath`): `next_step` keeps the path only when the straight line from the new place to
+  the next corner of the path, or else to its next cell, is free (`walk_line`). If not, it forgets the path and searches again
+  from the new place (the count `pushedOffPath` of `tools/world list`). The corner of the path was free from the old place only:
+  the line from the new place can go through a wall (code review of user test 2, finding U2-R1; test case RT1). More than 1 m
+  from the place of the last step: a new search, as before.
 - Which creature walks: a creature walks when a free floor of the navigation data is 0.5 m
   or less from its place in the plane (to the area of its cell) and 0.6 m or less in the height
   (`Navigation::footing`). The world asks when the tile of the creature is there: until then

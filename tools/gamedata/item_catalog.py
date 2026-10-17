@@ -48,19 +48,33 @@ different backstory.
 The tool needs only the standard library of Python and the module appearance_tables.py of
 this folder (pak entry reader).
 
-Output: {"format": 2, "count": N, "tables": [{"name", "rows", "first", "last"}, ...],
+Output: {"format": 3, "count": N, "tables": [{"name", "rows", "first", "last"}, ...],
 "columns": [...], "items": [[...], ...], "backstories": {"<id>": [[item id, quantity, gear
-score], ...], ...}, "creationBackstories": ["<id>", ...]}. `count` is the length of the list of the client with entry 0. Entry
+score], ...], ...}, "creationBackstories": ["<id>", ...], "artifactObjectives": [[item id, objective id, achievement id,
+achievement index], ...]}. `count` is the length of the list of the client with entry 0. Entry
 number K of `items` (from 0) is the item with the index K + 1. The columns are: id, name (the
 text key of the display name), type, class, tier, weight (tenths), maxStack, durability,
-minGearScore, maxGearScore, gearScoreOverride, bindOnPickup, nonRemovable, notDroppable. The last
-two (format 2, stage 2.2: code review of stage 3.5b.2, finding LB-R1) are the removal protections
+minGearScore, maxGearScore, gearScoreOverride, bindOnPickup, nonRemovable, notDroppable, maxCraftUpgradeGS. The
+nonRemovable and notDroppable columns (format 2, stage 2.2: code review of stage 3.5b.2, finding LB-R1) are the removal protections
 of the row (the columns Nonremovable and NotDroppable; a cell can be a text, a number, or a flag):
 the backend keeps such an item with its character (no discard, no give into a loot bag). A
 house item has no protection. Each master table must have both columns, and each cell must be a
 flag form (code review of stage 2.2, finding WT-R3): else the tool stops and the old file stays.
 The one exception is MISSING_PROTECTION_TABLES (the store tables have no column NotDroppable).
-tools/gamedata/check_item_catalog_tool.py is the check of these columns. A backstory has one entry for
+tools/gamedata/check_item_catalog_tool.py is the check of these columns.
+
+Format 3 (stage B0, the bow build): the column maxCraftUpgradeGS is the cell MaxCraftUpgradeGS of the master row: the largest
+gear score of an upgrade of the item (800 for the 73 artifacts; 0 for an empty cell). The client parser keeps the value only
+when the cell is not empty (image RVA 0x442DD20+0x1997: a value with a presence byte). The store tables
+(MISSING_UPGRADE_TABLES) have no such column (0); a different master table with no column, and a cell that is not a whole
+number or an empty text, stop the tool. The member artifactObjectives has the objective of each artifact (the rows of the
+type Artifact of the Objectives tables): the item of its equip task (TaskEquipItem in the task tree of its Task, the columns
+SubTask1 to SubTask5 of the ObjectiveTasks tables) and its achievement with the AchievementIndex of the AchievementData table.
+The client shows the perks 2 to 5 of an artifact only when the character has that achievement (live check U1 of stage B0;
+the tooltip says "Equip to view task." with no bit). An objective whose tasks, item, or achievement do not resolve, an
+objective with no equip item or with two, and two objectives of one item stop the tool.
+
+A backstory has one entry for
 each item of its column InventoryItem: a quantity of 0 is an item that only the character
 creation screen shows, and a gear score of 0 is the value of the item table.
 
@@ -93,6 +107,13 @@ MASTER_TYPE = "MasterItemDefinitions"
 HOUSE_TYPE = "VariationData"
 HOUSE_TABLES = ("HouseItems", "HouseItemsMTX")
 BACKSTORY_TYPE = "BackstoryDefinition"
+# The objectives of the artifacts (format 3, stage B0): the objective rows, their tasks, and the achievement table.
+OBJECTIVES_TYPE = "Objectives"
+TASKS_TYPE = "ObjectiveTasks"
+ACHIEVEMENT_TYPE = "AchievementData"
+ARTIFACT_OBJECTIVE = "Artifact"
+EQUIP_TASK = "TaskEquipItem"
+SUBTASK_PREFIX = "SubTask"
 # The backstories that the character creation of the client can send (see the text above).
 CREATION_PREFIX = "Archetype_"
 DEFAULT_BACKSTORY = "Backstory1"
@@ -104,7 +125,12 @@ OODLE = 15
 HEADER_SIZE = 0x5C
 CELL_TEXT, CELL_NUMBER, CELL_FLAG = 1, 2, 3
 COLUMNS = ["id", "name", "type", "class", "tier", "weight", "maxStack", "durability", "minGearScore",
-           "maxGearScore", "gearScoreOverride", "bindOnPickup", "nonRemovable", "notDroppable"]
+           "maxGearScore", "gearScoreOverride", "bindOnPickup", "nonRemovable", "notDroppable", "maxCraftUpgradeGS"]
+# The largest gear score of an upgrade of a master item row (format 3, stage B0).
+UPGRADE_COLUMN = "MaxCraftUpgradeGS"
+# The master tables that can have no upgrade column: the prefix of the table names. The 22 store tables of the game copy
+# (MasterItemDefinitions_MTX_*) have no column MaxCraftUpgradeGS (a census of the game data): their items have no upgrade.
+MISSING_UPGRADE_TABLES = "MasterItemDefinitions_MTX_"
 # The removal protections of a master item row (format 2; code review of stage 3.5b.2, finding LB-R1).
 PROTECTION_COLUMNS = ("Nonremovable", "NotDroppable")
 # The master tables that can have no protection column (code review of stage 2.2, finding WT-R3): the column, and the prefix of the table
@@ -305,6 +331,72 @@ def protection_columns(sheet: Sheet) -> list[str | None]:
     return columns
 
 
+def upgrade_gear_score(sheet: Sheet, row: int, item_id: str) -> int:
+    """@return The cell MaxCraftUpgradeGS of a master row (format 3): a whole number, or 0 for an empty cell. A store table has no
+    such column (0). A missing column of a different table, and a cell that is not a whole number or an empty text, are a Failure."""
+    if UPGRADE_COLUMN not in sheet.columns:
+        if sheet.name.startswith(MISSING_UPGRADE_TABLES):
+            return 0
+        raise Failure(f"the item table {sheet.name} has no column {UPGRADE_COLUMN} (the gear score limit of an upgrade)")
+    value = sheet.cell(row, UPGRADE_COLUMN)
+    if isinstance(value, str) and value.strip() == "":
+        return 0
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 and float(value).is_integer() \
+            and value <= 0xFFFF:
+        return int(value)
+    raise Failure(f"the cell {UPGRADE_COLUMN} of {item_id} in {sheet.name} has the value {value!r}, which is not a whole gear score")
+
+
+def artifact_objectives(objectives: list[Sheet], tasks: list[Sheet], achievements: list[Sheet], item_ids: set[str]) -> list[list]:
+    """@return [item id, objective id, achievement id, achievement index] for each objective of the type Artifact (format 3), in the
+    sequence of the objective tables. A Failure for a link that does not resolve (see the text at the top)."""
+    task_rows: dict[str, tuple[str, str, list[str]]] = {}
+    for sheet in tasks:
+        subtasks = [column for column in sheet.columns if column.startswith(SUBTASK_PREFIX)]
+        for row in range(sheet.row_count):
+            task_id = str(sheet.cell(row, "TaskID"))
+            children = [str(sheet.cell(row, column)) for column in subtasks if str(sheet.cell(row, column)).strip()]
+            task_rows[task_id] = (str(sheet.cell(row, "Type")), str(sheet.cell(row, "ItemName")), children)
+    indexes: dict[str, float] = {}
+    for sheet in achievements:
+        for row in range(sheet.row_count):
+            indexes[str(sheet.cell(row, "AchievementID"))] = sheet.cell(row, "AchievementIndex")
+    found: list[list] = []
+    seen: set[str] = set()
+    for sheet in objectives:
+        for row in range(sheet.row_count):
+            if sheet.cell(row, "Type") != ARTIFACT_OBJECTIVE:
+                continue
+            objective = str(sheet.cell(row, "ObjectiveID"))
+            items: list[str] = []
+            pending, visited = [str(sheet.cell(row, "Task"))], set()
+            while pending:
+                task = pending.pop()
+                if task in visited:
+                    continue
+                visited.add(task)
+                if task not in task_rows:
+                    raise Failure(f"the artifact objective {objective} names the task {task!r}, which no task table has")
+                kind, item, children = task_rows[task]
+                if kind == EQUIP_TASK:
+                    items.append(item)
+                pending.extend(children)
+            if len(items) != 1:
+                raise Failure(f"the artifact objective {objective} has {len(items)} equip task(s), not one")
+            if items[0].lower() not in item_ids:
+                raise Failure(f"the artifact objective {objective} names the item {items[0]!r}, which the item tables do not have")
+            if items[0].lower() in seen:
+                raise Failure(f"two artifact objectives name the item {items[0]}")
+            seen.add(items[0].lower())
+            achievement = str(sheet.cell(row, "AchievementId"))
+            index = indexes.get(achievement)
+            if not isinstance(index, (int, float)) or isinstance(index, bool) or index < 0 or not float(index).is_integer():
+                raise Failure(f"the artifact objective {objective} names the achievement {achievement!r}, which has no "
+                              f"AchievementIndex in the achievement table")
+            found.append([items[0], objective, achievement, int(index)])
+    return found
+
+
 def backstory_items(sheets: list[Sheet], item_ids: set[str]) -> dict[str, list[list]]:
     """@return For each backstory with items: [item id, quantity, gear score] for each entry of its column
     InventoryItem. An entry is `ItemID[-gearScore[-perk...]][:quantity]` (no quantity: 1). The perks of an entry
@@ -346,6 +438,9 @@ def build_catalog(contents: list[bytes]) -> dict:
     masters: list[Sheet] = []
     houses: dict[str, Sheet] = {}
     stories: list[Sheet] = []
+    objectives: list[Sheet] = []
+    tasks: list[Sheet] = []
+    achievements: list[Sheet] = []
     for data in contents:
         kind = sheet_type(data)
         try:
@@ -353,6 +448,12 @@ def build_catalog(contents: list[bytes]) -> dict:
                 masters.append(Sheet(data))
             elif kind == BACKSTORY_TYPE:
                 stories.append(Sheet(data))
+            elif kind == OBJECTIVES_TYPE:
+                objectives.append(Sheet(data))
+            elif kind == TASKS_TYPE:
+                tasks.append(Sheet(data))
+            elif kind == ACHIEVEMENT_TYPE:
+                achievements.append(Sheet(data))
             elif kind == HOUSE_TYPE:
                 sheet = Sheet(data)
                 if sheet.name in HOUSE_TABLES:
@@ -386,7 +487,8 @@ def build_catalog(contents: list[bytes]) -> dict:
                           whole(sheet.cell(row, "MinGearScore")), whole(sheet.cell(row, "MaxGearScore")),
                           whole(sheet.cell(row, "GearScoreOverride")), bool(sheet.cell(row, "BindOnPickup")),
                           *(flag(sheet.cell(row, column), f"the cell {column} of {item_id} in {sheet.name}") if column else False
-                            for column in protections)])
+                            for column in protections),
+                          upgrade_gear_score(sheet, row, item_id)])
         # A table with no row that gets an index has no range.
         tables.append({"name": sheet.name, "rows": sheet.row_count, "first": first, "last": len(items)})
     for name in HOUSE_TABLES:
@@ -406,11 +508,13 @@ def build_catalog(contents: list[bytes]) -> dict:
                 items.append([item_id, sheet.cell(row, "Name"), sheet.cell(row, "ItemType"), "",
                               whole(sheet.cell(row, "Tier")), whole(sheet.cell(row, "Weight")),
                               whole(sheet.cell(row, "MaxStackSize")), 0, 0, 0, 0,
-                              bool(sheet.cell(row, "BindOnPickup")), False, False])
+                              bool(sheet.cell(row, "BindOnPickup")), False, False, 0])
         tables.append({"name": sheet.name, "rows": sheet.row_count, "first": first, "last": len(items)})
-    backstories = backstory_items(stories, {item[0].lower() for item in items})
-    return {"format": 2, "count": len(items) + 1, "tables": tables, "columns": COLUMNS, "items": items,
-            "backstories": backstories, "creationBackstories": creation_backstories(stories)}
+    item_ids = {item[0].lower() for item in items}
+    backstories = backstory_items(stories, item_ids)
+    return {"format": 3, "count": len(items) + 1, "tables": tables, "columns": COLUMNS, "items": items,
+            "backstories": backstories, "creationBackstories": creation_backstories(stories),
+            "artifactObjectives": artifact_objectives(objectives, tasks, achievements, item_ids)}
 
 
 def main() -> int:
@@ -452,7 +556,9 @@ def main() -> int:
         print(f"  {table['name']:<40} {table['rows']:>5} rows, {span}")
     print(f"{target}: {len(catalog['items'])} items in {len(catalog['tables'])} tables, the list of the client has "
           f"{catalog['count']} entries, the items of {len(catalog['backstories'])} backstories, "
-          f"{len(catalog['creationBackstories'])} backstories of the character creation (source: {source[1]})")
+          f"{len(catalog['creationBackstories'])} backstories of the character creation, "
+          f"{sum(1 for item in catalog['items'] if item[-1] != 0)} items with an upgrade gear score, "
+          f"{len(catalog['artifactObjectives'])} artifact objectives (source: {source[1]})")
     if not catalog["backstories"]:
         print(f"items: the source has no table of the type {BACKSTORY_TYPE} with items: a new character gets no item")
     return 0

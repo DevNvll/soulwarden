@@ -157,6 +157,19 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand assign_node(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand set_ability_bar(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
+// The build presets (stage B0, world/build_presets.h, server/http/preset_commands.cpp).
+// apply_preset: `preset` (the name of a preset, "bow-boltcaster") and, when necessary, `variant` (the name of a variant, "pve" or
+// "pvp"; no value: the first variant): the whole build of the preset for the character, in one task of the world and one transaction
+// of the database. The reply 200 has "changes" (one text for each change); a preset that a system refuses (a bag with no room, a level
+// above the cap) gives the reply 409, an unknown preset or variant 404, and a disabled preset 409, with the cause: nothing changes.
+[[nodiscard]] WorldCommand apply_preset(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * @return The build presets of the backend (world thread): for each preset its name, title, "enabled" with the cause of a disabled
+ *         preset, the variants (name, label, and the trees: table, level, nodes, bar), the level, the attributes, and the items (slot,
+ *         item, quantity, gear score, perks).
+ */
+[[nodiscard]] nlohmann::json presets_json(world::World& world);
+
 // The travel command (World::travel, server/http/travel_commands.cpp). Arguments: `place` (the
 // id of a travel place of the game data), or `x`, `y`, and `z` (a position in meters; the
 // height is a height on the ground, from -99 to 999), and when necessary `screen` ("auto",

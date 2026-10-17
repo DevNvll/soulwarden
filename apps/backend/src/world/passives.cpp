@@ -1443,7 +1443,36 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
             return view;
         }
     }
-    // 4. A status with no event and no condition (Unyielding: the fortify of the vortex): the action or the spell of the data gives
+    // 4. A row with no event that is not a rule of a hit (no DamageTableRow, AttackType, or RemoteDamageTableRow), not the values of an
+    // ability, and no rule of the entities near (stage B0, the list of the bow build: "no silent rule"). A condition of a hit with no
+    // event (Finishing Shot, Passive_Bow_Hunter_DmgVsLow: TargetHealthPercent 50 and BaseDamage) has no hit in the evaluator
+    // (before_hit takes such a row only as a rule of a hit), and the gear values take a node row only with no condition
+    // (Passives::fixed). An effect of a fixed row other than its values (Refreshing, Global_Common_CDR: CooldownTimer -0.02 with
+    // CDRImmediatelyOptions) is not in the backend: the gear values take only the values of a fixed stat.
+    if (event.empty() && !hit_rule(row) && !ability_value_rule(row) && !row.has("NumAroundMe") && !row.has("SelfApplyStatusEffect")
+        && !row.has("OtherApplyStatusEffect")) {
+        std::string conditions;
+        for (const std::string& column : kConditions) {
+            if (column != "EquipLoadCategory" && row.has(column)) {
+                conditions += (conditions.empty() ? "" : ", ") + column;
+            }
+        }
+        if (!conditions.empty() && origin != RuleOrigin::perk) {
+            view.note = "not applied: the condition " + conditions + " with no event is not a rule of a hit in the evaluator";
+            return view;
+        }
+        std::string effects;
+        for (const char* column : {"CooldownTimer", "CDRImmediatelyOptions", "DmgPctToHealth", "CastSpell", "Stamina", "HealScalingValueMultiplier"}) {
+            if (row.number(column) != 0.0F || !row.text(column).empty()) {
+                effects += (effects.empty() ? "" : ", ") + std::string(column);
+            }
+        }
+        if (!effects.empty()) {
+            view.note = "not applied: the effect " + effects + " of a row with no event (the gear values take only the values of a fixed stat)";
+            return view;
+        }
+    }
+    // 5. A status with no event and no condition (Unyielding: the fortify of the vortex): the action or the spell of the data gives
     // it; the evaluator does not.
     if (event.empty() && !hit_rule(row) && !row.has("NumAroundMe") && (row.has("SelfApplyStatusEffect") || row.has("OtherApplyStatusEffect"))) {
         // A status that an area of a spell slice gives to the friends in it (stage 3.3b-M2: Unyielding, the AreaStatusEffectComponent of

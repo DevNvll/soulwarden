@@ -80,6 +80,12 @@ inline constexpr std::size_t kSpliceCells = 12;
 /** A creature that is this far from its path has no path (a command moved it). */
 inline constexpr float kOffPath = 1.0F;
 /**
+ * A creature that is more than this from the place of its last step (and not more than kOffPath) was moved by a force (a push): its
+ * path stays only with a free line from the new place (code review of user test 2, finding U2-R1; a decision of an agent: 1 cm, above
+ * the error of a float position).
+ */
+inline constexpr float kMovedOffPath = 0.01F;
+/**
  * A creature on a path to the place nearest to a goal with no way (`next_step` with `nearest`)
  * searches again when the goal is this far from the goal of that path (meters): a search for
  * such a goal can use the steps of many ticks.
@@ -154,6 +160,8 @@ struct NavigationCounts {
     std::size_t largestQueue{0};
     /** Steps of creatures that waited for a tile or for a search. */
     std::uint64_t waits{0};
+    /** Paths that a push ended: the line from the new place to the next cell of the path was not free (finding U2-R1). */
+    std::uint64_t pushedOffPath{0};
     /** Sight tests, and the ones that a solid stopped. */
     std::uint64_t sightTests{0};
     std::uint64_t sightStopped{0};

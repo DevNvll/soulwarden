@@ -1099,8 +1099,31 @@ NavStep Navigation::next_step(EntityId mover,
         route.cells.clear();
         return {StepKind::noGround, from};
     }
-    if (route.hasPosition && !route.cells.empty() && horizontal_distance(from, route.position) > navigation_rules::kOffPath) {
-        route.cells.clear(); // The creature is not on its path: a command moved it.
+    if (route.hasPosition && !route.cells.empty()) {
+        const float off = horizontal_distance(from, route.position);
+        if (off > navigation_rules::kOffPath) {
+            route.cells.clear(); // The creature is not on its path: a command moved it.
+        } else if (off > navigation_rules::kMovedOffPath) {
+            // A short movement that the path did not make (a push): the path stays only when the straight line from the new place to its
+            // next cell is free (code review of user test 2, finding U2-R1: the corner of the path was free from the old place, and the
+            // line from the new place went through a wall). The next corner is the corner of the path, else the next cell; with neither,
+            // the navigation looks for a path again from the new place.
+            const std::size_t last = route.cells.size() - 1;
+            bool free = false;
+            for (const std::size_t index : {route.corner > route.reached ? route.corner : route.reached + 1, route.reached + 1}) {
+                Place there;
+                if (index <= last && step_to(route.cells[index].x, route.cells[index].y, route.cells[index].height, there)
+                    && walk_line(*start, there)) {
+                    route.corner = index;
+                    free = true;
+                    break;
+                }
+            }
+            if (!free) {
+                route.cells.clear();
+                ++m_counts.pushedOffPath;
+            }
+        }
     }
     route.position = from;
     route.hasPosition = true;

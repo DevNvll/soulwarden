@@ -42,6 +42,10 @@
 //                                                         put an active ability that the character
 //                                                         has on a place (0 to 2) of the bar of a
 //                                                         weapon (ID "none": an empty place)
+//   GET  /v1/dev/presets                                  the build presets (stage B0) with the check of the start
+//   POST /v1/dev/presets/apply?character=ID&preset=NAME[&variant=NAME]
+//                                                         the whole build of a preset (the command apply_preset of the
+//                                                         admin interface)
 // tools/world sends these requests to the backend of a development run.
 
 namespace soulwarden::backend::server::http {
@@ -96,6 +100,13 @@ void register_dev_progress_routes(Router& router, const Services& services) {
                command_route(services, commands::add_skill_experience));
     router.add("POST", "", "/v1/dev/progress/node", "dev.progress_node", command_route(services, commands::assign_node));
     router.add("POST", "", "/v1/dev/progress/bar", "dev.progress_bar", command_route(services, commands::set_ability_bar));
+    router.add("GET", "", "/v1/dev/presets", "dev.presets", [&services](const RouteContext& context) {
+        if (!context.request.host.empty()) {
+            return message(403, "forbidden");
+        }
+        return in_world(services, [](world::World& target) { return json_reply(200, commands::presets_json(target).dump()); });
+    });
+    router.add("POST", "", "/v1/dev/presets/apply", "dev.presets_apply", command_route(services, commands::apply_preset));
 }
 
 } // namespace soulwarden::backend::server::http

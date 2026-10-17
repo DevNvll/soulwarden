@@ -13,12 +13,14 @@ namespace {
 using nlohmann::json;
 
 /** Columns of one item of the file, in this sequence (tools/gamedata/item_catalog.py). */
-constexpr std::array<const char*, 14> kColumns{"id",         "name",         "type",         "class",
+constexpr std::array<const char*, 15> kColumns{"id",         "name",         "type",         "class",
                                                "tier",       "weight",       "maxStack",     "durability",
                                                "minGearScore", "maxGearScore", "gearScoreOverride", "bindOnPickup",
-                                               "nonRemovable", "notDroppable"};
-/** A file of the tool from before stage 2.2 has the first 12 columns only (no removal protection). */
+                                               "nonRemovable", "notDroppable", "maxCraftUpgradeGS"};
+/** A file of the tool from before stage 2.2 (format 1) has the first 12 columns only (no removal protection). */
 constexpr std::size_t kColumnsBefore22 = 12;
+/** A file of format 2 (stage 2.2) has the first 14 columns (no upgrade gear score: stage B0 adds it, format 3). */
+constexpr std::size_t kColumnsBeforeB0 = 14;
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -59,15 +61,16 @@ bool ItemCatalog::load(const std::string& path) {
         || !document["columns"].is_array() || !document["items"].is_array()) {
         return false;
     }
-    // The file must have the columns that this code reads, in the same sequence: all of them (format 2), or the 12 columns of a file from
-    // before stage 2.2 (format 1: no removal protection). The format of the file selects the layout (code review of stage 2.2, finding
-    // WT-R4): a format 2 file with no protection columns is not complete and does not load.
+    // The file must have the columns that this code reads, in the same sequence: all of them (format 3, stage B0), the 14 columns of a file
+    // of stage 2.2 (format 2: no upgrade gear score), or the 12 columns of a file from before stage 2.2 (format 1: no removal protection).
+    // The format of the file selects the layout (code review of stage 2.2, finding WT-R4): a file with fewer columns than its format is not
+    // complete and does not load.
     std::uint32_t format = 1;
-    if (document.contains("format") && (!read_number(document["format"], format) || (format != 1 && format != 2))) {
+    if (document.contains("format") && (!read_number(document["format"], format) || format < 1 || format > 3)) {
         return false;
     }
     const json& columns = document["columns"];
-    if (columns.size() != (format == 2 ? kColumns.size() : kColumnsBefore22)) {
+    if (columns.size() != (format == 3 ? kColumns.size() : format == 2 ? kColumnsBeforeB0 : kColumnsBefore22)) {
         return false;
     }
     for (std::size_t column = 0; column < columns.size(); ++column) {
@@ -75,7 +78,8 @@ bool ItemCatalog::load(const std::string& path) {
             return false;
         }
     }
-    const bool protections = columns.size() == kColumns.size();
+    const bool protections = columns.size() >= kColumnsBeforeB0;
+    const bool upgrades = columns.size() == kColumns.size();
     std::vector<ItemDefinition> items;
     items.reserve(document["items"].size());
     for (const json& row : document["items"]) {
@@ -98,6 +102,9 @@ bool ItemCatalog::load(const std::string& path) {
         if (protections) {
             item.nonRemovable = row[12].get<bool>();
             item.notDroppable = row[13].get<bool>();
+        }
+        if (upgrades && !read_number(row[14], item.maxCraftUpgradeGS)) {
+            return false;
         }
         items.push_back(std::move(item));
     }
@@ -150,7 +157,36 @@ bool ItemCatalog::load(const std::string& path) {
             creation.push_back(name.get<std::string>());
         }
     }
+    // The artifact objectives (format 3, stage B0): [[item id, objective id, achievement id, achievement index], ...]. A file of an
+    // earlier format has none: the client then shows the perks 2 to 5 of an artifact locked (its achievement bit is not known).
+    std::vector<ArtifactObjective> objectives;
+    if (document.contains("artifactObjectives")) {
+        const json& member = document["artifactObjectives"];
+        if (!member.is_array()) {
+            return false;
+        }
+        std::unordered_set<std::string> ids;
+        for (const ItemDefinition& item : items) {
+            ids.insert(lower_ascii(item.id));
+        }
+        for (const json& row : member) {
+            ArtifactObjective objective;
+            if (!row.is_array() || row.size() != 4 || !row[0].is_string() || !row[1].is_string() || !row[2].is_string()
+                || !read_number(row[3], objective.achievementIndex)) {
+                return false;
+            }
+            objective.itemId = row[0].get<std::string>();
+            objective.objectiveId = row[1].get<std::string>();
+            objective.achievementId = row[2].get<std::string>();
+            // An objective of an item that the list does not have is a file that does not fit together.
+            if (objective.achievementId.empty() || ids.count(lower_ascii(objective.itemId)) == 0) {
+                return false;
+            }
+            objectives.push_back(std::move(objective));
+        }
+    }
     set(std::move(items));
+    set_artifact_objectives(std::move(objectives));
     m_backstories = std::move(backstories);
     m_creationBackstories.clear();
     m_hasCreationBackstories = false;
@@ -246,6 +282,26 @@ void ItemCatalog::set_creation_backstories(const std::vector<std::string>& backs
         m_creationBackstories.insert(lower_ascii(name));
     }
     m_hasCreationBackstories = true;
+}
+
+void ItemCatalog::set_artifact_objectives(std::vector<ArtifactObjective> objectives) {
+    m_objectives = std::move(objectives);
+    m_objectiveByItem.clear();
+    m_objectiveByAchievement.clear();
+    for (std::size_t position = 0; position < m_objectives.size(); ++position) {
+        m_objectiveByItem.emplace(lower_ascii(m_objectives[position].itemId), position);
+        m_objectiveByAchievement.emplace(m_objectives[position].achievementId, position);
+    }
+}
+
+const ArtifactObjective* ItemCatalog::artifact_objective(std::string_view itemId) const {
+    const auto found = m_objectiveByItem.find(lower_ascii(itemId));
+    return found == m_objectiveByItem.end() ? nullptr : &m_objectives[found->second];
+}
+
+std::optional<std::uint32_t> ItemCatalog::objective_achievement_index(std::string_view achievementId) const {
+    const auto found = m_objectiveByAchievement.find(std::string(achievementId));
+    return found == m_objectiveByAchievement.end() ? std::nullopt : std::optional(m_objectives[found->second].achievementIndex);
 }
 
 const ItemDefinition* ItemCatalog::by_index(std::uint32_t index) const {

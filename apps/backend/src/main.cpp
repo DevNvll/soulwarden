@@ -259,11 +259,12 @@ int main(int argc, char** argv) {
     gamedata::ItemCatalog itemCatalog;
     if (itemCatalog.load(itemCatalogPath)) {
         log::write("backend: item catalog loaded from %s (%zu items, the item list of the client has %u entries, "
-                   "the items of %zu backstories)",
+                   "the items of %zu backstories, %zu artifact objectives)",
                    itemCatalogPath.c_str(),
                    itemCatalog.item_count(),
                    itemCatalog.list_size(),
-                   itemCatalog.backstory_count());
+                   itemCatalog.backstory_count(),
+                   itemCatalog.artifact_objective_count());
         if (itemCatalog.backstory_count() == 0 || !itemCatalog.has_creation_backstories()) {
             log::write("backend: the item catalog has no backstory, or no list of the backstories of the character "
                        "creation: a new character gets no clothing. Make the file again with tools/gamedata/items.sh");
@@ -666,6 +667,9 @@ int main(int argc, char** argv) {
     // The random numbers of the world (the wander of the creatures): a different sequence in each start.
     worldOptions.randomSeed = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     world::World world(clock, store, appearanceTables, worldOptions);
+    // The build presets (stage B0): the check of each id against the game data, with one log line for each disabled preset. The
+    // world thread does not run yet.
+    world.presets().check();
     const server::http::Services services{store,
                                           options.repAddress,
                                           options.worldVersion,

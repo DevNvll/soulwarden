@@ -63,7 +63,43 @@ std::optional<std::uint32_t> Ownership::achievement_bit(const std::string& id) c
         }
     }
     const gamedata::InteractionData* interactions = m_world.interactions().data();
-    return interactions != nullptr ? interactions->achievement_index(id) : std::nullopt;
+    if (interactions != nullptr) {
+        if (const std::optional<std::uint32_t> bit = interactions->achievement_index(id)) {
+            return bit;
+        }
+    }
+    const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
+    return catalog != nullptr ? catalog->objective_achievement_index(id) : std::nullopt;
+}
+
+bool Ownership::write_achievements(const std::string& characterId, const std::vector<std::string>& ids) {
+    std::vector<std::string> added;
+    if (!m_store.grant_achievements(characterId, ids, &added)) {
+        log::write("ownership: the database did not take %zu achievement(s) of character %s", ids.size(), characterId.c_str());
+        return false;
+    }
+    for (const std::string& id : added) {
+        log::write("ownership: character %s gets the achievement %s", characterId.c_str(), id.c_str());
+    }
+    return true;
+}
+
+void Ownership::achievements_written(Entity& entity, const std::vector<std::string>& ids) {
+    bool changed = false;
+    for (const std::string& id : ids) {
+        const std::optional<std::uint32_t> index = achievement_bit(id);
+        if (!index) {
+            continue; // The row stays, with no bit on the wire.
+        }
+        const auto place = std::lower_bound(entity.achievements.begin(), entity.achievements.end(), *index);
+        if (place == entity.achievements.end() || *place != *index) {
+            entity.achievements.insert(place, *index);
+            changed = true;
+        }
+    }
+    if (changed) {
+        m_world.touch(entity.id, ComponentKey::achievements);
+    }
 }
 
 void Ownership::set_bits(Entity& entity, const std::vector<std::string>& aliases, const std::vector<std::string>& achievements) {

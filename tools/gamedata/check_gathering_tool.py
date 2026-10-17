@@ -27,10 +27,19 @@ They run only when a name is given (the case GR4 and GR6 of the test program giv
   flag-texts         GA-R4: the flag texts "tru" and "yes" stop the tool; "FALSE" is false and "TRUE" is true
   event-reward       GA-R4: an event table with no column CategoricalProgressionReward stops the tool; a blank reward cell is 0
   export-publish     GA-R6: an export that stops after it made a region file leaves the manifest and the region files of the
-                     published set as they were (no staging folder stays); each region file has the digest of the manifest; the
-                     earlier set stays after a publication, and an older set (also the layout of before) goes
+                     published set as they were (no staging folder stays); each region file has the digest of the manifest; from
+                     the code review of user test 2 (finding U2-R6) each earlier set (also the layout of before) stays after a
+                     publication
+
+The cases of the code review of user test 2 (finding U2-R6: a backend that runs holds the manifest of its start):
+
+  held-manifest      three publications: each region file of the first manifest is still there with its digest
+  prune              --prune with no backend: only the set of the current manifest stays (the older sets and the layout of before
+                     go); with a backend that runs: status 1, nothing goes
 
 Usage: check_gathering_tool.py FOLDER [CASE ...]
+       check_gathering_tool.py FOLDER --publish N     one made-up export into FOLDER (N: the made-up place of its record; for the
+                                                      backend case RT6, which loads a manifest between two exports)
 Status 0: each case has the expected result. Each line starts with "ok" or "FAIL".
 """
 
@@ -55,7 +64,7 @@ from check_ability_tool import FakeSheet  # noqa: E402
 
 CASES = ("offline-id", "region-name", "row", "row-unsupported", "row-stops", "tables", "table-stops", "distribution",
          "distribution-stops")
-REVIEW_CASES = ("gate-columns", "flag-texts", "event-reward", "export-publish")
+REVIEW_CASES = ("gate-columns", "flag-texts", "event-reward", "export-publish", "held-manifest", "prune")
 # The made-up game copy of the review cases: one region with one record of one gathering slice (variant Ore_A: Test_OreSmall).
 REGION = "r_+00_+00"
 SLICE = "slices/gatherables/test_ore.dynamicslice"
@@ -322,23 +331,54 @@ def review(case: str, work: Path) -> tuple[bool, str]:
         staging = [entry.name for entry in sets.iterdir() if entry.name.startswith(".staging-")]
         if status != 1 or not kept or staging or "No file was written" not in messages:
             wrong.append(f"the stopped export: status {status}, the published set as it was: {kept}, staging folders: {staging}")
-        # Two more publications: the earlier set stays, an older set goes.
+        # Two more publications: each earlier set stays (finding U2-R6), also the layout of before.
         status_two, _ = run_main(folder, sheets_with(good_row()), packed=(300 << 16) | 400)
         _, _, region_two = published()
         second = region_two.parent.name
-        if status_two != 0 or second == first or not (sets / first).is_dir() or (sets / f"{REGION}.swgn").exists():
+        if status_two != 0 or second == first or not (sets / first).is_dir() or not (sets / f"{REGION}.swgn").exists():
             wrong.append(f"the second publication: status {status_two}, a new set {second != first}, the earlier set stays "
-                         f"{(sets / first).is_dir()}, the layout of before goes {not (sets / f'{REGION}.swgn').exists()}")
+                         f"{(sets / first).is_dir()}, the layout of before stays {(sets / f'{REGION}.swgn').exists()}")
         status_three, _ = run_main(folder, sheets_with(good_row()), packed=(500 << 16) | 600)
         _, document_three, region_three = published()
         third = region_three.parent.name
-        if status_three != 0 or (sets / first).exists() or not (sets / second).is_dir() or not region_three.is_file():
-            wrong.append(f"the third publication: status {status_three}, the oldest set goes {not (sets / first).exists()}, the earlier "
-                         f"set stays {(sets / second).is_dir()}")
+        if status_three != 0 or not (sets / first).is_dir() or not (sets / second).is_dir() or not region_three.is_file():
+            wrong.append(f"the third publication: status {status_three}, the first set stays {(sets / first).is_dir()}, the second set "
+                         f"stays {(sets / second).is_dir()}")
         x = struct.unpack_from("<f", region_three.read_bytes(), 26)[0] if region_three.is_file() else -1.0
         last = document_three["regions"][0].get("digest")
-        return not wrong, "; ".join(wrong) or (f"the stopped export left the set {first}; sets {first} -> {second} -> {third}; the "
-                                                f"region of the third set has x {x:.3f}, the digest {last}")
+        return not wrong, "; ".join(wrong) or (f"the stopped export left the set {first}; sets {first} -> {second} -> {third} (each one "
+                                                f"stays); the region of the third set has x {x:.3f}, the digest {last}")
+    if case in ("held-manifest", "prune"):
+        folder = work / case
+        shutil.rmtree(folder, ignore_errors=True)
+        sets = folder / tool.FOLDER
+        sets.mkdir(parents=True)
+        (sets / f"{REGION}.swgn").write_bytes(b"SWGN-before")
+        statuses = [run_main(folder, sheets_with(good_row()), packed=(100 << 16) | 200)[0]]
+        first = json.loads((folder / tool.OUTPUT_NAME).read_text(encoding="utf-8"))
+        statuses += [run_main(folder, sheets_with(good_row()), packed=(number * 100 << 16) | (number * 200))[0] for number in (3, 5)]
+        current = json.loads((folder / tool.OUTPUT_NAME).read_text(encoding="utf-8"))
+        if case == "held-manifest":
+            held = all((folder / region["file"]).is_file()
+                       and hashlib.sha256((folder / region["file"]).read_bytes()).hexdigest()[:16] == region["digest"]
+                       for region in first["regions"])
+            return statuses == [0, 0, 0] and held and first["regions"][0]["file"] != current["regions"][0]["file"], (
+                f"statuses {statuses}; the region files of the first manifest are there with their digests: {held}")
+        names = sorted(entry.name for entry in sets.iterdir())
+        prune_argv = ["gathering.py", str(folder / tool.OUTPUT_NAME), "--prune"]
+        with patch.object(tool, "backend_running", return_value=True), patch.object(sys, "argv", prune_argv), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            refused = tool.main()
+        after_refused = sorted(entry.name for entry in sets.iterdir())
+        with patch.object(tool, "backend_running", return_value=False), patch.object(sys, "argv", prune_argv), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            pruned = tool.main()
+        after = sorted(entry.name for entry in sets.iterdir())
+        keep = Path(current["regions"][0]["file"]).parts[1]
+        passed = (statuses == [0, 0, 0] and len(names) == 4 and refused == 1 and after_refused == names and pruned == 0 and after == [keep]
+                  and (folder / current["regions"][0]["file"]).is_file())
+        return passed, (f"statuses {statuses}; before {len(names)} entries; with a backend: status {refused}, the entries stay "
+                        f"{after_refused == names}; with no backend: status {pruned}, entries {after} (the current set {keep})")
     return False, "not a case of this check"
 
 
@@ -416,6 +456,12 @@ def main() -> int:
         return 2
     work = Path(sys.argv[1])
     work.mkdir(parents=True, exist_ok=True)
+    if sys.argv[2:3] == ["--publish"] and len(sys.argv) == 4 and sys.argv[3].isdigit():
+        # One made-up export into the folder (the backend case RT6: a backend loads a manifest between two exports).
+        number = int(sys.argv[3])
+        status, messages = run_main(work, sheets_with(good_row()), packed=(number * 100 << 16) | (number * 200))
+        print(f"{'ok  ' if status == 0 else 'FAIL'}  publish {number}: status {status}" + ("" if status == 0 else f": {messages.strip()}"))
+        return status
     failures = 0
     for case in sys.argv[2:] or CASES:
         try:

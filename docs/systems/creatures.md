@@ -41,9 +41,12 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   damage row (`hit_reaction`: NoReaction, PowerLevel_AI, HitStun_AI; a blank "_AI" cell takes the normal cell). The rules and the
   source of each one:
   - No reaction (game data): a tick of a damage over time (no damage row), a row with NoReaction, a Boss type (Raid10+, Raid20+,
-    Boss, Boss+, Boss-, EliteBoss). A light attack (and an ability of a power below 1) plays one only on the types Solo, Solo-,
-    Solo_StarterBeach, Solo-_StarterBeach; a heavy attack also on Solo+, Solo+_StarterBeach, Named_Solo, Named_Solo+; an ability of a
-    power of 1 or more on each type that is not a boss. The creature type is the type of the kind (`CreatureKind::creatureType`).
+    Boss, Boss+, Boss-, EliteBoss). A light attack (and an attack of the type Ability of a power below 1) plays one only on the types
+    Solo, Solo-, Solo_StarterBeach, Solo-_StarterBeach; a heavy attack also on Solo+, Solo+_StarterBeach, Named_Solo, Named_Solo+; an
+    attack of a different type (Ability, Magic, MagicSpell, ...) of a power of 1 or more on each type that is not a boss. A Magic or a
+    MagicSpell row of a power below 1 plays no reaction and gives no hit stun: the branch below power 1 of the action list names only
+    the type Ability (code review of user test 2, finding U2-R2; game data: Firestaff_PrimaryAttackC3, IceMagic_Pylon,
+    IceMagic_PylonBurst have the power 0; test case RT2). The creature type is the type of the kind (`CreatureKind::creatureType`).
   - The rules of the backend from before (decisions of stage 3.2a and 3.3a): no reaction while an attack, a shot, a cast, or a status
     action plays (the grit of the action list: an attack of a creature of the backend always has grit), and none while a stun or a
     knockdown holds the creature.
@@ -58,7 +61,10 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   - The limit (game data: Chained_Reaction_Count 3, the status AI_Reaction_Limiter of 2 s, the tag ReactionLimiter_Active): the third
     chained reaction of a Solo type (of a heavy attack for a Solo+ or a named type), or the first one of DungeonMiniBoss, Dungeon+,
     Elite+, EliteMiniBoss, CatacombsMiniBoss, starts the limit until 2 s after its end; in it a light or heavy attack plays no reaction
-    (`Creature::reactionLimitUntil`). A reaction is chained when it starts while the reaction before it plays (a decision of an agent:
+    (`Creature::reactionLimitUntil`). The 2 s start at the real exit of that reaction (game data: AI_Reaction_Limiter is in
+    EffectsToApplyOnExit of the action `Reaction`): its natural end, a step, a new action, a stun, or the death
+    (`Creatures::action_exits`, `Creature::reactionLimitAction`; code review of user test 2, finding U2-R3; test case RT3). Before
+    the exit the limit holds to the natural end plus 2 s. A reaction is chained when it starts while the reaction before it plays (a decision of an agent:
     the count is a value of the behavior tree, which is not in the game files).
   - The push of the impact of the row is an activity of the reaction, or of the action Pushable (0.4 s, game data) for a row with
     NoReaction: a hit with neither moves nothing ([Forced movement](forced-movement.md)).

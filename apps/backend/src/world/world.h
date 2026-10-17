@@ -26,6 +26,7 @@
 #include "gamedata/travel_places.h"
 #include "state/store.h"
 #include "world/abilities.h"
+#include "world/build_presets.h"
 #include "world/combat.h"
 #include "world/consumables.h"
 #include "world/creatures.h"
@@ -744,6 +745,10 @@ public:
     [[nodiscard]] Ownership& ownership() {
         return m_ownership;
     }
+    /** @return The build presets (stage B0): one command gives a character a whole build. */
+    [[nodiscard]] BuildPresets& presets() {
+        return m_presets;
+    }
     /** @return The creature system: the creatures of the world and the spawn points. */
     [[nodiscard]] Creatures& creatures() {
         return m_creatures;
@@ -961,6 +966,8 @@ private:
      * time (the run clock of the respawns).
      */
     Gathering m_gathering;
+    /** The build presets (stage B0): they use the inventory, the progress, the skill, and the ownership systems. */
+    BuildPresets m_presets;
 };
 
 template <class Result>

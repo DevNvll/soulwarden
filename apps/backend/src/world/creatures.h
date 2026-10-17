@@ -522,6 +522,11 @@ private:
     void due(WorldClock::time_point at, EntityId creature, std::uint64_t serial);
     /** The stun of a creature ended: its action "Stun" stops, and each observer gets its idle action. */
     void end_stun(Entity& entity);
+    /**
+     * The action of a creature ends or a different action replaces it now: when it is the reaction that holds the reaction limit, the 2 s of
+     * the limit start now (code review of user test 2, finding U2-R3). Each place that ends or replaces an action calls it first.
+     */
+    void action_exits(Creature& creature, WorldClock::time_point now);
 
     World& m_world;
     const gamedata::CreatureData* m_data;

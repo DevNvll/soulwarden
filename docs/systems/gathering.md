@@ -154,9 +154,12 @@ The source of each rule is in brackets: game data, client code, live check (the 
   16 hexadecimal digits of the SHA-256 of the region digests), and writes `gathering-data.json` last. An export that stops leaves the
   published set as it was. The entry of each region in the document has `digest`: the first 16 hexadecimal digits of the SHA-256 of its
   region file. The loader refuses a region file with another digest (a file of another export): no node of the region (GA-R2 above for
-  its stored rows). A document of before the review has no digest: no check. After a publication the tool keeps the set of the earlier
-  manifest (a backend that runs reads its region files later) and removes older sets, staging folders, and region files of the layout
-  of before.
+  its stored rows). A document of before the review has no digest: no check. After a publication the tool keeps each published set
+  and removes only the staging folders of stopped exports: a backend that runs holds the manifest of its start and reads its region
+  files later, also after more than one publication (code review of user test 2, finding U2-R6; the game of the user can run from
+  Steam while a stage writes the common game data folder). `tools/gamedata/gathering.sh --prune` removes the sets and the region
+  files of the layout of before that the current manifest does not name; it refuses (status 1, no change) while a process
+  `soulwarden-backend` runs (case `prune` of `check_gathering_tool.py`).
 - Not in this stage: fishing (3.6b); the durability loss, the refining, and the crafting (3.7); the observer action of a gather (the
   animation of a different player: type 11, not derived); the yield multiplier (GatheringMultiplier, MULT) and the instant gather
   (INS); the quest, event, and special nodes (the unsupported rows).

@@ -125,38 +125,39 @@ std::optional<SkillView> Skills::view(const std::string& characterId) {
 }
 
 template <class Change>
-SkillResult Skills::change(const std::string& characterId, const char* what, Change&& apply) {
-    SkillResult result;
+Skills::Plan Skills::stage(const std::string& characterId, Change&& apply) {
+    Plan plan;
+    plan.characterId = characterId;
     Entity* entity = m_world.find_character(characterId);
-    // The log line names the session that plays the character.
-    const std::string mark = entity != nullptr ? log::session_mark(entity->owner, characterId) : std::string{};
-    const log::Context context(mark);
-    SkillSet skills;
     if (entity != nullptr) {
-        skills = entity->skills;
-        result.inWorld = true;
+        plan.skills = entity->skills;
+        plan.inWorld = true;
     } else if (m_store.find_character(characterId)) {
-        skills = read_skills(characterId);
+        plan.skills = read_skills(characterId);
     } else {
-        result.error = ProgressError::unknownCharacter;
+        plan.error = ProgressError::unknownCharacter;
     }
-    if (result.ok() && tables() == nullptr) {
-        result.error = ProgressError::noTables;
+    if (plan.ok() && tables() == nullptr) {
+        plan.error = ProgressError::noTables;
     }
+    plan.result.inWorld = plan.inWorld;
     // The change is made on a copy: the skills of the entity change only after the rows.
-    Touched touched;
-    if (result.ok()) {
-        result.error = apply(skills, touched, result);
+    if (plan.ok()) {
+        plan.error = apply(plan.skills, plan.touched, plan.result);
     }
+    return plan;
+}
+
+bool Skills::write(const Plan& plan) {
     // All rows of the change are one transaction.
-    if (result.ok() && (touched.ranks || touched.points || touched.bars)
-        && !m_store.write_skills(characterId, rows_of(skills))) {
-        result.error = ProgressError::storeFailed;
-    }
-    if (!result.ok()) {
-        log::write("skills: %s of character %s refused: %s", what, characterId.c_str(), progress_error_text(result.error));
-        return result;
-    }
+    const Touched& touched = plan.touched;
+    return !(touched.ranks || touched.points || touched.bars) || m_store.write_skills(plan.characterId, rows_of(plan.skills));
+}
+
+SkillResult Skills::finish(Plan& plan, const char* what) {
+    Entity* entity = plan.inWorld ? m_world.find_character(plan.characterId) : nullptr;
+    const Touched& touched = plan.touched;
+    SkillSet& skills = plan.skills;
     if (entity != nullptr) {
         if (touched.ranks) {
             m_world.touch(entity->id, ComponentKey::categorical);
@@ -179,7 +180,7 @@ SkillResult Skills::change(const std::string& characterId, const char* what, Cha
         if (touched.bars || touched.points) {
             // An aim of an ability names the place of the bar and the node of its press: a change of the bar or of the nodes ends it (code
             // review of stage 3.3b-S6, finding S6-R2).
-            m_world.abilities().cancel_aim(characterId);
+            m_world.abilities().cancel_aim(plan.characterId);
         }
         if (touched.points) {
             // The fixed stats of the learned nodes are gear values (Passives::fixed, Gear::values): a change of the nodes (an
@@ -189,9 +190,27 @@ SkillResult Skills::change(const std::string& characterId, const char* what, Cha
     }
     log::write("skills: %s of character %s: done (%s)",
                what,
-               characterId.c_str(),
+               plan.characterId.c_str(),
                entity != nullptr ? "the character is in the world" : "the rows only");
-    return result;
+    return plan.result;
+}
+
+template <class Change>
+SkillResult Skills::change(const std::string& characterId, const char* what, Change&& apply) {
+    Entity* entity = m_world.find_character(characterId);
+    // The log line names the session that plays the character.
+    const std::string mark = entity != nullptr ? log::session_mark(entity->owner, characterId) : std::string{};
+    const log::Context context(mark);
+    Plan plan = stage(characterId, std::forward<Change>(apply));
+    if (plan.ok() && !write(plan)) {
+        plan.error = ProgressError::storeFailed;
+    }
+    if (!plan.ok()) {
+        plan.result.error = plan.error;
+        log::write("skills: %s of character %s refused: %s", what, characterId.c_str(), progress_error_text(plan.error));
+        return plan.result;
+    }
+    return finish(plan, what);
 }
 
 void Skills::clear_tree(SkillSet& skills, std::uint32_t table, Touched& touched) const {
@@ -242,39 +261,49 @@ SkillResult Skills::set_rank(const std::string& characterId,
                              std::uint64_t points) {
     const std::string what = "rank " + std::to_string(rank) + " of " + std::string(id);
     return change(characterId, what.c_str(), [&](SkillSet& skills, Touched& touched, SkillResult& result) {
-        const gamedata::ProgressionRow* row = tables()->progression(id);
-        if (row == nullptr) {
-            return ProgressError::unknownProgression;
-        }
-        if (row->kind != kind) {
-            return ProgressError::wrongKind;
-        }
-        // The experience of a rank is below the experience that gives the next rank. The
-        // largest rank has no experience.
-        // The largest rank is the rank of the owned expansion (stage 1.1b: Riding 250, a trade skill 250).
-        const std::uint32_t cap = tables()->rank_cap(*row);
-        const std::uint64_t limit = rank < cap && rank < row->ranks.experience.size() ? row->ranks.experience[rank] : 0;
-        if (rank > cap || (points != 0 && points >= limit)) {
-            return ProgressError::badRank;
-        }
-        if (rank == 0 && points == 0) {
-            skills.progressions.erase(row->wireId);
-        } else {
-            skills.progressions[row->wireId] = ProgressionRank{static_cast<std::uint16_t>(rank), points};
-        }
-        touched.ranks = true;
-        if (row->kind == gamedata::ProgressionKind::weapon) {
-            // The free points of the weapon follow from its rank.
-            touched.points = true;
-            if (skills.spent_points(row->wireId) > rank) {
-                clear_tree(skills, row->wireId, touched);
-            }
-            result.freePoints = skills.free_points(row->wireId);
-        }
-        result.rank = rank;
-        result.points = points;
-        return ProgressError::none;
+        return rank_into(skills, touched, result, id, kind, rank, points);
     });
+}
+
+ProgressError Skills::rank_into(SkillSet& skills,
+                                Touched& touched,
+                                SkillResult& result,
+                                std::string_view id,
+                                gamedata::ProgressionKind kind,
+                                std::uint32_t rank,
+                                std::uint64_t points) const {
+    const gamedata::ProgressionRow* row = tables()->progression(id);
+    if (row == nullptr) {
+        return ProgressError::unknownProgression;
+    }
+    if (row->kind != kind) {
+        return ProgressError::wrongKind;
+    }
+    // The experience of a rank is below the experience that gives the next rank. The
+    // largest rank has no experience.
+    // The largest rank is the rank of the owned expansion (stage 1.1b: Riding 250, a trade skill 250).
+    const std::uint32_t cap = tables()->rank_cap(*row);
+    const std::uint64_t limit = rank < cap && rank < row->ranks.experience.size() ? row->ranks.experience[rank] : 0;
+    if (rank > cap || (points != 0 && points >= limit)) {
+        return ProgressError::badRank;
+    }
+    if (rank == 0 && points == 0) {
+        skills.progressions.erase(row->wireId);
+    } else {
+        skills.progressions[row->wireId] = ProgressionRank{static_cast<std::uint16_t>(rank), points};
+    }
+    touched.ranks = true;
+    if (row->kind == gamedata::ProgressionKind::weapon) {
+        // The free points of the weapon follow from its rank.
+        touched.points = true;
+        if (skills.spent_points(row->wireId) > rank) {
+            clear_tree(skills, row->wireId, touched);
+        }
+        result.freePoints = skills.free_points(row->wireId);
+    }
+    result.rank = rank;
+    result.points = points;
+    return ProgressError::none;
 }
 
 SkillResult Skills::add_experience(const std::string& characterId, std::string_view id, std::uint64_t amount) {
@@ -323,37 +352,7 @@ SkillResult Skills::assign(const std::string& characterId, std::uint32_t pool, s
     char what[96];
     std::snprintf(what, sizeof(what), "mastery point for node %08X of pool %08X", node, pool);
     const SkillResult result = change(characterId, what, [&](SkillSet& skills, Touched& touched, SkillResult& done) {
-        const gamedata::ProgressionRow* weapon = tables()->progression(pool);
-        if (weapon == nullptr) {
-            return ProgressError::unknownProgression;
-        }
-        if (weapon->kind != gamedata::ProgressionKind::weapon) {
-            return ProgressError::wrongKind;
-        }
-        const gamedata::AbilityNode* row = tables()->node(node);
-        if (row == nullptr || row->table != pool) {
-            return ProgressError::unknownNode;
-        }
-        // A node of a weapon tree takes one point.
-        if (count != 1) {
-            return ProgressError::badAmount;
-        }
-        if (node_level(skills, pool, node) != 0) {
-            return ProgressError::nodeOwned;
-        }
-        if (skills.free_points(pool) < count) {
-            return ProgressError::notEnoughPoints;
-        }
-        const ProgressError condition = node_condition(skills, *row);
-        if (condition != ProgressError::none) {
-            return condition;
-        }
-        skills.pools[pool][node].level = 1;
-        touched.points = true;
-        touched.nodes.emplace_back(pool, node);
-        done.rank = skills.rank(pool);
-        done.freePoints = skills.free_points(pool);
-        return ProgressError::none;
+        return assign_into(skills, touched, done, pool, node, count);
     });
     if (!result.ok()) {
         // The client has its own result of the request already: the state puts its values
@@ -372,46 +371,50 @@ SkillResult Skills::assign(const std::string& characterId, std::uint32_t pool, s
     return result;
 }
 
+ProgressError Skills::assign_into(SkillSet& skills,
+                                  Touched& touched,
+                                  SkillResult& done,
+                                  std::uint32_t pool,
+                                  std::uint32_t node,
+                                  std::uint32_t count) const {
+    const gamedata::ProgressionRow* weapon = tables()->progression(pool);
+    if (weapon == nullptr) {
+        return ProgressError::unknownProgression;
+    }
+    if (weapon->kind != gamedata::ProgressionKind::weapon) {
+        return ProgressError::wrongKind;
+    }
+    const gamedata::AbilityNode* row = tables()->node(node);
+    if (row == nullptr || row->table != pool) {
+        return ProgressError::unknownNode;
+    }
+    // A node of a weapon tree takes one point.
+    if (count != 1) {
+        return ProgressError::badAmount;
+    }
+    if (node_level(skills, pool, node) != 0) {
+        return ProgressError::nodeOwned;
+    }
+    if (skills.free_points(pool) < count) {
+        return ProgressError::notEnoughPoints;
+    }
+    const ProgressError condition = node_condition(skills, *row);
+    if (condition != ProgressError::none) {
+        return condition;
+    }
+    skills.pools[pool][node].level = 1;
+    touched.points = true;
+    touched.nodes.emplace_back(pool, node);
+    done.rank = skills.rank(pool);
+    done.freePoints = skills.free_points(pool);
+    return ProgressError::none;
+}
+
 SkillResult Skills::set_bar(const std::string& characterId, std::uint32_t table, std::uint32_t slot, std::uint32_t ability) {
     char what[112];
     std::snprintf(what, sizeof(what), "ability %08X on place %u of the bar of weapon %08X", ability, slot, table);
     const SkillResult result = change(characterId, what, [&](SkillSet& skills, Touched& touched, SkillResult&) {
-        const gamedata::ProgressionRow* weapon = tables()->progression(table);
-        if (weapon == nullptr) {
-            return ProgressError::unknownProgression;
-        }
-        if (weapon->kind != gamedata::ProgressionKind::weapon) {
-            return ProgressError::wrongKind;
-        }
-        if (slot >= kBarSlots) {
-            return ProgressError::badSlot;
-        }
-        if (ability != 0) {
-            const gamedata::AbilityNode* row = tables()->node(ability);
-            if (row == nullptr || row->table != table || !row->active) {
-                return ProgressError::notActive;
-            }
-            if (node_level(skills, table, ability) == 0) {
-                return ProgressError::notOwned;
-            }
-        }
-        std::array<std::uint32_t, kBarSlots> bar{};
-        const auto found = skills.bars.find(table);
-        if (found != skills.bars.end()) {
-            bar = found->second;
-        }
-        if (ability != 0) {
-            // An ability has one place: it leaves the place that it had.
-            std::replace(bar.begin(), bar.end(), ability, 0U);
-        }
-        bar[slot] = ability;
-        if (bar == std::array<std::uint32_t, kBarSlots>{}) {
-            skills.bars.erase(table);
-        } else {
-            skills.bars[table] = bar;
-        }
-        touched.bars = true;
-        return ProgressError::none;
+        return bar_into(skills, touched, table, slot, ability);
     });
     if (!result.ok()) {
         // The client changed its own bar before it sent the request. The state merge of the
@@ -423,6 +426,97 @@ SkillResult Skills::set_bar(const std::string& characterId, std::uint32_t table,
         }
     }
     return result;
+}
+
+ProgressError Skills::bar_into(SkillSet& skills, Touched& touched, std::uint32_t table, std::uint32_t slot, std::uint32_t ability) const {
+    const gamedata::ProgressionRow* weapon = tables()->progression(table);
+    if (weapon == nullptr) {
+        return ProgressError::unknownProgression;
+    }
+    if (weapon->kind != gamedata::ProgressionKind::weapon) {
+        return ProgressError::wrongKind;
+    }
+    if (slot >= kBarSlots) {
+        return ProgressError::badSlot;
+    }
+    if (ability != 0) {
+        const gamedata::AbilityNode* row = tables()->node(ability);
+        if (row == nullptr || row->table != table || !row->active) {
+            return ProgressError::notActive;
+        }
+        if (node_level(skills, table, ability) == 0) {
+            return ProgressError::notOwned;
+        }
+    }
+    std::array<std::uint32_t, kBarSlots> bar{};
+    const auto found = skills.bars.find(table);
+    if (found != skills.bars.end()) {
+        bar = found->second;
+    }
+    if (ability != 0) {
+        // An ability has one place: it leaves the place that it had.
+        std::replace(bar.begin(), bar.end(), ability, 0U);
+    }
+    bar[slot] = ability;
+    if (bar == std::array<std::uint32_t, kBarSlots>{}) {
+        skills.bars.erase(table);
+    } else {
+        skills.bars[table] = bar;
+    }
+    touched.bars = true;
+    return ProgressError::none;
+}
+
+ProgressError Skills::trees_into(SkillSet& skills, Touched& touched, const std::vector<TreeBuild>& trees) const {
+    for (const TreeBuild& tree : trees) {
+        const gamedata::ProgressionRow* weapon = tables()->progression(tree.table);
+        if (weapon == nullptr) {
+            return ProgressError::unknownProgression;
+        }
+        SkillResult ignored;
+        // The rank first (set_rank), then the reset of the tree with no cost: the build replaces the tree. A rank of 0 frees the points
+        // of a tree in set_rank too; here each tree of the build starts with no node and an empty bar.
+        if (const ProgressError error = rank_into(skills, touched, ignored, tree.table, gamedata::ProgressionKind::weapon, tree.rank, 0);
+            error != ProgressError::none) {
+            return error;
+        }
+        clear_tree(skills, weapon->wireId, touched);
+        for (const std::string& name : tree.nodes) {
+            const gamedata::AbilityNode* node = tables()->node(name);
+            if (node == nullptr) {
+                return ProgressError::unknownNode;
+            }
+            if (const ProgressError error = assign_into(skills, touched, ignored, weapon->wireId, node->wireId, 1);
+                error != ProgressError::none) {
+                return error;
+            }
+        }
+        for (std::uint32_t slot = 0; slot < kBarSlots; ++slot) {
+            const std::string& name = tree.bar[slot];
+            const gamedata::AbilityNode* node = name.empty() ? nullptr : tables()->node(name);
+            if (!name.empty() && node == nullptr) {
+                return ProgressError::notActive;
+            }
+            if (const ProgressError error = bar_into(skills, touched, weapon->wireId, slot, node != nullptr ? node->wireId : 0);
+                error != ProgressError::none) {
+                return error;
+            }
+        }
+    }
+    return ProgressError::none;
+}
+
+Skills::Plan Skills::plan_trees(const std::string& characterId, const std::vector<TreeBuild>& trees) {
+    return stage(characterId, [&](SkillSet& skills, Touched& touched, SkillResult&) { return trees_into(skills, touched, trees); });
+}
+
+ProgressError Skills::check_trees(const std::vector<TreeBuild>& trees) const {
+    if (tables() == nullptr) {
+        return ProgressError::noTables;
+    }
+    SkillSet skills;
+    Touched touched;
+    return trees_into(skills, touched, trees);
 }
 
 SkillResult Skills::reset_tree(const std::string& characterId, std::uint32_t table) {

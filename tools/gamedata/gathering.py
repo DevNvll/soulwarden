@@ -52,8 +52,12 @@ tools/gamedata/check_gathering_tool.py is the check of these rules, with made-up
 The publication (finding GA-R6): the region files go into a staging folder (gathering/.staging-PID), the tool checks each one against
 the document (its size and its digest), moves the folder to gathering/SET (SET: the first 16 hexadecimal digits of the SHA-256 of the
 region digests), and writes gathering-data.json last. A stop before that leaves the published set (the manifest and its region files)
-as it was. After the publication the set of the earlier manifest stays (a backend that runs reads its region files later); older set
-folders, staging folders, and region files of the layout of before (gathering/REGION.swgn) go. Run one export at a time.
+as it was. Each published set stays after a publication (code review of user test 2, finding U2-R6: a backend that runs holds the
+manifest of its start and reads its region files later, also after more than one publication; the game of the user can run from Steam
+while a stage writes the common game data folder): a publication removes only the staging folders of stopped exports. The option
+--prune removes the sets and the region files of the layout of before (gathering/REGION.swgn) that the current manifest does not name;
+it refuses (status 1, no change) while a backend process runs (a program soulwarden-backend), because that backend can hold an earlier
+manifest. Run one export at a time.
 
 Output:
   gathering-data.json (one line of JSON):
@@ -78,7 +82,9 @@ Output:
   primary record: type:u16 x:f32 y:f32 z:f32 (14 bytes). Record N has the counter N + 1 (its G: the rule above).
 
 Usage: gathering.py [OUTPUT.json] [--region NAME]... [--near X Y METERS]
-  --region: only these regions (a file for a test); --near: print the gathering nodes near a place (with their G) and write no file.
+       gathering.py [OUTPUT.json] --prune
+  --region: only these regions (a file for a test); --near: print the gathering nodes near a place (with their G) and write no file;
+  --prune: remove the sets that the manifest does not name (no export; only when no backend runs).
 Default output: <SOULWARDEN_GAMEDATA_DIR>/gathering-data.json
 Environment: as creature_data.py (SOULWARDEN_GAME_DIR, SOULWARDEN_GAMEDATA_DIR, SOULWARDEN_OODLE_LIB, SOULWARDEN_OODLE_DLL,
              SOULWARDEN_OODLE_DEC, SOULWARDEN_EXTRACT_DIR).
@@ -94,6 +100,7 @@ import os
 import re
 import shutil
 import struct
+import subprocess
 import sys
 import uuid
 import zlib
@@ -815,8 +822,9 @@ def same_set(folder: Path, regions: list[dict]) -> bool:
 def publish(target: Path, document: dict, staging: Path, folder: Path) -> list[str]:
     """Publishes one set of files (code review of stage 3.6a, finding GA-R6). The region files of `staging` are checked against the
     document (the size and the digest); the folder becomes the set folder gathering/SET (SET: a digest of the region digests); then the
-    manifest names the files of the set (the manifest last). A stop before the manifest leaves the published set whole. The set of the
-    earlier manifest stays (a backend that runs reads its region files later); the older sets, staging folders, and region files go.
+    manifest names the files of the set (the manifest last). A stop before the manifest leaves the published set whole. Each published
+    set stays (code review of user test 2, finding U2-R6: a backend that runs can hold any earlier manifest); only the staging folders of
+    stopped exports go. `prune` removes the old sets when no backend runs.
     @return The removed entries of the folder."""
     regions = document["regions"]
     for region in regions:
@@ -847,10 +855,43 @@ def publish(target: Path, document: dict, staging: Path, folder: Path) -> list[s
     temporary = target.with_name(target.name + ".tmp")
     temporary.write_text(text, encoding="utf-8")
     temporary.replace(target)
-    # The clean up: the new set and the set of the earlier manifest stay (a folder gathering/SET, or the region files of the layout of
-    # before the review: gathering/REGION.swgn).
-    keep_folders = {set_name} | {Path(file).parts[1] for file in previous if len(Path(file).parts) == 3}
-    keep_files = {Path(file).name for file in previous if len(Path(file).parts) == 2}
+    # The clean up: only the staging folders of stopped exports (no backend reads them). Each set and each region file of the layout of
+    # before the review (gathering/REGION.swgn) stays: a backend that runs can hold its manifest (finding U2-R6; `prune` removes them).
+    del previous
+    removed = []
+    for entry in sorted(folder.iterdir()):
+        try:
+            if entry.is_dir() and entry.name.startswith((STAGING_PREFIX, STALE_PREFIX)):
+                shutil.rmtree(entry)
+                removed.append(entry.name)
+            elif entry.is_file() and entry.name.endswith(".swgn.tmp"):
+                entry.unlink()
+                removed.append(entry.name)
+        except OSError as error:
+            print(f"gathering: {entry}: not removed: {error}", file=sys.stderr)
+    return removed
+
+
+def backend_running() -> bool:
+    """@return True when a process of a backend runs (the program soulwarden-backend of a start of the user or of a development run): it
+    can hold an earlier manifest. A computer with no pgrep: True (no prune)."""
+    try:
+        result = subprocess.run(["pgrep", "-f", r"^([^ ]*/)?soulwarden-backend( |$)"], capture_output=True, check=False)
+    except OSError:
+        return True
+    return result.returncode == 0
+
+
+def prune(target: Path, folder: Path) -> list[str]:
+    """Removes the sets and the region files of the layout of before that the manifest `target` does not name (finding U2-R6). It
+    refuses (a Failure, no change) while a backend runs, and with no manifest. @return The removed entries."""
+    if backend_running():
+        raise Failure("a backend runs (a program soulwarden-backend): it can hold an earlier manifest. Stop each backend, then prune")
+    named = manifest_files(target)
+    if not named:
+        raise Failure(f"{target} names no region file: nothing to keep, no prune")
+    keep_folders = {Path(file).parts[1] for file in named if len(Path(file).parts) == 3}
+    keep_files = {Path(file).name for file in named if len(Path(file).parts) == 2}
     removed = []
     for entry in sorted(folder.iterdir()):
         try:
@@ -876,8 +917,18 @@ def main() -> int:
     parser.add_argument("--region", action="append", help="a region (r_+04_+02); more than one is possible")
     parser.add_argument("--near", type=float, nargs=3, metavar=("X", "Y", "METERS"),
                         help="print the gathering nodes near a place (with their G) and write no file")
+    parser.add_argument("--prune", action="store_true",
+                        help="remove the sets that the manifest does not name (no export; only when no backend runs)")
     arguments = parser.parse_args()
     target = Path(arguments.output)
+    if arguments.prune:
+        try:
+            removed = prune(target, target.parent / FOLDER)
+        except Failure as error:
+            print(f"gathering: {error}. Nothing was removed.", file=sys.stderr)
+            return 1
+        print(f"gathering: removed {len(removed)} entr{'y' if len(removed) == 1 else 'ies'}" + (f": {', '.join(removed)}" if removed else ""))
+        return 0
     if arguments.near is not None and not all(math.isfinite(value) for value in arguments.near):
         print("gathering: --near needs three finite numbers. No file was written.", file=sys.stderr)
         return 1

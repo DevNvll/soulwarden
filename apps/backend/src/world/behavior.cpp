@@ -502,6 +502,17 @@ void Behavior::turn(Entity& creature, float yaw) {
     }
 }
 
+bool Behavior::hit_stunned(Entity& creature, WorldClock::time_point now) {
+    if (!creature.creature.hitStunUntil) {
+        return false;
+    }
+    if (now < *creature.creature.hitStunUntil) {
+        return true;
+    }
+    creature.creature.hitStunUntil.reset();
+    return false;
+}
+
 void Behavior::think(Entity& creature, float seconds) {
     CreatureMind& mind = creature.creature.mind;
     const gamedata::CreatureSlice& body = *creature.creature.body;
@@ -513,11 +524,8 @@ void Behavior::think(Entity& creature, float seconds) {
         return;
     }
     // The hit stun of the last hit (user test 2, UT2-9: HitStun_AI of the damage row): the reaction plays; no step, no turn, no attack.
-    if (creature.creature.hitStunUntil) {
-        if (now < *creature.creature.hitStunUntil) {
-            return;
-        }
-        creature.creature.hitStunUntil.reset();
+    if (hit_stunned(creature, now)) {
+        return;
     }
     if (mind.attack || mind.shooting) {
         // An attack or a shot plays: the creature stays at its place and keeps its direction to its end.
@@ -720,6 +728,9 @@ void Behavior::go_home(Entity& creature, float seconds) {
     }
     if (creature.creature.forced) {
         return; // A forced movement that started before the way back ends first (the movement system ends it).
+    }
+    if (hit_stunned(creature, now)) {
+        return; // The hit stun of a hit before the way back holds (code review of user test 2, finding U2-R5).
     }
     // At the anchor: near it in the plane and on its floor. A creature below or above its anchor
     // on a different floor goes there on its way, and it does not jump while a session observes
@@ -946,8 +957,10 @@ void Behavior::stand(Entity& creature) {
 void Behavior::roam(Entity& creature, float seconds) {
     CreatureMind& mind = creature.creature.mind;
     const WorldClock::time_point now = m_world.clock().now();
-    // An effect of an ability that holds the creature or keeps it at its place stops its walk too.
-    if (now < mind.roamWaitUntil || creature.creature.held(now) || creature.creature.rooted(now) || creature.creature.forced) {
+    // An effect of an ability that holds the creature or keeps it at its place stops its walk too, and the hit stun of a hit (a passive
+    // creature takes no target: its reaction plays to its hit stun; code review of user test 2, finding U2-R5).
+    if (now < mind.roamWaitUntil || creature.creature.held(now) || creature.creature.rooted(now) || creature.creature.forced
+        || hit_stunned(creature, now)) {
         return;
     }
     if (!mind.roamGoal && !next_roam_goal(creature)) {

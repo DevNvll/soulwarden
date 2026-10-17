@@ -490,6 +490,11 @@ private:
     void sense();
     void think(Entity& creature, float seconds);
     /**
+     * @return True while the hit stun of the last hit holds the creature (Creature::hitStunUntil, user test 2): no step, no turn, no attack.
+     *         The fight, the way back, and the roam check it (code review of user test 2, finding U2-R5). An ended hit stun goes.
+     */
+    bool hit_stunned(Entity& creature, WorldClock::time_point now);
+    /**
      * The shot rules of a step of a creature with a basic shot and a character as its target (stage 3.4f-A).
      * @return False: the melee rules decide (the target is in the reach of the next melee attack).
      */

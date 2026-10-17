@@ -34,6 +34,12 @@ before a live test of the expansion. The wire contracts are in the protocol note
     (`Store::Batch`). The table gives no quantity: one item is a rule of this project. A full bag gives nothing and no row:
     the next world entry tries again. The other rewards (skins, emotes, crests, a housing item, a title, the art book) need
     their own systems: only their entitlement bits go to the client.
+- The achievement of the objective of an artifact (stage B0, [Build presets](build-presets.md)): the client shows the perks 2 to 5
+  of an artifact only when the character has the achievement of its objective (`Achievement_Objective_<item>`, the AchievementIndex
+  of the achievement table; live check U1 of stage B0: with no bit the tooltip says "Equip to view task."). It is not a DLC
+  achievement: only the build preset writes it (`Ownership::write_achievements` in the transaction of the preset, then
+  `achievements_written` sets the bits and marks the achievement state). The bit index of such an achievement comes from the item
+  catalog (`artifactObjectives`, format 3). The objective progress of a quest (stage 1.8) does not give it yet.
 - The rows: `entitlements` (the persona id is the owner key), `achievements`, and `entitlement_rewards` (the character id is
   the owner key; the delete of a character removes them), schema version 8. The backend writes the rows of the policy at the
   login of an account (the token route), at the entitlement sync of the client, and at the world entry of a character

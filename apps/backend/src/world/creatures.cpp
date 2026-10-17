@@ -275,6 +275,7 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
             // fields with no record: the client keeps the scope fields of a creature, and it would
             // keep the run of a dead creature (code review of the corrections after user test 1,
             // finding F2).
+            action_exits(entity->creature, m_world.clock().now());
             entity->creature.action.reset();
             m_acting.erase(entity->id);
             entity->creature.moving.reset();
@@ -302,9 +303,10 @@ HitReaction hit_reaction(const gamedata::DamageRow& row) {
     reaction.pushable = row.reaction->none;
     reaction.power = static_cast<std::uint32_t>(std::max(row.reaction->power_on_creature(), 0));
     reaction.stunFrames = static_cast<std::uint32_t>(std::max(row.reaction->stun_on_creature(), 0));
-    reaction.attack = row.attackType == "Light" ? HitReaction::Attack::light
-                      : row.attackType == "Heavy" ? HitReaction::Attack::heavy
-                                                  : HitReaction::Attack::other;
+    reaction.attack = row.attackType == "Light"     ? HitReaction::Attack::light
+                      : row.attackType == "Heavy"   ? HitReaction::Attack::heavy
+                      : row.attackType == "Ability" ? HitReaction::Attack::ability
+                                                    : HitReaction::Attack::other;
     return reaction;
 }
 
@@ -329,10 +331,14 @@ bool Creatures::reaction_allowed(const Entity& entity, const HitReaction& reacti
         return !limited && type_in(type, kLightReactionTypes);
     case HitReaction::Attack::heavy:
         return !limited && type_in(type, kHeavyReactionTypes);
-    case HitReaction::Attack::other:
-        // An ability (each type that is not Light or Heavy) of power 1 or more: each creature type that is not a boss; of a power below 1:
-        // the rule of a light attack.
+    case HitReaction::Attack::ability:
+        // The type Ability of power 1 or more: each creature type that is not a boss; of a power below 1: the rule of a light attack (the
+        // branch below power 1 of the action list names IfDamagedByAttackType Ability).
         return power >= 1 || (!limited && type_in(type, kLightReactionTypes));
+    case HitReaction::Attack::other:
+        // A different type that is not Light or Heavy (Magic, MagicSpell, ...): only the branch of power 1 or more (code review of user test
+        // 2, finding U2-R2: a Magic row of power 0 plays no reaction and gives no hit stun).
+        return power >= 1;
     }
     return false;
 }
@@ -440,7 +446,10 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, Ent
                 if (reaction.ruled
                     && ((creature.reactionChain >= kReactionChain && (solo || (soloPlus && reaction.attack == HitReaction::Attack::heavy)))
                         || (creature.reactionChain >= 1 && type_in(type, kLimitedReactionTypes)))) {
+                    // The limit holds while the reaction plays and 2 s after its real exit (action_exits: code review of user test 2,
+                    // finding U2-R3); until that exit the end of the limit is the natural end of the reaction plus 2 s.
                     creature.reactionLimitUntil = now + length + kReactionLimit;
+                    creature.reactionLimitAction = creature.action->generation;
                     creature.reactionChain = 0;
                     ++m_counts.reactionLimits;
                 }
@@ -502,6 +511,7 @@ bool Creatures::start_action(Entity& entity, std::uint32_t action, std::optional
     if (action >= body.actions.size() || body.actions[action].fragmentIndex < 0) {
         return false;
     }
+    action_exits(entity.creature, m_world.clock().now());
     CreatureAction started;
     started.action = action;
     started.fragment = static_cast<std::uint32_t>(body.actions[action].fragmentIndex);
@@ -540,6 +550,7 @@ void Creatures::move(Entity& entity, const state::WorldPosition& position, Gait 
     // action too: its observers get the scope fields with no record (code review of the
     // corrections after user test 1, finding F7).
     if (creature.action) {
+        action_exits(creature, m_world.clock().now());
         creature.action.reset();
         m_acting.erase(entity.id);
     }
@@ -649,6 +660,7 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
             start_action(entity, *creature.body->stunAction);
         } else {
             creature.moving.reset();
+            action_exits(creature, m_world.clock().now());
             creature.action.reset();
             m_acting.erase(entity.id);
             rest(entity);
@@ -692,6 +704,7 @@ bool Creatures::knock(Entity& entity, unsigned power, std::chrono::milliseconds 
             creature.action->fragment = static_cast<std::uint32_t>(creature.body->reactions[level]);
         }
     } else if (longer && !creature.body->hitAction && creature.action) {
+        action_exits(creature, m_world.clock().now());
         creature.action.reset();
         m_acting.erase(entity.id);
         rest(entity);
@@ -709,12 +722,21 @@ void Creatures::end_stun(Entity& entity) {
     if (creature.body->stunAction && creature.action && creature.action->action == *creature.body->stunAction) {
         // The client keeps the scope fields of a creature: the next movement state has the idle record (user test 2, UT2-2), and the
         // client plays the idle action (creature_scope).
+        action_exits(creature, m_world.clock().now());
         creature.action.reset();
         m_acting.erase(entity.id);
         rest(entity);
         return;
     }
     m_world.touch(entity.id, ComponentKey::movement);
+}
+
+void Creatures::action_exits(Creature& creature, WorldClock::time_point now) {
+    if (creature.reactionLimitAction && creature.action && creature.action->generation == *creature.reactionLimitAction) {
+        // The status AI_Reaction_Limiter (2 s, EffectsToApplyOnExit of the action Reaction) starts at the exit of the reaction.
+        creature.reactionLimitUntil = now + kReactionLimit;
+        creature.reactionLimitAction.reset();
+    }
 }
 
 void Creatures::due(WorldClock::time_point at, EntityId creature, std::uint64_t serial) {
@@ -969,6 +991,7 @@ void Creatures::end_actions() {
             // client end its own idle at each tick, 0x2A2BC20). A session that observes the creature from now on gets the idle record.
             // The spawn action of a slice that needs it is not here: it is a value of the creature (Creature::spawnAction), and the end of
             // an action does not change it, also for a creature that died while its reaction played.
+            action_exits(entity->creature, m_world.clock().now());
             entity->creature.action.reset();
             // A stun that still holds the creature after a shorter knockdown: its action "Stun" comes back
             // (code review of stage 3.3a, finding F7), with a mark of the movement state, after this loop.

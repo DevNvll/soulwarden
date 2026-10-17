@@ -124,6 +124,23 @@ struct GrantItem {
     PerkIds perks{};
 };
 
+/**
+ * One item of a build (the build preset, stage B0; world/build_presets.h): a new instance in a slot of the paperdoll, or a stack for
+ * the bag. The checks of a give (the catalog, the gear score, the perks) and of an equip (the slot, the gear score limit of the
+ * expansion) apply to it.
+ */
+struct BuildItem {
+    /** The ItemID text of the item catalog. */
+    std::string itemId;
+    std::uint32_t quantity{1};
+    /** The gear score of the new instance. No value: the value of the item table. */
+    std::optional<std::uint32_t> gearScore;
+    /** The perks of the new instance (the stored ids, after the swap of the game). */
+    PerkIds perks{};
+    /** The slot of the paperdoll, or no value: the bag. */
+    std::optional<std::uint32_t> slot;
+};
+
 /** One entry of a drop request: a quantity of the item instance in a slot. */
 struct DropEntry {
     std::uint32_t slot{0};
@@ -165,6 +182,14 @@ public:
 
     /** Reads the bag, the equipment, and the coin of the character of a new entity from the store. */
     void load(Entity& entity);
+
+    /**
+     * @return The largest gear score of a new instance of a give (stage B0): the larger of the largest gear score of the item table
+     *         and the upgrade limit of the item (MaxCraftUpgradeGS of the item table: 800 for an artifact), the upgrade limit not
+     *         above the largest gear score of an equipped item of the owned expansion (MaxEquipGS: 800). A give with a gear score
+     *         outside the range of the item gets the nearest value of the range (a decision of an agent, the rule of stage 1.3b).
+     */
+    [[nodiscard]] std::uint32_t give_limit(const gamedata::ItemDefinition& definition) const;
 
     /**
      * Sets the index on the wire of each perk of an instance from the perk data (0 for a perk that the
@@ -357,6 +382,67 @@ private:
         std::set<std::uint32_t> bag;
         std::set<std::uint32_t> equipment;
     };
+
+public:
+    /**
+     * A change of the items of a character that is made on a copy and not written (stage B0): one part of a change of more than one
+     * system (world/build_presets.h). Each change of this system is a plan, a write, and a finish: `plan_build` gives the plan of a
+     * build, `write` writes its rows (in a batch: a savepoint of its transaction), and `finish` changes the entity and marks the
+     * states. A plan with an error changes nothing.
+     */
+    struct Plan {
+        std::string characterId;
+        ItemError error{ItemError::none};
+        /** True: the character is in the world (the plan is a copy of its entity). */
+        bool inWorld{false};
+        Carried before;
+        Carried items;
+        Touched touched;
+        std::vector<std::string> removed;
+        std::vector<state::ItemRow> rows;
+
+        [[nodiscard]] bool ok() const {
+            return error == ItemError::none;
+        }
+    };
+
+    /**
+     * Plans a build (the build preset): each item with a slot is a new instance in that slot, with the checks of a give and of an
+     * equip (a new instance in a free slot of the bag, then the equip of that slot: the item of the paperdoll goes into the bag);
+     * each item with no slot goes into the bag as a give. No write, no change of the entity.
+     */
+    [[nodiscard]] Plan plan_build(const std::string& characterId, const std::vector<BuildItem>& items);
+    /**
+     * Checks a build on a character with nothing (the check of the build presets at the start of the backend): the rules of
+     * plan_build, and each item of a slot of the paperdoll must keep its gear score and its perks (a gear score outside the range of
+     * its item, or a perk that the swap of the game changes, is an error here: a give would change it).
+     * @param detail Gets the item and the cause of an error.
+     */
+    [[nodiscard]] ItemError check_build(const std::vector<BuildItem>& items, std::string& detail) const;
+    /** Writes the rows of a plan in one write (in a batch: a savepoint). @return False: the database did not take them. */
+    [[nodiscard]] bool write(const Plan& plan, std::optional<std::uint64_t> coin = {});
+    /** Changes the entity of a written plan, marks its states, and refreshes the gear. */
+    ItemResult finish(Plan& plan, const char* what);
+
+private:
+    /** @return The plan of a change: `apply(Carried&, Touched&)` on a copy of the items, then the rows. */
+    template <class Change>
+    Plan stage(const std::string& characterId, Change&& apply);
+    /** The equip of the item of a bag slot into a slot of the paperdoll on a copy (Inventory::equip, the plan of a build). */
+    ItemError equip_into(Carried& items,
+                         Touched& touched,
+                         std::uint32_t bagSlot,
+                         std::optional<std::uint32_t> paperdollSlot,
+                         const InstanceId* instance,
+                         std::optional<std::uint32_t> quantity) const;
+    /** The items of a build on a copy (plan_build, check_build). */
+    ItemError build_into(Carried& items, Touched& touched, const std::vector<BuildItem>& build) const;
+    /** The give of a quantity of an item into a bag on a copy (Inventory::give, the plan of a build). */
+    ItemError give_into(Bag& bag,
+                        std::set<std::uint32_t>& changed,
+                        std::string_view itemId,
+                        std::uint32_t quantity,
+                        const GiveOptions& options) const;
 
     /**
      * A change of the bag and of the equipment: `apply(Carried&, Touched&)` gives an ItemError.

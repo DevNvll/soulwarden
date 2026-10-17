@@ -245,6 +245,20 @@ this stage gives the source of each applied row; the rows that are not applied n
 Grit and the block stay out of this stage (the roadmap): `Passive_Greataxe_Mauler_HeavyAddGrit`, `Passive_WarHammer_Juggernaut_HeavyGrit`,
 and the block rows of the table of the great axe and the war hammer above keep their cause.
 
+### The rows of the bow build with no event (stage B0)
+
+The list must name each row that the evaluator does not apply (no silent rule). A row with no event that is not a rule of a hit
+(no DamageTableRow, AttackType, or RemoteDamageTableRow), not the values of an ability, and not a rule of the entities near
+(`describe_row`, step 4; test case BP9):
+
+| Row | What the backend does |
+| --- | --- |
+| `Passive_Bow_Hunter_DmgVsLow` (Finishing Shot: TargetHealthPercent 50, BaseDamage 0.15) and the other node rows with a condition of a target and no event | Not applied: "the condition TargetHealthPercent with no event is not a rule of a hit in the evaluator". The evaluator takes such a row only as a rule of a hit (`before_hit`), and the gear values take a node row only with no condition (`Passives::fixed`). A perk row with such a condition keeps the rule of the earlier stages. |
+| `Global_Common_CDR` (Refreshing, a perk of the bow build: CooldownTimer -0.02 with CDRImmediatelyOptions) and the other rows with no event and the effect CooldownTimer, CDRImmediatelyOptions, DmgPctToHealth, CastSpell, Stamina, or HealScalingValueMultiplier | Not applied: "the effect ... of a row with no event (the gear values take only the values of a fixed stat)". |
+
+A condition EquipLoadCategory does not stop a row (the gear values apply it). The two rules are not in the backend: a later stage of
+the bow build implements them (the roadmap, stages B1 to B5).
+
 ## Commands
 
 ```sh

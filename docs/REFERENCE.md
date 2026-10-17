@@ -68,8 +68,9 @@ the attributes, the skills, the nodes and the ability bars (`assign_node`,
 `remove_status`), the cast of an ability and the spell entities (`cast_ability`,
 `end_spells`), a shot of the weapon in the hand (`shoot`), and the health of a character, for the
 creatures near it, and for a travel, and the interaction commands (`set_object_enabled` for an object 30 m or less from the
-character, `cancel_interaction`; stage 2.5a), `clear_chest_claim` (stage 3.5b.1), and `set_world_time` (stage 2.2: the time of the
-day of the whole world). The state of a character has its DLC (member
+character, `cancel_interaction`; stage 2.5a), `clear_chest_claim` (stage 3.5b.1), `set_world_time` (stage 2.2: the time of the
+day of the whole world), and `apply_preset` (stage B0: a build preset with a variant; the list of the presets with their check is
+`GET /admin/v1/catalog/presets`). The state of a character has its DLC (member
 `ownership`, stage 1.1b), its interactions (member `interactions`: its committed interaction and the objects near it, stage 2.5a), and
 its chests (member `chests`: its open, its loot claims, and the chests near it, stage 3.5b.1), and its loot bags (member `lootBags`:
 its open bag and its bags, stage 3.5b.2), and the world time (member `worldTime`, stage 2.2). The backend
@@ -191,7 +192,8 @@ It also has the commands for the items and the coin of a character: `items CHARA
 `move CHARACTER FROM TO`, `split CHARACTER SLOT QUANTITY [TO]`, and `lock CHARACTER SLOT
 on|off`, and for its equipment: `equipment CHARACTER`, `equip CHARACTER BAGSLOT [SLOT]`, and
 `unequip CHARACTER SLOT [BAGSLOT]` (`SLOT` is a slot number of the paperdoll: 1 chest, 24
-weapon 1; `tools/world --help` has the list). A command for a character that is not in the
+weapon 1; `tools/world --help` has the list); stage B0: `presets` (the build presets with their check) and `preset CHARACTER
+PRESET [VARIANT]` (routes `GET /v1/dev/presets`, `POST /v1/dev/presets/apply`). A command for a character that is not in the
 world changes its rows in the database. For the objects of the world (stage 2.5a):
 `interactions CHARACTER [METERS]`, `object CHARACTER KEY on|off`, and `interaction cancel
 CHARACTER`; stage 2.5b: `fixture CHARACTER NAME [DX DY DZ] [--yaw D] [--permission N]` (a
@@ -248,6 +250,7 @@ it is hidden, the game has its input again. The window is for the character that
 | --- | --- |
 | Items | Type a text in the search field to find items of the catalog (the text is compared with the id, the type, and the class of an item, for example `sword`, `potionhealth`, `ore`, `consumable`). Click an item, set the quantity, and press "Give": the item is in the bag. "Gear score" (0: the value of the item table) and "Perks" (up to five PerkID texts with "," between them; an empty part is a place with no perk; a gem is a perk) give an item with perks (stage 1.3b): the backend refuses a perk that is not for the item, and it changes a perk as the client does (the perk swap of the game: the Soldier perk of a weapon becomes "Acutely Empowered"). The list "Bag" has each item of the bag with a "Remove" button. |
 | Character | Set the level, give experience, set the coin, and set the value of each attribute (the character must have the free points for it). The row "Health" shows the health of your character: "Heal" gives it its full health, and for a dead character the button has the text "Revive" (the character lives again at its place, and the death screen closes). With the mark "Creatures ignore this character", no creature takes your character as its target, and a kill gives it nothing; the mark "Each kill drops loot and coin" makes each kill of your character drop loot and coin (the loot switch, stage 3.5a). The two values stay until the backend stops. |
+| Character: Build presets | At the end of the tab (stage B0, [Build presets](systems/build-presets.md)): choose a preset in the list ("Boltcaster bow and rapier (Season 10)") and a variant ("PvE tree" or "PvP tree"), press "Apply", read the line "This replaces the equipment, the level, the attributes, and the trees of CHARACTER.", and press "Confirm". The server gives the whole build in one step: the items of the paperdoll with their gear scores and perks (the old items go into the bag), the consumables, the level, the attributes, the masteries, the nodes, the bars, and the achievement of the objective of each artifact (the client shows the perks 2 to 5 of an artifact only with it). A refused preset (a bag with no room for the old items, a preset that the backend disabled at its start) changes nothing, and the line says why. |
 | Skills | Set the mastery level of each weapon (each level above 1 gives one mastery point for its tree) and the level of each trade skill. |
 | Creatures | The list at the bottom has each creature that is 150 m or less from your character, the nearest one first, with its level, its health, and its distance. "Set" sets the health of a creature to the percent value above the list, "Kill" kills it, and "Remove" takes it out of the world. To make a creature, type a text in the search field (the id, the name, or the family of a kind, for example `wolf`, `risen`, `rabbit`), click a kind, set the level and the distance, and press "Spawn": the creature is that many meters to the north of your character (the window covers the left half of the picture: press F8 to see the creature). "Reset" makes each spawn point free again whose creature you killed or removed. |
 | Travel | The first line has the position of your character (meters: east, north, up). The list has each spirit shrine and each inn of the world with its territory and its distance from your character. Type a text in the filter (a part of a name or of a territory, `shrine`, or `inn`), click a place, and press "Travel": your character is at that place, with no new login. A place that is more than 100 m away shows the loading screen of the game for some seconds. The form below the list moves your character to a position in numbers ("Here" puts the position of your character into the form): give a height on the ground or above it. Your character and the camera look north after a travel. |
@@ -363,7 +366,10 @@ button on "Confirm").
   (the backstory table of the game) and the list of the backstories of the character
   creation: a new character gets the items of its archetype, and the backend refuses a
   create request with a different backstory. `tools/gamedata/items.sh --find ITEM...` prints
-  the catalog line of an item id.
+  the catalog line of an item id. From stage B0 (format 3) the catalog also has the upgrade limit of each item (MaxCraftUpgradeGS:
+  800 for the artifacts; a give of an artifact takes a gear score up to 800) and the objective of each artifact with its
+  achievement (the build preset gives it). With a catalog of an earlier format an artifact has 700 at most, and the build preset
+  `bow-boltcaster` is disabled.
 - `tools/gamedata/progression.sh` makes the progression tables
   (`~/.local/share/soulwarden/gamedata/progression-tables.json`): the experience, the attribute
   points, and the health of each level, the health of each value of the constitution, the
@@ -462,6 +468,8 @@ button on "Confirm").
   distribution file with their heights (from the folder of `heights.sh`): 2,450,322 natural nodes in 49 regions and 33,071 capital
   nodes in the supported build. The backend reads a region file at the first request of a node of that region. `--near X Y
   METERS` prints the gathering nodes near a place with their G and writes no file; `--region NAME` writes a file of some regions.
+  An export keeps the region files of each earlier export (a backend that runs can read them); `--prune` removes the files that the
+  current file does not name, only when no backend runs (code review of user test 2).
   Without the files the backend starts and refuses each gather ([Gathering](systems/gathering.md)). The loot tables of `loot.sh`
   from stage 3.6a have the gathering roots: with an older `loot-tables.json` each gather is refused.
 - `tools/gamedata/combat.sh` makes the combat tables

@@ -21,6 +21,16 @@ file stays.
   store-table            a store table (MasterItemDefinitions_MTX_*) with no column NotDroppable (the one exception of the game
                          data): status 0, the file has its items with Nonremovable and no NotDroppable
 
+The cases of stage B0 (format 3: the column maxCraftUpgradeGS and the member artifactObjectives; case BP1 of the backend loads the
+file of the case "upgrade"):
+
+  upgrade               a made-up artifact bow with MaxCraftUpgradeGS 800, a ring with an empty cell, and a store table with no such
+                        column: format 3, 800, 0, 0; the objective of the bow (an objective of the type Artifact, its equip task in a
+                        sub task, its achievement index) is in artifactObjectives
+  upgrade-invalid       a cell MaxCraftUpgradeGS with the text "high": status 1, the old file stays
+  upgrade-missing       a master table (not a store table) with no column MaxCraftUpgradeGS: status 1, the old file stays
+  objective-broken      an artifact objective whose task tree names a task that no task table has: status 1, the old file stays
+
 Usage: check_item_catalog_tool.py FOLDER [CASE ...]
 Status 0: each case has the expected result. Each line starts with "ok" or "FAIL".
 """
@@ -42,6 +52,14 @@ from check_ability_tool import FakeSheet  # noqa: E402
 # The text of an old catalog file (the cases of finding WT-R3: the tool must not replace it).
 OLD_FILE = "old file\n"
 SOURCE_CASES = ("missing-nonremovable", "missing-notdroppable", "invalid-flag", "store-table")
+UPGRADE_CASES = ("upgrade-invalid", "upgrade-missing", "objective-broken")
+# The made-up items and rows of the cases of stage B0 (the ids of the backend case BP1).
+UPGRADE_BOW = "ReviewArtifactBow"
+PLAIN_RING = "ReviewPlainRing"
+STORE_HAT = "ReviewStoreHat"
+OBJECTIVE = "Objective_ReviewArtifactBow"
+OBJECTIVE_ACHIEVEMENT = "Achievement_Objective_ReviewArtifactBow"
+OBJECTIVE_INDEX = 4321
 
 # The made-up items of the check (the ids of the backend case RLB1).
 PROTECTED_HELM = "ReviewProtectedHelm"
@@ -56,7 +74,7 @@ HOUSE_CHAIR = "House_ReviewChair"
 def master_row(item_id: str, item_type: str, item_class: str, stack: int, **cells) -> dict:
     row = {"ItemID": item_id, "Name": f"@{item_id}", "ItemType": item_type, "ItemClass": item_class, "Tier": 1, "Weight": 1,
            "MaxStackSize": stack, "Durability": 1000 if stack == 1 else 0, "MinGearScore": 75 if stack == 1 else 0,
-           "MaxGearScore": 75 if stack == 1 else 0, "GearScoreOverride": 0, "BindOnPickup": False}
+           "MaxGearScore": 75 if stack == 1 else 0, "GearScoreOverride": 0, "BindOnPickup": False, "MaxCraftUpgradeGS": ""}
     row.update(cells)
     return row
 
@@ -82,6 +100,73 @@ def catalog() -> dict:
     with patch.object(tool, "sheet_type", side_effect=lambda data: kinds[data.decode()]), \
             patch.object(tool, "Sheet", side_effect=lambda data: sheets[data.decode()]):
         return tool.build_catalog([name.encode() for name in sheets])
+
+
+def upgrade_sheets(case: str = "upgrade") -> tuple[dict, dict]:
+    """@return The made-up tables of the cases of stage B0 (sheets by name, and their types)."""
+    bow = master_row(UPGRADE_BOW, "Weapon", "Artifact+Weapon+EquippableTwoHand+Bow", 1, Nonremovable=False, NotDroppable=True,
+                     MinGearScore=700, MaxGearScore=700, MaxCraftUpgradeGS=800)
+    ring = master_row(PLAIN_RING, "Armor", "EquippableRing+Jewelry", 1, Nonremovable=False, NotDroppable=False, MinGearScore=725,
+                      MaxGearScore=725, MaxCraftUpgradeGS="")
+    if case == "upgrade-invalid":
+        ring["MaxCraftUpgradeGS"] = "high"
+    if case == "upgrade-missing":
+        del bow["MaxCraftUpgradeGS"]
+        del ring["MaxCraftUpgradeGS"]
+    hat = master_row(STORE_HAT, "Armor", "EquippableHead+Armor+Light", 1, Nonremovable=False)
+    del hat["MaxCraftUpgradeGS"]  # The store tables of the game have no such column.
+    tasks = [{"TaskID": "Task_Container_Review", "Type": "SimpleTaskContainer", "SubTask1": "Task_Equip_Review",
+              "SubTask2": "Task_Kill_Review"},
+             {"TaskID": "Task_Equip_Review", "Type": "TaskEquipItem", "ItemName": UPGRADE_BOW},
+             {"TaskID": "Task_Kill_Review", "Type": "TaskKillContribution", "TargetQty": 5}]
+    if case == "objective-broken":
+        tasks[0]["SubTask2"] = "Task_Not_There"
+    sheets = {"ReviewItems": FakeSheet("ReviewItems", [bow, ring]),
+              "MasterItemDefinitions_MTX_Review": FakeSheet("MasterItemDefinitions_MTX_Review", [hat]),
+              "ReviewObjectives": FakeSheet("ReviewObjectives", [
+                  {"ObjectiveID": OBJECTIVE, "Type": "Artifact", "Task": "Task_Container_Review", "AchievementId": OBJECTIVE_ACHIEVEMENT},
+                  {"ObjectiveID": "Objective_ReviewMission", "Type": "Mission", "Task": "Task_Kill_Review", "AchievementId": ""}]),
+              "ReviewTasks": FakeSheet("ReviewTasks", tasks),
+              "ReviewAchievements": FakeSheet("ReviewAchievements", [{"AchievementID": OBJECTIVE_ACHIEVEMENT,
+                                                                       "AchievementIndex": OBJECTIVE_INDEX}])}
+    kinds = {"ReviewItems": tool.MASTER_TYPE, "MasterItemDefinitions_MTX_Review": tool.MASTER_TYPE, "ReviewObjectives": tool.OBJECTIVES_TYPE,
+             "ReviewTasks": tool.TASKS_TYPE, "ReviewAchievements": tool.ACHIEVEMENT_TYPE}
+    for name in tool.HOUSE_TABLES:
+        sheets[name] = FakeSheet(name, [{"HouseItemID": "DEFAULTS"}])
+        kinds[name] = tool.HOUSE_TYPE
+    return sheets, kinds
+
+
+def run_sheets(target: Path, sheets: dict, kinds: dict) -> int:
+    """Runs the main function of the tool with made-up tables into `target`. @return Its status."""
+    with patch.object(tool, "table_entries", return_value=[None]), \
+            patch.object(tool, "tables_of_paks", return_value=([name.encode() for name in sheets], "made-up tables")), \
+            patch.object(tool, "sheet_type", side_effect=lambda data: kinds[data.decode()]), \
+            patch.object(tool, "Sheet", side_effect=lambda data: sheets[data.decode()]), \
+            patch.object(sys, "argv", ["item_catalog.py", str(target)]), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        return tool.main()
+
+
+def upgrade_case(folder: Path, case: str) -> tuple[bool, str]:
+    """A case of stage B0. @return Passed, and the detail."""
+    target = folder / f"item-catalog-{case}.json"
+    target.write_text(OLD_FILE, encoding="utf-8")
+    status = run_sheets(target, *upgrade_sheets(case))
+    kept = target.read_text(encoding="utf-8") == OLD_FILE
+    if case != "upgrade":
+        return status == 1 and kept, f"status {status}, the old file {'stays' if kept else 'was replaced'}"
+    if kept:
+        return False, f"status {status}, no file"
+    document = json.loads(target.read_text(encoding="utf-8"))
+    column = document["columns"].index("maxCraftUpgradeGS") if "maxCraftUpgradeGS" in document["columns"] else -1
+    upgrades = {row[0]: row[column] for row in document["items"]} if column >= 0 else {}
+    objectives = document.get("artifactObjectives")
+    passed = (status == 0 and document.get("format") == 3 and column == len(document["columns"]) - 1
+              and all(len(row) == len(document["columns"]) for row in document["items"])
+              and upgrades.get(UPGRADE_BOW) == 800 and upgrades.get(PLAIN_RING) == 0 and upgrades.get(STORE_HAT) == 0
+              and objectives == [[UPGRADE_BOW, OBJECTIVE, OBJECTIVE_ACHIEVEMENT, OBJECTIVE_INDEX]])
+    return passed, f"status {status}, format {document.get('format')}, upgrades {upgrades}, objectives {objectives}; the file {target.name}"
 
 
 def run_tool(target: Path, rows: list[dict], table: str = "ReviewItems") -> int:
@@ -138,7 +223,7 @@ def main() -> int:
         return 2
     folder = Path(sys.argv[1])
     folder.mkdir(parents=True, exist_ok=True)
-    cases = sys.argv[2:] or ["protections", "control", *SOURCE_CASES]
+    cases = sys.argv[2:] or ["protections", "control", *SOURCE_CASES, "upgrade", *UPGRADE_CASES]
     document = catalog()
     found = protections(document)
     failures = 0
@@ -146,7 +231,7 @@ def main() -> int:
         if case == "protections":
             target = folder / "item-catalog-protections.json"
             target.write_text(json.dumps(document) + "\n", encoding="utf-8")
-            passed = (document.get("format") == 2 and document.get("columns", [])[-2:] == ["nonRemovable", "notDroppable"]
+            passed = (document.get("format") == 3 and document.get("columns", [])[12:14] == ["nonRemovable", "notDroppable"]
                       and all(len(row) == len(document["columns"]) for row in document["items"])
                       and found.get(PROTECTED_HELM) == (True, False) and found.get(NO_DROP_ORE) == (False, True)
                       and found.get(NO_DROP_HIDE) == (False, True))
@@ -158,6 +243,8 @@ def main() -> int:
             detail = f"the free ore {found.get(FREE_ORE)}, the stone {found.get(FREE_STONE)}, the house item {found.get(HOUSE_CHAIR)}"
         elif case in SOURCE_CASES:
             passed, detail = source_case(folder, case)
+        elif case == "upgrade" or case in UPGRADE_CASES:
+            passed, detail = upgrade_case(folder, case)
         else:
             passed, detail = False, "not a case of this check"
         print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")

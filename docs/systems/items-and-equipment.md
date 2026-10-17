@@ -12,6 +12,7 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 | --- | --- |
 | Items, the bag, the coin of a character | Protocol notes 4.10, `apps/backend/src/world/inventory.h`, `tools/world give`, `tools/gamedata/items.sh` |
 | Equipment: the paperdoll, equip and unequip, visible gear, the items of an archetype | Protocol notes 4.11, `apps/backend/src/world/inventory.h`, `server/rep/states/paperdoll_state.cpp`, `tools/world equip` |
+| A whole build in one step (the build preset), the gear score limit of a give | [Build presets](build-presets.md), `Inventory::plan_build`, `Inventory::give_limit`, test cases BP1 to BP9 |
 | The perks of an item instance: the places, the swap, the give with perks, the perk command, the loot roll | Protocol notes 4.23, `world/item.h` (`ItemInstance::perks`), `world/inventory.h` (`checked_perks`, `set_perks`, `resolve_perks`), `gamedata/perk_data.h`, `world/perk_roll.h`, test cases IZ1 to IZ3 |
 
 ## Rules
@@ -78,6 +79,14 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   fail" for a request of a client). With no expansion data there is no such limit. The item level of a gear score (the first
   level whose MaxEquippableGearScore takes it: 700 needs level 65) is a rule of the client that the backend does not check
   yet ([DLC and entitlements](dlc-and-entitlements.md)).
+- The gear score limit of a give (stage B0, [Build presets](build-presets.md)): the larger of the largest gear score of the item
+  table and the upgrade limit of the item (MaxCraftUpgradeGS of the item catalog format 3: 800 for the 73 artifacts), the upgrade
+  limit not above the MaxEquipGS of the owned expansion (`Inventory::give_limit`; game data). A value outside the range gets the
+  nearest value of the range with one log line, as before stage B0 (an agent decision; test case BP2).
+- The plan of a build (stage B0, `Inventory::plan_build`, `check_build`, `write`, `finish`): the give and the equip of each item of a
+  build on a copy, with the checks of the single commands, and no write; the build preset writes the rows of the plan in its
+  transaction and then finishes the plan (the entity and the marks). `Inventory::change` uses the same three steps for each other
+  command of the system.
 - The reward item of a DLC pack (stage 1.1b): each character gets one AmuletIsabellaT1 (the reward of the entitlement
   `STEAM_APP_ID.1200562`) one time, at a world entry, through `Inventory::give` in the transaction of its reward row.
 
