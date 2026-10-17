@@ -6503,6 +6503,53 @@ preset); the objective progress of an artifact in play (the quest engine, stage 
 also with no objective achievement (the client shows them as locked); the jewelry stat lines and the attribute bonuses of the build
 (stage B4: the maximum health of the character is 5,109, the video shows 10,676).
 
+### 4.46 The bow abilities: the shot items of a fragment, the aim of Penetrating Shot, the pierce, the explosion record (live proof of stage B1; static proof for the client code and the game data; the rules are project rules with the values of the game data)
+
+Stage B1, the second part of the bow build of the user. Build sheets: `~/Games/soulwarden/work/research/bow-build.md` (3.4, 4.2),
+`bow-build-2.md` (Q2, Q3, the live checks B1-1 to B1-6), `abilities-ranged.md`. Live checks before the code:
+`~/Games/soulwarden/work/evidence/bow-build/b1/implement/live/LIVE-CHECKS.md` (runs b1-l1 to b1-l3: the layer reads of the client,
+the input captures, a probe of the explosion slice); the live proof: `RESULT.md` of that folder (runs b1-f0, b1-f1). Code:
+`world/abilities.h` (`VolleyPlan`, `resolve_volley`, `volley_shot`, `volley_landed`), `world/projectiles.h` (`pierce_hits`),
+`gamedata/projectile_data.h` (format 2), `gamedata/combat_tables.h` (`hitRate`), `world/passives.cpp` (the volley count),
+`world/creatures.cpp` (the damage ticks). Document: [Abilities](systems/abilities.md). Test cases BW1 to BW10. The stage uses no new
+message and no new state: the shot items of 4.27, the cooldown state of 4.22, the spell record of 4.25, the compact status map of
+4.22.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The key of Penetrating Shot (Q) starts only the aim of the client: the layer of the upper body plays the ready fragment, then `Bow_Aim_UpperBody`; the camera goes over the shoulder; no shot item. A click (attack press 555 with `aim_shoot_depressed` 359) or the key again shoots: one shot item in the input step of the click or of the key. | Live L1 (layer reads; inputs 3897, 6711, 8148, 10392 of session 1) | The action list `playeractions_ability_bow` (game data) |
+| The shot item of Penetrating Shot: attack `penetratingshot` (CRC `cfd11046`), row `bow_penetrating_attack` (`6a1b00c5`), charge 0, ammunition `defaultarrow` (`c0e3a523`), the origin 0.9 m in front of the character and 1.45 m above its feet, the direction of the camera. The client keeps the aim with no time limit (58 s seen). | Live L1; live proof (the final run: the server shot from the item) | The item of 4.27 |
+| The cooldown of the client for Penetrating Shot starts at the shot, not at the key (`SetCooldownTimer` in `Bow_Penetrating_Shoot`). A key of a different ability out of its cooldown in the aim plays that ability (the aim ends); a key in its own cooldown is not played, and the aim stays. | Live L1 (inputs 7510 to 10065) | Game data |
+| Explosive Arrow (R): the key casts at once; one shot item 13 input steps (0.433 s) after the key (the cast at 0.4667 s of the fragment): attack `explosionshot` (`e1df9cfc`), row 0, charge 0, ammunition 0 (the form of a spell shot of 4.28). | Live L1 (inputs 10739 to 10752); live proof (the server got the item 0.432 s after the key) | Game data `player_bow.adb` |
+| Rapid Shot (F): three shot items 9, 25, and 52 input steps after the key (0.30 s, 0.83 s, 1.73 s; the clips at 0.3333 s, 0.8667 s, 1.7333 s): attack `tripleshot` (`4516adc7`), rows `bow_rapidattack_standard` (`d8aa756a`), the same, `bow_rapidattack_knockback` (`72db63b6`), ammunition `defaultarrow` each, each with its own direction. | Live L1 (session 2, inputs 592 to 644); live proof (0.299 s, 0.816 s, 1.716 s at the server) | Game data |
+| A key of a different bow ability in a bow fragment: the key R at 0.67 s of Rapid Shot is not played; at 2.0 s (in the buffered window 1.8681 s to 2.6 s of `CanAttack_*`) it is played at 2.6 s (the instant transition), and its item comes 13 steps after that. | Live L1 (session 2, inputs 8182 to 9005) | Game data (CAGE-TransitionBuffered, CAGE-TransitionInstant) |
+| The client shows no explosion of Explosive Arrow by itself. The record of the slice `spell_aoe_explosionshot` (asset `9289CD31-D118-5E6C-827E-5513DD935E4A`, the Spell state at slot 1 with the spell key `Spell_Ability_Bow_ExplosiveShot_Explosion` and the position) shows the fire burst 0.4 s after the record, for about 0.6 s; the small slice of Contained Detonation shows the small burst. | Live L1 (two shots with no record: nothing; the probe `probe1-sheet.png`); live proof (`video-b1-2-explosive-burn.mp4`, `video-b1-2-explosive-contained.mp4`) | The spell record of 4.25 |
+| The burn of Flame Arrow on a creature: its status number in the compact status map of the creature (slot 8, type 4236) shows the burn icon at the name plate for each observer, and the tick numbers (123) for the source. | Live proof (`b-18-burn-nameplates.png`: the icon at the plate of the direct target only) | The map of 4.22 |
+| The cooldown state (slot 45, type 2932) with the end that Rapid Accuracy made shorter: the HUD shows 3 s at 3.5 s after the key (7 s; with two hits and a miss: 9 s, the 14 s of the data). The countdown of the HUD ends 1 s to 2 s before the end of the server (the client clock, 4.22). | Live L3; live proof (`b-20` to `b-22`) | The state of 4.22 |
+| The client keeps the targets that a piercing projectile passed as an ordered list: field 16 `m_piercingHits` of the projectile state (type 16); each entry has an entity, a time (with a form "the same as the last"), and an optional hit volume. The backend sends no projectile state for the shot of a player (4.27), thus not this list. | Static (build sheet Q3) | Reader `0x6951010`; projectile state ctor `0x6715370` |
+| For a damage row with NumConsecutiveHits above 0 (row field +0xD0) the hit test of the client needs the target of the hit data (+0x88): the count is a count for one target. | Static (build sheet Q3; the meaning of +0x88 is not proved) | Hit test `0x67A18F0`, row loader `0x43AA0C0` |
+| For a hitscan profile the client uses `m_maxRange` as the length of its ray (the reason for the range 50 m of PenetratingShot and not the 100 m of the text). | Static (build sheet Q2) | `0x256D636` |
+
+**The data** (`projectile-data.json` format 2, `combat-tables.json` member `hitRates`, [Game data](development/game-data.md)):
+
+| Fact | Source |
+| --- | --- |
+| The actions `Bow_Penetrating_Shoot` (fragment `Bow_Shoot_UpperBody`, the variant with Bow and PenetratingAim: the clip PenetratingShot at 0.0333 s), `Bow_SpreadShot` (`Ability_Bow_ExplosiveArrow`: the casts at 0.4667 s of `Spell_Ability_Bow_Explosive_Base` with the condition `Bow_ExplosiveArrow_NoUpgrade` and of `_Upgrade` with `Bow_ExplosiveArrow_Upgraded`), `Bow_RapidShot` (`Ability_Bow_RapidShot`: three TripleShot clips; CanTransition 2.6 s); the transitions to the bow abilities (buffered 0.2333/0.5/1.8681 s, instant 0.7/1.1667/2.6 s) | `playeractions_ability_bow.actionlist`, `player_bow.adb` |
+| The profile PenetratingShot: maxRange 50, radius 0.275, AccelDelayDist 30, destroy flags 1; ExplosionShot: maxRange 100, radius 0.275, the slice `basic_arrow_spread` | `rangedattackdatabase.radb` |
+| The rows: Bow_Penetrating_Attack 1.5, Bow_Penetrating_AttackA1 1.5 with HitRateDmgModifier 0.1 and MaxHitRateDmgMod 0.5, Bow_RapidAttack_Standard 1.0, Bow_RapidAttack_KnockBack 1.25, Bow_ExplosionShot_Projectile 0.5, Bow_ExplosionShot_Explosion 1.35 (2.5 m), Bow_ExplosionShot_Explosion_Dmg 1.7 (1.25 m) | `DamageTable`, the slices `spell_aoe_explosionshot` and `_small` |
+| The cooldowns 18 s, 22 s, 14 s; no mana cost; the burn `Status_ExplosiveShot_Burn` (10 s, TickRate 1, HealthModifierDamageBased −0.08, Fire) | The ability tables |
+
+**The rules** (the source of each rule is in [Abilities](systems/abilities.md)): the volley of a cast and its shot items, the aim and
+its confirm by the shot item, the windows of a bow fragment, the pierce in the order of the line and its hit rate, the explosion on
+the bodies in its sphere, the burn only from the direct row, Rapid Accuracy for the arrows of one cast on one target (decision D11).
+
+**Not known, not done** (stage B1): the charged shots A1 and A2 of Penetrating Shot (`IfAbilityActive PenetratingCharge`: no ability
+row has that name); the arrow of the shot of a player for an observer (4.27); the arrow of the client prediction at 11 frames each
+second (live check B1-6: the flight of a charged arrow with and without Aim True was the same on the server; the predicted arrow is in
+no frame); a push of 0.01 m to 1 m of a walking creature for a live check of finding B0-R1 (no row of the build has one).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

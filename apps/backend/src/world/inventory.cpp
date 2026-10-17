@@ -464,11 +464,19 @@ ItemResult Inventory::finish(Plan& plan, const char* what) {
                 }
             }
         }
+        // The weapon in the hand before the change (its slot and its instance: Combat::weapon_key).
+        const std::string heldBefore = Combat::weapon_key(*entity);
         entity->bag = std::move(items.bag);
         entity->equipment = std::move(items.equipment);
         // The perks, the attributes, the armor, and the equip load of the new equipment (stage 1.3b).
         if (!touched.equipment.empty()) {
             m_world.gear().refresh(*entity);
+            // A committed change of the weapon in the hand (an equip, a preset that replaces it) is a change of the weapon for the abilities
+            // (code review of stage B0, finding B0-R2): the window of a counter of a cast with the old weapon ends before the next hit (the
+            // rule of Combat::select_weapon). An unchanged weapon in the hand gets no notification.
+            if (Combat::weapon_key(*entity) != heldBefore) {
+                m_world.abilities().weapon_changed(*entity);
+            }
         }
         // The countdown of each item of a consumable cooldown that runs, also for a new item (finding F8 of the review of
         // stage 1.3b).

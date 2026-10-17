@@ -89,7 +89,8 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   creature (`Creature::forced`), the behavior does not move it and starts no attack, also on its way back and on a roam.
   At its end the creature goes on with its path (user test 2, UT2-4: no new search while it is 1 m or less from its path; the step
   comes in the next step of the behavior; case UX5), but only when the straight line from its new place to the next corner of the
-  path, or to its next cell, is free (code review of user test 2, finding U2-R1; [Navigation](navigation.md)), and a creature in a fight
+  path, or to its next cell, is free, also on the real segment from its new place (code review of user test 2, finding U2-R1, and of
+  stage B0, finding B0-R1; [Navigation](navigation.md)), and a creature in a fight
   keeps the new place in its trail (`Behavior::moved_by_force`).
 - The hit stun (user test 2, UT2-9, [Creatures](creatures.md)): for HitStun_AI frames after a hit that started a reaction
   (`Creature::hitStunUntil`) the behavior does not step, turn, or attack: the reaction plays, and the walk starts again after it (one

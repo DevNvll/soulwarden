@@ -231,7 +231,10 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   its shot, the weapon and the gem of its launch, the damage modifier of its ammunition (1.2 for
   each arrow and shot of the game data) as the factor, and its point as the source. A melee
   contact of a ranged weapon is refused (`no melee weapon`): the bow and the musket hit only
-  with their projectiles.
+  with their projectiles. From stage B1 the weapon of a hit (`HitWeapon`) also has the ability action of its cast (`action`: the
+  rules with InAction), the volley (`volley`: the cast number of the arrows of a bow ability; the rules with NumConsecutiveHits), and
+  a part of the damage (`part`: the hit rate of a pierce, [Projectiles](projectiles.md)), which `Combat::strike` adds to the damage
+  parts of the hit (the sum with BaseDamage of the rules and the gear).
   From stage 3.3b-S4 a creature that lives after the hit moves by the impact of the row (the pull or
   the push of the game data, from the source of the hit: the last argument of `Combat::strike`, the
   attacker when it is not given; [Forced movement](forced-movement.md)).

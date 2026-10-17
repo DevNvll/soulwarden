@@ -30,6 +30,9 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 | The spells of an action, of a fragment, and of a rule (stage 3.3b-M2): the shield of Maelstrom, the ground of Mighty Gavel, the fortify of Clear Out | `Abilities::cast_spell_at`, `Abilities::rule_spell`, [Spell entities](spells.md), test cases GH8, GH10, GH11 |
 | Wrecking Ball in the fragment of the data (stage 3.3b-M2b): the base clip, the clip of Breathing Room, the knockdown, Safety Measures | `Abilities::strike_hit`, `Combat::strike_reach`, protocol notes 4.34, test case GH20 |
 | The hits of a cast for the client (IfAbilityNumHits; the exit of Whirlwind) | `Abilities::count_hit`, `CombatState::abilityHits`, `server/rep/states/skill_states.cpp` (slot 46), protocol notes 4.22, test case GH19 |
+| The bow abilities (stage B1): the ability actions of the projectile data, the volley of a cast and its shot items, the aim of Penetrating Shot and its confirm, the windows of a bow fragment, the explosion of Explosive Arrow | `Abilities::resolve_volley`, `volley_next`, `volley_shot`, `volley_landed`, `Abilities::shot`, `Abilities::takes_shot`, `press_entity` (the windows), `gamedata/projectile_data.h` (`AbilityActionData`), protocol notes 4.46, test cases BW1 to BW10 |
+| The pierce of Penetrating Shot, Blood Soaked Arrow | [Projectiles](projectiles.md), `Projectiles::pierce_hits`, `gamedata/combat_tables.h` (`DamageRow::hitRate`), test cases BW4, BW5 |
+| Rapid Accuracy, Final Blow, Flame Arrow (the rules of the bow nodes) | [Passive rules](passive-rules.md) (the volley count, InAction, the forced damage row of a status), [Creatures](creatures.md) (the damage ticks of a creature status), test cases BW2, BW6 |
 
 ## Rules
 
@@ -164,7 +167,10 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   counter action (open: its action numbers are not known). The counter needs the weapon of the cast in the hand (the
   condition Riposte_Attack of the action data: the mannequin tag Rapier and the timer; code review of stage 3.3b-S4,
   finding F2, test case RM2): a change of the weapon ends the window (`Abilities::weapon_changed`), a hit with a different
-  weapon in the hand starts no counter, and the counter hit needs the weapon too.
+  weapon in the hand starts no counter, and the counter hit needs the weapon too. A change of the weapon is a key of a weapon slot
+  (`Combat::select_weapon`) and each committed change of the inventory that changes the weapon in the hand (its slot or its instance:
+  `Inventory::finish` compares `Combat::weapon_key` before and after; an equip, a build preset that replaces the weapon) [code review
+  of stage B0, finding B0-R2, test case RQ2: a preset that replaced the rapier left the absorption of the window for the next hit].
 - The rules of the nodes in a plan (stage 3.3b-S5, [Passive rules](passive-rules.md)). A node changes an ability in one of
   two ways, and the data says which one:
   - A rule row of the node (an ability row with a cell of a rule): the evaluator of the passive rules applies it at each hit
@@ -306,6 +312,68 @@ a live test of an ability. The wire contracts are in the protocol notes (section
 - The rows of the abilities (stage 3.3b-M2; [Passive rules](passive-rules.md)): Execute gives BaseDamage 0.5 against a target
   below 50 % health (its ability row); Armor Breaker gives ArmorPenetration 0.35 at each hit of its fragment (its row has
   InAction `Ability_WarHammer_ArmorBreaker` and InSequence `Ability_WarHammer_BlockBreaker`, the fragment of its action).
+### The bow abilities (stage B1)
+
+The three bow abilities of the build of the user: Penetrating Shot (`Ability_Bow_PenetratingShot`), Explosive Arrow
+(`Ability_Bow_SplinterShot`), Rapid Shot (`Ability_Bow_RapidShot`). The source of each rule is in brackets. The live checks are in
+`~/Games/soulwarden/work/evidence/bow-build/b1/implement/live/LIVE-CHECKS.md`, the live proof in `RESULT.md` of that folder.
+
+- The data [game data]. The action of each ability (`playeractions_ability_bow`) plays a fragment of `player_bow.adb`: Penetrating
+  Shot the shoot fragment `Bow_Shoot_UpperBody` of `Bow_Penetrating_Shoot` (its variant with the tags Bow and PenetratingAim), Explosive
+  Arrow `Ability_Bow_ExplosiveArrow` of `Bow_SpreadShot`, Rapid Shot `Ability_Bow_RapidShot` of `Bow_RapidShot`. The projectile tool
+  writes them as the ability actions of the projectile data (format 2, [Game data](../development/game-data.md)): the ranged clips
+  (their time, attack, row, charge), the spell casts with their node conditions (an AND of learned or not learned nodes), and the
+  transitions of the fragment to each bow ability (buffered and instant, the `CanAttack_` conditions; Rapid Shot also its mark
+  CanTransition 2.6 s). A clip of an ability is a shot rule with the mark of an ability and no spell. With no ability action (no
+  file, a file of format 1) the press is refused (`noRule`): the plan of these abilities needs the data (`Abilities::resolve_volley`).
+- The volley [live check B1-I1; agent decision]. A cast of a bow ability has a list of shots (`VolleyPlan`): the clips of its
+  fragment and the projectile spell of its cast, in the time order (Rapid Shot 0.3333 s, 0.8667 s (Bow_RapidAttack_Standard), and
+  1.7333 s (Bow_RapidAttack_KnockBack); Penetrating Shot 0.0333 s (Bow_Penetrating_Attack); Explosive Arrow 0.4667 s, the spell
+  `Spell_Ability_Bow_Explosive_Base`, or `_Upgrade` with Contained Detonation). The client sends one shot item for each shot (the
+  live check: the items came at 0.30 s, 0.83 s, 1.73 s and 0.43 s after the key). A shot item is the next shot of the cast when its
+  attack and its row are those of the next shot (the row 0 for a projectile spell), it is not in the input step of the last shot,
+  and it is not more than 0.25 s (`ability_rules::kShotEarly`, agent decision: the delay of the network) before the time of the
+  shot on the world clock. Each other item is not a shot of the volley (the session gives it to the basic shot rules, which refuse
+  it). The fourth item of a volley of three is not a shot. A repeated report gives no second shot (one shot for each input step).
+- The shot flies on the server (`Projectiles::launch_spell`, [Projectiles](projectiles.md)): the origin of the item when it is near
+  the character and in sight of its launch place, else 1.5 m above the character; the direction of the item, else the direction of
+  the press. A character with no client (`tools/world cast`, a remote test character) gets the shots from the server at their times
+  in the direction of the press [agent decision].
+- Penetrating Shot [live check B1-I1; game data]. The key starts only the aim of the client (its actions Ready and Aim: no
+  cooldown, no shot): the backend keeps the aim (`Aim::byShot`) with no cast. The shot item of the clip (a click, with the bits of
+  `aim_shoot_depressed`, or the key again: the data has both in `Shoot_Bow_PenetratingShot`) is the confirm: the press runs again
+  with all its checks, the cooldown of the data (18 s) starts there (the client starts its cooldown at the shot, live), and the item
+  is the first shot. An aim with no shot stays 600 s (`kShotAimKeep`; the client waited 58 s and shot) [agent decision]. A key of a
+  different ability that the client plays ends the aim; a key that the backend refuses for a cooldown keeps it (the client keeps its
+  aim then, live). The arrow passes through creatures ([Projectiles](projectiles.md), the pierce): 50 m, the range of its profile
+  [game data; the text of the game says 100 m: orchestrator decision, the data wins]. Blood Soaked Arrow replaces the row of the
+  clip with `Bow_Penetrating_AttackA1` (DamageTableRow and DamageTableRowOverride of its row) [game data]. The charged shots A1 and
+  A2 of the data need `IfAbilityActive PenetratingCharge`, which no ability row has: the backend has no rule for them [orchestrator
+  decision].
+- Explosive Arrow [game data; live check B1-I1]. The key casts at once (cooldown 22 s from the key). The projectile spell of the cast
+  (0.4667 s) hits its first creature with `Bow_ExplosionShot_Projectile` (0.5). Its collision (a creature, a wall, the ground;
+  SpawnSecondaryOnCollision; not the end of the range or of the life time) makes its SecondarySpellID: the explosion
+  (`Spell_Ability_Bow_ExplosiveShot_Explosion`, or `_SizeChange` with Contained Detonation) as a spell entity of its slice
+  (`spell_aoe_explosionshot`; the client shows the fire burst only with this record: live check) at the point of the collision
+  ([Spell entities](spells.md)). Its burst phase hits each enemy creature whose body reaches into the sphere of the offense of the
+  slice (`PhasePlan::bodies`: the distance to the capsule of the creature; 2.5 m with `Bow_ExplosionShot_Explosion` 1.35, or 1.25 m
+  with `_Explosion_Dmg` 1.7), the direct target too, with no wall between. [Agent decision from the live run: the impact is on the
+  surface of the capsule, 1.6 m from the position of a wolf; a test of the position alone missed the direct target.]
+- Flame Arrow [game data]: the rule of the node gives `Status_ExplosiveShot_Burn` at a hit of its DamageTableRow
+  (`Bow_ExplosionShot_Projectile`, the direct row only): the explosion does not burn. Its ticks and its icon: [Passive
+  rules](passive-rules.md) and [Creatures](creatures.md).
+- Rapid Shot [game data; decision D11 of the orchestrator]. The three arrows of one cast are one volley (the cast number is the
+  volley of each hit: `HitWeapon::volley`). Final Blow gives BaseDamage 0.25 to the row KnockBack (the third arrow). Rapid Accuracy
+  (NumConsecutiveHits 3) counts the hits of the arrows of one cast on one target: three hits of one cast on one creature give
+  CooldownTimer −0.5 (the cooldown of 14 s ends 7 s after the press); a miss, a different target, or hits of two casts give nothing.
+- The windows of a bow fragment [game data; live check B1-I1]. A key of a different bow ability (or of the same ability) while a
+  bow fragment plays: before the buffered transition of the fragment to that ability, the backend refuses it (`casting`, the client
+  does not play it; an aim of Penetrating Shot stays); in the buffered window it starts at the instant transition (`CastPlan::delay`:
+  its cooldown and the times of its shots that much later; the count `windowDelays`; the log line "at the instant transition of the
+  cast that plays, in N ms"); from the instant transition on, at the press. Live: the key R at 0.67 s of Rapid Shot was not played;
+  at 2.0 s it started at 2.6 s.
+- The cost [game data]: the three abilities have no ManaCost: no mana. The backend has no equipped ammunition: a shot takes no
+  arrow ([Projectiles](projectiles.md)).
 - A new ability needs, in this sequence: a live check of its keys, its contacts, and its
   shots (protocol notes 4.22: L1, L3, L7), its rule in `Abilities::plan` with the rows and the
   spells of the data, a test case, and a live video. Do not make a message of the server for
@@ -406,3 +474,14 @@ tools/gamedata/abilities.sh          # write ability-data.json to the game data 
   older stage shows this again in a test of an old tree.
 - The time of day of the game changes (a cycle of 45 minutes, stage 2.2): set the day before a video (`tools/world time
   Soulwarden 12:00`).
+- Penetrating Shot: the key alone is only the aim. Shoot with `tools/hx 'key 0x51' 'wait 900' 'mousedown left' 'wait 80' 'mouseup
+  left'` (or the key again). The backend log has the line "casts Penetrating Shot" at the shot, not at the key.
+- The client plays no ability of a character that carries more than its weight limit: empty the bag first (live check B1-I1).
+- The countdown of a cooldown on the HUD ends 1 s to 2 s before the end of the server (the clock of the client; stage 3.3a). A
+  press in that time plays the animation, and the server refuses it: wait 2 s more in a test.
+- A wolf of level 65 has 15,799 health: the hits of two casts of Rapid Shot kill it, and the next arrows pass its body. Give the
+  creature its health (`tools/world creature health ID 100%`) or spawn a new one before each cast of a test.
+- The yaw of `tools/world cast` goes from the north to the east (the west is 270), as for `tools/world shoot`.
+- A change of the bow tree for a test: `tools/world mastery NAME bow 1`, then `bow 20` clears the tree (19 free points), and
+  `tools/world node NAME bow ...` assigns the nodes in the sequence of the tree; `tools/world preset NAME bow-boltcaster pve` gives
+  the build again. The respec button of the client needs 50 azoth.

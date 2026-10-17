@@ -38,6 +38,9 @@ constexpr AbilityRule kRules[] = {
     {"Ability_WarHammer_MightyGavel", AbilityKind::mightyGavel, "Mighty Gavel"},
     {"Ability_Warhammer_ArmorBreaker", AbilityKind::armorBreaker, "Armor Breaker"},
     {"Ability_WarHammer_ClearOut", AbilityKind::clearOut, "Clear Out"},
+    {"Ability_Bow_PenetratingShot", AbilityKind::penetratingShot, "Penetrating Shot"},
+    {"Ability_Bow_SplinterShot", AbilityKind::explosiveArrow, "Explosive Arrow"},
+    {"Ability_Bow_RapidShot", AbilityKind::rapidShot, "Rapid Shot"},
 };
 
 /**
@@ -549,6 +552,45 @@ std::optional<CastPlan> Abilities::plan(std::uint32_t ability, const SkillSet& s
         // impacts of the damage rows (forced movement). The fragment that plays decides when the client takes a press (the sequence).
         plan.length = std::chrono::milliseconds(0);
         break;
+    case AbilityKind::penetratingShot: {
+        // Penetrating Shot of the bow (stage B1; game data: playeractions_ability_bow, player_bow.adb; live checks of the stage). The key starts
+        // the aim of the client (the actions Bow_Penetrating_Ready and Bow_Penetrating_Aim_SubState: no cooldown, no shot). The action
+        // Bow_Penetrating_Shoot (a click or a second key in the aim: Shoot_Bow_PenetratingShot) sets the cooldown and shoots the clip of its
+        // fragment (PenetratingShot, Bow_Penetrating_Attack at 0.0333 s): its shot item is the confirm of the aim. The arrow passes through
+        // creatures (the profile PenetratingShot: 50 m; each target one time, in the order of the line). The clips, the times, and the
+        // windows come from the ability action of the projectile data (resolve_volley).
+        plan.aimed = true;
+        plan.shotConfirm = true;
+        plan.action = "Bow_Penetrating_Shoot";
+        VolleyPlan volley;
+        volley.pierce = true;
+        plan.volley = volley;
+        break;
+    }
+    case AbilityKind::explosiveArrow: {
+        // Explosive Arrow of the bow (Ability_Bow_SplinterShot; stage B1, game data). The action Bow_SpreadShot plays Ability_Bow_ExplosiveArrow:
+        // its cast at 0.4667 s shoots Spell_Ability_Bow_Explosive_Base, or _Upgrade with Contained Detonation (the conditions
+        // Bow_ExplosiveArrow_NoUpgrade and _Upgraded). The projectile hits its first creature with Bow_ExplosionShot_Projectile, and its
+        // collision (a creature, a wall, the ground: SpawnSecondaryOnCollision) makes its SecondarySpellID: the explosion of the slice
+        // (Bow_ExplosionShot_Explosion 2.5 m, or _Dmg 1.25 m) on each creature of the area, the direct target too (the burst phase).
+        plan.action = "Bow_SpreadShot";
+        VolleyPlan volley;
+        volley.explode = true;
+        plan.volley = volley;
+        PhasePlan burst;
+        burst.kind = PhaseKind::burst;
+        burst.bodies = true;
+        plan.phases.push_back(burst); // Its spell and its row come from the data at the press (resolve_volley).
+        break;
+    }
+    case AbilityKind::rapidShot: {
+        // Rapid Shot of the bow (stage B1, game data): the action Bow_RapidShot plays Ability_Bow_RapidShot, three clips TripleShot at 0.3333 s
+        // and 0.8667 s (Bow_RapidAttack_Standard) and 1.7333 s (Bow_RapidAttack_KnockBack). The three arrows of one cast are a volley (the
+        // cast number): Rapid Accuracy counts the hits of the arrows of one cast on one target (decision D11 of the orchestrator).
+        plan.action = "Bow_RapidShot";
+        plan.volley = VolleyPlan{};
+        break;
+    }
     }
     return plan;
 }
@@ -628,10 +670,19 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         playing != nullptr && !playing->ended && playing->cast != 0) {
         close_refused(playing->cast);
     }
-    // Each press ends the aim of an earlier key (stage 3.3b-S6; the confirm of an aim ends it before its press).
+    // Each press ends the aim of an earlier key (stage 3.3b-S6; the confirm of an aim ends it before its press). A press that the client
+    // does not play (its own cooldown, no window of the fragment that plays) keeps the aim (stage B1, live check: the aim of Penetrating
+    // Shot stayed after a key in the cooldown of the client, and its shot came): keep_aim gives it back with such a refusal.
+    std::optional<Aim> earlierAim;
     if (const auto known = m_characters.find(character->characterId); known != m_characters.end()) {
+        earlierAim = known->second.aim;
         known->second.aim.reset();
     }
+    const auto keep_aim = [&] {
+        if (earlierAim) {
+            m_characters[character->characterId].aim = earlierAim;
+        }
+    };
     if (!has_data()) {
         return refuse(CastVerdict::noData);
     }
@@ -666,6 +717,14 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     const gamedata::CooldownRow* cooldown = rule != nullptr ? m_data->cooldown(rule->id) : nullptr;
     if (!planned || cooldown == nullptr) {
         return refuse(CastVerdict::noRule);
+    }
+    // The shots of a ranged ability (stage B1) from the ability action of the projectile data: each part must be in the data.
+    if (planned->volley) {
+        std::string missing;
+        if (!resolve_volley(*planned, *character, missing)) {
+            log::write("world: ability: %s has no %s in the data", rule->name, missing.c_str());
+            return refuse(CastVerdict::noRule);
+        }
     }
     // Each row and each spell of the plan must be in the data: an ability with a part of its
     // data does nothing.
@@ -826,6 +885,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     if (running != state.cooldowns.end() && (running->second.indefinite || now < running->second.end || now < running->second.clientEnd)) {
         if (now < running->second.clientEnd) {
             reopen(); // The client does not play a press in its own cooldown.
+            keep_aim();
         }
         return refuse(CastVerdict::cooldown);
     }
@@ -838,11 +898,40 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
                                                                                       0, now, true);
         if (start.verdict == AbilityStart::Verdict::refused) {
             reopen(); // No window of the fragment that plays: the client does not play the press (live check of stage 3.3b-M2).
+            keep_aim();
             return refuse(CastVerdict::casting);
         }
     } else if (state.cast) {
         const auto playing = m_casts.find(*state.cast);
-        if (playing != m_casts.end() && now < playing->second.ends) {
+        if (playing != m_casts.end() && playing->second.plan.actionData != nullptr && planned->actionData != nullptr) {
+            // The fragment of a bow cast that plays (stage B1; game data: its transitions to the ability of the key, a CanAttack_ condition;
+            // live check of the stage: the key of Explosive Arrow at 0.67 s of Rapid Shot was not played, at 2.0 s it started at 2.6 s).
+            // Before its buffered window the client does not play the press; in the buffered window the ability starts at the instant
+            // transition (the timed parts of the cast come that much later); from the instant transition on, at the press.
+            const Cast& earlier = playing->second;
+            const WorldClock::time_point begun = earlier.started + earlier.plan.delay;
+            const float elapsed = std::chrono::duration<float>(now - begun).count();
+            std::optional<float> buffered;
+            std::optional<float> instant;
+            for (const gamedata::ActionTransition& transition : earlier.plan.actionData->transitions) {
+                if (!data_rules::same_text(transition.ability, rule->id)) {
+                    continue;
+                }
+                std::optional<float>& slot = transition.buffered ? buffered : instant;
+                slot = slot ? std::min(*slot, transition.time) : transition.time;
+            }
+            const float windowEnd = std::chrono::duration<float>(earlier.plan.length).count();
+            if (elapsed >= 0.0F && elapsed < windowEnd && !(instant && elapsed >= *instant)) {
+                if (buffered && elapsed >= *buffered && instant) {
+                    planned->delay = std::chrono::milliseconds(static_cast<long long>(std::lround((*instant - elapsed) * 1000.0F)));
+                    ++m_counts.windowDelays;
+                } else {
+                    reopen();
+                    keep_aim();
+                    return refuse(CastVerdict::casting);
+                }
+            }
+        } else if (playing != m_casts.end() && now < playing->second.ends) {
             return refuse(CastVerdict::casting);
         }
     }
@@ -879,6 +968,12 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         aim.session = session;
         aim.ability = ability;
         aim.started = now;
+        // Penetrating Shot (stage B1): the shot item of the first clip of its shoot action confirms the aim.
+        if (planned->shotConfirm && planned->volley && !planned->volley->shots.empty()) {
+            aim.byShot = true;
+            aim.shotAttack = gamedata::progression_id(planned->volley->shots.front().attack);
+            aim.shotRow = planned->volley->shots.front().spell.empty() ? gamedata::progression_id(planned->volley->shots.front().clipRow) : 0;
+        }
         state.aim = aim;
         ++m_counts.aims;
         log::write("world: ability: %s aims %s (place %u of the bar): the cast starts at the confirm", character->name.c_str(),
@@ -909,11 +1004,13 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         cast.conversionType = conversion->type;
         cast.conversionPart = conversion->part;
     }
-    // The cooldown of the data starts at the press, as the cooldown of the client (live check L1).
+    // The cooldown of the data starts at the press, as the cooldown of the client (live check L1). A bow cast that starts at the instant
+    // transition of a buffered window (stage B1) starts its cooldown there: the action of the client sets its cooldown at its start (game data:
+    // SetCooldownTimer of Bow_RapidShot and Bow_SpreadShot after Ability_Startup).
     AbilityCooldown timer;
-    timer.start = now;
-    timer.end = now + milliseconds(cooldown->time);
-    timer.minEnd = now + milliseconds(cooldown->minTime);
+    timer.start = now + cast.plan.delay;
+    timer.end = timer.start + milliseconds(cooldown->time);
+    timer.minEnd = timer.start + milliseconds(cooldown->minTime);
     timer.clientEnd = timer.end;
     if (cast.plan.spell && cast.plan.spell->role == SpellRole::summon) {
         // The Pylon (stage 3.3b-S2b): the cooldown holds while the summon lives (the action IceMagic_IcePylon_Cooldown: an
@@ -1015,6 +1112,30 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         ++stored.pending;
         m_world.after(stored.plan.heal->at + delay, [this, number](World&) { cast_heal(number); });
     }
+    if (stored.plan.volley && session == 0) {
+        // The shots of a ranged ability for a character with no client (stage B1; tools/world cast): the server shoots each one at its time
+        // from 1.5 m above the character in the direction of the press. A client shoots its own shots: a shot item that it does not send
+        // (a dodge ends the fragment) does not fly.
+        for (std::size_t index = 0; index < stored.plan.volley->shots.size(); ++index) {
+            ++stored.pending;
+            m_world.after(stored.plan.volley->shots[index].at + delay, [this, number, index](World&) {
+                const auto found = m_casts.find(number);
+                if (found == m_casts.end()) {
+                    return;
+                }
+                Cast& late = found->second;
+                --late.pending;
+                const Entity* caster = m_world.find(late.caster);
+                if (caster == nullptr || caster->life.dead || late.shotsTaken != index) {
+                    return;
+                }
+                const std::array<float, 2> ahead = direction_of(late.yaw);
+                state::WorldPosition origin = caster->position;
+                origin.z += 1.5F;
+                volley_shot(late, index, origin, {ahead[0], ahead[1], 0.0F});
+            });
+        }
+    }
     // The spells of the action at its start (stage 3.3b-M2: the shield of Maelstrom with Absorb). A fragment that waits for a buffered
     // window gets them at its real start (the sequence event `start`, fragment_event; code review of stage 3.3b-M2, finding M2-R5): a
     // start that a weapon change, a death, or a travel cancelled makes no spell.
@@ -1057,15 +1178,68 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
                stored.plan.sequence ? (", the fragment " + graph->fragments[stored.plan.fragment].name
                                         + (delay.count() > 0 ? " in " + std::to_string(delay.count()) + " ms" : std::string()))
                                           .c_str()
-                                    : "");
+               // A bow cast in the buffered window of the fragment that plays starts at its instant transition (stage B1).
+               : delay.count() > 0 ? (", at the instant transition of the cast that plays, in " + std::to_string(delay.count()) + " ms").c_str()
+                                   : "");
     return CastVerdict::accepted;
 }
 
 void Abilities::shot(SessionId session, const AbilityShot& shot) {
-    const Entity* character = m_world.entity_of(session);
-    if (character == nullptr) {
+    Entity* own = m_world.entity_of(session);
+    if (own == nullptr) {
         return;
     }
+    // Stage B1: a cast of a ranged ability that waits for this shot of its volley, or the aim of Penetrating Shot that the shot confirms.
+    std::size_t index = 0;
+    Cast* volley = volley_cast(session, own->characterId, shot.attack, shot.row, shot.input, &index);
+    if (volley == nullptr) {
+        const auto aimed = m_characters.find(own->characterId);
+        if (aimed != m_characters.end() && aimed->second.aim && aimed->second.aim->session == session && aimed->second.aim->byShot
+            && aimed->second.aim->shotAttack == shot.attack && aimed->second.aim->shotRow == shot.row) {
+            const Aim aim = *aimed->second.aim;
+            aimed->second.aim.reset();
+            if (m_world.clock().now() - aim.started > ability_rules::kShotAimKeep) {
+                ++m_counts.volleyRefused;
+                return;
+            }
+            // The confirm starts the cast with all the checks of a press, the lock of the session now, and the ability of the aim on its place.
+            AbilityPress press = aim.press;
+            press.input = shot.input;
+            press.confirmed = true;
+            press.locked = shot.locked;
+            press.expected = aim.ability;
+            const CastVerdict verdict = press_entity(*own, session, press);
+            if (verdict != CastVerdict::accepted) {
+                ++m_counts.volleyRefused;
+                log::write("world: ability: the shot item that confirms the aim of %s refused: %s", own->name.c_str(), cast_verdict_text(verdict));
+                return;
+            }
+            ++m_counts.shotConfirms;
+            volley = volley_cast(session, own->characterId, shot.attack, shot.row, shot.input, &index);
+        }
+    }
+    if (volley != nullptr) {
+        // The shot is a claim of the client: an origin far from the character, or with a wall between, is the launch place of the server;
+        // a direction that is not a direction is the direction of the press.
+        state::WorldPosition launch = own->position;
+        launch.z += 1.5F;
+        state::WorldPosition origin = shot.origin;
+        if (!valid_position(origin) || distance3(origin, own->position) > kShotOrigin || !m_world.navigation().sees(launch, origin)) {
+            origin = launch;
+        }
+        std::array<float, 3> direction = shot.direction;
+        const float size = std::hypot(direction[0], direction[1], direction[2]);
+        if (!std::isfinite(size) || size < 0.01F) {
+            const std::array<float, 2> ahead = direction_of(volley->yaw);
+            direction = {ahead[0], ahead[1], 0.0F};
+        } else {
+            direction = {direction[0] / size, direction[1] / size, direction[2] / size};
+        }
+        volley->lastShotInput = shot.input;
+        volley_shot(*volley, index, origin, direction);
+        return;
+    }
+    const Entity* character = own;
     const auto state = m_characters.find(character->characterId);
     if (state == m_characters.end() || !state->second.cast) {
         return;
@@ -1105,10 +1279,22 @@ void Abilities::shot(SessionId session, const AbilityShot& shot) {
     throw_projectile(cast, origin, direction);
 }
 
-bool Abilities::takes_shot(SessionId session, std::uint32_t attack) const {
+bool Abilities::takes_shot(SessionId session, std::uint32_t attack, std::uint32_t row, std::uint16_t input) {
     const Entity* character = m_world.entity_of(session);
     const auto state = character != nullptr ? m_characters.find(character->characterId) : m_characters.end();
-    if (state == m_characters.end() || !state->second.cast) {
+    if (state == m_characters.end()) {
+        return false;
+    }
+    // Stage B1: a shot of the volley of a cast of a ranged ability, or the shot item that confirms the aim of Penetrating Shot (its clip).
+    std::size_t index = 0;
+    if (volley_cast(session, character->characterId, attack, row, input, &index) != nullptr) {
+        return true;
+    }
+    if (const std::optional<Aim>& aim = state->second.aim;
+        aim && aim->session == session && aim->byShot && aim->shotAttack == attack && aim->shotRow == row) {
+        return true;
+    }
+    if (!state->second.cast) {
         return false;
     }
     const auto found = m_casts.find(*state->second.cast);
@@ -1135,7 +1321,254 @@ HitWeapon Abilities::weapon_of(const Cast& cast) const {
     weapon.row = m_combat != nullptr ? m_combat->weapon_of(cast.itemId) : nullptr;
     weapon.gearScore = cast.gearScore;
     weapon.ability = ability_text(cast.ability);
+    // Stage B1: the action of the cast (InAction of a row: Bow_RapidShot), the fragment of the action (InSequence), and the volley.
+    weapon.action = cast.plan.action;
+    if (cast.plan.actionData != nullptr) {
+        weapon.fragment = cast.plan.actionData->fragment;
+    }
+    weapon.volley = cast.plan.volley ? cast.number : 0;
     return weapon;
+}
+
+bool Abilities::resolve_volley(CastPlan& plan, const Entity& character, std::string& missing) const {
+    const gamedata::ProjectileData* projectiles = m_world.options().projectileData;
+    const gamedata::AbilityActionData* action = projectiles != nullptr && projectiles->loaded() ? projectiles->action(plan.action) : nullptr;
+    if (action == nullptr || !plan.volley) {
+        missing = "ability action " + plan.action + " (projectile data of format 2: tools/gamedata/projectiles.sh)";
+        return false;
+    }
+    plan.actionData = action;
+    // The length of the cast: the last instant transition of the fragment to an ability, or its mark CanTransition (game data): before it a
+    // different ability of the weapon waits for a window of the fragment (press_entity).
+    float length = std::max(action->canTransition, 0.0F);
+    for (const gamedata::ActionTransition& transition : action->transitions) {
+        if (!transition.buffered) {
+            length = std::max(length, transition.time);
+        }
+    }
+    plan.length = milliseconds(length);
+    // The profile of the weapon in the hand (the clips of the data are clips of a profile: Bow).
+    const ItemInstance* item = Combat::weapon_in_hand(character);
+    const gamedata::WeaponRow* weapon = item != nullptr ? m_combat->weapon_of(item->itemId) : nullptr;
+    const gamedata::RangedWeapon* ranged = weapon != nullptr ? projectiles->weapon(weapon->id) : nullptr;
+    if (ranged == nullptr) {
+        missing = "ranged profile of the weapon in the hand";
+        return false;
+    }
+    // A row override of a learned node (DamageTableRowOverride with DamageTableRow; game data: Blood Soaked Arrow,
+    // Upgrade_Bow_PenetratingShot_DmgPerHit, Bow_Penetrating_Attack to Bow_Penetrating_AttackA1).
+    std::vector<std::pair<std::string, std::string>> overrides;
+    const gamedata::ProgressionTables* tables = m_world.options().progressionTables;
+    for (const auto& [pool, nodes] : character.skills.pools) {
+        for (const auto& [id, value] : nodes) {
+            const gamedata::AbilityNode* node = tables != nullptr && value.level > 0 ? tables->node(id) : nullptr;
+            const gamedata::AbilityRow* row = node != nullptr ? m_data->ability_row(node->id) : nullptr;
+            if (row == nullptr || row->cells.text("DamageTableRowOverride").empty()) {
+                continue;
+            }
+            for (const std::string_view from : data_rules::parts_of(row->cells.text("DamageTableRow"))) {
+                overrides.emplace_back(std::string(from), std::string(row->cells.text("DamageTableRowOverride")));
+            }
+        }
+    }
+    const auto row_of = [&](const std::string& clipRow) {
+        for (const auto& [from, to] : overrides) {
+            if (data_rules::same_text(from, clipRow)) {
+                return to;
+            }
+        }
+        return clipRow;
+    };
+    VolleyPlan& volley = *plan.volley;
+    volley.shots.clear();
+    for (const gamedata::ActionClip& clip : action->clips) {
+        ShotPlan shot;
+        shot.at = milliseconds(clip.time);
+        shot.attack = clip.attack;
+        shot.clipRow = clip.row;
+        shot.row = row_of(clip.row);
+        if (projectiles->ability_clip(ranged->profile, gamedata::progression_id(clip.attack), gamedata::progression_id(clip.row)) == nullptr
+            || !m_combat->row_index(shot.row)) {
+            missing = "clip " + clip.attack + " (" + shot.row + ") of " + action->action;
+            return false;
+        }
+        volley.shots.push_back(std::move(shot));
+    }
+    // The spell casts of the fragment for the nodes of the character (the condition of each cast: an AND of node tests).
+    for (const gamedata::ActionCast& cast : action->casts) {
+        if (!all_learned(character.skills, cast.needs) || !none_learned(character.skills, cast.forbids)) {
+            continue;
+        }
+        const gamedata::ShotRule* rule = projectiles->ability_shot(cast.spell);
+        const gamedata::SpellRow* spell = m_data->spell(cast.spell);
+        if (rule == nullptr || spell == nullptr || !m_combat->row_index(rule->row)) {
+            missing = "projectile spell " + cast.spell + " of " + action->action;
+            return false;
+        }
+        ShotPlan shot;
+        shot.at = milliseconds(cast.time);
+        shot.attack = rule->attack;
+        shot.clipRow = rule->row;
+        shot.row = rule->row;
+        shot.spell = cast.spell;
+        volley.shots.push_back(std::move(shot));
+        if (volley.explode) {
+            // The explosion: the SecondarySpellID of the projectile spell (SpawnSecondaryOnCollision) and the damage row of the offense of
+            // its slice (the spell data: Bow_ExplosionShot_Explosion, or _Dmg for the small slice of Contained Detonation).
+            const std::string_view secondary = spell->cells.text("SecondarySpellID");
+            const gamedata::SpellData* spells = m_world.options().spellData;
+            const gamedata::SpellSlice* slice = spells != nullptr && spells->loaded() && !secondary.empty() ? spells->slice_of(secondary) : nullptr;
+            const gamedata::SpellOffense* offense = slice != nullptr ? slice->offense() : nullptr;
+            if (spell->cells.number("SpawnSecondaryOnCollision") == 0.0F || m_data->spell(secondary) == nullptr || offense == nullptr
+                || !m_combat->row_index(offense->row)) {
+                missing = "explosion (SecondarySpellID " + std::string(secondary) + " and the offense of its slice in the spell data) of " + cast.spell;
+                return false;
+            }
+            for (PhasePlan& phase : plan.phases) {
+                if (phase.kind == PhaseKind::burst) {
+                    phase.spell = std::string(m_data->spell(secondary)->id);
+                    phase.row = offense->row;
+                }
+            }
+        }
+    }
+    std::sort(volley.shots.begin(), volley.shots.end(), [](const ShotPlan& a, const ShotPlan& b) { return a.at < b.at; });
+    if (volley.shots.empty()) {
+        missing = "clip or projectile spell of " + action->action;
+        return false;
+    }
+    return true;
+}
+
+std::optional<std::size_t> Abilities::volley_next(const Cast& cast, std::uint32_t attack, std::uint32_t row, std::uint16_t input) const {
+    if (!cast.plan.volley || cast.shotsTaken >= cast.plan.volley->shots.size()) {
+        return std::nullopt;
+    }
+    const ShotPlan& next = cast.plan.volley->shots[cast.shotsTaken];
+    // The attack of the item, and the row of a clip (a projectile spell has the row 0 on the wire: live check of stage 3.3b-S3).
+    if (gamedata::progression_id(next.attack) != attack || (next.spell.empty() ? gamedata::progression_id(next.clipRow) : 0U) != row) {
+        return std::nullopt;
+    }
+    // One shot for each input step: a second item of the step of the last shot is not a new shot (a repeated item).
+    if (cast.lastShotInput && *cast.lastShotInput == input) {
+        return std::nullopt;
+    }
+    // Not before the time of the clip on the world clock (less ability_rules::kShotEarly).
+    const WorldClock::time_point due = cast.started + cast.plan.delay + next.at;
+    if (m_world.clock().now() + ability_rules::kShotEarly < due) {
+        return std::nullopt;
+    }
+    return cast.shotsTaken;
+}
+
+Abilities::Cast* Abilities::volley_cast(SessionId session, const std::string& characterId, std::uint32_t attack, std::uint32_t row,
+                                        std::uint16_t input, std::size_t* index) {
+    const auto state = m_characters.find(characterId);
+    if (state == m_characters.end() || !state->second.cast) {
+        return nullptr;
+    }
+    const auto found = m_casts.find(*state->second.cast);
+    if (found == m_casts.end() || found->second.session != session || !found->second.plan.volley) {
+        return nullptr;
+    }
+    const std::optional<std::size_t> next = volley_next(found->second, attack, row, input);
+    if (!next) {
+        return nullptr;
+    }
+    *index = *next;
+    return &found->second;
+}
+
+void Abilities::volley_shot(Cast& cast, std::size_t index, const state::WorldPosition& origin, const std::array<float, 3>& direction) {
+    if (!cast.plan.volley || index >= cast.plan.volley->shots.size() || index != cast.shotsTaken) {
+        return;
+    }
+    ++cast.shotsTaken;
+    const ShotPlan& plan = cast.plan.volley->shots[index];
+    const gamedata::ProjectileData* projectiles = m_world.options().projectileData;
+    const gamedata::WeaponRow* weapon = m_combat->weapon_of(cast.itemId);
+    const gamedata::RangedWeapon* ranged = projectiles != nullptr && weapon != nullptr ? projectiles->weapon(weapon->id) : nullptr;
+    const gamedata::ShotRule* rule = projectiles == nullptr ? nullptr
+                                     : !plan.spell.empty() ? projectiles->ability_shot(plan.spell)
+                                     : ranged != nullptr   ? projectiles->ability_clip(ranged->profile, gamedata::progression_id(plan.attack),
+                                                                                       gamedata::progression_id(plan.clipRow))
+                                                           : nullptr;
+    if (rule == nullptr) {
+        return;
+    }
+    SpellShot shot;
+    shot.caster = cast.caster;
+    shot.rule = rule;
+    shot.origin = origin;
+    shot.direction = direction;
+    shot.weapon = weapon_of(cast);
+    shot.conversion = CastConversion{cast.conversionType, cast.conversionPart};
+    shot.pierce = cast.plan.volley->pierce;
+    const std::uint64_t number = cast.number;
+    if (cast.plan.volley->explode) {
+        shot.landed = [this, number](const SpellLanding& landing) { volley_landed(number, landing); };
+        ++cast.pending;
+    }
+    // The damage row of the shot: the row of the clip, or the row of a node override (Blood Soaked Arrow).
+    if (plan.spell.empty() && !data_rules::same_text(plan.row, rule->row)) {
+        shot.row = plan.row;
+    }
+    ++m_counts.shots;
+    if (m_world.projectiles().launch_spell(shot).verdict == ShotVerdict::accepted) {
+        ++m_counts.volleyShots;
+        const Entity* caster = m_world.find(cast.caster);
+        log::write("world: ability: %s shoots the shot %zu of %zu of %s (%s, row %s)%s", caster != nullptr ? caster->name.c_str() : "a caster",
+                   index + 1, cast.plan.volley->shots.size(), ability_name(cast.plan.kind), plan.attack.c_str(), plan.row.c_str(),
+                   cast.session == 0 ? ", from the server (no client)" : "");
+    } else if (cast.plan.volley->explode && cast.pending > 0) {
+        --cast.pending;
+    }
+}
+
+void Abilities::volley_landed(std::uint64_t number, const SpellLanding& landing) {
+    const auto found = m_casts.find(number);
+    if (found == m_casts.end()) {
+        return;
+    }
+    Cast& cast = found->second;
+    if (cast.pending > 0) {
+        --cast.pending;
+    }
+    // SpawnSecondaryOnCollision (game data): a hit of a creature, a wall, or the ground (and a shield that takes it) makes the explosion; the
+    // end of the range or of the life time does not.
+    if (landing.end == ProjectileEnd::range || landing.end == ProjectileEnd::lifetime || landing.end == ProjectileEnd::caster) {
+        return;
+    }
+    std::uint32_t burst = 0;
+    const PhasePlan* phase = nullptr;
+    for (std::uint32_t index = 0; index < cast.plan.phases.size(); ++index) {
+        if (cast.plan.phases[index].kind == PhaseKind::burst) {
+            burst = index;
+            phase = &cast.plan.phases[index];
+        }
+    }
+    const gamedata::SpellRow* row = phase != nullptr && has_data() ? m_data->spell(phase->spell) : nullptr;
+    if (row == nullptr) {
+        return;
+    }
+    // The explosion is a spell entity of its slice (live check of stage B1: the record of spell_aoe_explosionshot shows the fire burst) at
+    // the point of the collision, whose phase hits the creatures of its area at its start; it ends after the Duration of its spell row.
+    SpellRequest request;
+    request.spellId = phase->spell;
+    request.caster = cast.caster;
+    request.position = landing.point;
+    request.cast = number;
+    request.role = SpellRole::area;
+    request.phases = {SpellPhase{burst, std::chrono::milliseconds(0)}};
+    request.life = std::chrono::milliseconds(static_cast<long long>(std::lround(std::max(row->duration, 1.0F))));
+    request.fallbackEnd = *request.life;
+    request.weapon = weapon_of(cast);
+    request.conversion = CastConversion{cast.conversionType, cast.conversionPart};
+    if (const Entity* spell = m_world.spells().make(request)) {
+        cast.spell = spell->id;
+        ++cast.pending;
+        ++m_counts.explosions;
+    }
 }
 
 void Abilities::throw_spell(Cast& cast, const state::WorldPosition& origin, const std::array<float, 3>& direction) {
@@ -1177,6 +1610,11 @@ bool Abilities::confirm(SessionId session, std::uint16_t input, bool self, float
     }
     const auto known = m_characters.find(character->characterId);
     if (known == m_characters.end() || !known->second.aim || known->second.aim->session != session) {
+        return false;
+    }
+    // Stage B1: the shot item of the client confirms the aim of Penetrating Shot (Abilities::shot), not a click alone: a click that the client
+    // does not turn into a shot (its own conditions) must start no cast and no cooldown.
+    if (known->second.aim->byShot) {
         return false;
     }
     const Aim aim = *known->second.aim;
@@ -1688,11 +2126,23 @@ void Abilities::run_area(std::uint64_t number, std::uint32_t index, state::World
     }
     const float height = std::max(ability_rules::kAreaHeight, spell->height);
     // The creatures of the area from the position index: the cost depends on the creatures near
-    // the center, not on the creatures of the world.
+    // the center, not on the creatures of the world. An area of bodies (stage B1: the explosion of Explosive Arrow) takes a creature whose
+    // capsule reaches into its sphere: the query reaches the largest capsule of the creature data farther.
     std::vector<std::pair<float, EntityId>> found_;
-    m_world.for_each_near(center, spell->radius, [&](Entity& entity) {
+    const float reach = phase.bodies ? m_world.projectiles().capsule_reach() : 0.0F;
+    m_world.for_each_near(center, spell->radius + reach, [&](Entity& entity) {
         ++m_counts.areaLooked;
-        if (entity.kind == EntityKind::creature && !entity.creature.dead && std::fabs(entity.position.z - center.z) <= height) {
+        if (entity.kind != EntityKind::creature || entity.creature.dead || std::fabs(entity.position.z - center.z) > height) {
+            return;
+        }
+        if (phase.bodies) {
+            const float away = capsule_distance(capsule_of(entity), center);
+            if (away <= spell->radius) {
+                found_.emplace_back(away, entity.id);
+            }
+            return;
+        }
+        if (horizontal_distance(entity.position, center) <= spell->radius) {
             found_.emplace_back(horizontal_distance(entity.position, center), entity.id);
         }
     });

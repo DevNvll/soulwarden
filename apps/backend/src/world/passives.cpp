@@ -35,7 +35,9 @@ const std::set<std::string, std::less<>> kMarks = {
     // of the weapon in the hand for a rule with no hit): no condition of a hit.
     "IsGlobalAbility", "EquipWhenUnsheathed", "ExcludeFromGameModes", "SupportsSmartcast", "UISpellForManaCheck",
     // The durability cost of a spell of a rule (stage 3.3b-M2: CastSpell of Power Cleaner): the backend has no durability use.
-    "DisableCastSpellDurability"};
+    "DisableCastSpellDurability",
+    // Stage B1: the hit count of a volley does not end at a death (Rapid Accuracy; the backend counts the arrows of one cast on one target).
+    "IgnoreResetConsecutiveOnDeath"};
 
 /** The columns of a value of a rule (a fixed stat, or a part of a hit). */
 const std::set<std::string, std::less<>> kValues = {
@@ -61,7 +63,10 @@ const std::set<std::string, std::less<>> kEffects = {
     "MaxHealth", "MaxHealthMod", "BaseDamageReduction", "MODStrength", "MODDexterity", "MODIntelligence", "MODFocus",
     "MODConstitution",
     // Stage 3.4f-B: a stamina gain of a hit rule (the runeglass rows Runeglass_Just_Stamina_*: OnHit, RequireReaction, 1 or 4 stamina).
-    "Stamina"};
+    "Stamina",
+    // Stage B1: the damage of the status of a rule is the damage of a row (Flame Arrow: Common_DamageOverTime_Override), and the row of the
+    // shots of an ability for a node (Blood Soaked Arrow: the plan of Penetrating Shot applies it, Abilities::resolve_volley).
+    "ForceStatusEffectDamageTableRow", "DamageTableRowOverride"};
 
 /**
  * The conditions that a hit taken has a source for (code review of stage 3.3b-S5, finding F6): the values of the character (its
@@ -408,9 +413,11 @@ bool Passives::conditions_pass(const PassiveRule& rule, const Entity& attacker, 
     // InSequence and InAction: the hit is a hit of the cast of an ability of the list (the action of the ability), or (stage 3.3b-M2) a
     // hit of a strike of a fragment of the list (Armor Breaker: InSequence Ability_WarHammer_BlockBreaker, the fragment of its action in
     // the weapon actions; game data).
+    // Stage B1: also the action of the cast in the ability action list (Rapid Accuracy and Final Blow: InAction Bow_RapidShot).
     for (const char* column : {"InSequence", "InAction"}) {
         if (const std::string_view sequence = row.text(column);
-            !sequence.empty() && (hit.ability.empty() || !list_has(sequence, hit.ability)) && (hit.fragment.empty() || !list_has(sequence, hit.fragment))) {
+            !sequence.empty() && (hit.ability.empty() || !list_has(sequence, hit.ability)) && (hit.fragment.empty() || !list_has(sequence, hit.fragment))
+            && (hit.action.empty() || !list_has(sequence, hit.action))) {
             return false;
         }
     }
@@ -507,6 +514,9 @@ bool Passives::counts_peek(const PassiveRule& rule, const Entity& attacker, cons
         if (const auto entry = state.consecutive.find(rule.id); entry != state.consecutive.end()) {
             scratch.consecutive.insert(*entry);
         }
+        if (const auto entry = state.volleyHits.find({rule.id, hit.volley, hit.target}); entry != state.volleyHits.end()) {
+            scratch.volleyHits.insert(*entry);
+        }
     }
     return count_rule(rule, scratch, hit, false);
 }
@@ -548,6 +558,21 @@ bool Passives::count_rule(const PassiveRule& rule, CharacterState& state, const 
         if (spend && attack != 0) {
             state.fired.insert({rule.id, attack});
         }
+    }
+    // NumConsecutiveHits of a hit of a volley (stage B1, decision D11 of the orchestrator): the arrows of one cast (Rapid Shot) that hit one
+    // target. The client tests the target of the hit data for such a row (hit test 0x67A18F0, field +0x88: the same target). Each arrow is
+    // one attack; a miss or a hit of a different target does not count for this target.
+    if (row.has("NumConsecutiveHits") && hit.volley != 0) {
+        auto& entry = state.volleyHits[{rule.id, hit.volley, hit.target}];
+        std::set<std::uint64_t> attacks = entry.first;
+        attacks.insert(attack);
+        const auto most = row.has("MaxConsecutiveHits") ? static_cast<std::size_t>(row.number("MaxConsecutiveHits")) : std::size_t{1000};
+        const std::size_t count = std::min(attacks.size(), most);
+        const bool reached = count >= static_cast<std::size_t>(std::max(1.0F, row.number("NumConsecutiveHits")));
+        if (spend) {
+            entry = {reached && row.number("ResetConsecutiveOnSuccess") != 0.0F ? std::set<std::uint64_t>{} : attacks, now};
+        }
+        return reached;
     }
     // NumConsecutiveHits: the hits of this number of attacks one after the other (client text: "After 2 light attacks").
     if (row.has("NumConsecutiveHits")) {
@@ -680,8 +705,8 @@ void Passives::after_hit(Entity& attacker, Entity& target, const HitContext& hit
             continue;
         }
         if (!conditions_pass(rule, *own, *hurt, hit)) {
-            // NumConsecutiveHits: a hit that the rule does not take ends the sequence of the hits.
-            if (row.has("NumConsecutiveHits") && unknown_columns(row).empty()) {
+            // NumConsecutiveHits: a hit that the rule does not take ends the sequence of the hits (a volley counts its own arrows: stage B1).
+            if (row.has("NumConsecutiveHits") && unknown_columns(row).empty() && hit.volley == 0) {
                 m_characters[characterId].consecutive[rule.id] = {0, hit.attack};
             }
             continue;
@@ -709,6 +734,9 @@ void Passives::after_hit(Entity& attacker, Entity& target, const HitContext& hit
                 } else {
                     ++entry;
                 }
+            }
+            for (auto entry = state.volleyHits.begin(); entry != state.volleyHits.end();) {
+                entry = now - entry->second.second > passive_rules::kAttackKeep ? state.volleyHits.erase(entry) : std::next(entry);
             }
         }
     }
@@ -784,6 +812,31 @@ void Passives::target_status(const PassiveRule& rule, Entity& attacker, Entity& 
     const gamedata::AbilityData* abilities = m_world.options().abilityData;
     const gamedata::StatusRow* row = abilities != nullptr ? abilities->status(status) : nullptr;
     if (row == nullptr || target.creature.dead) {
+        return;
+    }
+    // Stage B1: a rule whose status takes its damage from a row (ForceStatusEffectDamageTableRow with StatusEffectDamageTableRowOverride:
+    // Flame Arrow, Common_DamageOverTime_Override, DmgCoef 1): the status goes through the one status path of a creature (its icon at the
+    // name plate for each observer, its time, a later end at a new application), and each tick does HealthModifierDamageBased of the
+    // status row (the burn: 0.08, Fire) times the potency times the damage of that row with the weapon of the hit before the defense (a
+    // decision of an agent: the weapon damage with the attributes and the level, no part of the gear). The direct hit gives it only: the
+    // DamageTableRow of the rule (Bow_ExplosionShot_Projectile) is the condition.
+    if (rule.cells->number("ForceStatusEffectDamageTableRow") != 0.0F) {
+        const float based = -row->cells.number("HealthModifierDamageBased");
+        const std::string_view forced = rule.cells->text("StatusEffectDamageTableRowOverride");
+        const gamedata::CombatTables* tables = m_world.combat().tables();
+        const std::optional<std::uint32_t> index = tables != nullptr && !forced.empty() ? tables->row_index(forced) : std::nullopt;
+        StatusDamage damage;
+        if (based > 0.0F && index && hit.weapon != nullptr) {
+            const Damage base = m_world.combat().damage(attacker, *hit.weapon, hit.gearScore, tables->damage_row(*index), nullptr);
+            damage.amount = based * rule.potency * base.raw;
+            damage.type = std::string(row->cells.text("DamageType"));
+            damage.charge = row->cells.number("SourceRuneChargeOnTick");
+        }
+        if (m_world.creatures().give_status(target, *row, attacker.id, std::nullopt, damage.amount > 0.0F ? &damage : nullptr)) {
+            ++m_counts.targetStatuses;
+            log::write("world: rule %s gives %s to creature %016llx: %.1f %s damage each tick", rule.id.c_str(), row->id.c_str(),
+                       static_cast<unsigned long long>(target.id), static_cast<double>(damage.amount), damage.type.c_str());
+        }
         return;
     }
     // A rend, a damage over time, or a chain: the rules of a perk status (stage 1.3b); each other status through the creature
@@ -1259,6 +1312,29 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
     // 2. A node with no cell of an effect: the action data tests it (a rule of an action: Meteoric Crater has the marks OnHit and
     // InAction and no effect), the data of the actions uses it, or it has no effect of its own.
     if (!hasEffect && unknown.empty()) {
+        // Stage B1: a cast of the fragment of an ability action of the projectile data with a condition on the node (Contained
+        // Detonation: the cast of Spell_Ability_Bow_Explosive_Upgrade in Ability_Bow_ExplosiveArrow), for an ability with a plan.
+        if (const gamedata::ProjectileData* projectiles = m_world.options().projectileData;
+            projectiles != nullptr && projectiles->loaded()) {
+            const auto names = [&](const std::vector<std::string>& nodes) {
+                return std::any_of(nodes.begin(), nodes.end(), [&](const std::string& node) { return same_text(node, id); });
+            };
+            // The cast that needs the node first (its spell is the change of the node); a cast that only forbids it is the base.
+            for (const bool needed : {true, false}) {
+                for (const gamedata::AbilityActionData& action : projectiles->tables().actions) {
+                    for (const gamedata::ActionCast& cast : action.casts) {
+                        if (!view.applied && Abilities::has_plan(action.ability) && names(needed ? cast.needs : cast.forbids)) {
+                            view.applied = true;
+                            view.note = "applied: the fragment " + action.fragment + " of the action " + action.action + " casts " + cast.spell
+                                        + (needed ? " with the node" : " only with no node") + " (the projectile data)";
+                        }
+                    }
+                }
+            }
+        }
+        if (view.applied) {
+            return view;
+        }
         if (actionTested) {
             const std::vector<std::string> lists = abilities->action_lists_of(id);
             bool selects = false;
@@ -1326,6 +1402,14 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
     const auto planned_name = [&](std::string_view name) {
         if (Abilities::has_plan(name)) {
             return true;
+        }
+        // Stage B1: the action or the fragment of an ability action of the projectile data whose ability has a plan (Bow_RapidShot).
+        if (const gamedata::ProjectileData* projectiles = m_world.options().projectileData; projectiles != nullptr && projectiles->loaded()) {
+            for (const gamedata::AbilityActionData& action : projectiles->tables().actions) {
+                if (Abilities::has_plan(action.ability) && (same_text(action.action, name) || same_text(action.fragment, name))) {
+                    return true;
+                }
+            }
         }
         const gamedata::WeaponActions* weapons = m_world.combat().weapon_actions();
         if (weapons == nullptr) {

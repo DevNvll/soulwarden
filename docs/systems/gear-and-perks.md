@@ -112,6 +112,10 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
 - The cost of the rules: a hit looks at the perks of one character (55 at most), the chain at
   the position index near its target; the effects of a creature are in the creature system
   (test case IZ11 has a time limit).
+- The damage of a tick of a creature status (stage B1, `Gear::tick_damage`): the creature system gives each damage tick of a status
+  with a forced damage row (the burn of Flame Arrow) to the path of the damage of a perk (`perk_damage`, `Combat::strike_amount`: a
+  fixed amount, the defense of the creature, no reaction, the number for the source) [agent decision: one path for each damage of a
+  fixed amount].
 
 ## Commands
 

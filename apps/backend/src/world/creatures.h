@@ -226,11 +226,23 @@ struct CreatureCounts {
     std::uint64_t effectDueTaken{0};
     std::uint64_t effectsLooked{0};
     std::uint64_t effectTicks{0};
+    /** Stage B1: the ticks of a damage over time with its icon (the burn of Flame Arrow). */
+    std::uint64_t damageTicks{0};
     std::uint64_t heals{0};
     double healed{0.0};
     std::uint64_t dispelled{0};
     std::uint64_t statusesGiven{0};
     std::uint64_t statusesRefused{0};
+};
+
+/**
+ * The damage of each tick of a status on a creature (stage B1: the burn of Flame Arrow, whose rule gives the damage base of a row,
+ * ForceStatusEffectDamageTableRow): the amount of one tick, its damage type, and the rune charge of the source at a tick.
+ */
+struct StatusDamage {
+    float amount{0.0F};
+    std::string type;
+    float charge{0.0F};
 };
 
 class Creatures {
@@ -324,9 +336,11 @@ public:
      * category Buff). A row with no duration and no time is one application now (its heal, its dispel), the rule of the statuses of a
      * character.
      * @param time The time of the effect. No value: the BaseDuration of the row.
+     * @param damage Stage B1: the damage of each tick of the status (the source is the attacker). Null: none.
      * @return False: the creature took nothing (dead, on its way back, or a row with nothing for a creature).
      */
-    bool give_status(Entity& entity, const gamedata::StatusRow& row, EntityId source, std::optional<std::chrono::milliseconds> time = std::nullopt);
+    bool give_status(Entity& entity, const gamedata::StatusRow& row, EntityId source, std::optional<std::chrono::milliseconds> time = std::nullopt,
+                     const StatusDamage* damage = nullptr);
     /**
      * The heal of a creature (stage 3.4f-D, the one heal path of a creature: a tick of a heal effect): the health goes up by the amount, to
      * its maximum; each session that observes the creature gets the vitals state. A dead creature gets no heal.

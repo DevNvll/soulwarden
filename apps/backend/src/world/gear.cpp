@@ -566,6 +566,11 @@ void Gear::perk_status(Entity& attacker, Entity& target, std::string_view status
     }
 }
 
+void Gear::tick_damage(EntityId attacker, EntityId target, float amount, const std::string& type, const char* what, float charge) {
+    ++m_counts.tickHits;
+    perk_damage(attacker, target, amount, type, what, charge);
+}
+
 void Gear::perk_damage(EntityId attackerId, EntityId targetId, float amount, const std::string& type, const char* what, float charge) {
     Entity* attacker = m_world.find(attackerId);
     Entity* target = m_world.creatures().find(targetId);

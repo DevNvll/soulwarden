@@ -61,7 +61,11 @@ gearScoreRate, mastery], ...],
 "criticals": [[weapon id, critChance, critDamageMultiplier], ...],
 "hitRules": [[damage row id, canCrit, noHeadshot, noBackstab, dmgCoefHead, dmgCoefCrit], ...],
 "rowEffects": [[damage row id, [status effect, ...], effectOnlyOnDamage], ...],
-"reactions": [[damage row id, noReaction, power, hitStun, powerAI, hitStunAI], ...]}.
+"reactions": [[damage row id, noReaction, power, hitStun, powerAI, hitStunAI], ...],
+"hitRates": [[damage row id, hitRateDmgModifier, maxHitRateDmgMod], ...]}.
+`hitRates` (stage B1) has the cells HitRateDmgModifier and MaxHitRateDmgMod of each damage row whose HitRateDmgModifier is not 0: the part of
+the damage that each earlier hit of the same projectile adds, and the limit of its sum (Bow_Penetrating_AttackA1 of Blood Soaked Arrow:
+0.1 and 0.5; a negative pair makes a part that goes down: Bow_Penetrating_AttackA2). A file of a tool from before stage B1, or a damage table with no such column, has none.
 `reactions` (user test 2, UT2-9) has the reaction cells of each damage row: NoReaction (a flag), PowerLevel and HitStun (the values for a
 player target), and PowerLevel_AI and HitStun_AI (the values for a creature target; -1 for a blank cell: the target takes the normal value,
 the rule of the "_AI" impact cells). A file of a tool from before user test 2 has no member `reactions`.
@@ -316,6 +320,7 @@ def build_tables(sources: Sources) -> dict:
     reactions = []
     hit_rules = []
     row_effects = []
+    hit_rates = []
     row_ids: set[str] = set()
     # The rows of the damage table that have no damage type: a weapon can name one, and it then has no damage row.
     typeless: set[str] = set()
@@ -376,6 +381,14 @@ def build_tables(sources: Sources) -> dict:
                     raw = cell(sheet, row, "EffectOnlyOnDamage") if "EffectOnlyOnDamage" in sheet.columns else None
                     only = bool(raw) if isinstance(raw, (int, float)) else str(raw or "").strip().lower() in ("1", "true")
                     row_effects.append([name, effects, only])
+            # The hit rate cells (stage B1): a part for each earlier hit of the same projectile (a pierce), and its largest sum.
+            if "HitRateDmgModifier" in sheet.columns:
+                rate = rounded(number(sheet, row, "HitRateDmgModifier"))
+                most = rounded(number(sheet, row, "MaxHitRateDmgMod")) if "MaxHitRateDmgMod" in sheet.columns else 0.0
+                # A negative pair is a part that goes down for each earlier hit (Bow_Penetrating_AttackA2: the data has -0.1 and -0.5).
+                # A rate of 0 adds nothing (many rows have only the limit 10).
+                if rate != 0.0:
+                    hit_rates.append([name, rate, most])
     if not damage_rows:
         raise Failure(f"the game copy has no damage table with the name {DAMAGE_TABLE}")
 
@@ -525,7 +538,7 @@ def build_tables(sources: Sources) -> dict:
     return {"format": 3, "constants": constants, "damageTypes": damage_types, "attributes": attributes,
             "damageRows": damage_rows, "weapons": weapons, "items": items, "defenses": defenses, "vitals": vitals,
             "armor": armor, "levelDamage": sorted(level_damage), "impacts": impacts, "criticals": criticals,
-            "hitRules": hit_rules, "rowEffects": row_effects, "reactions": reactions}
+            "hitRules": hit_rules, "rowEffects": row_effects, "reactions": reactions, "hitRates": hit_rates}
 
 
 def print_found(tables: dict, texts: list[str]) -> None:

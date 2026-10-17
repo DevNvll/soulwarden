@@ -240,6 +240,14 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   dark screen, and the character moves away by itself). Give a Z on the ground or above it, or
   a place that a run before used.
 - `'move X Y'` and `'click X Y'` do not turn the camera. Use `'look DX DY'`.
+- A `gamescopectl screenshot` while a capture loop runs can give no file (stage B1): take the picture from a frame of the loop
+  (`ffmpeg -i FRAME -vf crop=W:H:X:Y,scale=...`) before you delete the frames, and choose the frame by its time as a number (the
+  name of a frame has the extension: compare the number, not the text).
+- `tools/world travel` turns the camera of the character to the north (also a move of 1 m). Turn it again before an aim.
+- A long free line for a test of a range: `tools/world path X0 Y0 Z0 X1 Y1 Z1` says "2 corners, ... a straight line that is free"
+  for a line with no wall of the navigation data. The streets of a settlement have no free line of 50 m; a field near a spirit
+  shrine can have one (stage B1: near `shrine_40297`, to the west). Grass hides a creature at 45 m: the damage number and the log
+  show the hit.
 - A `look` during a capture loop can give frames from two camera directions, one after the other (stage 3.3b-S2b, the
   trap video). Turn the camera before the capture, take two pictures to see that the view is stable, then capture.
 - The camera does not turn by a constant angle for one large pointer movement: 900 units in

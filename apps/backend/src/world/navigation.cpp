@@ -725,6 +725,33 @@ bool Navigation::walk_line(const Place& from, const Place& to) const {
     return next.floor == to.floor;
 }
 
+bool Navigation::walk_segment(const Place& start, const state::WorldPosition& from, const state::WorldPosition& to, const Place& end) const {
+    const float way = horizontal_distance(from, to);
+    const float cell = m_agent.cell;
+    Place at = start;
+    const auto samples = static_cast<std::int32_t>(std::ceil(way / (cell * 0.5F)));
+    for (std::int32_t index = 1; index <= samples; ++index) {
+        const float part = std::min(static_cast<float>(index) * cell * 0.5F / way, 1.0F);
+        const auto cellX = static_cast<std::int32_t>(std::floor((from.x + (to.x - from.x) * part) / cell));
+        const auto cellY = static_cast<std::int32_t>(std::floor((from.y + (to.y - from.y) * part) / cell));
+        if (cellX == at.x && cellY == at.y) {
+            continue;
+        }
+        if (cellX != at.x && cellY != at.y) {
+            Place side;
+            if (!step_to(cellX, at.y, at.height, side) || !step_to(at.x, cellY, at.height, side)) {
+                return false;
+            }
+        }
+        Place next;
+        if (!step_to(cellX, cellY, at.height, next)) {
+            return false;
+        }
+        at = next;
+    }
+    return at.x == end.x && at.y == end.y && at.floor == end.floor;
+}
+
 bool Navigation::sees(const state::WorldPosition& eye, const state::WorldPosition& target) const {
     ++m_counts.sightTests;
     if (!has_data() || !usable(eye) || !usable(target)) {
@@ -1112,8 +1139,10 @@ NavStep Navigation::next_step(EntityId mover,
             bool free = false;
             for (const std::size_t index : {route.corner > route.reached ? route.corner : route.reached + 1, route.reached + 1}) {
                 Place there;
+                // The real segment from the new place (code review of stage B0, finding B0-R1: the line between the centers of the
+                // cells of the place and of the corner was free, and the line from the pushed creature went through a wall).
                 if (index <= last && step_to(route.cells[index].x, route.cells[index].y, route.cells[index].height, there)
-                    && walk_line(*start, there)) {
+                    && walk_line(*start, there) && walk_segment(*start, from, center_of(route.cells[index]), there)) {
                     route.corner = index;
                     free = true;
                     break;
@@ -1171,7 +1200,10 @@ NavStep Navigation::next_step(EntityId mover,
                 } else {
                     no_way();
                 }
-            } else if (walk_line(*start, *end)) {
+            } else if (walk_line(*start, *end) && walk_segment(*start, from, center_of(PathCell{end->x, end->y, end->height}), *end)) {
+                // The direct path needs the real segment from the place of the creature too, not only the line between the centers of
+                // the cells (code review of stage B0, finding B0-R1: the place after a push was 0.1 m from the center of its cell, and
+                // the line from there went over the corner of a wall). Else the search makes a path of cells.
                 route.cells = {PathCell{start->x, start->y, start->height}, PathCell{end->x, end->y, end->height}};
                 route.reached = 0;
                 route.corner = 0;
@@ -1226,6 +1258,9 @@ NavStep Navigation::follow(Route& route, const state::WorldPosition& from, float
             route.corner = route.reached + 1;
             Place here;
             if (step_to(route.cells[route.reached].x, route.cells[route.reached].y, route.cells[route.reached].height, here)) {
+                // A creature away from the center of its cell (the first step of a new path) goes on the real segment from its place: the
+                // corner needs that segment free too (finding B0-R1). From the center the two lines are the same.
+                const bool offCenter = horizontal_distance(position, center_of(route.cells[route.reached])) > 1.0e-3F;
                 static constexpr std::size_t kAhead[] = {96, 48, 24, 12, 6, 3, 2};
                 std::size_t tried = 0;
                 for (const std::size_t ahead : kAhead) {
@@ -1235,7 +1270,8 @@ NavStep Navigation::follow(Route& route, const state::WorldPosition& from, float
                         continue;
                     }
                     tried = index;
-                    if (step_to(route.cells[index].x, route.cells[index].y, route.cells[index].height, there) && walk_line(here, there)) {
+                    if (step_to(route.cells[index].x, route.cells[index].y, route.cells[index].height, there) && walk_line(here, there)
+                        && (!offCenter || walk_segment(here, position, center_of(route.cells[index]), there))) {
                         route.corner = index;
                         break;
                     }

@@ -157,6 +157,18 @@ inline constexpr float kFacingMove = 0.3F;
  * within this angle (cosine), gets the shapes of the pull on the line to it. A decision of an agent.
  */
 inline constexpr float kHomingTurnCosine = 0.5F;
+/**
+ * The aim of Penetrating Shot (stage B1) keeps this long with no shot (a decision of an agent: the client kept its aim for 58 s in the live
+ * check of the stage and showed no limit; the shot item of its shoot action is the confirm, and the client sends it only from its aim, thus a
+ * long keep cannot confirm a wrong cast; the limit bounds a value of a character that has no end event that the server sees).
+ */
+inline constexpr std::chrono::milliseconds kShotAimKeep{600000};
+/**
+ * A shot item of a cast of a ranged ability (stage B1) comes this much before the time of its clip on the world clock at most (the time of
+ * the clip in the fragment, from the start of the fragment): the tolerance of the contact phases (kPhaseEarly, code review of stage 3.3a,
+ * finding F1). Live check of stage B1: the client sent the arrows of Rapid Shot one input step before the times of the data.
+ */
+inline constexpr std::chrono::milliseconds kShotEarly{250};
 } // namespace ability_rules
 
 /** The abilities that this backend has (the build of stage 3.3a): the great axe and the war hammer. */
@@ -187,6 +199,15 @@ enum class AbilityKind : std::uint8_t {
     mightyGavel,
     armorBreaker,
     clearOut,
+    /**
+     * Stage B1: the abilities of the bow of the build of the user. Their shots are the shot items of the client for the clips and the
+     * spell casts of the fragment of their action (the ability actions of the projectile data, format 2): Penetrating Shot (an aim, then
+     * one arrow that passes through creatures), Explosive Arrow (a projectile spell whose collision makes the explosion), Rapid Shot
+     * (three arrows of one cast: a volley).
+     */
+    penetratingShot,
+    explosiveArrow,
+    rapidShot,
 };
 
 /** @return The English name of an ability, for a log line ("Wrecking Ball"). */
@@ -258,6 +279,38 @@ struct AbilityShot {
     state::WorldPosition origin;
     /** The direction of the projectile (a unit vector). */
     std::array<float, 3> direction{};
+    /** Stage B1: the value "row" of the item (the CRC-32 of the lower-case damage row of a clip; 0 for a spell), and the lock of the session. */
+    std::uint32_t row{0};
+    bool locked{false};
+};
+
+/**
+ * One shot of a cast of a ranged ability (stage B1): a ranged clip or a projectile spell cast of the fragment of its action (game data:
+ * the ability actions of the projectile data). The shot item of the client with its attack (and the row of a clip) is the shot; a cast
+ * with no client gets its shots from the server at their times.
+ */
+struct ShotPlan {
+    /** The time of the clip or of the cast in the fragment (from the start of the fragment). */
+    std::chrono::milliseconds at{0};
+    /** The ranged attack name ("TripleShot"): the shot item has the CRC-32 of its lower-case text. */
+    std::string attack;
+    /** The damage row of the clip in the data (the shot item has its CRC-32), and the row of the damage (a node override: Blood Soaked). */
+    std::string clipRow;
+    std::string row;
+    /** A projectile spell of the fragment (Explosive Arrow: Spell_Ability_Bow_Explosive_Base or _Upgrade). Empty: a ranged clip. */
+    std::string spell;
+};
+
+/** The shots of a cast of a ranged ability (stage B1). */
+struct VolleyPlan {
+    std::vector<ShotPlan> shots;
+    /** The arrow passes through creatures (Penetrating Shot). */
+    bool pierce{false};
+    /**
+     * The collision of the projectile makes the area of its SecondarySpellID (SpawnSecondaryOnCollision of the spell row: Explosive Arrow)
+     * at the point of the collision: the burst phase of the plan, with the damage row of the offense of the slice of that spell.
+     */
+    bool explode{false};
 };
 
 /** The kind of a phase of a cast. */
@@ -307,6 +360,13 @@ struct PhasePlan {
     bool cooldownPerHit{false};
     /** Gravity Well with Crowded Well: the burst does more for each creature in the vortex. */
     bool crowded{false};
+    /**
+     * Stage B1: the area takes each creature whose body (the capsule of its character, world::capsule_of) reaches into its sphere, not only a
+     * creature whose place is in it: the explosion of Explosive Arrow at the point of its collision with the surface of a capsule (the
+     * offense volume of the slice meets the hit volumes of the body; live check of the stage: the explosion at the surface of a wolf
+     * capsule of 0.7 m was 1.6 m from the place of the wolf).
+     */
+    bool bodies{false};
     /**
      * A damage row whose impact (and no damage) the phase gives to each creature of its area (stage 3.3b-S4): the pull of
      * the vortex of Gravity Well (the child entity VortexPull of its slice: the row GreatAxe_GravityWell_Vortex, damage
@@ -425,6 +485,20 @@ struct CastPlan {
      * no client casts at once.
      */
     bool aimed{false};
+    /**
+     * Stage B1: the action of the ability in the ability action list of the weapon ("Bow_RapidShot"; the condition InAction of a row), and
+     * its data (the projectile data of format 2: the fragment, its clips, its casts, its transitions to the abilities). The press resolves
+     * them; with no data the press is refused (no rule).
+     */
+    std::string action;
+    const gamedata::AbilityActionData* actionData{nullptr};
+    /** Stage B1: the shots of the cast. No value: none (a plan of an earlier stage). */
+    std::optional<VolleyPlan> volley;
+    /**
+     * Stage B1 (Penetrating Shot): the shot item of the client confirms the aim (the action Bow_Penetrating_Shoot: a click or a second key in
+     * the aim; live check of the stage), not a click alone. The cast, its cooldown, and its shot start at the item.
+     */
+    bool shotConfirm{false};
 };
 
 /** A phase of a cast that a contact of a client fits (Combat::claim). */
@@ -485,6 +559,16 @@ struct AbilityCounts {
     std::uint64_t delayedStarts{0};
     std::uint64_t fragmentSpells{0};
     std::uint64_t ruleSpells{0};
+    /**
+     * Stage B1: the shots of the volleys that flew (the shot items of the client and the shots of the server for a character with no
+     * client), the shot items that a volley did not take (too early, a repeated input, a different attack), the aims that a shot item
+     * confirmed, the explosions of a collision, and the presses that a window of a bow fragment started later (a buffered window).
+     */
+    std::uint64_t volleyShots{0};
+    std::uint64_t volleyRefused{0};
+    std::uint64_t shotConfirms{0};
+    std::uint64_t explosions{0};
+    std::uint64_t windowDelays{0};
 };
 
 /** The check of a strike of a cast (Combat::claim_strike, stage 3.3b-M2). */
@@ -534,9 +618,11 @@ public:
     /**
      * @return True when the cast of the character of a session waits for a shot item with this attack (the CRC-32 of the lower-case
      *         ranged attack name): Gravity Well ("gravitywell"), the trap ("traps"), the Beacon ("heavy"; stage 3.3b-S2b). The
-     *         session then gives the item to `shot`, not to the projectile system of the basic attacks.
+     *         session then gives the item to `shot`, not to the projectile system of the basic attacks. Stage B1: also a shot of the
+     *         volley of a cast of a ranged ability (the attack and the row of a clip of its fragment, at its time, a new input), and the
+     *         shot item that confirms the aim of Penetrating Shot. @param row The value "row" of the item. @param input Its input number.
      */
-    [[nodiscard]] bool takes_shot(SessionId session, std::uint32_t attack) const;
+    [[nodiscard]] bool takes_shot(SessionId session, std::uint32_t attack, std::uint32_t row = 0, std::uint16_t input = 0);
 
     /**
      * @return The contact phase of the cast of a character that a contact of this input number
@@ -749,6 +835,9 @@ private:
         std::set<EntityId> struck;
         /** Stage 3.3b-S6: the self cast confirm of an aimed heal (the caster is the target). */
         bool self{false};
+        /** Stage B1: the shots of the volley that flew, and the input number of the last shot item that the volley took. */
+        std::size_t shotsTaken{0};
+        std::optional<std::uint16_t> lastShotInput;
     };
     /** The aim of an aimed ability (stage 3.3b-S6): the press that started it. */
     struct Aim {
@@ -756,6 +845,10 @@ private:
         SessionId session{0};
         std::uint32_t ability{0};
         WorldClock::time_point started{};
+        /** Stage B1 (Penetrating Shot): the shot item with this attack (the CRC-32 of its lower-case name) confirms the aim, not a click. */
+        bool byShot{false};
+        std::uint32_t shotAttack{0};
+        std::uint32_t shotRow{0};
     };
     /** The values of one character: its cooldowns, its cast, and its aim. */
     struct CharacterState {
@@ -788,6 +881,21 @@ private:
     void spawn_summon(std::uint64_t cast);
     /** The direct heal of a cast at its time (stage 3.3b-S6, Divine Embrace): the target, the payment, the statuses. */
     void cast_heal(std::uint64_t cast);
+    /**
+     * Stage B1: the shots of a plan with a volley from the ability action of the projectile data (the clips and the casts of the fragment
+     * for the nodes of the character, a node override of a row, the explosion row of the slice), and the length of the cast (the last
+     * transition to an ability at once). @return False with the missing part in `missing`.
+     */
+    [[nodiscard]] bool resolve_volley(CastPlan& plan, const Entity& character, std::string& missing) const;
+    /** Stage B1: the index of the shot of a volley cast that a shot item fits now (its attack, its row, its time, a new input), or none. */
+    [[nodiscard]] std::optional<std::size_t> volley_next(const Cast& cast, std::uint32_t attack, std::uint32_t row, std::uint16_t input) const;
+    /** Stage B1: the cast of a session that waits for a shot of its volley with this attack and row now, or null. */
+    [[nodiscard]] Cast* volley_cast(SessionId session, const std::string& characterId, std::uint32_t attack, std::uint32_t row, std::uint16_t input,
+                                    std::size_t* index);
+    /** Stage B1: one shot of a volley flies (Projectiles::launch_spell): a clip, a pierce, or a projectile spell whose collision explodes. */
+    void volley_shot(Cast& cast, std::size_t index, const state::WorldPosition& origin, const std::array<float, 3>& direction);
+    /** Stage B1: the projectile of a volley that explodes ended: at a collision (a creature, a wall, the ground) the explosion entity. */
+    void volley_landed(std::uint64_t cast, const SpellLanding& landing);
     /** @return The source of the heals of a cast (stage 3.3b-S6): the caster, its heal base with the weapon of the cast, the row of the spell. */
     [[nodiscard]] HealSource heal_source(const Cast& cast, const Entity& caster, std::string_view spell) const;
     /**

@@ -13,7 +13,8 @@ namespace {
 
 using nlohmann::json;
 
-constexpr std::uint64_t kFormat = 1;
+/** The formats that the loader reads: 1, and 2 with the ability actions (stage B1). */
+constexpr std::uint64_t kFormat = 2;
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -109,6 +110,60 @@ bool read_shot(const json& row, ShotRule& shot) {
            && whole_of(row[8], shot.ammoSlot) && flag_of(row[9], shot.consume) && (row.size() == 10 || flag_of(row[10], shot.ability));
 }
 
+bool texts_of(const json& value, std::vector<std::string>& out) {
+    if (!value.is_array()) {
+        return false;
+    }
+    for (const json& entry : value) {
+        if (!text_of(entry, out.emplace_back())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool time_of(const json& value, float& out) {
+    return number_of(value, out) && out >= 0.0F;
+}
+
+bool read_action(const json& row, AbilityActionData& action) {
+    // [action, ability, fragment, tags, canTransition or null, clips, casts, transitions] (stage B1).
+    if (!row.is_array() || row.size() != 8 || !text_of(row[0], action.action) || !text_of(row[1], action.ability)
+        || !text_of(row[2], action.fragment) || !text_of(row[3], action.tags) || action.action.empty() || action.ability.empty()) {
+        return false;
+    }
+    if (!row[4].is_null() && !time_of(row[4], action.canTransition)) {
+        return false;
+    }
+    if (!row[5].is_array() || !row[6].is_array() || !row[7].is_array()) {
+        return false;
+    }
+    for (const json& entry : row[5]) {
+        ActionClip& clip = action.clips.emplace_back();
+        if (!entry.is_array() || entry.size() != 5 || !time_of(entry[0], clip.time) || !text_of(entry[1], clip.attack)
+            || !text_of(entry[2], clip.row) || !time_of(entry[3], clip.charge) || !flag_of(entry[4], clip.consume) || clip.row.empty()) {
+            return false;
+        }
+    }
+    for (const json& entry : row[6]) {
+        ActionCast& cast = action.casts.emplace_back();
+        if (!entry.is_array() || entry.size() != 4 || !time_of(entry[0], cast.time) || !text_of(entry[1], cast.spell) || cast.spell.empty()
+            || !texts_of(entry[2], cast.needs) || !texts_of(entry[3], cast.forbids)) {
+            return false;
+        }
+    }
+    for (const json& entry : row[7]) {
+        ActionTransition& transition = action.transitions.emplace_back();
+        std::string kind;
+        if (!entry.is_array() || entry.size() != 3 || !text_of(entry[0], transition.ability) || !text_of(entry[1], kind)
+            || (kind != "buffered" && kind != "instant") || !time_of(entry[2], transition.time)) {
+            return false;
+        }
+        transition.buffered = kind == "buffered";
+    }
+    return true;
+}
+
 template <typename Row, typename Read>
 bool read_list(const json& document, const char* name, std::vector<Row>& out, Read read, std::string& error) {
     if (!document.contains(name) || !document[name].is_array()) {
@@ -138,14 +193,19 @@ bool ProjectileData::load(const std::string& path) {
     }
     const json document = json::parse(input, nullptr, false);
     if (!document.is_object() || !document.contains("format") || !document["format"].is_number_unsigned()
-        || document["format"].get<std::uint64_t>() != kFormat) {
-        m_error = "the file is not a JSON object of the format 1";
+        || document["format"].get<std::uint64_t>() < 1 || document["format"].get<std::uint64_t>() > kFormat) {
+        m_error = "the file is not a JSON object of the format 1 or 2";
         return false;
     }
+    const std::uint64_t format = document["format"].get<std::uint64_t>();
     ProjectileTables tables;
     if (!read_list(document, "attacks", tables.attacks, read_attack, m_error) || !read_list(document, "slices", tables.slices, read_slice, m_error)
         || !read_list(document, "ammo", tables.ammo, read_ammo, m_error) || !read_list(document, "weapons", tables.weapons, read_weapon, m_error)
         || !read_list(document, "shots", tables.shots, read_shot, m_error)) {
+        return false;
+    }
+    // Format 2 (stage B1): the ability actions are a part of the file. A file of format 2 with no such list is not complete.
+    if (format >= 2 && !read_list(document, "abilityActions", tables.actions, read_action, m_error)) {
         return false;
     }
     if (document.contains("counts")) {
@@ -154,7 +214,8 @@ bool ProjectileData::load(const std::string& path) {
             return counts.is_object() && counts.contains(name) && counts[name].is_number_unsigned() && counts[name].get<std::uint64_t>() == size;
         };
         if (!count("attacks", tables.attacks.size()) || !count("slices", tables.slices.size()) || !count("ammo", tables.ammo.size())
-            || !count("weapons", tables.weapons.size()) || !count("shots", tables.shots.size())) {
+            || !count("weapons", tables.weapons.size()) || !count("shots", tables.shots.size())
+            || (format >= 2 && !count("abilityActions", tables.actions.size()))) {
             m_error = "a list does not have the count of the file";
             return false;
         }
@@ -212,8 +273,41 @@ bool ProjectileData::set(ProjectileTables tables) {
     for (const ShotRule& shot : tables.shots) {
         if (error.empty() && (!attacks.contains(attack_key(shot.profile, progression_id(shot.attack))) || shot.row.empty()
                               || !in_slices(shot.slice) || !std::isfinite(shot.charge) || shot.charge < 0.0F
-                              || (shot.ability && (shot.slice < 0 || shot.spell.empty())))) {
+                              // A projectile spell of an ability has its own slice; a ranged clip of an ability fragment (stage B1, no
+                              // spell) has the slice of its ammunition (-1) or of its SliceOverride.
+                              || (shot.ability && !shot.spell.empty() && shot.slice < 0))) {
             error = "the shot " + shot.profile + "/" + shot.attack + " (" + shot.row + ") has an attack, a row, or a slice that is not correct";
+        }
+    }
+    // The ability actions (stage B1): one entry for each action name, and each ranged clip is a clip shot of the data.
+    std::unordered_map<std::string, std::size_t> actionNames;
+    for (std::size_t index = 0; index < tables.actions.size() && error.empty(); ++index) {
+        const AbilityActionData& action = tables.actions[index];
+        if (!actionNames.emplace(lower_ascii(action.action), index).second) {
+            error = "two ability actions have the name " + action.action;
+        }
+        for (const ActionClip& clip : action.clips) {
+            const bool shot = std::any_of(tables.shots.begin(), tables.shots.end(), [&](const ShotRule& rule) {
+                return rule.ability && rule.spell.empty() && progression_id(rule.attack) == progression_id(clip.attack)
+                       && progression_id(rule.row) == progression_id(clip.row);
+            });
+            if (error.empty() && !shot) {
+                error = "the clip " + clip.attack + " (" + clip.row + ") of the ability action " + action.action + " is not a shot of the file";
+            }
+        }
+    }
+    // An ability shot with no spell is a clip of an ability action of the file (stage B1); a file with no such action (format 1) has none.
+    for (const ShotRule& shot : tables.shots) {
+        if (!error.empty() || !shot.ability || !shot.spell.empty()) {
+            continue;
+        }
+        const bool named = std::any_of(tables.actions.begin(), tables.actions.end(), [&](const AbilityActionData& action) {
+            return std::any_of(action.clips.begin(), action.clips.end(), [&](const ActionClip& clip) {
+                return progression_id(clip.attack) == progression_id(shot.attack) && progression_id(clip.row) == progression_id(shot.row);
+            });
+        });
+        if (!named) {
+            error = "the ability shot " + shot.profile + "/" + shot.attack + " (" + shot.row + ") has no spell and is no clip of an ability action";
         }
     }
     if (!error.empty()) {
@@ -253,8 +347,29 @@ std::vector<const ShotRule*> ProjectileData::shots(std::string_view profile, std
 const ShotRule* ProjectileData::ability_shot(std::string_view spellId) const {
     const std::string wanted = lower_ascii(spellId);
     for (const ShotRule& shot : m_tables.shots) {
-        if (shot.ability && lower_ascii(shot.spell) == wanted) {
+        if (shot.ability && !shot.spell.empty() && lower_ascii(shot.spell) == wanted) {
             return &shot;
+        }
+    }
+    return nullptr;
+}
+
+const ShotRule* ProjectileData::ability_clip(std::string_view profile, std::uint32_t attackId, std::uint32_t rowId) const {
+    const std::string wanted = lower_ascii(profile);
+    for (const ShotRule& shot : m_tables.shots) {
+        if (shot.ability && shot.spell.empty() && lower_ascii(shot.profile) == wanted && progression_id(shot.attack) == attackId
+            && progression_id(shot.row) == rowId) {
+            return &shot;
+        }
+    }
+    return nullptr;
+}
+
+const AbilityActionData* ProjectileData::action(std::string_view name) const {
+    const std::string wanted = lower_ascii(name);
+    for (const AbilityActionData& entry : m_tables.actions) {
+        if (lower_ascii(entry.action) == wanted) {
+            return &entry;
         }
     }
     return nullptr;

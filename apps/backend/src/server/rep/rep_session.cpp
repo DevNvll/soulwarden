@@ -1617,13 +1617,16 @@ void RepSession::interaction_cancelled() {
 }
 
 void RepSession::shoot(const InputStep& step, const InputShot& item, std::uint32_t ordinal) {
-    if (m_world.abilities().takes_shot(m_id, item.attack)) {
-        // The projectile of an ability of its character (Gravity Well, stage 3.3a; the trap and the Beacon, stage 3.3b-S2b): the
-        // abilities system. The cast waits for a shot item with the attack of its projectile.
+    if (m_world.abilities().takes_shot(m_id, item.attack, item.row, step.sequence)) {
+        // The projectile of an ability of its character (Gravity Well, stage 3.3a; the trap and the Beacon, stage 3.3b-S2b; the shots of the
+        // bow abilities and the confirm of the aim of Penetrating Shot, stage B1): the abilities system. The cast waits for a shot item with
+        // the attack (and the row of a clip) of its projectile.
         world::AbilityShot shot;
         shot.input = step.sequence;
         shot.sequence = m_attack.sequence();
         shot.attack = item.attack;
+        shot.row = item.row;
+        shot.locked = m_travelAnchor.has_value();
         shot.origin = state::WorldPosition{item.origin[0], item.origin[1], item.origin[2]};
         shot.direction = item.direction;
         m_world.abilities().shot(m_id, shot);

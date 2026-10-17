@@ -369,7 +369,9 @@ button on "Confirm").
   the catalog line of an item id. From stage B0 (format 3) the catalog also has the upgrade limit of each item (MaxCraftUpgradeGS:
   800 for the artifacts; a give of an artifact takes a gear score up to 800) and the objective of each artifact with its
   achievement (the build preset gives it). With a catalog of an earlier format an artifact has 700 at most, and the build preset
-  `bow-boltcaster` is disabled.
+  `bow-boltcaster` is disabled. A file of format 3 must have the member of the objectives; an objective with an achievement bit
+  at or above the limit of the client, two bits of one achievement, two achievements of one bit, or two objectives of one item
+  does not load (code review of stage B0). A preset with an artifact whose objective the catalog does not have is disabled.
 - `tools/gamedata/progression.sh` makes the progression tables
   (`~/.local/share/soulwarden/gamedata/progression-tables.json`): the experience, the attribute
   points, and the health of each level, the health of each value of the constitution, the
@@ -484,7 +486,9 @@ button on "Confirm").
   row with an impact distance (the member `impacts`, 234 rows: the pull and the push of a hit,
   protocol notes 4.26; with a file from before, a hit moves no creature: run the tool again), and, from user test 2, the
   reaction cells of each damage row (the member `reactions`: NoReaction, PowerLevel, HitStun, PowerLevel_AI, HitStun_AI; with a
-  file from before, each hit plays the reaction of stage 3.2a and pushes for 1.5 s).
+  file from before, each hit plays the reaction of stage 3.2a and pushes for 1.5 s), and, from stage B1, the hit rate cells of each
+  damage row whose HitRateDmgModifier is not 0 (the member `hitRates`: the part that each earlier hit of the same arrow adds, and its
+  limit; Blood Soaked Arrow: 0.1 and 0.5; with a file from before, Blood Soaked Arrow adds nothing).
   It reads the data tables and the base
   attributes file of the game copy, from the same sources as the creature data tool.
   `tools/gamedata/combat.sh --find TEXT` prints the weapons and the creatures with a text.
@@ -554,7 +558,10 @@ button on "Confirm").
   a shot hits each creature with one size. From stage 3.3b-S2b the file also has the projectile
   spells of the abilities (the shot of the Ice Pylon, the toss of the musket trap, the Beacon):
   with an older file the trap and the Beacon do nothing, and the Pylon does not shoot. The tool
-  stops (and keeps the file that is there) when a source that a shot needs is not there.
+  stops (and keeps the file that is there) when a source that a shot needs is not there. From stage B1 (format 2) the file also
+  has the ability actions of the bow (`playeractions_ability_bow`, `player_bow.adb`): the clips and the spell casts of the fragment
+  of Penetrating Shot, Explosive Arrow, and Rapid Shot with their times and node conditions, and the windows of each fragment for a
+  different ability. With a file of format 1 the backend refuses the keys of these three abilities (the load line says it).
 - `tools/gamedata/spells.sh` makes the spell entity data
   (`~/.local/share/soulwarden/gamedata/spell-data.json`, 1.6 MB, stage 3.3b-S2a): for each spell
   row with a prefab slice, the slice asset, the slots of its replicated components, its
@@ -885,6 +892,22 @@ button on "Confirm").
   Mauler's Stamina (40 stamina at a hit below half health).
   `tools/gamedata/weapon-actions.sh`, `combat.sh`, `spells.sh`, and `abilities.sh` must make
   their files again for this stage.
+- The bow abilities (stage B1, protocol notes 4.46, `docs/systems/abilities.md`). With the projectile data of format 2, the
+  spell data, and the ability data, the keys Q, R, and F of the bow bar use Penetrating Shot, Explosive Arrow, and Rapid Shot.
+  Penetrating Shot: the key starts the aim (no cooldown yet); a click or the key again shoots the arrow, and the cooldown of 18 s
+  starts. The arrow passes through each creature on its line in the order of the line, one hit for each creature, to 50 m (the
+  range of the game data; the text of the game says 100 m); a wall or the ground stops it. Blood Soaked Arrow uses the row A1:
+  each earlier hit of the arrow adds 0.1 to the damage part, to 0.5. Explosive Arrow (22 s): the arrow comes 0.47 s after the
+  key; its first creature takes the direct row (0.5), and the collision (a creature, a wall, the ground; not the end of the
+  range) makes the fire burst of the game at that place: each creature whose body reaches into 2.5 m takes 1.35 (with Contained
+  Detonation: 1.25 m and 1.7). Flame Arrow gives the burn (10 s, a tick each 1 s, 0.08 of the damage of its row) only to the
+  creature of the direct hit, with the burn icon at its name plate for each player near it. Rapid Shot (14 s): three arrows at
+  0.33 s, 0.87 s, and 1.73 s (1.0, 1.0, 1.25); Final Blow adds 0.25 to the third; Rapid Accuracy halves the cooldown when the three
+  arrows of one cast hit one creature (two casts do not add). A key of a different bow ability in a bow ability is not played
+  before the window of the game data, and in the buffered window it starts at the instant transition (its cooldown then). For a
+  character with no client (`tools/world cast`) the server shoots the arrows; Penetrating Shot then shoots at once. The abilities
+  use no arrows and no mana. Not yet: the charged shots A1 and A2 of Penetrating Shot (no rule of the game data starts them), the
+  arrow of another player (others see the hit, the burst, and the burn icon), and the other bow abilities.
 - Spell abilities (stage 3.3b-S2b, protocol notes 4.28, `docs/systems/spells.md`). With the
   spell data and the projectile data of this stage, the key Q uses Ice Pylon of the ice
   gauntlet, Traps of the musket, and Beacon of the life staff when they are on the bar. The

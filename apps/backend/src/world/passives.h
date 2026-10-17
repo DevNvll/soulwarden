@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -196,6 +197,11 @@ private:
         std::set<std::pair<std::string, std::uint64_t>> fired;
         /** Rule to the consecutive hits and the last attack. */
         std::map<std::string, std::pair<std::uint32_t, std::uint64_t>> consecutive;
+        /**
+         * Stage B1: (rule, volley, target) to the attacks of the volley that hit the target (the arrows of one cast of Rapid Shot: decision
+         * D11), and the time of the last one.
+         */
+        std::map<std::tuple<std::string, std::uint64_t, EntityId>, std::pair<std::set<std::uint64_t>, WorldClock::time_point>> volleyHits;
         /** The rules near the character whose status it has now. */
         std::set<std::string> around;
         WorldClock::time_point nextAround{};

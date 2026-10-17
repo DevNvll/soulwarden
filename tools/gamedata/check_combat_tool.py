@@ -109,8 +109,12 @@ class MadeUpSources:
         # The critical, head, and behind cells (stage 3.3b-S5).
         hit_cells = {"CanCrit": False, "NoHeadshot": False, "NoBackstab": False, "DmgCoefHead": 1.3, "DmgCoefCrit": 0.0}
         # The reaction cells (user test 2): the light row has the values for a creature, the heavy row NoReaction and blank "_AI" cells.
-        light_reaction = {"NoReaction": False, "PowerLevel": 0.0, "HitStun": 15.0, "PowerLevel_AI": 2.0, "HitStun_AI": 23.0}
-        heavy_reaction = {"NoReaction": True, "PowerLevel": 0.0, "HitStun": 25.0, "PowerLevel_AI": None, "HitStun_AI": None}
+        light_reaction = {"NoReaction": False, "PowerLevel": 0.0, "HitStun": 15.0, "PowerLevel_AI": 2.0, "HitStun_AI": 23.0,
+                          # The hit rate cells (stage B1): the light row adds 0.1 for each earlier hit, at most 0.5; the heavy row has
+                          # the rate 0 (only the limit 10, as many rows of the game): it is not in the list.
+                          "HitRateDmgModifier": 0.1, "MaxHitRateDmgMod": 0.5}
+        heavy_reaction = {"NoReaction": True, "PowerLevel": 0.0, "HitStun": 25.0, "PowerLevel_AI": None, "HitStun_AI": None,
+                          "HitRateDmgModifier": 0.0, "MaxHitRateDmgMod": 10.0}
         if mode == "part-power":
             light_reaction["PowerLevel_AI"] = 2.5
         if mode == "text-flag":
@@ -237,7 +241,8 @@ def main() -> int:
                        and tables["criticals"] == [["Sword", 0.07, 1.3]]
                        and tables["format"] == 3 and tables["rowEffects"] == [["Heavy", ["Test_Root", "Test_Slow"], True]]
                        and tables["hitRules"] == [["Light", None, False, False, 1.3, 0.0], ["Heavy", False, False, False, 1.3, 0.0]]
-                       and tables["reactions"] == [["Light", False, 0, 15, 2, 23], ["Heavy", True, 0, 25, -1, -1]])
+                       and tables["reactions"] == [["Light", False, 0, 15, 2, 23], ["Heavy", True, 0, 25, -1, -1]]
+                       and tables["hitRates"] == [["Light", 0.1, 0.5]])
         if correct and mode == "known-absent-row":
             correct = json.loads(target.read_text(encoding="utf-8"))["weapons"][0][9] == ""
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""

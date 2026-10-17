@@ -210,6 +210,8 @@ struct Snapshot {
     /** The result of the last command, or empty. */
     std::string result;
     bool resultIsError{false};
+    /** The number of the last result: each reply of a command adds 1, also when its text is the same as the text before. */
+    std::uint64_t resultNumber{0};
 };
 
 /** Reads the token and starts the worker thread. Call it one time. */

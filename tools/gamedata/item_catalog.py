@@ -111,6 +111,9 @@ BACKSTORY_TYPE = "BackstoryDefinition"
 OBJECTIVES_TYPE = "Objectives"
 TASKS_TYPE = "ObjectiveTasks"
 ACHIEVEMENT_TYPE = "AchievementData"
+# The bits of the achievement state of the client (the limit of its bit vector: progression_tables.py, gamedata::kAchievementBitLimit of the
+# backend; code review of stage B0, finding B0-R4).
+ACHIEVEMENT_BIT_LIMIT = 0x2000000 * 8
 ARTIFACT_OBJECTIVE = "Artifact"
 EQUIP_TASK = "TaskEquipItem"
 SUBTASK_PREFIX = "SubTask"
@@ -393,6 +396,14 @@ def artifact_objectives(objectives: list[Sheet], tasks: list[Sheet], achievement
             if not isinstance(index, (int, float)) or isinstance(index, bool) or index < 0 or not float(index).is_integer():
                 raise Failure(f"the artifact objective {objective} names the achievement {achievement!r}, which has no "
                               f"AchievementIndex in the achievement table")
+            if int(index) >= ACHIEVEMENT_BIT_LIMIT:
+                raise Failure(f"the artifact objective {objective} has the achievement index {int(index)}, at or above the limit "
+                              f"{ACHIEVEMENT_BIT_LIMIT} of the client")
+            # One objective id, one bit for each achievement, and one achievement for each bit (code review of stage B0, finding B0-R5).
+            for other in found:
+                if other[1].lower() == objective.lower() or (other[2] == achievement) != (other[3] == int(index)):
+                    raise Failure(f"the artifact objectives {other[1]} and {objective} have one objective id, or one achievement or one "
+                                  "bit with two different values")
             found.append([items[0], objective, achievement, int(index)])
     return found
 

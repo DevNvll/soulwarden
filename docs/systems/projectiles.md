@@ -20,6 +20,7 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 | A shot of the server for a character with no client | `Projectiles::launch_character`, `commands::shoot`, `tools/world shoot` |
 | The projectile of an ability: the toss of the trap, the Beacon, the shots of the Pylon | `Projectiles::launch_spell` (`SpellShot`, `SpellLanding`), `Abilities::takes_shot`, `Abilities::throw_spell`, `Spells::summon_shot`, [Spell entities](spells.md), test cases SB3, SB5, SB6, SB9 |
 | The corrections of the code review of stage 3.3b-S3 (F1 to F8) | `tests/review_projectile_tests.cpp`, test cases RJ1 to RJ8 |
+| The shots of the bow abilities (stage B1): the clip shots, the pierce, the hit rate of a row | `SpellShot::pierce`, `SpellShot::row`, `Projectiles::pierce_hits`, `ProjectileData::ability_clip`, `ProjectileData::action`, [Abilities](abilities.md), test cases BW1, BW4, BW5, BW10 |
 | The shot of a creature (stage 3.4f-A; the casts and the dodge of stage 3.4f-B): the projectile entity and its record, the flight, the hit on a character, a character in a dodge, the ends, the holds, the limits | Protocol notes 4.37, `world/projectiles.h` (`Projectiles::launch_creature`, `CreatureShot`, `CreatureShotEnd`, `creature_shot_rules`), `server/rep/states/projectile_state.cpp`, `World::make_projectile`, test cases CRG3 to CRG6, CRG9 |
 
 ## Rules
@@ -75,8 +76,8 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   for the user: the network delay), takes one hit through `Combat::strike` when no wall is between the point of the segment and the surface of its capsule
   (the tolerance does not reach through a wall: finding F6, test case RJ6): the row of the shot, the weapon and the gem of
   the launch, the damage modifier of the ammunition (1.2 for each arrow and shot of the game data), and the point of the
-  hit as the source of its impact. The projectile ends: no pierce, no bounce (the profiles of the basic attacks have no
-  bounce; the penetration depth of 0.2 m of the bow has no known use). A wall or the ground first: the projectile ends with
+  hit as the source of its impact. The projectile ends: no pierce (only the arrow of Penetrating Shot pierces, below), no bounce
+  (the profiles of the basic attacks have no bounce; the penetration depth of 0.2 m of the bow has no known use). A wall or the ground first: the projectile ends with
   no hit. The damage number goes to the client of the caster; each observer of the creature gets its health and its
   reaction (the common hit path).
 - A shield of an enemy of the shooter (stage 3.3b-M2; [Spell entities](spells.md): the shield of Maelstrom with Absorb). The
@@ -196,6 +197,33 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 - At the end of the flight (a hit, a wall or the ground, the range, the life time) the abilities system gets the landing
   (`SpellLanding`: the point and the entity that it hit): the trap and the Beacon start there. A caster that leaves the
   world ends the projectile with no landing.
+
+### The shots of the bow abilities (stage B1)
+
+- A clip of a bow ability (Rapid Shot, Penetrating Shot) is a shot rule with the mark of an ability and no spell
+  (`ProjectileData::ability_clip`: the profile, the attack, the row of the clip) [game data: `player_bow.adb`]. Only the abilities
+  system launches it, through `launch_spell` with the clip as the rule; the slice of the ammunition (DefaultArrow: `basic_arrow`) and
+  its damage modifier (1.2) are those of a basic arrow. The loader refuses a clip shot that no ability action names, and an action
+  clip that is not a shot ([Game data](../development/game-data.md), format 2).
+- The row of a shot can differ from the row of its rule (`SpellShot::row`): the override of a node (Blood Soaked Arrow:
+  `Bow_Penetrating_AttackA1` in place of `Bow_Penetrating_Attack`) [game data].
+- The pierce (`SpellShot::pierce`, Penetrating Shot) [game data; build sheet Q3; agent decision for the order]. Each segment of the
+  flight takes each creature that it touches (the capsule with the radius of the projectile and `kHitTolerance`), in the order of
+  the line (the part of the segment at the touch), each creature one time for the projectile (`Projectile::struck`; a later segment
+  that touches the same capsule gives no hit: the count `pierceRepeats`). A wall or the ground on the segment stops the arrow: no
+  creature after the point of the wall takes a hit, and the tolerance does not reach through a wall (the rule of F6). The flight
+  ends at the range of the profile (PenetratingShot: 50 m). The client keeps the hits of a piercing projectile as an ordered list
+  (`m_piercingHits` of the projectile state, reader `0x6951010`: static proof); the backend sends no projectile state for the shot of
+  a player.
+- The hit rate of a row [game data: the member `hitRates` of the combat tables]. A hit of a pierce gets the part
+  `HitRateDmgModifier × the earlier hits of the projectile`, at most `MaxHitRateDmgMod` (a negative pair goes down to its limit: the
+  row A2), added to the damage parts of the hit (`HitWeapon::part`, as BaseDamage). Blood Soaked Arrow: 0, 0.1, 0.2, ... to 0.5 from
+  the sixth creature. The log line: `projectile N pierces creature X, its hit K, at ... (hit rate part P)`.
+- The explosion of Explosive Arrow is not a part of the projectile system: the landing of its projectile spell (`SpellLanding`) goes
+  to the abilities system ([Abilities](abilities.md), [Spell entities](spells.md)). The end of the range and of the life time is no
+  collision.
+- The cost: a pierce looks only at the creatures near the segment (the position index), as each shot (test case BW10: the same looks
+  with 40 and with 4,040 creatures).
 
 ## Commands
 

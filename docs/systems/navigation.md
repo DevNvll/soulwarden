@@ -75,10 +75,18 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
   Test cases NV6 and NV10 have the limits with a time limit: a new rule keeps them.
 - A path after a short movement that the path did not make (a push of a hit, 0.01 m to 1 m from the place of the last step;
   `navigation_rules::kMovedOffPath`, `kOffPath`): `next_step` keeps the path only when the straight line from the new place to
-  the next corner of the path, or else to its next cell, is free (`walk_line`). If not, it forgets the path and searches again
-  from the new place (the count `pushedOffPath` of `tools/world list`). The corner of the path was free from the old place only:
-  the line from the new place can go through a wall (code review of user test 2, finding U2-R1; test case RT1). More than 1 m
-  from the place of the last step: a new search, as before.
+  the next corner of the path, or else to its next cell, is free (`walk_line`), and the real segment from the new place to the
+  center of that cell is free too (`walk_segment`: the cells on the segment with the floor checks of `slide`). If not, it forgets
+  the path and searches again from the new place (the count `pushedOffPath` of `tools/world list`). The corner of the path was free
+  from the old place only: the line from the new place can go through a wall (code review of user test 2, finding U2-R1; test case
+  RT1). More than 1 m from the place of the last step: a new search, as before.
+- The real segment from the place of the creature (code review of stage B0, finding B0-R1; test case RQ1, with the pushes of 0.2 s
+  to 1.0 s at 1 m/s). The line between the centers of two cells (`walk_line`) is not the line that the creature walks: `follow`
+  moves it from its real place to the center of the corner. A creature that is not at the center of its cell (the first step of
+  a new path, the place after a push) needs the real segment to be free too: the direct path of `next_step` needs
+  `walk_segment(start, from, end)` (else the search makes a path of cells), and `follow` takes a corner only with a free real
+  segment from the place of the creature (else a nearer corner, at last the next cell). From the center of a cell the two lines
+  are the same.
 - Which creature walks: a creature walks when a free floor of the navigation data is 0.5 m
   or less from its place in the plane (to the area of its cell) and 0.6 m or less in the height
   (`Navigation::footing`). The world asks when the tile of the creature is there: until then

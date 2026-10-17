@@ -513,13 +513,16 @@ int main(int argc, char** argv) {
     const std::string projectileDataPath = (gameDataDirectory / gamedata::kProjectileDataFile).string();
     gamedata::ProjectileData projectileData;
     if (projectileData.load(projectileDataPath)) {
+        // The ability actions (format 2, stage B1): a file of an older tool has none, and the press of a bow ability is then refused.
         log::write("backend: projectile data loaded from %s (%zu ranged attacks, %zu projectile slices, %zu weapons with a profile, %zu "
-                   "shots of basic attacks)",
+                   "shots, %zu ability actions%s)",
                    projectileDataPath.c_str(),
                    projectileData.tables().attacks.size(),
                    projectileData.tables().slices.size(),
                    projectileData.tables().weapons.size(),
-                   projectileData.tables().shots.size());
+                   projectileData.tables().shots.size(),
+                   projectileData.tables().actions.size(),
+                   projectileData.tables().actions.empty() ? ": a file of a tool from before stage B1, the bow abilities are refused" : "");
     } else {
         log::write("backend: no projectile data at %s (%s): each shot of a bow, a musket, or a magic weapon is refused. Make the "
                    "file with tools/gamedata/projectiles.sh",

@@ -55,6 +55,15 @@ achievements in [DLC and entitlements](dlc-and-entitlements.md), the tool window
   `artifactObjectives`) goes into the rows of the character and its achievement state [live check U1: the client shows the perks 2 to
   5 of an artifact only with that achievement; the tooltip says "Equip to view task." without it; game data: the test characters of
   the game get it with AchievementUnlockOverride]. A catalog of an earlier format has no objective: no achievement.
+- An artifact of the paperdoll needs its objective in the item catalog (code review of stage B0, finding B0-R3; test case BP10): the
+  check at the start disables a preset with an item whose class has `Artifact` and whose objective the catalog does not have (`the
+  item catalog has no artifact objective of ITEM (the client would show its perks locked)`) [agent decision: the client shows the
+  perks 2 to 5 locked with no achievement (live check U1); a disabled preset is better than a build that looks wrong].
+- The objectives of the catalog (the loader, `ItemCatalog::load`, and the tool, `item_catalog.py`; findings B0-R3 to B0-R5, test cases
+  BP10 to BP12) [client limit and agent decision]: a file of format 3 must have the member `artifactObjectives`; the achievement index
+  must be below `kAchievementBitLimit` (the bit vector of the achievement state of the client, 0x2000000 bytes); one item has one
+  objective, one objective id has one row, one achievement has one bit, and one bit has one achievement. Else the file does not load
+  (the old catalog stays) and the tool writes no file. Before, the first row of an achievement won, and a bit at the limit loaded.
 - A character that is not in the world gets the rows only; its next world entry reads them (test case BP8).
 - The owner check [project rule]: the admin command `apply_preset` names a character of the account of the token, else the reply
   404. The command keeps the character id of the snapshot that the tool window drew.

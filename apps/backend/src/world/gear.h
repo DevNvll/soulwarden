@@ -160,6 +160,16 @@ struct HitContext {
     /** The health of the target before the hit (the conditions TargetHealthPercent of each rule of the hit). Negative: not set. */
     float targetHealth{-1.0F};
     float targetHealthMax{0.0F};
+    /**
+     * Stage B1: the action of the cast (InAction: Bow_RapidShot), the cast of a volley and the target (NumConsecutiveHits of Rapid
+     * Accuracy counts the arrows of one cast on one target: decision D11 of the orchestrator), and the weapon of the hit with its gear
+     * score (the damage of a status with ForceStatusEffectDamageTableRow: the burn of Flame Arrow).
+     */
+    std::string action;
+    std::uint64_t volley{0};
+    EntityId target{0};
+    const gamedata::WeaponRow* weapon{nullptr};
+    std::uint32_t gearScore{0};
 };
 
 /** Counts of the gear system, for the log and for the tests. */
@@ -233,6 +243,11 @@ public:
     [[nodiscard]] static bool perk_status_kind(const gamedata::StatusRow& row);
     /** The burst of a perk (gear_rules::kPerkBursts) around a character in the next tick, when the rule is a perk with a burst. */
     void perk_burst_of(const Entity& character, std::string_view rule);
+    /**
+     * One tick of a damage over time of a status on a creature (stage B1: the burn of Flame Arrow, Creatures::effect_tick), with the
+     * source character as the attacker: the path of the ticks of a perk (Combat::strike_amount, the rune charge of the source).
+     */
+    void tick_damage(EntityId attacker, EntityId target, float amount, const std::string& type, const char* what, float charge);
 
 private:
     /** One hit of a perk with a fixed amount (a tick, a chain): through Combat::strike_amount. */

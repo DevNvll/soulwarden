@@ -857,6 +857,11 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     hit.kind = use.kind;
     hit.spell = use.spell;
     hit.areaCount = use.areaCount;
+    hit.action = use.action;
+    hit.volley = use.volley;
+    hit.target = target.id;
+    hit.weapon = use.row;
+    hit.gearScore = use.gearScore;
     hit.targetHealth = target.vitals.health;
     hit.targetHealthMax = target.vitals.healthMax;
     bool behindCrit = false;
@@ -869,7 +874,8 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     // The modifiers of the passive rules of the hit (world/passives.h): the damage part, the critical parts, the penetration.
     const HitBonus bonus = m_world.passives().before_hit(attacker, target, hit);
     HitModifiers modifiers;
-    modifiers.part = attacker.gear.baseDamage + bonus.damage + m_world.gear().load_part(attacker);
+    // The part of a hit (stage B1): the hit rate of a pierce (Blood Soaked Arrow) joins the parts of the gear and of the rules.
+    modifiers.part = attacker.gear.baseDamage + bonus.damage + m_world.gear().load_part(attacker) + use.part;
     modifiers.typeParts = &attacker.gear.damage;
     modifiers.armor = target.creature.armor_part(m_world.clock().now());
     modifiers.penetration = bonus.penetration;

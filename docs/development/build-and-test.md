@@ -128,6 +128,12 @@ python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/
   removes the parts that need the new code (the build presets, the catalog format 3, the count `pushedOffPath`); the cases of a new
   feature with no code before (BP3 to BP8) are not in such a build. The helpers of the creature cases of user test 2 (an idle wolf, a
   passive creature on a wander) are in `tests/support/idle_fixture.h` (cases UX1 to UX9 and RT1 to RT6).
+- Stage B1 uses the mark `SOULWARDEN_B1_BASELINE` (proof on a copy of the tree of stage B0): in `tests/support/bow_fixture.h` and
+  `tests/bow_tests.cpp` it removes the ability actions, the clip shots, and the hit rates, and the counts of the stage are 0, so that
+  each case BW1 to BW10 runs and fails on the behavior of the old tree (the press of a bow ability is refused there: no rule). The
+  cases of the review of stage B0 are in `tests/review_b0_tests.cpp` (RQ1, RQ2) and `tests/build_preset_tests.cpp` (BP10 to BP12); they
+  need no mark. Do not change the baseline copy of the orchestrator: copy it again for the proof (`cp -a --reflink=auto`), and build
+  in a work folder of `SOULWARDEN_BUILD_ROOT`.
 - The Windows headers of the MinGW build define `near` and `far` as macros: a member or a variable with such a name in a file that a
   route includes after them does not compile (`SOULWARDEN_BACKEND_TARGET=windows`; stage 3.5b.1: `ChestsView::nearby`). Build the
   Windows target before a commit of a new header.

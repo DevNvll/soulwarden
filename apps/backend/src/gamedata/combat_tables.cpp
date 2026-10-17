@@ -554,6 +554,28 @@ bool CombatTables::load(const std::string& path) {
         }
         data.rowEffects = true;
     }
+    // The hit rate cells of the damage rows (stage B1): [[row, HitRateDmgModifier, MaxHitRateDmgMod], ...]. A file of a tool from before
+    // the stage has none: each row has the part 0 (Blood Soaked Arrow then adds nothing for an earlier hit of the same projectile).
+    if (document.contains("hitRates")) {
+        if (!document["hitRates"].is_array()) {
+            return fail("the hit rates are not a list");
+        }
+        std::vector<bool> seen(data.damageRows.size(), false);
+        for (const json& entry : document["hitRates"]) {
+            float rate = 0.0F;
+            float most = 0.0F;
+            if (!entry.is_array() || entry.size() != 3 || !entry[0].is_string() || !read_float(entry[1], rate) || !read_float(entry[2], most)) {
+                return fail("a hit rate of a damage row does not have the form of the tool");
+            }
+            const auto row = rowIndex.find(lower(entry[0].get<std::string>()));
+            if (row == rowIndex.end() || seen[row->second]) {
+                return fail("the hit rate of " + entry[0].get<std::string>() + " names no damage row of the file, or a row two times");
+            }
+            seen[row->second] = true;
+            data.damageRows[row->second].hitRate = rate;
+            data.damageRows[row->second].hitRateMost = most;
+        }
+    }
     // The damage of a level difference: [[difference, part of the damage], ...].
     if (document.contains("levelDamage")) {
         if (!document["levelDamage"].is_array()) {

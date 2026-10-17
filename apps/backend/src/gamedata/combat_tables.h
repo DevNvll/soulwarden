@@ -126,6 +126,13 @@ struct DamageRow {
     bool effectOnlyOnDamage{false};
     /** The reaction of a hit (user test 2). No value: a file of a tool from before user test 2 (the reaction of stage 3.2a). */
     std::optional<DamageReaction> reaction{};
+    /**
+     * The hit rate cells (stage B1, the member `hitRates` of the tool): HitRateDmgModifier, the part of the damage that each earlier hit
+     * of the same projectile adds (Bow_Penetrating_AttackA1 of Blood Soaked Arrow: 0.1), and MaxHitRateDmgMod, the limit of the sum
+     * (0.5). A negative pair is a part that goes down (A2). 0: none (also a file of a tool from before stage B1).
+     */
+    float hitRate{0.0F};
+    float hitRateMost{0.0F};
 };
 
 /** One row of the weapon table. */

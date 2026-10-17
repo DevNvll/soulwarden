@@ -35,14 +35,29 @@ capsule of its character) is in the creature data (creature_data.py, the member 
                                                    (TooltipPrimaryAttackData, TooltipAlternateAttackData): the spell,
                                                    its RangedAttackName, its row, its slice, and its ManaCost id
   DamageData (the table DamageTable)               the weapon category and the attack type of each damage row
+  playeractions_ability_bow.actionlist and         "abilityActions" (stage B1): each action of the ability action list of the
+  animations/mannequin/adb/player/player_bow.adb   bow that sets the cooldown of an ability (SetCooldownTimer), with the
+                                                   fragment that it plays (the variant of its FragmentName with no FragTags
+                                                   whose tags are tags of the bow weapons or tags that the action sets, the
+                                                   most tags first): the time of each CAGE-RangedAttack clip of an ability row
+                                                   (its attack, its row, its charge, ConsumeAmmo), of each CAGE-CastSpell (its
+                                                   spell, and the learned nodes of its condition), of each transition to a bow
+                                                   ability (a CanAttack_ condition with IfActiveAbilityMoveName: buffered or
+                                                   instant), and of the mark CanTransition; each such ranged clip is a shot of
+                                                   the file with the 11th value true (only the abilities system launches it)
 
-Output: {"format": 1, "counts": {...},
+Output: {"format": 2, "counts": {...},
 "attacks": [[profile, attack, hitScan, maxRange, radius, nearRange, penetration, accelDelay, falloffStart, falloffEnd,
              falloffMost, bounces, destroyOnBlock, destroyOnMiss, [x, y, z] predicted acceleration, spreadDirections], ...],
 "slices": [[path, baseSpeed, extraSpeed, timeForMaxSpeed, [x, y, z] acceleration, flyingLifetime, stuckLifetime], ...],
 "ammo": [[id, type, damageModifier, slice], ...],
 "weapons": [[weaponId, profile, ammoType], ...],
-"shots": [[profile, attack, row, charge, slice, spell, manaCost, heavy, ammoSlot, consume(, ability)], ...]}.
+"shots": [[profile, attack, row, charge, slice, spell, manaCost, heavy, ammoSlot, consume(, ability)], ...],
+"abilityActions": [[action, ability, fragment, tags, canTransition or null, [[time, attack, row, charge, consume], ...],
+                    [[time, spell, [needed node, ...], [forbidden node, ...]], ...], [[ability, "buffered"|"instant", time], ...]], ...]}.
+Format 2 (stage B1) has the member "abilityActions" and the ranged clips of the ability rows of its fragments in "shots" (the spell
+"", the 11th value true: the shot items of Penetrating Shot and Rapid Shot). A file of format 1 has neither: the backend then refuses
+the press of such an ability.
 A shot with the 11th value `ability` true (stage 3.3b-S2b) is a projectile spell of an ability of a player weapon (a Projectile
 spell of a player profile whose row has the attack type Ability or MagicSpell: the shot of the Pylon, the Beacon, the trap of
 the musket): only the abilities system of the backend launches it.
@@ -53,7 +68,8 @@ status 1 and writes no file when a file that it needs has no source, when a tabl
 a number of the ranged attack data or of a projectile slice is not a finite number of its size, when a ChargeValue of a
 clip is not a number, when a SliceOverride of a clip or the prefab of a spell shot names no slice with a projectile component,
 when a player weapon profile (PLAYER_PROFILES) has no shot of its light or heavy row, and when the ammunition of an empty slot
-of a weapon whose shot takes the slice of its ammunition has no slice (code review of stage 3.3b-S3, finding F7;
+of a weapon whose shot takes the slice of its ammunition has no slice, when an action of REQUIRED_ABILITY_ACTIONS has no fragment
+or no clip and no cast of an ability (stage B1), when a cast condition is not an AND of learned-node tests (code review of stage 3.3b-S3, finding F7;
 tools/gamedata/check_projectile_tool.py). An ammunition prefab that names no slice is -1 (the siege and creature ammunition of
 the game copy: 9 rows): no shot of a player takes it.
 
@@ -86,7 +102,8 @@ from item_catalog import Sheet, sheet_type  # noqa: E402
 OUTPUT_NAME = "projectile-data.json"
 RADB_PATH = "sharedassets/genericassets/rangedattackdatabase.radb"
 ADB_FOLDER = "animations/mannequin/adb/"
-WANTED = (TABLES_FOLDER, "slices/", "sharedassets/genericassets/", ADB_FOLDER)
+ACTION_FOLDER = "sharedassets/springboardentitites/playerdata/cage/"
+WANTED = (TABLES_FOLDER, "slices/", "sharedassets/genericassets/", ADB_FOLDER, ACTION_FOLDER)
 AMMO_TYPE = "AmmoItemDefinitions"
 WEAPON_TYPE = "WeaponItemDefinitions"
 SPELL_TYPE = "SpellData"
@@ -95,7 +112,7 @@ DAMAGE_TYPE = "DamageData"
 DAMAGE_TABLE = "DamageTable"
 USED_TYPES = (AMMO_TYPE, WEAPON_TYPE, SPELL_TYPE, DAMAGE_TYPE)
 AMMO_COLUMNS = ("AmmoID", "AmmoType", "DamageModifier", "AmmoPrefabPath")
-WEAPON_COLUMNS = ("WeaponID", "RangedAttackProfile", "AmmoType", "TooltipPrimaryAttackData", "TooltipAlternateAttackData")
+WEAPON_COLUMNS = ("WeaponID", "RangedAttackProfile", "AmmoType", "TooltipPrimaryAttackData", "TooltipAlternateAttackData", "MannequinTag")
 SPELL_COLUMNS = ("SpellID", "SpellPrefabPath", "CastingTypes", "RangedAttackProfile", "RangedAttackName", "DamageTableRow",
                  "ManaCost")
 DAMAGE_COLUMNS = ("DamageID", "WeaponCategory", "AttackType")
@@ -290,6 +307,152 @@ REQUIRED_ABILITY_SHOTS = ("IceMagic_Pylon_Projectile", "Musket_Trap_Toss", "Musk
                           "Spell_Ability_Lifestaff_Beacon_Projectile_Upgrade2", "Spell_Ability_Lifestaff_Beacon_Projectile_Upgrade3")
 
 
+# The ability actions of the ranged weapons whose abilities the backend plays with the shot items of the client (stage B1: the bow):
+# the profile, the action list, and the animation database of the fragments.
+ABILITY_ACTION_SOURCES = (("bow", "playeractions_ability_bow.actionlist", "player_bow.adb"),)
+# The actions of the abilities of the backend (stage B1, world/abilities.cpp): each one must have its fragment with a clip or a cast of
+# an ability; else the tool stops and the old file stays.
+REQUIRED_ABILITY_ACTIONS = ("Bow_Penetrating_Shoot", "Bow_SpreadShot", "Bow_RapidShot")
+
+
+def read_xml_root(data: bytes, path: str) -> ElementTree.Element:
+    try:
+        return ElementTree.fromstring(data)
+    except ElementTree.ParseError as error:
+        raise Failure(f"{path}: not an XML file: {error}") from error
+
+
+def fragment_variants(root: ElementTree.Element) -> dict[str, list[dict]]:
+    """@return The variants of each fragment name of an animation database: its tags, its FragTags, and its procedural clips with
+    their times (the sum of the ExitTime values of the Blend elements before a clip in its layer; a negative ExitTime adds 0)."""
+    result: dict[str, list[dict]] = {}
+    fragment_list = root.find("FragmentList")
+    for group in (fragment_list if fragment_list is not None else []):
+        for fragment in group.findall("Fragment"):
+            clips = []
+            for layer in fragment.findall("ProcLayer"):
+                time = 0.0
+                for node in layer:
+                    if node.tag == "Blend":
+                        time += max(float(node.get("ExitTime") or 0.0), 0.0)
+                    elif node.tag == "Procedural" and node.get("type"):
+                        parameters = node.find("ProceduralParams")
+                        values = {child.tag: child.get("value", "") for child in parameters} if parameters is not None else {}
+                        clips.append((round(time, 6), node.get("type", ""), values))
+            result.setdefault(group.tag, []).append({"tags": [tag for tag in fragment.get("Tags", "").split("+") if tag],
+                                                     "fragTags": fragment.get("FragTags", ""), "clips": clips})
+    return result
+
+
+def condition_nodes(name: str, named: dict[str, ElementTree.Element]) -> tuple[list[str], list[str]] | None:
+    """@return The learned nodes that a named condition needs and forbids (an AND of IfAbilityActive tests), ([], []) for no
+    condition, or None for a condition of a different form."""
+    if not name.strip():
+        return [], []
+    element = named.get(name.strip().lower())
+    if element is None:
+        return None
+    tests: list[tuple[str, bool]] = []
+
+    def walk_tests(node: ElementTree.Element, negated: bool) -> bool:
+        if node.tag == "IfAbilityActive":
+            ability = node.get("AbilityName", "").strip()
+            tests.append((ability, negated))
+            return bool(ability)
+        children = list(node)
+        if node.tag == "Not":
+            return len(children) == 1 and walk_tests(children[0], not negated)
+        if node.tag in ("And", "Or"):
+            if (node.tag == "And") == negated and len(children) != 1:
+                return False
+            return all(walk_tests(child, negated) for child in children)
+        return False
+
+    if not walk_tests(element, False):
+        return None
+    needs = sorted({ability for ability, negated in tests if not negated}, key=str.lower)
+    forbids = sorted({ability for ability, negated in tests if negated}, key=str.lower)
+    return needs, forbids
+
+
+def read_ability_actions(sources: Sources, rows: dict[str, tuple[str, str, str]], weapon_tags: dict[str, set[str]],
+                         profiles: dict, attack_names: set) -> tuple[list[list], list[list]]:
+    """@return The ability actions of ABILITY_ACTION_SOURCES (the member "abilityActions") and the shots of their ranged clips."""
+    actions: list[list] = []
+    clip_shots: list[list] = []
+    action_paths = sources.paths(ACTION_FOLDER, ".actionlist")
+    adb_paths = sources.paths(ADB_FOLDER, ".adb")
+    for profile, list_name, adb_name in ABILITY_ACTION_SOURCES:
+        list_path = next((path for path in action_paths if path.rsplit("/", 1)[-1].lower() == list_name), None)
+        adb_path = next((path for path in adb_paths if path.rsplit("/", 1)[-1].lower() == adb_name), None)
+        if list_path is None or adb_path is None or profile not in profiles:
+            continue
+        list_data, adb_data = sources.read(list_path), sources.read(adb_path)
+        if list_data is None or adb_data is None:
+            continue
+        root = read_xml_root(list_data, list_path)
+        named = {element.get("Name", "").lower(): element for element in root.iter()
+                 if element.tag in ("And", "Or", "Not") and element.get("Name")}
+        variants = fragment_variants(read_xml_root(adb_data, adb_path))
+        allowed_weapon = {tag.lower() for tag in weapon_tags.get(profile, set())}
+        for action in root.iter("Action"):
+            name, fragment = action.get("Name", ""), action.get("FragmentName", "")
+            cooldown = next((default.get("AbilityID", "") for timer in action.iter("SetCooldownTimer") for default in timer.iter("Default")
+                             if default.get("AbilityID")), "")
+            if not name or not fragment or not cooldown or fragment not in variants:
+                continue
+            set_tags = {default.get("TagName", "").lower() for default in action.iter("Default")
+                        if default.get("TagName") and default.get("OnEnter") == "Set"}
+            allowed = allowed_weapon | set_tags
+            best = None
+            for variant in variants[fragment]:
+                if variant["fragTags"] or not {tag.lower() for tag in variant["tags"]} <= allowed:
+                    continue
+                if best is None or len(variant["tags"]) > len(best["tags"]):
+                    best = variant
+            if best is None:
+                continue
+            clips, casts, transitions = [], [], []
+            can_transition = None
+            for time, kind, values in best["clips"]:
+                if kind == "CAGE-RangedAttack":
+                    row = rows.get(values.get("DamageTableRow", "").strip().lower())
+                    attack = values.get("RangedAttackName", "").strip()
+                    if row is None or row[2] not in ABILITY_ATTACK_TYPES or (profile, attack.lower()) not in attack_names:
+                        continue
+                    try:
+                        charge = round(float(values.get("ChargeValue", "0") or 0), 6)
+                    except ValueError as error:
+                        raise Failure(f"{adb_path}: a ChargeValue of {fragment} that is not a number: {error}") from error
+                    consume = values.get("ConsumeAmmo", "") == "true"
+                    clips.append([time, attack, row[0], charge, consume])
+                    slot = AMMO_SLOTS.get(values.get("AmmoSlot", "").strip(), 0) if values.get("UseAmmo", "") == "true" else 0
+                    clip_shots.append([profiles[profile], attack, row[0], charge, -1, "", "", False, slot, consume, True])
+                elif kind == "CAGE-CastSpell" and values.get("SpellName", "").strip():
+                    nodes = condition_nodes(values.get("Condition", ""), named)
+                    if nodes is None:
+                        raise Failure(f"{list_path}: the condition {values.get('Condition')} of a cast of {fragment} is not an AND of "
+                                      "learned-node tests")
+                    casts.append([time, values["SpellName"].strip(), nodes[0], nodes[1]])
+                elif kind in ("CAGE-TransitionBuffered", "CAGE-TransitionInstant"):
+                    condition = named.get(values.get("Condition", "").strip().lower())
+                    target = next((test.get("AbilityName", "") for test in condition.iter("IfActiveAbilityMoveName")), "") \
+                        if condition is not None and values.get("Condition", "").lower().startswith("canattack_") else ""
+                    if target:
+                        transitions.append([target, "buffered" if kind == "CAGE-TransitionBuffered" else "instant", time])
+                elif kind == "CAGE-Named" and values.get("Name") == "CanTransition":
+                    can_transition = time if can_transition is None else min(can_transition, time)
+            if not clips and not casts:
+                continue
+            actions.append([name, cooldown, fragment, "+".join(best["tags"]), can_transition, sorted(clips), sorted(casts, key=str),
+                            sorted(transitions, key=lambda entry: (entry[0].lower(), entry[1], entry[2]))])
+    sources.check_complete()
+    for required in REQUIRED_ABILITY_ACTIONS:
+        if not any(entry[0] == required for entry in actions):
+            raise Failure(f"the ability action {required} has no fragment with a clip or a cast of an ability in the source")
+    return sorted(actions, key=lambda entry: entry[0].lower()), clip_shots
+
+
 def check_joins(shot_rows: list, light_heavy: dict, weapons: list, ammo: list, profiles: dict) -> None:
     """Stops the tool when the joins that the backend needs are not complete (code review of stage 3.3b-S3, finding F7): each
     profile of PLAYER_PROFILES of a weapon with a light or heavy row (TooltipPrimaryAttackData, TooltipAlternateAttackData) has a shot of such a
@@ -373,6 +536,7 @@ def build_document(sources: Sources) -> dict:
     weapons = []
     light_heavy: dict[str, set[str]] = {}
     categories: dict[str, set[str]] = {}
+    weapon_tags: dict[str, set[str]] = {}
     for sheet in sheets[WEAPON_TYPE]:
         for row in range(sheet.row_count):
             identifier = str(sheet.cell(row, "WeaponID")).strip()
@@ -380,6 +544,9 @@ def build_document(sources: Sources) -> dict:
             if not identifier or profile.lower() not in profiles or any(entry[0].lower() == identifier.lower() for entry in weapons):
                 continue
             weapons.append([identifier, profiles[profile.lower()], str(sheet.cell(row, "AmmoType")).strip()])
+            # The tags of the weapons of the profile (MannequinTag): the fragment variant of an ability action (stage B1).
+            weapon_tags.setdefault(profile.lower(), set()).update(
+                tag.strip() for tag in str(sheet.cell(row, "MannequinTag")).split(",") if tag.strip())
             for column in ("TooltipPrimaryAttackData", "TooltipAlternateAttackData"):
                 tooltip = str(sheet.cell(row, column)).strip().lower()
                 if tooltip in rows:
@@ -454,6 +621,14 @@ def build_document(sources: Sources) -> dict:
             ability_shots += 1
     sources.check_complete()
 
+    # The ability actions of the ranged weapons (stage B1) and the shots of their ranged clips (the 11th value true).
+    ability_actions, clip_shots = read_ability_actions(sources, rows, weapon_tags, profiles, attack_names)
+    clip_count = 0
+    for shot in clip_shots:
+        key = (shot[0].lower(), shot[1].lower(), shot[2].lower(), shot[3], "clip")
+        if key not in shots:
+            shots[key] = shot
+            clip_count += 1
     shot_rows = sorted(shots.values(), key=lambda entry: (entry[0].lower(), entry[1].lower(), entry[2].lower(), entry[5].lower()))
     check_joins(shot_rows, light_heavy, weapons, ammo, profiles)
     spells_of_shots = {entry[5].lower() for entry in shot_rows}
@@ -465,10 +640,11 @@ def build_document(sources: Sources) -> dict:
             raise Failure(f"the ability spell {name} is not a row of the spell tables of the source")
         if name.lower() not in spells_of_shots:
             raise Failure(f"the ability spell {name} has no shot (its profile, its attack, or its damage row is not a row of the data)")
-    return {"format": 1,
+    return {"format": 2,
             "counts": {"attacks": len(attacks), "slices": len(slices), "ammo": len(ammo), "weapons": len(weapons),
-                       "shots": len(shot_rows), "abilityShots": ability_shots, "abilityShotsWithNoSlice": ability_no_slice},
-            "attacks": attacks, "slices": slices, "ammo": ammo, "weapons": weapons, "shots": shot_rows}
+                       "shots": len(shot_rows), "abilityShots": ability_shots + clip_count, "abilityShotsWithNoSlice": ability_no_slice,
+                       "abilityClips": clip_count, "abilityActions": len(ability_actions)},
+            "attacks": attacks, "slices": slices, "ammo": ammo, "weapons": weapons, "shots": shot_rows, "abilityActions": ability_actions}
 
 
 def main() -> int:
@@ -506,7 +682,8 @@ def main() -> int:
     counts = document["counts"]
     print(f"{target}: {counts['attacks']} ranged attacks, {counts['slices']} projectile slices, {counts['ammo']} ammunition rows, "
           f"{counts['weapons']} weapons with a profile, {counts['shots'] - counts['abilityShots']} shots of basic attacks, "
-          f"{counts['abilityShots']} projectile spells of abilities (source: "
+          f"{counts['abilityShots'] - counts['abilityClips']} projectile spells of abilities, {counts['abilityClips']} ranged clips and "
+          f"{counts['abilityActions']} actions of abilities (source: "
           f"{', '.join(f'{count} from the {name}' for name, count in sorted(sources.used.items()))})")
     return 0
 

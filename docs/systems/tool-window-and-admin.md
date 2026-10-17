@@ -41,6 +41,11 @@ protocol notes (section 6).
   changes for each player, [World time and weather](world-time-and-weather.md)). The tab
   asks the worker thread for the list of the places (`model::load_places`) until the
   backend gave it, one time each 5 s at most.
+- The result of a command has a number (`Snapshot::resultNumber`): the worker adds 1 for each reply of a command, also when its
+  text is the same as the text before. A part of the window that does a thing one time for each result (the group "Build presets"
+  fills the fields of the form again after a successful apply) compares this number, not the text (code review of stage B0, finding
+  B0-R6: a second apply of one preset gave the same text, and the field "New" of an attribute kept the old value; live pictures of
+  stage B1).
 - The admin interface of the backend (routes `/admin/v1`, `server/http/admin_routes.cpp`) is
   for the tool window. It needs no harness gate: each start has it when the launcher gave a
   token. A request needs the token of the start in the header `X-Soulwarden-Admin`. The token is
@@ -116,6 +121,10 @@ tools/hx 'toolwindow 1'              # show the tool window with no key ('toolwi
 
 ## Traps
 
+- The group "Build presets" is at the end of the tab "Character", below the bottom of the window: move the pointer onto the
+  window and turn the wheel (`tools/hx 'move 300 450' 'wheel -10'`). Then "Apply" is at `51 583` and, after the next wheel,
+  "Confirm" at `59 583` (stage B1, the window of 1256x660 at its first place). A value in a field: a click on the field, then
+  `'keydown 0x11' 'key 0x41' 'keyup 0x11' 'text 40'`, then a click on its "Set". Take a screenshot before you use a position.
 - The mark "Each kill drops loot and coin" of the tab "Character" is one row below the mark
   "Creatures ignore this character" (`35 314` in the window of 1256x660): each row below it
   is 29 pixels lower than in stage 3.4e. Take a screenshot before you use a position.

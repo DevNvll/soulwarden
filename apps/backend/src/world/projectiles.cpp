@@ -269,6 +269,10 @@ bool head_contact(const Entity& creature, const state::WorldPosition& point, con
     return !bodyAt || *headAt * span <= *bodyAt * span + projectile_rules::kHitTolerance;
 }
 
+float capsule_distance(const WorldCapsule& capsule, const state::WorldPosition& point) {
+    return std::max(point_segment(point, capsule.a, capsule.b) - capsule.radius, 0.0F);
+}
+
 std::optional<float> sweep(const state::WorldPosition& from, const state::WorldPosition& to, const WorldCapsule& capsule, float radius) {
     const float reach = capsule.radius + radius;
     if (point_segment(from, capsule.a, capsule.b) <= reach) {
@@ -594,7 +598,18 @@ ShotResult Projectiles::launch_spell(const SpellShot& shot) {
     }
     const gamedata::RangedAttack* attack = m_data->attack(shot.rule->profile, gamedata::progression_id(shot.rule->attack));
     const gamedata::ProjectileSlice* slice = m_data->slice(shot.rule->slice);
-    const std::optional<std::uint32_t> rowIndex = m_combat->row_index(shot.rule->row);
+    float factor = 1.0F;
+    if (shot.rule->slice < 0) {
+        // A ranged clip of an ability fragment (stage B1: Penetrating Shot, Rapid Shot): the slice and the damage modifier of the
+        // ammunition of an empty slot of the ammunition type of the weapon of the cast (DefaultArrow: client code; the rule of a
+        // basic shot, which the backend has no equipped ammunition for).
+        const gamedata::RangedWeapon* ranged = shot.weapon.row != nullptr ? m_data->weapon(shot.weapon.row->id) : nullptr;
+        const char* fallback = ranged != nullptr ? default_ammo(ranged->ammoType) : nullptr;
+        const gamedata::AmmoRow* ammo = fallback != nullptr ? m_data->ammo(gamedata::progression_id(fallback)) : nullptr;
+        slice = ammo != nullptr ? m_data->slice(ammo->slice) : nullptr;
+        factor = ammo != nullptr ? ammo->damageModifier : 1.0F;
+    }
+    const std::optional<std::uint32_t> rowIndex = m_combat->row_index(shot.row.empty() ? shot.rule->row : shot.row);
     if (attack == nullptr || slice == nullptr || !(slice->speed > 0.0F) || !rowIndex) {
         return refuse(ShotVerdict::unsupported);
     }
@@ -618,6 +633,8 @@ ShotResult Projectiles::launch_spell(const SpellShot& shot) {
     projectile.rowIndex = *rowIndex;
     projectile.weapon = shot.weapon;
     projectile.conversion = shot.conversion;
+    projectile.factor = factor;
+    projectile.pierce = shot.pierce;
     projectile.start = shot.origin;
     projectile.position = shot.origin;
     const std::array<float, 3> direction{shot.direction[0] / size, shot.direction[1] / size, shot.direction[2] / size};
@@ -631,13 +648,14 @@ ShotResult Projectiles::launch_spell(const SpellShot& shot) {
     projectile.landed = shot.landed;
     result.verdict = counted(ShotVerdict::accepted);
     result.projectile = projectile.number;
-    log::write("world: projectile %llu: %s launches the spell %s (%s/%s, row %s, %s) from %.2f %.2f %.2f to %.3f %.3f %.3f at %.0f m/s",
+    log::write("world: projectile %llu: %s launches the %s %s (%s/%s, row %s, %s) from %.2f %.2f %.2f to %.3f %.3f %.3f at %.0f m/s",
                static_cast<unsigned long long>(projectile.number),
                character->name.c_str(),
-               shot.rule->spell.c_str(),
+               shot.rule->spell.empty() ? (shot.pierce ? "piercing clip of" : "clip of") : "spell",
+               shot.rule->spell.empty() ? shot.weapon.ability.c_str() : shot.rule->spell.c_str(),
                shot.rule->profile.c_str(),
                shot.rule->attack.c_str(),
-               shot.rule->row.c_str(),
+               shot.row.empty() ? shot.rule->row.c_str() : shot.row.c_str(),
                slice->path.c_str(),
                shot.origin.x,
                shot.origin.y,
@@ -734,7 +752,7 @@ ShotResult Projectiles::fire(Entity& character, const Launch& launch) {
     return result;
 }
 
-HitResult Projectiles::hit(Projectile& projectile, Entity& target, const state::WorldPosition& point, bool head) {
+HitResult Projectiles::hit(Projectile& projectile, Entity& target, const state::WorldPosition& point, bool head, float part) {
     Entity* caster = m_world.find(projectile.caster);
     HitResult result;
     if (caster == nullptr || caster->life.dead || projectile.weapon.row == nullptr || target.kind != EntityKind::creature) {
@@ -753,12 +771,63 @@ HitResult Projectiles::hit(Projectile& projectile, Entity& target, const state::
     weapon.kind = HitKind::projectile;
     weapon.attack = passive_rules::kAttackShot | projectile.number;
     weapon.head = head;
+    weapon.part = part;
     result = m_world.combat().strike(*caster, target, weapon, projectile.rowIndex, projectile.factor, what.c_str(),
                                      &projectile.conversion, &point);
     if (result.verdict == HitVerdict::accepted) {
         ++m_counts.damage;
     }
     return result;
+}
+
+void Projectiles::pierce_hits(Projectile& projectile, const state::WorldPosition& end, const std::vector<EntityId>& candidates, float limit) {
+    const gamedata::RangedAttack& attack = *projectile.attack;
+    std::vector<std::pair<float, EntityId>> touches;
+    for (const EntityId id : candidates) {
+        const Entity* creature = m_world.find(id);
+        if (creature == nullptr || creature->kind != EntityKind::creature) {
+            continue; // A pierce hits creatures (the projectile of an ability that hits characters is not a pierce).
+        }
+        if (std::find(projectile.struck.begin(), projectile.struck.end(), id) != projectile.struck.end()) {
+            ++m_counts.pierceRepeats; // Each target one time for each projectile (a later segment touches the same capsule).
+            continue;
+        }
+        ++m_counts.looked;
+        const WorldCapsule capsule = capsule_of(*creature);
+        const std::optional<float> touch = sweep(projectile.position, end, capsule, attack.radius + projectile_rules::kHitTolerance);
+        if (!touch || *touch > limit) {
+            continue;
+        }
+        // The tolerance of a hit does not reach through a wall (the rule of a basic shot, code review of stage 3.3b-S3, finding F6).
+        if (m_world.navigation().line_stop(along(projectile.position, end, *touch), surface_toward(capsule, along(projectile.position, end, *touch)))) {
+            continue;
+        }
+        touches.emplace_back(*touch, id);
+    }
+    std::sort(touches.begin(), touches.end());
+    const gamedata::CombatTables* tables = m_world.combat().tables();
+    const gamedata::DamageRow* row = tables != nullptr ? &tables->damage_row(projectile.rowIndex) : nullptr;
+    for (const auto& [part, id] : touches) {
+        Entity* target = m_world.find(id);
+        if (target == nullptr || target->kind != EntityKind::creature || target->creature.dead || target->creature.immune()) {
+            continue;
+        }
+        // The hit rate of the row (Blood Soaked Arrow: Bow_Penetrating_AttackA1, +0.1 for each earlier hit of this projectile, to +0.5;
+        // game data HitRateDmgModifier and MaxHitRateDmgMod): a part of the damage of the hit. A negative pair goes down to its limit.
+        const auto earlier = static_cast<float>(projectile.struck.size());
+        float added = row != nullptr ? row->hitRate * earlier : 0.0F;
+        if (row != nullptr && row->hitRateMost != 0.0F) {
+            added = row->hitRate >= 0.0F ? std::min(added, row->hitRateMost) : std::max(added, row->hitRateMost);
+        }
+        projectile.struck.push_back(id);
+        ++m_counts.pierceHits;
+        const state::WorldPosition point = along(projectile.position, end, part);
+        const std::array<float, 3> direction{end.x - projectile.position.x, end.y - projectile.position.y, end.z - projectile.position.z};
+        log::write("world: projectile %llu pierces creature %016llx, its hit %zu, at %.2f %.2f %.2f (hit rate part %.2f)",
+                   static_cast<unsigned long long>(projectile.number), static_cast<unsigned long long>(id), projectile.struck.size(),
+                   point.x, point.y, point.z, static_cast<double>(added));
+        hit(projectile, *target, point, head_contact(*target, point, direction, attack.radius), added);
+    }
 }
 
 void Projectiles::finish(const Projectile& projectile, ProjectileEnd end, const state::WorldPosition& at, EntityId struck) {
@@ -830,7 +899,11 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
         });
         std::optional<float> first;
         EntityId struck = 0;
+        // The first creature of the segment (a pierce takes each creature of the segment: pierce_hits below).
         for (const EntityId id : candidates) {
+            if (projectile.pierce) {
+                break;
+            }
             ++m_counts.looked;
             const Entity* creature = m_world.find(id);
             if (creature == nullptr) {
@@ -851,9 +924,18 @@ std::optional<ProjectileEnd> Projectiles::advance(Projectile& projectile, WorldC
         }
         // A shield of an enemy of the shooter on the segment (stage 3.3b-M2: the projectile shield of Maelstrom) takes the projectile
         // before a creature or a wall behind it.
-        if (const std::optional<float> shield = m_world.spells().absorbs(projectile.position, end, projectile.source != 0 ? projectile.source
-                                                                                                                          : projectile.caster);
-            shield && (!first || *shield <= *first) && (!wall || *shield <= *wall)) {
+        const std::optional<float> shield =
+            m_world.spells().absorbs(projectile.position, end, projectile.source != 0 ? projectile.source : projectile.caster);
+        if (projectile.pierce) {
+            // A pierce (stage B1, Penetrating Shot): each creature on the segment before a wall or a shield, in the order of the line, one
+            // time for this projectile (the client keeps the pierced targets in the order of the hits: m_piercingHits, reader 0x6951010).
+            const float stop = std::min(wall.value_or(1.0F), shield.value_or(1.0F));
+            pierce_hits(projectile, end, candidates, stop);
+            if (shield && (!wall || *shield <= *wall)) {
+                finish(projectile, ProjectileEnd::absorbed, along(projectile.position, end, *shield));
+                return ProjectileEnd::absorbed;
+            }
+        } else if (shield && (!first || *shield <= *first) && (!wall || *shield <= *wall)) {
             finish(projectile, ProjectileEnd::absorbed, along(projectile.position, end, *shield));
             return ProjectileEnd::absorbed;
         }

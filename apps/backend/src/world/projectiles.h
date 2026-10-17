@@ -233,6 +233,9 @@ struct ProjectileCounts {
     std::uint64_t steps{0};
     std::uint64_t looked{0};
     std::size_t largest{0};
+    /** Stage B1: the hits of a pierce (Penetrating Shot), and the hits that a pierce did not do again on a creature that it hit before. */
+    std::uint64_t pierceHits{0};
+    std::uint64_t pierceRepeats{0};
 };
 
 /** One projectile in the air, for a development list. */
@@ -276,6 +279,13 @@ struct SpellShot {
     EntityId threat{0};
     /** Called at the end of the flight (a hit, a wall, the range, the life time), not at the leave of the caster. */
     std::function<void(const SpellLanding&)> landed;
+    /**
+     * Stage B1: the projectile passes through creatures (Penetrating Shot): it hits each creature on its line one time, in the order
+     * of the line, and ends at a wall, at the range of its profile, or at the life time of its slice. False: it ends at its first hit.
+     */
+    bool pierce{false};
+    /** Stage B1: the damage row of the hits in the place of the row of the rule (a node override: Blood Soaked Arrow). Empty: the row of the rule. */
+    std::string row;
 };
 
 /**
@@ -378,6 +388,9 @@ struct WorldCapsule {
  */
 [[nodiscard]] bool head_contact(const Entity& creature, const state::WorldPosition& point, const std::array<float, 3>& direction, float radius);
 
+/** @return The distance from a point to the surface of a capsule (0 for a point in it; stage B1: the area of an explosion). */
+[[nodiscard]] float capsule_distance(const WorldCapsule& capsule, const state::WorldPosition& point);
+
 /**
  * @return The part of the segment `from` - `to` (0 to 1) at which a sphere of `radius` that moves on it first touches the
  *         capsule. 0 when it touches at `from`. No value: it does not touch.
@@ -412,7 +425,8 @@ public:
      * the range, the life time, the row), from the origin in the direction. A hit on a creature goes through Combat::strike
      * (a row with the factor 0 does no damage: the toss of the trap); a hit on a character does no damage. The landing gets the
      * point and the entity. The limit kCharacterMost of the caster applies. No ledger entry: the cast of the abilities system
-     * has one projectile.
+     * has one projectile. From stage B1 also a ranged clip of an ability fragment (the rule has no spell: Penetrating Shot, Rapid
+     * Shot): the slice and the damage modifier of the ammunition of an empty slot of the weapon (DefaultArrow), and a pierce.
      */
     ShotResult launch_spell(const SpellShot& shot);
     /** The world calls it in each tick: each projectile in the air flies to the time of the world clock. */
@@ -460,6 +474,10 @@ public:
     [[nodiscard]] const ProjectileCounts& counts() const {
         return m_counts;
     }
+    /** @return The largest reach of a creature capsule from the place of its creature (meters; stage B1: the query of an area of bodies). */
+    [[nodiscard]] float capsule_reach() {
+        return reach();
+    }
     /** @return The projectiles in the air, in the sequence of their numbers. */
     [[nodiscard]] std::vector<ProjectileView> active() const;
     [[nodiscard]] std::size_t ledger_size() const {
@@ -506,6 +524,9 @@ private:
         EntityId threat{0};
         bool characters{false};
         std::function<void(const SpellLanding&)> landed;
+        /** Stage B1: a pierce (Penetrating Shot), and the creatures that it hit, in the order of the hits. */
+        bool pierce{false};
+        std::vector<EntityId> struck;
     };
 
     ShotVerdict counted(ShotVerdict verdict) {
@@ -519,7 +540,12 @@ private:
     /** Flies one projectile to `now`. @return The end, or no value while it is in the air. */
     std::optional<ProjectileEnd> advance(Projectile& projectile, WorldClock::time_point now);
     /** One hit of a projectile on a creature through Combat::strike. @return The values of the hit. */
-    HitResult hit(Projectile& projectile, Entity& target, const state::WorldPosition& point, bool head = false);
+    HitResult hit(Projectile& projectile, Entity& target, const state::WorldPosition& point, bool head = false, float part = 0.0F);
+    /**
+     * The hits of a pierce on one segment (stage B1): each creature whose capsule the segment touches before `limit` (a part of the
+     * segment: the wall, or 1), in the order of the line, one time for each projectile, with the hit rate part of its row.
+     */
+    void pierce_hits(Projectile& projectile, const state::WorldPosition& end, const std::vector<EntityId>& candidates, float limit);
     void finish(const Projectile& projectile, ProjectileEnd end, const state::WorldPosition& at, EntityId struck = 0);
 
     /** One creature shot in the air (stage 3.4f-A). */

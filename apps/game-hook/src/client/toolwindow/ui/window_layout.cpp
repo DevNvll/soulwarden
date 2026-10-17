@@ -65,8 +65,9 @@ std::string g_selectedPreset;
 std::string g_selectedVariant;
 /** The character of an open confirm line: a change of the selected character closes it. */
 std::string g_presetConfirm;
-/** The result line of the last preset that refilled the form. */
-std::string g_presetFilled;
+/** The number of the last result (Snapshot::resultNumber) that refilled the form. A second apply with the same result text is a new
+ * result: the text alone cannot show it (stage B0 review, B0-R6). */
+std::uint64_t g_presetFilled = 0;
 
 /** The character that the values of the controls are for. */
 std::string g_formCharacter;
@@ -683,8 +684,9 @@ void draw_presets() {
     ImGui::EndDisabled();
     // The result line of the last preset command (the last line of the window has it too). A preset that the backend applied changes
     // the level and the attributes: the fields of the form get the new values one time.
-    if (g_data.result.rfind("Apply the build preset", 0) == 0 && !g_data.resultIsError && g_data.result != g_presetFilled && !g_data.busy) {
-        g_presetFilled = g_data.result;
+    if (g_data.result.rfind("Apply the build preset", 0) == 0 && !g_data.resultIsError && g_data.resultNumber != g_presetFilled &&
+        !g_data.busy) {
+        g_presetFilled = g_data.resultNumber;
         fill_form();
     }
     if (g_data.result.rfind("Apply the build preset", 0) == 0) {

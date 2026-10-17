@@ -106,9 +106,55 @@ struct ShotRule {
     /**
      * A projectile spell of an ability (stage 3.3b-S2b: the shot of the Pylon, the Beacon, the trap of the musket; the 11th
      * value of the file): only the abilities system launches it (Projectiles::launch_spell). A shot item of a basic attack
-     * does not fit it.
+     * does not fit it. From stage B1 (format 2) also a ranged clip of an ability fragment (the spell is empty: Penetrating Shot,
+     * Rapid Shot), which a shot item of a cast of the abilities system fits (ProjectileData::ability_clip).
      */
     bool ability{false};
+};
+
+/** One ranged clip of the fragment of an ability action (stage B1): its time in the fragment (s), its attack, its row, its charge. */
+struct ActionClip {
+    float time{0.0F};
+    std::string attack;
+    std::string row;
+    float charge{0.0F};
+    /** ConsumeAmmo of the clip (the first arrow of Rapid Shot only). */
+    bool consume{false};
+};
+
+/** One spell cast of the fragment of an ability action (CAGE-CastSpell; stage B1): its time, its spell, and its node condition. */
+struct ActionCast {
+    float time{0.0F};
+    std::string spell;
+    /** The learned nodes that the condition of the cast needs, and the ones that it forbids (an AND of IfAbilityActive tests). */
+    std::vector<std::string> needs;
+    std::vector<std::string> forbids;
+};
+
+/** One transition of the fragment of an ability action to an ability (a CanAttack_ condition of the key of that ability; stage B1). */
+struct ActionTransition {
+    std::string ability;
+    /** True: CAGE-TransitionBuffered (a press from this time on starts the ability at the instant transition); false: instant. */
+    bool buffered{false};
+    float time{0.0F};
+};
+
+/**
+ * One action of the ability action list of a ranged weapon that sets the cooldown of an ability (stage B1, the member "abilityActions"
+ * of format 2): the fragment that it plays, its ranged clips, its spell casts, and its transitions to the abilities of the weapon.
+ */
+struct AbilityActionData {
+    std::string action;
+    /** The AbilityID of its SetCooldownTimer. */
+    std::string ability;
+    std::string fragment;
+    /** The tags of the selected variant of the fragment ("Bow+PenetratingAim"). */
+    std::string tags;
+    /** The time of the mark CanTransition (s). Negative: the fragment has none. */
+    float canTransition{-1.0F};
+    std::vector<ActionClip> clips;
+    std::vector<ActionCast> casts;
+    std::vector<ActionTransition> transitions;
 };
 
 /** The data as plain values: the content of the file, and what a test sets. */
@@ -118,6 +164,8 @@ struct ProjectileTables {
     std::vector<AmmoRow> ammo;
     std::vector<RangedWeapon> weapons;
     std::vector<ShotRule> shots;
+    /** Stage B1 (format 2). Empty with a file of format 1: each ability that needs its action is refused (no rule). */
+    std::vector<AbilityActionData> actions;
 };
 
 class ProjectileData {
@@ -150,6 +198,13 @@ public:
     [[nodiscard]] std::vector<const ShotRule*> shots(std::string_view profile, std::uint32_t attackId) const;
     /** @return The projectile spell of an ability with this spell id (the compare ignores the case of A to Z), or null. */
     [[nodiscard]] const ShotRule* ability_shot(std::string_view spellId) const;
+    /**
+     * @return The shot of a ranged clip of an ability fragment (stage B1: the spell is empty, the 11th value true) of a profile with the
+     *         CRC-32 of its lower-case attack and of its lower-case row (the values of a shot item of the client), or null.
+     */
+    [[nodiscard]] const ShotRule* ability_clip(std::string_view profile, std::uint32_t attackId, std::uint32_t rowId) const;
+    /** @return The ability action with this name (stage B1; the compare ignores the case of A to Z), or null. */
+    [[nodiscard]] const AbilityActionData* action(std::string_view name) const;
     /** @return The ammunition row with the CRC-32 of its lower-case id (the shot item of the client), or null. */
     [[nodiscard]] const AmmoRow* ammo(std::uint32_t ammoId) const;
     /** @return A slice, or null for -1 or an index outside the list. */

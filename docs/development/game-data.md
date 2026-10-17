@@ -336,6 +336,28 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage B1 changes `projectile-data.json` (format 2) and `combat-tables.json` (still format 3). `projectiles.py`: the new member
+  `abilityActions` (with its count) has the ability actions of the bow (`ABILITY_ACTION_SOURCES`: `playeractions_ability_bow.actionlist`
+  and `player_bow.adb`; `REQUIRED_ABILITY_ACTIONS`: Bow_Penetrating_Shoot, Bow_SpreadShot, Bow_RapidShot): for each action its
+  ability, the fragment that it plays (the variant of the fragment whose FragTags are in the mannequin tags of the bow and the tags
+  that the action sets at its start, the most tags first), its tags, its CanTransition, its ranged clips (time, attack, row, charge,
+  ConsumeAmmo), its spell casts (time, spell, the nodes that it needs, the nodes that it forbids: the condition must be an AND of
+  `IfAbilityActive` tests), and its transitions to a bow ability (the ability, `buffered` or `instant`, the time). Each clip is also a
+  shot with the mark of an ability and no spell (96 shots: 5 clips). The tool stops (and keeps the old file) for a missing action,
+  a fragment with no variant, or a cast condition of a different form (`check_projectile_tool.py`: cases missing-ability-action,
+  cast-condition). The loader takes the formats 1 and 2; a file of format 2 must have the list, each action clip must be a clip
+  shot, each clip shot must be a clip of an action, and an action name is one time in the list. With a file of format 1 the three
+  bow abilities are refused (`noRule`; the load line says it). `combat_tables.py`: the new member `hitRates`
+  (`[row, HitRateDmgModifier, MaxHitRateDmgMod]` of each damage row whose HitRateDmgModifier is not 0: 3 rows of the retail tables;
+  a negative pair is allowed: `Bow_Penetrating_AttackA2` has −0.1 and −0.5). The loader refuses an entry that names no row of the
+  file, a row two times, or a value that is not a number (test case BW1); a file with no member loads (the part 0 for each row).
+  Write both files again with `tools/gamedata/projectiles.sh` and `tools/gamedata/combat.sh` (the projectile tool needs
+  `SOULWARDEN_OODLE_LIB`).
+- The code review of stage B0 (findings B0-R3 to B0-R5) changes the checks of `item-catalog.json` (still format 3): the loader
+  refuses a file of format 3 with no member `artifactObjectives`, an achievement index at or above `kAchievementBitLimit`, two
+  objectives of one item or of one objective id, two bits of one achievement, and two achievements of one bit; `item_catalog.py`
+  stops for an index at the limit and for two achievements with one bit (`check_item_catalog_tool.py`: cases objective-bit-limit,
+  objective-conflict; test cases BP10 to BP12). The retail file of stage B0 passes: no new write.
 - Stage B0 changes `item-catalog.json` (format 3). `item_catalog.py`: one more column of each item, `maxCraftUpgradeGS`, from the
   cell MaxCraftUpgradeGS of the master row (0 for an empty cell; the 73 artifacts have 800, no other item has a value; client code:
   the parser at the image RVA 0x442DD20+0x1997 keeps the value with a presence byte). The 22 store tables

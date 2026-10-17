@@ -512,6 +512,15 @@ struct HitWeapon {
     std::string spell{};
     std::uint32_t areaCount{0};
     bool head{false};
+    /**
+     * Stage B1: the action of the cast in the ability action list (the condition InAction of a row: Bow_RapidShot), and the cast of a
+     * volley (the arrows of one cast of Rapid Shot: the cast number; 0: none) for the hit counts of a rule (Rapid Accuracy, decision
+     * D11 of the orchestrator: the hits of the arrows of one cast on one target).
+     */
+    std::string action{};
+    std::uint64_t volley{0};
+    /** Stage B1: a part of the damage that the hit adds (the hit rate of a pierce: Blood Soaked Arrow, +0.1 for each earlier hit). */
+    float part{0.0F};
 };
 
 /**

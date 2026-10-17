@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "gamedata/progression_tables.h"
 #include "server/hub/wire.h"
 
 namespace soulwarden::backend::gamedata {
@@ -160,6 +161,11 @@ bool ItemCatalog::load(const std::string& path) {
     // The artifact objectives (format 3, stage B0): [[item id, objective id, achievement id, achievement index], ...]. A file of an
     // earlier format has none: the client then shows the perks 2 to 5 of an artifact locked (its achievement bit is not known).
     std::vector<ArtifactObjective> objectives;
+    // A file of format 3 has the member (code review of stage B0, finding B0-R3): a file with no objectives would give artifacts whose perks
+    // 2 to 5 the client shows locked.
+    if (format >= 3 && !document.contains("artifactObjectives")) {
+        return false;
+    }
     if (document.contains("artifactObjectives")) {
         const json& member = document["artifactObjectives"];
         if (!member.is_array()) {
@@ -182,7 +188,28 @@ bool ItemCatalog::load(const std::string& path) {
             if (objective.achievementId.empty() || ids.count(lower_ascii(objective.itemId)) == 0) {
                 return false;
             }
+            // The bit of the achievement is in the bit vector of the client (code review of stage B0, finding B0-R4: the limit of the
+            // achievement state, kAchievementBitLimit, as for the progression and the interaction data).
+            if (objective.achievementIndex >= kAchievementBitLimit) {
+                return false;
+            }
             objectives.push_back(std::move(objective));
+        }
+        // One objective for each item and for each objective id, and one bit for each achievement and one achievement for each bit (code
+        // review of stage B0, finding B0-R5: two rows of one achievement with two bits loaded, and the first one won).
+        std::unordered_map<std::string, std::uint32_t> bitOf;
+        std::unordered_map<std::uint32_t, std::string> achievementOf;
+        std::unordered_set<std::string> objectiveItems;
+        std::unordered_set<std::string> objectiveIds;
+        for (const ArtifactObjective& objective : objectives) {
+            if (!objectiveItems.insert(lower_ascii(objective.itemId)).second || !objectiveIds.insert(lower_ascii(objective.objectiveId)).second) {
+                return false;
+            }
+            const auto bit = bitOf.emplace(objective.achievementId, objective.achievementIndex);
+            const auto achievement = achievementOf.emplace(objective.achievementIndex, objective.achievementId);
+            if (bit.first->second != objective.achievementIndex || achievement.first->second != objective.achievementId) {
+                return false;
+            }
         }
     }
     set(std::move(items));

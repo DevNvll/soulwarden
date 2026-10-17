@@ -190,7 +190,15 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
     of stage 3.4f-D, finding SU-R1); at its end an effect first gets its ticks that are due before the end, also when a late world step
     takes an earlier entry of the creature first (finding SU-R2); the OnTickStatusEffect of the row comes at each tick, and it ends with the effect when the row has no KeepOnTickEffectOnEnd
     (game data). A row with no duration is one application now. A negative heal part of a row (a damage over time on a creature) has no
-    rule yet;
+    rule of its own;
+  - the damage of a tick (stage B1, `StatusDamage`, `CreatureEffect::tickDamage`): a status that a rule gives with a forced damage row
+    (Flame Arrow: `Status_ExplosiveShot_Burn`, [Passive rules](passive-rules.md)) keeps the damage of one tick, its damage type, and
+    its rune charge. At each tick (the cadence of the heal ticks: TickRate 1 s, DelayInitialTick, the ticks that are due before the end)
+    the world hurts the creature through the gear system (`Gear::tick_damage`, the path of the damage of a perk: the defense of the
+    creature, its reaction rule (no reaction: a damage over time), the damage number for the source, its death) one step later
+    (`World::after(0)`: a tick that kills the creature does not change the effect list in its loop). The source is the character of
+    the rule; a source that left the world gives no tick. The count `damageTicks`. The icon: the compact status map of the creature
+    (slot 8, type 4236) for each observer, as each creature effect (live: the burn icon at the name plate of the direct target only);
   - the dispel (game data): a row with RemoveStatusEffects or RemoveStatusEffectCategories ends those effects of the creature first
     (the Null Chamber of the void gauntlet: the category Buff; the ability is not in the backend yet, a command applies the row);
   - the ends: the end of its time, the next hit for a stun of Shockwave, the dispel, and the death of the creature (each effect:

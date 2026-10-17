@@ -613,6 +613,14 @@ struct CreatureEffect {
     float healFixed{0.0F};
     std::chrono::milliseconds tickRate{0};
     std::optional<WorldClock::time_point> nextTick;
+    /**
+     * Stage B1: the damage of one tick of a damage over time with its icon (the burn of Flame Arrow: HealthModifierDamageBased of the row times
+     * the damage base of the rule that gave it), its damage type (DamageType of the row), and the rune charge of the source at a tick
+     * (SourceRuneChargeOnTick). The source (a character) is the attacker of each tick. 0: no damage.
+     */
+    float tickDamage{0.0F};
+    std::string tickType;
+    float tickCharge{0.0F};
     /** The number of the effect on the wire (gamedata::StatusRow::index). */
     std::uint16_t index{0};
     /** True: each observer gets the icon of the effect at the name plate of the creature. */

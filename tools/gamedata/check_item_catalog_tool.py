@@ -30,6 +30,10 @@ file of the case "upgrade"):
   upgrade-invalid       a cell MaxCraftUpgradeGS with the text "high": status 1, the old file stays
   upgrade-missing       a master table (not a store table) with no column MaxCraftUpgradeGS: status 1, the old file stays
   objective-broken      an artifact objective whose task tree names a task that no task table has: status 1, the old file stays
+  objective-bit-limit   the achievement index of the objective is the bit limit of the client: status 1, the old file stays (code
+                        review of stage B0, finding B0-R4)
+  objective-conflict    a second artifact (a made-up ring) with an objective of the same achievement and a different bit: status 1, the
+                        old file stays (finding B0-R5)
 
 Usage: check_item_catalog_tool.py FOLDER [CASE ...]
 Status 0: each case has the expected result. Each line starts with "ok" or "FAIL".
@@ -52,7 +56,7 @@ from check_ability_tool import FakeSheet  # noqa: E402
 # The text of an old catalog file (the cases of finding WT-R3: the tool must not replace it).
 OLD_FILE = "old file\n"
 SOURCE_CASES = ("missing-nonremovable", "missing-notdroppable", "invalid-flag", "store-table")
-UPGRADE_CASES = ("upgrade-invalid", "upgrade-missing", "objective-broken")
+UPGRADE_CASES = ("upgrade-invalid", "upgrade-missing", "objective-broken", "objective-bit-limit", "objective-conflict")
 # The made-up items and rows of the cases of stage B0 (the ids of the backend case BP1).
 UPGRADE_BOW = "ReviewArtifactBow"
 PLAIN_RING = "ReviewPlainRing"
@@ -121,14 +125,22 @@ def upgrade_sheets(case: str = "upgrade") -> tuple[dict, dict]:
              {"TaskID": "Task_Kill_Review", "Type": "TaskKillContribution", "TargetQty": 5}]
     if case == "objective-broken":
         tasks[0]["SubTask2"] = "Task_Not_There"
+    objectives = [{"ObjectiveID": OBJECTIVE, "Type": "Artifact", "Task": "Task_Container_Review", "AchievementId": OBJECTIVE_ACHIEVEMENT},
+                  {"ObjectiveID": "Objective_ReviewMission", "Type": "Mission", "Task": "Task_Kill_Review", "AchievementId": ""}]
+    achievements = [{"AchievementID": OBJECTIVE_ACHIEVEMENT, "AchievementIndex": OBJECTIVE_INDEX}]
+    if case == "objective-bit-limit":
+        achievements[0]["AchievementIndex"] = tool.ACHIEVEMENT_BIT_LIMIT
+    if case == "objective-conflict":
+        ring["ItemClass"] = "Artifact+EquippableRing+Jewelry"
+        tasks.append({"TaskID": "Task_Equip_Ring", "Type": "TaskEquipItem", "ItemName": PLAIN_RING})
+        objectives.append({"ObjectiveID": "Objective_ReviewRing", "Type": "Artifact", "Task": "Task_Equip_Ring",
+                           "AchievementId": "Achievement_Objective_ReviewRing"})
+        achievements.append({"AchievementID": "Achievement_Objective_ReviewRing", "AchievementIndex": OBJECTIVE_INDEX})
     sheets = {"ReviewItems": FakeSheet("ReviewItems", [bow, ring]),
               "MasterItemDefinitions_MTX_Review": FakeSheet("MasterItemDefinitions_MTX_Review", [hat]),
-              "ReviewObjectives": FakeSheet("ReviewObjectives", [
-                  {"ObjectiveID": OBJECTIVE, "Type": "Artifact", "Task": "Task_Container_Review", "AchievementId": OBJECTIVE_ACHIEVEMENT},
-                  {"ObjectiveID": "Objective_ReviewMission", "Type": "Mission", "Task": "Task_Kill_Review", "AchievementId": ""}]),
+              "ReviewObjectives": FakeSheet("ReviewObjectives", objectives),
               "ReviewTasks": FakeSheet("ReviewTasks", tasks),
-              "ReviewAchievements": FakeSheet("ReviewAchievements", [{"AchievementID": OBJECTIVE_ACHIEVEMENT,
-                                                                       "AchievementIndex": OBJECTIVE_INDEX}])}
+              "ReviewAchievements": FakeSheet("ReviewAchievements", achievements)}
     kinds = {"ReviewItems": tool.MASTER_TYPE, "MasterItemDefinitions_MTX_Review": tool.MASTER_TYPE, "ReviewObjectives": tool.OBJECTIVES_TYPE,
              "ReviewTasks": tool.TASKS_TYPE, "ReviewAchievements": tool.ACHIEVEMENT_TYPE}
     for name in tool.HOUSE_TABLES:

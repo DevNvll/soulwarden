@@ -23,6 +23,7 @@ and the stop are in [World and sessions](world-and-sessions.md).
 | A live check of a slice record before its code: the probe entity | `tools/world probe`, `World::make_probe`, `server/http/dev_routes.cpp` |
 | The spells of stage 3.3b-M2: the shield of Maelstrom, the ground of Mighty Gavel, the fortify of Clear Out, the fortify in the well of Unyielding | `Abilities::cast_spell_at`, `Spells::absorbs`, `Spells::aura_step`, `SpellRequest::areaStatuses`, test cases GH8, GH10, GH11, GH12 |
 | The ground areas of the creatures (stage 3.4f-C): the status area (the mushroom of the Dryad Shaman), the strike (the lightning of the Undead Shaman), their members, their ends | `Spells::make_area` (`AreaRequest`), `Spells::area_step`, `Spells::strike_step`, `Spells::in_area`, `Spells::leave_area`, `Spells::caster_died`, test cases CRA1 to CRA9 |
+| The explosion of Explosive Arrow (stage B1): the spell entity at the collision, its burst on the bodies in its sphere | `Abilities::volley_landed`, `PhasePlan::bodies`, `Abilities::run_area`, test cases BW6, BW9, BW10 |
 | The areas at the caster and the rotation of a creature area (stage 3.4f-D); the corrections AR-R1 to AR-R5 of the review of stage 3.4f-C (a late tick, the exit before a tick, a late strike sample, format 4, the volume times) | `Behavior::place_rule`, `area_range` ([Creature behavior](creature-behavior.md)), `SpellBody::yaw`, `Spells::holds`, `Spells::strike_sample`, `gamedata/spell_data.cpp`, test cases CRH5, RAR1 to RAR5 |
 
 ## Rules
@@ -131,6 +132,23 @@ and the stop are in [World and sessions](world-and-sessions.md).
 - The pull of the vortex ([Forced movement](forced-movement.md)): its start gives each creature of its sphere the impact
   of the row of the child entity VortexPull, and the burst pushes 0.5 m.
 - No limit of the count of vortexes: the cooldown of the cast (30 s) limits them (a decision of an agent).
+
+### The explosion of Explosive Arrow (area, stage B1)
+
+- The make [game data; live check B1-I1]. At the landing of the projectile spell of Explosive Arrow (a collision with a creature, a
+  wall, or the ground; SpawnSecondaryOnCollision; the end of the range is no collision) the abilities system asks for the
+  SecondarySpellID of the projectile spell at the point of the collision (`Abilities::volley_landed`): `Spell_Ability_Bow_ExplosiveShot_Explosion`
+  (slice `spell_aoe_explosionshot`) or `_Explosion_SizeChange` with Contained Detonation (slice `spell_aoe_explosionshot_small`). The
+  record of the slice (the Spell state at slot 1: the spell key and the position) is the fire burst of the client: the client shows
+  no explosion of its own (live check: two shots with no record showed nothing; a probe of the slice showed the burst 0.4 s after the
+  record, for about 0.6 s).
+- The burst phase runs at the start of the spell: the area of the offense of the slice (the radius and the damage row of its
+  `ExplosionDamage`: 2.5 m and `Bow_ExplosionShot_Explosion`, or 1.25 m and `_Explosion_Dmg`) hits each enemy creature whose body (its
+  capsule) reaches into the sphere, with no wall between (`PhasePlan::bodies`) [agent decision from the live run: the point of the
+  collision is on the surface of the capsule of the direct target]. The direct target also takes the burst [build sheet: the text
+  "deals 50 % on hit, then explodes on impact dealing an additional 135 %"].
+- The end: after the Duration of the spell row (1 s), on the world clock. A caster that leaves the world ends it.
+- Each session near the point observes the record (rule MP-10, test case BW9: the same bytes for two sessions).
 
 ### The Pylon of the ice gauntlet (summon, stage 3.3b-S2b)
 

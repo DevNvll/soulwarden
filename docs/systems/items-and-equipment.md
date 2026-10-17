@@ -89,6 +89,9 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   command of the system.
 - The reward item of a DLC pack (stage 1.1b): each character gets one AmuletIsabellaT1 (the reward of the entitlement
   `STEAM_APP_ID.1200562`) one time, at a world entry, through `Inventory::give` in the transaction of its reward row.
+- A committed change of the paperdoll that changes the weapon in the hand (its slot or its instance) tells the abilities system
+  (`Abilities::weapon_changed`: the aim of an ability ends, the window of Riposte ends) after the refresh of the gear (code review of
+  stage B0, finding B0-R2; test case RQ2). A change with the same weapon in the hand tells nothing.
 
 ## Commands
 

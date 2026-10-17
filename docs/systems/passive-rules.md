@@ -259,6 +259,31 @@ The list must name each row that the evaluator does not apply (no silent rule). 
 A condition EquipLoadCategory does not stop a row (the gear values apply it). The two rules are not in the backend: a later stage of
 the bow build implements them (the roadmap, stages B1 to B5).
 
+### The rules of the bow abilities (stage B1)
+
+- The volley count of NumConsecutiveHits (Rapid Accuracy) [decision D11 of the orchestrator; build sheet Q3]. A hit with a volley
+  (`HitContext::volley`: the cast number of the arrows of a bow ability) counts for the rule, the volley, and the target together
+  (`volleyHits`): Rapid Accuracy (NumConsecutiveHits 3) fires when three arrows of one cast hit one target. A hit of a different
+  cast, of a different target, or a miss does not add to the count, and a volley hit does not end the count of a different volley
+  (no reset of the consecutive count). [Static proof: the hit test of the client `0x67A18F0` needs the target of the hit data for a
+  row with NumConsecutiveHits.] The count of a volley ends after the time of the rule (the sweep), and with ResetConsecutiveOnSuccess
+  at its success. IgnoreResetConsecutiveOnDeath is a mark (the death of the target does not end the count; the count is per target).
+- InAction (stage B1): a hit passes also when the list names the ability action of its cast (`HitContext::action`: `Bow_RapidShot`,
+  the actions of the projectile data). Final Blow (InAction `Bow_RapidShot`, DamageTableRow `Bow_RapidAttack_KnockBack`) and Rapid
+  Accuracy use it.
+- The forced damage row of a status (Flame Arrow) [game data]. A rule with ForceStatusEffectDamageTableRow gives its
+  OtherApplyStatusEffect to the target with the damage of a tick: the HealthModifierDamageBased of the status row times the potency
+  times the damage of the row of StatusEffectDamageTableRowOverride (`Common_DamageOverTime_Override`, DmgCoef 1) with the weapon
+  and the gear score of the hit (`Combat::damage`), of the damage type of the status row. The creature status system runs the
+  ticks ([Creatures](creatures.md)). Log line: `world: rule R gives S to creature X: N TYPE damage each tick`. Only a hit of the
+  DamageTableRow of the rule gives it (Flame Arrow: the direct row of Explosive Arrow, not the explosion).
+- DamageTableRowOverride (Blood Soaked Arrow) is an effect of the plan of the ability (`Abilities::resolve_volley` replaces the row of
+  the clip): the list shows it as applied.
+- The list of the passive rules (`describe_row`): a node that a cast of an ability action selects (Contained Detonation: the cast of
+  `Spell_Ability_Bow_Explosive_Upgrade` with the node) is applied, with the note of the cast that needs the node; the projectile, the
+  action, and the fragment names of a planned bow ability are names of a planned ability (the node rows of Rapid Shot are rules of
+  its arrows).
+
 ## Commands
 
 ```sh

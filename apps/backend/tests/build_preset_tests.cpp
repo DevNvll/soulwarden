@@ -15,6 +15,10 @@
 //   BP8  a character not in the world: the rows only; the next world entry has the build and the achievement bit
 //   BP9  the list of the passive rules: a target condition with no event and a cooldown of a fixed row are "not applied" (the row of
 //        a fixed value stays applied)
+//   BP10 B0-R3 (code review of stage B0, corrected in stage B1): a file of format 3 with no member artifactObjectives does not load; a
+//        preset with an artifact whose objective the catalog does not have is disabled (no apply with locked artifact perks)
+//   BP11 B0-R4: an achievement index at the bit limit of the client does not load (the tool and the loader)
+//   BP12 B0-R5: two bits of one achievement, two achievements of one bit, two objectives of one item or one objective id do not load
 //
 // All ids, names, and values are made up, with the id texts of the game where a rule of the backend names them. No value of a capture.
 //
@@ -823,6 +827,114 @@ void passive_list(const Options&) {
     check(opening.applied, "control: a target condition with a damage row (Opening Strike) stays a rule of a hit: " + opening.note);
 }
 
+#ifndef SOULWARDEN_B0_BASELINE
+/** A catalog file of format 3 with the items of preset_catalog() and the objective of the artifact bow (the cases BP10 to BP12). */
+json catalog_document() {
+    json document{{"format", 3},
+                  {"columns", {"id", "name", "type", "class", "tier", "weight", "maxStack", "durability", "minGearScore", "maxGearScore",
+                               "gearScoreOverride", "bindOnPickup", "nonRemovable", "notDroppable", "maxCraftUpgradeGS"}},
+                  {"items", json::array()}};
+    for (const gamedata::ItemDefinition& item : preset_catalog()) {
+        document["items"].push_back({item.id, item.nameKey, item.type, item.itemClass, item.tier, item.weight, item.maxStack, item.durability,
+                                     item.minGearScore, item.maxGearScore, item.gearScoreOverride, item.bindOnPickup, item.nonRemovable,
+                                     item.notDroppable, item.maxCraftUpgradeGS});
+    }
+    document["artifactObjectives"] = {{kBow, "Test_Objective_Bow", kObjectiveAchievement, kObjectiveBit}};
+    return document;
+}
+
+/** @return True when the catalog of the shop loads the document (the file is in the work folder of the case). */
+bool load_document(PresetShop& shop, const Options& options, const json& document) {
+    std::filesystem::create_directories(options.workDirectory);
+    const auto path = options.workDirectory / "build-preset-objectives.json";
+    std::ofstream(path) << document.dump();
+    const bool loaded = shop.host.catalog.load(path.string());
+    std::filesystem::remove(path);
+    return loaded;
+}
+
+bool has_bit(const world::Entity& character, std::uint32_t bit) {
+    return std::find(character.achievements.begin(), character.achievements.end(), bit) != character.achievements.end();
+}
+
+/** BP10 (code review of stage B0, B0-R3): a catalog of format 3 with no objective of an artifact. */
+void missing_objective(const Options& options) {
+    PresetShop shop;
+    check(load_document(shop, options, catalog_document()), "control: the complete file of format 3 loads");
+    json missing = catalog_document();
+    missing.erase("artifactObjectives");
+    check(!load_document(shop, options, missing), "a file of format 3 with no member artifactObjectives does not load");
+    check(shop.host.catalog.artifact_objective(kBow) != nullptr, "the refused file changes nothing: the old catalog stays");
+    json empty = catalog_document();
+    empty["artifactObjectives"] = json::array();
+    json other = catalog_document();
+    other["artifactObjectives"] = {{kRing, "Test_Other_Objective", "Test_Other_Achievement", 88}};
+    for (const json& document : {empty, other}) {
+        check(load_document(shop, options, document), "setup: a list of objectives that has no row of the artifact bow loads");
+        shop.world().presets().set({test_preset()});
+        const auto& status = shop.world().presets().presets().front();
+        check(!status.enabled && status.cause.find("artifact objective") != std::string::npos && status.cause.find(kBow) != std::string::npos,
+              "the check at the start disables the preset with the artifact: " + status.cause);
+        const auto applied = shop.world().presets().apply(kCharacterA, "test-build", "first");
+        check(applied.error == world::PresetError::disabled && !has_bit(*shop.character(), kObjectiveBit),
+              "its apply is refused: no artifact with locked perks");
+    }
+    check(load_document(shop, options, catalog_document()), "control: the complete file loads again");
+    shop.world().presets().set({test_preset()});
+    check(shop.world().presets().presets().front().enabled && shop.world().presets().apply(kCharacterA, "test-build", "first").ok()
+              && has_bit(*shop.character(), kObjectiveBit),
+          "control: with the objective the preset is enabled, and its apply gives the achievement bit");
+}
+
+/** BP11 (B0-R4): the achievement bit of an objective is in the bit vector of the client. */
+void objective_bit_limit(const Options& options) {
+    const std::filesystem::path work = options.workDirectory / "build-preset-bit-limit";
+    const std::vector<std::string> lines = run_check(options, "tools/gamedata/check_item_catalog_tool.py", {work.string(), "objective-bit-limit"});
+    check(passed(lines, "objective-bit-limit"), "the item catalog tool refuses an objective at the bit limit of the client");
+    std::filesystem::remove_all(work);
+    PresetShop shop;
+    json limit = catalog_document();
+    limit["artifactObjectives"][0][3] = gamedata::kAchievementBitLimit;
+    check(!load_document(shop, options, limit), "the loader refuses an achievement index at the bit limit (kAchievementBitLimit)");
+    json last = catalog_document();
+    last["artifactObjectives"][0][3] = gamedata::kAchievementBitLimit - 1;
+    check(load_document(shop, options, last) && objective_bit(shop.host.catalog, kObjectiveAchievement) == gamedata::kAchievementBitLimit - 1,
+          "control: the last bit below the limit loads");
+}
+
+/** BP12 (B0-R5): one bit for each achievement and one achievement for each bit. */
+void objective_conflict(const Options& options) {
+    const std::filesystem::path work = options.workDirectory / "build-preset-conflict";
+    const std::vector<std::string> lines = run_check(options, "tools/gamedata/check_item_catalog_tool.py", {work.string(), "objective-conflict"});
+    check(passed(lines, "objective-conflict"), "the item catalog tool refuses two achievements with one bit");
+    std::filesystem::remove_all(work);
+    PresetShop shop;
+    json document = catalog_document();
+    for (json& row : document["items"]) {
+        if (row[0] == kRing) {
+            row[3] = "Artifact+EquippableRing+Jewelry";
+        }
+    }
+    json twoBits = document;
+    twoBits["artifactObjectives"].push_back({kRing, "Test_Objective_Ring", kObjectiveAchievement, kObjectiveBit + 1});
+    check(!load_document(shop, options, twoBits), "two rows of one achievement with two bits do not load (no first row wins)");
+    json oneBit = document;
+    oneBit["artifactObjectives"].push_back({kRing, "Test_Objective_Ring", "Test_Ring_Achievement", kObjectiveBit});
+    check(!load_document(shop, options, oneBit), "two achievements with one bit do not load");
+    json twoRows = document;
+    twoRows["artifactObjectives"].push_back({kBow, "Test_Objective_Bow_Again", "Test_Bow_Achievement", kObjectiveBit + 2});
+    check(!load_document(shop, options, twoRows), "two objectives of one item do not load");
+    json sameObjective = document;
+    sameObjective["artifactObjectives"].push_back({kRing, "Test_Objective_Bow", "Test_Ring_Achievement", kObjectiveBit + 3});
+    check(!load_document(shop, options, sameObjective), "two rows of one objective id do not load");
+    json correct = document;
+    correct["artifactObjectives"].push_back({kRing, "Test_Objective_Ring", "Test_Ring_Achievement", kObjectiveBit + 1});
+    check(load_document(shop, options, correct) && objective_bit(shop.host.catalog, kObjectiveAchievement) == kObjectiveBit
+              && objective_bit(shop.host.catalog, "Test_Ring_Achievement") == kObjectiveBit + 1,
+          "control: two artifacts with their own achievements and bits load");
+}
+#endif
+
 } // namespace
 
 std::vector<Case> build_preset_cases() {
@@ -837,7 +949,15 @@ std::vector<Case> build_preset_cases() {
             {"BP7", "the routes of the build presets: the admin command and its owner check, the catalog, the development route", routes},
             {"BP8", "a build preset for a character that is not in the world: the rows, then the world entry", preset_stored},
 #endif
-            {"BP9", "the list of the passive rules: a target condition with no event and a cooldown of a fixed row are not applied", passive_list}};
+            {"BP9", "the list of the passive rules: a target condition with no event and a cooldown of a fixed row are not applied", passive_list},
+#ifndef SOULWARDEN_B0_BASELINE
+            {"BP10", "B0-R3: a catalog of format 3 needs its artifact objectives; a preset with an artifact and no objective is disabled",
+             missing_objective},
+            {"BP11", "B0-R4: the achievement bit of an artifact objective is below the bit limit of the client (tool and loader)",
+             objective_bit_limit},
+            {"BP12", "B0-R5: one bit for each achievement of an objective, one achievement for each bit (tool and loader)", objective_conflict},
+#endif
+    };
 }
 
 } // namespace soulwarden::backend::tests

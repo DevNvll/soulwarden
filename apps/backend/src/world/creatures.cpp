@@ -837,6 +837,18 @@ void Creatures::effect_tick(Entity& entity, std::uint64_t serial, WorldClock::ti
         if (amount > 0.0F) {
             (void)heal(entity, amount, status);
         }
+        // The damage of a tick (stage B1: the burn of Flame Arrow) through the hit path of a damage over time, with the source as the
+        // attacker; after this step of the due list (a hit can end the creature and change the entities of the world).
+        if (effect->tickDamage > 0.0F && source != 0) {
+            const EntityId target = entity.id;
+            const float hurt = effect->tickDamage;
+            const std::string type = effect->tickType;
+            const float charge = effect->tickCharge;
+            m_world.after(std::chrono::milliseconds(0), [source, target, hurt, type, charge, status](World& world) {
+                world.gear().tick_damage(source, target, hurt, type, status.c_str(), charge);
+            });
+            ++m_counts.damageTicks;
+        }
         // OnTickStatusEffect of the row at each tick (game data: AI_Inquisitor_RampantFlame of AI_InqCleric_Rekindle).
         if (row != nullptr && !row->cells.text("OnTickStatusEffect").empty()) {
             const gamedata::AbilityData* data = m_world.options().abilityData;
@@ -879,7 +891,8 @@ float Creatures::heal(Entity& entity, float amount, std::string_view what) {
     return gained;
 }
 
-bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, EntityId source, std::optional<std::chrono::milliseconds> time) {
+bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, EntityId source, std::optional<std::chrono::milliseconds> time,
+                            const StatusDamage* damage) {
     Creature& creature = entity.creature;
     if (entity.kind != EntityKind::creature || creature.dead || creature.immune()) {
         ++m_counts.statusesRefused;
@@ -952,6 +965,11 @@ bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, Enti
     const float rate = row.cells.number("TickRate");
     effect.healPart = row.cells.number("HealthModifierPercent") > 0.0F ? row.cells.number("HealthModifierPercent") : 0.0F;
     effect.healFixed = row.cells.number("Health") > 0.0F ? row.cells.number("Health") : 0.0F;
+    if (damage != nullptr && damage->amount > 0.0F && !damage->type.empty()) {
+        effect.tickDamage = damage->amount;
+        effect.tickType = damage->type;
+        effect.tickCharge = damage->charge;
+    }
     const auto lasting = time ? *time : std::chrono::milliseconds(std::lround(row.duration * 1000.0F));
     if (lasting.count() <= 0) {
         // No duration: one application now (the rule of a character): the heal, and the dispel above.
@@ -963,7 +981,7 @@ bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, Enti
         return true;
     }
     effect.ends = now + lasting;
-    if (rate > 0.0F && (effect.healPart > 0.0F || effect.healFixed > 0.0F || !row.cells.text("OnTickStatusEffect").empty())) {
+    if (rate > 0.0F && (effect.healPart > 0.0F || effect.healFixed > 0.0F || effect.tickDamage > 0.0F || !row.cells.text("OnTickStatusEffect").empty())) {
         // The ticks (the rule of a character, statuses.h): the first one at the next tick of the world, or one TickRate later with
         // DelayInitialTick; then each TickRate, while it is before the end.
         effect.tickRate = std::chrono::milliseconds(std::max<long long>(std::lround(rate * 1000.0F), 1));

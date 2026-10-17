@@ -386,6 +386,13 @@ private:
     [[nodiscard]] bool step_to(std::int32_t cellX, std::int32_t cellY, float height, Place& out) const;
     /** @return True when a creature can go on the straight line from one place to a different one. */
     [[nodiscard]] bool walk_line(const Place& from, const Place& to) const;
+    /**
+     * @return True when a creature can go on the real segment from a place (its floor `start`) to the floor `end` of a cell: the samples
+     *         of half a cell of `slide` (each new cell a step from the cell before it, no cut of the corner of a wall), and the last floor
+     *         is the floor of `end` (code review of stage B0, finding B0-R1: the line between the centers of the cells can be free while
+     *         the real line from a pushed creature goes through a wall).
+     */
+    [[nodiscard]] bool walk_segment(const Place& start, const state::WorldPosition& from, const state::WorldPosition& to, const Place& end) const;
     /** @return The free floor that is nearest to a position: not farther than `reach` in the plane and `heightReach` in the height. */
     [[nodiscard]] std::optional<Place> snap(const state::WorldPosition& position, float reach, float heightReach) const;
     [[nodiscard]] state::WorldPosition center_of(const PathCell& cell) const;

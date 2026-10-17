@@ -414,6 +414,7 @@ void run_command(const PendingCommand& command) {
     g_snapshot.busy = false;
     g_snapshot.result = command.label + ": " + text;
     g_snapshot.resultIsError = reply.status != 200;
+    ++g_snapshot.resultNumber;
     ++g_version;
 }
 

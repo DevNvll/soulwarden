@@ -4,6 +4,7 @@
 #include <set>
 
 #include "core/logging/log.h"
+#include "world/data_rules.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -218,6 +219,12 @@ std::string BuildPresets::cause_of(const BuildPreset& preset) const {
     for (const PresetItem& item : preset.items) {
         if (item.slot && !slots.insert(*item.slot).second) {
             return "two items of the preset are for slot " + std::to_string(*item.slot);
+        }
+        // An artifact of the equipment needs its objective in the item catalog (code review of stage B0, finding B0-R3): with no objective
+        // the preset gives no achievement, and the client shows the perks 2 to 5 of the artifact locked (live check U1 of stage B0).
+        const gamedata::ItemDefinition* definition = item.slot ? catalog->find(item.itemId) : nullptr;
+        if (definition != nullptr && data_rules::list_has(definition->itemClass, "Artifact") && catalog->artifact_objective(item.itemId) == nullptr) {
+            return "the item catalog has no artifact objective of " + item.itemId + " (the client would show its perks locked)";
         }
     }
     // The rules of the systems on a character with nothing: the same checks as the apply.
