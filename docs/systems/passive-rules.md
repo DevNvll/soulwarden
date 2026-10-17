@@ -17,6 +17,7 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
 | The rule rows of the data and the spell selections of the action data | `tools/gamedata/abilities.py` (format 4), `gamedata/ability_data.h`, [Game data](../development/game-data.md) |
 | The fixed stats of the nodes in the gear values | `Gear::values` ([Gear and perks](gear-and-perks.md)) |
 | The rules of stage 3.3b-M2: a spell of a rule (CastSpell), the box of Blood Lust, the status actions (Guarded Sprint), the row of an ability with InSequence, the uses of a node in the weapon actions | `Passives::apply_effects`, `Passives::around_count` (`tracking_supported`), `action_holds`, `ability_value_rule`, `Passives::describe_row` (`data_use`), test cases GH9, GH10, GH13, GH14, RV9 |
+| The rules of stage B2: the conditions of a status of the target and of the attacker, DamageTypes, the helper rows of a node, the rows that a status equips, the end of statuses, the Boltcaster, Shirking Shock II, Surprise Attack | `Passives::target_status_pass`, `own_status_pass`, `status_rules`, `rules_of`, `apply_effects`, `target_status`, `HitContext::types`, `targetEffects` (`world/gear.h`), `AbilityData::helpers_of`, test cases BC3 to BC8 |
 
 ## Rules
 
@@ -31,7 +32,14 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   (the WeaponMastery of the weapon row), each with its row of the ability data; the active abilities of that table (their
   rows have the rules of their own hits); and the ability rows of the perks of the equipped items, with the potency of the
   perk. A character has no rule of a different weapon tree in a hit. Source: game data (the ability tables of the players,
-  `ability-data.json` format 4: 2,025 rows).
+  `ability-data.json` format 4: 2,025 rows). From stage B2 two more sources (game data):
+  - the helper rows of a learned node (`AbilityData::helpers_of`: the rows whose RequiredEquippedAbilityId is the node, with
+    EquipWhenUnsheathed; 78 rows of the data): the tracker of Surprise Attack, `Passive_Bow_Hunter_DmgOnFirst_Tracker`. The list names
+    them with the origin "helper of a node". RequiredEquippedAbilityId is also a condition: the character has the node;
+  - the rows that the statuses of the character equip (`Passives::status_rules`: EquipAbility of the status row, with the potency of the
+    status; 378 status rows of the data have EquipAbility), for a hit of each weapon: the tracker of Shirking Shock II
+    (`Status_ItemPerk_Weapon_DodgeSuccess_LightningDMG_Tracker`)
+    equips `Ability_Perk_Weapon_DodgeSuccess_LightningDMG` while it runs. The list names them with the origin "row of a status".
 - The events that the backend has a source for: OnHit, OnCrit, OnKill, OnHitTaken, OnHeadShot, OnHitBehind, OnHealed (only
   its HealScalingValueMultiplier, stage 3.3b-S6). A row with no
   event and a condition of a hit (DamageTableRow, AttackType, RemoteDamageTableRow) is a rule of that hit (Crowded Well:
@@ -53,6 +61,21 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   - The health of the target is its health before the hit, one value for each rule of the hit (a decision of an agent).
   - TargetStatusEffectCategory with TargetStatusEffectComparison: the EffectCategories of the status rows of the effects
     on the creature (NotEqual: the creature has none of them).
+  - TargetStatusEffect, TargetStatusEffectStackSize, TargetStatusEffectComparison, CheckStatusEffectsOnTargetOwned (stage B2; client
+    hit test 0x67A18F0, research bow-build-2.md Q4): with a stack size of 1 or more, the stacks of the status (or of the effects of the
+    categories, when no status is named) with the comparison; with no size, the target has the status (NotEqual: it has none). The
+    stacks of each source count (one entry for each status of an entity, client 0x4038E80; decision D10 of the orchestrator); with
+    CheckStatusEffectsOnTargetOwned only an effect whose source is the attacker (a creature has one source for each effect: the last
+    application). The conditions of a target status see the effects of the target before the hit (`HitContext::targetEffects`, a copy in
+    `Combat::strike`): an earlier rule of the same hit does not change them (the bolt of the Boltcaster tests the 3 charges before the
+    charge of its own hit).
+  - StatusEffect, StatusEffectStackSize, StatusEffectComparison (stage B2; client self test 0x67A0130): with no size, the attacker has the
+    status (each source; the comparison is not read); with a size, its stacks with the comparison. CheckOwnedStatusEffects is not in the
+    evaluator (a row with it is not applied).
+  - DamageTypes (stage B2): the hit has a part of a type of the list (`HitContext::types`: the type of the row when a part keeps it, and
+    the type of the conversion of a gem or an affix with a part above 0). The Boltcaster converts 99 percent: a light arrow has Thrust and
+    Lightning, and passes DamageTypes Lightning (decision K6 of the research: a hit with a part of the type passes; the client reader of
+    DamageTypes was not found).
   - InAction, InSequence: the hit is a hit of a cast of an ability of the list.
   - RequireReaction: the hit did damage above 0 (a decision of an agent).
   - DamageIsMelee: a melee contact; DamageIsRanged: a projectile. A hit of an area is neither (a decision of an agent).
@@ -100,6 +123,18 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
     lifeSteal, thus with the outgoing and the received heal parts; [Combat and health](combat-and-health.md)), CooldownTimer with CDRImmediatelyOptions (ActiveWeapon: each ability of
     the bar of the weapon in the hand; AbilitySpecific: the ability of CooldownId; AllExcept: each other ability of the bar).
   - ActivationCooldown: the rule acts one time in that time, for each character (the key: the character id and the rule).
+  - RemoveTargetStatusEffectsList (stage B2): the statuses of the list end on the target after the hit, of each source
+    (`Creatures::remove_statuses`).
+  - RemoveStatusEffects (stage B2): statuses of the attacker end after the hit (`Statuses::remove_rows`): the statuses of the list, or with
+    the text AbilitySpecific the statuses of StatusEffectsList (Momentum of the rapier, `Rapier_BonusDMGAfterAbility`). A name that is not
+    a status of the character ends nothing (`Global_Weapon_DodgeSuccess_*DMG` names its ability row `..._Tracker`, not the status: the
+    game data; that tracker then ends at its time or at the next hit taken, its StopOnHitCount 1).
+  - A status with no duration whose damage is a part of the damage of the hit (stage B2; a negative HealthModifierDamageBased with a
+    DamageType, no rend, no CastSpell: the bolt `Status_Perk_Artifact_Set1_Bow_StaticDischarge`, and 12 rows of the set bonuses and of
+    the infix perks): one damage of `-HealthModifierDamageBased x potency x the raw damage of the hit` of its type, through the one status
+    path of a creature ([Creatures](creatures.md): its ApplicationCooldown on the target, its dispel, its icon). The damage base is the
+    project rule of a damage-based status of a perk (research K5: the row has no ForceStatusEffectDamageTableRow). Before stage B2 the
+    gear system gave the damage with an ApplicationCooldown for each attacker and no dispel.
   - A fixed stat: its CritChance and CritDamage count at each hit; its other values (PhysicalArmor, MaxHealth, the
     attributes) are in the gear values of the weapon in the hand (`Gear::values`).
 - A status while entities are near (`Passives::tick`, each 500 ms: `passive_rules::kAroundStep`, a decision of this
@@ -223,6 +258,9 @@ The list of the backend (`tools/world passives --table stamina`; the final run o
 common game data folder) names each row of the data (a node or a perk) with a part of the stamina or of the dodge: a column with
 "Stamina", OnHitTakenWhileInvulnerable, EquipLoadCategory, or a text that names a dodge. 115 rows, 45 applied. The stamina model of
 this stage gives the source of each applied row; the rows that are not applied need a different system, and the list names the cause.
+From stage B2 the list has 61 of the 115 rows applied (the run `b2-live2` of stage B2 with the game data of the stage): the 12 elemental
+weapon perks, `Ability_Spear_CDROnHitAfterDodge`, `GlobalPerk_Artifact_Set2_MediumLegs`, `Helper_Passive_Greatsword_Off_8`, and
+`Passive_Dagger_Blade_LightFinish_Helper_Rend` came with the conditions and the effects of stage B2 (the rows of the table below).
 
 | Rows | What the backend does |
 | --- | --- |
@@ -234,13 +272,14 @@ this stage gives the source of each applied row; the rows that are not applied n
 | `Passive_Greataxe_Mauler_StamVsLowHp` (not one of the 115 rows: its row has no stamina cell) | Applied: the hit-taken action of the data gives its stamina. |
 | The other applied rows of the list (`AbilityTable_SetBonus_Infix_SecondWind_Gloves`, `GlobalPerk_Artifact_Set2_Warhammer2`, `GlobalPerk_Artifact_Set2_HeavyLegs`, `Global_Conqueror_MeleeWeapon_DodgeSuppressant`, `Heartgem_Rune_SpinningSwords_*`, `IceTempestPass3`, `Passive_Dagger_Blade_LightFinish_Weaken`, `Runeglass_Just_ElementalAdd`) | Applied by the rules of the earlier stages (a text of the row names a dodge or a stamina status; the row has no stamina condition). |
 | 5 rows of a hit between players in a dodge (`Global_PvP_Amulet_DodgeSuccess_DMG`, `Global_PvP_Armor_DodgeSuccess_Heal`, `Global_Conqueror_DodgeCorruptionBall`, and two `Ability_Perk_PvP_*`) | Not applied: the attacker of a hit in a dodge is a creature. |
-| 12 elemental weapon perks (`Global_Weapon_DodgeSuccess_*DMG`, `Ability_Perk_Weapon_DodgeSuccess_*DMG`) | Not applied: the damage over time of the next hit needs StatusEffect (a condition of a status of the character), RemoveStatusEffects, and ForceStatusEffectDamageTableRow. |
-| 3 cleanse amulets (`Global_Amulet_DodgeSuccess_CleanseDoT`, `_CleanseDebilitate`, `Ability_Perk_Amulet_DodgeSuccess_Cleanse`), `GlobalPerk_Artifact_Set2_HeavyChest`, `Ability_Spear_CDROnHitAfterDodge` | Not applied: RemoveStatusEffects (the removal of statuses of a category) is not in the backend. |
+| 12 elemental weapon perks (`Global_Weapon_DodgeSuccess_*DMG`, `Ability_Perk_Weapon_DodgeSuccess_*DMG`) | Applied from stage B2: the tracker status equips the row (EquipAbility); the next hit gives the damage of its forced row (Shirking Shock II: 0.236 x potency of the base weapon damage as Lightning) and ends the tracker (RemoveStatusEffects). Before stage B2: not applied. |
+| 3 cleanse amulets (`Global_Amulet_DodgeSuccess_CleanseDoT`, `_CleanseDebilitate`, `Ability_Perk_Amulet_DodgeSuccess_Cleanse`), `GlobalPerk_Artifact_Set2_HeavyChest` | Not applied: NumStatusEffectsToRemove and StatusEffectCategoriesList (the removal of a number of statuses of a category) are not in the backend. |
+| `Ability_Spear_CDROnHitAfterDodge` | Applied from stage B2 (StatusEffect, RemoveStatusEffects); the spear has no ability in this backend yet. |
 | 3 block perks (`Global_Chest_OnBlockedHitTaken_StaminaRegen`, its `Ability_Perk_*` form, `Passive_Flail_Eldritch_Passive2`), `AbilityID_Catacombs_Revitalize_Ability` | Not applied: the backend has no block (OnBlockedHitTaken). |
 | 22 rows after a dodge (`CDROnDodgePerk1` to `3`, `Global_Common_CDRonDodge`, `Global_Earring_ThreatSubOnDodge`, the 10 `Mut_Curse1_*` rows, `Passive_Lifestaff_Protection_HealingOnDodge`, `Passive_Musket_Trapper_*`, `Passive_VoidGauntlet_HealOnDodgeMaxMana`, `Passive_Greatsword_Off_8`, `Ultimate_Bow_Skirmish`, `AbilityTable_SetBonus_Infix_Stifling_Legs`) | Not applied: AfterAction, AfterSequence, and Duration (a rule after the end of an action) are not in the evaluator. |
-| 13 rows of an equipped ability or a trigger (`RequiredEquippedAbilityId`, `AbilityTrigger`, `AbilityList`: the helpers of the flail, the sword, the dagger, and the greatsword, the greatsword counter, `Passive_Flail_Crusader_Passive4`) | Not applied: the evaluator has no such condition. |
+| 13 rows of an equipped ability or a trigger (`RequiredEquippedAbilityId`, `AbilityTrigger`, `AbilityList`: the helpers of the flail, the sword, the dagger, and the greatsword, the greatsword counter, `Passive_Flail_Crusader_Passive4`) | From stage B2 RequiredEquippedAbilityId is a condition (the helper rows of a node): `Helper_Passive_Greatsword_Off_8` and `Passive_Dagger_Blade_LightFinish_Helper_Rend` are applied. The others keep a cause: AbilityTrigger, AbilityList, HealthDamageMitigation, ThreatDamage, or an ability with no plan. |
 | 5 rows of an ability with no plan (`Ability_Greatsword_DrainAttack`, `Ability_Spear_Cyclone_BonusStaminaOnMultiHit`, `Rapier_Evasion_Mod2`, `_Mod4`, `Upgrade_Sword_WhirlingBlade_Rend`) | Not applied yet: the weapon part of their ability comes later. |
-| `Global_Conqueror_Longsword_ShieldlessAgility_HitStaminaCostTracker`, `Global_Conqueror_Musket_LimbDebilitation_Legshot`, `GlobalPerk_Artifact_Set2_MediumLegs`, `Passive_Firestaff_Pyro_ManaOnblock` | Not applied: OnEquipStatusEffect, OnLegShot, DamageTypes, UseDefenderWeaponOnApplyOtherSE are not in the evaluator. |
+| `Global_Conqueror_Longsword_ShieldlessAgility_HitStaminaCostTracker`, `Global_Conqueror_Musket_LimbDebilitation_Legshot`, `Passive_Firestaff_Pyro_ManaOnblock` | Not applied: OnEquipStatusEffect, OnLegShot, UseDefenderWeaponOnApplyOtherSE are not in the evaluator. `GlobalPerk_Artifact_Set2_MediumLegs` is applied from stage B2 (DamageTypes). |
 
 Grit and the block stay out of this stage (the roadmap): `Passive_Greataxe_Mauler_HeavyAddGrit`, `Passive_WarHammer_Juggernaut_HeavyGrit`,
 and the block rows of the table of the great axe and the war hammer above keep their cause.
@@ -284,6 +323,20 @@ the bow build implements them (the roadmap, stages B1 to B5).
   action, and the fragment names of a planned bow ability are names of a planned ability (the node rows of Rapid Shot are rules of
   its arrows).
 
+### The rules of the Boltcaster and of the bow build (stage B2)
+
+The rows of the game data (research `bow-build.md` section 4.3, `bow-build-2.md` Q4) and what the backend does (`tools/world passives
+NAME` with the preset `bow-boltcaster`: each row below is "applied"; live checks B2-1 to B2-4 of stage B2):
+
+| Row | What the backend does |
+| --- | --- |
+| `GlobalPerk_Artifact_Set1_Bow` (Electrified: OnHit, AttackType Light,Heavy, DamageTypes Lightning, BaseDamage 0.2) | +0.2 in the damage part of a light or heavy hit with a Lightning part (the conversion of 99 percent of its affix). An ability hit does not get it. |
+| `GlobalPerk_Artifact_Set1_BowPerk` (Bolt: OnHit, RequireReaction, AttackType Light,Heavy, OtherApplyStatusEffect the charge) | One stack of `Status_Perk_Artifact_Set1_Bow_StaticCharge` (3 s, StackMax 3, RefreshDuration, the icon with its count at the name plate) for each light or heavy hit. An ability hit adds none. |
+| `GlobalPerk_Artifact_Set1_BowPerk2` (the bolt: 21 bow rows, DamageTypes Lightning, TargetStatusEffect the charge, TargetStatusEffectStackSize 3 Equal, the bolt and the removal, RemoveTargetStatusEffectsList the charge, ActivationCooldown 1) | A hit of a row of the list with a Lightning part on a target with 3 charges before the hit: the bolt (0.8 x the raw damage of the hit, Lightning, one number), the end of the charges, and the removal of 0.2 s (it refuses the charge of the same hit: the 4th hit is the bolt, research K4). One bolt in 3 s for each target (ApplicationCooldown of the bolt status: a later rule in the 3 s takes the charges and gives no damage), one trigger in 1 s for each attacker. The ability hits of the list (Rapid Shot, Penetrating Shot, Explosive Arrow) give the bolt too (live check B2-2). |
+| `Ability_Perk_Weapon_DodgeSuccess_LightningDMG_Tracker` and the equipped row `Ability_Perk_Weapon_DodgeSuccess_LightningDMG` (Shirking Shock II) | A creature hit in the immune window of a dodge gives the tracker (10 s, the potency of the perk: 1.274 at 800). The next hit with damage gives one tick of 0.236 x potency x the base weapon damage (`Common_DamageOverTime_Override`, DmgCoef 1, the weapon with the attributes and the level) as Lightning, and the tracker ends. ActivationCooldown 0.5. Live: 713.6 = 0.236 x 1.274 x 2,373.9. |
+| `Passive_Bow_Hunter_DmgOnFirst` (Surprise Attack) and its helper `Passive_Bow_Hunter_DmgOnFirst_Tracker` | +0.2 (the data; the text says 15 percent: a literal number of an older text; decision of the orchestrator) on a hit of a target with no tracker of Surprise Attack of any source (decision D10); the tracker (10 s) goes on the target and the self tracker (15 s) on the attacker. The helper renews the tracker of the target at each later hit of an attacker with the self tracker. A second character gets no bonus while the tracker of the first is on the target. |
+| `Rapier_BonusDMGAfterAbility` (Momentum) | Applied by the evaluator (StatusEffect, RemoveStatusEffects AbilitySpecific): +0.25 on a light or heavy hit while the character has the status, then the status ends. The status comes from an action of a rapier ability, which has no plan in this backend: only a command gives it now. |
+
 ## Commands
 
 ```sh
@@ -301,6 +354,12 @@ tools/world creature effect ID STATUS 5 # give a creature a status for 5 s (a te
 ## Traps
 
 - A node acts only in a hit with the weapon of its tree: a war hammer node does nothing for a hit of the great axe.
+- The value "before the defense" of a hit line is the raw damage with the damage parts: the core (the weapon with the attributes and the
+  level) x the factor of the row x (1 + the parts). Two hits of one weapon on one target differ by the parts of their rules. Live run
+  `b2-live3` of stage B2 (the core 2,373.9, both rows with the factor 1.0): a light arrow on the Cyclops with a charge (a debuff) had
+  1.493 = 1 + 0.02 (Acutely Empowered) + 0.15 (the light load) + 0.2 (Electrified) + 0.1 (Mark) + 0.023 (`Slottable_Common_DmgBasic`, a
+  fixed perk of the definition that the charm of the instance replaces: corrected in stage B2, case BC10); the first arrow of Rapid Shot
+  had 1.370 = 1 + 0.17 + 0.2 (Surprise Attack). Gambled Energy adds 0.045 below full stamina (the first hit after a dodge).
 - The list says "not applied yet" for each node of an ability with no plan, also when the evaluator has each column of the
   row: the hit of that ability does not exist in the backend.
 - The box of Blood Lust follows the look of the camera of the client, not the body: a creature behind the camera does not

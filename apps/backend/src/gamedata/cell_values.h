@@ -24,6 +24,18 @@ struct CellValues {
     [[nodiscard]] bool has(std::string_view column) const {
         return numbers.find(column) != numbers.end() || texts.find(column) != texts.end();
     }
+    /**
+     * @return True for a mark of the data that is set: a number that is not 0, or the text TRUE (some tables have the text form:
+     *         RefreshDuration "TRUE" of Status_ExplosiveShot_Burn; stage B2).
+     */
+    [[nodiscard]] bool flag(std::string_view column) const {
+        if (number(column) != 0.0F) {
+            return true;
+        }
+        const std::string_view value = text(column);
+        return value.size() == 4 && (value[0] == 'T' || value[0] == 't') && (value[1] == 'R' || value[1] == 'r') && (value[2] == 'U' || value[2] == 'u')
+               && (value[3] == 'E' || value[3] == 'e');
+    }
     /** @return The text of a cell, or an empty text. A number cell has no text here. */
     [[nodiscard]] std::string_view text(std::string_view column) const {
         const auto found = texts.find(column);

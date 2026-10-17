@@ -357,6 +357,20 @@ The three bow abilities of the build of the user: Penetrating Shot (`Ability_Bow
   A shot also needs the weapon of the cast in the hand. An item in the lock of the session (the loading screen of a travel) is no shot,
   and it changes nothing of the volley. A projectile that flies already flies on. [Before the correction an item after a weapon
   change, in the loading screen of a travel, or 30 s after the cast shot the arrow that did not fly.]
+- A dodge cancels a bow action [code review of stage U3, finding U3-R7, test cases UR7 and UR9; game data: the CanDodgeBuffer and
+  CanDodgeCancel marks of the fragment, the projectile data of format 3; agent decision with the rule of a buffered input]. An accepted
+  dodge (`Combat::step`, then `Abilities::dodged`) ends the action at its cancel: at once in a cancel window, else (a buffer window, or
+  before the first window) at the next CanDodgeCancel mark (Rapid Shot: buffer 0.2 s, cancel 0.567 s, buffer 0.867 s, cancel 1.1 s,
+  buffer 1.733 s, cancel 2.333 s). The shots of the volley whose time is after the cancel do not fly; a shot whose time came before it
+  can still come late. The log line `world: ability: a dodge of NAME cancels Rapid Shot at T s of its fragment (the dodge at T s): N
+  shot(s) that did not fly do not fly`. Live: a dodge 0.696 s after the cast cancelled at once; the client and the server shot one
+  arrow.
+- The weapon switch in a bow action [code review of stage U3, finding U3-R8, test case UR8]: the switch marks of the fragment of the
+  action (`AbilityActionData::switchBuffer`, `switchAt`; [Combat and health](combat-and-health.md)); `Abilities::playing_action` gives
+  the fragment that plays to the switch rule.
+- The bow abilities and the Boltcaster (stage B2, [Passive rules](passive-rules.md)): an ability hit of a row of the list of the bolt
+  rule gives the bolt at 3 charges (live check B2-2: the first arrow of Rapid Shot), and no ability hit adds a charge (Bolt has AttackType
+  Light,Heavy).
 - The shot flies on the server (`Projectiles::launch_spell`, [Projectiles](projectiles.md)): the origin of the item when it is near
   the character (5 m) and no wall or ground is on the real segment from the launch place of the server (1.5 m above the character) to
   it (`Navigation::line_stop`, the rule of a basic shot), else the launch place; the direction of the item, else the direction of the

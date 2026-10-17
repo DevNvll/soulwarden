@@ -32,7 +32,11 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   each item in the armor slots (0 to 4), the jewelry slots (5 to 7), the weapon slots (24 to 29),
   and the heart rune (45), after the swap of the game, with the potency of the gear score of the
   item. Each effective perk counts one time for an item (code review of stage 1.3b, finding F2:
-  the instance has the swapped id of a fixed perk, and the definition the old id). A perk with the condition OnActive or OnUnsheathed counts only for the weapon in the hand
+  the instance has the swapped id of a fixed perk, and the definition the old id). From stage B2 a perk of the instance in a place
+  replaces the fixed perk of the definition in that place (a charm that the player slotted: the Boltcaster has Lightning Harnessing II
+  in place 4, where the definition has `Slottable_Common_DmgBasic`; research `bow-build.md` section 3.2 and the tooltip of the video; a
+  decision of an agent; test case BC10). Before stage B2 the two counted: each light or heavy arrow of the build had +0.023 too much
+  (live run of stage B2). A loot item has its fixed perks in its instance (the roll), thus it loses none. A perk with the condition OnActive or OnUnsheathed counts only for the weapon in the hand
   (and its off hand item). A perk that the item cannot have counts nothing.
 - The passive values (the cells of the affixes, the ability rows with no event, and from stage 3.3b-S5 the fixed node rows
   of the tree of the weapon in the hand: `Passives::fixed`; the status row
@@ -112,6 +116,13 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
 - The cost of the rules: a hit looks at the perks of one character (55 at most), the chain at
   the position index near its target; the effects of a creature are in the creature system
   (test case IZ11 has a time limit).
+- The ApplicationCooldown of a status of a perk on a creature (`Gear::perk_status`: a rend, a damage over time, a chain): from stage B2
+  one application for each creature in that time, of each source (`Creatures::application_ready`; before: for each attacker). Research
+  `bow-build-2.md` Q4: the cooldown of a status is on its target.
+- The conversion and the damage types of a hit (stage B2, `HitContext::types`): the type of the row when a part keeps it, and the type of
+  the conversion; the condition DamageTypes of a rule reads them ([Passive rules](passive-rules.md)).
+- The rules of the Boltcaster of the bow build (stage B2: Electrified, Bolt and its bolt, Shirking Shock II, and Surprise Attack of the
+  tree): [Passive rules](passive-rules.md).
 - The damage of a tick of a creature status (stage B1, `Gear::tick_damage`): the creature system gives each damage tick of a status
   with a forced damage row (the burn of Flame Arrow) to the path of the damage of a perk (`perk_damage`, `Combat::strike_amount`: a
   fixed amount, the defense of the creature, no reaction, the number for the source) [agent decision: one path for each damage of a

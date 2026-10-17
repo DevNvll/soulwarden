@@ -156,6 +156,8 @@ const char* shot_verdict_text(ShotVerdict verdict) {
         return "not enough mana";
     case ShotVerdict::busy:
         return "the character has too many projectiles in the air";
+    case ShotVerdict::encumbered:
+        return "the press started no attack: the bag is over 1.5 x its weight limit";
     case ShotVerdict::unsupported:
         return "the attack has no flight or a grouped spread";
     }
@@ -429,6 +431,11 @@ ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, Attack
     // ledger entry of its projectile ended.
     if (press->shot) {
         return refuse(ShotVerdict::repeated);
+    }
+    // The weight verdict of the press (code review of stage U3, finding U3-R4): a press at rest with the bag over 1.5 x its weight limit
+    // starts no attack, also for an item that comes later.
+    if (!press->allowed) {
+        return refuse(ShotVerdict::encumbered);
     }
     // The press of the weapon in the hand (finding F3): a press of a different weapon, or a press after which the weapon changed,
     // fits no shot.

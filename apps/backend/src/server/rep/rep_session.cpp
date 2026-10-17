@@ -1440,7 +1440,14 @@ void RepSession::handle_attacks(const ClientInput& input) {
         // The lock of a travel (stage 3.4f-B): a dodge in the loading screen of a travel is refused, as the press of an ability.
         bits.locked = m_travelAnchor.has_value();
         bits.block = step.blockPress;
-        m_world.combat().step(m_id, m_attack.sequence(), step.sequence, bits);
+        const world::StepOutcome outcome = m_world.combat().step(m_id, m_attack.sequence(), step.sequence, bits);
+        // The press of the step after the weapon switch (code review of stage U3): a press that the switch kept is a new press of the new
+        // weapon (finding U3-R5: the first arrow of a bow after the switch), and the weight verdict goes with its press (finding U3-R4).
+        if (const world::Entity* after = m_world.entity_of(m_id); outcome.kept && after != nullptr) {
+            m_attack.keep(step.sequence, now, world::Combat::weapon_key(*after), outcome.allowed);
+        } else if (outcome.press) {
+            m_attack.verdict(step.sequence, outcome.allowed);
+        }
         m_projectileItems += step.projectileHits + step.shots;
         if (step.abilityKey != 0) {
             press_ability(input, step);

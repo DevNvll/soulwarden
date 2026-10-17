@@ -270,6 +270,11 @@ public:
      *         the rule and TrackNumInVolume (its Radius and its TargetTypes), or null.
      */
     [[nodiscard]] const SpellRow* tracking_spell(std::string_view rule) const;
+    /**
+     * @return The rows whose RequiredEquippedAbilityId is this node (stage B2): the helper rows that the client equips with the node
+     *         (EquipWhenUnsheathed; Passive_Bow_Hunter_DmgOnFirst_Tracker of Surprise Attack), in the sequence of the data.
+     */
+    [[nodiscard]] std::vector<const AbilityRow*> helpers_of(std::string_view node) const;
 
 private:
     AbilityTables m_tables;
@@ -286,6 +291,8 @@ private:
     std::unordered_map<std::string, std::vector<std::size_t>> m_actionSpells;
     std::unordered_map<std::string, std::vector<std::string>> m_actionNodes;
     std::unordered_map<std::string, std::size_t> m_trackingSpells;
+    /** Stage B2: the lower-case node to the indexes of its helper rows in `abilityRows`. */
+    std::unordered_map<std::string, std::vector<std::size_t>> m_helpers;
     std::string m_error;
     /** The check of `set`, with `fromFile` true for a file: the file must name the number of the status rows (finding F10). */
     [[nodiscard]] bool accept(AbilityTables tables, bool fromFile);

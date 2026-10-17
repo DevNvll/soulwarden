@@ -22,6 +22,10 @@ const char* origin_name(world::RuleOrigin origin) {
         return "active";
     case world::RuleOrigin::perk:
         return "perk";
+    case world::RuleOrigin::helper:
+        return "helper of a node";
+    case world::RuleOrigin::status:
+        return "row of a status";
     }
     return "?";
 }

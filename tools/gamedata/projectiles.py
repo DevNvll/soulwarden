@@ -46,7 +46,7 @@ capsule of its character) is in the creature data (creature_data.py, the member 
                                                    instant), and of the mark CanTransition; each such ranged clip is a shot of
                                                    the file with the 11th value true (only the abilities system launches it)
 
-Output: {"format": 2, "counts": {...},
+Output: {"format": 3, "counts": {...},
 "attacks": [[profile, attack, hitScan, maxRange, radius, nearRange, penetration, accelDelay, falloffStart, falloffEnd,
              falloffMost, bounces, destroyOnBlock, destroyOnMiss, [x, y, z] predicted acceleration, spreadDirections], ...],
 "slices": [[path, baseSpeed, extraSpeed, timeForMaxSpeed, [x, y, z] acceleration, flyingLifetime, stuckLifetime], ...],
@@ -54,7 +54,11 @@ Output: {"format": 2, "counts": {...},
 "weapons": [[weaponId, profile, ammoType], ...],
 "shots": [[profile, attack, row, charge, slice, spell, manaCost, heavy, ammoSlot, consume(, ability)], ...],
 "abilityActions": [[action, ability, fragment, tags, canTransition or null, [[time, attack, row, charge, consume], ...],
-                    [[time, spell, [needed node, ...], [forbidden node, ...]], ...], [[ability, "buffered"|"instant", time], ...]], ...]}.
+                    [[time, spell, [needed node, ...], [forbidden node, ...]], ...], [[ability, "buffered"|"instant", time], ...],
+                    [switchBuffer, switchAt, [[time, "buffer"|"cancel"], ...]]], ...]}.
+Format 3 (code review of stage U3, findings U3-R7 and U3-R8) has the 9th member of each ability action: the start of CanUnsheathe_Buffer,
+the first start of CanUnsheathe or CanTransition (-1: none; the switch rule of a melee fragment), and the CanDodgeBuffer and
+CanDodgeCancel marks in time order.
 Format 2 (stage B1) has the member "abilityActions" and the ranged clips of the ability rows of its fragments in "shots" (the spell
 "", the 11th value true: the shot items of Penetrating Shot and Rapid Shot). A file of format 1 has neither: the backend then refuses
 the press of such an ability.
@@ -315,6 +319,10 @@ ABILITY_ACTION_SOURCES = (("bow", "playeractions_ability_bow.actionlist", "playe
 # The actions of the abilities of the backend (stage B1, world/abilities.cpp): each one must have its fragment with a clip or a cast of
 # an ability; else the tool stops and the old file stays.
 REQUIRED_ABILITY_ACTIONS = ("Bow_Penetrating_Shoot", "Bow_SpreadShot", "Bow_RapidShot")
+# Format 3 (code review of stage U3, findings U3-R7 and U3-R8): the switch marks (the melee rule of tools/gamedata/weapon_actions.py) and the
+# dodge marks of each ability fragment (a CanDodgeBuffer window waits for the next CanDodgeCancel mark).
+SWITCH_MARKS = ("CanUnsheathe_Buffer", "CanUnsheathe")
+DODGE_MARKS = {"CanDodgeBuffer": "buffer", "CanDodgeCancel": "cancel"}
 
 
 def read_xml_root(data: bytes, path: str) -> ElementTree.Element:
@@ -416,6 +424,8 @@ def read_ability_actions(sources: Sources, rows: dict[str, tuple[str, str, str]]
                 continue
             clips, casts, transitions = [], [], []
             can_transition = None
+            switch_marks: dict[str, float] = {}
+            dodge_marks: list[list] = []
             for time, kind, values in best["clips"]:
                 if kind == "CAGE-RangedAttack":
                     row = rows.get(values.get("DamageTableRow", "").strip().lower())
@@ -450,10 +460,21 @@ def read_ability_actions(sources: Sources, rows: dict[str, tuple[str, str, str]]
                         transitions.append([target, "buffered" if kind == "CAGE-TransitionBuffered" else "instant", time])
                 elif kind == "CAGE-Named" and values.get("Name") == "CanTransition":
                     can_transition = time if can_transition is None else min(can_transition, time)
+                elif kind == "CAGE-Named" and values.get("Name") in SWITCH_MARKS:
+                    mark = values["Name"]
+                    switch_marks[mark] = time if mark not in switch_marks else min(switch_marks[mark], time)
+                elif kind == "CAGE-Named" and values.get("Name") in DODGE_MARKS:
+                    dodge_marks.append([time, DODGE_MARKS[values["Name"]]])
             if not clips and not casts:
                 continue
+            # Format 3 (code review of stage U3, findings U3-R7 and U3-R8): the switch marks as for a melee fragment (the buffer
+            # CanUnsheathe_Buffer, the first start of CanUnsheathe or CanTransition; -1: none) and the dodge marks in time order.
+            conditions = [switch_marks["CanUnsheathe"]] if "CanUnsheathe" in switch_marks else []
+            conditions += [can_transition] if can_transition is not None else []
+            marks = [switch_marks.get("CanUnsheathe_Buffer", -1.0), min(conditions) if conditions else -1.0,
+                     sorted(dodge_marks, key=lambda entry: (entry[0], entry[1]))]
             actions.append([name, cooldown, fragment, "+".join(best["tags"]), can_transition, sorted(clips), sorted(casts, key=str),
-                            sorted(transitions, key=lambda entry: (entry[0].lower(), entry[1], entry[2]))])
+                            sorted(transitions, key=lambda entry: (entry[0].lower(), entry[1], entry[2])), marks])
     sources.check_complete()
     for required in REQUIRED_ABILITY_ACTIONS:
         if not any(entry[0] == required for entry in actions):
@@ -659,7 +680,7 @@ def build_document(sources: Sources) -> dict:
             raise Failure(f"the ability spell {name} is not a row of the spell tables of the source")
         if name.lower() not in spells_of_shots:
             raise Failure(f"the ability spell {name} has no shot (its profile, its attack, or its damage row is not a row of the data)")
-    return {"format": 2,
+    return {"format": 3,
             "counts": {"attacks": len(attacks), "slices": len(slices), "ammo": len(ammo), "weapons": len(weapons),
                        "shots": len(shot_rows), "abilityShots": ability_shots + clip_count, "abilityShotsWithNoSlice": ability_no_slice,
                        "abilityClips": clip_count, "abilityActions": len(ability_actions)},

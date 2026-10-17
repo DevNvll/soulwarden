@@ -564,7 +564,10 @@ button on "Confirm").
   stops (and keeps the file that is there) when a source that a shot needs is not there. From stage B1 (format 2) the file also
   has the ability actions of the bow (`playeractions_ability_bow`, `player_bow.adb`): the clips and the spell casts of the fragment
   of Penetrating Shot, Explosive Arrow, and Rapid Shot with their times and node conditions, and the windows of each fragment for a
-  different ability. With a file of format 1 the backend refuses the keys of these three abilities (the load line says it).
+  different ability. With a file of format 1 the backend refuses the keys of these three abilities (the load line says it). From
+  stage B2 (format 3) each ability action also has the switch marks and the dodge marks of its fragment (CAGE-TransitionBuffered,
+  CAGE-TransitionInstant, CanDodgeBuffer, CanDodgeCancel). With a file of format 2 a weapon key in a bow ability waits for the end
+  of the action, and a dodge does not end the action.
 - `tools/gamedata/spells.sh` makes the spell entity data
   (`~/.local/share/soulwarden/gamedata/spell-data.json`, 1.6 MB, stage 3.3b-S2a): for each spell
   row with a prefab slice, the slice asset, the slots of its replicated components, its
@@ -920,6 +923,25 @@ button on "Confirm").
   character with no client (`tools/world cast`) the server shoots the arrows; Penetrating Shot then shoots at once. The abilities
   use no arrows and no mana. Not yet: the charged shots A1 and A2 of Penetrating Shot (no rule of the game data starts them), the
   arrow of another player (others see the hit, the burst, and the burn icon), and the other bow abilities.
+- The rules of the Boltcaster and the stacks of a status on a creature (stage B2, protocol notes 4.47,
+  `docs/systems/passive-rules.md`, `docs/systems/creatures.md`). No new file: the ability data and the status data of stage 3.3b.
+  A status that a creature has again gets one more stack, to the StackMax of its row; each player near the creature sees the icon
+  with the count at the name plate ("x2"). Its end follows RefreshDuration and DurationMax of the row, and all stacks end together.
+  A row with ApplicationCooldown goes on one creature at most once in that time. The Boltcaster: each light or heavy hit puts one
+  static charge (3 s, at most 3); a hit with lightning damage of a row of the list of the data (the light, heavy, and ability rows
+  of the bow) on a creature with 3 charges before the hit calls the bolt: one damage of 0.8 x the raw damage of the hit as
+  lightning, the strike of the game at the creature, and the end of the charges. One bolt in 3 s on each creature, one in 1 s for
+  each attacker. The charges of all attackers count (decision D10). Electrified: +0.2 for a light or heavy hit with lightning.
+  Shirking Shock II: a creature hit in the immune window of your dodge gives a tracker (10 s); your next hit with damage gives one
+  more damage of 0.236 x the potency of the perk x the base damage of the weapon as lightning. Surprise Attack: +0.2 (the data;
+  the text says 15 percent) on the first hit on a creature with no tracker of Surprise Attack of any player in the last 10 s. The
+  evaluator has the conditions DamageTypes, TargetStatusEffect with its stack size and comparison, and StatusEffect of the
+  attacker, and the effects RemoveTargetStatusEffectsList and RemoveStatusEffects. A perk of an item instance in a place (a charm)
+  replaces the fixed perk of the definition in that place. The corrections of the code review of stage U3 (projectile data of
+  format 3: run `tools/gamedata/projectiles.sh` again): a dodge in a bow ability ends it at the cancel mark of the game data (the
+  arrows after it do not fly); a weapon key in a bow ability waits for its switch marks; the weight limit refuses the press of a
+  bow; the first arrow after a weapon switch to the bow flies; the turn and the walk of a creature attack follow each clip of the
+  attack, also when two clips overlap.
 - Spell abilities (stage 3.3b-S2b, protocol notes 4.28, `docs/systems/spells.md`). With the
   spell data and the projectile data of this stage, the key Q uses Ice Pylon of the ice
   gauntlet, Traps of the musket, and Beacon of the life staff when they are on the bar. The

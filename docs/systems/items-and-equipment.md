@@ -71,7 +71,9 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   finding F3). A stack takes only an item with the same perks; the gear score does not stop it.
 - The client shows the fixed perks of an item definition also when the instance does not
   have them (the heart rune, the opal jewelry): the backend does not write them into the
-  instance of a give, and the gear system counts them.
+  instance of a give, and the gear system counts them. From stage B2 a perk of the instance in
+  a place replaces the fixed perk of that place (a slotted charm: [Gear and perks](gear-and-perks.md),
+  test case BC10).
 - A loot item gets the perks of the roll of the client (`world/perk_roll.h`, protocol notes
   4.23): each instance of a drop has its own roll, with the level of the character.
 - The rarity of an item is a value of the client: it computes it from the perk count.

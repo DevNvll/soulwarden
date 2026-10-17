@@ -114,127 +114,146 @@ bool AttackMotion::step(Entity& entity, WorldClock::time_point now) {
     const gamedata::CreatureAttack& attack = creature.body->attacks[homing.attack];
     const float sinceAttack = seconds_of(now - homing.attackStarted);
     const Entity* target = homing.target != 0 ? m_world.find(homing.target) : nullptr;
-    // The start of the next clip at its time in the fragment.
-    if (!homing.running) {
+    const auto at_time = [&](float seconds) {
+        return homing.attackStarted + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(seconds));
+    };
+    // The start of each clip at its time in the fragment, also while an earlier clip runs (code review of stage U3, finding U3-R6: the
+    // exporter collects the clips of each procedural layer, and 32 attacks of the data have clips that overlap).
+    while (homing.clip < attack.homing.size() && attack.homing[homing.clip].start <= sinceAttack) {
+        const gamedata::HomingClip& clip = attack.homing[homing.clip];
+        HomingClipRun run;
+        run.clip = homing.clip;
+        run.clipStarted = at_time(clip.start);
+        run.stepped = run.clipStarted;
+        run.origin = entity.position;
+        run.curve = entity.position;
+        run.scanYaw = creature.yaw;
+        run.moveDone = !clip.moveToTarget;
+        ++m_counts.clips;
+        if (target == nullptr || !in_wedge(clip, entity.position, creature.yaw, target->position)) {
+            // No target that passes the wedge: the clip does nothing (client code 0x255A140).
+            run.turnDone = true;
+            run.moveDone = true;
+            ++m_counts.clipsOutOfWedge;
+        } else {
+            run.aim = target->position;
+        }
+        homing.runs.push_back(run);
+        ++homing.clip;
+    }
+    // No clip runs: the next one waits for its time (each tick looks; the steps of 50 ms count from the start of a clip).
+    if (homing.runs.empty()) {
         if (homing.clip >= attack.homing.size()) {
             end(entity, "its clips ended", false);
             return false;
         }
-        const gamedata::HomingClip& clip = attack.homing[homing.clip];
-        if (sinceAttack < clip.start) {
-            return true;
-        }
-        homing.running = true;
-        homing.clipStarted = homing.attackStarted + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(clip.start));
-        homing.stepped = homing.clipStarted;
-        homing.origin = entity.position;
-        homing.scanYaw = creature.yaw;
-        homing.turnDone = false;
-        homing.moveDone = !clip.moveToTarget;
-        ++m_counts.clips;
-        if (target == nullptr || !in_wedge(clip, entity.position, creature.yaw, target->position)) {
-            // No target that passes the wedge: the clip does nothing (client code 0x255A140).
-            homing.turnDone = true;
-            homing.moveDone = true;
-            ++m_counts.clipsOutOfWedge;
-        } else {
-            homing.aim = target->position;
-        }
+        return true;
     }
-    const gamedata::HomingClip& clip = attack.homing[homing.clip];
-    const float clipEnd = clip.duration >= 0.0F ? clip.start + clip.duration : attack.length;
-    const WorldClock::time_point at =
-        std::min(now, homing.attackStarted + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(clipEnd)));
-    const float dt = std::max(seconds_of(at - homing.stepped), 0.0F);
-    const float t = std::max(seconds_of(at - homing.clipStarted), 0.0F);
-    homing.stepped = at;
-    // The target place: the target while it passes the wedge (from the origin along the direction of the start), else the last place;
-    // the place of the start with LockInitialTargetPos.
-    if (!clip.lockTarget && target != nullptr && !(homing.turnDone && homing.moveDone)
-        && in_wedge(clip, homing.origin, homing.scanYaw, target->position)) {
-        homing.aim = target->position;
-    }
-    // The turn (client code 0x25666A0).
-    if (!homing.turnDone && dt > 0.0F && horizontal_distance(entity.position, homing.aim) > 0.01F) {
-        const float left = signed_turn(creature.yaw, yaw_to(entity.position, homing.aim));
-        // An exponential clip with a TurnRate of 1 or more (1080 and 3.0 in the data) turns the whole angle (a decision of an agent: the
-        // formula of 0x25666A0 has no meaning for a part above 1; the client limits the step to the angle).
-        float turn = clip.exponential ? (1.0F - std::pow(1.0F - std::clamp(clip.turnRate, 0.0F, 1.0F), 30.0F * dt)) * left
-                                      : std::copysign(std::min(std::fabs(left), clip.turnRate * dt), left);
-        if (std::fabs(turn) > std::fabs(left)) {
-            turn = left;
-        }
-        creature.yaw = std::fmod(creature.yaw + turn + 360.0F, 360.0F);
-        if (std::fabs(left - turn) < kTurnDone && !clip.turnAfterTarget) {
-            homing.turnDone = true;
-        }
-    }
-    // The move (client code 0x2564FC0, 0x2565210, 0x25653F0).
+    homing.stepped = now;
+    // A root holds the place of the creature (code review of stage U3, finding U3-R1; the rule of the behavior): the turn and the attack go
+    // on, the curve of the time rule goes on with no travel (the blocked travel does not come back at the end of the root).
+    const bool rooted = creature.rooted(now);
     bool moved = false;
-    if (!homing.moveDone && dt > 0.0F) {
-        const float away = horizontal_distance(entity.position, homing.aim);
+    for (HomingClipRun& run : homing.runs) {
+        const gamedata::HomingClip& clip = attack.homing[run.clip];
+        const float clipEnd = clip.duration >= 0.0F ? clip.start + clip.duration : attack.length;
+        const WorldClock::time_point at = std::min(now, at_time(clipEnd));
+        const float dt = std::max(seconds_of(at - run.stepped), 0.0F);
+        const float t = std::max(seconds_of(at - run.clipStarted), 0.0F);
+        run.stepped = at;
+        // The target place: the target while it passes the wedge (from the origin along the direction of the start), else the last place;
+        // the place of the start with LockInitialTargetPos.
+        if (!clip.lockTarget && target != nullptr && !(run.turnDone && run.moveDone) && in_wedge(clip, run.origin, run.scanYaw, target->position)) {
+            run.aim = target->position;
+        }
+        // The turn (client code 0x25666A0).
+        if (!run.turnDone && dt > 0.0F && horizontal_distance(entity.position, run.aim) > 0.01F) {
+            const float left = signed_turn(creature.yaw, yaw_to(entity.position, run.aim));
+            // An exponential clip with a TurnRate of 1 or more (1080 and 3.0 in the data) turns the whole angle (a decision of an agent: the
+            // formula of 0x25666A0 has no meaning for a part above 1; the client limits the step to the angle).
+            float turn = clip.exponential ? (1.0F - std::pow(1.0F - std::clamp(clip.turnRate, 0.0F, 1.0F), 30.0F * dt)) * left
+                                          : std::copysign(std::min(std::fabs(left), clip.turnRate * dt), left);
+            if (std::fabs(turn) > std::fabs(left)) {
+                turn = left;
+            }
+            creature.yaw = std::fmod(creature.yaw + turn + 360.0F, 360.0F);
+            if (std::fabs(left - turn) < kTurnDone && !clip.turnAfterTarget) {
+                run.turnDone = true;
+            }
+        }
+        // The move (client code 0x2564FC0, 0x2565210, 0x25653F0).
+        if (run.moveDone || !(dt > 0.0F)) {
+            continue;
+        }
+        const float away = horizontal_distance(entity.position, run.aim);
         if (away <= clip.moveToDistance) {
-            homing.moveDone = true; // The target is in MoveToDistance: no pull back (a decision of an agent, research Q1).
+            run.moveDone = true; // The target is in MoveToDistance: no pull back (a decision of an agent, research Q1).
+            continue;
+        }
+        // The line to the target: from the place of the creature (the velocity rule), or from the place of the curve (the time rule; finding
+        // U3-R2: a push between two steps does not move the end of the curve).
+        const state::WorldPosition& from = clip.moveToVelocity > 0.0F ? entity.position : run.curve;
+        const float line = std::max(horizontal_distance(from, run.aim), 1.0e-4F);
+        const float ux = (run.aim.x - from.x) / line;
+        const float uy = (run.aim.y - from.y) / line;
+        state::WorldPosition dest{run.aim.x - ux * clip.moveToDistance, run.aim.y - uy * clip.moveToDistance, entity.position.z};
+        const float fromOrigin = horizontal_distance(run.origin, dest);
+        if (clip.maxMoveDistance > 0.0F && fromOrigin > clip.maxMoveDistance) {
+            const float scale = clip.maxMoveDistance / fromOrigin;
+            dest.x = run.origin.x + (dest.x - run.origin.x) * scale;
+            dest.y = run.origin.y + (dest.y - run.origin.y) * scale;
+        }
+        float dx = 0.0F;
+        float dy = 0.0F;
+        if (clip.moveToVelocity > 0.0F) {
+            // The velocity rule (0x25653F0): a step of MoveToVelocity x dt to dest, from the place of the creature.
+            const float left = horizontal_distance(entity.position, dest);
+            const float way = std::min(left, clip.moveToVelocity * dt);
+            if (left > 1.0e-4F) {
+                dx = (dest.x - entity.position.x) / left * way;
+                dy = (dest.y - entity.position.y) / left * way;
+            }
         } else {
-            const float ux = (homing.aim.x - entity.position.x) / away;
-            const float uy = (homing.aim.y - entity.position.y) / away;
-            state::WorldPosition dest{homing.aim.x - ux * clip.moveToDistance, homing.aim.y - uy * clip.moveToDistance, entity.position.z};
-            const float fromOrigin = horizontal_distance(homing.origin, dest);
-            if (clip.maxMoveDistance > 0.0F && fromOrigin > clip.maxMoveDistance) {
-                const float scale = clip.maxMoveDistance / fromOrigin;
-                dest.x = homing.origin.x + (dest.x - homing.origin.x) * scale;
-                dest.y = homing.origin.y + (dest.y - homing.origin.y) * scale;
-            }
-            float gx = entity.position.x;
-            float gy = entity.position.y;
-            if (clip.moveToVelocity > 0.0F) {
-                // The velocity rule (0x25653F0): a step of MoveToVelocity x dt to dest.
-                const float left = horizontal_distance(entity.position, dest);
-                const float way = std::min(left, clip.moveToVelocity * dt);
-                if (left > 1.0e-4F) {
-                    gx += (dest.x - entity.position.x) / left * way;
-                    gy += (dest.y - entity.position.y) / left * way;
-                }
-            } else {
-                // The time rule (0x2565210): the smoothstep in MoveToDuration, at most MaxMoveDistance / MoveToDuration x dt in a step.
-                const float u = clip.moveToDuration > 0.0F ? std::min(t / clip.moveToDuration, 1.0F) : 1.0F;
-                const float w = u * u * (3.0F - 2.0F * u);
-                float dx = homing.origin.x + w * (dest.x - homing.origin.x) - entity.position.x;
-                float dy = homing.origin.y + w * (dest.y - homing.origin.y) - entity.position.y;
-                const float length = std::hypot(dx, dy);
-                if (clip.maxMoveDistance > 0.0F && clip.moveToDuration > 0.0F) {
-                    const float limit = clip.maxMoveDistance / clip.moveToDuration * dt;
-                    if (length > limit && length > 0.0F) {
-                        dx *= limit / length;
-                        dy *= limit / length;
-                    }
-                }
-                gx += dx;
-                gy += dy;
-                if (t >= clip.moveToDuration) {
-                    homing.moveDone = true;
+            // The time rule (0x2565210): the smoothstep in MoveToDuration, at most MaxMoveDistance / MoveToDuration x dt in a step. The step is
+            // the change of the place of the curve (finding U3-R2: a push of an additive reaction between two steps stays).
+            const float u = clip.moveToDuration > 0.0F ? std::min(t / clip.moveToDuration, 1.0F) : 1.0F;
+            const float w = u * u * (3.0F - 2.0F * u);
+            const state::WorldPosition curve{run.origin.x + w * (dest.x - run.origin.x), run.origin.y + w * (dest.y - run.origin.y), run.origin.z};
+            dx = curve.x - run.curve.x;
+            dy = curve.y - run.curve.y;
+            const float length = std::hypot(dx, dy);
+            if (clip.maxMoveDistance > 0.0F && clip.moveToDuration > 0.0F) {
+                const float limit = clip.maxMoveDistance / clip.moveToDuration * dt;
+                if (length > limit && length > 0.0F) {
+                    dx *= limit / length;
+                    dy *= limit / length;
                 }
             }
-            const state::WorldPosition goal{gx, gy, entity.position.z};
-            if (horizontal_distance(goal, entity.position) > 0.0005F) {
-                const Slide slide = m_world.navigation().slide(entity.position, goal);
-                if (!slide.waiting) {
-                    const float step = horizontal_distance(entity.position, slide.position);
-                    if (step > 0.0005F || std::fabs(slide.position.z - entity.position.z) > 0.0005F) {
-                        homing.travelled += step;
-                        m_creatures.move(entity, slide.position, Gait::place);
-                        moved = true;
-                        ++m_counts.steps;
-                    }
-                    if (slide.blocked) {
-                        homing.moveDone = true; // A wall or a drop ends the move of the clip.
-                        ++m_counts.blocked;
-                    }
+            run.curve.x += dx;
+            run.curve.y += dy;
+            if (t >= clip.moveToDuration) {
+                run.moveDone = true;
+            }
+        }
+        const state::WorldPosition goal{entity.position.x + dx, entity.position.y + dy, entity.position.z};
+        if (!rooted && horizontal_distance(goal, entity.position) > 0.0005F) {
+            const Slide slide = m_world.navigation().slide(entity.position, goal);
+            if (!slide.waiting) {
+                const float travel = horizontal_distance(entity.position, slide.position);
+                if (travel > 0.0005F || std::fabs(slide.position.z - entity.position.z) > 0.0005F) {
+                    homing.travelled += travel;
+                    m_creatures.move(entity, slide.position, Gait::place);
+                    moved = true;
+                    ++m_counts.steps;
+                }
+                if (slide.blocked) {
+                    run.moveDone = true; // A wall or a drop ends the move of the clip.
+                    ++m_counts.blocked;
                 }
             }
-            if (horizontal_distance(entity.position, dest) < kAtDest && !clip.moveAfterTarget) {
-                homing.moveDone = true;
-            }
+        }
+        if (horizontal_distance(entity.position, dest) < kAtDest && !clip.moveAfterTarget) {
+            run.moveDone = true;
         }
     }
     // The direction goes to the observers with a new place, or alone when it changed enough.
@@ -245,15 +264,15 @@ bool AttackMotion::step(Entity& entity, WorldClock::time_point now) {
     if (moved || std::fabs(signed_turn(creature.mind.sentYaw, creature.yaw)) >= kTurnSent) {
         creature.mind.sentYaw = creature.yaw;
     }
-    // The end of the clip.
-    if (at >= homing.attackStarted + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(clipEnd))
-        || (homing.turnDone && homing.moveDone && clip.duration < 0.0F)) {
-        homing.running = false;
-        ++homing.clip;
-        if (homing.clip >= attack.homing.size()) {
-            end(entity, "its clips ended", false);
-            return false;
-        }
+    // The end of each clip: its time, or its turn and its move done for a clip with no duration.
+    std::erase_if(homing.runs, [&](const HomingClipRun& run) {
+        const gamedata::HomingClip& clip = attack.homing[run.clip];
+        const float clipEnd = clip.duration >= 0.0F ? clip.start + clip.duration : attack.length;
+        return now >= at_time(clipEnd) || (run.turnDone && run.moveDone && clip.duration < 0.0F);
+    });
+    if (homing.clip >= attack.homing.size() && homing.runs.empty()) {
+        end(entity, "its clips ended", false);
+        return false;
     }
     return true;
 }

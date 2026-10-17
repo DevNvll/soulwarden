@@ -42,11 +42,15 @@ of a movement in [Navigation](navigation.md), and the position check in [Positio
 - The length (user test 2, UT2-4; game data and client code): the client runs the push in the activity ReactionMotion of the action
   `Reaction` until the end of its fragment (IfFragmentDone), or of the action `Pushable` (ActiveTime 0.4 s) for a row with
   NoReaction. The mode comes only from the decay of the row (client code 0x48A0690: mode 1 for a decay of 0 or less; UsePushNoDecay
-  of Pushable does not change it there). Thus the push of a hit lasts the reaction that the hit started (`HitResult::push`,
-  `Creatures::reaction_length`: the length of the reaction fragment of the power of the row in the slice; 1.5 s with no length), or
-  0.4 s for a row with NoReaction (`kPushableTime`). A hit that starts no reaction (a light hit on an Elite, an attack that plays,
-  the reaction limit) moves nothing. A pull of an ability that is no hit (the vortex of Gravity Well, the pull of Reap) keeps
-  1.5 s. A heavy arrow (BowAttack2: 1 m/s, no decay, power 3) pushes the Inquisitor Cleric 1.33 m (its `r_R3_F`), the grunt 1.33 m.
+  of Pushable does not change it there). Thus the push of a hit lasts the reaction that the hit started (`HitResult::push`), or 0.4 s
+  for a row with NoReaction (`kPushableTime`). From stage U3 the length of a full reaction is the rule of the clip HitStun
+  ([Creatures](creatures.md), `Creatures::plan_reaction`): a fragment with that clip ends at the hit stun of the row (HitStun_AI / 30 s,
+  in the limits of the play speed of the rest of the fragment); a fragment with no clip keeps its length (1.5 s with no length). A hit
+  with no full reaction (a light hit on an Elite, the reaction limit) plays the additive reaction and pushes with its push scale (the
+  rule of the additive push below); a promoted elite takes nothing in an additive reaction. A pull of an ability that is no hit (the
+  vortex of Gravity Well, the pull of Reap) keeps 1.5 s. A heavy arrow (BowAttack2: 1 m/s, no decay, power 3, 22 hit stun frames) pushes
+  the Inquisitor Cleric 0.73 m in 0.73 s (its `r_R3_F` with the clip HitStun; before stage U3: 1.33 m in 1.33 s). Code review of stage
+  U3, finding U3-R9: this text and the trap of the slow walk had the rules from before stage U3 (corrected in stage B2).
 - The end of a decay travel (a decision of an agent, user test 2): when less than 2 cm of it is left (`forced_rules::kRest`), the last
   step goes the rest; GreatAxe_PrimaryAttack (1 m, decay 0.85) ends after 0.8 s (before: the end at 1 mm held the creature for 1.47 s).
 - The steps: one new place at most each 50 ms of the world clock (`forced_rules::kStep`, a decision of an agent: 20
@@ -69,7 +73,9 @@ of a movement in [Navigation](navigation.md), and the position check in [Positio
 - The push of an additive reaction (stage U3; decision (c) of the orchestrator, and live check LC-Q5-2 for the run): a hit with no full
   reaction plays the additive reaction ([Creatures](creatures.md)) and pushes with its push scale (a light arrow on a Solo+ wolf: 0.5
   m/s for 0.7 s, 0.35 m). This push does not hold the behavior (`ForcedMove::additive`): the run, the attack, and the homing go on, and
-  the two movements add (each one takes its step from the place of the creature). Live check LC-Q5-2 showed the reason: a push that held
+  the two movements add. The push and the velocity rule of a homing take their step from the place of the creature; the time rule of a
+  homing adds the change of its curve, which a push does not move (code review of stage U3, finding U3-R2, test case UR2: before the
+  correction the curve took back most of the push). Live check LC-Q5-2 showed the reason: a push that held
   the behavior stopped the run of a wolf for the 0.7 s of the push, and the client showed the stop. A push of an additive reaction does
   not replace the push of a full reaction that runs (a rule of an agent; `ForcedCounts::keptFull`). A full push stops the homing of an
   attack; an additive push does not. Test case CF12.
@@ -134,9 +140,10 @@ tools/gamedata/combat.sh [OUT.json]  # the combat tables with the member impacts
 
 ## Traps
 
-- A creature with a slow walk and heavy arrows: the Inquisitor Cleric walks 1.25 m/s, and each heavy arrow pushes it 1.33 m in 1.33 s
-  (the data rule). With a heavy arrow each 2 s it goes back; it comes to its cast distance when the arrows stop or miss (user test 2,
-  live run `u2-after`). A melee grunt (5.5 m/s) comes in 15 s to 20 s from 24 m.
+- A creature with a slow walk and heavy arrows (a result from before stage U3: user test 2, live run `u2-after`): the Inquisitor Cleric
+  walks 1.25 m/s, and each heavy arrow pushed it 1.33 m in 1.33 s; with a heavy arrow each 2 s it went back. From stage U3 the push of a
+  heavy arrow on it is 0.73 m in 0.73 s (the clip HitStun), and the Cleric comes nearer between two arrows. A melee grunt (5.5 m/s) comes
+  in 15 s to 20 s from 24 m.
 - The log line of a push gives its longest time (`for 1.33 s at most`), and the line of the reaction its power and its hit stun
   (`world: reaction: creature ... plays the reaction of power 3 (fragment 26, front 0 degrees) for 0.73 s (the HitStun clip), a hit stun
   of 0.73 s, the chain 1`). The push of an additive reaction has the end `(the push of an additive reaction: the behavior goes on)`,

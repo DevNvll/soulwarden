@@ -21,7 +21,8 @@
 //
 // A rule is one row of an ability table of the players (game data, tools/gamedata/abilities.sh format 4): a learned node of
 // the tree of the weapon of a hit (the active abilities too: their OnHit rows), or an ability row of a perk of an equipped item
-// (with the potency of the perk). The evaluator is the one place that reads the cells of these rows; the combat system asks it
+// (with the potency of the perk); from stage B2 also a helper row of a learned node and the row that a status of the character
+// equips (EquipAbility: the tracker of Shirking Shock II). The evaluator is the one place that reads the cells of these rows; the combat system asks it
 // before the damage of each hit (Passives::before_hit) and gives it the result (Passives::after_hit), the health system gives it
 // each hit that a character takes (hit_taken), and the world tick runs its rules of the entities near a character (tick).
 //
@@ -32,10 +33,14 @@
 //   Conditions The conditions of a perk row (Gear: AttackType, DamageTableRow, the health, stamina, and mana percents with the
 //              comparator of the client, TargetStatusEffectCategory, DontHaveStatusEffect, InSequence) and InAction,
 //              RequireReaction, DamageIsMelee, DamageIsRanged, the hit counts (TrackHitCount with NumberOfTrackedHits,
-//              NumSuccessfulHits, NumConsecutiveHits), and NumAroundMe (the entities in the tracking spell of the rule).
+//              NumSuccessfulHits, NumConsecutiveHits), and NumAroundMe (the entities in the tracking spell of the rule). From
+//              stage B2: DamageTypes, TargetStatusEffect with its stack size and comparison (the stacks of each source on the
+//              target before the hit, unless CheckStatusEffectsOnTargetOwned), and StatusEffect with its stack size and
+//              comparison (the attacker).
 //   Effects    BaseDamage, CritChance, CritDamage, ArmorPenetration, HeadshotDamage, HitFromBehindDamage (before the
 //              damage); SelfApplyStatusEffect, OtherApplyStatusEffect, DmgPctToHealth, CooldownTimer with
-//              CDRImmediatelyOptions (after the hit); the fixed stats through the gear values.
+//              CDRImmediatelyOptions, and from stage B2 RemoveTargetStatusEffectsList and RemoveStatusEffects (after the hit);
+//              the fixed stats through the gear values.
 //
 // A row with a column that is neither a condition, an effect, nor a mark of the evaluator, or with an event that the backend
 // does not have (a block, a heal, a weapon swap), has no effect: the list of the evaluator (Passives::describe, tools/world
@@ -70,6 +75,16 @@ enum class RuleOrigin : std::uint8_t {
     active,
     /** An ability row of a perk of an equipped item (with the potency of the perk). */
     perk,
+    /**
+     * Stage B2: a helper row of a learned node of the tree (RequiredEquippedAbilityId names the node, EquipWhenUnsheathed: the tracker of
+     * Surprise Attack, Passive_Bow_Hunter_DmgOnFirst_Tracker). The client equips it with the node; it has no node of its own.
+     */
+    helper,
+    /**
+     * Stage B2: the row that a status of the character equips (EquipAbility of the status row, with the potency of the status: the tracker
+     * of Shirking Shock II equips Ability_Perk_Weapon_DodgeSuccess_LightningDMG while it runs).
+     */
+    status,
 };
 
 /** One rule of a character for one hit. */
@@ -207,6 +222,16 @@ private:
         WorldClock::time_point nextAround{};
     };
 
+    /** Stage B2: @return The rows that the statuses of a character equip (EquipAbility), with the potency of each status. */
+    [[nodiscard]] std::vector<PassiveRule> status_rules(const Entity& character) const;
+    /**
+     * Stage B2: @return True when the target status conditions of a row pass (TargetStatusEffect with TargetStatusEffectStackSize and
+     *         TargetStatusEffectComparison, TargetStatusEffectCategory, CheckStatusEffectsOnTargetOwned; client hit test 0x67A18F0), with the
+     *         effects of the target before the hit.
+     */
+    [[nodiscard]] bool target_status_pass(const gamedata::CellValues& row, const Entity& attacker, const Entity& target, const HitContext& hit) const;
+    /** Stage B2: @return True when the condition StatusEffect (with StatusEffectStackSize, StatusEffectComparison) of a row passes (client 0x67A0130). */
+    [[nodiscard]] bool own_status_pass(const gamedata::CellValues& row, const Entity& character) const;
     /** @return The event of a rule, or an empty text (no event). */
     [[nodiscard]] static std::string event_of(const gamedata::CellValues& cells);
     /** @return The columns of a rule that the evaluator does not have (no effect for the rule), and the unsupported events. */

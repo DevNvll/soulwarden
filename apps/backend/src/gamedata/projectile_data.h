@@ -155,6 +155,23 @@ struct AbilityActionData {
     std::vector<ActionClip> clips;
     std::vector<ActionCast> casts;
     std::vector<ActionTransition> transitions;
+    /**
+     * Format 3 (code review of stage U3, finding U3-R8): the switch marks of the fragment, as for a melee fragment (grid rule 62 Attack ->
+     * Sheathe): the start of the buffer CanUnsheathe_Buffer, and the first start of CanUnsheathe or CanTransition (s). -1: none (an older file).
+     * Rapid Shot: 1.868143 and 2.566667 (player_bow.adb).
+     */
+    float switchBuffer{-1.0F};
+    float switchAt{-1.0F};
+    /**
+     * Format 3 (finding U3-R7): the dodge marks of the fragment in time order: the start of a buffer window CanDodgeBuffer (`buffer` true) and
+     * of a cancel window CanDodgeCancel (false). Rapid Shot: buffer 0.2, cancel 0.566667, buffer 0.866667, cancel 1.1, buffer 1.733333, cancel
+     * 2.333333. Empty: none (an older file).
+     */
+    struct DodgeMark {
+        float time{0.0F};
+        bool buffer{false};
+    };
+    std::vector<DodgeMark> dodgeMarks;
 };
 
 /** The data as plain values: the content of the file, and what a test sets. */

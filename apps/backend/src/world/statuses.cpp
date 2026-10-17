@@ -181,17 +181,7 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
         if (how.permanent) {
             status.permanent = true;
         } else if (!status.permanent) {
-            const WorldClock::time_point fresh = now + milliseconds_of(seconds);
-            if (row.cells.number("RefreshDuration") != 0.0F) {
-                // RefreshDuration: the time starts again from now, and a shorter refresh keeps the later end (code review
-                // of stage 3.3b-S1, finding F6).
-                status.ends = std::max(status.ends, fresh);
-            } else if (most > 0.0F && row.duration > 0.0F && most > row.duration) {
-                // DurationMax above the duration: the time adds up, to DurationMax from now.
-                status.ends = std::min(status.ends + milliseconds_of(seconds), now + milliseconds_of(most));
-            } else {
-                status.ends = std::max(status.ends, fresh);
-            }
+            status.ends = renewed_end(row, status.ends, now, milliseconds_of(seconds));
         }
         status.hitsLeft = row.stopOnHit;
         // A status of the gear keeps its source and its life (code review of stage 3.3b-S1, finding F4): the item that
@@ -252,6 +242,22 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
         cast(*again, row, how.source);
     }
     return counted(StatusVerdict::applied);
+}
+
+WorldClock::time_point Statuses::renewed_end(const gamedata::StatusRow& row, WorldClock::time_point old, WorldClock::time_point now,
+                                             std::chrono::milliseconds lasting) {
+    const WorldClock::time_point fresh = now + lasting;
+    const float most = row.cells.number("DurationMax");
+    if (row.cells.flag("RefreshDuration")) {
+        // RefreshDuration: the time starts again from now, and a shorter refresh keeps the later end (code review of stage 3.3b-S1,
+        // finding F6).
+        return std::max(old, fresh);
+    }
+    if (most > 0.0F && row.duration > 0.0F && most > row.duration) {
+        // DurationMax above the duration: the time adds up, to DurationMax from now.
+        return std::min(old + lasting, now + milliseconds_of(most));
+    }
+    return std::max(old, fresh);
 }
 
 void Statuses::schedule(const std::string& characterId, const ActiveStatus& status) {

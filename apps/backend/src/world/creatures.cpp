@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "core/logging/log.h"
+#include "world/data_rules.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -828,11 +829,31 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
                                    [&](const CreatureEffect& existing) { return existing.status == effect.status; });
     WorldClock::time_point end = effect.ends;
     if (same != creature.effects.end()) {
-        // The same status again: the later end (StackMax 1 of the six abilities, and of the heals and the buffs of stage 3.4f-D). The ticks
-        // of a heal keep their times: the same row again gives no second tick (a decision of an agent; the rule of a character). A tick
-        // that the old end stopped comes when the new end is later than it (review SU-R1): a tick is in the due list only before the end.
+        // The same status again (stage B2: the rule of a character, statuses.h): one more stack to StackMax (a value below 1 is 1: client
+        // loader 0x44B65F5), the end by RefreshDuration and DurationMax (Statuses::renewed_end), and at StackMax with DontReplaceStack no
+        // change. An effect with no row (the rend of a perk) keeps the later end. The ticks of a heal keep their times: the same row again
+        // gives no second tick (a decision of an agent; the rule of a character). A tick that the old end stopped comes when the new end
+        // is later than it (review SU-R1): a tick is in the due list only before the end.
+        const gamedata::StatusRow* row = effect.row != nullptr ? effect.row : same->row;
         const WorldClock::time_point before = same->ends;
-        same->ends = std::max(same->ends, effect.ends);
+        if (row != nullptr) {
+            const auto stackMax = static_cast<std::uint8_t>(std::clamp(row->cells.number("StackMax"), 1.0F, 127.0F));
+            if (row->cells.flag("DontReplaceStack") && same->stacks >= stackMax) {
+                return false;
+            }
+            const std::uint8_t stacks = std::min<std::uint8_t>(static_cast<std::uint8_t>(same->stacks + 1U), stackMax);
+            if (stacks != same->stacks) {
+                same->stacks = stacks;
+                same->speed = 1.0F + row->moveSpeed * static_cast<float>(stacks);
+                ++m_counts.stacksAdded;
+                if (same->shown) {
+                    m_world.touch(entity.id, ComponentKey::status);
+                }
+            }
+            same->ends = Statuses::renewed_end(*row, same->ends, now, std::chrono::duration_cast<std::chrono::milliseconds>(effect.ends - now));
+        } else {
+            same->ends = std::max(same->ends, effect.ends);
+        }
         same->source = effect.source;
         // The damage of a tick goes with its source (code review of stage B1, finding B1-R4): the refresh takes the damage snapshot of the new
         // source (its forced row with its own weapon, its type, its rune charge). The cadence of the ticks stays (no extra tick).
@@ -849,6 +870,11 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
         creature.effects.push_back(added);
         if (added.nextTick) {
             due(*added.nextTick, entity.id, added.serial);
+        }
+        // A new icon goes to each observer (stage B2: a renewal with the same stacks changes nothing on the wire: the compact map has no
+        // end; a new stack sends the list above).
+        if (effect.shown) {
+            m_world.touch(entity.id, ComponentKey::status);
         }
     }
     due(end, entity.id, 0);
@@ -868,14 +894,14 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
             rest(entity);
         }
     }
-    if (effect.shown) {
-        m_world.touch(entity.id, ComponentKey::status);
-    }
-    log::write("world: effect: creature %016llx (%s) has %s for %.1f s%s%s%s",
+    const auto kept = std::find_if(creature.effects.begin(), creature.effects.end(),
+                                   [&](const CreatureEffect& existing) { return existing.status == effect.status; });
+    log::write("world: effect: creature %016llx (%s) has %s (%u stack(s)) for %.1f s%s%s%s",
                static_cast<unsigned long long>(entity.id),
                creature.kind->id.c_str(),
                effect.status.c_str(),
-               std::chrono::duration<double>(effect.ends - now).count(),
+               kept != creature.effects.end() ? static_cast<unsigned>(kept->stacks) : 1U,
+               std::chrono::duration<double>(end - now).count(),
                effect.stun ? ": stun" : "",
                effect.root ? ": root" : "",
                effect.speed < 1.0F ? ": slow" : "");
@@ -1101,56 +1127,37 @@ bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, Enti
         return false;
     }
     const WorldClock::time_point now = m_world.clock().now();
-    // A dispel (game data): RemoveStatusEffects and RemoveStatusEffectCategories of the row end those effects of the creature first (the
-    // Null Chamber of the void gauntlet: the category Buff of the enemies). An effect with a category of the list, or of a row of the list.
-    const auto words = [](std::string_view text) {
-        std::vector<std::string> list;
-        std::string word;
-        for (const char letter : text) {
-            if (letter == '+' || letter == ',' || letter == ' ') {
-                if (!word.empty()) {
-                    list.push_back(word);
-                }
-                word.clear();
-            } else {
-                word += static_cast<char>(std::tolower(static_cast<unsigned char>(letter)));
-            }
+    // Stage B2, the removal window: a running effect whose row removes statuses (RemoveStatusEffects, RemoveStatusEffectCategories) refuses
+    // those rows while it runs. Game data: Status_Perk_Artifact_Set1_Bow_StaticCharge_Removal (0.2 s) is the partner of the bolt of the
+    // Boltcaster and takes the charge that the hit of the bolt adds; Status_SetBonusInfix_Focused_CCEffectImmunity (1 s, the category CC)
+    // has the same form. A reading of the data (a decision of an agent: the client has no add code of the server).
+    for (const CreatureEffect& running : creature.effects) {
+        if (running.row == nullptr || now >= running.ends || data_rules::same_text(running.status, row.id)) {
+            continue;
         }
-        if (!word.empty()) {
-            list.push_back(word);
+        const std::string_view rows = running.row->cells.text("RemoveStatusEffects");
+        const std::string_view categories = running.row->cells.text("RemoveStatusEffectCategories");
+        bool blocked = data_rules::list_has(rows, row.id);
+        for (const std::string_view category : data_rules::parts_of(row.cells.text("EffectCategories"))) {
+            blocked = blocked || data_rules::list_has(categories, category);
         }
-        return list;
-    };
-    const std::vector<std::string> removeRows = words(row.cells.text("RemoveStatusEffects"));
-    const std::vector<std::string> removeCategories = words(row.cells.text("RemoveStatusEffectCategories"));
-    if (!removeRows.empty() || !removeCategories.empty()) {
-        bool shownEnded = false;
-        bool stunEnded = false;
-        std::erase_if(creature.effects, [&](const CreatureEffect& effect) {
-            std::string id = effect.status;
-            std::transform(id.begin(), id.end(), id.begin(), [](unsigned char letter) { return static_cast<char>(std::tolower(letter)); });
-            bool ends = std::find(removeRows.begin(), removeRows.end(), id) != removeRows.end();
-            if (!ends && effect.row != nullptr) {
-                for (const std::string& category : words(effect.row->cells.text("EffectCategories"))) {
-                    ends = ends || std::find(removeCategories.begin(), removeCategories.end(), category) != removeCategories.end();
-                }
-            }
-            if (ends) {
-                ++m_counts.dispelled;
-                shownEnded = shownEnded || effect.shown;
-                stunEnded = stunEnded || effect.stun;
-                log::write("world: effect: %s of creature %016llx (%s) ends: a dispel of %s", effect.status.c_str(),
-                           static_cast<unsigned long long>(entity.id), creature.kind->id.c_str(), row.id.c_str());
-            }
-            return ends;
-        });
-        if (shownEnded) {
-            m_world.touch(entity.id, ComponentKey::status);
-        }
-        if (stunEnded && !creature.held(now)) {
-            end_stun(entity);
+        if (blocked) {
+            ++m_counts.statusesBlocked;
+            ++m_counts.statusesRefused;
+            log::write("world: effect: creature %016llx (%s) takes no %s: %s removes it", static_cast<unsigned long long>(entity.id),
+                       creature.kind->id.c_str(), row.id.c_str(), running.status.c_str());
+            return false;
         }
     }
+    // Stage B2: ApplicationCooldown, one application of the row for each creature in that time (the rule of a character).
+    if (!application_ready(entity, row, false)) {
+        ++m_counts.applicationCooldowns;
+        ++m_counts.statusesRefused;
+        return false;
+    }
+    // A dispel (game data): RemoveStatusEffects and RemoveStatusEffectCategories of the row end those effects of the creature first (the
+    // Null Chamber of the void gauntlet: the category Buff of the enemies; stage B2: the bolt of the Boltcaster ends the charges).
+    (void)remove_statuses(entity, row.cells.text("RemoveStatusEffects"), row.cells.text("RemoveStatusEffectCategories"), row.id);
     CreatureEffect effect;
     effect.status = row.id;
     effect.row = &row;
@@ -1158,7 +1165,9 @@ bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, Enti
     effect.shown = row.nameplate;
     effect.stun = row.stunned;
     effect.root = row.root;
-    effect.speed = 1.0F + row.moveSpeed;
+    const auto stackMax = static_cast<unsigned>(std::clamp(row.cells.number("StackMax"), 1.0F, 127.0F));
+    effect.stacks = static_cast<std::uint8_t>(std::clamp(static_cast<unsigned>(std::max(row.cells.number("InitialStackSize"), 1.0F)), 1U, stackMax));
+    effect.speed = 1.0F + row.moveSpeed * static_cast<float>(effect.stacks);
     effect.damage = row.damage;
     effect.typedDamage = std::any_of(row.cells.numbers.begin(), row.cells.numbers.end(),
                                      [](const auto& cell) { return cell.first.rfind("DMG", 0) == 0; });
@@ -1174,11 +1183,33 @@ bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, Enti
     }
     const auto lasting = time ? *time : std::chrono::milliseconds(std::lround(row.duration * 1000.0F));
     if (lasting.count() <= 0) {
-        // No duration: one application now (the rule of a character): the heal, and the dispel above.
+        // No duration: one application now (the rule of a character): the heal, the dispel above, and (stage B2) one damage of the source
+        // (the bolt of the Boltcaster: HealthModifierDamageBased -0.8 of the damage of the hit, Lightning) through the path of a tick.
+        (void)application_ready(entity, row, true);
         ++m_counts.statusesGiven;
         const float amount = effect.healFixed + effect.healPart * entity.vitals.healthMax;
         if (amount > 0.0F) {
             (void)heal(entity, amount, row.id);
+        }
+        if (effect.tickDamage > 0.0F && source != 0) {
+            const EntityId target = entity.id;
+            const float hurt = effect.tickDamage;
+            const std::string type = effect.tickType;
+            const float charge = effect.tickCharge;
+            const std::string status = row.id;
+            m_world.after(std::chrono::milliseconds(0), [source, target, hurt, type, charge, status](World& world) {
+                world.gear().tick_damage(source, target, hurt, type, status.c_str(), charge);
+            });
+            ++m_counts.instantDamage;
+        }
+        // Stage B2: the icon and the visual effect of a row with ShowInNameplates: the effect stays for its DurationMax (live check L2 of
+        // stage B2: the compact entry of Status_Perk_Artifact_Set1_Bow_StaticDischarge, DurationMax 0.1, plays the lightning strike of its
+        // FxScriptOn at the creature; with no entry the client shows nothing). No tick.
+        if (const float most = row.cells.number("DurationMax"); row.nameplate && most > 0.0F) {
+            effect.tickDamage = 0.0F;
+            effect.tickType.clear();
+            effect.ends = now + std::chrono::milliseconds(std::max<long long>(std::lround(most * 1000.0F), 1));
+            (void)apply_effect(entity, effect);
         }
         return true;
     }
@@ -1190,8 +1221,77 @@ bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, Enti
         effect.nextTick = row.cells.number("DelayInitialTick") != 0.0F ? now + effect.tickRate : now;
     }
     const bool given = apply_effect(entity, effect);
+    if (given) {
+        (void)application_ready(entity, row, true);
+    }
     ++(given ? m_counts.statusesGiven : m_counts.statusesRefused);
     return given;
+}
+
+bool Creatures::application_ready(const Entity& entity, const gamedata::StatusRow& row, bool start) {
+    const float wait = row.cells.number("ApplicationCooldown");
+    if (!(wait > 0.0F)) {
+        return true;
+    }
+    const WorldClock::time_point now = m_world.clock().now();
+    if (m_applications.size() > 256) {
+        for (auto entry = m_applications.begin(); entry != m_applications.end();) {
+            entry = entry->second <= now ? m_applications.erase(entry) : std::next(entry);
+        }
+    }
+    const auto key = std::make_pair(entity.id, data_rules::lower(row.id));
+    if (const auto found = m_applications.find(key); found != m_applications.end() && now < found->second) {
+        return false;
+    }
+    if (start) {
+        m_applications[key] = now + std::chrono::milliseconds(std::max<long long>(std::lround(wait * 1000.0F), 1));
+    }
+    return true;
+}
+
+std::uint32_t Creatures::stacks_of(const Entity& entity, std::string_view status, EntityId source) const {
+    const WorldClock::time_point now = m_world.clock().now();
+    for (const CreatureEffect& effect : entity.creature.effects) {
+        if (now < effect.ends && data_rules::same_text(effect.status, status) && (source == 0 || effect.source == source)) {
+            return effect.stacks;
+        }
+    }
+    return 0;
+}
+
+unsigned Creatures::remove_statuses(Entity& entity, std::string_view rows, std::string_view categories, std::string_view cause) {
+    if (rows.empty() && categories.empty()) {
+        return 0;
+    }
+    Creature& creature = entity.creature;
+    const WorldClock::time_point now = m_world.clock().now();
+    bool shownEnded = false;
+    bool stunEnded = false;
+    unsigned ended = 0;
+    std::erase_if(creature.effects, [&](const CreatureEffect& effect) {
+        bool ends = data_rules::list_has(rows, effect.status);
+        if (!ends && effect.row != nullptr && !categories.empty()) {
+            for (const std::string_view category : data_rules::parts_of(effect.row->cells.text("EffectCategories"))) {
+                ends = ends || data_rules::list_has(categories, category);
+            }
+        }
+        if (ends) {
+            ++ended;
+            ++m_counts.dispelled;
+            shownEnded = shownEnded || effect.shown;
+            stunEnded = stunEnded || effect.stun;
+            log::write("world: effect: %s of creature %016llx (%s) ends: a removal of %.*s", effect.status.c_str(),
+                       static_cast<unsigned long long>(entity.id), creature.kind->id.c_str(), static_cast<int>(cause.size()), cause.data());
+        }
+        return ends;
+    });
+    if (shownEnded) {
+        m_world.touch(entity.id, ComponentKey::status);
+    }
+    if (stunEnded && !creature.held(now)) {
+        end_stun(entity);
+    }
+    return ended;
 }
 
 void Creatures::end_actions() {

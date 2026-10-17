@@ -323,7 +323,7 @@ tools/gamedata/abilities.sh          # one time: ability data for the backend (c
 tools/gamedata/stamina.sh            # one time: stamina data for the backend (the stamina of the player slice, the dodge and its times; 2 KB); needs an Oodle source
 tools/gamedata/perks.sh              # one time: perk data for the backend (perk list, affixes, buckets, item perk places, consumables, equip load, swaps; 6.5 MB)
 tools/gamedata/spells.sh             # one time: spell entity data for the backend (slices, slots, delayed events, the values of format 2; 1.6 MB); needs an Oodle source
-tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots; 72 KB, 10 s); needs an Oodle source
+tools/gamedata/projectiles.sh        # one time: projectile data for the backend (profiles, slices, ammunition, weapons, shots, ability shots, the bow actions with their marks: format 3; 75 KB, 10 s); needs an Oodle source
 tools/gamedata/weapon-actions.sh     # one time: the attack graphs and the abilities of the melee weapons for the backend (fragments, transitions, strikes, lengths; 0.4 MB, 5 s); needs an Oodle source
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/chests.sh             # one time: the chests of the world for the backend (placements, gatherable rows, loot roots, territories; 3.6 MB); needs an Oodle source
@@ -373,6 +373,16 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   file, a row two times, or a value that is not a number (test case BW1); a file with no member loads (the part 0 for each row).
   Write both files again with `tools/gamedata/projectiles.sh` and `tools/gamedata/combat.sh` (the projectile tool needs
   `SOULWARDEN_OODLE_LIB`).
+- Stage B2 (the code review of stage U3, findings U3-R7 and U3-R8) changes `projectile-data.json` to format 3: each entry of
+  `abilityActions` has a 9th member `[switchBuffer, switchAt, [[time, "buffer"|"cancel"], ...]]`: the start of CanUnsheathe_Buffer, the
+  first start of CanUnsheathe or CanTransition (the switch rule of a melee fragment of `weapon_actions.py`; -1: none), and the
+  CanDodgeBuffer and CanDodgeCancel marks of the fragment in time order (`projectiles.py`: `SWITCH_MARKS`, `DODGE_MARKS`). Retail:
+  `Bow_RapidShot` 1.868143, 2.566667, and buffer 0.2, cancel 0.566667, buffer 0.866667, cancel 1.1, buffer 1.733333, cancel 2.333333;
+  `Bow_SpreadShot` 0.5, 1.0, no dodge mark; `Bow_Penetrating_Shoot` none; `Bow_JumpBackShot` 1.0, 1.4. The other members are the same as
+  in format 2 (the run of stage B2 compared them). The loader takes the formats 1, 2, and 3 (a format 2 action has no marks; a mark of
+  format 3 below 0 must be -1, and the dodge marks must be in time order). `check_projectile_tool.py`: the case valid tests the marks
+  (test case PJ11). A backend from before stage B2 refuses a file of format 3 (its rows have 9 members): put the file and the backend
+  of stage B2 together. Write the file again with `tools/gamedata/projectiles.sh` (`SOULWARDEN_OODLE_LIB`).
 - The code review of stage B0 (findings B0-R3 to B0-R5) changes the checks of `item-catalog.json` (still format 3): the loader
   refuses a file of format 3 with no member `artifactObjectives`, an achievement index at or above `kAchievementBitLimit`, two
   objectives of one item or of one objective id, two bits of one achievement, and two achievements of one bit; `item_catalog.py`

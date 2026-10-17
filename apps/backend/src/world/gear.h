@@ -170,6 +170,25 @@ struct HitContext {
     EntityId target{0};
     const gamedata::WeaponRow* weapon{nullptr};
     std::uint32_t gearScore{0};
+    /**
+     * Stage B2: the damage types of the hit (the condition DamageTypes): the type of its row when a part of the damage keeps it, and the type
+     * of the conversion of a gem or an affix when the hit has a part of it (the Boltcaster: 1 percent Thrust and 99 percent Lightning; a
+     * decision of the orchestrator, research bow-build-2.md K6: a hit with a part of the type passes).
+     */
+    std::vector<std::string> types;
+    /**
+     * Stage B2: the effects of the target before the hit (Combat::strike). The conditions TargetStatusEffect and TargetStatusEffectCategory of
+     * each rule of the hit see them, also after an earlier rule of the same hit changed the target (the bolt of the Boltcaster tests the 3
+     * charges before the charge of its own hit). `targetKnown` false: the conditions read the target as it is (a test, a hit with no strike).
+     */
+    struct TargetEffect {
+        std::string status;
+        const gamedata::StatusRow* row{nullptr};
+        std::uint32_t stacks{0};
+        EntityId source{0};
+    };
+    std::vector<TargetEffect> targetEffects;
+    bool targetKnown{false};
 };
 
 /** Counts of the gear system, for the log and for the tests. */

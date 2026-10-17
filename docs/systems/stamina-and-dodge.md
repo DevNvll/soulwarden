@@ -60,7 +60,11 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
 - The immune window: from the start of the fragment to the end of its Invulnerability clip (0 s to 0.5 s), the end not included
   (`Stamina::immune`: 499 ms immune, 500 ms not). A creature hit at a time in the window (`Health::creature_hit` with the time of the
   contact) does no damage, no mark, and no effect (`CreatureHitOutcome::evaded`); the passive rules with OnHitTakenWhileInvulnerable
-  get it (`Passives::hit_evaded`). The immunity is of the character of the dodge only (test case CRG12).
+  get it (`Passives::hit_evaded`). The immunity is of the character of the dodge only (test case CRG12). From stage B2 the trackers of
+  the 12 elemental weapon perks act on the next hit (Shirking Shock II of the bow build: [Passive rules](passive-rules.md); live check
+  B2-3: an arcane arrow of an elite archer at 0.31 s of a dodge gave the tracker, and the next arrow had 713.6 Lightning).
+- A dodge in a bow action (stage B2; code review of stage U3, finding U3-R7): an accepted dodge ends the action of a bow ability at its
+  cancel mark, and its arrows after the cancel do not fly ([Abilities](abilities.md)).
 - The window of an earlier dodge (code review of stage 3.4f-B, finding CS-R1; test case RZ1): a dodge that a next dodge replaces, or
   that ends early (a death, a travel), keeps its immune window for `kPastWindowKeep` (1 s after its end; at most `kPastWindows`, 8,
   for each character; `Stamina::keep_window`). A contact that the world tests later, at a time in such a window, is evaded

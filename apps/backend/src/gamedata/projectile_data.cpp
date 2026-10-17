@@ -13,8 +13,8 @@ namespace {
 
 using nlohmann::json;
 
-/** The formats that the loader reads: 1, and 2 with the ability actions (stage B1). */
-constexpr std::uint64_t kFormat = 2;
+/** The formats that the loader reads: 1, 2 with the ability actions (stage B1), and 3 with their switch and dodge marks (stage B2). */
+constexpr std::uint64_t kFormat = 3;
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -126,9 +126,29 @@ bool time_of(const json& value, float& out) {
     return number_of(value, out) && out >= 0.0F;
 }
 
-bool read_action(const json& row, AbilityActionData& action) {
-    // [action, ability, fragment, tags, canTransition or null, clips, casts, transitions] (stage B1).
-    if (!row.is_array() || row.size() != 8 || !text_of(row[0], action.action) || !text_of(row[1], action.ability)
+bool read_marks(const json& marks, AbilityActionData& action) {
+    // [switchBuffer, switchAt, [[time, "buffer"|"cancel"], ...]] (format 3, code review of stage U3, findings U3-R7 and U3-R8; -1: no switch mark).
+    if (!marks.is_array() || marks.size() != 3 || !number_of(marks[0], action.switchBuffer) || !number_of(marks[1], action.switchAt)
+        || (action.switchBuffer < 0.0F && action.switchBuffer != -1.0F) || (action.switchAt < 0.0F && action.switchAt != -1.0F) || !marks[2].is_array()) {
+        return false;
+    }
+    float last = 0.0F;
+    for (const json& entry : marks[2]) {
+        AbilityActionData::DodgeMark& mark = action.dodgeMarks.emplace_back();
+        std::string kind;
+        if (!entry.is_array() || entry.size() != 2 || !time_of(entry[0], mark.time) || !text_of(entry[1], kind) || (kind != "buffer" && kind != "cancel")
+            || mark.time < last) {
+            return false;
+        }
+        mark.buffer = kind == "buffer";
+        last = mark.time;
+    }
+    return true;
+}
+
+bool read_action(const json& row, AbilityActionData& action, bool marks) {
+    // [action, ability, fragment, tags, canTransition or null, clips, casts, transitions] (stage B1), and the marks of format 3 (stage B2).
+    if (!row.is_array() || row.size() != (marks ? 9U : 8U) || !text_of(row[0], action.action) || !text_of(row[1], action.ability)
         || !text_of(row[2], action.fragment) || !text_of(row[3], action.tags) || action.action.empty() || action.ability.empty()) {
         return false;
     }
@@ -161,7 +181,7 @@ bool read_action(const json& row, AbilityActionData& action) {
         }
         transition.buffered = kind == "buffered";
     }
-    return true;
+    return !marks || read_marks(row[8], action);
 }
 
 template <typename Row, typename Read>
@@ -194,7 +214,7 @@ bool ProjectileData::load(const std::string& path) {
     const json document = json::parse(input, nullptr, false);
     if (!document.is_object() || !document.contains("format") || !document["format"].is_number_unsigned()
         || document["format"].get<std::uint64_t>() < 1 || document["format"].get<std::uint64_t>() > kFormat) {
-        m_error = "the file is not a JSON object of the format 1 or 2";
+        m_error = "the file is not a JSON object of the format 1, 2, or 3";
         return false;
     }
     const std::uint64_t format = document["format"].get<std::uint64_t>();
@@ -205,7 +225,9 @@ bool ProjectileData::load(const std::string& path) {
         return false;
     }
     // Format 2 (stage B1): the ability actions are a part of the file. A file of format 2 with no such list is not complete.
-    if (format >= 2 && !read_list(document, "abilityActions", tables.actions, read_action, m_error)) {
+    // Format 3 (code review of stage U3, findings U3-R7 and U3-R8): each action has its switch marks and its dodge marks.
+    const auto read_entry = [format](const json& row, AbilityActionData& action) { return read_action(row, action, format >= 3); };
+    if (format >= 2 && !read_list(document, "abilityActions", tables.actions, read_entry, m_error)) {
         return false;
     }
     if (document.contains("counts")) {

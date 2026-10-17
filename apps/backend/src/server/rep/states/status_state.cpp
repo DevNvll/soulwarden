@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <bit>
 #include <cmath>
 
@@ -20,9 +21,11 @@
 // of the lower-case status id. wallEnd is the end on the synced wall clock of the client (Unix ns): the Player state
 // (player_state.cpp) gives the client the wall clock pair first. flags is 0 (the meaning of its bits is not known).
 //
-// Creature  observer: group 3 field 1, one entry for each effect of the creature that shows at the name plate (one
-//           stack, the potency 1). The client shows the icon of a creature from the compact map only (live check L5 of
-//           stage 3.3a). No fragment in the first record of a creature with no such effect.
+// Creature  observer: group 3 field 1, one entry for each effect of the creature that shows at the name plate (its
+//           stacks, the potency 1). The client shows the icon of a creature from the compact map only (live check L5 of
+//           stage 3.3a), with the stack count from 2 on ("x2", "x3"; live check L1 of stage B2). A creature has one view:
+//           each session that observes it gets the same entries. No fragment in the first record of a creature with no
+//           such effect.
 // Player    owner: group 1 field 0 the full map with each status of the character on the wire (not a status of the gear:
 //           the client has the items), field 1 the lightweight map (empty: the full map has each status), field 2 the
 //           tray, empty. The live checks of stage 3.3b-S1: an entry of the full map alone gives the HUD icon of a row
@@ -44,8 +47,9 @@ constexpr unsigned kFullMap = 0;
 constexpr unsigned kCompactMap = 1;
 constexpr unsigned kLightweightMap = 1;
 constexpr unsigned kTray = 2;
-/** One stack and the potency 1. */
-constexpr std::uint8_t kPackedOneStack = 0x81;
+/** The potency 1 (bit 7 of a packed entry of the compact map); bits 0 to 6 are the stacks. */
+constexpr std::uint8_t kPackedPotencyOne = 0x80;
+constexpr unsigned kPackedStacksMost = 0x7F;
 
 void stamp(hub::Writer& map, std::uint64_t sequence, std::size_t count) {
     map.size(0);
@@ -113,7 +117,7 @@ std::vector<hub::Bytes> encode_player_status_state(const world::Entity& entity, 
     stamp(compact, sequence, plates.size());
     for (const world::ActiveStatus* status : plates) {
         compact.u16(status->index);
-        compact.u8(static_cast<std::uint8_t>(0x80U | (std::min<unsigned>(status->stacks, 0x7FU))));
+        compact.u8(static_cast<std::uint8_t>(kPackedPotencyOne | std::min<unsigned>(status->stacks, kPackedStacksMost)));
     }
     return {state.finish()};
 }
@@ -138,7 +142,7 @@ std::vector<hub::Bytes> encode_creature_status_state(const world::Entity& entity
     map.size(static_cast<std::uint32_t>(shown.size()));
     for (const world::CreatureEffect* effect : shown) {
         map.u16(effect->index);
-        map.u8(kPackedOneStack);
+        map.u8(static_cast<std::uint8_t>(kPackedPotencyOne | std::clamp<unsigned>(effect->stacks, 1U, kPackedStacksMost)));
     }
     return {state.finish()};
 }

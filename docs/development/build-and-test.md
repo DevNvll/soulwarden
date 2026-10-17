@@ -134,6 +134,10 @@ python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/
   cases of the review of stage B0 are in `tests/review_b0_tests.cpp` (RQ1, RQ2) and `tests/build_preset_tests.cpp` (BP10 to BP12); they
   need no mark. Do not change the baseline copy of the orchestrator: copy it again for the proof (`cp -a --reflink=auto`), and build
   in a work folder of `SOULWARDEN_BUILD_ROOT`.
+- Stage B2 uses the mark `SOULWARDEN_B2_BASELINE` (proof on a copy of the tree of stage U3): in `tests/support/boltcaster_fixture.h`,
+  `tests/boltcaster_tests.cpp`, and `tests/review_u3_tests.cpp` it removes the stacks of a creature effect, the counts of the stage, the
+  marks of the projectile data of format 3, so that each case BC1 to BC11 and UR1 to UR9 runs and fails on the behavior of the old
+  tree. Copy the new test files and their registration in `tests/cases.cpp` into the copy.
 - The Windows headers of the MinGW build define `near` and `far` as macros: a member or a variable with such a name in a file that a
   route includes after them does not compile (`SOULWARDEN_BACKEND_TARGET=windows`; stage 3.5b.1: `ChestsView::nearby`). Build the
   Windows target before a commit of a new header.

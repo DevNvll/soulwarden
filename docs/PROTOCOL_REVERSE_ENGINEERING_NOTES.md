@@ -6614,6 +6614,44 @@ row has that name); the arrow of the shot of a player for an observer (4.27); th
 second (live check B1-6: the flight of a charged arrow with and without Aim True was the same on the server; the predicted arrow is in
 no frame); a push of 0.01 m to 1 m of a walking creature for a live check of finding B0-R1 (no row of the build has one).
 
+### 4.47 The stacks of a status on a creature and the rules of the Boltcaster (live proof of stage B2; static proof for the client code and the game data; the rules are project rules with the values of the game data)
+
+Stage B2, the third part of the bow build of the user. Build sheets: `~/Games/soulwarden/work/research/bow-build.md` (4.3),
+`bow-build-2.md` (Q4, K1 to K4, the live checks B2-1 to B2-4). The live proof: `RESULT.md` of
+`~/Games/soulwarden/work/evidence/bow-build/b2/implement/` (live checks L1 and L2 before the code; runs b2-live1 to b2-live4). Code:
+`world/creatures.h` (`give_status`, `application_ready`, `stacks_of`, `remove_statuses`), `world/statuses.h` (`renewed_end`),
+`world/passives.h` (`target_status_pass`, `own_status_pass`, `status_rules`), `server/rep/states/status_state.cpp` (the packed byte).
+Documents: [Creatures](systems/creatures.md), [Status effects](systems/status-effects.md), [Passive rules](systems/passive-rules.md).
+Test cases BC1 to BC11. The stage uses no new message and no new state: the compact status map of 4.22, the damage number of 4.24.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The packed byte of an entry of the compact status map of a creature (state type 4236, group 3 field 1, `statusIndex:u16 packed:u8`): bits 0 to 6 are the stacks (1 to 127), bit 7 is a potency of 1. The name plate of each observer shows the icon with the count ("x2", "x3", "x5"); a byte with stacks 1 shows the icon with no count. A new list with a larger sequence replaces the count. | Live L1 (the charges of the Boltcaster 1, 2, 3; a command entry with 5 stacks: `L1-sheet-stack-count.png`) | The compact reader `0x4044030`; one entry for each status number `0x4038E80` |
+| An entry of a status with no time and with FxScriptOn (the bolt `Status_Perk_Artifact_Set1_Bow_StaticDischarge`, index 4047) in the compact map plays the visual effect of the row at the creature (the lightning strike), for each observer. The entry for 0.1 s (DurationMax) is sufficient; with no entry the client shows no strike. The damage number of the bolt is the number of 4.24 (type Lightning). | Live L2 (`L2-discharge-raw.mp4`); live proof B2-1 (`B2-1-sheet-bolt.png`, the number 1842) | The map of 4.22 |
+| The hit test of a damage row of the client with TargetStatusEffect, TargetStatusEffectStackSize, and TargetStatusEffectComparison counts the stacks of the status of each source on the target; only with CheckStatusEffectsOnTargetOwned (bit 1 of +0xC4) the stacks of the attacker. An empty comparison kind is LessThanOrEqual. | Static (build sheet Q4; decision D10 of the orchestrator keeps this rule) | Hit test `0x67A18F0`; comparison parser `0x43B6390` |
+| The self test of a row with StatusEffect (+0x1DC), StatusEffectStackSize (+0x1E0), and StatusEffectComparison (+0x1E4) counts the statuses of the attacker; CheckOwnedStatusEffects (bit 0) counts only the statuses of its own source. | Static (build sheet Q4) | Self test `0x67A0130` |
+| StackMax below 1 is 1. The client has no reader of RefreshDuration (bit 28) and of RemoveUnappliedStacks (bit 26): the rule of a new stack and of its end is a rule of the server. | Static (build sheet Q4, K3) | Status loader `0x44B4430`; StackMax `0x44B65F5` |
+
+**The data** (`abilities.json`, `statuses.json`, `damage-table.json`; no new file form; `projectile-data.json` format 3 for the
+corrections of the code review of stage U3, [Game data](development/game-data.md)):
+
+| Fact | Source |
+| --- | --- |
+| Electrified `GlobalPerk_Artifact_Set1_Bow` (OnHit, Light,Heavy, DamageTypes Lightning, BaseDamage 0.2); Bolt `GlobalPerk_Artifact_Set1_BowPerk` (OnHit, RequireReaction, Light,Heavy, the charge); the bolt `GlobalPerk_Artifact_Set1_BowPerk2` (21 bow rows, DamageTypes Lightning, the charge with StackSize 3 Equal, ActivationCooldown 1, RemoveTargetStatusEffectsList the charge) | `abilitytable` of the artifacts |
+| The charge `Status_Perk_Artifact_Set1_Bow_StaticCharge` (index 791, 3 s, StackMax 3, RefreshDuration, RemoveUnappliedStacks); the removal `_StaticCharge_Removal` (0.2 s, RemoveStatusEffects the charge); the bolt `_StaticDischarge` (index 4047, no duration, DurationMax 0.1, HealthModifierDamageBased -0.8 Lightning, ApplicationCooldown 3, ShowInNameplates) | `statuseffects` of the artifacts |
+| Shirking Shock II: the tracker `Status_ItemPerk_Weapon_DodgeSuccess_LightningDMG_Tracker` (10 s, EquipAbility `Ability_Perk_Weapon_DodgeSuccess_LightningDMG`, StopOnHitCount 1), the shock -0.236 Lightning; the potency 1.274 at gear score 800. Surprise Attack `Passive_Bow_Hunter_DmgOnFirst` (0.2) and its helper `_Tracker` (RequiredEquippedAbilityId) | The perk tables, `BowAbilityTable` |
+| The switch marks and the dodge marks of the bow actions (Rapid Shot: the switch buffer 1.868143 s, the switch 2.566667 s; the dodge buffer 0.2 s, 0.867 s, 1.733 s and the dodge cancel 0.567 s, 1.1 s, 2.333 s) | `player_bow.adb` (CAGE-TransitionBuffered, CAGE-TransitionInstant, CanDodgeBuffer, CanDodgeCancel) |
+
+**The rules** (the source of each rule is in [Passive rules](systems/passive-rules.md) and [Creatures](systems/creatures.md)): the
+stacks of a creature effect and their end, the ApplicationCooldown of a row for each target, the removal window, the one-time damage of
+a status with no duration, the target status test of each source (D10), the snapshot of the target statuses before the hit (the 4th
+hit is the bolt), the trackers of the dodge perks, Surprise Attack with 0.2 of the data.
+
+**Not known, not done** (stage B2): the view of a second client (only one client can run: the case BC6 tests two sessions); the
+meaning of DisableScalePerTargetSEStack; the source of the Momentum status of the rapier (no plan of a rapier ability).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

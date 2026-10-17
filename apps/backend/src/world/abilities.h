@@ -593,6 +593,8 @@ struct AbilityCounts {
     std::uint64_t shotConfirms{0};
     std::uint64_t explosions{0};
     std::uint64_t windowDelays{0};
+    /** Code review of stage U3, finding U3-R7: the bow actions that a dodge cancelled. */
+    std::uint64_t dodgeCancels{0};
 };
 
 /** The check of a strike of a cast (Combat::claim_strike, stage 3.3b-M2). */
@@ -782,6 +784,28 @@ public:
      * fly end (code review of stage B1, finding B1-R1).
      */
     void weapon_changed(Entity& character);
+    /** The bow action that plays for a character (code review of stage U3, finding U3-R8). */
+    struct PlayingAction {
+        /** The ability action of the projectile data (its switch marks). */
+        const gamedata::AbilityActionData* data{nullptr};
+        /** The input number of the start of its fragment (the press, plus the delay of a buffered press), and the input sequence. */
+        std::uint16_t start{0};
+        std::uint32_t sequence{0};
+        /** The length of the cast (s): the switch of a fragment with no switch mark comes at its end. */
+        float length{0.0F};
+    };
+    /**
+     * @return The ability action of the projectile data that plays for a character now (a cast of Rapid Shot, Explosive Arrow, Penetrating
+     *         Shot: from the start of its fragment to its length, not after the cancel of a dodge). No value: none. The weapon switch takes
+     *         its switch marks (code review of stage U3, finding U3-R8: no melee visit is not the rest of a character in a bow action).
+     */
+    [[nodiscard]] std::optional<PlayingAction> playing_action(const std::string& characterId) const;
+    /**
+     * An accepted dodge of a character cancels its bow action (code review of stage U3, finding U3-R7; finding B1-R1): the action ends at the
+     * cancel (a dodge in a CanDodgeBuffer window waits for the next CanDodgeCancel mark of the fragment, game data), and the shots of its volley
+     * whose time is after the cancel do not fly. A projectile that flies already flies on.
+     */
+    void dodged(const Entity& character);
     /** The world calls it in each tick: the mana regeneration of the characters whose mana is not full, and the dashes of the server. */
     void tick();
     /**
@@ -887,6 +911,8 @@ private:
          * or of the nodes, the death of the caster; code review of stage B1, finding B1-R1): the shots that did not fly do not fly.
          */
         bool shotsClosed{false};
+        /** Code review of stage U3, finding U3-R7: the cancel of the action by a dodge (the end of the fragment then). No value: none. */
+        std::optional<WorldClock::time_point> cancelAt;
     };
     /** The aim of an aimed ability (stage 3.3b-S6): the press that started it. */
     struct Aim {
@@ -1020,8 +1046,6 @@ private:
     std::map<std::uint64_t, Dash> m_dashes;
     /** The characters in the movement of a cast, with the time of the last mark of the state `motion`. */
     std::map<std::string, WorldClock::time_point> m_motionMarks;
-    /** The end of the ApplicationCooldown of a status of a row on a creature (stage 3.3b-M2: Gravity, 1 s for each target). */
-    std::map<std::pair<EntityId, std::string>, WorldClock::time_point> m_rowCooldowns;
     /** The spell entity of a spell of the data at a character (an action, a fragment, a passive rule; stage 3.3b-M2). */
     void cast_spell_at(Entity& character, std::uint64_t cast, std::string_view spell);
     /** A strike with no damage of a cast at its time (fragment_event): each creature that the cast hit before. */

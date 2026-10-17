@@ -623,6 +623,12 @@ struct CreatureEffect {
     float tickCharge{0.0F};
     /** The number of the effect on the wire (gamedata::StatusRow::index). */
     std::uint16_t index{0};
+    /**
+     * Stage B2: the stacks of the effect (1 to the StackMax of its row). Each new application of the row adds one; the compact map of an
+     * observer has the count (live check L1 of stage B2: the name plate shows "x2", "x3"). The DMG parts and the speed part count for each
+     * stack (the rule of the statuses of a character).
+     */
+    std::uint8_t stacks{1};
     /** True: each observer gets the icon of the effect at the name plate of the creature. */
     bool shown{false};
     /** True: the creature does not move and does not attack. */
@@ -695,6 +701,27 @@ struct CreatureAdditive {
     std::uint32_t scope{0};
 };
 
+/** One Homing clip that runs (stage U3; code review of stage U3, finding U3-R6: the clips of an attack can overlap, each one runs at its time). */
+struct HomingClipRun {
+    /** The clip (index in CreatureAttack::homing), its start on the world clock, and its last step. */
+    std::uint32_t clip{0};
+    WorldClock::time_point clipStarted{};
+    WorldClock::time_point stepped{};
+    /** The place of the creature at the start of the clip, and the last place of the target that passed the wedge of the clip. */
+    state::WorldPosition origin;
+    state::WorldPosition aim;
+    /**
+     * The place of the time curve of the clip at its last step (origin + w (dest - origin), client code 0x2565210). A step adds the change of
+     * the curve to the place of the creature (code review of stage U3, finding U3-R2: a push of an additive reaction stays; a root keeps the
+     * curve going with no travel, finding U3-R1).
+     */
+    state::WorldPosition curve;
+    /** The direction of the creature at the start of the clip: the direction of the wedge of its target (client code 0x2561C10). */
+    float scanYaw{0.0F};
+    bool turnDone{false};
+    bool moveDone{false};
+};
+
 /**
  * The homing of an attack of a creature (stage U3, research Q1; game data: the Homing clips of the attack fragment): the server moves and
  * turns the creature on the world clock with the rule of the client (world/attack_motion.h). The client does not do it for a creature (live
@@ -706,18 +733,11 @@ struct HomingMove {
     std::uint16_t generation{0};
     EntityId target{0};
     WorldClock::time_point attackStarted{};
-    /** The clip that runs (`running`), else the next clip to start. */
+    /** The next clip to start (the clips are in the sequence of their start), and the clips that run now. */
     std::uint32_t clip{0};
-    bool running{false};
-    WorldClock::time_point clipStarted{};
+    std::vector<HomingClipRun> runs;
+    /** The last step of the homing (one step each forced_rules::kStep). */
     WorldClock::time_point stepped{};
-    /** The place of the creature at the start of the clip, and the last place of the target that passed the wedge of the clip. */
-    state::WorldPosition origin;
-    state::WorldPosition aim;
-    /** The direction of the creature at the start of the clip: the direction of the wedge of its target (client code 0x2561C10). */
-    float scanYaw{0.0F};
-    bool turnDone{false};
-    bool moveDone{false};
     /** The travel of the clips of the attack (meters, for the log). */
     float travelled{0.0F};
 };
@@ -911,12 +931,14 @@ inline float Creature::damage_factor(WorldClock::time_point now, std::string_vie
         if (now >= effect.ends) {
             continue;
         }
+        // Stage B2: each stack counts (the rule of the statuses of a character: the values times the stacks).
+        const auto stacks = static_cast<float>(std::max<std::uint8_t>(effect.stacks, 1));
         if (effect.row != nullptr && effect.typedDamage && !type.empty() && type != "Standard") {
             std::string column = "DMG";
             column += type;
-            part += effect.row->cells.number(column);
+            part += effect.row->cells.number(column) * stacks;
         } else {
-            part += effect.damage;
+            part += effect.damage * stacks;
         }
     }
     return part < -1.0F ? 0.0F : 1.0F + part;

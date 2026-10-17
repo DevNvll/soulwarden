@@ -209,6 +209,18 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   swing at the key step + 3; SW-L2: a press 21 steps before the switch still played). An ability press in that time is refused
   (`CastVerdict::switching`). The log lines: `world: weapon: NAME switches to slot S at input N (the key at input K, D steps before)`
   and `world: weapon: NAME, the key of input N is lost: ...`. Test cases CF7 and MB4.
+- The corrections of the code review of stage U3 (stage B2):
+  - A bow action of an ability that plays (Rapid Shot, Explosive Arrow, Penetrating Shot: `Abilities::playing_action`) is not the rest:
+    a key waits for the switch marks of its fragment (the projectile data of format 3: Rapid Shot the buffer 1.868143 s and the condition
+    2.566667 s, player_bow.adb; a fragment with no mark: the end of the action, a decision of an agent). Finding U3-R8, test case UR8;
+    live: a key 1.6 s after Rapid Shot kept the third arrow (1.74 s), and the switch came 2.53 s after the cast.
+  - The weight verdict is for the press after the switch code (`StepOutcome::press`: also a press that a switch kept, finding U3-R3,
+    test case UR3), for a melee and for a ranged weapon (finding U3-R4, test case UR4): the attack track keeps the verdict with its press
+    (`AttackTrack::Press::allowed`), and a shot item of a press above the weight limit is refused (`ShotVerdict::encumbered`), also an
+    item that comes later.
+  - A press that a switch kept to a bow is a new press of the bow at the step of its start (`StepOutcome::kept`, `AttackTrack::keep`):
+    the first arrow of the bow after the switch flies (finding U3-R5, test case UR5). A press of the old weapon keeps its mark of a
+    changed weapon.
 - The press after CanTransition (stage U3, research Q6; game data: the mark CanTransition of a fragment; live check CT-L1): a chain
   press at or after the CanTransition time of the fragment that plays gets the first fragment of the chain as its other fragment (the
   visit keeps both, and the first hit selects one, M1-R3). In CT-L1 the client always played the chain (the war hammer C2 and then
@@ -216,7 +228,8 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   Strike2. Test case CF8.
 - The weight (stage U3, [Items and equipment](items-and-equipment.md)): a press at rest of an overencumbered character (above 1.5 x the
   limit) starts no attack (`AttackBits::attackAllowed`; the client shows "Overencumbered - Cannot attack" and plays no swing); a chain
-  of an attack that plays goes on. Test case CF6.
+  of an attack that plays goes on. Test case CF6. From stage B2 also a press that a switch kept, and a basic ranged press (each press of
+  a bow or a staff is a press at rest): findings U3-R3 and U3-R4 above.
 - The fragments of the abilities (stage 3.3b-M2; [Abilities](abilities.md)): an accepted press of an ability of the great axe
   or the war hammer starts the fragment of its action as a visit of the sequence with the cast (`AttackSequences::start_ability`).
   The fragments of one ability keep its cast (the exit of Whirlwind, the uppercut of Charge). A contact of an ability visit is a

@@ -134,6 +134,37 @@ void AttackTrack::step(std::uint16_t input, bool press, bool hold, bool release,
     m_pressed = press;
 }
 
+void AttackTrack::keep(std::uint16_t input, WorldClock::time_point now, std::string_view weapon, bool allowed) {
+    const bool released = m_current && m_current->released;
+    if (m_current && m_current->on) {
+        m_current->on = false;
+        m_current->endInput = input;
+        m_current->ended = now;
+    }
+    m_previous = m_current;
+    Press attack;
+    attack.number = ++m_presses;
+    attack.input = input;
+    attack.started = now;
+    attack.weapon = std::string(weapon);
+    attack.allowed = allowed;
+    if (released) {
+        attack.on = false;
+        attack.endInput = input;
+        attack.ended = now;
+        attack.released = true;
+        attack.releaseInput = input;
+        attack.releasedAt = now;
+    }
+    m_current = attack;
+}
+
+void AttackTrack::verdict(std::uint16_t input, bool allowed) {
+    if (m_current && m_current->input == input) {
+        m_current->allowed = allowed;
+    }
+}
+
 void AttackTrack::mark_shot(std::uint32_t number) {
     for (std::optional<Press>* attack : {&m_current, &m_previous}) {
         if (*attack && (*attack)->number == number) {
@@ -239,10 +270,11 @@ const gamedata::StrikeRow* Combat::row_for(const Entity& attacker, const gamedat
     return nullptr;
 }
 
-void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t input, const AttackBits& bits) {
+StepOutcome Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t input, const AttackBits& bits) {
+    StepOutcome outcome;
     Entity* character = m_world.entity_of(session);
     if (character == nullptr) {
-        return;
+        return outcome;
     }
     const ItemInstance* item = weapon_in_hand(*character);
     const gamedata::WeaponRow* weapon = item != nullptr && has_tables() ? m_tables->weapon_of(item->itemId) : nullptr;
@@ -250,7 +282,7 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
     if (character->life.dead) {
         // A dead character does no damage: its attack ends, and its steps play nothing.
         m_sequences.end(character->characterId, SequenceEnd::death);
-        return;
+        return outcome;
     }
     // A dodge input ends an attack only when the stamina system can start the dodge (code review of stage 3.4f-B, finding CS-R2).
     AttackBits checked = bits;
@@ -263,11 +295,16 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
         actions = weapon != nullptr ? actions_of(*weapon) : nullptr;
     }
     checked.dodgeAllowed = m_world.stamina().can_dodge(*character, bits.locked);
-    // Stage U3 (research Q4): a press at rest starts no attack while the bag is over 1.5 x its weight limit (the client refuses it too).
-    if (bits.press && actions != nullptr) {
+    outcome.press = checked.press;
+    outcome.kept = checked.press && !bits.press;
+    // Stage U3 (research Q4): a press at rest starts no attack while the bag is over 1.5 x its weight limit (the client refuses it too). The
+    // press after the switch (code review of stage U3, finding U3-R3: a press that a switch kept), for a melee weapon and for a ranged weapon
+    // (finding U3-R4: the attack track keeps the verdict with the press for the projectile check).
+    if (checked.press && weapon != nullptr) {
         const Encumbrance weight = m_world.inventory().encumbrance(*character);
         checked.attackAllowed = !weight.overencumbered;
-        const AttackVisit* playing = m_sequences.newest(character->characterId);
+        const AttackVisit* playing = actions != nullptr ? m_sequences.newest(character->characterId) : nullptr;
+        outcome.allowed = !weight.overencumbered || (playing != nullptr && !playing->ended);
         if (weight.overencumbered && (playing == nullptr || playing->ended)) {
             const std::string mark = log::session_mark(character->owner, character->characterId);
             const log::Context context(mark);
@@ -289,6 +326,12 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
             const log::Context context(mark);
             log::write("world: dodge: %s, input %u: no dodge of the server: %s", character->name.c_str(), static_cast<unsigned>(input),
                        dodge_verdict_text(verdict));
+        }
+        // An accepted dodge cancels a bow action that plays (code review of stage U3, finding U3-R7): its shots after the cancel do not fly.
+        if (verdict == DodgeVerdict::accepted) {
+            if (Entity* again = m_world.entity_of(session)) {
+                m_world.abilities().dodged(*again);
+            }
         }
     }
     // The payments of the fragments (PayStaminaCost, CAGE-PayManaCost). A stamina payment goes through the one stamina path (stage
@@ -315,6 +358,7 @@ void Combat::step(SessionId session, std::uint32_t inputSequence, std::uint16_t 
             }
         }
     }
+    return outcome;
 }
 
 void Combat::run_event(const std::string& characterId, SessionId session, const SequenceEvent& event) {
@@ -514,23 +558,40 @@ void Combat::step_switch(Entity& character, std::uint32_t inputSequence, std::ui
         const AttackSequences::State* state = m_sequences.state_of(character.characterId);
         const bool playing = visit != nullptr && !visit->ended && state != nullptr && state->actions != nullptr
                              && visit->fragment < state->actions->fragments.size();
+        // The fragment that plays and its switch marks: a melee visit, or (code review of stage U3, finding U3-R8) the action of a bow ability
+        // of the projectile data (Rapid Shot: the buffer 1.868 s, the condition 2.567 s). No marks: the switch waits to its end.
+        std::optional<std::uint16_t> start;
+        float switchAt = -1.0F;
+        float switchBuffer = -1.0F;
+        if (playing) {
+            const gamedata::AttackFragment& fragment = state->actions->fragments[visit->fragment];
+            start = visit->start;
+            switchAt = fragment.switchAt;
+            switchBuffer = fragment.switchBuffer;
+        } else if (const std::optional<Abilities::PlayingAction> action = m_world.abilities().playing_action(character.characterId);
+                   action && action->sequence == inputSequence) {
+            start = action->start;
+            // No switch mark (Penetrating Shot: Bow_Shoot_UpperBody has none, and an older file): the end of the action (a decision of an
+            // agent: the client plays the fragment to its end, then the switch of the rest).
+            switchAt = action->data->switchAt >= 0.0F ? action->data->switchAt : action->length;
+            switchBuffer = action->data->switchBuffer;
+        }
         std::optional<std::uint16_t> due;
-        if (!playing) {
+        if (!start) {
             // At rest: the switch at the key, while the key is in its 20 steps (BackTicks of Use_MainHandSlot_N).
             if (sinceKey <= switch_rules::kKeySteps) {
                 due = input;
             }
         } else {
-            const gamedata::AttackFragment& fragment = state->actions->fragments[visit->fragment];
-            if (fragment.switchAt >= 0.0F) {
+            if (switchAt >= 0.0F) {
                 // The step whose clock reaches the mark: the clock of a fragment that starts at s is (k - s + 1) / 30 at the step k.
                 const auto step_of = [&](float time) {
-                    return static_cast<std::uint16_t>(visit->start + static_cast<std::uint16_t>(
-                                                                         std::max(std::ceil(time * attack_rules::kStepsInSecond - 0.001F), 1.0F))
+                    return static_cast<std::uint16_t>(*start + static_cast<std::uint16_t>(
+                                                                   std::max(std::ceil(time * attack_rules::kStepsInSecond - 0.001F), 1.0F))
                                                       - 1);
                 };
-                const std::uint16_t condition = step_of(fragment.switchAt);
-                const std::uint16_t buffer = fragment.switchBuffer >= 0.0F ? step_of(fragment.switchBuffer) : condition;
+                const std::uint16_t condition = step_of(switchAt);
+                const std::uint16_t buffer = switchBuffer >= 0.0F ? step_of(switchBuffer) : condition;
                 const auto after_key = [&](std::uint16_t step) { return static_cast<std::uint16_t>(step - pending->key); };
                 const std::uint16_t opens = after_key(buffer) <= 0x7FFF ? buffer : pending->key;
                 if (after_key(opens) <= switch_rules::kKeySteps || after_key(condition) > 0x7FFF || after_key(condition) <= switch_rules::kKeySteps) {
@@ -1022,14 +1083,7 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
         behindCrit = angle >= 0.0F && angle >= target.creature.body->behind->critical && !row.noBackstab;
     }
     hit.head = use.head && use.kind == HitKind::projectile && !row.noHeadshot;
-    // The modifiers of the passive rules of the hit (world/passives.h): the damage part, the critical parts, the penetration.
-    const HitBonus bonus = m_world.passives().before_hit(attacker, target, hit);
     HitModifiers modifiers;
-    // The part of a hit (stage B1): the hit rate of a pierce (Blood Soaked Arrow) joins the parts of the gear and of the rules.
-    modifiers.part = attacker.gear.baseDamage + bonus.damage + m_world.gear().load_part(attacker) + use.part;
-    modifiers.typeParts = &attacker.gear.damage;
-    modifiers.armor = target.creature.armor_part(m_world.clock().now());
-    modifiers.penetration = bonus.penetration;
     // The gem of the weapon of the hit: the instance of the slot of the hit (finding F1 of the review of stage 1.3b), when
     // that slot still has the item of the hit.
     if (cast != nullptr) {
@@ -1044,6 +1098,30 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
             modifiers.conversionPart = conversion->part;
         }
     }
+    // Stage B2: the damage types of the hit (the condition DamageTypes) and the effects of the target before the hit (the conditions of a
+    // status of the target): the conditions of each rule of the hit see the target as it was before the effects of the hit.
+    const auto& types = m_tables->data().damageTypes;
+    const bool converts = modifiers.conversionPart > 0.0F && !modifiers.conversionType.empty();
+    if (row.type < types.size() && !(converts && modifiers.conversionPart >= 1.0F)) {
+        hit.types.push_back(types[row.type].name);
+    }
+    if (converts && std::none_of(hit.types.begin(), hit.types.end(), [&](const std::string& name) { return name == modifiers.conversionType; })) {
+        hit.types.push_back(modifiers.conversionType);
+    }
+    const WorldClock::time_point before = m_world.clock().now();
+    for (const CreatureEffect& effect : target.creature.effects) {
+        if (before < effect.ends) {
+            hit.targetEffects.push_back(HitContext::TargetEffect{effect.status, effect.row, effect.stacks, effect.source});
+        }
+    }
+    hit.targetKnown = true;
+    // The modifiers of the passive rules of the hit (world/passives.h): the damage part, the critical parts, the penetration.
+    const HitBonus bonus = m_world.passives().before_hit(attacker, target, hit);
+    // The part of a hit (stage B1): the hit rate of a pierce (Blood Soaked Arrow) joins the parts of the gear and of the rules.
+    modifiers.part = attacker.gear.baseDamage + bonus.damage + m_world.gear().load_part(attacker) + use.part;
+    modifiers.typeParts = &attacker.gear.damage;
+    modifiers.armor = target.creature.armor_part(m_world.clock().now());
+    modifiers.penetration = bonus.penetration;
     result.damage = damage(attacker, weapon, gearScore, row, m_tables->defense_of(target.creature.kind->vitals), &modifiers);
     if (factor != 1.0F) {
         result.damage.dealt *= std::max(factor, 0.0F);

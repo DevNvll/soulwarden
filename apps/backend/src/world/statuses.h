@@ -181,6 +181,14 @@ public:
 
     /** Puts a status row on a character in the world. */
     StatusVerdict apply(Entity& character, const gamedata::StatusRow& row, const StatusApply& how);
+    /**
+     * @return The end of a status of a row at a new application that keeps it (the one rule of a character and, from stage B2, of a
+     *         creature): RefreshDuration: now plus the time, not before the old end; a DurationMax above the duration: the old end plus
+     *         the time, not after now plus DurationMax; else the later end of the two. A reading of the names of the columns (a decision of
+     *         an agent: the add code of the server is not in the client; the loader 0x44B4430 has no reader of RefreshDuration).
+     */
+    [[nodiscard]] static WorldClock::time_point renewed_end(const gamedata::StatusRow& row, WorldClock::time_point old, WorldClock::time_point now,
+                                                            std::chrono::milliseconds lasting);
     /** The same with the id of the row ("FoodCONT5"). */
     StatusVerdict apply(Entity& character, std::string_view status, const StatusApply& how);
 

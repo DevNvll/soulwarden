@@ -54,7 +54,13 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
   entry ended. A press that ended with no release fits for 30 input steps after its end.
 - The weapon of the press (finding F3, test case RJ3): the attack track keeps the weapon in the hand at the press (its slot
   and its instance: `Combat::weapon_key`). A shot whose weapon is not that weapon, or a press in which the weapon changed,
-  fits no press (`noAttack`).
+  fits no press (`noAttack`). From stage B2 a press that a weapon switch kept is a new press of the new weapon at the step at which
+  the switch gives it back (code review of stage U3, finding U3-R5, test case UR5: the first arrow of a bow after a switch from a
+  staff flies; `AttackTrack::keep`); its release is the release of the button in the switch, else a later release (a heavy shot).
+- The weight (code review of stage U3, finding U3-R4, test case UR4): a basic press of a ranged weapon with the bag over 1.5 x its
+  weight limit starts no attack (the rule of a melee press at rest, [Combat and health](combat-and-health.md)); the track keeps the
+  verdict with the press (`AttackTrack::Press::allowed`), and each shot item of that press is refused (`encumbered`, also a late
+  item).
 - The hold on the world clock (finding F5, test case RJ5): the time from the step of the press to the step of the release
   (or of the shot), as the session got them, must not be shorter than the steps of the hold (1/30 s each) less 200 ms
   (`kHoldSlack`, a decision of an agent: the reports of a client come with a delay). Input numbers alone do not give the

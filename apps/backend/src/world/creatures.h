@@ -241,6 +241,16 @@ struct CreatureCounts {
     std::uint64_t dispelled{0};
     std::uint64_t statusesGiven{0};
     std::uint64_t statusesRefused{0};
+    /**
+     * Stage B2: the new stacks of an effect (a new application of a row with StackMax above its stacks), the applications that the
+     * ApplicationCooldown of a row on the creature refused, the applications that a removal window refused (a running effect whose row
+     * removes the row or its category: the removal of the charges of the Boltcaster), and the one-time damage of a row with no duration
+     * (the bolt of the Boltcaster).
+     */
+    std::uint64_t stacksAdded{0};
+    std::uint64_t applicationCooldowns{0};
+    std::uint64_t statusesBlocked{0};
+    std::uint64_t instantDamage{0};
 };
 
 /**
@@ -349,6 +359,24 @@ public:
      */
     bool give_status(Entity& entity, const gamedata::StatusRow& row, EntityId source, std::optional<std::chrono::milliseconds> time = std::nullopt,
                      const StatusDamage* damage = nullptr);
+    /**
+     * Stage B2: the ApplicationCooldown of a status row on a creature: one application of the row for each creature in that time (the key is
+     * the creature, as for a character: research bow-build-2.md Q4, the bolt of the Boltcaster at most once in 3 s on each target).
+     * @param start True: an application that changes the creature starts the time.
+     * @return True when the row can come on the creature now.
+     */
+    bool application_ready(const Entity& entity, const gamedata::StatusRow& row, bool start);
+    /**
+     * Stage B2: @return The stacks of the effect of a status row on a creature now (0: none). The client keeps one entry for each status
+     *         number of an entity (0x4038E80): the stacks of each source count (decision D10 of the orchestrator). `source` not 0: only when
+     *         the effect has that source (CheckStatusEffectsOnTargetOwned).
+     */
+    [[nodiscard]] std::uint32_t stacks_of(const Entity& entity, std::string_view status, EntityId source = 0) const;
+    /**
+     * Stage B2: ends the effects of the rows and of the categories of the lists ("A,B" or "A+B") on a creature now, of each source (a dispel
+     * of a status row, RemoveTargetStatusEffectsList of a passive rule). Each observer gets the status state. @return The number that ended.
+     */
+    unsigned remove_statuses(Entity& entity, std::string_view rows, std::string_view categories, std::string_view cause);
     /**
      * The heal of a creature (stage 3.4f-D, the one heal path of a creature: a tick of a heal effect): the health goes up by the amount, to
      * its maximum; each session that observes the creature gets the vitals state. A dead creature gets no heal.
@@ -603,6 +631,8 @@ private:
     };
     std::multimap<WorldClock::time_point, EffectDue> m_effectDue;
     std::uint64_t m_nextEffect{0};
+    /** Stage B2: the end of the ApplicationCooldown of each status row (lower case) on each creature. */
+    std::map<std::pair<EntityId, std::string>, WorldClock::time_point> m_applications;
     CreatureCounts m_counts;
     std::optional<WorldClock::time_point> m_lastScan;
     /** Number of creatures that commands made. It selects the slice of an alias with more than one. */

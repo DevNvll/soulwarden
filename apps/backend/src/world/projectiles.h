@@ -152,8 +152,13 @@ enum class ShotVerdict : std::uint8_t {
     busy,
     /** The attack has no flight (a hit scan) or a grouped spread: the backend has no rule for it (the blunderbuss). */
     unsupported,
+    /**
+     * The press of the item started no attack from rest: the bag of the character was over 1.5 x its weight limit at the press (code review
+     * of stage U3, finding U3-R4; the client shows "Overencumbered - Cannot attack").
+     */
+    encumbered,
 };
-inline constexpr std::size_t kShotVerdictCount = 20;
+inline constexpr std::size_t kShotVerdictCount = 21;
 
 /** @return A short text for a log line, for example "the press has a projectile". */
 [[nodiscard]] const char* shot_verdict_text(ShotVerdict verdict);

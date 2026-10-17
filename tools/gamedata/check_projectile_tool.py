@@ -132,6 +132,11 @@ def cast(time: str, spell: str, condition: str) -> str:
             f'<Condition value="{condition}"/></ProceduralParams></Procedural></ProcLayer>')
 
 
+def named(time: str, name: str) -> str:
+    return (f'<ProcLayer><Blend ExitTime="{time}"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="{name}"/></ProceduralParams>'
+            '</Procedural></ProcLayer>')
+
+
 # Stage B1: the fragments of the three bow abilities of the backend (the times of player_bow.adb).
 ABILITY_FRAGMENTS = (
     '<Bow_Shoot_UpperBody><Fragment Tags="Bow"><ProcLayer>' + ranged("0.0333", "Basic", "TestRow") + '</ProcLayer></Fragment>'
@@ -142,7 +147,8 @@ ABILITY_FRAGMENTS = (
     + ranged("0.5334", "TripleShot", "Bow_RapidAttack_Standard") + ranged("0.8666", "TripleShot", "Bow_RapidAttack_KnockBack") + '</ProcLayer>'
     + transition("Buffered", "1.8681", "CanAttack_SpreadShot") + transition("Instant", "2.6", "CanAttack_SpreadShot")
     + '<ProcLayer><Blend ExitTime="2.6"/><Procedural type="CAGE-Named"><ProceduralParams><Name value="CanTransition"/></ProceduralParams>'
-    '</Procedural></ProcLayer></Fragment></Ability_Bow_RapidShot>'
+    '</Procedural></ProcLayer>' + named("0.2", "CanDodgeBuffer") + named("0.566667", "CanDodgeCancel") + named("1.868143", "CanUnsheathe_Buffer")
+    + named("2.566667", "CanUnsheathe") + '</Fragment></Ability_Bow_RapidShot>'
     '<Ability_Bow_ExplosiveArrow><Fragment Tags="Bow">' + cast("0.4667", "Spell_Ability_Bow_Explosive_Base", "Bow_ExplosiveArrow_NoUpgrade")
     + cast("0.4667", "Spell_Ability_Bow_Explosive_Upgrade", "Bow_ExplosiveArrow_Upgraded") + '</Fragment></Ability_Bow_ExplosiveArrow>')
 
@@ -270,21 +276,24 @@ def main() -> int:
     basic = [shot for shot in shots if not shot[5] and not (len(shot) > 10 and shot[10])]
     clips = sorted((shot[1], shot[2]) for shot in shots if not shot[5] and len(shot) > 10 and shot[10])
     actions = {entry[0]: entry for entry in document.get("abilityActions", [])}
-    rapid = actions.get("Bow_RapidShot", [None] * 8)
-    penetrating = actions.get("Bow_Penetrating_Shoot", [None] * 8)
-    spread = actions.get("Bow_SpreadShot", [None] * 8)
+    rapid = actions.get("Bow_RapidShot", [None] * 9)
+    penetrating = actions.get("Bow_Penetrating_Shoot", [None] * 9)
+    spread = actions.get("Bow_SpreadShot", [None] * 9)
     # Each cast of an action is the spell of an ability shot of the output (code review of stage B1, finding B1-R8).
     cast_spells = sorted(cast[1] for entry in actions.values() for cast in entry[6])
     ability_spells = {shot[5] for shot in shots if shot[5] and len(shot) > 10 and shot[10]}
     joined = cast_spells == sorted(BOW_CAST_SPELLS) and all(spell in ability_spells for spell in cast_spells)
-    stage_b1 = (document.get("format") == 2 and clips == [("PenetratingShot", "Bow_Penetrating_Attack"), ("TripleShot", "Bow_RapidAttack_KnockBack"),
+    stage_b1 = (clips == [("PenetratingShot", "Bow_Penetrating_Attack"), ("TripleShot", "Bow_RapidAttack_KnockBack"),
                                                          ("TripleShot", "Bow_RapidAttack_Standard")]
                 and rapid[1] == "Ability_Bow_RapidShot" and rapid[4] == 2.6 and [clip[0] for clip in rapid[5]] == [0.3333, 0.8667, 1.7333]
                 and rapid[7] == [["Ability_Bow_SplinterShot", "buffered", 1.8681], ["Ability_Bow_SplinterShot", "instant", 2.6]]
                 and penetrating[3] == "Bow+PenetratingAim" and penetrating[5] == [[0.0333, "PenetratingShot", "Bow_Penetrating_Attack", 0.0, True]]
                 and spread[6] == [[0.4667, "Spell_Ability_Bow_Explosive_Base", ["Ability_Bow_SplinterShot"], ["Upgrade_Bow_SplinterShot_FiveA"]],
                                   [0.4667, "Spell_Ability_Bow_Explosive_Upgrade", ["Ability_Bow_SplinterShot", "Upgrade_Bow_SplinterShot_FiveA"], []]]
-                and joined)
+                and joined
+                # Format 3 (code review of stage U3, findings U3-R7 and U3-R8): the switch marks and the dodge marks of each action.
+                and rapid[8] == [1.868143, 2.566667, [[0.2, "buffer"], [0.566667, "cancel"]]] and penetrating[8] == [-1.0, -1.0, []]
+                and document.get("format") == 3)
     print(f"{'ok  ' if stage_b1 else 'FAIL'}  valid (stage B1): the ability actions {sorted(actions)}, the clip shots {clips}, "
           f"the casts with an ability shot {joined}")
     failures += 0 if stage_b1 else 1

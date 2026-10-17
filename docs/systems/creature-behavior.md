@@ -35,6 +35,17 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   follows a side step of 1 m (homing 0.47 m to 1.36 m). The root motion of the animations (phase B of the research) is not done: the
   client plays a remote lunge in place (LC-Q1-1). Test cases CF1 (the time rule, two sessions) and CF9 (the load: 200 homings in a world
   of 4,200 creatures).
+- The corrections of the code review of stage U3 (stage B2; `world/attack_motion.cpp`, `HomingClipRun`):
+  - A root (`Creature::rooted`) holds the place of a creature in the homing of its attack, as in each step of the behavior: the turn and
+    the attack go on, and the curve of the time rule goes on with no travel, so the blocked travel does not come back at the end of the
+    root (finding U3-R1, test case UR1).
+  - The time rule takes the change of its curve as the step (the curve place is apart from the place of the creature; the line to the
+    target goes from the curve place): a push of an additive reaction between two steps stays (finding U3-R2, test case UR2). The
+    velocity rule steps from the place of the creature.
+  - Each clip starts at its own time, also while an earlier clip runs: the clips of one attack run at the same time, each with its own
+    origin, target place, turn, and move (finding U3-R6, test case UR6; the exporter collects the clips of each procedural layer, and 32
+    attacks of the common data have clips that overlap, for example `Attack_Rapier_Flurry` of `lost_pirate_spectral_1hsword`). Two
+    clips that turn at the same time both turn the creature (a decision of an agent: the data has no rule for an overlap).
 - The behavior of a creature (protocol notes 4.17; project rules, in `world/behavior.h`, with
   each constant in the namespace `world::behavior_rules`). The game files give the values of
   a slice (the vision, the leash, the speeds, the attacks) and no rule. A creature at rest

@@ -364,6 +364,11 @@ public:
          * long as the track keeps the press, also after the ledger entry of the projectile (world/projectiles.h) ended.
          */
         bool shot{false};
+        /**
+         * False: the press starts no attack from rest (code review of stage U3, finding U3-R4: the bag over 1.5 x its weight limit at the
+         * press, Combat::step): it fits no shot, also when its item comes later.
+         */
+        bool allowed{true};
     };
 
     /** @return True when this input number is newer than the last one of the track (or the track has none). */
@@ -389,6 +394,14 @@ public:
     void step(std::uint16_t input, bool press, bool hold, bool release, WorldClock::time_point now, std::string_view weapon = {});
     /** A projectile left for the press with this number (Projectiles::launch): the press fits no second shot. */
     void mark_shot(std::uint32_t number);
+    /**
+     * A press that a weapon switch kept starts now for the new weapon (code review of stage U3, finding U3-R5; Combat::step, StepOutcome::kept):
+     * a new press of the track at this input step with the weapon in the hand now. A kept press whose button went off in the switch is
+     * released at this step; else its release comes later (a heavy shot). The press of the old weapon keeps its mark of a changed weapon.
+     */
+    void keep(std::uint16_t input, WorldClock::time_point now, std::string_view weapon, bool allowed);
+    /** The weight verdict of the press that started at this input step (finding U3-R4; Combat::step, StepOutcome::allowed). */
+    void verdict(std::uint16_t input, bool allowed);
 
     /**
      * @return The attack input that a contact of this input number can come from: the newest
@@ -546,6 +559,16 @@ inline constexpr unsigned kFirstAttackSteps = 3;
 } // namespace switch_rules
 
 
+/** The press of one input step after the weapon switch (Combat::step; code review of stage U3, findings U3-R3 to U3-R5). */
+struct StepOutcome {
+    /** The step has a press: its own press bit, or a press that a weapon switch kept and gives back at this step. */
+    bool press{false};
+    /** True for a press that a weapon switch kept: the press of the new weapon starts at this step (not at the step of the button). */
+    bool kept{false};
+    /** False: the press starts no attack from rest (the bag is over 1.5 x its weight limit; stage U3, research Q4). */
+    bool allowed{true};
+};
+
 class Combat {
 public:
     /**
@@ -559,8 +582,10 @@ public:
      * step): the sequence of the basic attacks of its character follows it (world/attack_sequence.h). The world finds the
      * character from the session (rule MP-5).
      * @param inputSequence The number of the input sequence of the client (AttackTrack::sequence).
+     * @return The press of the step after the weapon switch (code review of stage U3, findings U3-R3 to U3-R5): the session gives the attack
+     *         track of a ranged weapon a kept press of a switch and the weight verdict of a press.
      */
-    void step(SessionId session, std::uint32_t inputSequence, std::uint16_t input, const AttackBits& bits);
+    StepOutcome step(SessionId session, std::uint32_t inputSequence, std::uint16_t input, const AttackBits& bits);
     /**
      * Runs an item of the fragment of an ability (not a payment) at its due time on the world clock (code review of stage 3.3b-M2,
      * finding M2-R1), with the tolerance of a contact: at once when it is due, else in a timer that runs it only when its visit lives

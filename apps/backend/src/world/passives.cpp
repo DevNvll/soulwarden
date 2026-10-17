@@ -37,7 +37,10 @@ const std::set<std::string, std::less<>> kMarks = {
     // The durability cost of a spell of a rule (stage 3.3b-M2: CastSpell of Power Cleaner): the backend has no durability use.
     "DisableCastSpellDurability",
     // Stage B1: the hit count of a volley does not end at a death (Rapid Accuracy; the backend counts the arrows of one cast on one target).
-    "IgnoreResetConsecutiveOnDeath"};
+    "IgnoreResetConsecutiveOnDeath",
+    // Stage B2: the potency of a rule is not multiplied by the stacks of the status of the target (the bolt of the Boltcaster). The backend
+    // multiplies no rule by such stacks: the mark changes nothing.
+    "DisableScalePerTargetSEStack"};
 
 /** The columns of a value of a rule (a fixed stat, or a part of a hit). */
 const std::set<std::string, std::less<>> kValues = {
@@ -53,7 +56,12 @@ const std::set<std::string, std::less<>> kConditions = {
     "AttackerVitalsCategory", "TargetVitalsCategory", "DontHaveStatusEffect", "InSequence", "InAction", "RequireReaction",
     "TrackHitCount", "NumberOfTrackedHits", "NumberOfHitsComparisonType", "NumSuccessfulHits", "NumConsecutiveHits",
     "MaxConsecutiveHits", "ResetConsecutiveOnSuccess", "DamageIsMelee", "DamageIsRanged", "NumAroundMe", "MaxNumAroundMe",
-    "NumAroundComparisonType", "EquipLoadCategory"};
+    "NumAroundComparisonType", "EquipLoadCategory",
+    // Stage B2: the damage types of the hit, a status of the target with its stacks (each source, or the attacker's with
+    // CheckStatusEffectsOnTargetOwned: client 0x67A18F0), a status of the attacker with its stacks (client 0x67A0130), and the node of a
+    // helper row.
+    "DamageTypes", "TargetStatusEffect", "TargetStatusEffectStackSize", "CheckStatusEffectsOnTargetOwned", "StatusEffect",
+    "StatusEffectStackSize", "StatusEffectComparison", "RequiredEquippedAbilityId"};
 
 /** The effects that the evaluator has (before the damage, after the hit, or a fixed stat through the gear values). */
 const std::set<std::string, std::less<>> kEffects = {
@@ -66,7 +74,10 @@ const std::set<std::string, std::less<>> kEffects = {
     "Stamina",
     // Stage B1: the damage of the status of a rule is the damage of a row (Flame Arrow: Common_DamageOverTime_Override), and the row of the
     // shots of an ability for a node (Blood Soaked Arrow: the plan of Penetrating Shot applies it, Abilities::resolve_volley).
-    "ForceStatusEffectDamageTableRow", "DamageTableRowOverride"};
+    "ForceStatusEffectDamageTableRow", "DamageTableRowOverride",
+    // Stage B2: the end of statuses of the target (RemoveTargetStatusEffectsList: the charges of the Boltcaster) and of the attacker
+    // (RemoveStatusEffects: a list, or AbilitySpecific with the list of StatusEffectsList: the tracker of Shirking Shock II).
+    "RemoveTargetStatusEffectsList", "RemoveStatusEffects", "StatusEffectsList"};
 
 /**
  * The conditions that a hit taken has a source for (code review of stage 3.3b-S5, finding F6): the values of the character (its
@@ -325,8 +336,21 @@ std::vector<PassiveRule> Passives::rules_of(const Entity& character, std::uint32
                 if (row != nullptr) {
                     rules.push_back(PassiveRule{row->id, &row->cells, 1.0F, node->active ? RuleOrigin::active : RuleOrigin::node});
                 }
+                // Stage B2: the helper rows of the node (RequiredEquippedAbilityId; the tracker of Surprise Attack), not a node themselves.
+                if (node != nullptr) {
+                    for (const gamedata::AbilityRow* helper : abilities->helpers_of(node->id)) {
+                        if (progression->node(helper->id) == nullptr) {
+                            rules.push_back(PassiveRule{helper->id, &helper->cells, 1.0F, RuleOrigin::helper});
+                        }
+                    }
+                }
             }
         }
+    }
+    // Stage B2: the rows that the statuses of the character equip (EquipAbility of the status row), with the potency of the status, for a hit
+    // of each weapon (the tracker of Shirking Shock II equips Ability_Perk_Weapon_DodgeSuccess_LightningDMG while it runs).
+    for (const PassiveRule& rule : status_rules(character)) {
+        rules.push_back(rule);
     }
     if (const gamedata::PerkData* perks = m_world.perk_data()) {
         for (const GearPerk& perk : m_world.gear().perks_of(character)) {
@@ -338,6 +362,119 @@ std::vector<PassiveRule> Passives::rules_of(const Entity& character, std::uint32
         }
     }
     return rules;
+}
+
+std::vector<PassiveRule> Passives::status_rules(const Entity& character) const {
+    std::vector<PassiveRule> rules;
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    if (abilities == nullptr || character.kind != EntityKind::player) {
+        return rules;
+    }
+    const gamedata::PerkData* perks = m_world.perk_data();
+    const WorldClock::time_point now = m_world.clock().now();
+    for (const ActiveStatus& status : character.statuses) {
+        const gamedata::StatusRow* row = status.permanent || now < status.ends ? abilities->status(status.status) : nullptr;
+        if (row == nullptr) {
+            continue;
+        }
+        for (const std::string_view part : parts_of(row->cells.text("EquipAbility"))) {
+            if (const gamedata::AbilityRow* ability = abilities->ability_row(part)) {
+                rules.push_back(PassiveRule{ability->id, &ability->cells, status.potency, RuleOrigin::status});
+            } else if (const gamedata::CellValues* cells = perks != nullptr ? perks->ability(part) : nullptr) {
+                rules.push_back(PassiveRule{std::string(part), cells, status.potency, RuleOrigin::status});
+            }
+        }
+    }
+    return rules;
+}
+
+bool Passives::target_status_pass(const gamedata::CellValues& row, const Entity& attacker, const Entity& target, const HitContext& hit) const {
+    const std::string_view named = row.text("TargetStatusEffect");
+    const std::string_view categories = row.text("TargetStatusEffectCategory");
+    if (named.empty() && categories.empty()) {
+        return true;
+    }
+    // The effects of the target before the hit (the snapshot of Combat::strike), or as it is now (a test, a hit with no strike).
+    std::vector<HitContext::TargetEffect> live;
+    const std::vector<HitContext::TargetEffect>* effects = &hit.targetEffects;
+    if (!hit.targetKnown) {
+        const WorldClock::time_point now = m_world.clock().now();
+        const gamedata::AbilityData* abilities = m_world.options().abilityData;
+        for (const CreatureEffect& effect : target.creature.effects) {
+            if (now < effect.ends) {
+                const gamedata::StatusRow* data = effect.row != nullptr ? effect.row : abilities != nullptr ? abilities->status(effect.status) : nullptr;
+                live.push_back(HitContext::TargetEffect{effect.status, data, effect.stacks, effect.source});
+            }
+        }
+        effects = &live;
+    }
+    // Client hit test 0x67A18F0: CheckStatusEffectsOnTargetOwned (bit 1 of +0xC4) counts only the statuses of the attacker, else each source
+    // (decision D10 of the orchestrator: the charges and the tracker of Surprise Attack belong to the target).
+    const bool owned = row.flag("CheckStatusEffectsOnTargetOwned");
+    const auto in_categories = [&](const HitContext::TargetEffect& effect) {
+        if (effect.row == nullptr || categories.empty()) {
+            return false;
+        }
+        for (const std::string_view category : parts_of(effect.row->cells.text("EffectCategories"))) {
+            if (list_has(categories, category)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::uint32_t namedStacks = 0;
+    std::uint32_t categoryStacks = 0;
+    bool hasNamed = false;
+    bool hasCategory = false;
+    for (const HitContext::TargetEffect& effect : *effects) {
+        if (owned && effect.source != attacker.id) {
+            continue;
+        }
+        if (!named.empty() && list_has(named, effect.status)) {
+            hasNamed = true;
+            namedStacks += std::max<std::uint32_t>(effect.stacks, 1);
+        }
+        if (in_categories(effect)) {
+            hasCategory = true;
+            categoryStacks += std::max<std::uint32_t>(effect.stacks, 1);
+        }
+    }
+    const std::string_view comparison = row.text("TargetStatusEffectComparison");
+    // TargetStatusEffectStackSize 1 or more: the stacks of TargetStatusEffect, or of the categories when no status is named, with the
+    // comparison (0x146624CD0). With no size: the target has the status or a status of a category; NotEqual: it has none.
+    if (const float size = row.number("TargetStatusEffectStackSize"); size >= 1.0F) {
+        return compare(static_cast<float>(named.empty() ? categoryStacks : namedStacks), size, comparison);
+    }
+    const bool wanted = lower(comparison) != "notequal";
+    if (!named.empty() && hasNamed != wanted) {
+        return false;
+    }
+    if (!categories.empty() && hasCategory != wanted) {
+        return false;
+    }
+    return true;
+}
+
+bool Passives::own_status_pass(const gamedata::CellValues& row, const Entity& character) const {
+    const std::string_view named = row.text("StatusEffect");
+    if (named.empty()) {
+        return true;
+    }
+    // Client self test 0x67A0130: with no StatusEffectStackSize the character must have the status (each source); with a size, its stacks
+    // with StatusEffectComparison.
+    const WorldClock::time_point now = m_world.clock().now();
+    std::uint32_t stacks = 0;
+    bool has = false;
+    for (const ActiveStatus& status : character.statuses) {
+        if ((status.permanent || now < status.ends) && list_has(named, status.status)) {
+            has = true;
+            stacks += std::max<std::uint32_t>(status.stacks, 1);
+        }
+    }
+    if (const float size = row.number("StatusEffectStackSize"); size >= 1.0F) {
+        return compare(static_cast<float>(stacks), size, row.text("StatusEffectComparison"));
+    }
+    return has;
 }
 
 bool Passives::conditions_pass(const PassiveRule& rule, const Entity& attacker, const Entity& target, const HitContext& hit) const {
@@ -354,22 +491,24 @@ bool Passives::conditions_pass(const PassiveRule& rule, const Entity& attacker, 
     if (const std::string_view rows = row.text("RemoteDamageTableRow"); !rows.empty() && !list_has(rows, hit.row)) {
         return false;
     }
-    if (const std::string_view categories = row.text("TargetStatusEffectCategory"); !categories.empty()) {
-        // The categories of the effects on the creature (EffectCategories of their status rows).
-        bool has = false;
-        const gamedata::AbilityData* abilities = m_world.options().abilityData;
-        const WorldClock::time_point now = m_world.clock().now();
-        for (const CreatureEffect& effect : target.creature.effects) {
-            const gamedata::StatusRow* status = abilities != nullptr && now < effect.ends ? abilities->status(effect.status) : nullptr;
-            if (status == nullptr) {
-                continue;
-            }
-            for (const std::string_view category : parts_of(categories)) {
-                has = has || list_has(status->cells.text("EffectCategories"), category);
-            }
-        }
-        const bool wanted = lower(row.text("TargetStatusEffectComparison")) != "notequal";
-        if (has != wanted) {
+    // The statuses of the target (TargetStatusEffect with its stacks, TargetStatusEffectCategory) before the hit (stage B2), and a status of
+    // the attacker (StatusEffect, stage B2).
+    if (!target_status_pass(row, attacker, target, hit) || !own_status_pass(row, attacker)) {
+        return false;
+    }
+    // DamageTypes (stage B2): the hit has a part of a type of the list (the Boltcaster: 99 percent Lightning; decision K6 of the research).
+    if (const std::string_view types = row.text("DamageTypes");
+        !types.empty() && std::none_of(hit.types.begin(), hit.types.end(), [&](const std::string& type) { return list_has(types, type); })) {
+        return false;
+    }
+    // RequiredEquippedAbilityId (stage B2): the character has the node of a helper row.
+    if (const std::string_view node = row.text("RequiredEquippedAbilityId"); !node.empty()) {
+        const std::uint32_t id = gamedata::progression_id(node);
+        const bool learned = std::any_of(attacker.skills.pools.begin(), attacker.skills.pools.end(), [&](const auto& pool) {
+            const auto found = pool.second.find(id);
+            return found != pool.second.end() && found->second.level != 0;
+        });
+        if (!learned) {
             return false;
         }
     }
@@ -699,7 +838,8 @@ void Passives::after_hit(Entity& attacker, Entity& target, const HitContext& hit
                              && std::any_of(kValues.begin(), kValues.end(), [&](const std::string& column) { return row.number(column) != 0.0F; });
         const bool effect = !row.text("OtherApplyStatusEffect").empty() || !row.text("SelfApplyStatusEffect").empty()
                             || row.number("DmgPctToHealth") > 0.0F || (row.number("CooldownTimer") < 0.0F && !row.text("CDRImmediatelyOptions").empty())
-                            || !row.text("CastSpell").empty() || row.number("Stamina") != 0.0F || counted;
+                            || !row.text("CastSpell").empty() || row.number("Stamina") != 0.0F || counted
+                            || !row.text("RemoveTargetStatusEffectsList").empty() || !row.text("RemoveStatusEffects").empty();
         // A rule with OnCrit and only CritChance changed the roll (before_hit): it has no effect after the hit.
         if (!takes || !effect) {
             continue;
@@ -790,6 +930,26 @@ void Passives::apply_effects(const PassiveRule& rule, Entity& attacker, Entity& 
             }
         }
     }
+    // RemoveTargetStatusEffectsList (stage B2): the statuses of the list end on the target, of each source (the bolt of the Boltcaster takes
+    // the charges).
+    if (const std::string_view list = row.text("RemoveTargetStatusEffectsList"); !list.empty()) {
+        if (Entity* hurt = m_world.creatures().find(targetId)) {
+            (void)m_world.creatures().remove_statuses(*hurt, list, {}, rule.id);
+        }
+    }
+    // RemoveStatusEffects (stage B2): statuses of the attacker end: the statuses of the list, or with AbilitySpecific the statuses of
+    // StatusEffectsList (game data: Shirking Shock II takes its tracker; Momentum of the rapier, Rapier_BonusDMGAfterAbility). A name that is
+    // not a status of the character ends nothing (Global_Weapon_DodgeSuccess_LightningDMG names an ability row).
+    if (const std::string_view removed = row.text("RemoveStatusEffects"); !removed.empty()) {
+        const std::string_view list = same_text(removed, "AbilitySpecific") ? row.text("StatusEffectsList") : removed;
+        std::vector<std::string> ids;
+        for (const std::string_view part : parts_of(list)) {
+            ids.emplace_back(part);
+        }
+        if (Entity* own = m_world.find(attackerId); own != nullptr && !ids.empty()) {
+            (void)m_world.statuses().remove_rows(*own, ids, {}, StatusEnd::replaced);
+        }
+    }
     if (Entity* own = m_world.find(attackerId); own != nullptr && !row.text("SelfApplyStatusEffect").empty()) {
         const std::uint64_t before = m_world.gear().counts().casterEffects;
         m_world.gear().caster_effect(*own, row, rule.id, rule.potency);
@@ -835,6 +995,25 @@ void Passives::target_status(const PassiveRule& rule, Entity& attacker, Entity& 
         if (m_world.creatures().give_status(target, *row, attacker.id, std::nullopt, damage.amount > 0.0F ? &damage : nullptr)) {
             ++m_counts.targetStatuses;
             log::write("world: rule %s gives %s to creature %016llx: %.1f %s damage each tick", rule.id.c_str(), row->id.c_str(),
+                       static_cast<unsigned long long>(target.id), static_cast<double>(damage.amount), damage.type.c_str());
+        }
+        return;
+    }
+    // Stage B2: a status with no duration whose damage is a part of the damage of the hit (a negative HealthModifierDamageBased with a
+    // DamageType, no rend, no spell: the bolt of the Boltcaster, Status_Perk_Artifact_Set1_Bow_StaticDischarge, -0.8 Lightning) goes through
+    // the one status path of a creature: its ApplicationCooldown on the target (3 s: one bolt in 3 s on each target), its dispel (the
+    // charges), its icon and its visual effect for its DurationMax, and one damage of `-HealthModifierDamageBased x potency x the raw damage
+    // of the hit` of its type. The damage base is the project rule of a damage-based status of a perk (research bow-build-2.md K5: the row
+    // has no ForceStatusEffectDamageTableRow; the game text "a bolt of lightning, dealing 80% damage").
+    if (row->duration <= 0.0F && row->cells.number("HealthModifierDamageBased") < 0.0F && !row->cells.text("DamageType").empty()
+        && row->cells.text("CastSpell").empty() && row->cells.number("PhysicalArmor") == 0.0F && row->cells.number("ElementalArmor") == 0.0F) {
+        StatusDamage damage;
+        damage.amount = -row->cells.number("HealthModifierDamageBased") * rule.potency * hit.raw;
+        damage.type = std::string(row->cells.text("DamageType"));
+        damage.charge = row->cells.number("SourceRuneChargeOnApply");
+        if (m_world.creatures().give_status(target, *row, attacker.id, std::nullopt, damage.amount > 0.0F ? &damage : nullptr)) {
+            ++m_counts.targetStatuses;
+            log::write("world: rule %s gives %s to creature %016llx: one damage of %.1f %s", rule.id.c_str(), row->id.c_str(),
                        static_cast<unsigned long long>(target.id), static_cast<double>(damage.amount), damage.type.c_str());
         }
         return;
@@ -1602,6 +1781,14 @@ std::vector<RuleView> Passives::describe(const Entity& character) const {
                 }
                 const gamedata::AbilityRow* row = abilities != nullptr ? abilities->ability_row(node->id) : nullptr;
                 views.push_back(describe_row(node->id, row != nullptr ? &row->cells : nullptr, node->active ? RuleOrigin::active : RuleOrigin::node));
+                // Stage B2: the helper rows of the node (RequiredEquippedAbilityId).
+                if (abilities != nullptr) {
+                    for (const gamedata::AbilityRow* helper : abilities->helpers_of(node->id)) {
+                        if (progression->node(helper->id) == nullptr) {
+                            views.push_back(describe_row(helper->id, &helper->cells, RuleOrigin::helper));
+                        }
+                    }
+                }
             }
         }
     }
@@ -1611,6 +1798,10 @@ std::vector<RuleView> Passives::describe(const Entity& character) const {
                 views.push_back(describe_row(name, perks->ability(name), RuleOrigin::perk));
             }
         }
+    }
+    // Stage B2: the rows that the statuses of the character equip now (EquipAbility).
+    for (const PassiveRule& rule : status_rules(character)) {
+        views.push_back(describe_row(rule.id, rule.cells, RuleOrigin::status));
     }
     return views;
 }
@@ -1628,6 +1819,14 @@ std::vector<RuleView> Passives::describe_table(std::uint32_t table) const {
         }
         const gamedata::AbilityRow* row = abilities != nullptr ? abilities->ability_row(node.id) : nullptr;
         views.push_back(describe_row(node.id, row != nullptr ? &row->cells : nullptr, node.active ? RuleOrigin::active : RuleOrigin::node));
+        // Stage B2: the helper rows of the node (RequiredEquippedAbilityId).
+        if (abilities != nullptr) {
+            for (const gamedata::AbilityRow* helper : abilities->helpers_of(node.id)) {
+                if (progression->node(helper->id) == nullptr) {
+                    views.push_back(describe_row(helper->id, &helper->cells, RuleOrigin::helper));
+                }
+            }
+        }
     }
     return views;
 }

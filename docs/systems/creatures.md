@@ -16,6 +16,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 | The status effects of an ability on a creature: the stun, the root, the slow, the weaken, the knockdown and the stagger, the status state (the icons at the name plate) | Protocol notes 4.22, [Abilities](abilities.md), `world/creatures.h` (`Creatures::apply_effect`, `knock`), `world/entity.h` (`CreatureEffect`, `Creature::held`, `rooted`, `speed_factor`, `damage_factor`), `server/rep/states/status_state.cpp`, `tools/world creature effect`, test cases AB6 to AB8 |
 | The pull and the push of a hit (stage 3.3b-S4) | [Forced movement](forced-movement.md), `world/forced_motion.h`, `Creatures::impact`, test cases FM2 to FM8 |
 | The heals and the buffs of a creature (stage 3.4f-D): the one path of a status on a creature, the heal of its ticks, the DMG part and the haste, the dispel, the due list of the effects, the status actions and the low-health part of the data | Protocol notes 4.40, `world/creatures.h` (`Creatures::give_status`, `heal`, `end_effects`, `sweep`, `effect_tick`), `world/entity.h` (`CreatureEffect`, `Creature::damage_factor`, `speed_factor`), `gamedata/creature_data.h` (`CreatureStatusAction`, `StatusMark`, `lowHealth`), [Creature behavior](creature-behavior.md), `tools/world creature effect`, `tools/world creature status-action`, test cases CRH1 to CRH9 |
+| The stacks of a status on a creature (stage B2): StackMax, the end of the rule of a character, the count at the name plate, the ApplicationCooldown on the target, the removal window, the one-time damage of a row with no duration | `Creatures::give_status`, `apply_effect`, `application_ready`, `stacks_of`, `remove_statuses`, `server/rep/states/status_state.cpp` (`encode_creature_status_state`), protocol notes 4.47, test cases BC1, BC2, BC6, BC7 |
 | The load of the world: the cost of the spawn rule, the time of a tick | `apps/backend/src/world/creatures.h` (`SpawnGrid`), `world/load_meter.h`, `tools/world list` (the line `load:`), test case WS2 |
 
 ## Rules
@@ -212,7 +213,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   of a status row of the game data (`CreatureEffect` in `Creature::effects`: the stun, the
   root, the slow, the weaken, the end at the next hit, the end on the world clock) or a
   knockdown or a stagger (`Creature::knockedUntil`). Only the creature system changes them:
-  `Creatures::apply_effect` (the same status again gets the later end) and
+  `Creatures::apply_effect` (the same status again: one more stack and the end of the rule of a character, from stage B2) and
   `Creatures::knock`. From stage 3.4f-D a status row comes on a creature through one path
   (`Creatures::give_status`: an ability, a passive rule, a spell, a status action of the creature, a command):
   - the effect keeps its row: the part of the damage of a hit of the creature is the DMG<type> of the row for the type of the hit
@@ -221,7 +222,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   - a heal at each tick (TickRate) of a row with a positive HealthModifierPercent or Health: that part of the maximum health, through
     the one heal path of a creature (`Creatures::heal`: to the maximum, the vitals state for each observer; no heal for a dead
     creature); the first tick at the next tick of the world (DelayInitialTick: one TickRate later), then each TickRate before the end
-    (the rule of a character, [Status effects](status-effects.md)); the same row again (StackMax 1) gets the later end and no second
+    (the rule of a character, [Status effects](status-effects.md)); the same row again gets the end of the stacks rule below and no second
     tick, and the ticks keep their cadence: a tick that the old end stopped comes at its time when the new end is later (code review
     of stage 3.4f-D, finding SU-R1); at its end an effect first gets its ticks that are due before the end, also when a late world step
     takes an earlier entry of the creature first (finding SU-R2); the OnTickStatusEffect of the row comes at each tick, and it ends with the effect when the row has no KeepOnTickEffectOnEnd
@@ -236,7 +237,32 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
     the rule; a source that left the world gives no tick. The count `damageTicks`. The icon: the compact status map of the creature
     (slot 8, type 4236) for each observer, as each creature effect (live: the burn icon at the name plate of the direct target only);
   - the dispel (game data): a row with RemoveStatusEffects or RemoveStatusEffectCategories ends those effects of the creature first
-    (the Null Chamber of the void gauntlet: the category Buff; the ability is not in the backend yet, a command applies the row);
+    (the Null Chamber of the void gauntlet: the category Buff; the ability is not in the backend yet, a command applies the row;
+    stage B2: the bolt of the Boltcaster ends the charges; `Creatures::remove_statuses`, also for RemoveTargetStatusEffectsList of a
+    passive rule);
+  - the stacks (stage B2, `CreatureEffect::stacks`; the rule of a character, [Status effects](status-effects.md)): a new effect has
+    InitialStackSize stacks (1 to StackMax); the same row again adds one stack to StackMax (a value below 1 is 1: client loader
+    0x44B65F5), and at StackMax with DontReplaceStack changes nothing. The end of the same row again: `Statuses::renewed_end`
+    (RefreshDuration: now plus the time, not before the old end; a DurationMax above the duration: the old end plus the time, not after
+    now plus DurationMax; else the later end; RefreshDuration "TRUE" as a text counts: `CellValues::flag`). All stacks end together at
+    the end (RemoveUnappliedStacks and a row with no such cell: the backend has one end for each effect; the client has no reader of the
+    cell, research bow-build-2.md K3: a decision of an agent). The DMG parts and the speed part of the row count for each stack. Each
+    observer gets the stack count in the compact map (the packed byte: bits 0 to 6 the stacks; live check L1 of stage B2: the name plate
+    shows "x2", "x3"); a new stack sends the list, a renewal with the same stacks sends nothing (the compact map has no end). Test case BC1;
+  - the ApplicationCooldown of a row (stage B2, `Creatures::application_ready`): one application of the row for each creature in that
+    time, of each source (the key is the creature, as for a character; research bow-build-2.md Q4: the bolt of the Boltcaster at most once
+    in 3 s on each target). Only an application that changes the creature starts it. The status of a damage row (`Abilities::row_effects`)
+    and the rend and the damage over time of a perk (`Gear::perk_status`; before stage B2 its key was the attacker) use the same time.
+    Test cases BC2, BC7;
+  - the removal window (stage B2; game data, a decision of an agent): a running effect whose row removes rows or categories
+    (RemoveStatusEffects, RemoveStatusEffectCategories with a duration) refuses those rows while it runs (the count `statusesBlocked`):
+    `Status_Perk_Artifact_Set1_Bow_StaticCharge_Removal` (0.2 s) takes the charge that the hit of the bolt adds;
+    `Status_SetBonusInfix_Focused_CCEffectImmunity` (1 s, the category CC) has the same form. Test case BC2;
+  - a row with no duration and a damage of its source (stage B2: the bolt, `Status_Perk_Artifact_Set1_Bow_StaticDischarge`,
+    [Passive rules](passive-rules.md)) is one damage now through the path of a tick (`Gear::tick_damage`, the count `instantDamage`), and
+    a row with ShowInNameplates and a DurationMax stays for the DurationMax (0.1 s) with no tick: each observer gets its icon and the
+    client plays its visual effect (live check L2 of stage B2: the compact entry of the bolt plays the lightning strike of its
+    FxScriptOn; with no entry the client shows nothing). Test cases BC2, BC6;
   - the ends: the end of its time, the next hit for a stun of Shockwave, the dispel, and the death of the creature (each effect:
     RemoveOnDeath of the rows; the source of a status action is the creature itself). The way back gives no new effect (immune).
     ResetAI of the data (the reset of a creature removes the category ClearOnReset) is not applied: no effect of this stage has it;
@@ -434,6 +460,12 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
   the pose at the same times after the start of an attack (user test 2: `UT2-2-before-after-ghost-attack1-end-side-by-side.png`).
 - An Elite takes no reaction and no push from a light or a heavy attack (the reaction rule): use one as the target of a long test of
   the attacks of a player (`Ghost_Frozen_65_Elite`), so that it stays in the reach.
+- From stage U3 an Elite+ that is not a promoted elite takes the additive push of a light arrow (0.35 m away from the source): after
+  three arrows `Wolf_Elemental_Earth_ELITE_05WC10` was 0.6 m beside the line of the shots, and the next arrows passed it (stage B2). With
+  `tools/world ignore NAME on` and the behavior on, a pushed creature also walks back to its place, immune. For a series of bow hits on
+  one creature use a large body (`CorruptedLegion_Cyclops_ELITE`, 238,670 health) in a run with `SOULWARDEN_CREATURE_BEHAVIOR=0`.
+- The icon of a status at the name plate of a creature is small (about 12 pixels): crop the frames near the name plate and scale them 4
+  times to read the stack count ("x2", "x3"). The client shows no count for one stack.
 - A slice of the tests with only `Idle_No_Task` has no idle action: its creature keeps the rule from before user test 2.
 - The client keeps the scope fields of a creature: a state with no scope fields after an
   action makes the client start that action again. A new state of a creature must keep

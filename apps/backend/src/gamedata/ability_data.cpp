@@ -422,6 +422,7 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
     m_actionSpells.clear();
     m_actionNodes.clear();
     m_trackingSpells.clear();
+    m_helpers.clear();
     std::unordered_map<std::string, std::size_t> cooldowns;
     std::unordered_map<std::string, std::size_t> status;
     std::unordered_map<std::string, std::size_t> spells;
@@ -583,6 +584,13 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
             tracking.emplace(lower_ascii(rule), index);
         }
     }
+    // Stage B2: the helper rows of a node (RequiredEquippedAbilityId), in the sequence of the data.
+    std::unordered_map<std::string, std::vector<std::size_t>> helpers;
+    for (std::size_t index = 0; index < tables.abilityRows.size(); ++index) {
+        if (const std::string_view node = tables.abilityRows[index].cells.text("RequiredEquippedAbilityId"); !node.empty()) {
+            helpers[lower_ascii(node)].push_back(index);
+        }
+    }
     if (!error.empty()) {
         m_error = error;
         return false;
@@ -590,6 +598,7 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
     m_actionSpells = std::move(actionSpells);
     m_actionNodes = std::move(actionNodes);
     m_trackingSpells = std::move(tracking);
+    m_helpers = std::move(helpers);
     m_tables = std::move(tables);
     m_cooldowns = std::move(cooldowns);
     m_status = std::move(status);
@@ -659,6 +668,16 @@ bool AbilityData::action_tests(std::string_view node) const {
 std::vector<std::string> AbilityData::action_lists_of(std::string_view node) const {
     const auto found = m_actionNodes.find(lower_ascii(node));
     return found == m_actionNodes.end() ? std::vector<std::string>{} : found->second;
+}
+
+std::vector<const AbilityRow*> AbilityData::helpers_of(std::string_view node) const {
+    std::vector<const AbilityRow*> rows;
+    if (const auto found = m_helpers.find(lower_ascii(node)); found != m_helpers.end()) {
+        for (const std::size_t index : found->second) {
+            rows.push_back(&m_tables.abilityRows[index]);
+        }
+    }
+    return rows;
 }
 
 const SpellRow* AbilityData::tracking_spell(std::string_view rule) const {

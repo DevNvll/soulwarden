@@ -84,9 +84,16 @@ std::vector<GearPerk> Gear::item_perks(const ItemInstance& item, std::uint32_t s
             names.push_back(name);
         }
     }
-    // The fixed perks of the definition: the client shows them with the perks of the instance (live check I2).
+    // The fixed perks of the definition: the client shows them with the perks of the instance (live check I2). A perk of the instance in a
+    // place replaces the fixed perk of that place (stage B2: a charm that the player slotted; the Boltcaster of the bow build has Lightning
+    // Harnessing II in place 4, where the definition has Slottable_Common_DmgBasic: research bow-build.md section 3.2, the tooltip of the
+    // video). Before stage B2 the two counted.
     if (const gamedata::PerkLayout* layout = data->layout_of(item.itemId)) {
-        for (const std::string& name : layout->fixed) {
+        for (std::size_t place = 0; place < layout->fixed.size(); ++place) {
+            const std::string& name = layout->fixed[place];
+            if (place < item.perks.size() && !item.perks[place].empty()) {
+                continue;
+            }
             if (!name.empty() && std::none_of(names.begin(), names.end(), [&](const std::string& other) { return same_text(other, name); })) {
                 names.push_back(name);
             }
@@ -232,7 +239,8 @@ GearValues Gear::values(const Entity& character) const {
             const std::uint32_t table = weapon != nullptr && !weapon->mastery.empty() ? gamedata::progression_id(weapon->mastery) : 0;
             for (const PassiveRule& rule : m_world.passives().rules_of(character, table)) {
                 if (rule.origin != RuleOrigin::perk && Passives::fixed(*rule.cells)) {
-                    add_cells(*rule.cells, 1.0F, true);
+                    // The potency of the rule: 1 for a node; stage B2: the potency of the status that equips a row.
+                    add_cells(*rule.cells, rule.potency, true);
                 }
             }
         }
@@ -471,13 +479,10 @@ void Gear::perk_status(Entity& attacker, Entity& target, std::string_view status
         return;
     }
     const WorldClock::time_point now = m_world.clock().now();
-    // The ApplicationCooldown of the status: one application for each character and status in that time.
-    const std::string key = attacker.characterId + "/status/" + row->id;
-    if (const auto found = m_activations.find(key); found != m_activations.end() && now < found->second) {
+    // The ApplicationCooldown of the status: one application for each creature and status in that time (stage B2: the key is the target, the
+    // rule of a character and of the one status path of a creature, Creatures::application_ready; before: the attacker).
+    if (!m_world.creatures().application_ready(target, *row, true)) {
         return;
-    }
-    if (const float wait = row->cells.number("ApplicationCooldown"); wait > 0.0F) {
-        m_activations[key] = now + std::chrono::milliseconds(static_cast<long long>(std::lround(wait * 1000.0F)));
     }
     ++m_counts.perkEffects;
     // A rend of the armor of the creature (Sundering Shockwave: PhysicalArmor and ElementalArmor -0.05 times the potency).

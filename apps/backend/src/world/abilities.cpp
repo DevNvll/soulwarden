@@ -2607,6 +2607,87 @@ void Abilities::weapon_changed(Entity& character) {
     log::write("world: ability: %s changes the weapon: the window of %s ends", character.name.c_str(), ability_name(found->second.plan.kind));
 }
 
+std::optional<Abilities::PlayingAction> Abilities::playing_action(const std::string& characterId) const {
+    const auto state = m_characters.find(characterId);
+    if (state == m_characters.end() || !state->second.cast) {
+        return std::nullopt;
+    }
+    const auto found = m_casts.find(*state->second.cast);
+    if (found == m_casts.end() || found->second.plan.actionData == nullptr) {
+        return std::nullopt;
+    }
+    const Cast& cast = found->second;
+    const WorldClock::time_point now = m_world.clock().now();
+    const WorldClock::time_point begun = cast.started + cast.plan.delay;
+    if (now >= begun + cast.plan.length || (cast.cancelAt && now >= *cast.cancelAt)) {
+        return std::nullopt;
+    }
+    const auto delaySteps = static_cast<std::uint16_t>(std::lround(std::chrono::duration<double>(cast.plan.delay).count() * ability_rules::kStepsInSecond));
+    return PlayingAction{cast.plan.actionData, static_cast<std::uint16_t>(cast.input + delaySteps), cast.sequence,
+                         std::chrono::duration<float>(cast.plan.length).count()};
+}
+
+void Abilities::dodged(const Entity& character) {
+    const auto state = m_characters.find(character.characterId);
+    if (state == m_characters.end() || !state->second.cast) {
+        return;
+    }
+    const auto found = m_casts.find(*state->second.cast);
+    if (found == m_casts.end() || found->second.plan.actionData == nullptr || found->second.cancelAt) {
+        return;
+    }
+    Cast& cast = found->second;
+    const gamedata::AbilityActionData& action = *cast.plan.actionData;
+    const WorldClock::time_point now = m_world.clock().now();
+    const WorldClock::time_point begun = cast.started + cast.plan.delay;
+    if (now >= begun + cast.plan.length) {
+        return;
+    }
+    // The cancel time in the fragment (game data: the CanDodgeBuffer and CanDodgeCancel marks of the fragment; a decision of an agent with the
+    // client rule of a buffered input): in a cancel window at once; in a buffer window, or before the first window, at the next cancel mark;
+    // with no cancel mark after it, at the end of the fragment. A file with no marks: at once.
+    const float elapsed = std::max(std::chrono::duration<float>(now - begun).count(), 0.0F);
+    const float length = std::chrono::duration<float>(cast.plan.length).count();
+    float cancel = elapsed;
+    if (!action.dodgeMarks.empty()) {
+        const gamedata::AbilityActionData::DodgeMark* last = nullptr;
+        for (const gamedata::AbilityActionData::DodgeMark& mark : action.dodgeMarks) {
+            if (mark.time <= elapsed) {
+                last = &mark;
+            }
+        }
+        if (last == nullptr || last->buffer) {
+            cancel = length;
+            for (const gamedata::AbilityActionData::DodgeMark& mark : action.dodgeMarks) {
+                if (!mark.buffer && mark.time > elapsed) {
+                    cancel = mark.time;
+                    break;
+                }
+            }
+        }
+    }
+    cast.cancelAt = begun + std::chrono::duration_cast<WorldClock::time_point::duration>(std::chrono::duration<float>(cancel));
+    if (!cast.plan.volley || cast.shotsClosed) {
+        return;
+    }
+    // The shots after the cancel do not fly (they count as done); a shot whose time came before it can still come (its item is late).
+    const std::vector<ShotPlan>& shots = cast.plan.volley->shots;
+    cast.shotsDone.resize(shots.size(), false);
+    std::size_t closed = 0;
+    for (std::size_t index = 0; index < shots.size(); ++index) {
+        if (!cast.shotsDone[index] && std::chrono::duration<float>(shots[index].at).count() > cancel) {
+            cast.shotsDone[index] = true;
+            ++closed;
+        }
+    }
+    if (std::all_of(cast.shotsDone.begin(), cast.shotsDone.end(), [](bool done) { return done; })) {
+        cast.shotsClosed = true;
+    }
+    ++m_counts.dodgeCancels;
+    log::write("world: ability: a dodge of %s cancels %s at %.3f s of its fragment (the dodge at %.3f s): %zu shot(s) that did not fly do not fly",
+               character.name.c_str(), ability_name(cast.plan.kind), static_cast<double>(cancel), static_cast<double>(elapsed), closed);
+}
+
 bool Abilities::countered(Entity& character, Entity& attacker, float reach) {
     const auto state = m_characters.find(character.characterId);
     if (state == m_characters.end() || !state->second.cast || character.life.dead) {
@@ -3334,26 +3415,15 @@ void Abilities::row_effects(Entity& creature, const gamedata::DamageRow& row, fl
     if (row.effectOnlyOnDamage && !(dealt > 0.0F)) {
         return;
     }
-    const WorldClock::time_point now = m_world.clock().now();
-    if (m_rowCooldowns.size() > 256) {
-        for (auto entry = m_rowCooldowns.begin(); entry != m_rowCooldowns.end();) {
-            entry = entry->second <= now ? m_rowCooldowns.erase(entry) : std::next(entry);
-        }
-    }
     for (const std::string& status : row.effects) {
         const gamedata::StatusRow* data = m_data->status(status);
         if (data == nullptr) {
             continue;
         }
-        // ApplicationCooldown of the status row: one application for each creature in that time (Gravity: 1 s for each target).
-        const float wait = data->cells.number("ApplicationCooldown");
-        const auto key = std::make_pair(creature.id, data->id);
-        if (wait > 0.0F) {
-            const auto until = m_rowCooldowns.find(key);
-            if (until != m_rowCooldowns.end() && now < until->second) {
-                continue;
-            }
-            m_rowCooldowns[key] = now + milliseconds(wait);
+        // ApplicationCooldown of the status row: one application for each creature in that time (Gravity: 1 s for each target). From stage
+        // B2 the one status path of a creature has it (Creatures::application_ready).
+        if (!m_world.creatures().application_ready(creature, *data, false)) {
+            continue;
         }
         const bool given = apply_status(creature, status, source);
         ++(given ? m_counts.effects : m_counts.effectsRefused);

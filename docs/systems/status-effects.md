@@ -19,7 +19,8 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 | The heal of a status: a fixed heal, a heal over time, a heal of an ability (HealthModifierDamageBased), the heal values (stage 3.3b-S6) | `Statuses::give` (`StatusApply::heal`, `ActiveStatus::heal`), `Statuses::potency_factor`, `Health::heal` ([Combat and health](combat-and-health.md)), test cases HE1, HE4, HE5, HE7 |
 | The damage of a status: the poison of a creature area, its damage source, the ticks, the dodge (stage 3.4f-C) | `Statuses::give` (`StatusApply::damage`, `ActiveStatus::damage`, `DamageSource`), `Health::status_damage`, [Spell entities](spells.md), test cases CRA2, CRA5, CRA8 |
 | The corrections AR-R1 and AR-R2 of the review of stage 3.4f-C: the dodge at the due time of a tick, the exit from an area before a tick | `Statuses::tick`, `Statuses::give` (`at`), `Health::status_damage` (`at`), `Spells::holds`, test cases RAR1, RAR2 |
-| The statuses of a creature (stage 3.4f-D: its heals and buffs) | [Creatures](creatures.md) (`Creatures::give_status`) |
+| The statuses of a creature (stage 3.4f-D: its heals and buffs; stage B2: the stacks, the ApplicationCooldown on the target, the removal window) | [Creatures](creatures.md) (`Creatures::give_status`) |
+| The end of a status at a new application (one rule for a character and a creature, stage B2) | `Statuses::renewed_end`, `CellValues::flag` (a mark as a number or the text TRUE), test cases ST2, BC1 |
 | The status categories and the caster effect rows of the game data | `tools/gamedata/abilities.sh` (format 4), `gamedata/ability_data.h` (`StatusCategory`, `AbilityRow`), test case ST1 |
 
 ## Rules
@@ -41,7 +42,10 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   - the larger potency stays; at StackMax with DontReplaceStack the application changes nothing.
   The meaning of RefreshDuration, DurationMax, and DontReplaceStack is a reading of the names of the columns of the
   game data (a decision of an agent): the add code of the server is not in the client (the static search found only
-  the loader 0x44B4430).
+  the loader 0x44B4430; research bow-build-2.md Q4: no client reader of RefreshDuration, bit 28, and of RemoveUnappliedStacks, bit 26).
+  From stage B2 one function has the end rule (`Statuses::renewed_end`), for a character and for a creature, and a mark in the text
+  form "TRUE" counts (`CellValues::flag`: RefreshDuration "TRUE" of `Status_ExplosiveShot_Burn`). At the end all stacks go together
+  (RemoveUnappliedStacks: the backend has one end for each status; a decision of an agent).
 - The duration: the duration of the source (DurationOverrides of a consumable), else BaseDuration; not more than
   DurationMax. A row with no duration is one application now: a heal (Health and HealthModifierPercent of the maximum
   health, times the potency, through the heal path of stage 3.3b-S6 with its kind), a mana change (Mana, ManaModifierPercent), a
@@ -151,6 +155,9 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   same source "ability"; [Passive rules](passive-rules.md)). A status of an area with no duration (BaseDuration -1: the fortify
   in the well of Unyielding) has no end while the friend is in the area, and the area takes it ([Spell entities](spells.md)).
   The fortify of Clear Out (`WarHammer_ClearOut_FortifyBuff`, 4 s) comes from the spell of the rule Power Cleaner.
+- A status with EquipAbility (stage B2): while it runs, the ability row that it names is a rule of the hits of the character, with the
+  potency of the status (the tracker of Shirking Shock II equips `Ability_Perk_Weapon_DodgeSuccess_LightningDMG`; [Passive
+  rules](passive-rules.md)). The heart rune keeps its own rule (the EquipAbility of its weapon row).
 - The status state of a player (protocol notes 4.24). The owner gets the full map (group 1, field 0) with each status
   on the wire, an empty lightweight map, and an empty tray. An entry of the full map alone gives the HUD icon of a row
   with ShowInUITray, its countdown, its stack count (×2), its visual effect, and its values in the character sheet
