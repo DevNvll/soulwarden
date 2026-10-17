@@ -1542,6 +1542,19 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   which creatures walk. For stage 3.5a: the death of a creature is in `Creatures::hurt`
   (with the attacker), the place of the respawn timer is `Creatures::respawn_at`, and a
   creature has its full health only at its home.
+- User test 2 of stage 3.6a (done; result file
+  `~/Games/soulwarden/work/evidence/user-test-2/implement/RESULT.md`; diagnosis `~/Games/soulwarden/work/research/user-test-2.md`):
+  an ability starts only from the step of its press (a press before a window of the fragment that plays is refused; the server of
+  the release started it later and ended the swing that the client played on, and its contact was refused with "no strike", 4.33);
+  the end of a creature action, a walk, and a stun give the idle record of the slice (the client kept the last pose and ended its own
+  idle at each state, 4.14); a timed action goes out again in each state while it plays (one arrow gave three reactions, 4.14); the
+  reaction to a hit follows the damage row and the action Reaction of the action lists (the power, the length of its fragment, the
+  hit stun, the creature types, the chain limit; no reaction for a damage over time, 4.14); the push lasts the reaction (0.4 s for
+  a row with NoReaction, nothing with no reaction) and the creature goes on with its path after it (4.26); the creature data tool
+  reads the lengths of the reaction fragments and of the attacks from the animation files; one log line for each refused claim with
+  no strike and each refused press (32 at most). The seven findings of the code review of stage 3.6a (gathering) are corrected. Not
+  in this stage: the homing of a creature attack (the client moves the body, the server keeps the place), the reaction of a side or
+  the back, the weight rule of the abilities, the block press in the charge (the client played its light swing: no fault found).
 - User test 1 of stage 3.4d (done; result file
   `~/Games/soulwarden/work/evidence/user-test-1/implement/RESULT.md`): the locomotion action
   of a creature and the rule of its scope fields (the creatures slid in the pose of an

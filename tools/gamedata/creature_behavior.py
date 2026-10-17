@@ -209,9 +209,18 @@ AREA_EXCEPTIONS: dict[tuple[str, str, str], str] = {
 # An action of a ranged event that is a movement or an attack on a structure is not a ranged attack of the file (a project
 # rule): the backend has no rule for a shot in a walk (WalkBack of the skeleton archer) or for a structure.
 RANGED_LEFT_OUT_WORDS = LEFT_OUT_WORDS | {"walkback", "walk", "move"}
-# The time of an attack whose animation has no end time in the database: its last contact plus this (seconds).
+# The time of an attack whose fragment has no end blend and whose animation length the tool cannot read: its last contact plus
+# this (seconds; user test 2: the tool reads the animation length first, UT2-7).
 TIME_AFTER_CONTACT = 0.9
 LONGEST_ATTACK = 12.0
+# The reaction fragments of the five power levels (r_R0_F to r_R4_F: the reaction to a hit from the front). Stage 3.3a: the knockdown of an
+# ability plays power 4, a stagger power 2; user test 2: a hit plays the power of its damage row (PowerLevel_AI).
+REACTION_FRAGMENTS = ("r_R0_F", "r_R1_F", "r_R2_F", "r_R3_F", "r_R4_F")
+# The animation files of the creatures (user test 2, UT2-7): the length of an animation clip of a fragment, by the name of the clip (the
+# file name with no suffix). The motion parameters chunk of a CAF file has the frames and the time of a frame (the reader of
+# weapon_actions.py for the player).
+CREATURE_ANIMATION_FOLDER = "animations/gameplay/character/npc/"
+MOTION_CHUNK = 0x3002
 
 
 def walk(element):
@@ -525,12 +534,101 @@ class TagBits:
         return state.hex(), unknown
 
 
+def caf_length(data: bytes, path: str) -> float:
+    """@return The length of an animation file (seconds): (end frame - start frame) x ticks per frame x seconds per tick of its motion
+    parameters chunk."""
+    if data[:4] != b"CrCh" or len(data) < 16:
+        raise Failure(f"{path} is not an animation chunk file")
+    count, table = struct.unpack_from("<II", data, 8)
+    for index in range(count):
+        if table + 16 * (index + 1) > len(data):
+            break
+        kind, _, _, size, offset = struct.unpack_from("<HHIII", data, table + 16 * index)
+        if kind == MOTION_CHUNK and size >= 24 and offset + 24 <= len(data):
+            _, _, ticks, seconds, start, end = struct.unpack_from("<IIifii", data, offset)
+            length = (end - start) * ticks * seconds
+            if not math.isfinite(length) or length <= 0.0:
+                raise Failure(f"{path} has a motion parameters chunk with no length")
+            return length
+    raise Failure(f"{path} has no motion parameters chunk")
+
+
+def animation_clips(layer) -> list[dict]:
+    """@return The animation clips of one AnimLayer: the name, the start (the sum of the ExitTime values before it), the flags, the speed,
+    the StartTime of its blend, and "afterPrevious" (ExitTime -1: the clip starts at the end of the clip before it)."""
+    clips = []
+    time = 0.0
+    blend: dict = {}
+    for item in layer:
+        if item.tag == "Blend":
+            blend = dict(item.attrib)
+            time += max(number_of(blend.get("ExitTime")), 0.0)
+        elif item.tag == "Animation":
+            clips.append({"name": item.get("name", ""), "start": time, "flags": item.get("flags", ""),
+                          "speed": number_of(item.get("speed")) or 1.0, "startTime": number_of(blend.get("StartTime")),
+                          "afterPrevious": number_of(blend.get("ExitTime")) < 0.0})
+    return clips
+
+
 class Animations:
     """The variants of the fragments of the animation databases of the game, read when a slice names a file."""
 
     def __init__(self, sources) -> None:
         self.sources = sources
         self._files: dict[str, dict[str, list[dict]]] = {}
+        # The animation files of the creatures by the lower-case name of a clip (user test 2), read at the first length.
+        self._caf: dict[str, list[str]] | None = None
+        self._lengths: dict[str, float | None] = {}
+
+    def clip_length(self, name: str) -> float | None:
+        """@return The length of the animation of a clip (seconds), or no value: no file of that name, or two files of different lengths."""
+        if self._caf is None:
+            self._caf = {}
+            for path in self.sources.paths(CREATURE_ANIMATION_FOLDER, ".caf"):
+                self._caf.setdefault(path.rsplit("/", 1)[-1][:-4], []).append(path)
+        key = name.lower()
+        if key not in self._lengths:
+            values = set()
+            for path in self._caf.get(key, []):
+                data = self.sources.read(path)
+                if data is not None:
+                    values.add(round(caf_length(data, path), 6))
+            self._lengths[key] = values.pop() if len(values) == 1 else None
+        return self._lengths[key]
+
+    def fragment_length(self, variant: dict | None) -> float | None:
+        """@return The length of a variant of a fragment (seconds): its end blend (the blend to an empty animation), else the end of the last
+        animation clip of its first animation layer (the lengths of the animation files; the rule of weapon_actions.py). No value: the
+        variant has neither, a clip has no file, or its last clip loops (the fragment ends only at a transition)."""
+        if variant is None:
+            return None
+        if variant["end"] is not None:
+            return variant["end"]
+        clips = variant.get("clips") or []
+        if not clips:
+            return None
+        end = 0.0
+        previous_name = None
+        animation_time = 0.0
+        previous_start = 0.0
+        previous_speed = 1.0
+        shift = 0.0
+        for index, clip in enumerate(clips):
+            length = self.clip_length(clip["name"]) if clip["name"] else None
+            if length is None or clip["speed"] <= 0.0:
+                return None
+            if "Loop" in clip["flags"].split("+") and index == len(clips) - 1:
+                return None
+            if clip["afterPrevious"] and index > 0:
+                shift = end - clip["start"]
+            start = clip["start"] + shift
+            if clip["name"] == previous_name:
+                animation_time += (start - previous_start) * previous_speed
+            else:
+                animation_time = clip["startTime"]
+            end = start + max(length - animation_time, 0.0) / clip["speed"]
+            previous_name, previous_start, previous_speed = clip["name"], start, clip["speed"]
+        return end if end > 0.0 else None
 
     def variants(self, path: str, extra_tags: tuple[str, ...] = (), depth: int = 0) -> dict[str, list[dict]]:
         """@return The variants of each fragment of one database: lower-case fragment name to a list of
@@ -548,8 +646,10 @@ class Animations:
         for fragment in (listed if listed is not None else []):
             for variant in fragment.findall("Fragment"):
                 tags = {name.lower() for name in tag_names(variant.get("Tags", ""))} | {name.lower() for name in extra_tags}
-                entry = {"tags": tags, "contacts": [], "ranged": [], "casts": [], "named": [], "end": None}
-                for layer in variant.findall("AnimLayer"):
+                entry = {"tags": tags, "contacts": [], "ranged": [], "casts": [], "named": [], "end": None, "clips": []}
+                for layer_number, layer in enumerate(variant.findall("AnimLayer")):
+                    if layer_number == 0:
+                        entry["clips"] = animation_clips(layer)
                     time = 0.0
                     last = None
                     items = list(layer)
@@ -682,6 +782,10 @@ class Behavior:
         # and the causes of a listed action of a slice that is not a status action of the file.
         self.status_actions = status_actions
         self.status_left_out: dict[str, int] = {}
+        # User test 2 (UT2-7): the source of the length of each attack (its end blend, the length of its animation, or the last contact plus
+        # TIME_AFTER_CONTACT), and the reaction fragments with a length and with none.
+        self.attack_lengths = {"endBlend": 0, "animation": 0, "guess": 0}
+        self.reaction_lengths = {"known": 0, "unknown": 0}
 
     def release(self, values: dict, references: dict, main_hand: dict | None, rows: dict) -> tuple[dict | None, str]:
         """@return The joins of one release of a ranged attack (see the head of the file), or no value and the cause."""
@@ -735,6 +839,36 @@ class Behavior:
                 "miss": [number("AIMissMinDistance"), number("AIMissMaxDistance")], "range": attack["range"],
                 "radius": attack["radius"], "accelDelay": attack["accelDelay"]}, ""
 
+    def attack_length(self, chosen: dict | None, last: float) -> float:
+        """@return The length of an attack (user test 2, UT2-7): the end blend of its fragment, else the end of its animation (the CAF file),
+        else its last contact plus TIME_AFTER_CONTACT. The server ends the action at this time, and each observer gets the idle record then."""
+        end = chosen["end"] if chosen is not None else None
+        animated = self.animations.fragment_length(chosen) if end is None else None
+        if end is not None and end > last:
+            self.attack_lengths["endBlend"] += 1
+            return end
+        if animated is not None and animated > last:
+            self.attack_lengths["animation"] += 1
+            return animated
+        self.attack_lengths["guess"] += 1
+        return last + TIME_AFTER_CONTACT
+
+    def reaction_lengths_of(self, databases: list[str], tags: set[str]) -> list[float]:
+        """@return The length of each reaction fragment of REACTION_FRAGMENTS (user test 2, UT2-4 and UT2-7): the variant of the tags (the
+        weapons and the default tags of the slice) in the first database that has one, its end blend or the end of its animation; -1: not
+        known. The reaction to a hit and its push last this time (protocol notes 4.26)."""
+        lengths = []
+        for name in REACTION_FRAGMENTS:
+            length = None
+            for database in databases:
+                variant = select(self.animations.variants(database).get(name.lower(), []), tags, False)
+                if variant is not None:
+                    length = self.animations.fragment_length(variant)
+                    break
+            self.reaction_lengths["known" if length is not None else "unknown"] += 1
+            lengths.append(rounded(min(length, LONGEST_ATTACK)) if length is not None else -1.0)
+        return lengths
+
     def tag_bits(self, controller_path: str) -> TagBits | None:
         controller = read_xml(self.sources, controller_path, "the action list component of a slice")
         entry = controller.find("Tags") if controller is not None else None
@@ -772,20 +906,26 @@ class Behavior:
         if not references["animations"]:
             result["noAttack"] = "the slice names no animation database"
             return result
-        if rows is None:
-            result["noAttack"] = "the slice names no damage table"
-            return result
         databases = [references["animations"]]
         for weapon in (main_hand, off_hand):
             if weapon is not None and weapon["animations"] and weapon["animations"] not in databases:
                 databases.append(weapon["animations"])
+        # The length of each reaction fragment (user test 2, UT2-4 and UT2-7): the variant of the tags of the weapons and the default tags of
+        # the slice (the Inquisitor Cleric plays the variant 1H_Caster+Staff+Inquisitor), in the first database that has one. The reaction to a
+        # hit and its push last this time (protocol notes 4.26: the client pushes a creature to the end of the reaction fragment). -1: no length.
+        reaction_lengths = self.reaction_lengths_of(databases, tags | read_default_tags(roots))
+        if any(length > 0.0 for length in reaction_lengths):
+            result["reactionLengths"] = reaction_lengths
+        if rows is None:
+            result["noAttack"] = "the slice names no damage table"
+            return result
         attacks = []
         causes: set[str] = set()
         for index, (name, fragment, fragment_index, _) in enumerate(actions):
             if fragment_index < 0:
                 continue
             events = []
-            end = None
+            chosen = None
             for position, database in enumerate(databases):
                 variants = self.animations.variants(database).get(fragment.lower(), [])
                 for offhand in (False, True):
@@ -794,7 +934,7 @@ class Behavior:
                         continue
                     events.extend(variant["contacts"])
                     if position == 0 and not offhand:
-                        end = variant["end"]
+                        chosen = variant
             events = [event for event in events if event[1].get("DamageSelf", "").lower() != "true"]
             if not events:
                 continue
@@ -824,9 +964,7 @@ class Behavior:
                                  row["type"], wire, category, row["id"], rounded(row["charge"])])
             if not usable or not contacts:
                 continue
-            last = contacts[-1][0]
-            length = end if end is not None and end > last else last + TIME_AFTER_CONTACT
-            attacks.append([index, rounded(min(length, LONGEST_ATTACK)), contacts])
+            attacks.append([index, rounded(min(self.attack_length(chosen, contacts[-1][0]), LONGEST_ATTACK)), contacts])
         if attacks:
             result["attacks"] = attacks
         # The variant of a ranged attack: the tags of the weapons and the default tags of the slice (stage 3.4f-A, research

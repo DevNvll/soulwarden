@@ -38,6 +38,11 @@ std::string item_list(const std::vector<GrantItem>& items) {
     return text.empty() ? "no item" : text;
 }
 
+/** @return The creation time of a creature (microseconds of the world clock): a new creature of one id is a new body. */
+std::uint64_t body_generation(const Entity& creature) {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(creature.creature.madeAt.time_since_epoch()).count());
+}
+
 /** The actor id of a natural node: G little-endian and 8 zero bytes (live check L2 of stage 3.6a). */
 std::array<std::uint8_t, 16> actor_of_group(std::uint64_t group) {
     std::array<std::uint8_t, 16> actor{};
@@ -61,6 +66,8 @@ public:
     void started(Entity& character, const InteractionContext& context) override {
         if (chest(context)) {
             m_chest->started(character, context);
+        } else {
+            m_gathering.started(character, context);
         }
     }
     [[nodiscard]] float use_time(const Entity& character, const InteractionContext& context) const override {
@@ -247,8 +254,7 @@ std::optional<ExternalObject> Gathering::body_object(const Entity& creature) con
     ExternalObject external;
     external.body = creature.id;
     // A new creature is a new entity (a new id): the time of its creation separates two bodies of one id in a test host.
-    external.generation =
-        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(creature.creature.madeAt.time_since_epoch()).count());
+    external.generation = body_generation(creature);
     gamedata::InteractionObject& object = external.object;
     object.key = "body/" + hex64(creature.id);
     object.kind = gamedata::InteractionKind::gathering;
@@ -287,6 +293,14 @@ std::optional<ExternalObject> Gathering::resolve(const InteractionReference& ref
         ++m_counts.resolved;
         return natural_object(*node);
     }
+    // A G of a region whose file cannot be read, or is not the file of the data (code review of stage 3.6a, finding GA-R2): no node of
+    // the region can be gathered (the base refuses the request). The log names the region one time.
+    if (const std::optional<std::uint32_t> region = m_data->region_of(reference.group);
+        region && !m_data->region_valid(*region) && m_badRegions.insert(*region).second) {
+        log::write("world: gathering: the file of the region %s is not there, not complete, or not the file of the gathering data: no node "
+                   "of the region can be gathered, and its stored depletions stay (write the files again with tools/gamedata/gathering.sh)",
+                   m_data->regions()[*region].name.c_str());
+    }
     const Entity* creature = m_world.find(reference.group);
     if (creature != nullptr && creature->kind == EntityKind::creature && creature->actor.bytes == reference.actor) {
         if (std::optional<ExternalObject> body = body_object(*creature)) {
@@ -303,8 +317,7 @@ bool Gathering::alive(const ExternalObject& object) const {
     }
     const Entity* creature = m_world.find(object.body);
     return creature != nullptr && creature->kind == EntityKind::creature && creature->creature.dead
-           && static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(creature->creature.madeAt.time_since_epoch()).count())
-                  == object.generation;
+           && body_generation(*creature) == object.generation;
 }
 
 bool Gathering::owns(const InteractionContext& context) const {
@@ -558,6 +571,11 @@ InteractionVerdict Gathering::begin(Entity& character, const InteractionContext&
         if (creature == nullptr || !creature->creature.dead) {
             return refuse(GatherRefusal::alive, character, key, row.id);
         }
+        // The node state of the body is the rule (code review of stage 3.6a, finding GA-R1): a skinned body stays Depleted while the
+        // creature system has it, also when its entry is not there.
+        if (creature->creature.skinState == gathering_rules::kDepleted) {
+            return refuse(GatherRefusal::depleted, character, key, row.id);
+        }
     }
     if (is_depleted(target->key)) {
         return refuse(GatherRefusal::depleted, character, key, row.id);
@@ -601,10 +619,9 @@ InteractionVerdict Gathering::begin(Entity& character, const InteractionContext&
     work.started = now;
     work.due = now + std::chrono::duration_cast<WorldClock::time_point::duration>(std::chrono::duration<float>(work.seconds));
     work.group = target->group;
-    m_work[character.characterId] = work;
-    // The Gathering state of the owner (live check L3: Success, the amount, the speed in field 2, the G of the node: the ring runs
-    // amount / speed seconds).
-    set_gather(character, gathering_rules::kStatusSuccess, amount, work.parts.speed, true, target->group);
+    // The work begins at started(): the base calls it after the end of the use that this use replaces, and that end keeps the rest of the
+    // old work (code review of stage 3.6a, finding GA-R3). A refusal of the base before started() is not possible after begin.
+    m_pending[character.characterId] = work;
     ++m_counts.begins;
     const std::string mark = log::session_mark(character.owner, character.characterId);
     const log::Context logContext(mark);
@@ -617,7 +634,28 @@ InteractionVerdict Gathering::begin(Entity& character, const InteractionContext&
     return InteractionVerdict::accepted;
 }
 
+void Gathering::started(Entity& character, const InteractionContext& context) {
+    const auto found = m_pending.find(character.characterId);
+    if (found == m_pending.end()) {
+        return;
+    }
+    const GatherWork work = found->second;
+    m_pending.erase(found);
+    const std::optional<Target> target = target_of(context);
+    if (!target || target->key != work.node) {
+        return; // Not the use of the prepared work.
+    }
+    m_work[character.characterId] = work;
+    // The Gathering state of the owner (live check L3: Success, the amount, the speed in field 2, the G of the node: the ring runs
+    // amount / speed seconds).
+    set_gather(character, gathering_rules::kStatusSuccess, work.amount, work.parts.speed, true, work.group);
+}
+
 float Gathering::work_seconds(const Entity& character) const {
+    // The base asks for the time between begin and started: the prepared work.
+    if (const auto pending = m_pending.find(character.characterId); pending != m_pending.end()) {
+        return pending->second.seconds;
+    }
     const auto found = m_work.find(character.characterId);
     return found != m_work.end() ? found->second.seconds : 0.0F;
 }
@@ -686,7 +724,9 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
     // decision of an agent through the orchestrator: docs/systems/gathering.md).
     // (The base checked the use again before this call: the source, a creature body that went away, the life, the range.)
     const auto node = m_nodes.find(work.node);
-    if (node != m_nodes.end() && (node->second.depleted || node->second.generation != work.nodeGeneration)) {
+    const Entity* body = work.kind == NodeKind::body ? m_world.find(work.group) : nullptr;
+    if ((node != m_nodes.end() && (node->second.depleted || node->second.generation != work.nodeGeneration))
+        || (body != nullptr && body->kind == EntityKind::creature && body->creature.skinState == gathering_rules::kDepleted)) {
         ++m_counts.contested;
         log::write("world: gathering: the node %s was depleted before the gather of character %s ended: no reward", work.node.c_str(),
                    characterId.c_str());
@@ -705,11 +745,13 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
     }
     // The roll: a kept roll of an earlier completion that found no place (no new roll), else the root of the row with the roller of
     // the rewards (client 0x368B070) and the luck of the rank and the ROL parts (a bonus of each table of the path).
+    // A character has one kept roll for each node (code review of stage 3.6a, finding GA-R7).
     std::vector<GrantItem> items;
     std::vector<Rest>& rests = m_rests[characterId];
-    if (const auto roll = m_kept.find(characterId); roll != m_kept.end() && roll->second.node == work.node
-                                                    && roll->second.generation == work.nodeGeneration) {
-        items = roll->second.items;
+    std::vector<KeptRoll>& kept = m_kept[characterId];
+    const auto roll = std::find_if(kept.begin(), kept.end(), [&](const KeptRoll& entry) { return entry.node == work.node; });
+    if (roll != kept.end() && roll->generation == work.nodeGeneration) {
+        items = roll->items;
     } else {
         LootContext loot;
         loot.characterLevel = character.progression.level;
@@ -740,6 +782,9 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
         next.source = target->source;
         next.position = target->position;
         next.generation = 0;
+    }
+    if (body != nullptr && body->kind == EntityKind::creature) {
+        next.bodyMade = body_generation(*body);
     }
     next.depleted = true;
     ++next.generation;
@@ -781,7 +826,12 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
         m_world.touch(character.id, ComponentKey::categorical);
         if (full) {
             ++m_counts.fullBags;
-            m_kept[characterId] = KeptRoll{work.node, work.nodeGeneration, items};
+            // The kept roll of this node replaces only an earlier roll of this node; a roll of a node that changed since (depleted or
+            // respawned) goes (finding GA-R7).
+            kept.erase(std::remove_if(kept.begin(), kept.end(),
+                                      [&](const KeptRoll& entry) { return entry.node == work.node || !roll_current(entry); }),
+                       kept.end());
+            kept.push_back(KeptRoll{work.node, work.nodeGeneration, items});
             log::write("world: gathering: %s character %s for the roll of %s (%s): no item, no experience, the node stays",
                        given.error == ItemError::bagFull ? "the bag has no place for" : "the item catalog has no item of the roll of",
                        characterId.c_str(), work.node.c_str(), item_list(items).c_str());
@@ -790,20 +840,27 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
             log::write("world: gathering: the store did not write the gather of %s by character %s: no item, no experience, no depletion",
                        work.node.c_str(), characterId.c_str());
         }
+        if (kept.empty()) {
+            m_kept.erase(characterId);
+        }
         fail_work(character);
         m_world.interactions().end_use(character, InteractionEnd::policyFailed);
         return;
     }
-    m_kept.erase(characterId);
+    // Only the kept roll of this node goes (finding GA-R7: the rolls of the other nodes stay).
+    kept.erase(std::remove_if(kept.begin(), kept.end(), [&](const KeptRoll& entry) { return entry.node == work.node; }), kept.end());
+    if (kept.empty()) {
+        m_kept.erase(characterId);
+    }
     rests.erase(std::remove_if(rests.begin(), rests.end(), [&](const Rest& rest) { return rest.node == work.node; }), rests.end());
     m_work.erase(characterId);
     GatherNode& stored = m_nodes[next.key];
     stored = next;
     if (stored.kind == NodeKind::body) {
         // A skinned body stays Depleted until the creature system removes it (its respawn time is not the respawn of a body: research
-        // Q1); its entry goes after the largest respawn bound of its row (the body is gone by then).
-        stored.respawn = now + std::chrono::duration_cast<WorldClock::time_point::duration>(
-                                   std::chrono::duration<float>(std::max(row.respawnMax, 600.0F)));
+        // Q1). Its entry stays while the body is there: the due list looks at the body again after kBodyCheck (code review of stage
+        // 3.6a, finding GA-R1: a time is no proof of the removal).
+        stored.respawn = now + gathering_rules::kBodyCheck;
     }
     m_due.emplace(stored.respawn, Due{stored.key, stored.generation});
     publish(stored);
@@ -883,8 +940,15 @@ void Gathering::creature_died(Entity& creature) {
 
 void Gathering::left(Entity& character) {
     m_work.erase(character.characterId);
+    m_pending.erase(character.characterId);
     m_rests.erase(character.characterId);
     m_kept.erase(character.characterId);
+}
+
+bool Gathering::roll_current(const KeptRoll& roll) const {
+    const auto found = m_nodes.find(roll.node);
+    const std::uint64_t generation = found != m_nodes.end() ? found->second.generation : 0;
+    return generation == roll.generation && (found == m_nodes.end() || !found->second.depleted);
 }
 
 void Gathering::load_stored() {
@@ -899,8 +963,14 @@ void Gathering::load_stored() {
         GatherNode node;
         node.key = row.key;
         bool found = false;
-        if (row.source == kCapitalSource) {
-            const std::optional<std::uint32_t> index = catalog != nullptr ? catalog->index_of(row.key) : std::nullopt;
+        // Only a lookup in data that the backend can read proves a stale row (code review of stage 3.6a, finding GA-R2). A row whose node
+        // the backend cannot check now (no interaction data for a capital node; a region file that is not there, not complete, or not the
+        // file of the data) stays in the store with its respawn on the run clock; no node of it can be gathered in this run.
+        std::string unchecked;
+        if (row.source == kCapitalSource && catalog == nullptr) {
+            unchecked = "the backend has no interaction data";
+        } else if (row.source == kCapitalSource) {
+            const std::optional<std::uint32_t> index = catalog->index_of(row.key);
             const std::optional<gamedata::GatheringLink> link = m_data->capital(row.key);
             if (index && link) {
                 node.kind = NodeKind::capital;
@@ -916,7 +986,10 @@ void Gathering::load_stored() {
             const std::optional<std::uint32_t> region = hash != std::string::npos ? m_data->region_index(row.key.substr(0, hash)) : std::nullopt;
             // The same version of the distribution file: a different file has different records (a stored node of an older game copy is
             // not the same node).
-            if (region && row.source == std::string(kDistributionSource) + m_data->regions()[*region].version) {
+            if (region && row.source == std::string(kDistributionSource) + m_data->regions()[*region].version
+                && !m_data->region_valid(*region)) {
+                unchecked = "the file of the region " + m_data->regions()[*region].name + " is not there, not complete, or not the file of the data";
+            } else if (region && row.source == std::string(kDistributionSource) + m_data->regions()[*region].version) {
                 std::uint32_t record = 0xFFFFFFFFU;
                 try {
                     record = static_cast<std::uint32_t>(std::stoul(row.key.substr(hash + 1)));
@@ -932,6 +1005,12 @@ void Gathering::load_stored() {
                     found = true;
                 }
             }
+        }
+        if (!unchecked.empty()) {
+            ++m_counts.keptRows;
+            log::write("world: gathering: the stored node %s (%s, %s) cannot be checked now (%s): its row stays", row.key.c_str(),
+                       row.source.c_str(), row.row.c_str(), unchecked.c_str());
+            continue;
         }
         if (!found || m_data->rows()[node.row].id != row.row) {
             ++m_counts.staleRows;
@@ -954,15 +1033,30 @@ void Gathering::load_stored() {
         publish(stored);
         ++m_counts.storedNodes;
     }
-    if (m_counts.storedNodes != 0 || m_counts.staleRows != 0) {
-        log::write("world: gathering: %llu depleted node(s) from the store (%llu row(s) of an older source removed)",
-                   static_cast<unsigned long long>(m_counts.storedNodes), static_cast<unsigned long long>(m_counts.staleRows));
+    if (m_counts.storedNodes != 0 || m_counts.staleRows != 0 || m_counts.keptRows != 0) {
+        log::write("world: gathering: %llu depleted node(s) from the store (%llu row(s) of an older source removed, %llu row(s) that the "
+                   "backend cannot check now kept)",
+                   static_cast<unsigned long long>(m_counts.storedNodes), static_cast<unsigned long long>(m_counts.staleRows),
+                   static_cast<unsigned long long>(m_counts.keptRows));
     }
+}
+
+void Gathering::body_removed(EntityId creature) {
+    m_nodes.erase("body/" + hex64(creature));
 }
 
 void Gathering::respawn(GatherNode& node) {
     if (node.kind == NodeKind::body) {
-        m_nodes.erase(node.key); // The entry of a skinned body: the body is gone (no respawn of a body by this system).
+        // The entry of a skinned body (no respawn of a body by this system). The body is still there: the entry stays, and the due list
+        // looks again later (finding GA-R1). The body is gone: the entry goes.
+        const Entity* creature = m_world.find(node.group);
+        if (creature != nullptr && creature->kind == EntityKind::creature && body_generation(*creature) == node.bodyMade) {
+            node.respawn = m_world.clock().now() + gathering_rules::kBodyCheck;
+            m_due.emplace(node.respawn, Due{node.key, node.generation});
+            return;
+        }
+        const std::string key = node.key;
+        m_nodes.erase(key);
         return;
     }
     if (!m_world.store().delete_gathering_node(node.key)) {
@@ -981,6 +1075,8 @@ void Gathering::tick() {
     if (!m_loaded) {
         load_stored();
     }
+    // A work that begin prepared and the base did not start (the base calls started() in the same request): it goes.
+    m_pending.clear();
     // A work whose use the base ended with no call of the handler (the source went: a body that left the world): the work ends as a
     // cancel (the state Failure). The cost is the number of works (the characters that gather now).
     for (auto work = m_work.begin(); work != m_work.end();) {

@@ -571,6 +571,82 @@ def check_status_actions() -> int:
     return failures
 
 
+LENGTH_CASES = ("length-reactions", "length-attack-animation", "length-attack-end-blend", "length-attack-guess", "length-caf-cut")
+
+
+def check_lengths() -> int:
+    """The lengths of user test 2 (UT2-4, UT2-7): the reaction fragments of a slice and an attack with no end blend take the end of their
+    animation (the motion parameters chunk of a made-up CAF file), a fragment with an end blend that end, a looping or unknown clip no
+    length (-1; an attack: its last contact plus TIME_AFTER_CONTACT), and a CAF file with no motion chunk stops the tool.
+    @return The number of failures."""
+    import creature_behavior as cb
+    failures = 0
+
+    def report(case: str, passed: bool, detail: str) -> None:
+        nonlocal failures
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
+        failures += 0 if passed else 1
+
+    def caf(frames: int, motion: bool = True) -> bytes:
+        # The chunk file: "CrCh", a version, the count of the chunks and the offset of the table; one entry (kind, version, id, size,
+        # offset) and the motion parameters (flags, compression, ticks per frame, seconds per tick, start frame, end frame).
+        payload = struct.pack("<IIifii", 0, 0, 1, 1.0 / 30.0, 0, frames)
+        table = struct.pack("<HHIII", 0x3002 if motion else 0x3003, 0x925, 1, len(payload), 16 + 16)
+        return b"CrCh" + struct.pack("<III", 0x746, 1, 16) + table + payload
+
+    database = ('<AnimDB><FragmentList>'
+                '<r_R1_F><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="test_loop" flags="Loop"/></AnimLayer></Fragment></r_R1_F>'
+                '<r_R2_F><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="test_r2"/><Blend ExitTime="0.8"/><Animation name=""/>'
+                '</AnimLayer></Fragment></r_R2_F>'
+                '<r_R3_F><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="test_r3"/></AnimLayer></Fragment>'
+                '<Fragment Tags="Staff"><AnimLayer><Blend ExitTime="0"/><Animation name="test_r3_staff" speed="2"/></AnimLayer></Fragment></r_R3_F>'
+                '<Attack_Bite><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="test_bite"/></AnimLayer></Fragment></Attack_Bite>'
+                '<Attack_Nofile><Fragment Tags=""><AnimLayer><Blend ExitTime="0"/><Animation name="test_none"/></AnimLayer></Fragment></Attack_Nofile>'
+                '</FragmentList></AnimDB>').encode()
+    files = {"animations/test/wolf.adb": database,
+             cb.CREATURE_ANIMATION_FOLDER + "test/test_r3.caf": caf(30),        # 1.0 s
+             cb.CREATURE_ANIMATION_FOLDER + "test/test_r3_staff.caf": caf(45),  # 1.5 s, at the speed 2: 0.75 s
+             cb.CREATURE_ANIMATION_FOLDER + "test/test_bite.caf": caf(39),      # 1.3 s
+             cb.CREATURE_ANIMATION_FOLDER + "test/test_loop.caf": caf(60)}
+
+    class LengthSources:
+        def read(self, path):
+            return files.get(path)
+
+        def has(self, path):
+            return path in files
+
+        def paths(self, prefix, suffix):
+            return sorted(name for name in files if name.startswith(prefix) and name.endswith(suffix))
+
+    behavior = cb.Behavior.__new__(cb.Behavior)
+    behavior.animations = cb.Animations(LengthSources())
+    behavior.attack_lengths = {"endBlend": 0, "animation": 0, "guess": 0}
+    behavior.reaction_lengths = {"known": 0, "unknown": 0}
+    plain = behavior.reaction_lengths_of(["animations/test/wolf.adb"], set())
+    staff = behavior.reaction_lengths_of(["animations/test/wolf.adb"], {"staff"})
+    report("length-reactions", plain == [-1.0, -1.0, 0.8, 1.0, -1.0] and staff[3] == 0.75,
+           f"{plain}, with the tag Staff r_R3_F {staff[3]} (an end blend 0.8 s, an animation of 1.0 s, a looping clip and no fragment -1, "
+           f"an animation of 1.5 s at the speed 2)")
+    variants = behavior.animations.variants("animations/test/wolf.adb")
+    bite = cb.select(variants["attack_bite"], set(), False)
+    found = behavior.attack_length(bite, 0.4)
+    report("length-attack-animation", abs(found - 1.3) < 1e-6 and behavior.attack_lengths["animation"] == 1,
+           f"{found} (an attack with no end blend takes the end of its animation, 1.3 s, not its contact plus 0.9 s)")
+    found = behavior.attack_length(cb.select(variants["r_r2_f"], set(), False), 0.3)
+    report("length-attack-end-blend", abs(found - 0.8) < 1e-6 and behavior.attack_lengths["endBlend"] == 1, f"{found} (an end blend wins)")
+    found = behavior.attack_length(cb.select(variants["attack_nofile"], set(), False), 0.5)
+    report("length-attack-guess", abs(found - (0.5 + cb.TIME_AFTER_CONTACT)) < 1e-6 and behavior.attack_lengths["guess"] == 1,
+           f"{found} (a clip with no animation file: the last contact plus {cb.TIME_AFTER_CONTACT} s)")
+    try:
+        cb.caf_length(caf(30, motion=False), "test.caf")
+        cut = "no stop"
+    except cd.Failure as error:
+        cut = f"stop: {error}"
+    report("length-caf-cut", cut.startswith("stop:") and "motion parameters" in cut, cut)
+    return failures
+
+
 REVIEW_AREA_CASES = ("review-area-control", "review-area-nonfinite-time", "review-area-malformed-aim", "review-area-missing-row",
                      "review-area-unsupported")
 REVIEW_SHAMAN_ADB = "animations/test/shaman.adb"
@@ -848,6 +924,7 @@ def main() -> int:
     failures += check_review_areas(work)
     failures += check_review_support(work)
     failures += check_status_actions()
+    failures += check_lengths()
     return 1 if failures else 0
 
 

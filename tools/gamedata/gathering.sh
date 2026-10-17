@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Make the gathering data of the backend from the game copy of the user (stage 3.6a).
-# The backend reads GAMEDATA_DIR/gathering-data.json at its start and GAMEDATA_DIR/gathering/REGION.swgn when it needs a node of a
+# The backend reads GAMEDATA_DIR/gathering-data.json at its start and GAMEDATA_DIR/gathering/SET/REGION.swgn when it needs a node of a
 # region: the gatherable rows, the variation rows, the gathering slices, the natural nodes of each distribution file with the offline
 # id of the client, the capital nodes, the skinning of the creature slices, the tools, the trade skill ranks, and the events
 # (docs/systems/gathering.md). Without the files no node can be gathered. The files are game data: they stay outside the repository.

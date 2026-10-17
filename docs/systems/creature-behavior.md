@@ -87,8 +87,16 @@ protocol notes (sections 4.14, 4.17, and 4.19).
   is not at its anchor. A creature on its way back takes no new effect.
 - A forced movement (stage 3.3b-S4, [Forced movement](forced-movement.md)): while the pull or the push of a hit moves a
   creature (`Creature::forced`), the behavior does not move it and starts no attack, also on its way back and on a roam.
-  At its end the path of the creature is forgotten (the next step searches from the new place) and a creature in a fight
+  At its end the creature goes on with its path (user test 2, UT2-4: no new search while it is 1 m or less from its path; the step
+  comes in the next step of the behavior; case UX5) and a creature in a fight
   keeps the new place in its trail (`Behavior::moved_by_force`).
+- The hit stun (user test 2, UT2-9, [Creatures](creatures.md)): for HitStun_AI frames after a hit that started a reaction
+  (`Creature::hitStunUntil`) the behavior does not step, turn, or attack: the reaction plays, and the walk starts again after it (one
+  new locomotion record, not one after each hit of a walk that the next step cut after 200 ms). A hit during an attack starts no
+  reaction and no hit stun (the grit of an attack).
+- The length of an attack (user test 2, UT2-7, game data): the end blend of its fragment, else the end of its animation (the CAF file
+  of the clip), else its last contact plus 0.9 s. At its end each observer gets the idle record ([Creatures](creatures.md)), and the
+  pause of the attack starts.
 - A knockdown and a stagger (code review of stage 3.3a). A slice with no reaction fragment for
   the power still gets the hold of the knockdown: no movement and no attack for its time (finding
   F5). A shorter or weaker knock does not end an earlier one: the later end and the stronger
@@ -287,6 +295,10 @@ tools/world creature status-action 5e Howl            # the creature starts its 
 
 ## Traps
 
+- After the end of its attack a creature stands in the idle of its slice (user test 2): a ghost floats up and down, a wolf crouches.
+  Before, it kept the last pose of the attack until its next state. A video of the agent desktop shows it; a still picture does not.
+- In the hit stun of a hit a creature does not turn to its target: a fast series of light hits keeps it in its reactions until the
+  reaction limit (the third chained reaction of a Solo kind), then it attacks again.
 - A Cleric heals itself only at 15 percent of its health or below (the low-health part of its slice): set its health
   (`tools/world creature health ID 12%`) for a test, and turn the ignore value off: the heal is a part of its fight.
 - An Evil Knight hound howls when it takes its target, and again 20 s later when its buff ended; the Grey Wolf has the action `Howl` with a

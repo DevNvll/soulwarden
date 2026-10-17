@@ -7,6 +7,7 @@
 #include <iterator>
 #include <sstream>
 
+#include <mbedtls/sha256.h>
 #include <nlohmann/json.hpp>
 
 namespace soulwarden::backend::gamedata {
@@ -28,6 +29,27 @@ constexpr std::size_t kRecordSize = 14;
 constexpr std::size_t kHeaderSize = 24;
 /** The largest coordinate of a node place (the world limits of world/world.h). */
 constexpr float kLargestCoordinate = 200000.0F;
+/** The largest ItemRestrictionQuantity of a row. */
+constexpr std::uint64_t kLargestItemCount = 1000000;
+/** The restrictions of a row (GatherableData: Restriction) that the backend can check, and the restriction of an item. */
+constexpr std::string_view kNoToolNecessary = "NoToolNecessary";
+constexpr std::string_view kToolRequired = "ToolRequired";
+constexpr std::string_view kItemRequired = "ItemRequired";
+
+/** @return The first 16 hexadecimal digits (lower case) of the SHA-256 of the data, or an empty text when the hash failed. */
+std::string sha256_prefix(const std::string& data) {
+    unsigned char hash[32] = {};
+    if (mbedtls_sha256(reinterpret_cast<const unsigned char*>(data.data()), data.size(), hash, 0) != 0) {
+        return {};
+    }
+    std::string text;
+    for (std::size_t index = 0; index < 8; ++index) {
+        static constexpr char kDigits[] = "0123456789abcdef";
+        text += kDigits[hash[index] >> 4];
+        text += kDigits[hash[index] & 0x0F];
+    }
+    return text;
+}
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -284,6 +306,15 @@ bool GatheringData::parse(const std::string& text) {
             }
             row.unsupported.push_back(cause.get<std::string>());
         }
+        // The item of the restriction (code review of stage 3.6a, finding GA-R5). A file of before the review can have no member: then
+        // the row names no item that the loader can check.
+        const bool itemKnown = entry.contains("item");
+        std::uint64_t itemCount = 0;
+        if ((itemKnown && !text_of(entry, "item", row.item))
+            || (entry.contains("itemCount") && !whole_in(entry["itemCount"], kLargestItemCount, itemCount))) {
+            return fail("the item of the row " + row.id + " is not a text, or its count is not a whole number of 0 to 1,000,000");
+        }
+        row.itemCount = static_cast<std::uint32_t>(itemCount);
         row.type = gathering_type_of(type);
         row.level = static_cast<std::uint32_t>(level);
         row.time = static_cast<float>(time);
@@ -292,6 +323,22 @@ bool GatheringData::parse(const std::string& text) {
         row.required = static_cast<std::uint32_t>(required);
         if (row.type == GatheringType::other && row.unsupported.empty()) {
             row.unsupported.push_back("the gathering type " + type);
+        }
+        // The mark "supported" (no cause) must agree with the gates of the row (finding GA-R5): an empty list of causes does not remove
+        // a restriction that the backend cannot check, an item, or more than one gatherer. Such a row is refused, with the cause of the
+        // loader. ItemRequired with an empty item is the one exception (BushSmall, BushWithered: the item names nothing to check).
+        if (row.unsupported.empty()) {
+            if (row.restriction == kItemRequired && !itemKnown) {
+                row.unsupported.push_back("the restriction ItemRequired with no item member (the file marks the row supported)");
+            } else if (row.restriction == kItemRequired && !row.item.empty()) {
+                row.unsupported.push_back("the restriction ItemRequired with the item " + row.item + " (the file marks the row supported)");
+            } else if (row.restriction != kNoToolNecessary && row.restriction != kToolRequired && row.restriction != kItemRequired) {
+                row.unsupported.push_back("the restriction " + (row.restriction.empty() ? std::string("(none)") : row.restriction)
+                                          + " (the file marks the row supported)");
+            }
+            if (row.required > 1) {
+                row.unsupported.push_back("more than one gatherer: " + std::to_string(row.required) + " (the file marks the row supported)");
+            }
         }
         if (!m_rowIndex.emplace(lower_ascii(row.id), static_cast<std::uint32_t>(m_rows.size())).second) {
             return fail("the row " + row.id + " is two times in the file");
@@ -462,6 +509,14 @@ bool GatheringData::parse(const std::string& text) {
         }
         region.records = static_cast<std::uint32_t>(records);
         region.tails = static_cast<std::uint32_t>(tails);
+        // The digest of its region file (finding GA-R6): 16 hexadecimal digits; a document of before the review has no member.
+        if (entry.contains("digest")) {
+            std::uint64_t digest = 0;
+            if (!hex_u64(entry["digest"], digest)) {
+                return fail("the region " + region.name + " has a digest that is not 16 hexadecimal digits");
+            }
+            region.digest = lower_ascii(entry["digest"].get<std::string>());
+        }
         for (const json& type : entry["types"]) {
             std::int32_t templateIndex = -1;
             std::int32_t row = -1;
@@ -539,6 +594,7 @@ const std::vector<NaturalRecord>* GatheringData::records_of(std::uint32_t region
     const GatheringRegion& entry = m_regions[region];
     std::ifstream input(std::filesystem::path(m_directory) / entry.file, std::ios::binary);
     std::vector<NaturalRecord> records;
+    bool good = false;
     if (input) {
         const std::string data((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
         std::uint32_t format = 0;
@@ -553,10 +609,13 @@ const std::vector<NaturalRecord>* GatheringData::records_of(std::uint32_t region
             std::memcpy(&count, data.data() + 16, 4);
             std::memcpy(&tails, data.data() + 20, 4);
         }
+        // The file of this document (finding GA-R6): its digest; a file of another export (one that stopped after it wrote the file) has
+        // a different one.
         if (format == kRegionFormat && x == entry.x && y == entry.y && count == entry.records && tails == entry.tails
-            && data.size() == kHeaderSize + kRecordSize * static_cast<std::size_t>(count)) {
+            && data.size() == kHeaderSize + kRecordSize * static_cast<std::size_t>(count)
+            && (entry.digest.empty() || sha256_prefix(data) == entry.digest)) {
+            good = true;
             records.resize(count);
-            bool good = true;
             for (std::size_t index = 0; index < count && good; ++index) {
                 const char* at = data.data() + kHeaderSize + kRecordSize * index;
                 NaturalRecord& record = records[index];
@@ -568,15 +627,29 @@ const std::vector<NaturalRecord>* GatheringData::records_of(std::uint32_t region
                        && std::fabs(record.x) <= kLargestCoordinate && std::fabs(record.y) <= kLargestCoordinate
                        && std::fabs(record.z) <= kLargestCoordinate;
             }
-            if (!good) {
-                records.clear();
-            }
         }
     }
     ++m_work.regionLoads;
+    // A file that is not there, not complete, or not the file of the document: an empty list (no node of the region; the next lookup
+    // does not read it again), and the region is not valid (finding GA-R2: a stored depletion of the region stays).
+    if (!good) {
+        records.clear();
+        m_badRegions.insert(region);
+    }
     m_work.recordsRead += records.size();
-    // A file that is not there or not complete: an empty list (no node of the region; the next lookup does not read it again).
     return &m_loadedRecords.emplace(region, std::move(records)).first->second;
+}
+
+bool GatheringData::region_valid(std::uint32_t region) const {
+    return region < m_regions.size() && records_of(region) != nullptr && m_badRegions.count(region) == 0;
+}
+
+std::optional<std::uint32_t> GatheringData::region_of(std::uint64_t group) const {
+    if ((group & 0x7U) != 1U || (group >> 32) != 0) {
+        return std::nullopt;
+    }
+    const auto region = m_regionByPlace.find({static_cast<std::int32_t>((group >> 3) & 0x1FU), static_cast<std::int32_t>((group >> 8) & 0x1FU)});
+    return region == m_regionByPlace.end() ? std::nullopt : std::optional<std::uint32_t>(region->second);
 }
 
 std::optional<NaturalNode> GatheringData::natural_at(std::uint32_t region, std::uint32_t record) const {

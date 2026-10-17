@@ -14,7 +14,8 @@ are in the protocol notes (section 4.44). The interaction base (the request, the
 | The node state (type 12) of a node and of a creature body | `server/rep/states/gatherable_state.cpp`, `server/rep/states/state_codecs.cpp` (the creature and the object codecs), `world/entity.h` (`ObjectBody::nodeSlot`, `nodeState`, `Creature::skinSlot`, `skinState`), `tests/support/state_decoder.h` |
 | The skinning of a body | `Gathering::creature_died`, `Gathering::body_object`, `world/creatures.cpp` (the call at a death), test case GAT10 |
 | The store and the restart | `state/store.h` (`GatheringNodeRow`, `list_gathering_nodes`, `write_gathering_node`, `delete_gathering_node`; schema 13: the table `gathering_nodes`, the column `world_time.run_ns`), `world/world_time.h` (`WorldTime::run_ns`), test case GAT7 |
-| The gathering data (`gathering-data.json`, `gathering/REGION.swgn`) and its tool | `gamedata/gathering_data.h` (`GatheringData`, `natural_group`), `tools/gamedata/gathering.sh` (`gathering.py`, `check_gathering_tool.py`), the gathering roots of `tools/gamedata/loot_tables.py`, [Game data](../development/game-data.md), test case GAT1 |
+| The gathering data (`gathering-data.json`, `gathering/SET/REGION.swgn`) and its tool | `gamedata/gathering_data.h` (`GatheringData`, `natural_group`, `region_valid`), `tools/gamedata/gathering.sh` (`gathering.py`, `check_gathering_tool.py`), the gathering roots of `tools/gamedata/loot_tables.py`, [Game data](../development/game-data.md), test cases GAT1, GR4 to GR6 |
+| The corrections of the code review of stage 3.6a (findings GA-R1 to GA-R7) | `tests/review_gathering_tests.cpp` (test cases GR1 to GR7), the review cases of `check_gathering_tool.py` (`gate-columns`, `flag-texts`, `event-reward`, `export-publish`) |
 | The commands | `server/http/gathering_commands.cpp`, `server/http/character_commands.h`, `tools/world gathering`, `tools/world gathering respawn` |
 | The load | Test case GAT9 (2.5 million placements, 50 characters, 1,000 updates, the due list) |
 
@@ -50,6 +51,20 @@ The source of each rule is in brackets: game data, client code, live check (the 
   `NoToolNecessary` or `ToolRequired` (an item, a key), a song, a whisper, an emote, a status effect, a faction, a cost,
   `IsLootContainer`, `OpenAfterGathering`, `RequireLootItems`, `IsFFARestricted`, more than one gatherer, and a gathering type that is
   not a tool type of this stage (AzothStaff, fishing). The tool writes the causes of each row; the first one is in the log line.
+- The loader checks the mark "supported" (no cause) against the gates of the row [code review of stage 3.6a, finding GA-R5]: a row with
+  no cause and the restriction ItemRequired with an item (or with no member `item`: a file of before), a restriction that is not
+  `NoToolNecessary`, `ToolRequired`, or `ItemRequired`, or more than one gatherer gets a cause of the loader ("... (the file marks the row
+  supported)"), and each gather of it is refused. The row keeps its item and its count (`GatherableRow::item`, `itemCount`). A member
+  `item` that is not a text, or a count that is not a whole number of 0 to 1,000,000, refuses the file. ItemRequired with an empty item
+  stays supported (the bushes above).
+- The source columns of the gates [code review of stage 3.6a, finding GA-R4; game data]. Each GatherableData table must have the
+  columns of the gates of its rows: Restriction, ItemRestrictionId, NumRequiredToGather, ResetGatherTimeOnEndInteraction, and the columns
+  of the causes above. A blank cell is no rule; a missing column stops the tool (it is not a false flag). The exceptions of the retail
+  data (the census of the supported build, `MISSING_GATE_COLUMNS`): GatherablesDunwood and QuestGatherables have no IsFFARestricted,
+  and they and Gatherables_IsleOfNight have no OpenAfterGathering and no ProgressionCurrencyCosts; their rows have no such rule
+  (GatherablesDunwood has 9 supported rows). A flag cell must be "", "0", "1", "true", or "false" (any case; the retail tables have one
+  "FALSE"); a different text stops the tool. Each GameEventData table must have EventID, CategoricalProgressionId, and
+  CategoricalProgressionReward; a blank reward cell is 0 experience.
 - The tool [game data; live check L6; client code]. A row of a gathering type needs a tool of that type in its paperdoll slot: 33 the
   axe (Chopping), 34 the sickle (Cutting), 35 the skinning knife (Dressing), 36 the pick (Mining). The weapon row of the item must have
   the type (GatheringTypes). A tool in the bag does not count (live check L6: the prompt "No equipped Axe"; client 0x48FF240). A broken
@@ -78,6 +93,10 @@ The source of each rule is in brackets: game data, client code, live check (the 
 - The rest of a work [game data; decision of an agent]: a row with ResetGatherTimeOnEndInteraction false keeps the rest of the work of a
   character on the node: the next gather of the same node (the same generation) starts with the rest. The rest stays only while the
   character is in the world. A row with the flag true starts with the whole amount.
+- A new request before the release [code review of stage 3.6a, finding GA-R3]: the base calls begin of the new use before it ends the
+  old use. Begin only prepares the work (`m_pending`); the end of the old use keeps the rest of the old work first; then `started()`
+  makes the prepared work the work of the character and sends Success. A new request that the handler or the base refuses leaves the
+  old use and its work as they were.
 - The completion. At the end of the time the base checks the use again (the source, the life, the exact position, the range). Then, in
   this sequence: the node is not depleted (two characters at one node: both can begin; the first valid completion gets the materials
   and depletes the node; the work of the other ends with Failure and 3746) [decision of an agent through the orchestrator]; the tool
@@ -90,7 +109,10 @@ The source of each rule is in brackets: game data, client code, live check (the 
   before the commit: no item, no experience, no depletion; the node stays; Failure and 3746. An item of the roll that the item catalog
   does not have has the same rule. The roll stays with the character (in the memory) for its next completion on the same node and
   generation: no new roll, and the whole quantity (a roll can be more than one stack: the grant makes the stacks) [the rule of the
-  chests and of the loot bags, code review of stage 2.2, finding WT-R1]. A leave of the character ends the kept roll.
+  chests and of the loot bags, code review of stage 2.2, finding WT-R1]. A character has one kept roll for each node [code review of
+  stage 3.6a, finding GA-R7]: a full bag at another node keeps a second roll and does not replace the first one; a completion removes
+  only the roll of its node; a roll of a node that changed since (depleted or respawned) is not used, and goes at the next kept roll. A
+  leave of the character ends its kept rolls.
 - The depletion [live check L2]: the node gets the state Depleted (8) in the slot of its GatherableController (type 12), and each
   session that observes the node gets it (one state, shared: research Q1). For a natural node the base makes an object entity with the
   managed actor of the node at its place (one time); for a capital node the entity of its placement; for a body the creature entity.
@@ -104,19 +126,37 @@ The source of each rule is in brackets: game data, client code, live check (the 
   progress at a stop ends (nothing is given).
 - The store [project rule]: the table `gathering_nodes` has a row only for a depleted node (key, source and version, row id,
   generation, the respawn on the run clock, the depletion time). A stored row whose node is not in the data now (another version of the
-  distribution file, a placement that the data does not have, another row) goes at the start [decision of an agent].
+  distribution file, a region or a placement that the data does not have, another row) goes at the start [decision of an agent]. Only
+  a lookup in data that the backend can read proves this [code review of stage 3.6a, finding GA-R2]: when the region file of the row is
+  not there, not complete, or not the file of the document (its digest), or when the backend has no interaction data (a capital node),
+  the row stays in the store with its respawn on the run clock, and no node of it can be gathered in this run (the base refuses each
+  request of the region; the log names the region one time). The counts have `keptRows`. With good files at a later start, the node
+  is depleted until its saved time (the run clock went on while the backend ran).
 - The skinning [game data; research Q1; decision of an agent for the entry]. At the death of a creature whose slice has a skinning row
   the body gets Healthy in the slot of its GatherableController. A skinned body stays Depleted until the creature system removes it (at
-  the respawn of its spawn point): a body has no respawn of its own, and no row in the store. The entry of a skinned body goes after
-  the largest respawn bound of its row, at least 600 s. A new creature is a new entity: a new node.
+  the respawn of its spawn point, or by a command): a body has no respawn of its own, and no row in the store. The node state of the
+  body (`Creature::skinState`) is the rule of a request and of a completion [code review of stage 3.6a, finding GA-R1]: a body with
+  Depleted is refused, also with no entry. The entry of a skinned body stays while the body is in the world, and it goes at the
+  removal of the creature (`World::remove_entity` calls `Gathering::body_removed`); the due list also looks at the body each 10 s
+  (`kBodyCheck`) and removes an entry whose body is gone [a time is no proof of the removal]. A new creature is a new entity: a new node.
 - Tool durability does not change in this stage [decision of the user through the orchestrator: the audit of stage 3.7; the client
   registers the loss as false].
 - The cost (MP-8): a request finds its node by its key or its G (a hash of the region and an index of its record; the file of a region
-  only at its first use); a work is one timer of the base; a respawn is one entry of the due list; the tick looks only at the works and
-  at the due entries; a depleted node is an object entity in the grid of the base. No look at each node of the world (test case GAT9:
-  the same work with 25,000 and with 2.5 million far placements, one region file read).
+  only at its first use); a work is one timer of the base; a respawn is one entry of the due list (a skinned body too: one look each
+  10 s while it is in the world); the tick looks only at the works and at the due entries; a depleted node is an object entity in the
+  grid of the base. No look at each node of the world (test case GAT9: the same work with 25,000 and with 2.5 million far placements,
+  one region file read).
 - The development override of a respawn (`tools/world gathering respawn`, the route `POST /v1/dev/gathering/respawn`, only with
-  `SOULWARDEN_HARNESS=1`): a depleted node respawns after 1 s to a week. It is not a rule of the product.
+  `SOULWARDEN_HARNESS=1`): a depleted node respawns after 1 s to a week. It is not a rule of the product. On a skinned body it changes
+  only the time of the next look at the body.
+- One set of files [code review of stage 3.6a, finding GA-R6]. The tool writes the region files into a staging folder
+  (`gathering/.staging-PID`), checks each one against the document (its size and its digest), moves the folder to `gathering/SET` (SET:
+  16 hexadecimal digits of the SHA-256 of the region digests), and writes `gathering-data.json` last. An export that stops leaves the
+  published set as it was. The entry of each region in the document has `digest`: the first 16 hexadecimal digits of the SHA-256 of its
+  region file. The loader refuses a region file with another digest (a file of another export): no node of the region (GA-R2 above for
+  its stored rows). A document of before the review has no digest: no check. After a publication the tool keeps the set of the earlier
+  manifest (a backend that runs reads its region files later) and removes older sets, staging folders, and region files of the layout
+  of before.
 - Not in this stage: fishing (3.6b); the durability loss, the refining, and the crafting (3.7); the observer action of a gather (the
   animation of a different player: type 11, not derived); the yield multiplier (GatheringMultiplier, MULT) and the instant gather
   (INS); the quest, event, and special nodes (the unsupported rows).
@@ -144,6 +184,13 @@ The admin interface has the member `gathering` of the state of a character (the 
   client had for minutes). The probe backend of the live checks (Depleted by `tools/world fragment` on a probe record) gave no fall in
   six variants; the cause of the difference is not known (protocol notes 4.44). Do not use a probe to check the fall of a tree.
 - The region files and `gathering-data.json` are one set: write them together with `tools/gamedata/gathering.sh`. A stored row of an
-  older version of a distribution file goes at the start.
+  older version of a distribution file goes at the start. Do not copy a region file from one set folder (`gathering/SET`) into another:
+  its digest is not the digest of the document, and the region gives no node. The files of before the code review of stage 3.6a
+  (`gathering/REGION.swgn`, no digest) load as before, with no check; write them again to get the check.
+- A region file that is not there or that the loader refuses is not an error of the start: the backend starts, the log names the region
+  at the first request ("no node of the region can be gathered"), and its stored depletions stay. Write the files again.
+- Run one export of the gathering tool at a time into one game data folder: an export removes the staging folders of the folder after
+  its publication.
+- `tools/world gathering` lists a skinned body while it is in the world (its entry stays; GA-R1); the entry goes at the removal.
 - A backend with a `loot-tables.json` from before stage 3.6a has no gathering roots: each gather is refused with "the loot tables have
   no table of the root of the row". The backend log names it at the start. Write the loot tables again (`tools/gamedata/loot.sh`).

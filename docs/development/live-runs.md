@@ -308,5 +308,13 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   other node (a bush next to a tree takes the focus), and press W for about 0.1 s (`tools/hx 'key 0x57 120'`) so that the
   character turns to the camera. A travel does not turn the character. `tools/gamedata/gathering.sh --region REGION --near X Y
   METERS` lists the nodes near a place with their kind and their G.
+- An encumbered character plays no ability (user test 2: three presses of Wrecking Ball at rest gave no action of layer 0, and the
+  server cast each one). Take the materials out of the bag before a test of an ability (`tools/world take Soulwarden SLOT`); the HUD
+  shows "Encumbered - movement slowed" in the frames. The backend has no weight rule.
+- `tools/hx` waits 30 s for the result and then prints `harness: no result`, but the harness of the client runs the whole command
+  list: a list of 60 s goes on in the game. Read the log after the end of the list, or send parts of less than 30 s.
+- A test of the press of an ability in a swing: `python3 -B fragment_sampler.py "mousedown left;wait 117;mouseup left;R1;key 0x51
+  60;R60" 0 15` (in the tools of the evidence of user test 2) reads the action of layer 0 between the keys: the start input of the
+  charge, of the swing, and of the ability. Compare it with the log line of the cast (`in 33 ms`).
 - The development character carries more than its weight limit: the HUD shows "Encumbered" during a gather. It does not stop a
   gather (the action Gather has no weight condition).

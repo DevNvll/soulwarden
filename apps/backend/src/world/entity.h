@@ -727,6 +727,28 @@ struct Creature {
      * slides in its pose. No value: the creature is not on a way, or its slice has no such action.
      */
     std::optional<CreatureAction> moving;
+    /**
+     * The idle record of the creature (user test 2, UT2-2): the action "Idle" of its slice (CreatureSlice::idleAction), with a new start
+     * count at each end of an action of the server, of a walk, and of a stun (Creatures::rest). A session sends it when the creature has
+     * no action of the server and no locomotion: the client plays the idle (a looping fragment) and does not keep the last pose of the
+     * action that ended, and a later state with no scope fields keeps a valid record (the scope fields with no record make the client end
+     * its own idle at each tick, client code 0x2A2BC20). An action and a walk clear it. No value: the creature had no action yet, or its
+     * slice has no idle action (the scope fields with no record).
+     */
+    std::optional<CreatureAction> idle;
+    /**
+     * The end of the hit stun of the last hit (user test 2, UT2-9): HitStun_AI of the damage row, in frames of 1/30 s. Until this time
+     * the behavior does not move the creature, does not turn it, and starts no attack: the reaction of the hit plays. No value: none.
+     */
+    std::optional<WorldClock::time_point> hitStunUntil;
+    /**
+     * The chained reactions of the creature (user test 2: Chained_Reaction_Count of the action Reaction; a reaction that starts while the
+     * reaction before it plays is one more in the chain, a decision of an agent: the count is a value of the behavior tree, which is not in
+     * the game files) and the end of the reaction limit (the tag ReactionLimiter_Active: the reaction of the third chained reaction and the
+     * status AI_Reaction_Limiter of 2 s after it, game data). While it holds, a light or heavy attack plays no reaction.
+     */
+    std::uint32_t reactionChain{0};
+    std::optional<WorldClock::time_point> reactionLimitUntil;
     /** The behavior values of the creature. */
     CreatureMind mind;
     /**

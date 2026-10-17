@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "gamedata/gathering_data.h"
@@ -70,6 +71,11 @@ inline constexpr float kNoToolSpeed = 1.0F;
 inline constexpr std::chrono::seconds kRespawnRetry{10};
 /** The development override of a respawn: from 1 s to a week. */
 inline constexpr std::chrono::seconds kLongestOverride{7 * 24 * 3600};
+/**
+ * A skinned body keeps its entry while the creature system has it (code review of stage 3.6a, finding GA-R1): the due list looks at the
+ * body again after this time, and the entry goes only when the body is gone.
+ */
+inline constexpr std::chrono::seconds kBodyCheck{10};
 } // namespace gathering_rules
 
 enum class NodeKind : std::uint8_t {
@@ -102,6 +108,8 @@ struct GatherNode {
     WorldClock::time_point respawn{};
     std::uint64_t respawnRunNs{0};
     std::int64_t depletedAt{0};
+    /** A body: the creation time of its creature (microseconds of the world clock; a new creature is a new body). */
+    std::uint64_t bodyMade{0};
 };
 
 /** The parts of the speed and of the luck of a gather (the log, the view, and the tests). */
@@ -181,6 +189,9 @@ struct GatheringCounts {
     std::uint64_t dueLooks{0};
     std::uint64_t storedNodes{0};
     std::uint64_t staleRows{0};
+    /** The stored rows that the backend could not check at the start (a region file that is not there or not the file of the data, no
+     *  interaction data): they stay in the store (code review of stage 3.6a, finding GA-R2). */
+    std::uint64_t keptRows{0};
     /** The requests that the resolver answered (natural nodes and bodies). */
     std::uint64_t resolved{0};
 };
@@ -236,8 +247,13 @@ public:
 
     /** @return True when the object of a use is a node of the gathering data (a capital node, a natural node, a creature body). */
     [[nodiscard]] bool owns(const InteractionContext& context) const;
-    /** The handler (world/interactions.h): an accepted use of a node begins its work. */
+    /**
+     * The handler (world/interactions.h): an accepted use of a node prepares its work. The work begins at started(), after the base ended
+     * the use that the new use replaces (code review of stage 3.6a, finding GA-R3: the end of the old use keeps the rest of its work).
+     */
     [[nodiscard]] InteractionVerdict begin(Entity& character, const InteractionContext& context);
+    /** The handler: the base registered the use: the work that begin prepared begins (the Gathering state Success). */
+    void started(Entity& character, const InteractionContext& context);
     /** @return The time of the work of a character (the timed use of the base), or 0. */
     [[nodiscard]] float work_seconds(const Entity& character) const;
     /** The handler: the timed use reached its end, and the checks of the base passed. */
@@ -251,6 +267,11 @@ public:
     void left(Entity& character);
     /** The creature system calls it at the death of a creature: a body with a skinning row gets the node state Healthy. */
     void creature_died(Entity& creature);
+    /**
+     * The world removed a creature (code review of stage 3.6a, finding GA-R1): the entry of its skinned body goes now. The due list also
+     * removes an entry whose body is gone (kBodyCheck), and a new creature has a new entity id.
+     */
+    void body_removed(EntityId creature);
 
     /** @return The work and the nodes near a character (a command). */
     [[nodiscard]] GatheringView view(const std::string& characterId, float radius);
@@ -289,7 +310,10 @@ private:
         std::uint64_t generation{0};
         float amount{0.0F};
     };
-    /** A roll that found no place in the bag (or an item that the catalog does not have): the next completion on the node gives it. */
+    /**
+     * A roll that found no place in the bag (or an item that the catalog does not have): the next completion on the node gives it. A
+     * character has one for each node (code review of stage 3.6a, finding GA-R7: a gather of another node does not replace it).
+     */
     struct KeptRoll {
         std::string node;
         std::uint64_t generation{0};
@@ -323,6 +347,8 @@ private:
     [[nodiscard]] std::chrono::milliseconds respawn_time(const gamedata::GatherableRow& row);
     void load_stored();
     void respawn(GatherNode& node);
+    /** @return True when a kept roll is for the node as it is now (its generation, not depleted). */
+    [[nodiscard]] bool roll_current(const KeptRoll& roll) const;
     [[nodiscard]] float effect_sum(const Entity& character, const std::string& column) const;
     [[nodiscard]] std::int64_t wall_ms(WorldClock::time_point time) const;
 
@@ -331,8 +357,12 @@ private:
     std::unique_ptr<InteractionHandler> m_handler;
     std::unordered_map<std::string, GatherNode> m_nodes;
     std::unordered_map<std::string, GatherWork> m_work;
+    /** The work that begin prepared, by character: started() makes it the work of the character (finding GA-R3). */
+    std::unordered_map<std::string, GatherWork> m_pending;
     std::unordered_map<std::string, std::vector<Rest>> m_rests;
-    std::unordered_map<std::string, KeptRoll> m_kept;
+    std::unordered_map<std::string, std::vector<KeptRoll>> m_kept;
+    /** The regions whose file cannot be read: the log named each one (finding GA-R2). */
+    std::unordered_set<std::uint32_t> m_badRegions;
     std::multimap<WorldClock::time_point, Due> m_due;
     bool m_loaded{false};
     GatheringCounts m_counts;

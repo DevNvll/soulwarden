@@ -78,6 +78,10 @@ constexpr const char* kMoveAction = "Move_Combat";
 constexpr const char* kWalkAction = "Move";
 /** The action of a stunned creature (CreatureSlice::stunAction, live check L6 of stage 3.3a). */
 constexpr const char* kStunAction = "Stun";
+/** The idle action of a slice (user test 2): the action that the client selects itself (client code 0x4838EE0). */
+constexpr const char* kIdleAction = "Idle";
+/** The longest reaction fragment that the loader takes (seconds; the limit of the tool for an attack). */
+constexpr double kLongestReaction = 12.0;
 /** The state type of the status effect component (MB::StatusEffectsComponentReplicatedState). */
 constexpr std::uint32_t kStatusEffectsType = 4236;
 
@@ -358,6 +362,24 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
                 return false;
             }
             slice.reactions[power] = static_cast<std::int32_t>(reactions[power].get<std::int64_t>());
+        }
+    }
+    // The length of each reaction fragment (user test 2): a member of a file of a newer tool. -1 is "not known"; a different value is a
+    // length above 0 and not above kLongestReaction.
+    if (entry.contains("reactionLengths")) {
+        const json& lengths = entry["reactionLengths"];
+        if (!lengths.is_array() || lengths.size() != slice.reactionLengths.size()) {
+            return false;
+        }
+        for (std::size_t power = 0; power < slice.reactionLengths.size(); ++power) {
+            if (!lengths[power].is_number()) {
+                return false;
+            }
+            const double length = lengths[power].get<double>();
+            if (length != -1.0 && (!std::isfinite(length) || length <= 0.0 || length > kLongestReaction)) {
+                return false;
+            }
+            slice.reactionLengths[power] = static_cast<float>(length);
         }
     }
     // The spawn action: a member of a slice that needs it. A member with a wrong form is a fault.
@@ -836,6 +858,7 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
         slice.moveAction = slice.find_action(kMoveAction);
         slice.walkAction = slice.find_action(kWalkAction);
         slice.stunAction = slice.find_action(kStunAction);
+        slice.idleAction = slice.find_action(kIdleAction);
         slice.statusSlot = 0;
         for (const CreatureSlice::Slot& slot : slice.slots) {
             if (slot.stateType == kStatusEffectsType && slice.statusSlot == 0) {

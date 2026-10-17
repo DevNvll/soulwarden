@@ -3074,6 +3074,33 @@ the death of the Grey Wolf (interest 3, 90 bytes: the movement state and the vit
   The entity of the backend did not move in this check. From stage 3.4b the behavior of a
   creature sends such a sequence, and the entity moves (4.17).
 
+- **The end of an action, the idle record** (user test 2, UT2-2; static proof of the research `user-test-2.md`: the constructor of an
+  action of an action list 0x2A5D630 sets NoAutoBlendOut, the scope code 0x6D899DD and 0x6D87DA8 ends an action at the end of its
+  fragment only when `(flags & 0x1002) == 0x1000`, 0x4838EE0 selects the action whose name hash is 0xDC24B515 (CRC-32 of "idle"),
+  0x4872130 plays it only after a pause of the server states, and 0x2A2BC20 (0x2A2C0D5 to 0x2A2C122) calls ForceFinish on the action
+  of scope 0 at each tick while the newest state has the scope fields with no record; live proof of the run `u2-after`). The client
+  keeps the last pose of an action of the server after its fragment, and with the fields with no record it ends its own idle again
+  and again while states come (the up and down of a ghost). The backend gives the creature the record of the action `Idle` of its
+  slice (a new start count; its fragment loops) at the end of an action with an end, at the end of a walk, and at the end of a stun.
+  Live: a Fenwallow Faminegeist after its attack (`Ghost_Starved_33:3`, `Attack_Stab_R` 1.30 s) kept one bent pose from +2.0 s to
+  +2.8 s before the correction and played its idle after it; a Grey Wolf crouches in its idle after its bite. A slice with no action
+  `Idle` keeps the rule from before.
+- **The record of a timed action in each state** (user test 2, UT2-3; static proof: the copy 0x2A2ACD0 keeps the record of an earlier
+  state, the target state 0x48709A0 interpolates the time of the record (0x2A222E0), and the apply 0x2A2BC20 starts a one-shot fragment
+  again (IAction::SetFragment 0x2A67B30) when the time of the record minus the time of the fragment is less than -0.5 times the length
+  of the fragment (0x2A2C28D, the constant -0.5 at 0x7F4016C); live proof of the runs `u2-before` and `u2-after`). While a one-shot
+  action of the server with an end plays, each movement state has its record again: the same start count and the time of the state.
+  Live: one heavy arrow on an Inquisitor Cleric played three reactions (0.55 s apart) before the correction and one after it; one
+  arrow on a Grey Wolf one reaction. No body jump was seen (the risk of the research).
+- **The reaction to a hit** (user test 2, UT2-9; game data: the action `Reaction` of `baseai_reaction.actionlist`, its table
+  `baseai_reactiontableharness.actionlist`, the action `Pushable` of `baseai_pushable.actionlist`, the status rows
+  AI_Reaction_Limiter_Gate and AI_Reaction_Limiter, the cells NoReaction, PowerLevel, HitStun and their "_AI" cells of the damage
+  table; live proof of the run `u2-after`): the rules are in [Creatures](systems/creatures.md). Live: a light attack of the great
+  axe on a Faminegeist plays power 2 (`r_R2_F`, 0.83 s, a hit stun of 0.77 s, a push of 1.00 m in 0.82 s), its charged heavy attack
+  power 3 (1.43 s, 0.93 s, 1.98 m); a heavy arrow on the Cleric power 3 (1.33 s, 1.33 m); an Elite takes no reaction and no push from
+  the attacks of the war hammer and the great axe. Not known: the semantics of Chained_Reaction_Count (a value of the behavior
+  tree), the unit of HitStun_AI (taken as frames of 1/30 s), and the reaction of a side or the back (the backend plays the front).
+
 **The world model for creatures** (project rules, roadmap MP-1 to MP-8).
 
 - A creature is an entity of the entity table with the kind "creature": the kind and the
@@ -3163,6 +3190,10 @@ world (6.4). The health command with `percent` 100 gives the exact maximum healt
 
 **Not known, not done.**
 
+- The homing of a creature attack (user test 2, UT2-8): the client moves the body of the creature to its target in the attack (the
+  Homing procedurals of the fragment: a ghost to 0.3 m) and puts it back at the end, the server keeps the place of the start. The
+  videos of user test 2 show the lunge and the return of a ghost. When the client puts the body back (at the end of the action or at
+  the next state) is not known, and a movement of the server could add to the movement of the client: not done.
 - The option index and the tag bytes that the client itself has for an action. The scope
   record of the idle action that the client selects itself was not found at the decoded
   offsets in the first 0x2400 bytes of the movement facet and of the movement component.
@@ -5258,9 +5289,9 @@ none. A file from before has no member: a hit then moves no creature.
 | The one owner | `world::ForcedMotion`, a part of the creature system, moves a creature that a hit moves. `Combat::strike` gives it the impact of the row of an accepted hit on a creature that lives after it. |
 | The values | The "_AI" distances when one is not 0, the "_AI" decay when it is above 0; else the normal values. |
 | The direction | From the source (the attacker, the center of an area or a spell; the attacker for UseAttackerPosForReaction) to the creature, in the plane; D = dir * Y + side * X; north for a creature at the source. Z is not used. |
-| The travel | Decay above 0: \|D\| * (1 − decay^(30 t)). Decay 0 or less: \|Y\| m/s to the source point (Y < 0), away from it (Y > 0); a pull stops 0.1 m from the point. At most the length of a reaction (1.5 s). |
+| The travel | Decay above 0: \|D\| * (1 − decay^(30 t)); it ends when less than 2 cm is left (user test 2). Decay 0 or less: \|Y\| m/s to the source point (Y < 0), away from it (Y > 0); a pull stops 0.1 m from the point. At most the length of the reaction that the hit started (user test 2: the length of its fragment in the slice; 0.4 s, the action Pushable, for a row with NoReaction; a hit with no reaction moves nothing; 1.5 s with no length and for a pull that is no hit). The mode comes only from the decay (client code 0x48A0690). |
 | The steps | A new place at most each 50 ms of the world clock, on the line of the navigation (`Navigation::slide`): a wall, a drop, or a cell with no floor stops the movement at the last place (proof P4: 0.85 m of 2 m at a pillar). |
-| No movement | A creature on its way back (immune), a dead creature; a death ends the movement; a new impact replaces it. A root or a stun does not stop it. The behavior does not move the creature and starts no attack while it moves; after it, the path is new. |
+| No movement | A creature on its way back (immune), a dead creature; a death ends the movement; a new impact replaces it. A root or a stun does not stop it. The behavior does not move the creature and starts no attack while it moves; after it, the creature goes on with its path (user test 2). |
 | The dash of the caster | No second displacement of the server. The position check accepts the dash in the envelope of the accepted cast: 14.73 m × 1.3 more in the window, a step of 18.07 m/s × 1.3, from the press for 1.6 s and 1 s after. A refused press gives no envelope. |
 | The observers of a dash | The state `motion` (the observer view of the movement state): the place, the rotation of the dash, the actions 7/59, 7/2312, then 30/1080 at rest; at each accepted report, at most each 50 ms. The owner gets nothing. A character with no client gets the dash from the server (13.77 m in 1 s, to 1 m in front of a creature). |
 | The counter | The window `Rapier_Riposte_Timer` at an accepted press. A creature hit in the window: the window ends, and at 0.433 s the row `1H_Rapier_Riposte_Stun` hits the attacker one time (in the reach of its hit + 0.3 m, in sight), with the stun and the push of the row. No window, no counter. |
@@ -5274,10 +5305,10 @@ DEGREES]` (a remote test character: the dash of the server).
 
 - The start of the client action Ability_Rapier_Riposte_Out: the numbers of its layer are not known (L8-B). The owner
   sees its loop and its idle pose; the hit, the stun, and the push of the counter show.
-- The action `Pushable` (a push of 0.4 s with no decay for a hit with no reaction) and the PushBackScale of a promoted
-  elite (0.15 and 0.0): each creature has the scale 1.0.
+- The PushBackScale of a promoted elite (0.15 and 0.0): each creature has the scale 1.0. (The action `Pushable` is done from
+  user test 2.)
 - The part Z of an impact, and the part X in mode 1. No row of the abilities of this stage has them.
-- The length of the fragment of a reaction: the backend uses the length of a reaction (1.5 s).
+- The length of the fragment of a reaction: done from user test 2 (the reaction lengths of the creature data).
 - The pull or the push of a character (a hit with an impact on a player).
 
 ### 4.27 Projectiles: the shot item of a client, the flight and the hit of the server (live proof of stage 3.3b-S3; the rules are project rules with the values of the game data)
@@ -5687,6 +5718,20 @@ MB::AbilityComponentReplicatedState, slot 46 (constructor 0x66EA770), group 0
 pointer button) in the window 0.1 s to 0.4 s of the charge of Charge with Unpredictable Strike starts the swing
 (`Ability_GreatAxe_Engage_Swing`; the condition `IfInput block_press_virtual` of the action list). The client then reports its
 contact in the window of the swing.
+
+**The step of a press** (user test 2, UT2-1; live proof of the run `u2-before` with the release of stage 3.6a and of the run
+`u2-after`; static proof of the research `user-test-2.md`): the conditions CanAttack_<ability> of the great axe and the war hammer
+read the press of the input step with no BackTicks (the evaluator 0x2BEBDA0, the bit read 0x2A22F90). A buffered clip latches the
+press of a step in its window (0x257D2A0) and starts the action at the end of the window (0x257D5B0, 0x257D0E0); an instant clip
+starts it at the press (0x257D780). Live (layer 0 of the own character, `fragment_sampler.py`): a press of Wrecking Ball at the last
+step of a buffered window of Attack_Primary, of Attack_Start_Charge, and of Attack_Primary_Strike2 (the case of the log of the
+user) played at the end of the window (6 of 6 tries; the step of the client was the step of the server); a press in an instant
+window of the charge and of the light swing played at the press; a press at 0.4 s of Shockwave (its window of Wrecking Ball from
+0.8 s) did not play: the release started it 1033 ms later and ended the fragment of Shockwave. The backend refuses such a press
+(`casting`). A client whose character carries more than its weight limit ("Encumbered") plays no ability at all, and the server
+of the release cast each press (live: three presses at rest, no action; after the removal of the materials the next press played):
+the backend has no weight rule (open). The refusal of the log of the user at input 5204 (a press 176 ms after a hit of the ghost on
+the character) has no cause in the server: the log lines of UT2-13 give the next one its visits.
 
 **The collision of Charge** (live proof): the client starts the uppercut at a collision with a creature (`character_collided`).
 The server sees no collision; the contact of the uppercut strike shows it (the server starts the uppercut at the step of the

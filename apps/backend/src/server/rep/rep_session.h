@@ -667,6 +667,12 @@ private:
     world::AttackTrack m_attack;
     /** True for each cause of a refused hit claim that has its log line. */
     std::array<bool, world::kHitVerdictCount> m_hitVerdictLogged{};
+    /**
+     * The refused claims with "no strike" and the presses refused with "casting" that have their own log line with the sequence of the
+     * character (user test 2, UT2-13: at most kRefusalLines of each in a session).
+     */
+    std::uint32_t m_noStrikeLines{0};
+    std::uint32_t m_castingLines{0};
     /** The presses of the ability keys of the session, and the first refusal of each cause in the log. */
     std::uint64_t m_abilityPresses{0};
     std::array<bool, world::kCastVerdictCount> m_castVerdictLogged{};

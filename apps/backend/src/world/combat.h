@@ -11,6 +11,7 @@
 
 #include "gamedata/combat_tables.h"
 #include "gamedata/creature_data.h"
+#include "world/hit_reaction.h"
 #include "gamedata/weapon_actions.h"
 #include "world/attack_sequence.h"
 #include "world/entity.h"
@@ -313,6 +314,12 @@ struct HitResult {
     /** The fragment of the basic attack and the damage row of the hit (stage 3.3b-M1). Empty: no fragment (a rule with no data). */
     std::string fragment;
     std::string row;
+    /**
+     * The longest time of the push of the impact of the row (user test 2): the length of the reaction that the hit started, or the push of
+     * the action Pushable for a row with NoReaction. No value: the hit started no reaction, and the impact moves nothing (the push of the
+     * client is an activity of these two actions).
+     */
+    std::optional<std::chrono::milliseconds> push;
 };
 
 /**
@@ -724,9 +731,13 @@ public:
 private:
     /** @return The part of a damage of a type that a target with these defense values takes (mitigation, weakness, absorption). */
     [[nodiscard]] float defense_factor(std::uint32_t type, const gamedata::DefenseRow* defense, float armor, float penetration = 0.0F) const;
-    /** Gives the damage of a hit to a creature through the creature system, with the log line and the damage number. */
+    /**
+     * Gives the damage of a hit to a creature through the creature system, with the log line and the damage number. `reaction` is the
+     * reaction of the damage row (user test 2: a tick of a damage over time has none).
+     */
     HitResult apply_hit(Entity& attacker, Entity& target, const Damage& damage, const std::string& itemId, const std::string& row,
-                        const char* what, EntityId threat = 0, std::uint16_t flags = 0, const char* note = nullptr);
+                        const char* what, EntityId threat = 0, std::uint16_t flags = 0, const char* note = nullptr,
+                        const HitReaction& reaction = {});
 
     /** The check of a claim with the sequence of the basic attacks (stage 3.3b-M1), after the checks of the target. */
     HitResult claim_strike(SessionId session, const HitClaim& claim, AttackTrack& track, Entity& attacker, Entity& target,

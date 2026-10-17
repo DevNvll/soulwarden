@@ -26,7 +26,10 @@ backend. The tool of each system is also in the document of that system.
   offset, for 501 of 503 slices; with a file from before a projectile uses the default capsule,
   [Projectiles](../systems/projectiles.md); from stage 2.2, format 4, also the time constraint of each spawn point: the phase mask,
   the despawn flag, and the two cooldown flags of its spawner; with a file from before each point makes its creature in each phase,
-  [World time and weather](../systems/world-time-and-weather.md)), the folder
+  [World time and weather](../systems/world-time-and-weather.md); from user test 2 also the member `reactionLengths` of a slice (the
+  length of the variant of each reaction fragment: its end blend, else the end of its animation from the CAF file of the clip in
+  `animations/gameplay/character/npc/`; -1: not known), and the length of an attack with no end blend from its animation (else its
+  last contact plus 0.9 s); with a file from before a reaction and its push last 1.5 s, [Creatures](../systems/creatures.md)), the folder
   `heights` (the terrain heights, one file for each region, from stage 3.4d after the
   cookies of the placements), the folder `navigation` (stage 3.4d: one file for each region
   with the floors, the water, and the sight of each cell of 0.25 m, and `navigation.json`;
@@ -289,13 +292,20 @@ backend. The tool of each system is also in the document of that system.
   ranks (Mining, Logging, Harvesting, Skinning), the tools (230: the weapon rows with a gathering type), the gathering slices (127: the
   template of each one with its root, the slot of its GatherableController, and its Interact bound with GatherOption), the capital
   nodes (33,071 placements by their UUID), the skinning of the creature slices (117, from `creatures.json`), and for each region of
-  the world one region file `gathering/REGION.swgn` ("SWGN", the format 1, x, y, the records, the tails, then 14 bytes for each
+  the world one region file `gathering/SET/REGION.swgn` ("SWGN", the format 1, x, y, the records, the tails, then 14 bytes for each
   primary record: the slice index u16 and the place x, y, z f32; 2,728,908 records, 2,450,322 of them gathering nodes; the heights of
   the backend from the folder of `heights.sh`, and the water surface for a record with a height mode) with the version of its
-  distribution file (the first 16 hexadecimal digits of its SHA-256). 40 MB, 1 minute. The tool stops with no file for a source that it
-  needs and for a value of a wrong form (`check_gathering_tool.py`, case GAT1). The backend refuses `gathering-data.json` as a whole
-  when its form or a value is not correct, and a region file that is not complete gives no node of its region (case GAT1); without the
-  files each gather is refused.
+  distribution file (the first 16 hexadecimal digits of its SHA-256) and the digest of the region file (the first 16 hexadecimal
+  digits of the SHA-256 of the file). 40 MB, 1 minute. The tool stops with no file for a source that it needs and for a value of a
+  wrong form (`check_gathering_tool.py`, case GAT1), and (code review of stage 3.6a, finding GA-R4) for a GatherableData table with no
+  column of a gate of its rows (the named exceptions of the retail data are in `MISSING_GATE_COLUMNS`), for a flag text that is not
+  "", "0", "1", "true", or "false", and for a GameEventData table with no column CategoricalProgressionReward (case GR4). The tool
+  publishes one set (finding GA-R6, case GR6): the region files go into `gathering/.staging-PID`, the tool checks them, moves the folder
+  to `gathering/SET`, and writes `gathering-data.json` last; an export that stops leaves the published set as it was. The backend
+  refuses `gathering-data.json` as a whole when its form or a value is not correct; a row that the file marks supported with an item,
+  a restriction that it cannot check, or more than one gatherer gets a cause of the loader and is refused (finding GA-R5, case GR5); a
+  region file that is not complete or that has another digest than the document gives no node of its region, and the stored
+  depletions of the region stay (findings GA-R2 and GA-R6, cases GAT1, GR2, GR6); without the files each gather is refused.
 
 ## Commands
 
@@ -324,6 +334,24 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- User test 2 changes `creatures.json` (still format 4: the member `reactionLengths` of a slice, the attack lengths from the
+  animation files, the counts `attackLengths`, `reactionLengths`, `slicesWithReactionLengths`; the tool now reads the CAF files of
+  `animations/gameplay/character/npc/`, and a CAF file of a clip with no motion parameters chunk stops it) and `combat-tables.json`
+  (still format 3: the member `reactions`; the tool stops for a missing reaction column, a power or a hit stun that is not a whole
+  number that is not negative, and a NoReaction cell that is not a flag). The backend of this stage reads the older files: then a
+  reaction and its push last 1.5 s, an attack keeps its old length, and each hit plays the reaction of stage 3.2a. Write the files
+  again with `tools/gamedata/creatures.sh` and `tools/gamedata/combat.sh` (the checks: `check_creature_tool.py`, cases length-*, and
+  `check_combat_tool.py`, cases no-reaction-column, part-power, text-flag).
+- The code review of stage 3.6a changes `gathering.py` (findings GA-R4 and GA-R6): the gate columns, the flag texts, and the reward
+  column of the events must be there (see above); the region files are in a set folder `gathering/SET/` with a digest in the document,
+  and the tool publishes the manifest last. The files of the game data folder from before (`gathering/REGION.swgn`, no member
+  `digest`) load as before with no digest check: the loader reads the same 295 rows (54 refused) and the 49 regions. A new write gives
+  the check. After a publication the tool keeps the set of the earlier manifest and removes the older sets and the region files of the
+  layout of before. The retail tables pass the new checks (the census of the supported build: the exceptions are GatherablesDunwood,
+  QuestGatherables, and Gatherables_IsleOfNight; each event table has the reward column; the flag texts are "", "0", "1", and one
+  "FALSE"). An export of the retail data with the new tool (into a work folder) has the same rows, events, tools, templates, capital
+  nodes, and creature slices as the file of stage 3.6a, and its 49 region files have the same bytes; only the member `file` (the set
+  folder) and the new member `digest` differ. The files of stage 3.6a need no new write.
 - Stage 3.6a adds `gathering-data.json` and the folder `gathering/`, and changes `loot-tables.json` (still format 2) and the checks of
   `item_catalog.py`. `loot_tables.py`: the member `gatheringRoots` (the FinalLootTable of each gatherable row that is not a loot
   container and not `Empty`; their tables are read), `gatheringRootsWithNoTable` (a root of a quest or event row that no loot table

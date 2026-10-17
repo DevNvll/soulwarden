@@ -451,7 +451,9 @@ void scope_controls(const Options&) {
     system.hurt(body->id, 1.0F);
     const auto reaction = server::rep::creature_scope(body->creature, false).key;
     check(action(encode(0, server::rep::kScopeUnknown)) == static_cast<int>(reactionIndex), "a first reaction record has the current reaction");
-    check(action(encode(host.world.revision(), reaction)) == -2, "an unchanged reaction scope is omitted for a session that already has it");
+    // User test 2 (UT2-3): a one-shot action of the server with an end goes out again in each state while it plays (the same start count).
+    check(action(encode(host.world.revision(), reaction)) == static_cast<int>(reactionIndex),
+          "a reaction that plays goes out again for a session that already has it (user test 2, UT2-3)");
     system.play(body->id, "Attack_Bite", 0.01F);
     host.steps(3, {});
     check(!body->creature.action && action(encode(1, server::rep::kScopeNone)) == -2,

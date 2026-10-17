@@ -435,6 +435,38 @@ bool CombatTables::load(const std::string& path) {
             data.damageRows[row->second].impact = impact;
         }
     }
+    // The reactions of the damage rows (user test 2): [[id, noReaction, power, hitStun, powerAI, hitStunAI], ...]. A file of a tool from
+    // before user test 2 has none: a hit plays the reaction of stage 3.2a.
+    if (document.contains("reactions")) {
+        if (!document["reactions"].is_array()) {
+            return fail("the reactions are not a list");
+        }
+        constexpr std::int64_t kLargest = 1000;
+        const auto whole = [](const json& value, std::int64_t lowest, std::int32_t& out) {
+            if (!value.is_number_integer() || value.get<std::int64_t>() < lowest || value.get<std::int64_t>() > kLargest) {
+                return false;
+            }
+            out = static_cast<std::int32_t>(value.get<std::int64_t>());
+            return true;
+        };
+        for (const json& entry : document["reactions"]) {
+            DamageReaction reaction;
+            if (!entry.is_array() || entry.size() != 6 || !entry[0].is_string() || !entry[1].is_boolean() || !whole(entry[2], 0, reaction.power)
+                || !whole(entry[3], 0, reaction.hitStun) || !whole(entry[4], -1, reaction.creaturePower)
+                || !whole(entry[5], -1, reaction.creatureHitStun)) {
+                return fail("a reaction does not have the form of the tool");
+            }
+            reaction.none = entry[1].get<bool>();
+            const auto row = rowIndex.find(lower(entry[0].get<std::string>()));
+            if (row == rowIndex.end()) {
+                return fail("the reaction of " + entry[0].get<std::string>() + " names a damage row that the file does not have");
+            }
+            if (data.damageRows[row->second].reaction) {
+                return fail("the damage row " + entry[0].get<std::string>() + " has two reactions");
+            }
+            data.damageRows[row->second].reaction = reaction;
+        }
+    }
     // The critical values (stage 3.3b-S5): [[weapon id, critChance, critDamageMultiplier], ...] and [[row id, canCrit,
     // noHeadshot, noBackstab, dmgCoefHead, dmgCoefCrit], ...]. A file of a tool from before the stage has none: no critical hit.
     if (document.contains("criticals") || document.contains("hitRules")) {

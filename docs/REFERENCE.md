@@ -403,7 +403,10 @@ button on "Confirm").
   `SOULWARDEN_OODLE_DLL` to an Oodle library for Windows (the helper of
   `tools/research/oodle_loader.c`). The tool needs about 1 minute.
   `tools/gamedata/creatures.sh --find TEXT` prints the kinds with a text. Without the file
-  the backend starts, and the world has no creature.
+  the backend starts, and the world has no creature. From user test 2 the tool also reads the animation files of the creatures
+  (`animations/gameplay/character/npc/**.caf`): each model has the length of each reaction fragment (`reactionLengths`), and an
+  attack with no end blend has the length of its animation. With a file from before, a reaction lasts 1.5 s and an attack its
+  last contact plus 0.9 s.
 - `tools/gamedata/heights.sh` makes the terrain heights
   (`~/.local/share/soulwarden/gamedata/heights`, one file for each of the 49 regions of the
   world, 136 MB): the height of the terrain at each meter, from the height maps of the game
@@ -471,7 +474,9 @@ button on "Confirm").
   stage 3.5a, the weapon mastery of each weapon (with a file from before, a kill gives no
   mastery experience: run the tool again), and, from stage 3.3b-S4, the impact of each damage
   row with an impact distance (the member `impacts`, 234 rows: the pull and the push of a hit,
-  protocol notes 4.26; with a file from before, a hit moves no creature: run the tool again).
+  protocol notes 4.26; with a file from before, a hit moves no creature: run the tool again), and, from user test 2, the
+  reaction cells of each damage row (the member `reactions`: NoReaction, PowerLevel, HitStun, PowerLevel_AI, HitStun_AI; with a
+  file from before, each hit plays the reaction of stage 3.2a and pushes for 1.5 s).
   It reads the data tables and the base
   attributes file of the game copy, from the same sources as the creature data tool.
   `tools/gamedata/combat.sh --find TEXT` prints the weapons and the creatures with a text.

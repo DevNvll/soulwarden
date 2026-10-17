@@ -79,11 +79,6 @@ inline constexpr std::chrono::milliseconds kWorldEarly{250};
  * agent: 3 s).
  */
 inline constexpr unsigned kGapFill = 90;
-/**
- * A press of a key of the bar stays valid for this number of input steps (the action lists of the player: IfActiveAbilityMoveName with
- * BackTicks 20 and UseBacktickInputs): the ability starts at the first step of them at which its action can start (stage 3.3b-M2).
- */
-inline constexpr unsigned kAbilityBackSteps = 20;
 } // namespace attack_rules
 
 /** The attack bits of one input step of the client. */
@@ -156,9 +151,9 @@ struct AbilityStart {
     enum class Verdict : std::uint8_t {
         /** At the step of the press. */
         now,
-        /** At a later step (the end of a buffered window, the start of an instant window, the mark CanTransition, the end). */
+        /** At a later step: the end of a buffered window that holds the press step (user test 2, UT2-1). */
         later,
-        /** The fragment that plays takes no ability in the next steps: the client does not play the press. */
+        /** The fragment that plays takes no ability at the step of the press: the client does not play the press. */
         refused,
     };
     Verdict verdict{Verdict::now};
@@ -308,10 +303,9 @@ public:
     /**
      * The press of a key of the bar of a character was accepted (stage 3.3b-M2): the fragment of the ability (the default fragment of
      * its action or a selection) starts as a visit of the sequence with the cast. At rest it starts at the press. In a fragment that
-     * plays it starts at the first of the next attack_rules::kAbilityBackSteps steps at which the action of the ability can start: in
-     * the window of a transition of the fragment to the ability (an instant window at once, a buffered window at its end), at the mark
-     * CanTransition, or at the end of the fragment. With none, the start is refused (the client does not play the press), and nothing
-     * changes.
+     * plays only the step of the press counts (user test 2, UT2-1): a window of a transition of the fragment to the ability that holds
+     * that step (an instant window at once, a buffered window at its end), or the press at or after the mark CanTransition or after the
+     * end of the fragment. With none, the start is refused (the client does not play the press), and nothing changes.
      * @param dryRun True: only the verdict (the checks of a press before its cost and its cooldown).
      */
     AbilityStart start_ability(const std::string& characterId, SessionId session, std::uint32_t inputSequence, std::uint16_t input,
@@ -366,6 +360,12 @@ public:
     }
 
     [[nodiscard]] const State* state_of(const std::string& characterId) const;
+    /**
+     * @return A text of the sequence of a character for a log line of a refusal (user test 2, UT2-13): each visit of the history (its
+     *         fragment, its start and end inputs and the cause of its end, the clock of the input in it, its nearest strike window, and its
+     *         due time on the world clock against now), and an ability that waits for its step.
+     */
+    [[nodiscard]] std::string describe(const std::string& characterId, std::uint16_t input, WorldClock::time_point now) const;
     /**
      * @return True when the character has the visit and no end of the sequence interrupted it (a death, a travel, a change of the
      *         weapon, a dodge, a new session): a fragment event that waited for its time still belongs to an attack that plays

@@ -112,7 +112,8 @@ bool Behavior::move_anchor(Entity& creature, const state::WorldPosition& anchor)
 }
 
 void Behavior::moved_by_force(Entity& creature) {
-    m_world.navigation().forget(creature.id);
+    // The path stays (user test 2, UT2-4): the navigation follows it when the creature is near it (navigation_rules::kOffPath), else
+    // it takes the free straight line at once or searches. The step after the push comes in the next step of the behavior.
     if (creature.creature.mind.mode == CreatureMode::fight) {
         record_trail(creature);
     }
@@ -510,6 +511,13 @@ void Behavior::think(Entity& creature, float seconds) {
     // behavior waits for its end.
     if (creature.creature.held(now) || creature.creature.forced) {
         return;
+    }
+    // The hit stun of the last hit (user test 2, UT2-9: HitStun_AI of the damage row): the reaction plays; no step, no turn, no attack.
+    if (creature.creature.hitStunUntil) {
+        if (now < *creature.creature.hitStunUntil) {
+            return;
+        }
+        creature.creature.hitStunUntil.reset();
     }
     if (mind.attack || mind.shooting) {
         // An attack or a shot plays: the creature stays at its place and keeps its direction to its end.

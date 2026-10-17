@@ -376,7 +376,15 @@ tools/world list                     # the line "basic attacks": the sequences, 
   line for each hit (`world: hit: NAME hurts creature ID ... N damage of the type T ...,
   health A to B`), one line for the first refused claim of each cause (`rep: hit claim
   refused (CAUSE)`), and the counts at the end of the session (`rep: hit claims of the
-  session`).
+  session`). From user test 2 (UT2-13) each claim refused with "no strike of the attack fits the contact" and each press of an
+  ability refused with "a different cast plays" (`casting`) has its own line with the visits of the sequence of the character
+  (`AttackSequences::describe`: for each visit its fragment, its start input, its end input and the cause of the end, the clock
+  of the input in it, its nearest strike window, and its due time on the world clock against now; an ability that waits for its
+  step), at most 32 lines of each in a session.
+- The reaction of a creature to a hit (user test 2, UT2-9) comes from the damage row of the hit and the rule of the action Reaction
+  of the action lists ([Creatures](creatures.md)): a tick of a damage over time (`Combat::strike_amount`: no damage row) plays no
+  reaction; `Combat::strike` gives `Creatures::hurt` the reaction of the row (`hit_reaction`), and the push of its impact lasts the
+  reaction that the hit started at most (`HitResult::push`; with no reaction and no NoReaction the hit moves nothing).
 - Each attack moves the character 0.7 m to 2 m to the creature. A creature has no body that
   stops the character: after some attacks the character is 1 m from the creature, and some
   attacks then give no contact (the thrust of a heavy sword attack at 1.0 m, each spear

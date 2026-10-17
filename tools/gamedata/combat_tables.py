@@ -29,7 +29,9 @@ extracted).
                                                   ImpactDistanceX, Y, Z, ImpactDecayRate, the
                                                   same four with "_AI" (the values for a target
                                                   that is a creature), and
-                                                  UseAttackerPosForReaction
+                                                  UseAttackerPosForReaction; the reaction of a hit
+                                                  (user test 2): NoReaction, PowerLevel, HitStun,
+                                                  PowerLevel_AI, HitStun_AI
   DamageTypes (DamageTypeData)                    for each damage type: its number on the wire
                                                   and its category (physical, elemental, true)
   Strength, Dexterity, Intelligence, Focus        for each value of the attribute: the sum of
@@ -58,7 +60,11 @@ gearScoreRate, mastery], ...],
 "impacts": [[id, x, y, z, decay, aiX, aiY, aiZ, aiDecay, fromAttacker], ...],
 "criticals": [[weapon id, critChance, critDamageMultiplier], ...],
 "hitRules": [[damage row id, canCrit, noHeadshot, noBackstab, dmgCoefHead, dmgCoefCrit], ...],
-"rowEffects": [[damage row id, [status effect, ...], effectOnlyOnDamage], ...]}.
+"rowEffects": [[damage row id, [status effect, ...], effectOnlyOnDamage], ...],
+"reactions": [[damage row id, noReaction, power, hitStun, powerAI, hitStunAI], ...]}.
+`reactions` (user test 2, UT2-9) has the reaction cells of each damage row: NoReaction (a flag), PowerLevel and HitStun (the values for a
+player target), and PowerLevel_AI and HitStun_AI (the values for a creature target; -1 for a blank cell: the target takes the normal value,
+the rule of the "_AI" impact cells). A file of a tool from before user test 2 has no member `reactions`.
 Format 3 (stage 3.3b-M2): `rowEffects` has the column StatusEffect of each damage row that has one (a list with a comma), and
 EffectOnlyOnDamage (the status only after a hit with damage): the root of Gravity on the pull rows of the great axe (_RP2).
 Format 2 (code review of stage 3.3b-S5, finding F2): canCrit is true for the cell 1, false for an explicit 0 (the row cannot
@@ -152,6 +158,10 @@ MASTERY_COLUMN = "WeaponMasteryCategoryId"
 IMPACT_COLUMNS = ("ImpactDistanceX", "ImpactDistanceY", "ImpactDistanceZ", "ImpactDecayRate")
 IMPACT_AI_COLUMNS = tuple(column + "_AI" for column in IMPACT_COLUMNS)
 IMPACT_SOURCE_COLUMN = "UseAttackerPosForReaction"
+# The reaction of a hit of a damage row (user test 2): each one is required. A blank "_AI" cell is -1 in the file.
+REACTION_FLAG_COLUMN = "NoReaction"
+REACTION_COLUMNS = ("PowerLevel", "HitStun")
+REACTION_AI_COLUMNS = tuple(column + "_AI" for column in REACTION_COLUMNS)
 # The critical values of a weapon (stage 3.3b-S5): a weapon table has both columns or none (the table of the heart runes).
 CRITICAL_COLUMNS = ("CritChance", "CritDamageMultiplier")
 # The cells of a damage row for a critical hit, a headshot, and a hit from behind (stage 3.3b-S5): each one is required.
@@ -303,6 +313,7 @@ def build_tables(sources: Sources) -> dict:
 
     damage_rows = []
     impacts = []
+    reactions = []
     hit_rules = []
     row_effects = []
     row_ids: set[str] = set()
@@ -337,6 +348,20 @@ def build_tables(sources: Sources) -> dict:
                 raise Failure(f"the damage row {name} has a decay rate above 1")
             if any(value != 0.0 for value in normal[:3] + creature[:3]):
                 impacts.append([name] + normal + creature + [bool(cell(sheet, row, IMPACT_SOURCE_COLUMN))])
+            # The reaction cells (user test 2): whole numbers that are not negative; a blank "_AI" cell is -1.
+            flag = cell(sheet, row, REACTION_FLAG_COLUMN)
+            flag_text = sheet.source(row, REACTION_FLAG_COLUMN).strip().lower()
+            if flag_text not in ("", "0", "1", "true", "false"):
+                raise Failure(f"the cell {REACTION_FLAG_COLUMN} of the damage row {name} is the text \"{flag_text}\", not a flag")
+            reaction = [flag is True or flag_text in ("1", "true")]
+            for column in REACTION_COLUMNS + REACTION_AI_COLUMNS:
+                cell(sheet, row, column)  # A table with no such column stops the tool (an absent column is not a blank cell).
+                blank = column.endswith("_AI") and sheet.source(row, column).strip() == ""
+                value = -1.0 if blank else number(sheet, row, column)
+                if not blank and (value < 0.0 or value != int(value)):
+                    raise Failure(f"the cell {column} of the damage row {name} is {value:g}, not a whole number that is not negative")
+                reaction.append(int(value))
+            reactions.append([name] + reaction)
             # The critical, head, and behind cells (stage 3.3b-S5).
             factors = [rounded(number(sheet, row, column)) for column in HIT_FACTOR_COLUMNS]
             if any(factor < 0.0 for factor in factors):
@@ -500,7 +525,7 @@ def build_tables(sources: Sources) -> dict:
     return {"format": 3, "constants": constants, "damageTypes": damage_types, "attributes": attributes,
             "damageRows": damage_rows, "weapons": weapons, "items": items, "defenses": defenses, "vitals": vitals,
             "armor": armor, "levelDamage": sorted(level_damage), "impacts": impacts, "criticals": criticals,
-            "hitRules": hit_rules, "rowEffects": row_effects}
+            "hitRules": hit_rules, "rowEffects": row_effects, "reactions": reactions}
 
 
 def print_found(tables: dict, texts: list[str]) -> None:
@@ -553,7 +578,7 @@ def main() -> int:
     constants = tables["constants"]
     print(f"{target}: {len(tables['items'])} items with a weapon, {len(tables['weapons'])} weapons ({melee} melee "
           f"weapons with a damage row), {len(tables['damageRows'])} damage rows, {len(tables['damageTypes'])} damage "
-          f"types, {len(tables['impacts'])} damage rows with an impact, {len(tables['vitals'])} vitals rows with "
+          f"types, {len(tables['impacts'])} damage rows with an impact, {len(tables['reactions'])} with reaction cells, {len(tables['vitals'])} vitals rows with "
           f"{len(tables['defenses'])} different defense entries "
           f"(source: {', '.join(f'{count} from the {name}' for name, count in sorted(sources.used.items()))})")
     print(f"  one level adds {constants['levelDamage']} of the base damage; the gear score: {constants['gearScoreRate']} "

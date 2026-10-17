@@ -39,8 +39,16 @@ of a movement in [Navigation](navigation.md), and the position check in [Positio
   0.2 s, 97 % in 0.5 s. A decay rate of 0 or less (client code 0x488B8F0): |displacement| meters in each second to the
   source point for a negative Y (a pull), away from it for a positive Y; a pull ends 0.1 m from the point. The vortex
   of Gravity Well (Y -7) pulls at 7 m/s to its center.
-- The length: the length of the reaction of the creature (`Creatures::kReactionTime`, 1.5 s) at most. The client runs
-  the activity in the action of the reaction until the end of its fragment; the backend has no length of a fragment.
+- The length (user test 2, UT2-4; game data and client code): the client runs the push in the activity ReactionMotion of the action
+  `Reaction` until the end of its fragment (IfFragmentDone), or of the action `Pushable` (ActiveTime 0.4 s) for a row with
+  NoReaction. The mode comes only from the decay of the row (client code 0x48A0690: mode 1 for a decay of 0 or less; UsePushNoDecay
+  of Pushable does not change it there). Thus the push of a hit lasts the reaction that the hit started (`HitResult::push`,
+  `Creatures::reaction_length`: the length of the reaction fragment of the power of the row in the slice; 1.5 s with no length), or
+  0.4 s for a row with NoReaction (`kPushableTime`). A hit that starts no reaction (a light hit on an Elite, an attack that plays,
+  the reaction limit) moves nothing. A pull of an ability that is no hit (the vortex of Gravity Well, the pull of Reap) keeps
+  1.5 s. A heavy arrow (BowAttack2: 1 m/s, no decay, power 3) pushes the Inquisitor Cleric 1.33 m (its `r_R3_F`), the grunt 1.33 m.
+- The end of a decay travel (a decision of an agent, user test 2): when less than 2 cm of it is left (`forced_rules::kRest`), the last
+  step goes the rest; GreatAxe_PrimaryAttack (1 m, decay 0.85) ends after 0.8 s (before: the end at 1 mm held the creature for 1.47 s).
 - The steps: one new place at most each 50 ms of the world clock (`forced_rules::kStep`, a decision of an agent: 20
   movement states in a second; the walk of a creature has 5). Each step goes on the straight line of the navigation
   (`Navigation::slide`): a wall, a drop (a floor more than a step lower), or a cell with no free floor stops the creature
@@ -50,7 +58,8 @@ of a movement in [Navigation](navigation.md), and the position check in [Positio
   movement that runs (the client starts its reaction motion again). A root, a stun, and a knockdown do not stop a forced
   movement (the vortex roots the creatures that it pulls; a decision of an agent from the design of the data).
 - The behavior. While a force moves a creature, the behavior does not move it and starts no attack (`Behavior::think`,
-  `go_home`, `roam`). At the end the path of the creature is forgotten (its next step searches from its new place), and a
+  `go_home`, `roam`). At the end the creature goes on with its path (user test 2, UT2-4: the navigation keeps a path that is 1 m or
+  less away, `navigation_rules::kOffPath`, and takes the free straight line at once for one that is farther), and a
   creature in a fight keeps the new place in its trail (`Behavior::moved_by_force`).
 - The action of the creature during the movement: the reaction of the hit (stage 3.2a: `Reaction` for a creature that
   plays no attack). The movement keeps the action (`Gait::place`): the client plays the reaction while the creature
@@ -113,6 +122,11 @@ tools/gamedata/combat.sh [OUT.json]  # the combat tables with the member impacts
 
 ## Traps
 
+- A creature with a slow walk and heavy arrows: the Inquisitor Cleric walks 1.25 m/s, and each heavy arrow pushes it 1.33 m in 1.33 s
+  (the data rule). With a heavy arrow each 2 s it goes back; it comes to its cast distance when the arrows stop or miss (user test 2,
+  live run `u2-after`). A melee grunt (5.5 m/s) comes in 15 s to 20 s from 24 m.
+- The log line of a push gives its longest time (`for 1.33 s at most`), and the line of the reaction its power and its hit stun
+  (`world: reaction: creature ... plays the reaction of power 3 (fragment 19) for 1.33 s, a hit stun of 0.73 s`).
 - A combat tables file of a tool from before stage 3.3b-S4 has no member `impacts`: the backend starts and no hit moves a
   creature. The start log then has the line `the combat tables have no impacts` (else `234 damage rows with an
   impact`). Make the file again with `tools/gamedata/combat.sh`.

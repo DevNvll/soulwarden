@@ -129,8 +129,8 @@ TABLES_FOLDER = "sharedassets/springboardentitites/datatables/"
 CATALOG_PATH = "assetcatalog.catalog"
 NAMES_PATH = "localization/en-us/javelindata_vitals.loc.xml"
 # The paths that the tool can need: the index of the pak files keeps only these.
-WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", "sharedassets/", "animations/mannequin/", CATALOG_PATH,
-          NAMES_PATH, "objects/characters/", "libs/timeline/")
+WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", "sharedassets/", "animations/mannequin/",
+          creature_behavior.CREATURE_ANIMATION_FOLDER, CATALOG_PATH, NAMES_PATH, "objects/characters/", "libs/timeline/")
 # The start place of a new character (meters), and the radius of the default area.
 DEFAULT_CENTER = (8880.0, 4250.0)
 DEFAULT_RADIUS = 800.0
@@ -871,10 +871,9 @@ def controller_path_of(roots: list[Element]) -> str:
     return ""
 
 
-# The reaction fragments of the five power levels (r_R0_F to r_R4_F: the reaction to a hit from the front). Stage
-# 3.3a: the knockdown of an ability plays power 4, a stagger power 2 (live check L6: the fragment file of the Grey Wolf
-# has them).
-REACTION_FRAGMENTS = ("r_R0_F", "r_R1_F", "r_R2_F", "r_R3_F", "r_R4_F")
+# The reaction fragments of the five power levels (creature_behavior.REACTION_FRAGMENTS). Stage 3.3a: the knockdown of an ability plays
+# power 4, a stagger power 2 (live check L6: the fragment file of the Grey Wolf has them).
+REACTION_FRAGMENTS = creature_behavior.REACTION_FRAGMENTS
 
 
 def read_reaction_fragments(sources: Sources, roots: list[Element]) -> list[int] | None:
@@ -1244,6 +1243,9 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                  "reactions": [r_R0_F, ..., r_R4_F],   the fragment index of the reaction of each
                                                        power level (-1: none); only for a slice whose
                                                        fragment file has one of them (stage 3.3a)
+                 "reactionLengths": [seconds x 5],     the length of the variant of each reaction fragment of
+                                                       the slice (its end blend, else its animation; -1: not
+                                                       known); only for a slice with one length (user test 2)
                  "spawnAction": NAME,                  only for a slice that needs its spawn action
                  "behavior": {"sight": [angle, distance], "combatSight": [angle, distance],
                               "leash": [at rest, in a fight], "speed": [walk, run]},
@@ -1653,6 +1655,10 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                                 projectile_list))
     counts.update(area_counts([slices[body] for body in used], points, document_kinds, behavior.areas_left_out))
     counts.update(status_counts([slices[body] for body in used], points, document_kinds, getattr(behavior, "status_left_out", {})))
+    # User test 2 (UT2-7): the sources of the lengths of the attacks and the reaction fragments with a length (each slice that the tool read).
+    counts.update({"attackLengths": dict(getattr(behavior, "attack_lengths", {"endBlend": 0, "animation": 0, "guess": 0})),
+                   "reactionLengths": dict(getattr(behavior, "reaction_lengths", {"known": 0, "unknown": 0})),
+                   "slicesWithReactionLengths": sum(1 for body in used if "reactionLengths" in slices[body])})
     # The capsule of the character of a player (stage 3.4f-A): the target of a creature shot. No capsule: the backend uses its
     # default capsule.
     player_roots = sources.stream(PLAYER_SLICE)
@@ -1935,6 +1941,11 @@ def main() -> int:
           f"low-health part: {counts['slicesWithLowHealth']}")
     for cause, count in counts["statusActionsLeftOut"].items():
         print(f"  no status action, {cause}: {count}")
+    lengths = counts["attackLengths"]
+    print(f"  the lengths of the attacks: {lengths['endBlend']} from an end blend, {lengths['animation']} from the animation file, "
+          f"{lengths['guess']} the last contact plus {creature_behavior.TIME_AFTER_CONTACT} s; reaction fragments with a length: "
+          f"{counts['reactionLengths']['known']} ({counts['reactionLengths']['unknown']} with none), "
+          f"{counts['slicesWithReactionLengths']} slices")
     near = counts["spawnPointsAtTerrainHeight"]
     print(f"  spawn points 0.3 m or less from the terrain height: {near['0.3']}; 1.0 m or less: {near['1.0']}")
     policies = counts["routePolicies"]

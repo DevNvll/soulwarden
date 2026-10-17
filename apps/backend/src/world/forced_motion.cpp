@@ -25,7 +25,7 @@ float seconds_of(std::chrono::steady_clock::duration duration) {
 ForcedMotion::ForcedMotion(World& world, Creatures& creatures) : m_world(world), m_creatures(creatures) {}
 
 bool ForcedMotion::impact(Entity& entity, const gamedata::DamageImpact& impact, const state::WorldPosition& source,
-                          const state::WorldPosition& attacker, std::string_view row) {
+                          const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length) {
     Creature& creature = entity.creature;
     if (entity.kind != EntityKind::creature || creature.dead || creature.immune()) {
         ++m_counts.refused;
@@ -54,7 +54,7 @@ bool ForcedMotion::impact(Entity& entity, const gamedata::DamageImpact& impact, 
     const WorldClock::time_point now = m_world.clock().now();
     move.started = now;
     move.stepped = now;
-    move.ends = now + Creatures::kReactionTime;
+    move.ends = now + std::max(length, forced_rules::kStep);
     move.start = entity.position;
     if (decay > 0.0F) {
         // direction * Y + side * X, side = direction x up = (dy, -dx). The vertical part (Z) is not a place of the
@@ -81,16 +81,16 @@ bool ForcedMotion::impact(Entity& entity, const gamedata::DamageImpact& impact, 
     m_moving.insert(entity.id);
     ++(replaced ? m_counts.replaced : m_counts.started);
     m_counts.largest = std::max(m_counts.largest, m_moving.size());
-    // The path of the creature is of no use from a different place.
-    m_world.navigation().forget(entity.id);
-    log::write("world: force: creature %016llx (%s) moves by the impact of %s: %s %.2f m%s (%s)",
+    // The path of the creature stays (user test 2, UT2-4): the navigation keeps it while the creature is near it.
+    log::write("world: force: creature %016llx (%s) moves by the impact of %s: %s %.2f m%s (%s), for %.2f s at most",
                id_number(entity.id),
                creature.kind->id.c_str(),
                move.row.c_str(),
                move.constantSpeed ? (move.away ? "away from the source at" : "to the source at") : "a travel of",
                static_cast<double>(move.constantSpeed ? move.speed : move.distance),
                move.constantSpeed ? "/s" : "",
-               move.constantSpeed ? "no decay" : (std::string("decay ") + std::to_string(move.decay)).c_str());
+               move.constantSpeed ? "no decay" : (std::string("decay ") + std::to_string(move.decay)).c_str(),
+               static_cast<double>(seconds_of(move.ends - now)));
     return true;
 }
 
@@ -149,13 +149,13 @@ bool ForcedMotion::step(Entity& entity, WorldClock::time_point now) {
     } else {
         // The travel of the time of the reaction (client code at image RVA 0x48A0D30).
         const float t = seconds_of(at - move.started);
-        const float travel = move.decay >= 1.0F ? move.distance
-                                                : move.distance * (1.0F - std::pow(move.decay, forced_rules::kFrames * t));
-        const float more = travel - move.travelled;
-        goal = {entity.position.x + move.direction[0] * more, entity.position.y + move.direction[1] * more, entity.position.z};
-        if (move.distance - travel < 0.001F) {
+        float travel = move.decay >= 1.0F ? move.distance : move.distance * (1.0F - std::pow(move.decay, forced_rules::kFrames * t));
+        if (move.distance - travel < forced_rules::kRest) {
+            travel = move.distance; // The last step goes the rest of the travel (user test 2: the end at kRest, not 1 mm).
             last = true;
         }
+        const float more = travel - move.travelled;
+        goal = {entity.position.x + move.direction[0] * more, entity.position.y + move.direction[1] * more, entity.position.z};
     }
     move.stepped = at;
     const Slide slide = m_world.navigation().slide(entity.position, goal);

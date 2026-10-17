@@ -882,6 +882,7 @@ void skinning(const Options&) {
           "setup: the body leaves the world");
     check(try_gather(shop, shop.clientB, firstBlock) == kRefused, "a request of a body that left is refused");
     check(shop.host.world.interactions().external(first) == nullptr, "the external object of the body goes with it");
+    check(shop.gathering().node("body/" + hex64(first)) == nullptr, "the entry of the skinned body goes at its removal (finding GA-R1)");
     // A new wolf (a respawn of the creature system is a new entity): a new node.
     world::Entity* second = shop.dead_wolf();
     shop.hold(shop.clientA, std::nullopt, 1000);
@@ -891,6 +892,7 @@ void skinning(const Options&) {
     }
     shop.gather(shop.clientB, GatherShop::body_block(*second), 1600);
     check(bag_count(b, "TestHideT1") == 2 && shop.skill(kCharacterB, "Skinning").second == 32, "B skins the new body");
+    const world::EntityId secondId = second->id;
     // The body leaves during a work: the use ends with no reward.
     world::Entity* third = shop.dead_wolf();
     if (third == nullptr) {
@@ -904,13 +906,26 @@ void skinning(const Options&) {
     const auto ended = gather_states(shop.clientA, 1, during);
     check(bag_count(a, "TestHideT1") == 2 && shop.gathering().work_count() == 0 && !ended.empty() && ended.back().status == 2,
           "the body leaves during the work: no hide, the work ends (Failure)");
-    // The entries of the skinned bodies go after 600 s (the largest respawn bound of the row, at least 600 s); a body has no respawn.
-    check(shop.gathering().node_count() == 2, "two skinned bodies have an entry");
+    // The entry of a skinned body stays while the body is in the world, and goes after the body left (code review of stage 3.6a, finding
+    // GA-R1: a time is no proof of the removal); a body has no respawn.
+    check(shop.gathering().node_count() == 1, "the skinned body that is in the world has an entry");
     for (int tick = 0; tick < 610; ++tick) {
         shop.host.clock.advance(1s);
         shop.host.world.tick();
     }
-    check(shop.gathering().node_count() == 0 && shop.gathering().counts().respawns == 0, "their entries go after 600 s, with no respawn");
+    const std::string secondKey = "body/" + hex64(secondId);
+    const world::Entity* stays = shop.host.world.find(secondId);
+    check(shop.gathering().node_count() == 1 && shop.gathering().node("body/" + hex64(first)) == nullptr
+              && shop.gathering().node(secondKey) != nullptr && shop.gathering().node(secondKey)->depleted && stays != nullptr
+              && stays->creature.skinState == kDepleted && shop.gathering().counts().respawns == 0,
+          "after 610 s the entry of the body that left is gone; the body that stays keeps its entry and stays Depleted, with no respawn");
+    check(shop.host.world.creatures().remove(secondId).error == world::CreatureError::none, "setup: the second body leaves the world");
+    check(shop.gathering().node(secondKey) == nullptr, "its entry goes at its removal");
+    for (int tick = 0; tick < 11; ++tick) {
+        shop.host.clock.advance(1s);
+        shop.host.world.tick();
+    }
+    check(shop.gathering().node_count() == 0 && shop.gathering().counts().respawns == 0, "no entry and no respawn after it left");
 }
 
 } // namespace gat

@@ -830,7 +830,7 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
         return refuse(CastVerdict::cooldown);
     }
     // A cast of the sequence (stage 3.3b-M2): the fragment that plays decides (the windows of the transitions to the ability, the mark
-    // CanTransition, its end; in the next kAbilityBackSteps steps). Else the length of the plan of a different cast.
+    // CanTransition, its end; only from the step of the press: user test 2, UT2-1). Else the length of the plan of a different cast.
     const bool sequenced = planned->sequence && session != 0;
     if (sequenced) {
         const AbilityStart start = m_world.combat().sequences_of_world().start_ability(character->characterId, session, press.sequence, press.input,

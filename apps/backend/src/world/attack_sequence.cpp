@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <optional>
 
 namespace soulwarden::backend::world {
@@ -504,41 +505,38 @@ AbilityStart AttackSequences::start_ability(const std::string& characterId, Sess
     if (playing == nullptr) {
         at = input;
     } else {
-        // The first step from the press to kAbilityBackSteps after it at which the action of the ability can start in the fragment that
-        // plays (the action lists of the player: the windows CanAttack_<ability>, the mark CanTransition, the end of the fragment).
+        // The step at which the action of the ability starts in the fragment that plays (the action lists of the player: the windows
+        // CanAttack_<ability>, the mark CanTransition, the end of the fragment), from the step of the press only (user test 2, UT2-1). The
+        // conditions CanAttack_<ability> of the great axe and the war hammer read the press of the input step with no BackTicks (client
+        // code 0x2BEBDA0, 0x2A22F90): an instant window that holds the press step starts the ability at the press, a buffered window that
+        // holds it starts the ability at its end (the clip latches the press: 0x257D2A0, 0x257D5B0; live check of user test 2: a press at
+        // the last step of a buffered window played at the end of the window, 6 of 6 tries), and the mark CanTransition and the end of the
+        // fragment start it at the press when the press step is at or after them. A press before a window, the mark, or the end does not
+        // play (live check of user test 2: Wrecking Ball at 0.4 s of Shockwave, whose window starts at 0.8 s; before the correction the
+        // server started it 1033 ms later and ended the fragment that the client played).
         const gamedata::AttackFragment& data = actions->fragments[playing->fragment];
         const float t = clock_of(*playing, input);
-        const float back = static_cast<float>(attack_rules::kAbilityBackSteps) / attack_rules::kStepsInSecond;
         const auto consider = [&](std::uint16_t step) {
-            if (steps_between(input, step) <= attack_rules::kAbilityBackSteps
-                && (!at || steps_between(step, *at) <= 0x7FFF)) {
+            if (!at || steps_between(step, *at) <= 0x7FFF) {
                 at = step;
             }
         };
         for (const gamedata::AttackTransition& transition : data.transitions) {
-            if (transition.input != gamedata::AttackInput::ability || transition.abilityId != ability) {
+            if (transition.input != gamedata::AttackInput::ability || transition.abilityId != ability
+                || !in_window(t, transition.start, transition.end)) {
                 continue;
             }
-            const bool inside = in_window(t, transition.start, transition.end);
-            const bool ahead = transition.start > t + kClockEpsilon && transition.start - t <= back + kClockEpsilon;
-            if (!inside && !ahead) {
-                continue;
-            }
-            if (transition.kind == gamedata::TransitionKind::instant) {
-                consider(inside ? input : step_at(playing->start, transition.start));
-            } else if (transition.end >= 0.0F) {
-                // A buffered window: the press waits to the end of the window (the press of a later step of the window too).
-                const std::uint16_t end = step_at(playing->start, transition.end);
-                at = !at || steps_between(end, *at) <= 0x7FFF ? std::optional<std::uint16_t>(end) : at;
+            if (transition.kind == gamedata::TransitionKind::buffered && transition.end >= 0.0F) {
+                consider(step_at(playing->start, transition.end)); // The press waits to the end of the window.
             } else {
-                consider(inside ? input : step_at(playing->start, transition.start));
+                consider(input);
             }
         }
-        if (data.canTransition >= 0.0F) {
-            consider(t >= data.canTransition - kClockEpsilon ? input : step_at(playing->start, data.canTransition));
+        if (data.canTransition >= 0.0F && t >= data.canTransition - kClockEpsilon) {
+            consider(input);
         }
-        if (data.length > 0.0F) {
-            consider(t > data.length + kClockEpsilon ? input : static_cast<std::uint16_t>(step_at(playing->start, data.length) + 1));
+        if (data.length > 0.0F && t > data.length + kClockEpsilon) {
+            consider(input);
         }
     }
     if (!at) {
@@ -844,6 +842,49 @@ void AttackSequences::count_payment(int kind) {
     } else {
         ++m_counts.paymentsWithCondition;
     }
+}
+
+std::string AttackSequences::describe(const std::string& characterId, std::uint16_t input, WorldClock::time_point now) const {
+    const auto found = m_states.find(characterId);
+    if (found == m_states.end() || found->second.actions == nullptr) {
+        return "no sequence";
+    }
+    const State& state = found->second;
+    std::string text = "visits:";
+    char part[320];
+    for (const AttackVisit& visit : state.visits) {
+        const gamedata::AttackFragment& data = state.actions->fragments[visit.fragment];
+        const bool after = steps_between(visit.start, input) <= 0x7FFF;
+        const float t = after ? clock_of(visit, input) : -1.0F;
+        // The nearest strike window of the fragment to the clock of the input.
+        const gamedata::AttackStrike* nearest = nullptr;
+        float distance = 0.0F;
+        for (const gamedata::AttackStrike& strike : data.strikes) {
+            const float away = t < strike.start ? strike.start - t : (t > strike.end ? t - strike.end : 0.0F);
+            if (nearest == nullptr || away < distance) {
+                nearest = &strike;
+                distance = away;
+            }
+        }
+        std::snprintf(part, sizeof(part), " [#%u %s%s, start %u, %s %u, clock %.3f s, nearest strike %s%.3f to %.3f s, due %+.0f ms]",
+                      visit.number, data.name.c_str(), visit.cast != 0 ? " (ability)" : "", static_cast<unsigned>(visit.start),
+                      !visit.ended ? "plays, no end," : (visit.interrupted ? "interrupted at" : "ended at"),
+                      static_cast<unsigned>(visit.ended ? visit.endInput : input), static_cast<double>(t), nearest == nullptr ? "none " : "",
+                      nearest != nullptr ? static_cast<double>(nearest->start) : 0.0, nearest != nullptr ? static_cast<double>(nearest->end) : 0.0,
+                      std::chrono::duration<double, std::milli>(now - visit.dueAt).count());
+        text += part;
+    }
+    if (state.visits.empty()) {
+        text += " none";
+    }
+    if (state.pendingAbility >= 0) {
+        std::snprintf(part, sizeof(part), "; an ability %s waits for input %u", state.actions->fragments[static_cast<std::size_t>(state.pendingAbility)].name.c_str(),
+                      static_cast<unsigned>(state.pendingInput));
+        text += part;
+    }
+    std::snprintf(part, sizeof(part), "; the last input %u, %u end(s) of the sequence", static_cast<unsigned>(state.lastInput), state.generation);
+    text += part;
+    return text;
 }
 
 const AttackSequences::State* AttackSequences::state_of(const std::string& characterId) const {

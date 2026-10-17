@@ -16,6 +16,7 @@
 #include "world/behavior.h"
 #include "world/entity.h"
 #include "world/forced_motion.h"
+#include "world/hit_reaction.h"
 #include "world/ids.h"
 #include "world/load_meter.h"
 #include "world/position_index.h"
@@ -194,6 +195,16 @@ struct CreatureCounts {
     std::uint64_t removedByPhase{0};
     std::uint64_t outOfPhase{0};
     std::uint64_t deaths{0};
+    /**
+     * User test 2: the reactions to a hit that started (with the fragment of a power of the row), the hits with no reaction (a damage over
+     * time, NoReaction, an attack that plays, a hold), the hit stuns, and the idle records of the ends of an action, a walk, or a stun.
+     */
+    std::uint64_t reactions{0};
+    std::uint64_t reactionsOfPower{0};
+    std::uint64_t hitsWithNoReaction{0};
+    std::uint64_t hitStuns{0};
+    std::uint64_t reactionLimits{0};
+    std::uint64_t idleRecords{0};
     /** The largest number of creatures in the world at one time. */
     std::size_t largest{0};
     /** Number of scans of the spawn point rule. */
@@ -276,8 +287,23 @@ public:
      * @param attacker The entity of the character that did the damage. 0: a command.
      * @param threat The entity that the creature takes as its target in the place of the attacker (stage 3.3b-S2b: the Pylon
      *        whose shot did the damage). 0: the attacker.
+     * @param reaction The reaction of the damage row of the hit (user test 2).
+     * @param push Gets the longest time of the push of the impact of the hit (HitResult::push): the reaction that started, or the
+     *        action Pushable. No value: no push.
      */
-    CreatureResult hurt(EntityId id, float damage, EntityId attacker = 0, EntityId threat = 0);
+    CreatureResult hurt(EntityId id, float damage, EntityId attacker = 0, EntityId threat = 0, const HitReaction& reaction = {},
+                        std::optional<std::chrono::milliseconds>* push = nullptr);
+    /**
+     * @return The length of the reaction of a hit on a creature (user test 2, UT2-4 and UT2-7): the length of the reaction fragment of its
+     *         power in the slice (CreatureSlice::reactionLengths), else kReactionTime. The push of the hit lasts this time at most.
+     */
+    [[nodiscard]] std::chrono::milliseconds reaction_length(const Entity& entity, const HitReaction& reaction) const;
+    /**
+     * @return True when the reaction rule of the action lists lets a hit play a reaction on a creature (user test 2, game data: the action
+     *         Reaction of baseai_reaction.actionlist): the attack type of the row, its power level, the creature type of the kind, and the
+     *         reaction limit (Creature::reactionLimitUntil). True for a hit with no rule (HitReaction::ruled false).
+     */
+    [[nodiscard]] bool reaction_allowed(const Entity& entity, const HitReaction& reaction, WorldClock::time_point now) const;
 
     /**
      * Gives a creature a status effect of an ability (stage 3.3a, world/abilities.h) until its
@@ -327,8 +353,8 @@ public:
      * @return True when the creature moves.
      */
     bool impact(Entity& entity, const gamedata::DamageImpact& impact, const state::WorldPosition& source,
-                const state::WorldPosition& attacker, std::string_view row) {
-        return m_forced.impact(entity, impact, source, attacker, row);
+                const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length = kReactionTime) {
+        return m_forced.impact(entity, impact, source, attacker, row, length);
     }
     /** @return The forced movement of the creatures (the pulls and the pushes that run). */
     [[nodiscard]] const ForcedMotion& forced() const {
@@ -429,8 +455,14 @@ public:
      * each session that observes it gets the vitals state with the fields of the mark.
      */
     void immune_changed(Entity& entity);
-    /** Ends the walk of a creature (Creature::moving): its client plays the action that it selects (the idle action). */
+    /** Ends the walk of a creature (Creature::moving): each observer gets its idle record (rest). */
     void stop(Entity& entity);
+    /**
+     * The creature has no action of the server and no locomotion now (user test 2, UT2-2): it gets the idle record of its slice with a new
+     * start count (Creature::idle), and each observer gets its movement state. The end of an action of the server, of a walk, and of a stun
+     * call it. No effect for a dead creature; a slice with no idle action gets the scope fields with no record (a mark of the state).
+     */
+    void rest(Entity& entity);
     /** Marks the movement state of a creature that changed its direction at its place. */
     void moved(Entity& entity);
     /** Gives a creature that lives its full health: a creature that is at its home again. */
@@ -455,9 +487,9 @@ public:
     /** The interval of the spawn point rule on the world clock. */
     static constexpr std::chrono::milliseconds kScanInterval{500};
     /**
-     * The time of the reaction of a creature to a hit (a rule of this project: the game files
-     * have the length of each animation, and the tool does not read it). After it the
-     * creature has no action of the server: its client plays the idle action again itself.
+     * The time of the reaction of a creature to a hit when the creature data has no length of its reaction fragment (a rule of this
+     * project, from before user test 2; the tool reads the lengths from user test 2: CreatureSlice::reactionLengths). After it the
+     * creature has no action of the server: each observer gets its idle record.
      */
     static constexpr std::chrono::milliseconds kReactionTime{1500};
 

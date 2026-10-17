@@ -28,13 +28,16 @@
 //   Decay <= 0. A constant speed of |displacement| meters in each second to the source point for a negative Y (a pull),
 //               away from it for a positive Y; a pull ends 0.1 m from the point (client code at image RVA 0x488B8F0):
 //               the vortex of Gravity Well (Y -7) pulls at 7 m/s to its center.
-//   Length.     The movement runs for the length of the reaction of the creature (Creatures::kReactionTime) at most.
+//   Length.     The movement runs for the length of the reaction of the hit at most (user test 2: the length of the reaction
+//               fragment of the power of the damage row, Creatures::reaction_length; protocol notes 4.26: the client pushes a
+//               creature to the end of the reaction fragment). A decay travel ends when less than forced_rules::kRest is left.
 //   Navigation. Each step goes on the straight line of the navigation data (Navigation::slide): a wall or a drop
 //               stops the creature, and the movement ends there. The height is the height of the floor.
 //   Rules.      A dead creature and a creature on its way back (immune) do not move. A new impact replaces the movement
 //               that runs (the client starts its reaction motion again). While it moves, the behavior does not move the
-//               creature and starts no attack; at its end the behavior searches a new path from the new place
-//               (Behavior::moved_by_force).
+//               creature and starts no attack; at its end the creature goes on with its path when it is near it (user test
+//               2, UT2-4: the navigation keeps a path that is navigation_rules::kOffPath or less away, and takes the free
+//               straight line at once for one that is farther), and its trail gets the new place (Behavior::moved_by_force).
 //
 // The cost: a step looks only at the creatures that a force moves now (`m_moving`), each one at most each `kStep` of
 // the world clock, and at the cells of its short line. World thread only.
@@ -54,6 +57,11 @@ inline constexpr float kFrames = 30.0F;
 inline constexpr float kPointStop = 0.1F;
 /** A displacement shorter than this (meters) moves nothing. */
 inline constexpr float kShortest = 0.01F;
+/**
+ * A decay travel ends when less than this (meters) of it is left (user test 2, UT2-4; a decision of an agent): the travel of
+ * GreatAxe_PrimaryAttack (1.0 m, decay 0.85) is 97 percent complete after 0.33 s, and the end at 1 mm held the creature for 1.47 s.
+ */
+inline constexpr float kRest = 0.02F;
 /** A creature nearer than this to the source of the hit (meters) has the default direction (north). */
 inline constexpr float kNoDirection = 0.05F;
 } // namespace forced_rules
@@ -83,10 +91,11 @@ public:
      * @param source The source of the hit: the attacker of a melee hit, the center of an area or of a spell.
      * @param attacker The place of the attacker (a row with UseAttackerPosForReaction takes the direction from it).
      * @param row The id of the damage row (for the log).
+     * @param length The longest time of the movement: the length of the reaction of the hit (Creatures::reaction_length).
      * @return True when the creature moves.
      */
     bool impact(Entity& creature, const gamedata::DamageImpact& impact, const state::WorldPosition& source,
-                const state::WorldPosition& attacker, std::string_view row);
+                const state::WorldPosition& attacker, std::string_view row, std::chrono::milliseconds length);
 
     /** The creature system calls it in each tick: one step of each creature that a force moves. */
     void tick();

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Write the gathering data of the world (stage 3.6a, docs/systems/gathering.md): one JSON file and one file for each region.
 
-The backend reads GAMEDATA_DIR/gathering-data.json at its start, and the file of a region (GAMEDATA_DIR/gathering/REGION.swgn) the
-first time that it needs a node of that region. Without the files no node can be gathered (each request is refused).
+The backend reads GAMEDATA_DIR/gathering-data.json at its start, and the file of a region (the file that gathering-data.json names:
+GAMEDATA_DIR/gathering/SET/REGION.swgn) the first time that it needs a node of that region. Without the files no node can be gathered
+(each request is refused).
 
 The sources (all in the pak files of the game copy; research gathering-stage.md and the live checks of stage 3.6a):
 
@@ -41,7 +42,18 @@ below 0 or a largest bound below the smallest one, a rank that is not a whole nu
 row of a gathering slice names a gatherable row that no table has, when two variation rows of one table have one id and different
 content, when a gathering slice has no root, no Interact bound with GatherOption, or not one GatherableController, when a gatherable
 row names an event that no event table has, and when a region file has a record that names a slice index outside its list or does
-not end at its last byte. tools/gamedata/check_gathering_tool.py is the check of these rules, with made-up sources.
+not end at its last byte. From the code review of stage 3.6a (finding GA-R4) it also stops when a GatherableData table has no column of
+a gate of its rows (GATE_COLUMNS: the restriction, the item, the gatherer count, the work reset, the causes of UNSUPPORTED_COLUMNS and
+UNSUPPORTED_FLAGS; the exceptions of the game data are MISSING_GATE_COLUMNS), when a flag cell has a text that is not "", "0", "1",
+"true", or "false" (any case), and when a GameEventData table has no column EventID, CategoricalProgressionId, or
+CategoricalProgressionReward. A blank cell is no rule (a blank reward is 0); a missing column is a source that is not complete.
+tools/gamedata/check_gathering_tool.py is the check of these rules, with made-up sources.
+
+The publication (finding GA-R6): the region files go into a staging folder (gathering/.staging-PID), the tool checks each one against
+the document (its size and its digest), moves the folder to gathering/SET (SET: the first 16 hexadecimal digits of the SHA-256 of the
+region digests), and writes gathering-data.json last. A stop before that leaves the published set (the manifest and its region files)
+as it was. After the publication the set of the earlier manifest stays (a backend that runs reads its region files later); older set
+folders, staging folders, and region files of the layout of before (gathering/REGION.swgn) go. Run one export at a time.
 
 Output:
   gathering-data.json (one line of JSON):
@@ -54,14 +66,16 @@ Output:
    "templates": [{"slice", "asset", "sub", "root", "controllerSlot", "table", "bound": {"entity", "component", "slot", "rangeSq",
                   "capacity", "translation": [X, Y, Z], "option": OPTION_ENTITY}}, ...],
    "capitals": {PLACEMENT_UUID: [TEMPLATE, ROW], ...},
-   "regions": [{"name", "x", "y", "file", "records", "tails", "version", "types": [[TEMPLATE, ROW, VARIANT], ...]}, ...],
+   "regions": [{"name", "x", "y", "file", "records", "tails", "version", "digest", "types": [[TEMPLATE, ROW, VARIANT], ...]}, ...],
    "creatures": {ASSET:SUB: {"slice", "template", "row"}, ...},
    "counts": {...}}
   TEMPLATE and ROW are indexes (-1: not a gathering type). `version` is the SHA-256 (first 16 hexadecimal digits) of the
-  distribution file: a stored node of an older version is not the same node (the backend drops it).
+  distribution file: a stored node of an older version is not the same node (the backend drops it). `file` is the region file of the
+  set (gathering/SET/REGION.swgn), and `digest` the SHA-256 (first 16 hexadecimal digits) of that file: the backend refuses a region
+  file with a different digest (a file of another export).
 
-  gathering/REGION.swgn (little-endian): "SWGN" format:u32 (1) regionX:i32 regionY:i32 records:u32 tails:u32, then for each primary
-  record: type:u16 x:f32 y:f32 z:f32 (14 bytes). Record N has the counter N + 1 (its G: the rule above).
+  gathering/SET/REGION.swgn (little-endian): "SWGN" format:u32 (1) regionX:i32 regionY:i32 records:u32 tails:u32, then for each
+  primary record: type:u16 x:f32 y:f32 z:f32 (14 bytes). Record N has the counter N + 1 (its G: the rule above).
 
 Usage: gathering.py [OUTPUT.json] [--region NAME]... [--near X Y METERS]
   --region: only these regions (a file for a test); --near: print the gathering nodes near a place (with their G) and write no file.
@@ -78,6 +92,7 @@ import json
 import math
 import os
 import re
+import shutil
 import struct
 import sys
 import uuid
@@ -125,16 +140,44 @@ UNSUPPORTED_COLUMNS = (("RequiredSongId", "a song"), ("RequiredWhisperId", "a wh
                        ("ProgressionCurrencyCosts", "a cost"))
 UNSUPPORTED_FLAGS = (("IsLootContainer", "a loot container (a chest: stage 3.5b)"), ("OpenAfterGathering", "OpenAfterGathering"),
                      ("RequireLootItems", "RequireLootItems"), ("IsFFARestricted", "IsFFARestricted"))
+# The columns of the gates of a gatherable row (code review of stage 3.6a, finding GA-R4): each GatherableData table must have them. A
+# blank cell is no rule; a missing column is a source that is not complete, and the tool stops (it does not read the gate as false).
+GATE_COLUMNS = (("Restriction", "ItemRestrictionId", "NumRequiredToGather", "ResetGatherTimeOnEndInteraction")
+                + tuple(column for column, _ in UNSUPPORTED_COLUMNS) + tuple(column for column, _ in UNSUPPORTED_FLAGS))
+# The gate columns that a table of the game data does not have (the census of the supported client build): the rows of the table have no
+# such rule. GatherablesDunwood has 9 supported rows of the retail data.
+MISSING_GATE_COLUMNS = {"IsFFARestricted": ("GatherablesDunwood", "QuestGatherables"),
+                        "OpenAfterGathering": ("GatherablesDunwood", "QuestGatherables", "Gatherables_IsleOfNight"),
+                        "ProgressionCurrencyCosts": ("GatherablesDunwood", "QuestGatherables", "Gatherables_IsleOfNight")}
+# The texts of a flag cell (finding GA-R4; the retail tables have "", "0", "1", and one "FALSE"). A different text stops the tool.
+FLAG_TEXTS = {"": False, "0": False, "1": True, "false": False, "true": True}
+# The columns of a game event of a gatherable row (finding GA-R4: a missing reward column is not an experience of 0).
+EVENT_COLUMNS = ("EventID", "CategoricalProgressionId", "CategoricalProgressionReward")
 SUPPORTED_RESTRICTIONS = ("NoToolNecessary", "ToolRequired")
 # The restriction of an item: supported only when the row names no item (nothing to check).
 ITEM_RESTRICTION = "ItemRequired"
 # The gathering types of the four tools (GatheringTypes of the weapon rows; the paperdoll slots 33 to 36 of protocol notes 4.11). A row of
 # a different type (AzothStaff: an encounter of a later stage; fishing: stage 3.6b) is refused.
 TOOL_TYPES = ("Chopping", "Cutting", "Dressing", "Mining")
+# The folder of a set of region files that the tool writes before it moves the folder to its name (finding GA-R6).
+STAGING_PREFIX = ".staging-"
+STALE_PREFIX = ".old-"
+REGION_HEADER = 24
+REGION_RECORD = 14
 
 
-def is_true(text: str) -> bool:
-    return text.strip().lower() in ("1", "true", "yes")
+def flag(text: str, what: str) -> bool:
+    """@return The value of a flag cell (FLAG_TEXTS, any case). A different text stops the tool (code review of stage 3.6a, finding
+    GA-R4): an unknown text is not false."""
+    value = FLAG_TEXTS.get(text.strip().lower())
+    if value is None:
+        raise Failure(f"{what} has the text {text!r}, which is not a flag (\"\", \"0\", \"1\", \"true\", \"false\")")
+    return value
+
+
+def digest(data: bytes) -> str:
+    """@return The digest of a region file: the first 16 hexadecimal digits of its SHA-256 (the backend compares it, finding GA-R6)."""
+    return hashlib.sha256(data).hexdigest()[:16]
 
 
 def finite(text: str, what: str, default: float | None = None) -> float:
@@ -201,7 +244,7 @@ class Tables:
             elif kind == RANK_TYPE and sheet.name in GATHERING_SKILLS:
                 self._ranks(sheet, path)
             elif kind == EVENT_TYPE:
-                self._events(sheet)
+                self._events(sheet, path)
             elif kind == ITEM_TYPE:
                 self._items(sheet, path)
             elif kind == WEAPON_TYPE:
@@ -217,6 +260,10 @@ class Tables:
     def _gatherables(self, sheet: Sheet, path: str) -> None:
         need(sheet, path, ("GatherableID", "GatheringType", "Restriction", "Tradeskill", "RequiredTradeskillLevel", "BaseGatherTime",
                            "MinRespawnRate", "MaxRespawnRate", "FinalLootTable", "GameEventID"))
+        for column in GATE_COLUMNS:
+            if column not in sheet.columns and sheet.name not in MISSING_GATE_COLUMNS.get(column, ()):
+                raise Failure(f"{path}: the table {sheet.name} has no column {column} (a gate of its rows: a blank cell is no rule, a "
+                              f"missing column is a source that is not complete)")
         for row in range(sheet.row_count):
             identifier = sheet.source(row, "GatherableID").strip()
             if identifier and identifier.lower() not in self.rows:
@@ -255,16 +302,15 @@ class Tables:
             raise Failure(f"{path}: the levels of the table {sheet.name} are not 0, 1, 2, ... with no gap")
         self.ranks[sheet.name] = [ranks[level] for level in range(len(ranks))]
 
-    def _events(self, sheet: Sheet) -> None:
-        if "EventID" not in sheet.columns or "CategoricalProgressionId" not in sheet.columns:
-            return
+    def _events(self, sheet: Sheet, path: str) -> None:
+        # Each event table must have the three columns (finding GA-R4: the retail tables have them; a blank reward cell is 0).
+        need(sheet, path, EVENT_COLUMNS)
         for row in range(sheet.row_count):
             identifier = sheet.source(row, "EventID").strip()
             if not identifier or identifier.lower() in self.events:
                 continue
             progression = sheet.source(row, "CategoricalProgressionId").strip()
-            reward = finite(sheet.source(row, "CategoricalProgressionReward"), f"the event {identifier}: CategoricalProgressionReward",
-                            0.0) if "CategoricalProgressionReward" in sheet.columns else 0.0
+            reward = finite(sheet.source(row, "CategoricalProgressionReward"), f"the event {identifier}: CategoricalProgressionReward", 0.0)
             self.events[identifier.lower()] = [identifier, progression, reward]
 
     def _items(self, sheet: Sheet, path: str) -> None:
@@ -313,6 +359,8 @@ def row_entry(identifier: str, table: str, cells: dict) -> dict:
         raise Failure(f"RequiredTradeskillLevel of {what} is not a whole number of 0 or more")
     required = finite(cells.get("NumRequiredToGather", ""), f"NumRequiredToGather of {what}", 0.0)
     count = finite(cells.get("ItemRestrictionQuantity", ""), f"ItemRestrictionQuantity of {what}", 0.0)
+    if count != int(count) or not 0 <= count <= 1000000:
+        raise Failure(f"ItemRestrictionQuantity of {what} is not a whole number of 0 to 1,000,000")
     restriction = cells.get("Restriction", "").strip()
     item = cells.get("ItemRestrictionId", "").strip()
     unsupported = []
@@ -324,7 +372,7 @@ def row_entry(identifier: str, table: str, cells: dict) -> dict:
         if cells.get(column, "").strip() and cause not in unsupported:
             unsupported.append(cause)
     for column, cause in UNSUPPORTED_FLAGS:
-        if is_true(cells.get(column, "")):
+        if flag(cells.get(column, ""), f"{column} of {what}"):
             unsupported.append(cause)
     # The loader of the client changes NumRequiredToGather 0 to 1 (0x440D2A0); more than one gatherer: a special node.
     if max(1, int(required)) > 1:
@@ -337,10 +385,11 @@ def row_entry(identifier: str, table: str, cells: dict) -> dict:
             "tradeskill": "" if tradeskill == "None" else tradeskill, "level": int(level), "time": round(time, 6),
             "respawn": [round(low, 4), round(high, 4)], "loot": cells.get("FinalLootTable", "").strip(),
             "material": cells.get("LootTableDefaultMaterial", "").strip(), "event": cells.get("GameEventID", "").strip(),
-            "reset": is_true(cells.get("ResetGatherTimeOnEndInteraction", "")), "destroy": is_true(cells.get("DestroyOnDepletion", "")),
+            "reset": flag(cells.get("ResetGatherTimeOnEndInteraction", ""), f"ResetGatherTimeOnEndInteraction of {what}"),
+            "destroy": flag(cells.get("DestroyOnDepletion", ""), f"DestroyOnDepletion of {what}"),
             "depleted": cells.get("DepletedGatherableID", "").strip(), "required": max(1, int(required)),
             "item": item, "itemCount": int(count),
-            "waitForImpact": is_true(cells.get("WaitForImpact", "")), "unsupported": unsupported}
+            "waitForImpact": flag(cells.get("WaitForImpact", ""), f"WaitForImpact of {what}"), "unsupported": unsupported}
 
 
 class Slices:
@@ -635,14 +684,13 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
         counts["gatheringRecords"] += gathering
         version = hashlib.sha256(data).hexdigest()[:16]
         file_name = f"{name}.swgn"
+        region_data = b"SWGN" + struct.pack("<IiiII", REGION_FORMAT, region_x, region_y, len(indexes), tails) + bytes(body)
+        # The file name of the set comes at the publication (publish); the digest binds the file to this document (finding GA-R6).
         region_list.append({"name": name, "x": region_x, "y": region_y, "file": f"{FOLDER}/{file_name}", "records": len(indexes),
-                            "tails": tails, "version": version, "types": types})
+                            "tails": tails, "version": version, "digest": digest(region_data), "types": types})
         if out_folder is not None:
-            header = b"SWGN" + struct.pack("<IiiII", REGION_FORMAT, region_x, region_y, len(indexes), tails)
-            out_folder.mkdir(parents=True, exist_ok=True)
-            temporary = out_folder / (file_name + ".tmp")
-            temporary.write_bytes(header + bytes(body))
-            temporary.replace(out_folder / file_name)
+            # The staging folder of the set (main): a stop later leaves the published set as it was.
+            (out_folder / file_name).write_bytes(region_data)
         print(f"gathering: {name}: {len(indexes)} records, {gathering} gathering nodes", file=sys.stderr)
 
     # The capital nodes: the placements of the layers whose slice is a gathering slice.
@@ -744,6 +792,80 @@ def build(sources: Sources, gamedata: Path, regions: list[str] | None, out_folde
     return document
 
 
+def manifest_files(target: Path) -> set[str]:
+    """@return The region files (paths relative to the game data folder) that the manifest `target` names; none when it is not there or
+    is not a manifest."""
+    try:
+        document = json.loads(target.read_text(encoding="utf-8"))
+        files = [region.get("file") for region in document.get("regions", []) if isinstance(region, dict)]
+        return {file for file in files if isinstance(file, str) and file.startswith(f"{FOLDER}/") and ".." not in file}
+    except (OSError, ValueError, AttributeError, TypeError):
+        return set()
+
+
+def same_set(folder: Path, regions: list[dict]) -> bool:
+    """@return True when a set folder has each region file with its digest."""
+    for region in regions:
+        file = folder / f"{region['name']}.swgn"
+        if not file.is_file() or digest(file.read_bytes()) != region["digest"]:
+            return False
+    return True
+
+
+def publish(target: Path, document: dict, staging: Path, folder: Path) -> list[str]:
+    """Publishes one set of files (code review of stage 3.6a, finding GA-R6). The region files of `staging` are checked against the
+    document (the size and the digest); the folder becomes the set folder gathering/SET (SET: a digest of the region digests); then the
+    manifest names the files of the set (the manifest last). A stop before the manifest leaves the published set whole. The set of the
+    earlier manifest stays (a backend that runs reads its region files later); the older sets, staging folders, and region files go.
+    @return The removed entries of the folder."""
+    regions = document["regions"]
+    for region in regions:
+        staged = staging / f"{region['name']}.swgn"
+        data = staged.read_bytes() if staged.is_file() else b""
+        if len(data) != REGION_HEADER + REGION_RECORD * region["records"] or digest(data) != region["digest"]:
+            raise Failure(f"{staged}: the region file is not the file of the document (its size or its digest)")
+    set_name = hashlib.sha256("\n".join(f"{region['name']}:{region['digest']}" for region in regions).encode()).hexdigest()[:16]
+    for region in regions:
+        region["file"] = f"{FOLDER}/{set_name}/{region['name']}.swgn"
+    text = json.dumps(document, separators=(",", ":"), allow_nan=False) + "\n"
+    previous = manifest_files(target)
+    generation = folder / set_name
+    if generation.is_dir() and same_set(generation, regions):
+        shutil.rmtree(staging)  # The same files are published (an export of the same sources).
+    elif generation.is_dir():
+        aside = folder / f"{STALE_PREFIX}{os.getpid()}"
+        shutil.rmtree(aside, ignore_errors=True)
+        generation.rename(aside)
+        try:
+            staging.rename(generation)
+        except OSError:
+            aside.rename(generation)
+            raise
+        shutil.rmtree(aside, ignore_errors=True)
+    else:
+        staging.rename(generation)
+    temporary = target.with_name(target.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(target)
+    # The clean up: the new set and the set of the earlier manifest stay (a folder gathering/SET, or the region files of the layout of
+    # before the review: gathering/REGION.swgn).
+    keep_folders = {set_name} | {Path(file).parts[1] for file in previous if len(Path(file).parts) == 3}
+    keep_files = {Path(file).name for file in previous if len(Path(file).parts) == 2}
+    removed = []
+    for entry in sorted(folder.iterdir()):
+        try:
+            if entry.is_dir() and entry.name not in keep_folders and (re.fullmatch(r"[0-9a-f]{16}", entry.name)
+                                                                        or entry.name.startswith((STAGING_PREFIX, STALE_PREFIX))):
+                shutil.rmtree(entry)
+                removed.append(entry.name)
+            elif entry.is_file() and entry.name.endswith((".swgn", ".swgn.tmp")) and entry.name not in keep_files:
+                entry.unlink()
+                removed.append(entry.name)
+        except OSError as error:
+            print(f"gathering: {entry}: not removed: {error}", file=sys.stderr)
+    return removed
+
+
 def main() -> int:
     home = Path.home()
     game = Path(os.environ.get("SOULWARDEN_GAME_DIR") or home / "Games/soulwarden/game")
@@ -759,18 +881,23 @@ def main() -> int:
     if arguments.near is not None and not all(math.isfinite(value) for value in arguments.near):
         print("gathering: --near needs three finite numbers. No file was written.", file=sys.stderr)
         return 1
+    folder = target.parent / FOLDER
+    staging = None
     try:
         sources = Sources(game / "assets", WANTED)
-        out_folder = None if arguments.near else target.parent / FOLDER
-        document = build(sources, gamedata, arguments.region, out_folder, tuple(arguments.near) if arguments.near else None)
+        if not arguments.near:
+            # The region files go into a staging folder first (finding GA-R6): the published set changes only at the end.
+            folder.mkdir(parents=True, exist_ok=True)
+            staging = folder / f"{STAGING_PREFIX}{os.getpid()}"
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir()
+        document = build(sources, gamedata, arguments.region, staging, tuple(arguments.near) if arguments.near else None)
         if arguments.near:
             for distance, region, record, variant, row, (x, y, z), group in document["near"]:
                 print(f"{distance:7.2f} m  {region} record {record:6d}  G {group:016x}  {variant:34s} {row:24s} {x:10.3f} {y:10.3f} {z:8.3f}")
             return 0
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_name(target.name + ".tmp")
-        temporary.write_text(json.dumps(document, separators=(",", ":"), allow_nan=False) + "\n", encoding="utf-8")
-        temporary.replace(target)
+        removed = publish(target, document, staging, folder)
+        staging = None
     except Failure as error:
         print(f"gathering: {error}. No file was written.", file=sys.stderr)
         return 1
@@ -778,8 +905,11 @@ def main() -> int:
         print(f"gathering: the document has a number that is not finite ({error}). No file was written.", file=sys.stderr)
         return 1
     except OSError as error:
-        print(f"gathering: {target}: {error}", file=sys.stderr)
+        print(f"gathering: {target}: {error}. The published files did not change.", file=sys.stderr)
         return 1
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
     counts = document["counts"]
     print(f"{target}: {counts['gatheringRecords']} natural nodes of {counts['records']} distribution records in {counts['regions']} "
           f"regions, {counts['capitals']} capital nodes, {counts['creatures']} creature slices with skinning, {counts['rows']} "
@@ -787,6 +917,8 @@ def main() -> int:
     print("  natural nodes: " + ", ".join(f"{table} {count}" for table, count in sorted(counts["recordsByTable"].items())))
     print("  capital nodes: " + ", ".join(f"{table} {count}" for table, count in sorted(counts["capitalsByTable"].items())))
     print("  source: " + ", ".join(f"{count} files from the {name}" for name, count in sorted(sources.used.items())))
+    print(f"  region files: {document['regions'][0]['file'].rsplit('/', 1)[0] if document['regions'] else FOLDER}"
+          + (f"; removed: {', '.join(removed)}" if removed else ""))
     return 0
 
 

@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -20,8 +21,10 @@
 // The data is game data: the tool tools/gamedata/gathering.sh makes the files from the game copy of the user, and the files stay outside
 // the repository. Without the files no node can be gathered (each request is refused), and the rest of the backend works.
 //
-// The natural nodes (2.45 million in the supported build) are in one file for each region (gathering/REGION.swgn). The backend reads a
-// region file only when a request or a stored node names a node of that region, and keeps it. A request finds its node from its G in
+// The natural nodes (2.45 million in the supported build) are in one file for each region (the file that the document names:
+// gathering/SET/REGION.swgn, or gathering/REGION.swgn before the code review of stage 3.6a). The backend reads a region file only when a
+// request or a stored node names a node of that region, and keeps it. A region file must have the digest that the document gives it
+// (finding GA-R6): the files of an export that stopped are not the files of the document. A request finds its node from its G in
 // O(1): the client gives each record of a distribution file the offline id G = ((counter & 0x7FFFF) << 13) | ((regionY & 0x1F) << 8) |
 // ((regionX & 0x1F) << 3) | 1, with the counter = the record number + 1 (client 0x69D5090; live check L2 of stage 3.6a). The cost does
 // not depend on the size of the world (roadmap rule MP-8).
@@ -56,6 +59,12 @@ struct GatherableRow {
     GatheringType type{GatheringType::none};
     /** Restriction: NoToolNecessary, ToolRequired, or ItemRequired with no item (an other value is in `unsupported`). */
     std::string restriction;
+    /**
+     * ItemRestrictionId and ItemRestrictionQuantity: the item that the restriction ItemRequired names (empty: no item). The loader keeps
+     * them and refuses a row with an item (code review of stage 3.6a, finding GA-R5: the backend has no rule of the client for an item).
+     */
+    std::string item;
+    std::uint32_t itemCount{0};
     /** The trade skill of the rank gate and of the speed and the luck (empty: none) and the rank that the node needs. */
     std::string tradeskill;
     std::uint32_t level{0};
@@ -147,6 +156,12 @@ struct GatheringRegion {
     std::uint32_t tails{0};
     /** The version of the distribution file (a stored node of a different version is not the same node). */
     std::string version;
+    /**
+     * The first 16 hexadecimal digits of the SHA-256 of the region file that the tool wrote with this document (code review of stage 3.6a,
+     * finding GA-R6): a region file with a different digest is not the file of this document, and gives no node. Empty: a document of
+     * before the review (no check).
+     */
+    std::string digest;
     /** For each slice index of the file: the template and the row (-1: not a gathering type), and the variant name. */
     std::vector<std::int32_t> templates;
     std::vector<std::int32_t> rows;
@@ -229,6 +244,15 @@ public:
     [[nodiscard]] std::optional<NaturalNode> natural_at(std::uint32_t region, std::uint32_t record) const;
     /** @return The index of a region by its name, or no value. */
     [[nodiscard]] std::optional<std::uint32_t> region_index(std::string_view name) const;
+    /** @return The region of the place of a G (no read of its file), or no value. */
+    [[nodiscard]] std::optional<std::uint32_t> region_of(std::uint64_t group) const;
+    /**
+     * @return True when the records of a region are there and correct: its file is read and checked (the header, each record, the digest
+     *         of the document), or `set` gave them. False: the file is not there, is not complete, or is not the file of this document
+     *         (code review of stage 3.6a, finding GA-R2): no node of the region, and a stored depletion of the region cannot be checked.
+     *         Reads the file at its first use.
+     */
+    [[nodiscard]] bool region_valid(std::uint32_t region) const;
 
     [[nodiscard]] const GatheringDataWork& work() const {
         return m_work;
@@ -269,6 +293,8 @@ private:
     std::uint64_t m_naturalCount{0};
     /** The records of the regions that a lookup needed (or that `set` gave). */
     mutable std::unordered_map<std::uint32_t, std::vector<NaturalRecord>> m_loadedRecords;
+    /** The regions whose file a lookup read and found not there, not complete, or not the file of the document (finding GA-R2). */
+    mutable std::unordered_set<std::uint32_t> m_badRegions;
     mutable GatheringDataWork m_work;
 };
 

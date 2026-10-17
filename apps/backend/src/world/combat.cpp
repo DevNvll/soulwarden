@@ -924,7 +924,8 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
                       static_cast<double>(critical.chance), static_cast<double>(critical.roll), static_cast<double>(critical.multiplier));
     }
     const Damage dealt = result.damage;
-    result = apply_hit(attacker, target, dealt, itemId, row.id, what, use.threat, flags, note[0] != '\0' ? note : nullptr);
+    const HitReaction reaction = hit_reaction(row);
+    result = apply_hit(attacker, target, dealt, itemId, row.id, what, use.threat, flags, note[0] != '\0' ? note : nullptr, reaction);
     result.critical = critical;
     result.behind = hit.behind;
     result.head = hit.head;
@@ -936,9 +937,11 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
     if (own == nullptr || hurt == nullptr) {
         return result;
     }
-    // The impact of the row (stage 3.3b-S4): a creature that lives after the hit moves by it (a pull, a push).
-    if (row.impact && !hurt->creature.dead) {
-        m_world.creatures().impact(*hurt, *row.impact, from, attackerPlace, row.id);
+    // The impact of the row (stage 3.3b-S4): a creature that lives after the hit moves by it (a pull, a push), for the length of the
+    // reaction that the hit started at most (user test 2, UT2-4: the client pushes in the reaction, or in the action Pushable of a row with
+    // NoReaction; a hit with neither moves nothing).
+    if (row.impact && !hurt->creature.dead && result.push) {
+        m_world.creatures().impact(*hurt, *row.impact, from, attackerPlace, row.id, *result.push);
     }
     // The heart rune charge of the hit (AttackRuneCharge of the row), and the perks and the passive rules of a hit (stage 1.3b,
     // stage 3.3b-S5).
@@ -1026,18 +1029,22 @@ HitResult Combat::strike_amount(Entity& attacker, Entity& target, float amount, 
     if (!std::isfinite(damage.dealt) || damage.dealt < 0.0F) {
         damage.dealt = 0.0F;
     }
-    return apply_hit(attacker, target, damage, "", typeName, what);
+    // A tick of a damage over time has no damage row and plays no reaction (user test 2, UT2-9).
+    HitReaction none;
+    none.plays = false;
+    return apply_hit(attacker, target, damage, "", typeName, what, 0, 0, nullptr, none);
 }
 
 HitResult Combat::apply_hit(Entity& attacker, Entity& target, const Damage& damage, const std::string& itemId, const std::string& row,
-                            const char* what, EntityId threat, std::uint16_t flags, const char* note) {
+                            const char* what, EntityId threat, std::uint16_t flags, const char* note, const HitReaction& reaction) {
     HitResult result;
     result.verdict = HitVerdict::dead;
     result.damage = damage;
     result.healthBefore = target.vitals.health;
     const EntityId targetId = target.id;
     const ActorId targetActor = target.actor;
-    const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt, attacker.id, threat);
+    std::optional<std::chrono::milliseconds> push;
+    const CreatureResult hurt = m_world.creatures().hurt(targetId, result.damage.dealt, attacker.id, threat, reaction, &push);
     if (hurt.error != CreatureError::none || hurt.entity == nullptr) {
         if (hurt.error == CreatureError::immune) {
             result.verdict = HitVerdict::immune;
@@ -1045,6 +1052,7 @@ HitResult Combat::apply_hit(Entity& attacker, Entity& target, const Damage& dama
         return result;
     }
     m_world.health().fought(attacker); // The health of the attacker does not come back while it fights.
+    result.push = push;
     result.healthAfter = hurt.entity->vitals.health;
     result.killed = hurt.entity->creature.dead;
     result.verdict = HitVerdict::accepted;

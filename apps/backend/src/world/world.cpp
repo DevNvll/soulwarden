@@ -307,6 +307,8 @@ void World::remove_entity(EntityId id) {
         m_creatures.entity_removed(entity);
         // The external object of its body goes (stage 3.6a: the skinning of a body; a use of it ends at its next check).
         m_interactions.body_removed(entity.id);
+        // The entry of its skinned body goes with it (code review of stage 3.6a, finding GA-R1).
+        m_gathering.body_removed(entity.id);
         // The projectiles of the creature in the air end with no hit (stage 3.4f-A: the leave of the source).
         m_projectiles.source_left(entity.id);
         // The ground areas of the creature end with it (stage 3.4f-C: the leave of the caster, the rule of a character).

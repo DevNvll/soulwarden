@@ -10,6 +10,7 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
 | Task | Start here |
 | --- | --- |
 | Creatures: the spawn points, the kinds, the record of a creature, health and death, the action of a creature (the scope fields, the locomotion of a walk), the commands | Protocol notes 4.14, `apps/backend/src/world/creatures.h`, `gamedata/creature_data.h`, `server/rep/states` (movement, vitals, marker; `creature_scope`), `server/http/creature_commands.cpp`, `tools/world creatures`, `tools/gamedata/creatures.sh`, `tools/research/creature_actions.py`, test cases UT2 and UT3 |
+| The end of an action and the idle record, the record of a timed action in each state, the reaction to a hit (the rule of the action lists, the power, the length, the hit stun, the limit), the push of a hit (user test 2) | Protocol notes 4.14 and 4.26, `world/creatures.h` (`Creatures::rest`, `hurt`, `reaction_allowed`, `reaction_length`), `world/hit_reaction.h`, `world/entity.h` (`Creature::idle`, `hitStunUntil`, `reactionChain`, `reactionLimitUntil`), `gamedata/creature_data.h` (`CreatureSlice::idleAction`, `reactionLengths`), `gamedata/combat_tables.h` (`DamageReaction`), `server/rep/states/movement_state.cpp`, test cases UX2 to UX6, UX8, UX9 |
 | The creature data of the whole world: which entries are in, which slices are out, the spawn action of a slice, the picture check of the slices | Protocol notes 4.14, `tools/gamedata/creature_data.py`, `tools/gamedata/creature_slices.json`, `tools/research/creature_tour.py` |
 | The status effects of an ability on a creature: the stun, the root, the slow, the weaken, the knockdown and the stagger, the status state (the icons at the name plate) | Protocol notes 4.22, [Abilities](abilities.md), `world/creatures.h` (`Creatures::apply_effect`, `knock`), `world/entity.h` (`CreatureEffect`, `Creature::held`, `rooted`, `speed_factor`, `damage_factor`), `server/rep/states/status_state.cpp`, `tools/world creature effect`, test cases AB6 to AB8 |
 | The pull and the push of a hit (stage 3.3b-S4) | [Forced movement](forced-movement.md), `world/forced_motion.h`, `Creatures::impact`, test cases FM2 to FM8 |
@@ -28,14 +29,52 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   and removes it (the behavior of the creatures, `world/behavior.h`, is a part of it). The health 0 is the death: the creature gets the dead mark and the death
   action of its slice, and its entity stays in the world (the body). A dead creature does
   not get health again. Damage goes through the same system (`Creatures::hurt`): a creature
-  that lives after it plays the action `Reaction` of its slice, which has an end 1.5 s later
-  (the creature then has no action of the server, and its observers get no record for it
-  until its next movement state, which has the scope fields with no record). A creature
+  that lives after it plays the action `Reaction` of its slice by the reaction rule below (user test 2), and at its end its
+  observers get the idle record of the slice. A creature
   that plays an attack plays no reaction, and a step of a way ends a reaction. The creature gets the character that
   hurt it as its target (`Creatures::hurt` has the attacker). A creature on its way back is
   immune for each source: a hit, the health command, and the kill command do not lower its
   health (`Creatures::set_health` gives `CreatureError::immune`; a health that goes up is not a
   damage; test case RP7).
+- The reaction to a hit (user test 2, UT2-9; game data: the action `Reaction` of `baseai_reaction.actionlist` and its reaction
+  table `BaseAI_ReactionTableHarness`; protocol notes 4.14). `Combat::strike` gives `Creatures::hurt` the reaction cells of the
+  damage row (`hit_reaction`: NoReaction, PowerLevel_AI, HitStun_AI; a blank "_AI" cell takes the normal cell). The rules and the
+  source of each one:
+  - No reaction (game data): a tick of a damage over time (no damage row), a row with NoReaction, a Boss type (Raid10+, Raid20+,
+    Boss, Boss+, Boss-, EliteBoss). A light attack (and an ability of a power below 1) plays one only on the types Solo, Solo-,
+    Solo_StarterBeach, Solo-_StarterBeach; a heavy attack also on Solo+, Solo+_StarterBeach, Named_Solo, Named_Solo+; an ability of a
+    power of 1 or more on each type that is not a boss. The creature type is the type of the kind (`CreatureKind::creatureType`).
+  - The rules of the backend from before (decisions of stage 3.2a and 3.3a): no reaction while an attack, a shot, a cast, or a status
+    action plays (the grit of the action list: an attack of a creature of the backend always has grit), and none while a stun or a
+    knockdown holds the creature.
+  - The fragment (game data, the reaction table): power 0 and 1 play `r_R1_F`, power 2 to 4 `r_R2_F` to `r_R4_F`, power 5 `r_R4_F`
+    (its fragment `r_R4_F_Overhead` is in no slice of the data). `r_R0_F` is the fragment of the additive table. The backend plays
+    the fragment of the front (the table has one for each side: open).
+  - The length (game data, UT2-7): the length of that fragment in the slice (`CreatureSlice::reactionLengths`: its end blend, else the
+    end of its animation); the action ends at IfFragmentDone. With no length: `Creatures::kReactionTime` (1.5 s).
+  - The hit stun (a decision of an agent: the unit of HitStun_AI is not proved; frames of 1/30 s, as the other frame values of the
+    data): HitStun_AI frames from the hit (`Creature::hitStunUntil`; 18 frames, 0.6 s, for a light arrow); in it the behavior does not
+    step, turn, or attack, and the reaction plays (before, the next step ended it after 200 ms at most).
+  - The limit (game data: Chained_Reaction_Count 3, the status AI_Reaction_Limiter of 2 s, the tag ReactionLimiter_Active): the third
+    chained reaction of a Solo type (of a heavy attack for a Solo+ or a named type), or the first one of DungeonMiniBoss, Dungeon+,
+    Elite+, EliteMiniBoss, CatacombsMiniBoss, starts the limit until 2 s after its end; in it a light or heavy attack plays no reaction
+    (`Creature::reactionLimitUntil`). A reaction is chained when it starts while the reaction before it plays (a decision of an agent:
+    the count is a value of the behavior tree, which is not in the game files).
+  - The push of the impact of the row is an activity of the reaction, or of the action Pushable (0.4 s, game data) for a row with
+    NoReaction: a hit with neither moves nothing ([Forced movement](forced-movement.md)).
+- The end of an action (user test 2, UT2-2; client code 0x2A5D630, 0x6D899DD, 0x4838EE0, 0x2A2BC20; protocol notes 4.14). The client
+  does not end an action of an action list by itself (NoAutoBlendOut): the body keeps the last pose. And the scope fields with no
+  record make the client end its own idle at each tick while states come. Thus the end of an action of the server with an end, the end
+  of a walk (`Creatures::stop`, also at the anchor), and the end of a stun give the creature the idle record of its slice
+  (`Creatures::rest`, `Creature::idle`: the action `Idle`, `CreatureSlice::idleAction`, one record with a new start count, its
+  fragment loops), and each observer gets its movement state. A later state (a turn) has no scope fields: the client keeps the idle. A
+  session that observes the creature later gets the idle record in its first record. A slice with no action `Idle` keeps the rule from
+  before (no state at the end of an action; the fields with no record at a stop). An action and a step clear the idle record.
+- The record of a timed action (user test 2, UT2-3; client code 0x48709A0, 0x2A222E0, 0x2A2ACD0, 0x2A2BC20 with the constant -0.5 at
+  0x7F4016C; protocol notes 4.14): while a one-shot action of the server with an end plays (a reaction, a knockdown, an attack, an area
+  attack, a status action, a timed task), each movement state has its record again, with the same start count and the time of the
+  state. Before, the push of a heavy arrow (a state each 50 ms) made the client start the reaction again at each half of its length
+  (three reactions of a Cleric for one arrow). The locomotion, the idle record, and the actions with no end keep one record.
 - The target bits (stage 3.3b-M2b, client code, protocol notes 4.34): each movement state of a creature has `dataBits` 0x03. Bit 0
   makes the creature a camera lock target of the client, bit 1 a homing target (the Homing clips of the abilities of the players
   turn the character to it). With 0 the client finds no target. Each creature slice of the data has `m_notTargetableOnInit`
@@ -160,7 +199,8 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   creature (`Creature::held`), a hit starts no reaction; a hit ends a stun whose row has
   `StopOnHitCount`. The world ends each effect at its time at the start of a tick
   (`Creatures::end_effects`): it looks only at the creatures with an effect. At the end of
-  a stun the next movement state has the scope fields with no record. The behavior obeys
+  a stun the next movement state has the idle record of the slice (user test 2; a slice with no idle action: the scope fields with
+  no record). The behavior obeys
   each effect ([Creature behavior](creature-behavior.md)), and the creature damage obeys a
   weaken (`Creature::damage_factor`, `Combat::creature_damage`).
 - The record of a creature has the metadata state (the asset of its slice), the movement
@@ -270,7 +310,11 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
   a slice of the list `spawnAction` has no action `Spawn` with a fragment. Each slice has the
   member `reactions` (stage 3.3a): the fragment indexes of `r_R0_F` to `r_R4_F` of its
   action `Reaction` (-1: the slice has no such fragment). With a file from before, a
-  knockdown plays the fragment of the hit reaction. From stage 3.3b-S5 each slice also has `behind` and `head` (the hit
+  knockdown plays the fragment of the hit reaction. From user test 2 each slice also has `reactionLengths` (the length of
+  the variant of each reaction fragment for the tags of its weapons and its default tags: the end blend, else the end of its
+  animation from the CAF file; -1: not known), and the length of an attack with no end blend is the end of its animation (else its
+  last contact plus 0.9 s): the counts `attackLengths` and `reactionLengths` (the supported build: 560 attacks from an end blend,
+  1,411 from the animation, 338 guessed; 2,144 reaction fragments with a length, 621 with none). From stage 3.3b-S5 each slice also has `behind` and `head` (the hit
   facts), and the counts `slicesWithBehindAngles`, `slicesWithHead`, `headsWithNoSkeleton` (140: the skeleton of the
   character is not in the game copy), and `headsWithOtherShape` (3: a shape with no radius). The tool reads the skeletons
   of `objects/characters/`; `tools/gamedata/check_hit_facts_tool.py` checks the reader with made-up sources (test case
@@ -313,6 +357,13 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
 
 ## Traps
 
+- The yaw of `tools/world creature spawn` turns to the west: `--yaw 270` looks east, `--yaw 90` west. A creature that looks away does
+  not see the character (user test 2: a ghost with `--yaw 105` 3 m west of the character took no target for 40 s).
+- The light and the smoke of a ghost change in each frame: a measure of the change between frames does not show a frozen pose. Compare
+  the pose at the same times after the start of an attack (user test 2: `UT2-2-before-after-ghost-attack1-end-side-by-side.png`).
+- An Elite takes no reaction and no push from a light or a heavy attack (the reaction rule): use one as the target of a long test of
+  the attacks of a player (`Ghost_Frozen_65_Elite`), so that it stays in the reach.
+- A slice of the tests with only `Idle_No_Task` has no idle action: its creature keeps the rule from before user test 2.
 - The client keeps the scope fields of a creature: a state with no scope fields after an
   action makes the client start that action again. A new state of a creature must keep
   the rule of `creature_scope` (protocol notes 4.14).

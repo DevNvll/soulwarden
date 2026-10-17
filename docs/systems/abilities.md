@@ -246,10 +246,13 @@ a live test of an ability. The wire contracts are in the protocol notes (section
     from `closedAt`). The close goes to the newest cast of the character and to the cast whose fragment still plays in the sequence (a
     buffered press makes a later cast the newest one). A later press that the server accepted ends the visit of the cast at the start
     of the next fragment (a buffered press: the fragment plays on to the end of its window).
-  - The start of the fragment (`AttackSequences::start_ability`): at rest at the press. In a fragment that plays, at the first
-    step in the next 20 steps at which the action of the ability can start: in an instant window of a transition to it at once,
-    in a buffered window at the end of the window, at the mark CanTransition, or at the end of the fragment. With none, the
-    press is refused (`casting`): the client does not play it. The timed phases of the plan come that much later (`CastPlan::delay`).
+  - The start of the fragment (`AttackSequences::start_ability`; user test 2, UT2-1): at rest at the press. In a fragment that plays
+    only the step of the press counts: an instant window of a transition to the ability that holds the press step starts it at the
+    press, a buffered window that holds it starts it at the end of the window (also a press at the last step of the window), and a
+    press at or after the mark CanTransition or after the end of the fragment starts it at the press. A press before a window, the
+    mark, or the end is refused (`casting`; no cast, no cooldown, no cost): the client does not play it (live check of user test 2:
+    Wrecking Ball at 0.4 s of Shockwave, whose window starts at 0.8 s; the release started it 1033 ms later and ended the fragment
+    that the client played). The timed phases of the plan come that much later (`CastPlan::delay`).
   - The transitions inside an ability have the conditions of the action lists as terms: a learned node, a perk ability, the
     attack input, the block press (`block_press_virtual`, bit 484: the swing of Charge with Unpredictable Strike, live check of
     stage 3.3b-M2), the hits of the cast (IfAbilityNumHits: the exits of Whirlwind with Unending Winds), and the fragment that

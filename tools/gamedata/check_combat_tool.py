@@ -108,19 +108,29 @@ class MadeUpSources:
             light_impact["ImpactDecayRate"] = 1.5
         # The critical, head, and behind cells (stage 3.3b-S5).
         hit_cells = {"CanCrit": False, "NoHeadshot": False, "NoBackstab": False, "DmgCoefHead": 1.3, "DmgCoefCrit": 0.0}
+        # The reaction cells (user test 2): the light row has the values for a creature, the heavy row NoReaction and blank "_AI" cells.
+        light_reaction = {"NoReaction": False, "PowerLevel": 0.0, "HitStun": 15.0, "PowerLevel_AI": 2.0, "HitStun_AI": 23.0}
+        heavy_reaction = {"NoReaction": True, "PowerLevel": 0.0, "HitStun": 25.0, "PowerLevel_AI": None, "HitStun_AI": None}
+        if mode == "part-power":
+            light_reaction["PowerLevel_AI"] = 2.5
+        if mode == "text-flag":
+            light_reaction["NoReaction"] = "maybe"  # A text column: the other row has the text "1".
+            heavy_reaction["NoReaction"] = "1"
         # The light row has a blank CanCrit cell (an ordinary attack), the heavy row an explicit 0 (format 2: null and false;
         # code review of stage 3.3b-S5, finding F2).
         damage = [{"DamageID": "Light", "WeaponCategory": "Sword", "AttackType": "Light", "DamageType": "Slash",
                    "DmgCoef": 1.0, "AddDmg": 0.0, "AttackRuneCharge": 1.105, "HitRuneCharge": 0.27625, **light_impact, **hit_cells,
-                   "CanCrit": None}]
+                   **light_reaction, "CanCrit": None}]
         if mode == "no-impact-column":
             damage[0].pop("ImpactDecayRate_AI")
         if mode == "no-hit-column":
             damage[0].pop("NoBackstab")
+        if mode == "no-reaction-column":
+            damage[0].pop("HitStun_AI")
         if mode != "missing-row":
             damage.append({"DamageID": "Heavy", "WeaponCategory": "Sword", "AttackType": "Heavy",
                            "DamageType": "Slsh" if mode == "unknown-type" else "Slash", "DmgCoef": 1.2, "AddDmg": 0.0,
-                           "AttackRuneCharge": 1.604, "HitRuneCharge": 0.401, **heavy_impact, **hit_cells,
+                           "AttackRuneCharge": 1.604, "HitRuneCharge": 0.401, **heavy_impact, **hit_cells, **heavy_reaction,
                            # The status effects of a row (format 3, stage 3.3b-M2): a list with a comma, only after damage.
                            "StatusEffect": "Test_Root,Test_Slow", "EffectOnlyOnDamage": True})
             damage[0]["StatusEffect"] = ""
@@ -129,6 +139,8 @@ class MadeUpSources:
                 damage[1].pop("ImpactDecayRate_AI")
             if mode == "no-hit-column":
                 damage[1].pop("NoBackstab")
+            if mode == "no-reaction-column":
+                damage[1].pop("HitStun_AI")
         add(tool.DAMAGE_TABLE, tool.DAMAGE_TYPE, damage)
         add("DamageTypes", tool.DAMAGE_TYPE_TYPE, [{"TypeID": "Slash", "IntID": 4, "Category": "Physical"}])
         for attribute in tool.ATTRIBUTE_TABLES:
@@ -194,6 +206,9 @@ CASES = [
     ("one-crit-column", False, "a weapon table with CritChance and no CritDamageMultiplier (stage 3.3b-S5)"),
     ("crit-above-one", False, "a CritChance above 1 (stage 3.3b-S5)"),
     ("no-hit-column", False, "a damage table with no column NoBackstab (stage 3.3b-S5)"),
+    ("no-reaction-column", False, "a damage table with no column HitStun_AI (user test 2)"),
+    ("part-power", False, "a PowerLevel_AI that is not a whole number (user test 2)"),
+    ("text-flag", False, "a NoReaction cell with a text that is not a flag (user test 2)"),
 ]
 
 
@@ -221,7 +236,8 @@ def main() -> int:
                        and tables["impacts"] == [["Light", 0.0, -1.5, 0.0, 0.8, 0.0, -2.0, 0.0, 0.0, True]]
                        and tables["criticals"] == [["Sword", 0.07, 1.3]]
                        and tables["format"] == 3 and tables["rowEffects"] == [["Heavy", ["Test_Root", "Test_Slow"], True]]
-                       and tables["hitRules"] == [["Light", None, False, False, 1.3, 0.0], ["Heavy", False, False, False, 1.3, 0.0]])
+                       and tables["hitRules"] == [["Light", None, False, False, 1.3, 0.0], ["Heavy", False, False, False, 1.3, 0.0]]
+                       and tables["reactions"] == [["Light", False, 0, 15, 2, 23], ["Heavy", True, 0, 25, -1, -1]])
         if correct and mode == "known-absent-row":
             correct = json.loads(target.read_text(encoding="utf-8"))["weapons"][0][9] == ""
         message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""

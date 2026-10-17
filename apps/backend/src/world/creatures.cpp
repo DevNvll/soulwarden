@@ -9,6 +9,39 @@
 namespace soulwarden::backend::world {
 namespace {
 
+// The creature types of the reaction rule (the action Reaction of baseai_reaction.actionlist, game data; user test 2).
+/** A light attack and an ability of a power below 1 play a reaction on these types. */
+constexpr std::string_view kLightReactionTypes[] = {"Solo", "Solo-", "Solo_StarterBeach", "Solo-_StarterBeach"};
+/** A heavy attack plays a reaction on these types. */
+constexpr std::string_view kHeavyReactionTypes[] = {"Solo",       "Solo-",      "Solo+",        "Solo_StarterBeach", "Solo-_StarterBeach",
+                                                    "Solo+_StarterBeach", "Named_Solo", "Named_Solo+"};
+/** These types play no reaction while the reaction limit holds, and their first reaction starts it. */
+constexpr std::string_view kLimitedReactionTypes[] = {"DungeonMiniBoss", "Dungeon+", "Elite+", "EliteMiniBoss", "CatacombsMiniBoss"};
+/** These types play no reaction. */
+constexpr std::string_view kBossReactionTypes[] = {"Raid10+", "Raid20+", "Boss", "Boss+", "Boss-", "EliteBoss"};
+/** The chained reactions of a Solo type that start the reaction limit (Chained_Reaction_Count 3.0). */
+constexpr std::uint32_t kReactionChain = 3;
+/** The limit after the end of the reaction that started it (the status AI_Reaction_Limiter: BaseDuration 2.0). */
+constexpr std::chrono::milliseconds kReactionLimit{2000};
+
+/**
+ * @return The reaction fragment of a power level of a hit (the table BaseAI_ReactionTableHarness of the action lists, game data): power 0
+ *         and 1 play r_R1_F, power 2 to 4 their own fragment, and a larger power r_R4_F (power 5 has r_R4_F_Overhead, which the slices
+ *         of the data do not name). r_R0_F is the fragment of the additive table (the action ReactionAdditive).
+ */
+std::size_t reaction_level(std::uint32_t power) {
+    return power <= 1 ? 1 : std::min<std::size_t>(power, 4);
+}
+
+template <std::size_t N>
+bool type_in(const std::string& type, const std::string_view (&list)[N]) {
+    return std::find(std::begin(list), std::end(list), type) != std::end(list);
+}
+
+} // namespace
+
+namespace {
+
 /**
  * @return The slice of a kind for one creature. An alias with more than one slice gives each
  *         slice its part of the creatures (the percent values of the alias): the selector is a
@@ -247,8 +280,10 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
             entity->creature.moving.reset();
             m_world.touch(entity->id, ComponentKey::movement);
         }
-        // A dead creature does not walk (start_action ended the locomotion for a death action).
+        // A dead creature does not walk (start_action ended the locomotion for a death action), and it has no idle record and no hit stun.
         entity->creature.moving.reset();
+        entity->creature.idle.reset();
+        entity->creature.hitStunUntil.reset();
         // Its effects end (RemoveOnDeath of the rows; stage 3.4f-D: its heal has no tick more, its buff ends).
         sweep(*entity);
     }
@@ -257,7 +292,74 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
     return result;
 }
 
-CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, EntityId threat) {
+HitReaction hit_reaction(const gamedata::DamageRow& row) {
+    HitReaction reaction;
+    if (!row.reaction) {
+        return reaction; // A file of a tool from before user test 2: the reaction of stage 3.2a.
+    }
+    reaction.ruled = true;
+    reaction.plays = !row.reaction->none;
+    reaction.pushable = row.reaction->none;
+    reaction.power = static_cast<std::uint32_t>(std::max(row.reaction->power_on_creature(), 0));
+    reaction.stunFrames = static_cast<std::uint32_t>(std::max(row.reaction->stun_on_creature(), 0));
+    reaction.attack = row.attackType == "Light" ? HitReaction::Attack::light
+                      : row.attackType == "Heavy" ? HitReaction::Attack::heavy
+                                                  : HitReaction::Attack::other;
+    return reaction;
+}
+
+bool Creatures::reaction_allowed(const Entity& entity, const HitReaction& reaction, WorldClock::time_point now) const {
+    if (!reaction.ruled) {
+        return true; // The reaction of stage 3.2a (a command, a file of an older tool).
+    }
+    // The activation condition of the action Reaction (baseai_reaction.actionlist, game data), the parts that the backend has: the attack
+    // type of the row, its power level, the creature type of the kind, and the reaction limit. The grit of an attack, a stun, and a
+    // knockdown are the conditions of the caller.
+    const std::string& type = entity.creature.kind->creatureType;
+    if (type_in(type, kBossReactionTypes)) {
+        return false;
+    }
+    const bool limited = entity.creature.reactionLimitUntil && now < *entity.creature.reactionLimitUntil;
+    if (limited && type_in(type, kLimitedReactionTypes)) {
+        return false;
+    }
+    const std::uint32_t power = reaction.power.value_or(0);
+    switch (reaction.attack) {
+    case HitReaction::Attack::light:
+        return !limited && type_in(type, kLightReactionTypes);
+    case HitReaction::Attack::heavy:
+        return !limited && type_in(type, kHeavyReactionTypes);
+    case HitReaction::Attack::other:
+        // An ability (each type that is not Light or Heavy) of power 1 or more: each creature type that is not a boss; of a power below 1:
+        // the rule of a light attack.
+        return power >= 1 || (!limited && type_in(type, kLightReactionTypes));
+    }
+    return false;
+}
+
+std::chrono::milliseconds Creatures::reaction_length(const Entity& entity, const HitReaction& reaction) const {
+    const gamedata::CreatureSlice& body = *entity.creature.body;
+    std::optional<std::size_t> level;
+    if (reaction.power) {
+        level = reaction_level(*reaction.power);
+    } else if (body.hitAction) {
+        // The fragment of the action Reaction (r_R2_F of each slice of the data): the power whose fragment it is.
+        const std::int32_t fragment = body.actions[*body.hitAction].fragmentIndex;
+        for (std::size_t power = 0; power < body.reactions.size() && !level; ++power) {
+            if (body.reactions[power] >= 0 && body.reactions[power] == fragment) {
+                level = power;
+            }
+        }
+    }
+    if (level && body.reactionLengths[*level] > 0.0F) {
+        return std::chrono::milliseconds(std::max<long long>(std::lround(body.reactionLengths[*level] * 1000.0F), 1));
+    }
+    return kReactionTime;
+}
+
+CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, EntityId threat, const HitReaction& reaction,
+                               std::optional<std::chrono::milliseconds>* push) {
+    std::optional<std::chrono::milliseconds> pushFor;
     CreatureResult result;
     Entity* entity = find(id);
     if (entity == nullptr) {
@@ -301,14 +403,68 @@ CreatureResult Creatures::hurt(EntityId id, float damage, EntityId attacker, Ent
         // A creature that plays an attack does not stop it for a hit: the reaction would take
         // the action of the attack away, and a player that hits fast would stop each attack. A
         // creature that an effect holds keeps the action of the effect (the stun, the knockdown).
-        if (body.hitAction && !entity->creature.mind.attack && !entity->creature.mind.shooting
-            && !entity->creature.held(m_world.clock().now())) {
-            start_action(*entity, *body.hitAction, kReactionTime);
+        // User test 2 (UT2-9): the reaction of the damage row of the hit, by the rule of the action Reaction of the action lists (game data,
+        // reaction_allowed): no reaction for a tick of a damage over time and for NoReaction, the fragment r_R{power}_F of the slice for
+        // PowerLevel_AI, the length of that fragment (UT2-7; the action ends at IfFragmentDone), and a hit stun of HitStun_AI frames (the
+        // behavior waits for it: the reaction plays, and a step does not end it at once). The push of the impact of the row is an activity of
+        // the reaction (or of the action Pushable for a row with NoReaction): with neither, the hit moves nothing.
+        const WorldClock::time_point now = m_world.clock().now();
+        const bool canReact = body.hitAction && !entity->creature.mind.attack && !entity->creature.mind.shooting && !entity->creature.held(now);
+        if (reaction.plays && canReact && reaction_allowed(*entity, reaction, now)) {
+            const std::chrono::milliseconds length = reaction_length(*entity, reaction);
+            // A reaction that starts while the reaction before it plays is the next one of the chain.
+            Creature& creature = entity->creature;
+            const bool chained = creature.action && creature.action->action == *body.hitAction && creature.action->ends && now < *creature.action->ends;
+            creature.reactionChain = chained ? creature.reactionChain + 1 : 1;
+            if (start_action(*entity, *body.hitAction, length)) {
+                ++m_counts.reactions;
+                pushFor = length;
+                if (reaction.power) {
+                    const std::size_t level = reaction_level(*reaction.power);
+                    if (body.reactions[level] >= 0) {
+                        creature.action->fragment = static_cast<std::uint32_t>(body.reactions[level]);
+                        ++m_counts.reactionsOfPower;
+                    }
+                }
+                const auto stun = std::chrono::milliseconds(static_cast<long long>(reaction.stunFrames) * 1000 / 30);
+                if (stun.count() > 0) {
+                    creature.hitStunUntil = std::max(creature.hitStunUntil.value_or(now), now + stun);
+                    ++m_counts.hitStuns;
+                }
+                // The limit of the chain (the action Reaction, game data): the third chained reaction of a Solo type (of a heavy attack for a
+                // Solo+ or a named type), or the first one of an elite type, holds the limit for the reaction and 2 s after it
+                // (AI_Reaction_Limiter, duration 2.0).
+                const std::string& type = creature.kind->creatureType;
+                const bool solo = type_in(type, kLightReactionTypes);
+                const bool soloPlus = !solo && type_in(type, kHeavyReactionTypes);
+                if (reaction.ruled
+                    && ((creature.reactionChain >= kReactionChain && (solo || (soloPlus && reaction.attack == HitReaction::Attack::heavy)))
+                        || (creature.reactionChain >= 1 && type_in(type, kLimitedReactionTypes)))) {
+                    creature.reactionLimitUntil = now + length + kReactionLimit;
+                    creature.reactionChain = 0;
+                    ++m_counts.reactionLimits;
+                }
+                log::write("world: reaction: creature %016llx (%s) plays the reaction of %s (fragment %u) for %.2f s, a hit stun of %.2f s%s",
+                           static_cast<unsigned long long>(entity->id), creature.kind->id.c_str(),
+                           reaction.power ? ("power " + std::to_string(*reaction.power)).c_str() : "the action Reaction", creature.action->fragment,
+                           std::chrono::duration<double>(length).count(), std::chrono::duration<double>(stun).count(),
+                           creature.reactionLimitUntil && *creature.reactionLimitUntil > now ? ", the reaction limit holds" : "");
+            }
+        } else {
+            ++m_counts.hitsWithNoReaction;
+            if (!reaction.ruled) {
+                pushFor = reaction_length(*entity, reaction); // The rule of stage 3.3b-S4: each hit pushes (a command).
+            } else if (reaction.pushable && !entity->creature.mind.attack && !entity->creature.mind.shooting) {
+                pushFor = kPushableTime; // The action Pushable: a row with NoReaction, no grit.
+            }
         }
         // The creature takes the attacker as its target, or the threat of the hit (stage 3.3b-S2b: the Pylon that shot it).
         if (threat != 0 || attacker != 0) {
             m_behavior.hurt_by(*entity, threat != 0 ? threat : attacker);
         }
+    }
+    if (push != nullptr) {
+        *push = pushFor;
     }
     return result;
 }
@@ -362,8 +518,9 @@ bool Creatures::start_action(Entity& entity, std::uint32_t action, std::optional
     }
     started.changed = m_world.touch(entity.id, ComponentKey::movement);
     entity.creature.action = started;
-    // The action of the server replaces the locomotion: an attack and a reaction stop the walk.
+    // The action of the server replaces the locomotion: an attack and a reaction stop the walk. Its end gives a new idle record (rest).
     entity.creature.moving.reset();
+    entity.creature.idle.reset();
     return true;
 }
 
@@ -374,6 +531,8 @@ void Creatures::move(Entity& entity, const state::WorldPosition& position, Gait 
         return;
     }
     Creature& creature = entity.creature;
+    // A step replaces the idle record: the end of the walk gives a new one (stop, rest).
+    creature.idle.reset();
     // The step replaces an action of the server that plays (a reaction to a hit, the action of
     // a command): a creature that changes its place plays its locomotion, not a different
     // action (user test 1: a creature that moved in the pose of an attack). The behavior does
@@ -413,7 +572,27 @@ void Creatures::stop(Entity& entity) {
         return;
     }
     entity.creature.moving.reset();
-    m_world.touch(entity.id, ComponentKey::movement);
+    // The end of the walk (user test 2, UT2-2): the idle record, not the scope fields with no record.
+    rest(entity);
+}
+
+void Creatures::rest(Entity& entity) {
+    Creature& creature = entity.creature;
+    const Revision revision = m_world.touch(entity.id, ComponentKey::movement);
+    if (creature.dead || !creature.body->idleAction || creature.body->actions[*creature.body->idleAction].fragmentIndex < 0) {
+        creature.idle.reset(); // No idle action: the scope fields with no record (the rule before user test 2).
+        return;
+    }
+    // One record with a new start count for each end (the client starts the looping idle fragment from it), and the time of now.
+    CreatureAction idle;
+    idle.action = *creature.body->idleAction;
+    idle.fragment = static_cast<std::uint32_t>(creature.body->actions[idle.action].fragmentIndex);
+    idle.generation = static_cast<std::uint16_t>(++creature.actions);
+    idle.started = m_world.clock().now();
+    idle.tags = creature.body->tags;
+    idle.changed = revision;
+    creature.idle = idle;
+    ++m_counts.idleRecords;
 }
 
 void Creatures::moved(Entity& entity) {
@@ -470,7 +649,9 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
             start_action(entity, *creature.body->stunAction);
         } else {
             creature.moving.reset();
-            m_world.touch(entity.id, ComponentKey::movement);
+            creature.action.reset();
+            m_acting.erase(entity.id);
+            rest(entity);
         }
     }
     if (effect.shown) {
@@ -513,7 +694,7 @@ bool Creatures::knock(Entity& entity, unsigned power, std::chrono::milliseconds 
     } else if (longer && !creature.body->hitAction && creature.action) {
         creature.action.reset();
         m_acting.erase(entity.id);
-        m_world.touch(entity.id, ComponentKey::movement);
+        rest(entity);
     }
     log::write("world: effect: creature %016llx (%s) has a reaction of power %u for %.1f s (it does not move and does not attack)",
                static_cast<unsigned long long>(entity.id),
@@ -526,10 +707,12 @@ bool Creatures::knock(Entity& entity, unsigned power, std::chrono::milliseconds 
 void Creatures::end_stun(Entity& entity) {
     Creature& creature = entity.creature;
     if (creature.body->stunAction && creature.action && creature.action->action == *creature.body->stunAction) {
-        // The client keeps the scope fields of a creature: the next movement state has the
-        // fields with no record, and the client plays the idle action (creature_scope).
+        // The client keeps the scope fields of a creature: the next movement state has the idle record (user test 2, UT2-2), and the
+        // client plays the idle action (creature_scope).
         creature.action.reset();
         m_acting.erase(entity.id);
+        rest(entity);
+        return;
     }
     m_world.touch(entity.id, ComponentKey::movement);
 }
@@ -780,25 +963,30 @@ void Creatures::end_actions() {
             continue;
         }
         if (entity != nullptr && entity->creature.action && entity->creature.action->ends) {
-            // No mark of the movement state: the client of each observer ended the action
-            // itself and plays its idle action. The next movement state of a session has the
-            // scope fields with no record (the key of the scope of the session changed), so
-            // that the client does not start the action again. A session that observes the
-            // creature from now on gets a record with no action of this kind. The spawn action
-            // of a slice that needs it is not here: it is a value of the creature
-            // (Creature::spawnAction), and the end of an action does not change it, also for a
-            // creature that died while its reaction played.
+            // User test 2 (UT2-2): the client does not end an action of an action list by itself (NoAutoBlendOut; client code 0x2A5D630,
+            // 0x6D899DD): the body keeps the last pose of the action until a new record. Each observer gets the idle record of the slice
+            // now (rest: a new start count), and a later movement state keeps a valid record (the scope fields with no record make the
+            // client end its own idle at each tick, 0x2A2BC20). A session that observes the creature from now on gets the idle record.
+            // The spawn action of a slice that needs it is not here: it is a value of the creature (Creature::spawnAction), and the end of
+            // an action does not change it, also for a creature that died while its reaction played.
             entity->creature.action.reset();
             // A stun that still holds the creature after a shorter knockdown: its action "Stun" comes back
             // (code review of stage 3.3a, finding F7), with a mark of the movement state, after this loop.
             const Creature& creature = entity->creature;
+            bool stunHolds = false;
             if (!creature.dead && creature.body->stunAction) {
                 for (const CreatureEffect& effect : creature.effects) {
                     if (effect.stun && now < effect.ends) {
                         stunned.push_back(entity->id);
+                        stunHolds = true;
                         break;
                     }
                 }
+            }
+            // A slice with no idle action keeps the rule from before user test 2: no mark (the next state has the scope fields with no
+            // record).
+            if (!creature.dead && !stunHolds && creature.body->idleAction) {
+                rest(*entity);
             }
         }
         acting = m_acting.erase(acting);

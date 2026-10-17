@@ -459,6 +459,20 @@ struct CreatureSlice {
      */
     std::array<std::int32_t, 5> reactions{-1, -1, -1, -1, -1};
     /**
+     * The length of the variant of each reaction fragment of the slice, in seconds (user test 2, the member `reactionLengths` of the
+     * tool): its end blend, else the end of its animation (the animation file). The reaction to a hit and its push last this time
+     * (protocol notes 4.26: the client pushes a creature to the end of the reaction fragment). Below 0: not known (the reaction keeps
+     * Creatures::kReactionTime). A file of a tool from before user test 2 has none.
+     */
+    std::array<float, 5> reactionLengths{-1.0F, -1.0F, -1.0F, -1.0F, -1.0F};
+    /**
+     * Index of the action "Idle" of the slice (user test 2, UT2-2): the action that the client of an observer selects itself when it gets
+     * no state of the server (client code 0x4838EE0: the action whose name hash is the CRC-32 of "idle"). The server gives a creature its
+     * record at the end of an action of the server, at the end of a walk, and at the end of a stun: the client then plays the idle and
+     * does not keep the last pose of the action. No value: the slice has none with a fragment (the scope fields with no record).
+     */
+    std::optional<std::uint32_t> idleAction;
+    /**
      * Slot of the status effect component of the slice (the component "StatusEffects", state
      * type 4236): the creature state of its status effects goes there (stage 3.3a). 0: none.
      */

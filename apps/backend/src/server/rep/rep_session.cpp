@@ -23,6 +23,9 @@
 namespace soulwarden::backend::server::rep {
 namespace {
 
+/** The most log lines of a session for the refused claims with no strike and for the presses refused with "casting" (user test 2, UT2-13). */
+constexpr std::uint32_t kRefusalLines = 32;
+
 constexpr std::size_t kRouteSize = 16;
 /** Main open-world level of the supported build. */
 constexpr const char* kLevelName = "newworld_vitaeeterna";
@@ -1509,7 +1512,15 @@ void RepSession::press_ability(const ClientInput& input, const InputStep& step) 
     const world::CastVerdict verdict = m_world.abilities().press(m_id, press);
     ++m_abilityPresses;
     const auto cause = static_cast<std::size_t>(verdict);
-    if (verdict != world::CastVerdict::accepted && !m_castVerdictLogged[cause]) {
+    if (verdict == world::CastVerdict::casting && m_castingLines < kRefusalLines) {
+        // Each press that the fragment that plays does not take, with the sequence (user test 2, UT2-13; at most kRefusalLines).
+        ++m_castingLines;
+        m_castVerdictLogged[cause] = true;
+        log::write("rep: ability press refused (%s): key %u, input %u; %s (%u of at most %u lines)", world::cast_verdict_text(verdict),
+                   static_cast<unsigned>(step.abilityKey), static_cast<unsigned>(step.sequence),
+                   m_world.combat().sequences().describe(m_characterId, step.sequence, m_world.clock().now()).c_str(), m_castingLines,
+                   kRefusalLines);
+    } else if (verdict != world::CastVerdict::accepted && !m_castVerdictLogged[cause]) {
         m_castVerdictLogged[cause] = true;
         log::write("rep: ability press refused (%s): key %u, input %u (the first press of the session with this cause)",
                    world::cast_verdict_text(verdict),
@@ -1673,6 +1684,18 @@ void RepSession::claim_hit(const InputStep& step, const InputContact& contact) {
         return;
     }
     const auto cause = static_cast<std::size_t>(result.verdict);
+    if (result.verdict == world::HitVerdict::noStrike && m_noStrikeLines < kRefusalLines) {
+        // Each claim with no strike, with each visit of the sequence (user test 2, UT2-13: the log of the release had only the first
+        // one, and the newest attack input was often not the press of the swing that hit; at most kRefusalLines).
+        ++m_noStrikeLines;
+        m_hitVerdictLogged[cause] = true;
+        log::write("rep: hit claim refused (%s): input %u, target %016llx, point %.3f %.3f %.3f; %s (%u of at most %u lines)",
+                   world::hit_verdict_text(result.verdict), static_cast<unsigned>(step.sequence),
+                   static_cast<unsigned long long>(contact.entity), contact.point[0], contact.point[1], contact.point[2],
+                   m_world.combat().sequences().describe(m_characterId, step.sequence, m_world.clock().now()).c_str(), m_noStrikeLines,
+                   kRefusalLines);
+        return;
+    }
     if (!m_hitVerdictLogged[cause]) {
         m_hitVerdictLogged[cause] = true;
         const world::AttackTrack::Press* attack = m_attack.newest();

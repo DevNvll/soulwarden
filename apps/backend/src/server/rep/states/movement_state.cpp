@@ -32,7 +32,9 @@
 //          scopeData, scopeInfoBlob, and scopeTimeBlobEx (protocol notes 4.14 and 4.17). No
 //          later time anchor. For an action of the server (the death action, an attack, a
 //          reaction) the scope fields have its record, and the four bytes of the time of scope
-//          0 the time of the action. Each other state has the scope fields with no record: the
+//          0 the time of the action (a timed action in each state while it plays, user test 2).
+//          After the end of an action, a walk, or a stun the state has the idle record of the
+//          slice (user test 2). Each other state has the scope fields with no record: the
 //          client keeps the fields of a state that a later state does not have, and it starts
 //          the action of a kept record again each time that it applies a state after the end
 //          of that action (live proof, user test 1: a Reaver that walks plays its spawn action
@@ -243,6 +245,9 @@ CreatureScope creature_scope(const world::Creature& creature, bool first) {
         scope.action = &*creature.action;
     } else if (creature.moving) {
         scope.action = &*creature.moving;
+    } else if (creature.idle && !creature.dead) {
+        // The idle record of the end of an action, a walk, or a stun (user test 2, UT2-2; Creatures::rest).
+        scope.action = &*creature.idle;
     }
     scope.key = scope.action != nullptr ? 0x10000U | scope.action->generation : kScopeNone;
     return scope;
@@ -264,7 +269,17 @@ hub::Bytes encode_creature_movement_state(const world::Entity& entity, const wor
     // changed for the session: the client keeps its action and plays it with no jump.
     const world::Creature& creature = entity.creature;
     const CreatureScope scope = creature_scope(creature, since == 0);
-    if (since != 0 && (keepScope || (sent != kScopeUnknown && scope.key == sent))) {
+    // A one-shot action of the server with an end (the reaction to a hit, a knockdown, an attack, an area cast, a status action, a timed
+    // task) goes out again in each movement state while it plays: the same start count and the time of the state (user test 2, UT2-3). The
+    // client builds the target state of a remote creature from the buffered states and interpolates the time of a record between them
+    // (client code 0x48709A0, 0x2A222E0); a state with no scope fields keeps the record with its old time (copy 0x2A2ACD0), and at each apply
+    // the client starts a one-shot fragment again when the time of its record is more than half the length of the fragment behind its own
+    // time (0x2A2BC20, the test at 0x2A2C28D with the constant -0.5 at 0x7F4016C). A push sends a state each 50 ms: one arrow gave three
+    // reactions. The locomotion, the idle record, and the actions with no end keep one record (user test 1: a looping fragment is not
+    // started again).
+    const bool timed = scope.action != nullptr && !scope.fromStart && creature.action && scope.action == &*creature.action
+                       && creature.action->ends.has_value();
+    if (since != 0 && (keepScope || (sent != kScopeUnknown && scope.key == sent && !timed))) {
         write_time_anchor(state, clock);
         return state.finish();
     }

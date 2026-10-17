@@ -65,6 +65,27 @@ struct DamageImpact {
     bool fromAttacker{false};
 };
 
+/**
+ * The reaction of a hit of a damage row (user test 2, the member `reactions` of the tool): the columns NoReaction, PowerLevel, HitStun, and
+ * the two columns with "_AI" for a target that is a creature (-1: a blank cell, the target takes the normal value).
+ */
+struct DamageReaction {
+    bool none{false};
+    std::int32_t power{0};
+    std::int32_t hitStun{0};
+    std::int32_t creaturePower{-1};
+    std::int32_t creatureHitStun{-1};
+
+    /** @return The power level of a hit on a creature: the "_AI" value when the row has one (the rule of the "_AI" impact values). */
+    [[nodiscard]] std::int32_t power_on_creature() const {
+        return creaturePower >= 0 ? creaturePower : power;
+    }
+    /** @return The hit stun of a hit on a creature, in frames of 1/30 s (the "_AI" value when the row has one). */
+    [[nodiscard]] std::int32_t stun_on_creature() const {
+        return creatureHitStun >= 0 ? creatureHitStun : hitStun;
+    }
+};
+
 /** One row of the damage table of the weapons of a player: one attack. */
 struct DamageRow {
     std::string id;
@@ -103,6 +124,8 @@ struct DamageRow {
      */
     std::vector<std::string> effects{};
     bool effectOnlyOnDamage{false};
+    /** The reaction of a hit (user test 2). No value: a file of a tool from before user test 2 (the reaction of stage 3.2a). */
+    std::optional<DamageReaction> reaction{};
 };
 
 /** One row of the weapon table. */
