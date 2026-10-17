@@ -68,6 +68,12 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   character ids that observe it; the interest of a session skips the object when the list does not have the character of the
   session (MP-3: no record, no state). Its LootDrop state (type 2027, `ObjectBody::lootDropSlot`) is in the object codecs. The player
   codecs have the selected Container (slot 76, type 1755) and the GlobalStorage map (slot 77, type 2938), both owner only.
+- A gathering node with a state of the server (stage 3.6a, [Gathering](gathering.md)): a capital node is the object of its placement
+  (`Interactions::level_entity`), a natural node an object that the interaction base makes one time with the managed actor of the
+  node (its offline id G; `Interactions::external_entity`), and a creature body the creature. The node state (type 12) is in the
+  object codecs (`ObjectBody::nodeSlot`, `nodeState`) and in the creature codecs (`Creature::skinSlot`, `skinState`): a fragment only
+  when the slot is not 0, the same for the owner view and the observer view (the state is shared). The player codecs have the
+  Gathering state (type 81, slot 36) of stage 3.5b.1, owner only.
 - A projectile of a creature (stage 3.4f-A, `EntityKind::projectile`, [Projectiles](projectiles.md)): only the projectile system makes
   it (`World::make_projectile`: an actor of the allocator) and removes it (`World::remove_projectile`); it moves with its flight
   (`World::place_projectile`: the position index, no state change). Its codecs (`projectile_codecs`): the metadata state of the

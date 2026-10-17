@@ -172,6 +172,8 @@ void WorldTime::start() {
     }
     m_started = true;
     m_reference = m_world.clock().now();
+    m_runStart = m_reference;
+    m_runBase = m_world.store().world_run_time(kWorldTimeKey).value_or(0);
     const std::uint64_t length = day_cycle::length_ns(m_cycle);
     const std::optional<std::uint64_t> stored = m_world.store().world_time(kWorldTimeKey);
     if (stored && *stored < length) {
@@ -202,6 +204,12 @@ std::uint64_t WorldTime::position() {
     const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(m_world.clock().now() - m_reference).count();
     const std::uint64_t length = day_cycle::length_ns(m_cycle);
     return (m_base + static_cast<std::uint64_t>(std::max<std::int64_t>(elapsed, 0)) % length) % length;
+}
+
+std::uint64_t WorldTime::run_ns() {
+    start();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(m_world.clock().now() - m_runStart).count();
+    return m_runBase + static_cast<std::uint64_t>(std::max<std::int64_t>(elapsed, 0));
 }
 
 DayPhase WorldTime::phase() {
@@ -257,7 +265,7 @@ TimeSetError WorldTime::set(double gameSecond, const std::string& cause) {
     }
     const std::uint64_t position = day_cycle::position_of(m_cycle, gameSecond);
     // The store first: a command that the database refuses changes nothing.
-    if (!m_world.store().set_world_time(kWorldTimeKey, position)) {
+    if (!m_world.store().set_world_time(kWorldTimeKey, position, run_ns())) {
         ++m_counts.refusedSets;
         log::write("world: the world time stays: the database did not accept the time %s (%s)", clock_text(gameSecond).c_str(),
                    cause.c_str());
@@ -279,7 +287,7 @@ TimeSetError WorldTime::set(double gameSecond, const std::string& cause) {
 bool WorldTime::save(const char* cause) {
     const std::uint64_t now = position();
     m_lastSave = m_world.clock().now();
-    if (!m_world.store().set_world_time(kWorldTimeKey, now)) {
+    if (!m_world.store().set_world_time(kWorldTimeKey, now, run_ns())) {
         if (m_counts.failedSaves++ == 0) {
             log::write("world: the world time was not saved (%s): the next interval tries again", cause);
         }

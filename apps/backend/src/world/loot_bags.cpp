@@ -41,7 +41,7 @@ std::uint32_t quantity_of(const std::vector<ItemInstance>& items) {
 }
 
 std::uint32_t quantity_of(const BagPart& part) {
-    std::uint32_t total = quantity_of(part.items);
+    std::uint32_t total = quantity_of(part.items) + quantity_of(part.waiting);
     for (const GrantItem& item : part.kept) {
         total += item.quantity;
     }
@@ -56,9 +56,18 @@ std::string kept_text(const std::vector<GrantItem>& items) {
     return text;
 }
 
-/** @return True when the part has no item: no instance and no kept roll. */
+/** @return True when the part has no item: no instance (shown or waiting) and no kept roll. */
 bool part_empty(const BagPart& part) {
-    return part.items.empty() && part.kept.empty();
+    return part.items.empty() && part.waiting.empty() && part.kept.empty();
+}
+
+/** Moves the waiting instances into the free places of the 500 stacks of a part, in their order (finding WT-R2). */
+void show_waiting(BagPart& part) {
+    std::size_t moved = 0;
+    while (moved < part.waiting.size() && part.items.size() < kMaxContainerSlots) {
+        part.items.push_back(std::move(part.waiting[moved++]));
+    }
+    part.waiting.erase(part.waiting.begin(), part.waiting.begin() + static_cast<std::ptrdiff_t>(moved));
 }
 
 /** @return True when each part of the bag has no item (the fast end; a kept roll keeps the bag). */
@@ -66,7 +75,7 @@ bool bag_empty(const LootBag& bag) {
     return std::all_of(bag.parts.begin(), bag.parts.end(), [](const auto& part) { return part_empty(part.second); });
 }
 
-/** @return The kept roll of an instance (a stack beyond the 500 stacks of a part): its item, quantity, gear score, and perks. */
+/** @return The kept roll of a new instance (a stack of a roll beyond the 500 stacks of a part): its item, quantity, gear score, and perks. */
 GrantItem roll_of(const ItemInstance& item) {
     return GrantItem{item.itemId, item.quantity, item.gearScore != 0 ? std::optional<std::uint32_t>(item.gearScore) : std::nullopt, item.perks};
 }
@@ -82,8 +91,9 @@ state::LootBagRow make_row(const std::string& key, std::uint32_t kind, const std
     row.createdAt = createdAt;
     row.expiresAt = expiresAt;
     row.emptiedAt = emptiedAt;
-    for (std::size_t index = 0; index < part.items.size(); ++index) {
-        const ItemInstance& item = part.items[index];
+    // The shown instances, then the waiting instances (finding WT-R2: all their fields), in their order.
+    for (std::size_t index = 0; index < part.items.size() + part.waiting.size(); ++index) {
+        const ItemInstance& item = index < part.items.size() ? part.items[index] : part.waiting[index - part.items.size()];
         state::ItemRow entry;
         entry.instanceId = instance_text(item.instance);
         entry.container = 0;
@@ -279,8 +289,9 @@ void LootBags::load() {
                 continue;
             }
             if (item.instanceId.empty()) {
-                // A kept roll (stage 2.2): the item catalog did not have the item, or the part had 500 stacks.
-                rolls.push_back(GrantItem{item.itemId, std::min(item.quantity, kMaxItemQuantity),
+                // A kept roll (stage 2.2): the item catalog did not have the item, or the part had 500 stacks. Its whole quantity (finding
+                // WT-R1: a roll can be more than one stack; the stack limit applies to each instance that a load makes of it).
+                rolls.push_back(GrantItem{item.itemId, item.quantity,
                                           item.gearScore != 0 ? std::optional<std::uint32_t>(item.gearScore) : std::nullopt, item.perks});
                 continue;
             }
@@ -302,18 +313,24 @@ void LootBags::load() {
             value.index = definition != nullptr ? definition->index : 0;
             m_world.inventory().resolve_perks(value);
             if (part.items.size() >= kMaxContainerSlots) {
-                // The bound of a part (finding LB-R4): a stack beyond 500 (a part of a backend before stage 2.2) is a kept roll.
-                rolls.push_back(roll_of(value));
+                // The bound of a part (finding LB-R4): a stack beyond 500 (a part of a backend before stage 2.2) waits with all its fields
+                // (finding WT-R2), and the client does not see it.
+                part.waiting.push_back(std::move(value));
                 ++beyond;
                 continue;
             }
             part.items.push_back(std::move(value));
         }
         // A kept roll whose item the catalog has now gets its instances (made one time, with the values of the item table) when the part
-        // has a place for all of them; the others stay kept.
+        // has a place for all of them; the others stay kept, with their whole quantity (finding WT-R1). The count of the stacks comes
+        // first: a roll that cannot fit makes no instance.
         bool changed = false;
         for (const GrantItem& roll : rolls) {
-            std::vector<ItemInstance> instances = m_world.inventory().make_instances({roll}, nullptr);
+            const gamedata::ItemDefinition* definition = catalog != nullptr && catalog->loaded() ? catalog->find(roll.itemId) : nullptr;
+            const std::uint64_t maxStack = definition != nullptr ? std::clamp<std::uint32_t>(definition->maxStack, 1, kMaxItemQuantity) : 1;
+            const std::uint64_t stacks = (static_cast<std::uint64_t>(roll.quantity) + maxStack - 1) / maxStack;
+            const bool fits = part.waiting.empty() && part.items.size() + stacks <= kMaxContainerSlots;
+            std::vector<ItemInstance> instances = fits ? m_world.inventory().make_instances({roll}, nullptr) : std::vector<ItemInstance>{};
             if (!instances.empty() && part.items.size() + instances.size() <= kMaxContainerSlots) {
                 for (ItemInstance& instance : instances) {
                     part.items.push_back(std::move(instance));
@@ -359,7 +376,8 @@ void LootBags::load() {
     }
     if (made != 0 || kept != 0 || beyond != 0) {
         log::write("world: loot bags: %zu kept item(s) of the store got their instances, %zu stay kept (the item catalog does not have "
-                   "them, or the part has 500 stacks; the client does not see them), %zu stack(s) beyond 500 stacks became kept items",
+                   "them, or the part has 500 stacks; the client does not see them), %zu stored stack(s) beyond 500 stacks wait with all "
+                   "their fields (the client does not see them)",
                    made, kept, beyond);
     }
 }
@@ -793,6 +811,7 @@ BagResult LootBags::transfer(Entity& character, LootBag& bag, const std::vector<
         }
         next.items.erase(std::remove_if(next.items.begin(), next.items.end(), [](const ItemInstance& item) { return item.quantity == 0; }),
                          next.items.end());
+        show_waiting(next);
         next.rarity = rarity_of(next.items);
         if (moved != 0) {
             // The take of the last item of the last part (finding LB-R9): the absolute fast end goes into the row, in the transaction of the

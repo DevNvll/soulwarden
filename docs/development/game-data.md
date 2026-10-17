@@ -284,6 +284,18 @@ backend. The tool of each system is also in the document of that system.
   the census of the gatherable records of the layer metadata; 3.6 MB. The tool stops with no file for a source that is not complete or
   not consistent (`check_chests_tool.py`, case LC9). The backend refuses a file whose form, keys, gatherables, times, or places are not
   correct, as a whole; without it no chest opens (the request of a chest gets the refusal of the interaction).
+- `gathering-data.json` and the folder `gathering/` (stage 3.6a, `tools/gamedata/gathering.sh`, [Gathering](../systems/gathering.md)):
+  the gatherable rows (295; each with the causes of a rule that the backend cannot check: 54 rows), the events, the trade skill
+  ranks (Mining, Logging, Harvesting, Skinning), the tools (230: the weapon rows with a gathering type), the gathering slices (127: the
+  template of each one with its root, the slot of its GatherableController, and its Interact bound with GatherOption), the capital
+  nodes (33,071 placements by their UUID), the skinning of the creature slices (117, from `creatures.json`), and for each region of
+  the world one region file `gathering/REGION.swgn` ("SWGN", the format 1, x, y, the records, the tails, then 14 bytes for each
+  primary record: the slice index u16 and the place x, y, z f32; 2,728,908 records, 2,450,322 of them gathering nodes; the heights of
+  the backend from the folder of `heights.sh`, and the water surface for a record with a height mode) with the version of its
+  distribution file (the first 16 hexadecimal digits of its SHA-256). 40 MB, 1 minute. The tool stops with no file for a source that it
+  needs and for a value of a wrong form (`check_gathering_tool.py`, case GAT1). The backend refuses `gathering-data.json` as a whole
+  when its form or a value is not correct, and a region file that is not complete gives no node of its region (case GAT1); without the
+  files each gather is refused.
 
 ## Commands
 
@@ -305,11 +317,24 @@ tools/gamedata/places.sh             # one time: travel places for the backend (
 tools/gamedata/chests.sh             # one time: the chests of the world for the backend (placements, gatherable rows, loot roots, territories; 3.6 MB); needs an Oodle source
 tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, the stations, ...; 25 MB, 2 to 4 minutes); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
+tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
+tools/gamedata/gathering.sh --region r_+04_+02 --near 8817 4281 30   # the gathering nodes near a place, with their G (no file)
 tools/gamedata/navigation.sh         # one time: navigation data of the world (1.2 GB, 43 minutes with 8 processes, 2.1 GB of work files; needs an Oodle library, a C and a C++ compiler; it also makes the folder heights again)
 ```
 
 ## Traps
 
+- Stage 3.6a adds `gathering-data.json` and the folder `gathering/`, and changes `loot-tables.json` (still format 2) and the checks of
+  `item_catalog.py`. `loot_tables.py`: the member `gatheringRoots` (the FinalLootTable of each gatherable row that is not a loot
+  container and not `Empty`; their tables are read), `gatheringRootsWithNoTable` (a root of a quest or event row that no loot table
+  has: named, not a stop), and their counts. A `loot-tables.json` from before has no gathering roots: each gather is refused (the
+  backend log names it at the start). Write it again with `tools/gamedata/loot.sh`. `item_catalog.py` (code review of stage 2.2,
+  finding WT-R3): each master table must have the columns Nonremovable and NotDroppable, and each protection cell must be a flag, the
+  number 0 or 1, or the text "", "0", "1", "true", or "false"; else the tool stops and the old file stays. The one exception of the game
+  data: the 22 store tables (`MasterItemDefinitions_MTX_*`) have no column NotDroppable (their items have no such protection). The
+  retail tables pass, and the output is the same as the file of stage 2.2: `item-catalog.json` needs no new write. The loader of the
+  backend (finding WT-R4) reads the format of the file: a file of format 2 must have the two protection columns, a file of format 1
+  (or with no format) the 12 old columns; another format is refused.
 - Stage 2.2 changes `creatures.json` (format 4). `creature_data.py`: the reader of a spawner slice also reads its
   TimeOfDayConstraintComponent (type e949f549-71a8-4914-861c-20a2ca6b75c4: the flags m_night, m_dawn, m_day, m_dusk,
   m_despawnOnTimeEnd of its server facet) and the cooldown flags of the spawner (m_cooldownAfterDespawn,

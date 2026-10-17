@@ -181,6 +181,8 @@ struct InteractionContext {
     const gamedata::InteractionOption* option{nullptr};
     EntityId instance{0};
     std::uint64_t generation{0};
+    /** True: an object that the data does not have (stage 3.6a: a natural node, a creature body); `instance` is its G. */
+    bool external{false};
 };
 
 /**
@@ -210,6 +212,32 @@ struct StationContext {
     state::WorldPosition position;
     float rangeSq{0.0F};
     bool isCamp{false};
+};
+
+/**
+ * An object that the interaction data does not have (stage 3.6a, docs/systems/gathering.md): a natural gathering node of a distribution
+ * file (the client makes it from its level data and gives it an offline id: live check L2 of stage 3.6a), or the body of a creature
+ * (skinning). A resolver of a later stage gives it from the reference of a request. The base checks its use as the use of a level object:
+ * the option, the range, the requirements, the handler.
+ */
+struct ExternalObject {
+    /** The key (a durable key of the node), the kind, the slice, the asset, the actor, G (`group`), the place, the bounds (world places,
+     *  facet targets, options with their entity). */
+    gamedata::InteractionObject object;
+    /** The generation of the source (a creature body: a new entity has a new one). */
+    std::uint64_t generation{0};
+    /** The entity that carries the state of the source: 0 for a natural node (the base makes an object entity), or a creature. */
+    EntityId body{0};
+};
+
+/** A resolver of the objects that the interaction data does not have (stage 3.6a: the gathering system). */
+class ObjectResolver {
+public:
+    virtual ~ObjectResolver() = default;
+    /** @return The object of a reference (G and the facet target) that the data does not have, or no value. */
+    [[nodiscard]] virtual std::optional<ExternalObject> resolve(const InteractionReference& reference) = 0;
+    /** @return True while the body of an external object is still its source (a creature body that went away is not). */
+    [[nodiscard]] virtual bool alive(const ExternalObject& object) const = 0;
 };
 
 /** A handler of a kind and its options. A later stage registers its own one (research Q4: no switch of action numbers). */
@@ -375,6 +403,31 @@ public:
      * replaces the first one. The handler must live as long as the world.
      */
     void register_handler(gamedata::InteractionKind kind, std::uint32_t optionId, InteractionHandler& handler);
+    /** @return The handler of an option of a kind, or null (stage 3.6a: the gathering handler wraps the chest handler). */
+    [[nodiscard]] InteractionHandler* handler(gamedata::InteractionKind kind, std::uint32_t optionId) const {
+        return handler_of(kind, optionId);
+    }
+    /** Registers the resolver of the objects that the data does not have (stage 3.6a). It must live as long as the world. */
+    void register_resolver(ObjectResolver& resolver) {
+        m_resolver = &resolver;
+    }
+    /**
+     * @return The entity of a level object of the data (stage 3.6a: the node state of a capital gathering node): the base makes it when
+     *         it has none (as for a state that differs from the level data). Null: no such object.
+     */
+    Entity* level_entity(std::uint32_t objectIndex);
+    /**
+     * Registers an object that the data does not have (stage 3.6a) and @return the entity that carries its state: an object entity with
+     * its managed actor (a natural node; the base makes it once, and each session near it observes it), or the body of a creature.
+     */
+    Entity* external_entity(const ExternalObject& object);
+    /** @return The external object of a G (registered by a request or by external_entity), or null. */
+    [[nodiscard]] const ExternalObject* external(EntityId group) const;
+    /**
+     * The world calls it at the removal of a creature: the external object of its body goes (a use of it ends at the next check: the
+     * source is gone). The entries of the bodies do not grow with the kills.
+     */
+    void body_removed(EntityId creature);
 
     /**
      * The request of a new input step of the client of a session (its block changed). The world finds the character from the
@@ -530,12 +583,19 @@ private:
         /** The cells of the grid of the entities that have this child (its interest points). */
         std::vector<std::int64_t> cells;
     };
-    /** A usable object: a level object of the data (instance 0) or a server child. */
+    /** An object that the data does not have (stage 3.6a): its object, its state, and the cells of its entity. */
+    struct External {
+        ExternalObject value;
+        ObjectState state;
+        std::vector<std::int64_t> cells;
+    };
+    /** A usable object: a level object of the data (instance 0), a server child, or an external object (stage 3.6a: its G). */
     struct Site {
         const gamedata::InteractionObject* object{nullptr};
         std::uint32_t index{0};
         EntityId instance{0};
         std::uint64_t generation{0};
+        bool external{false};
     };
 
     [[nodiscard]] InteractionVerdict check(Entity& character, const InteractionRequest& request, InteractionContext& context,
@@ -550,6 +610,9 @@ private:
     /** Gives the entity of an object the state of now and marks its state (a new entity for a level object with no entity). */
     void publish(std::uint32_t objectIndex);
     void publish(Instance& instance);
+    void publish(External& external);
+    /** Publishes the state of the source of a site (a level object, a server child, or an external object). */
+    void publish(const Site& site);
     [[nodiscard]] InteractionHandler* handler_of(gamedata::InteractionKind kind, std::uint32_t optionId) const;
     /** Makes a server child of a template with its template children. @return Its entity, or null (a place that is not of the world). */
     Entity* spawn(std::uint32_t templateIndex, const state::WorldPosition& place, const gamedata::Rotation& rotation,
@@ -580,6 +643,11 @@ private:
     std::map<std::uint32_t, ObjectState> m_objects;
     /** The server children that live, by their entity id (= G of their actor). */
     std::map<EntityId, Instance> m_instances;
+    /** The objects that the data does not have (stage 3.6a), by their G; the resolver of the gathering system. */
+    std::map<EntityId, External> m_externals;
+    ObjectResolver* m_resolver{nullptr};
+    /** The object entities of the external objects (their G), for the interest of a session. */
+    std::set<EntityId> m_externalEntities;
     /** The placement children that live: the index into the data to the entity. */
     std::map<std::uint32_t, EntityId> m_spawnedLive;
     /** The object entities by the cells of their interest points (64 m; finding INT-R3), for for_each_entity_near. */

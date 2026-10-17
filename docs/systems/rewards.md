@@ -59,6 +59,13 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
   (ContainerLootGSFloor of VitalsLevels, `LootTables::container_floor`) as its low end in place of the ceiling of a creature (game data).
   `loot-tables.json` format 2 has the chest roots, the loot limits, and the container floors; a file of format 1 loads, and then a chest
   has no loot table (each open is refused: `noLoot`).
+- The roll of a gathering node (stage 3.6a, [Gathering](gathering.md)): `Rewards::roll_root` with the luck of the gather
+  (`LootContext::rollBonus`: the RollBonus of the trade skill rank and the ROL parts). The luck adds to the bonus of each table of the
+  path, as a numeric condition does (client roller 0x368B070): AddToRoll adds it to the roll, ClampMax raises the low end of the roll,
+  IgnoreBonus ignores it (case GAT5). A kill and a chest have the luck 0. `loot-tables.json` from stage 3.6a has the member
+  `gatheringRoots` (the FinalLootTable of each gatherable row that is not a loot container, and not `Empty`) and
+  `gatheringRootsWithNoTable` (the roots of quest and event rows that no loot table has: such a row is refused, `noLoot`); the format
+  stays 2.
 - The perks of a drop (stage 1.3b, protocol notes 4.23): an item with perk places in the perk
   data gets the perk roll of the client (`world/perk_roll.h`) for each instance, with the level
   of the character that gets it and the gear score of the drop; the swap of the game follows

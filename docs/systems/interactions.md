@@ -200,8 +200,22 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   Ownership, Vitals, and Interact slots; code review of stage 2.5b, finding ST-R5, case RY5).
 - A later stage registers a handler for a kind and its options (`Interactions::register_handler`); it does not add an action switch
   to the session. Its domain (the loot, the gathering, the crafting) owns its state and its transactions. Stage 3.5b.1 registers the
-  chest handler for GatherOption of the kind `gathering` ([Chests](chests.md)): a gathering object that is not a chest of the chest
-  data (a gathering node of stage 3.6) is refused by that handler.
+  chest handler for GatherOption of the kind `gathering` ([Chests](chests.md)). Since stage 3.6a the gathering system registers one
+  handler for GatherOption of that kind that wraps the chest handler (`Interactions::handler`): a chest of the chest data goes to the
+  chests, a node of the gathering data to the gathering, and an object that neither system knows to the chests when they have no data
+  (the refusal "no chest data" of stage 3.5b.1), else to the gathering ([Gathering](gathering.md)).
+- Objects that the data does not have (stage 3.6a): a system registers a resolver (`ObjectResolver`, `register_resolver`). A request
+  whose reference is not in the reference map and not a server child goes to the resolver: it gives the object of a natural gathering
+  node (from its offline id) or of a creature body (from the entity of the creature), with the bound, the option, and the range of its
+  slice. The base keeps the object and its bound states (`ExternalObject`, by its G) for the same generation, and checks it as a
+  placement; `alive` tells if its source is still there (a body: the same dead creature). `external_entity` makes the object entity of
+  a natural node one time (its managed actor at its place, in the grid of the base); `level_entity` makes the entity of a placement of
+  the data; the node state of a gathering node goes on these entities. The removal of a creature removes the object of its body
+  (`body_removed`): the entries do not grow with the kills.
+- The capacity of a bound (MaxInteractors) does not apply to the action 14 GatherResource [client code 0x35C2E60: the check at
+  0x35C3858 skips the action]: two characters can use one gathering node (stage 3.6a). Each other action keeps the capacity.
+- When the source of a use goes (a body that left the world), the base ends the use with no call of the handler (the object is gone):
+  a handler with its own state of the use must check its works itself (the gathering ends such a work at its next tick).
 
 ## Commands
 

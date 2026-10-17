@@ -14,7 +14,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 12;
+constexpr int kSchemaVersion = 13;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -286,6 +286,23 @@ CREATE INDEX IF NOT EXISTS loot_bag_items_bag_key ON loot_bag_items(bag_key);
 ALTER TABLE loot_bags ADD COLUMN emptied_at INTEGER NOT NULL DEFAULT 0;
 )sql";
 
+/**
+ * Version 13 (stage 3.6a: gathering, docs/systems/gathering.md). The run clock of the world (`run_ns` of `world_time`: the time that the
+ * backend ran, with the cycle position; a stop of the backend stops it, as the cycle), and the depleted gathering nodes of the world
+ * (`gathering_nodes`: one row for each node that waits for its respawn; the respawn on the run clock: the downtime does not count).
+ */
+constexpr const char* kMigration13Gathering = R"sql(
+ALTER TABLE world_time ADD COLUMN run_ns INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS gathering_nodes(
+    node_key TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    row_id TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    respawn_run_ns INTEGER NOT NULL,
+    depleted_at INTEGER NOT NULL
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
@@ -517,6 +534,13 @@ bool Store::migrate() {
         // Stage 2.2, the corrections of the code review of stage 3.5b.2 (findings LB-R8, LB-R9): the bag indexes and the fast end of a bag.
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration12LootBags) || !execute("PRAGMA user_version=12")
             || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 13) {
+        // Stage 3.6a: the run clock of the world and the depleted gathering nodes.
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration13Gathering) || !execute("PRAGMA user_version=13") || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
         }
@@ -1340,19 +1364,93 @@ std::optional<std::uint64_t> Store::world_time(const std::string& worldKey) {
     return std::nullopt;
 }
 
-bool Store::set_world_time(const std::string& worldKey, std::uint64_t position) {
+std::optional<std::uint64_t> Store::world_run_time(const std::string& worldKey) {
+    std::lock_guard lock(m_mutex);
+    Statement statement(m_database, "SELECT run_ns FROM world_time WHERE world_key=?1");
+    statement.bind(1, worldKey);
+    const int step = sqlite3_step(statement.handle);
+    if (step == SQLITE_ROW) {
+        const sqlite3_int64 run = sqlite3_column_int64(statement.handle, 0);
+        return run < 0 ? std::nullopt : std::optional<std::uint64_t>(static_cast<std::uint64_t>(run));
+    }
+    if (step != SQLITE_DONE) {
+        log::write("store: the run clock of %s did not read: %s", worldKey.c_str(), sqlite3_errmsg(m_database));
+    }
+    return std::nullopt;
+}
+
+bool Store::set_world_time(const std::string& worldKey, std::uint64_t position, std::optional<std::uint64_t> run) {
     std::lock_guard lock(m_mutex);
     if (!begin_write()) {
         return false;
     }
-    Statement statement(m_database,
-                        "INSERT INTO world_time(world_key, cycle_position_ns) VALUES(?1, ?2) "
-                        "ON CONFLICT(world_key) DO UPDATE SET cycle_position_ns=excluded.cycle_position_ns");
+    Statement statement(m_database, run ? "INSERT INTO world_time(world_key, cycle_position_ns, run_ns) VALUES(?1, ?2, ?3) "
+                                          "ON CONFLICT(world_key) DO UPDATE SET cycle_position_ns=excluded.cycle_position_ns, "
+                                          "run_ns=excluded.run_ns"
+                                        : "INSERT INTO world_time(world_key, cycle_position_ns) VALUES(?1, ?2) "
+                                          "ON CONFLICT(world_key) DO UPDATE SET cycle_position_ns=excluded.cycle_position_ns");
     statement.bind(1, worldKey);
     sqlite3_bind_int64(statement.handle, 2, static_cast<sqlite3_int64>(position));
+    if (run) {
+        sqlite3_bind_int64(statement.handle, 3, static_cast<sqlite3_int64>(*run));
+    }
     const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
     if (!ok) {
         log::write("store: no write of the world time of %s: %s", worldKey.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::vector<GatheringNodeRow> Store::list_gathering_nodes() {
+    std::lock_guard lock(m_mutex);
+    std::vector<GatheringNodeRow> rows;
+    Statement statement(m_database, "SELECT node_key, source, row_id, generation, respawn_run_ns, depleted_at FROM gathering_nodes "
+                                    "ORDER BY node_key");
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        GatheringNodeRow row;
+        row.key = column_text(statement.handle, 0);
+        row.source = column_text(statement.handle, 1);
+        row.row = column_text(statement.handle, 2);
+        row.generation = static_cast<std::uint64_t>(std::max<sqlite3_int64>(0, sqlite3_column_int64(statement.handle, 3)));
+        row.respawnRunNs = static_cast<std::uint64_t>(std::max<sqlite3_int64>(0, sqlite3_column_int64(statement.handle, 4)));
+        row.depletedAt = sqlite3_column_int64(statement.handle, 5);
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+bool Store::write_gathering_node(const GatheringNodeRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "INSERT INTO gathering_nodes(node_key, source, row_id, generation, respawn_run_ns, depleted_at) "
+                                    "VALUES(?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(node_key) DO UPDATE SET source=excluded.source, "
+                                    "row_id=excluded.row_id, generation=excluded.generation, respawn_run_ns=excluded.respawn_run_ns, "
+                                    "depleted_at=excluded.depleted_at");
+    statement.bind(1, row.key);
+    statement.bind(2, row.source);
+    statement.bind(3, row.row);
+    sqlite3_bind_int64(statement.handle, 4, static_cast<sqlite3_int64>(row.generation));
+    sqlite3_bind_int64(statement.handle, 5, static_cast<sqlite3_int64>(row.respawnRunNs));
+    sqlite3_bind_int64(statement.handle, 6, static_cast<sqlite3_int64>(row.depletedAt));
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of the gathering node %s: %s", row.key.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+bool Store::delete_gathering_node(const std::string& key) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "DELETE FROM gathering_nodes WHERE node_key=?1");
+    statement.bind(1, key);
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no removal of the gathering node %s: %s", key.c_str(), sqlite3_errmsg(m_database));
     }
     return end_write(ok);
 }

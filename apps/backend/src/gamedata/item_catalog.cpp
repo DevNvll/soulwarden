@@ -59,10 +59,15 @@ bool ItemCatalog::load(const std::string& path) {
         || !document["columns"].is_array() || !document["items"].is_array()) {
         return false;
     }
-    // The file must have the columns that this code reads, in the same sequence: all of them, or the 12 columns of a file from before
-    // stage 2.2 (no removal protection).
+    // The file must have the columns that this code reads, in the same sequence: all of them (format 2), or the 12 columns of a file from
+    // before stage 2.2 (format 1: no removal protection). The format of the file selects the layout (code review of stage 2.2, finding
+    // WT-R4): a format 2 file with no protection columns is not complete and does not load.
+    std::uint32_t format = 1;
+    if (document.contains("format") && (!read_number(document["format"], format) || (format != 1 && format != 2))) {
+        return false;
+    }
     const json& columns = document["columns"];
-    if (columns.size() != kColumns.size() && columns.size() != kColumnsBefore22) {
+    if (columns.size() != (format == 2 ? kColumns.size() : kColumnsBefore22)) {
         return false;
     }
     for (std::size_t column = 0; column < columns.size(); ++column) {

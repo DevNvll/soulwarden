@@ -15,6 +15,7 @@
 #include "gamedata/creature_data.h"
 #include "gamedata/height_maps.h"
 #include "gamedata/chest_data.h"
+#include "gamedata/gathering_data.h"
 #include "gamedata/interaction_data.h"
 #include "gamedata/item_catalog.h"
 #include "gamedata/perk_data.h"
@@ -87,13 +88,16 @@ struct ServerHost {
     gamedata::StaminaData stamina;
     /** The chest data (stage 3.5b.1). It is empty until a case sets it: each open of a chest is then refused. */
     gamedata::ChestData chests;
+    /** The gathering data (stage 3.6a). It is empty until a case sets it: each gather is then refused. */
+    gamedata::GatheringData gathering;
     world::World world{clock, store, tables,
-                       with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures, combat, places, terrain,
-                                                                                 navigation, loot, abilities, perks, spells, projectiles,
-                                                                                 weaponActions),
-                                                                  interactions),
-                                                stamina),
-                                   chests)};
+                       with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures, combat, places,
+                                                                                                terrain, navigation, loot, abilities, perks,
+                                                                                                spells, projectiles, weaponActions),
+                                                                                 interactions),
+                                                               stamina),
+                                                  chests),
+                                      gathering)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -259,6 +263,10 @@ struct ServerHost {
     }
     static world::WorldOptions with_chests(world::WorldOptions options, const gamedata::ChestData& chests) {
         options.chestData = &chests;
+        return options;
+    }
+    static world::WorldOptions with_gathering(world::WorldOptions options, const gamedata::GatheringData& gathering) {
+        options.gatheringData = &gathering;
         return options;
     }
 

@@ -79,7 +79,8 @@ World::World(const WorldClock& clock,
       m_interactions(*this, options.interactionData),
       m_chests(*this, options.chestData),
       m_lootBags(*this),
-      m_worldTime(*this) {
+      m_worldTime(*this),
+      m_gathering(*this, options.gatheringData) {
     m_random = options.randomSeed;
 }
 
@@ -147,6 +148,8 @@ void World::tick() {
         m_chests.tick();
         // The bags of the store at the first tick, and the bags whose end came (stage 3.5b.2).
         m_lootBags.tick();
+        // The depleted nodes of the store at the first tick, and the nodes whose respawn came (stage 3.6a).
+        m_gathering.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -290,6 +293,8 @@ void World::remove_entity(EntityId id) {
         // The open of a chest ends, and the claims leave the memory (stage 3.5b.1; the rows stay).
         m_chests.left(entity);
         m_lootBags.left(entity);
+        // The work of a gather ends (stage 3.6a: a work is not kept over a leave).
+        m_gathering.left(entity);
     }
     // The auras that follow the entity end with it (stage 3.3b-S2b: no aura stays with no attachment).
     if (entity.kind == EntityKind::creature || entity.kind == EntityKind::player) {
@@ -300,6 +305,8 @@ void World::remove_entity(EntityId id) {
                    static_cast<unsigned long long>(entity.id),
                    entity.creature.kind->id.c_str());
         m_creatures.entity_removed(entity);
+        // The external object of its body goes (stage 3.6a: the skinning of a body; a use of it ends at its next check).
+        m_interactions.body_removed(entity.id);
         // The projectiles of the creature in the air end with no hit (stage 3.4f-A: the leave of the source).
         m_projectiles.source_left(entity.id);
         // The ground areas of the creature end with it (stage 3.4f-C: the leave of the caster, the rule of a character).

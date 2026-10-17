@@ -65,6 +65,7 @@ inline constexpr std::uint32_t kTypeGatheringState = 81;        // MB::Gathering
 inline constexpr std::uint32_t kTypeLootTrackerState = 982;     // MB::LootTrackerComponentReplicatedState (stage 3.5b.1)
 inline constexpr std::uint32_t kTypeGlobalStorageState = 2938;  // MB::GlobalStorageComponentReplicatedState (stage 3.5b.2)
 inline constexpr std::uint32_t kTypeLootDropState = 2027;       // MB::LootDropReplicatedState (stage 3.5b.2)
+inline constexpr std::uint32_t kTypeGatherableState = 12;       // MB::GatherableControllerReplicatedState (stage 3.6a)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -377,6 +378,11 @@ void write_place_rotation(hub::Writer& writer, std::array<float, 4> rotation);
 [[nodiscard]] std::vector<hub::Bytes> encode_global_storage_state(const world::Entity& entity, View view, const PartsRequest& request);
 /** @return The LootDrop state of a loot bag (stage 3.5b.2, type 2027): m_rarityLevel. Observer view (the bag has no owner). */
 [[nodiscard]] hub::Bytes encode_loot_drop_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The node state of a gathering node or of the body of a creature (stage 3.6a, type 12; states/gatherable_state.cpp): field 0,
+ *         Healthy 4 or Depleted 8. Each observer; no fragment for an entity with no node state.
+ */
+[[nodiscard]] hub::Bytes encode_gatherable_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 
 /**
  * @return The fragments of the equipment (states/paperdoll_state.cpp): for a session with no

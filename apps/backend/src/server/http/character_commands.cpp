@@ -101,7 +101,33 @@ std::optional<std::string> QueryArguments::text(const std::string& name) const {
         const std::size_t end = query.find('&', position);
         const std::string pair = query.substr(position, end == std::string::npos ? end : end - position);
         if (pair.rfind(needle, 0) == 0) {
-            return pair.substr(needle.size());
+            // The value with its escapes %XX decoded (stage 3.6a: the key of a gathering node has "#" and "+"). A "+" stays a "+". A
+            // malformed escape gives no value.
+            const std::string raw = pair.substr(needle.size());
+            std::string value;
+            for (std::size_t index = 0; index < raw.size(); ++index) {
+                if (raw[index] != '%') {
+                    value += raw[index];
+                    continue;
+                }
+                const auto digit = [](char letter) {
+                    return letter >= '0' && letter <= '9'   ? letter - '0'
+                           : letter >= 'a' && letter <= 'f' ? letter - 'a' + 10
+                           : letter >= 'A' && letter <= 'F' ? letter - 'A' + 10
+                                                            : -1;
+                };
+                if (index + 2 >= raw.size()) {
+                    return std::nullopt;
+                }
+                const int high = digit(raw[index + 1]);
+                const int low = digit(raw[index + 2]);
+                if (high < 0 || low < 0) {
+                    return std::nullopt;
+                }
+                value += static_cast<char>(high * 16 + low);
+                index += 2;
+            }
+            return value;
         }
         if (end == std::string::npos) {
             break;

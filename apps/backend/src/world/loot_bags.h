@@ -105,6 +105,12 @@ struct BagPart {
      * until its lifetime ends (no fast end).
      */
     std::vector<GrantItem> kept;
+    /**
+     * The stored instances beyond the 500 stacks (a part of a backend before stage 2.2; code review of stage 2.2, finding WT-R2): each
+     * keeps all its fields (its instance id, its durability, its flags). The client does not see them. A take that frees a place in
+     * `items` moves them into it, in their order. A kept roll is only for an item that has no instance yet.
+     */
+    std::vector<ItemInstance> waiting;
     /** The rarity of its best item (the selector of its LootTracker entry). */
     std::uint32_t rarity{0};
 };

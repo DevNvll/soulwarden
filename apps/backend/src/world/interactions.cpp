@@ -29,6 +29,8 @@ constexpr const char* kTimedFixtureOptions[] = {"Trigger"};
  * plays the action InteractionAnimation, which ends at IfDamaged (game data: playeractions_interact.actionlist).
  */
 constexpr std::uint8_t kPlayInteractionAnimation = 64;
+/** The action GatherResource (uidatabase.uidb: GatherOption): the client skips the capacity check for it (client code 0x35C3858). */
+constexpr std::uint8_t kGatherResource = 14;
 /** The depth limit of the template children (the tool writes no deeper chain; the loader refuses a cycle). */
 constexpr int kChildDepth = 4;
 
@@ -271,11 +273,23 @@ Interactions::Site Interactions::site_of(std::uint32_t object, EntityId instance
         return site;
     }
     const auto found = m_instances.find(instance);
-    if (found != m_instances.end() && found->second.generation == generation) {
-        site.object = &found->second.object;
-        site.index = found->second.templateIndex;
+    if (found != m_instances.end()) {
+        if (found->second.generation == generation) {
+            site.object = &found->second.object;
+            site.index = found->second.templateIndex;
+            site.instance = instance;
+            site.generation = generation;
+        }
+        return site;
+    }
+    // An object that the data does not have (stage 3.6a): the same generation, and its body still its source (a creature body).
+    const auto external = m_externals.find(instance);
+    if (external != m_externals.end() && external->second.value.generation == generation
+        && (m_resolver == nullptr || m_resolver->alive(external->second.value))) {
+        site.object = &external->second.value.object;
         site.instance = instance;
         site.generation = generation;
+        site.external = true;
     }
     return site;
 }
@@ -309,6 +323,32 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
                 break;
             }
         }
+    } else if (m_resolver != nullptr) {
+        // An object that the data does not have (stage 3.6a): a natural gathering node (its offline id), the body of a creature. The
+        // resolver gives its object from the data of the stage; its state stays for the same generation.
+        if (std::optional<ExternalObject> resolved = m_resolver->resolve(request.object)) {
+            const EntityId group = resolved->object.group;
+            auto found = m_externals.find(group);
+            if (found == m_externals.end() || found->second.value.generation != resolved->generation) {
+                External external;
+                if (found != m_externals.end()) {
+                    external.state.entity = found->second.state.entity;
+                    external.cells = found->second.cells;
+                }
+                external.value = std::move(*resolved);
+                external.state.bounds.resize(external.value.object.bounds.size());
+                found = m_externals.insert_or_assign(group, std::move(external)).first;
+            }
+            External& external = found->second;
+            for (std::uint32_t index = 0; index < external.value.object.bounds.size(); ++index) {
+                if (external.value.object.bounds[index].target == request.object.target) {
+                    site = Site{&external.value.object, 0, group, external.value.generation, true};
+                    boundIndex = index;
+                    boundState = &external.state.bounds[index];
+                    break;
+                }
+            }
+        }
     }
     if (site.object == nullptr || site.object->actor != request.object.actor) {
         return InteractionVerdict::unknownObject;
@@ -326,7 +366,7 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     if (option == nullptr) {
         return InteractionVerdict::unknownOption;
     }
-    context = InteractionContext{site.index, boundIndex, &object, &bound, option, site.instance, site.generation};
+    context = InteractionContext{site.index, boundIndex, &object, &bound, option, site.instance, site.generation, site.external};
     // A handler that owns the sight rule of its bounds checks it itself (stage 3.5b.1: a chest).
     InteractionHandler* const owner = handler_of(object.kind, option->id);
     const bool sightOwned = owner != nullptr && owner->owns_sight();
@@ -355,12 +395,16 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
             }
         }
     }
-    if (bound.capacity >= 0 && boundState != nullptr
+    // A gather (GatherResource) has no limit of users: the client skips the ordinary capacity check for the action 14 (client code
+    // 0x35C2E60 at 0x35C3858; research gathering-stage.md Q1). Stage 3.6a: two characters can begin at one node; the gathering system
+    // decides the completion (docs/systems/gathering.md).
+    const bool gather = option->action == kGatherResource;
+    if (!gather && bound.capacity >= 0 && boundState != nullptr
         && std::find(boundState->users.begin(), boundState->users.end(), character.id) == boundState->users.end()
         && boundState->users.size() >= static_cast<std::size_t>(bound.capacity)) {
         return InteractionVerdict::full;
     }
-    if (bound.capacity == 0) {
+    if (!gather && bound.capacity == 0) {
         return InteractionVerdict::full;
     }
     handler = handler_of(object.kind, option->id);
@@ -435,14 +479,11 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
         }
         character->interaction = active;
         m_active.insert(character->id);
-        if (ObjectState* state = state_of(Site{context.object, context.objectIndex, context.instance, context.generation})) {
+        const Site used{context.object, context.objectIndex, context.instance, context.generation, context.external};
+        if (ObjectState* state = state_of(used)) {
             state->bounds[context.boundIndex].users.push_back(character->id);
         }
-        if (context.instance != 0) {
-            publish(m_instances.at(context.instance));
-        } else {
-            publish(context.objectIndex);
-        }
+        publish(used);
         m_world.touch(character->id, ComponentKey::interactor);
     }
     // A use of a different source ends the service grant of the character (research Q4: one source grant), also a use of one time
@@ -610,14 +651,10 @@ void Interactions::end(Entity& character, InteractionEnd cause, bool notify) {
         if (ObjectState* state = state_of(site)) {
             std::vector<EntityId>& users = state->bounds[active.bound].users;
             users.erase(std::remove(users.begin(), users.end(), character.id), users.end());
-            if (site.instance != 0) {
-                publish(m_instances.at(site.instance));
-            } else {
-                publish(active.object);
-            }
+            publish(site);
         }
         InteractionContext context{site.index, active.bound, site.object, &site.object->bounds[active.bound], &catalog->options()[active.option],
-                                   site.instance, site.generation};
+                                   site.instance, site.generation, site.external};
         if (InteractionHandler* handler = handler_of(site.object->kind, context.option->id)) {
             handler->end(character, context, cause);
         }
@@ -650,10 +687,10 @@ void Interactions::timed_due(const std::string& characterId, std::uint64_t seria
     const Site site = site_of(active.object, active.instance, active.generation);
     const gamedata::InteractionOption& option = data()->options()[active.option];
     InteractionContext context{site.index, active.bound, site.object, &site.object->bounds[active.bound], &option, site.instance,
-                               site.generation};
+                               site.generation, site.external};
     ++m_counts.completions;
     std::uint32_t completions = 0;
-    if (site.instance != 0) {
+    if (site.instance != 0 && !site.external) {
         completions = ++m_instances.at(site.instance).completions;
     }
     // The time of the use (the Delay Time of the option, or the time of the handler: finding CH-R2). The handler can end the use.
@@ -676,7 +713,9 @@ bool Interactions::still_valid(const Entity& character, const ActiveInteraction&
         return false;
     }
     const BoundState* state = nullptr;
-    if (site.instance != 0) {
+    if (site.external) {
+        state = &m_externals.at(site.instance).state.bounds[active.bound];
+    } else if (site.instance != 0) {
         state = &m_instances.at(site.instance).state.bounds[active.bound];
     } else if (const auto found = m_objects.find(active.object); found != m_objects.end()) {
         state = &found->second.bounds[active.bound];
@@ -704,6 +743,10 @@ Interactions::ObjectState& Interactions::state_of(std::uint32_t objectIndex) {
 Interactions::ObjectState* Interactions::state_of(const Site& site) {
     if (site.object == nullptr) {
         return nullptr;
+    }
+    if (site.external) {
+        const auto found = m_externals.find(site.instance);
+        return found != m_externals.end() ? &found->second.state : nullptr;
     }
     if (site.instance != 0) {
         const auto found = m_instances.find(site.instance);
@@ -781,6 +824,100 @@ void Interactions::publish(Instance& instance) {
     }
     if (changed) {
         m_world.touch(entity->id, ComponentKey::interact);
+    }
+}
+
+void Interactions::publish(External& external) {
+    Entity* entity = external.state.entity != 0 ? m_world.find(external.state.entity) : nullptr;
+    if (entity == nullptr || entity->kind != EntityKind::object) {
+        return; // No object entity (a creature body, or a natural node with no state of the server yet).
+    }
+    bool changed = false;
+    for (std::size_t index = 0; index < external.state.bounds.size() && index < entity->object.bounds.size(); ++index) {
+        ObjectBound& target = entity->object.bounds[index];
+        const ObjectBound now{target.slot, external.state.bounds[index].enabled,
+                              static_cast<std::uint32_t>(external.state.bounds[index].users.size())};
+        if (now.enabled != target.enabled || now.users != target.users) {
+            target = now;
+            changed = true;
+        }
+    }
+    if (changed) {
+        m_world.touch(entity->id, ComponentKey::interact);
+    }
+}
+
+void Interactions::publish(const Site& site) {
+    if (site.object == nullptr) {
+        return;
+    }
+    if (site.external) {
+        if (const auto found = m_externals.find(site.instance); found != m_externals.end()) {
+            publish(found->second);
+        }
+    } else if (site.instance != 0) {
+        if (const auto found = m_instances.find(site.instance); found != m_instances.end()) {
+            publish(found->second);
+        }
+    } else {
+        publish(site.index);
+    }
+}
+
+Entity* Interactions::level_entity(std::uint32_t objectIndex) {
+    if (data() == nullptr || objectIndex >= data()->objects().size()) {
+        return nullptr;
+    }
+    publish(objectIndex);
+    return m_world.find(state_of(objectIndex).entity);
+}
+
+Entity* Interactions::external_entity(const ExternalObject& object) {
+    auto found = m_externals.find(object.object.group);
+    if (found == m_externals.end() || found->second.value.generation != object.generation) {
+        External external;
+        if (found != m_externals.end()) {
+            external.state.entity = found->second.state.entity;
+            external.cells = found->second.cells;
+        }
+        external.value = object;
+        external.state.bounds.resize(object.object.bounds.size());
+        found = m_externals.insert_or_assign(object.object.group, std::move(external)).first;
+    }
+    External& external = found->second;
+    if (external.value.body != 0) {
+        return m_world.find(external.value.body);
+    }
+    Entity* entity = external.state.entity != 0 ? m_world.find(external.state.entity) : nullptr;
+    if (entity == nullptr) {
+        // The entity of a natural node (its managed actor: the client applies the states to the node of its level data, live check L2 of
+        // stage 3.6a), as the entity of a level object; each session observes it at the distance of a character from its bound.
+        ObjectBody body;
+        body.asset = external.value.object.asset;
+        body.subId = external.value.object.sub;
+        for (const gamedata::InteractionBound& bound : external.value.object.bounds) {
+            body.bounds.push_back(ObjectBound{bound.slot, true, 0});
+        }
+        ActorId actor;
+        actor.bytes = external.value.object.actor;
+        entity = &m_world.make_object(body, actor, external.value.object.position);
+        external.state.entity = entity->id;
+        external.cells.clear();
+        add_cells(external.cells, entity->id, external.value.object, external.value.object.position);
+        m_externalEntities.insert(entity->id);
+    }
+    return entity;
+}
+
+const ExternalObject* Interactions::external(EntityId group) const {
+    const auto found = m_externals.find(group);
+    return found == m_externals.end() ? nullptr : &found->second.value;
+}
+
+void Interactions::body_removed(EntityId creature) {
+    const auto found = m_externals.find(creature);
+    if (found != m_externals.end() && found->second.value.body == creature) {
+        m_externals.erase(found);
     }
 }
 
@@ -1046,7 +1183,7 @@ std::uint32_t Interactions::completions_of(EntityId entity) const {
 }
 
 std::size_t Interactions::object_entities() const {
-    return m_levelEntities.size() + m_instances.size();
+    return m_levelEntities.size() + m_instances.size() + m_externalEntities.size();
 }
 
 float Interactions::distance_to(const Entity& entity, const state::WorldPosition& place) const {
@@ -1059,6 +1196,8 @@ float Interactions::distance_to(const Entity& entity, const state::WorldPosition
     } else if (const auto level = m_levelEntities.find(entity.id); level != m_levelEntities.end() && data() != nullptr
                                                                     && level->second < data()->objects().size()) {
         object = &data()->objects()[level->second];
+    } else if (const auto external = m_externals.find(entity.id); external != m_externals.end()) {
+        object = &external->second.value.object;
     }
     if (object == nullptr || object->bounds.empty()) {
         return horizontal(entity.position, place);

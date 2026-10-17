@@ -136,6 +136,7 @@ tools/gamedata/places.sh           # one time: travel places (without them the t
 tools/gamedata/interactions.sh     # one time: the interaction objects of the world (without them each use of an object is refused); 24 MB, 4 minutes; needs an Oodle library
 tools/gamedata/chests.sh           # one time: the chests of the world (without them no chest opens); 3.6 MB; needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
+tools/gamedata/gathering.sh        # one time, after heights.sh: the gathering nodes of the world (without them each gather is refused); 40 MB, 1 minute; needs an Oodle library
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
 ```
@@ -452,6 +453,14 @@ button on "Confirm").
   no complete position, for a station or a forge child whose slice asset the catalog does not
   have, and for one placement id in two spellings; the loader of the backend refuses a template
   with two components at one slot (code review of stage 2.5b).
+- `tools/gamedata/gathering.sh` makes the gathering data (stage 3.6a; `~/.local/share/soulwarden/gamedata/gathering-data.json` and
+  the folder `gathering/` with one file for each region): the gatherable rows, the trade skill ranks, the events, the tools, the
+  gathering slices, the capital nodes, the skinning of the creature slices (from `creatures.json`), and the natural nodes of each
+  distribution file with their heights (from the folder of `heights.sh`): 2,450,322 natural nodes in 49 regions and 33,071 capital
+  nodes in the supported build. The backend reads a region file at the first request of a node of that region. `--near X Y
+  METERS` prints the gathering nodes near a place with their G and writes no file; `--region NAME` writes a file of some regions.
+  Without the files the backend starts and refuses each gather ([Gathering](systems/gathering.md)). The loot tables of `loot.sh`
+  from stage 3.6a have the gathering roots: with an older `loot-tables.json` each gather is refused.
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -682,8 +691,8 @@ button on "Confirm").
   animations of a chair, a bed, or a pet are accepted (a chair takes one character). The
   crafting stations of the settlements (stage 2.5b) are at their places: E (Craft) at a station
   opens the crafting screen of the game (a craft does not work yet: stage 3.7). Each other
-  option (storage, a gathering node, a shop, an inn, a teleport door, a camp) is refused: its system is
-  not there yet (the chests: stage 3.5b.1, below). In a development run, `tools/world interactions NAME` lists the objects near a
+  option (storage, a shop, an inn, a teleport door, a camp) is refused: its system is
+  not there yet (the chests: stage 3.5b.1, the gathering: stage 3.6a, below). In a development run, `tools/world interactions NAME` lists the objects near a
   character with their state (also the stations and the facts of a station use),
   `tools/world object NAME KEY on|off` hides or shows the prompt of an object,
   `tools/world interaction cancel NAME` ends the interaction of a character, and
@@ -713,6 +722,19 @@ button on "Confirm").
   character: a drop or a give into a bag changes nothing (with an `item-catalog.json` from before stage 2.2 no item has this
   protection). An item of a kill that the item catalog does not have stays in the bag until a start with a catalog that has it. A bag
   takes 500 stacks, and a restart does not renew the end of an empty bag.
+- Gathering (stage 3.6a). With the tool of a node in its paperdoll slot (33 the axe, 34 the sickle, 35 the skinning knife, 36 the
+  pick; a node of the type None needs no tool) and the trade skill rank of the node, E at a natural node (a record of a distribution
+  file: its offline id), at a capital node, or at the body of a creature with skinning starts a gather: the ring of the prompt runs
+  BaseGatherTime / speed (the speed: the tool from MinGatherEFF to MaxGatherEFF over its gear score range, times 1 plus the rank part
+  and the EFF parts of the effects). At the end the character gets the roll of the loot root of the node (the luck of the rank and the
+  ROL parts) and the trade skill experience of the event of the node, in one transaction; the node is Depleted for each player near
+  it (a tree falls) until its respawn: one draw between the bounds of the data, on the run clock of the world (a restart keeps the
+  remaining time; the downtime does not count). A skinned body stays depleted until it goes. A walk, a hit, damage, a release, a travel,
+  or the death before the end gives nothing; a full bag gives nothing and keeps the roll for the next gather of the node; of two
+  characters at one node the first completion wins. Tools do not lose durability (stage 3.7). Fishing is stage 3.6b. In a development
+  run `tools/world gathering NAME [METERS]` lists the work, the speed and the luck of each trade skill, and the depleted nodes near a
+  character, and `tools/world gathering respawn NAME NODE SECONDS` makes a depleted node respawn sooner
+  ([Gathering](systems/gathering.md)).
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
   abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar
   of the HUD goes away at full mana ([Combat and health](systems/combat-and-health.md)).

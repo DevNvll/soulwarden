@@ -30,6 +30,7 @@
 #include "gamedata/progression_tables.h"
 #include "gamedata/slice_ids.h"
 #include "gamedata/chest_data.h"
+#include "gamedata/gathering_data.h"
 #include "gamedata/interaction_data.h"
 #include "gamedata/travel_places.h"
 #include "server/http/admin_access.h"
@@ -582,6 +583,24 @@ int main(int argc, char** argv) {
         log::write("backend: no chest data at %s (%s): no chest opens. Make the file with tools/gamedata/chests.sh", chestDataPath.c_str(),
                    chestData.error().c_str());
     }
+    // The gathering data (stage 3.6a): the gatherable rows, the gathering slices, the natural nodes of the distribution files (one file for
+    // each region, read at the first use of a node of the region), the capital nodes, the skinning, the tools, the ranks. With no file each
+    // gather is refused.
+    gamedata::GatheringData gatheringData;
+    if (gatheringData.load(gameDataDirectory.string())) {
+        log::write("backend: gathering data loaded from %s (%zu gatherable rows, %llu distribution records in %zu regions, %zu capital nodes, "
+                   "%zu creature slices with skinning)",
+                   (gameDataDirectory / gamedata::kGatheringDataFile).string().c_str(), gatheringData.rows().size(),
+                   static_cast<unsigned long long>(gatheringData.natural_count()), gatheringData.regions().size(), gatheringData.capital_count(),
+                   gatheringData.creature_count());
+        if (lootTables.loaded() && !lootTables.table_index("TreeTiny")) {
+            log::write("backend: the loot tables have no gathering root (a file from before stage 3.6a): each gather is refused. Make the "
+                       "file again with tools/gamedata/loot.sh");
+        }
+    } else {
+        log::write("backend: no gathering data at %s (%s): each gather is refused. Make the files with tools/gamedata/gathering.sh",
+                   (gameDataDirectory / gamedata::kGatheringDataFile).string().c_str(), gatheringData.error().c_str());
+    }
     // The readers of the game data files are done: the memory of the parsed documents (the
     // creature data of the whole world is a file of some megabytes) goes back to the system.
     release_free_memory();
@@ -632,6 +651,7 @@ int main(int argc, char** argv) {
     worldOptions.travelPlaces = &travelPlaces;
     worldOptions.interactionData = &interactionData;
     worldOptions.chestData = &chestData;
+    worldOptions.gatheringData = &gatheringData;
     worldOptions.lootTables = &lootTables;
     worldOptions.abilityData = &abilityData;
     worldOptions.spellData = &spellData;

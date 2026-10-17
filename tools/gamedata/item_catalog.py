@@ -57,8 +57,10 @@ minGearScore, maxGearScore, gearScoreOverride, bindOnPickup, nonRemovable, notDr
 two (format 2, stage 2.2: code review of stage 3.5b.2, finding LB-R1) are the removal protections
 of the row (the columns Nonremovable and NotDroppable; a cell can be a text, a number, or a flag):
 the backend keeps such an item with its character (no discard, no give into a loot bag). A
-house item has no protection. tools/gamedata/check_item_catalog_tool.py is the check of these
-columns. A backstory has one entry for
+house item has no protection. Each master table must have both columns, and each cell must be a
+flag form (code review of stage 2.2, finding WT-R3): else the tool stops and the old file stays.
+The one exception is MISSING_PROTECTION_TABLES (the store tables have no column NotDroppable).
+tools/gamedata/check_item_catalog_tool.py is the check of these columns. A backstory has one entry for
 each item of its column InventoryItem: a quantity of 0 is an item that only the character
 creation screen shows, and a gear score of 0 is the value of the item table.
 
@@ -105,6 +107,14 @@ COLUMNS = ["id", "name", "type", "class", "tier", "weight", "maxStack", "durabil
            "maxGearScore", "gearScoreOverride", "bindOnPickup", "nonRemovable", "notDroppable"]
 # The removal protections of a master item row (format 2; code review of stage 3.5b.2, finding LB-R1).
 PROTECTION_COLUMNS = ("Nonremovable", "NotDroppable")
+# The master tables that can have no protection column (code review of stage 2.2, finding WT-R3): the column, and the prefix of the table
+# names. The store tables of the game copy (22 tables, MasterItemDefinitions_MTX_*) have no column NotDroppable (a census of the game
+# data); their items have no such protection (a decision of an agent: the value of a cell with no text). Each other master table must
+# have both columns: a table without one stops the tool, and the old file stays.
+MISSING_PROTECTION_TABLES = {"NotDroppable": "MasterItemDefinitions_MTX_"}
+# The forms of a protection cell in the item tables of the game (a census of the game data): a flag, the number 0 or 1, the text "" or
+# "1". The texts "0", "true", and "false" are also read. Each other value stops the tool.
+FLAG_TEXTS = {"": False, "0": False, "1": True, "false": False, "true": True}
 
 
 class Sheet:
@@ -269,11 +279,30 @@ def whole(value) -> int:
     return int(value) if isinstance(value, (int, float)) else 0
 
 
-def flag(value) -> bool:
-    """@return The value of a flag cell. The item tables have a flag as a flag, a number (0 or 1), or a text ("" or "1")."""
-    if isinstance(value, str):
-        return value.strip().lower() in ("true", "1")
-    return bool(value)
+def flag(value, where: str = "a cell") -> bool:
+    """@return The value of a flag cell. The item tables have a flag as a flag, a number (0 or 1), or a text ("" or "1").
+    A different value (finding WT-R3) is a Failure: the tool writes no file."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str) and value.strip().lower() in FLAG_TEXTS:
+        return FLAG_TEXTS[value.strip().lower()]
+    raise Failure(f"{where} has the value {value!r}, which is not a flag (a flag, 0, 1, \"\", \"0\", \"1\", \"true\", \"false\")")
+
+
+def protection_columns(sheet: Sheet) -> list[str | None]:
+    """@return For each protection column: its name, or None for a column that the table can omit (MISSING_PROTECTION_TABLES).
+    A missing column of a different table (finding WT-R3) is a Failure: a blank cell is not the same as a missing column."""
+    columns: list[str | None] = []
+    for column in PROTECTION_COLUMNS:
+        if column in sheet.columns:
+            columns.append(column)
+        elif sheet.name.startswith(MISSING_PROTECTION_TABLES.get(column, "\0")):
+            columns.append(None)
+        else:
+            raise Failure(f"the item table {sheet.name} has no column {column} (the removal protection of its items)")
+    return columns
 
 
 def backstory_items(sheets: list[Sheet], item_ids: set[str]) -> dict[str, list[list]]:
@@ -344,6 +373,7 @@ def build_catalog(contents: list[bytes]) -> dict:
         if "ItemID" not in sheet.columns or sheet.columns["ItemID"] != 0:
             raise Failure(f"the first column of the table {sheet.name} is not ItemID")
         first = len(items) + 1
+        protections = protection_columns(sheet)
         for row in range(sheet.row_count):
             item_type = sheet.cell(row, "ItemType")
             if item_type == HOUSING_ITEM_TYPE:
@@ -355,7 +385,8 @@ def build_catalog(contents: list[bytes]) -> dict:
                           whole(sheet.cell(row, "MaxStackSize")), whole(sheet.cell(row, "Durability")),
                           whole(sheet.cell(row, "MinGearScore")), whole(sheet.cell(row, "MaxGearScore")),
                           whole(sheet.cell(row, "GearScoreOverride")), bool(sheet.cell(row, "BindOnPickup")),
-                          *(flag(sheet.cell(row, column)) for column in PROTECTION_COLUMNS)])
+                          *(flag(sheet.cell(row, column), f"the cell {column} of {item_id} in {sheet.name}") if column else False
+                            for column in protections)])
         # A table with no row that gets an index has no range.
         tables.append({"name": sheet.name, "rows": sheet.row_count, "first": first, "last": len(items)})
     for name in HOUSE_TABLES:

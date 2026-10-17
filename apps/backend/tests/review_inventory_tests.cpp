@@ -367,6 +367,17 @@ void older_schemas(const Options& options) {
                             && bags[0].second.emptiedAt == 1250;
         // The table of schema version 11 (stage 2.2): the position of the day cycle of a world (no character owns it).
         const bool timed = !store.world_time("test_world") && store.set_world_time("test_world", 1234567) && store.world_time("test_world") == 1234567ULL;
+        // Schema version 13 (stage 3.6a): the run clock of a world and the depleted gathering nodes.
+        state::GatheringNodeRow node;
+        node.key = "r_+00_+00#1";
+        node.source = "distribution:test";
+        node.row = "Test_OreSmall";
+        node.generation = 1;
+        node.respawnRunNs = 5000;
+        const bool gathered = store.set_world_time("test_world", 7654321, 42ULL) && store.world_run_time("test_world") == 42ULL
+                              && store.write_gathering_node(node) && store.list_gathering_nodes().size() == 1
+                              && store.list_gathering_nodes()[0].respawnRunNs == 5000 && store.delete_gathering_node(node.key)
+                              && store.list_gathering_nodes().empty();
         const bool deleted = store.delete_character(kCharacterA) == state::DeleteResult::deleted && store.list_items(kCharacterA).empty()
                              && store.list_loot_claims(kCharacterA).empty() && store.list_loot_bags().empty()
                              && store.currency(kCharacterA, state::kCurrencyCoin) == 0 && store.progress(kCharacterA).level == 1
@@ -374,14 +385,14 @@ void older_schemas(const Options& options) {
                              && store.list_skills(kCharacterA).bars.empty() && store.list_achievements(kCharacterA).empty()
                              && store.list_entitlement_rewards(kCharacterA).empty()
                              && store.list_entitlements(player.account.personaId).size() == 1;
-        check(made && opened && schema_version(path) == 12 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
-                  && timed && deleted,
+        check(made && opened && schema_version(path) == 13 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
+                  && timed && gathered && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 12: its character row and its item stay (the item with no perk), its persona has an account, "
+                  + " opens and gets version 13: its character row and its item stay (the item with no perk), its persona has an account, "
                     "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
                     "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, a loot "
                     "claim with a kept item (stage 3.5b.1), the part of a loot bag with a stored instance (stage 3.5b.2) and its fast end, the world time (stage 2.2), "
-                    "and the delete of a character removes the rows of the character (the entitlement of the account stays)");
+                    "the run clock and a depleted gathering node (stage 3.6a), and the delete of a character removes the rows of the character (the entitlement of the account stays)");
     }
 }
 

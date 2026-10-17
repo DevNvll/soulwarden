@@ -574,7 +574,9 @@ void bag_key_index(const Options& options) {
     check(steps == 0 && plans.find("USING INDEX") != std::string::npos && plans.find("SCAN") == std::string::npos,
           "the end of one bag finds its rows by an index of the bag key: no look at the rows of the 20,000 far bags");
     // A store of schema 10 (no index): the migration adds the indexes and keeps the rows.
-    std::string downgrade = "DROP INDEX IF EXISTS loot_bags_bag_key; DROP INDEX IF EXISTS loot_bag_items_bag_key; PRAGMA user_version=10;";
+    // Schema 10 had no world time (11) and no gathering tables (13; the stage 3.6a fixture).
+    std::string downgrade = "DROP INDEX IF EXISTS loot_bags_bag_key; DROP INDEX IF EXISTS loot_bag_items_bag_key; DROP TABLE IF EXISTS world_time; "
+                            "DROP TABLE IF EXISTS gathering_nodes; PRAGMA user_version=10;";
     {
         sqlite3* connection = nullptr;
         sqlite3_open(path.string().c_str(), &connection);

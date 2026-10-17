@@ -41,7 +41,8 @@ std::optional<unsigned> read_clock(const std::string& text) {
             return std::nullopt;
         }
         parts[count++] = value;
-        if (index == text.size()) {
+        // After the third number the text must end (code review of stage 2.2, finding WT-R5: no delimiter after the seconds).
+        if (index == text.size() || count == 3) {
             break;
         }
         if (text[index] != ':') {

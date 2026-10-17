@@ -227,6 +227,8 @@ CreatureResult Creatures::set_health(EntityId id, float health) {
         // The ground areas of the creature whose spell row has EndOnCasterDeath end (stage 3.4f-C, game data: the lightning strike of the
         // Undead Shaman; the mushroom of the Dryad Shaman has no such cell and stays to its end).
         m_world.spells().caster_died(entity->id);
+        // A body with a skinning row can be skinned (stage 3.6a: the GatherableController state of its slice, Healthy).
+        m_world.gathering().creature_died(*entity);
         // The death action of the slice: the body falls and stays on the ground. The client
         // starts this action only when the server starts it.
         const gamedata::CreatureSlice& body = *entity->creature.body;

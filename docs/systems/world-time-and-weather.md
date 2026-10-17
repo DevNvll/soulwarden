@@ -32,6 +32,10 @@ in the protocol notes (section 4.43). The research is `~/Games/soulwarden/work/r
   (`WorldTime::kSaveInterval`), and at an orderly stop of the backend (`backend: the world time is saved`). A stop of the backend
   stops the cycle (decision D3): the next start continues from the stored position. A crash loses 60 s at most. A stored value that
   is not a position of the cycle gives a new world at noon. The world time runs while the backend runs, also with no player.
+- The run clock of the world (stage 3.6a, `WorldTime::run_ns`): the time that the backend ran with this world, over each start (the
+  column `world_time.run_ns`, schema 13: the stored value plus the world clock since the start). It is saved with the position (each
+  60 s and at an orderly stop), so a stop stops it too and a crash loses 60 s at most. A respawn of a gathering node is a time of this
+  clock: a restart keeps the remaining time, and the downtime does not count (decision of the orchestrator; [Gathering](gathering.md)).
 - The command for the world (rule MP-2): `WorldTime::set` writes the row first. A write that the database refuses changes nothing
   (the error `storage`, the reply 500). A time that is not a time of the day changes nothing (the reply 400). The character of the
   command names who gives it (rule MP-9): the time changes for each player.
@@ -117,6 +121,7 @@ python3 -B tools/research/time_of_day.py     # the time of day of the live clien
 | A new world at noon | Decision D2 of the orchestrator |
 | The stop of the cycle while the backend is stopped; the save each 60 s and at an orderly stop | Decision D3 of the orchestrator |
 | The gameplay edges 60 s after dawn and 60 s before dusk | Decision D4 of the orchestrator |
+| The run clock (the time that the backend ran) for the respawn of a gathering node; the downtime does not count | Decision of the orchestrator for stage 3.6a (as D3) |
 | No weather message, the local volumes | Game data (research K5); live check L7 |
 | The phase mask and the despawn of a point; no reward at a phase end; the death time stays | Game data (TimeOfDayConstraintComponent, cooldown flags false); decision D6 of the orchestrator |
 | The rule of the two cooldown flags (one random encounter) | A decision of an agent from the names of the data flags |

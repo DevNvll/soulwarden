@@ -69,7 +69,7 @@ std::span<const StateCodec> player_codecs() {
 
 std::span<const StateCodec> creature_codecs() {
     // The slot of each component is a value of the slice of the creature (game data).
-    static constexpr std::array<StateCodec, 5> codecs{{
+    static constexpr std::array<StateCodec, 6> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::movement, 0, kTypeMovementState, nullptr, encode_creature_movement_parts, false,
          [](const world::Entity& entity) { return entity.creature.body->movementSlot; }},
@@ -80,6 +80,9 @@ std::span<const StateCodec> creature_codecs() {
         // The status effects of abilities on the creature (stage 3.3a): the icons at its name plate.
         {world::ComponentKey::status, 0, kTypeStatusEffectsState, nullptr, encode_creature_status_state, false,
          [](const world::Entity& entity) { return entity.creature.body->statusSlot; }},
+        // The skinning of the body (stage 3.6a): the GatherableController state of a dead creature with a skinning row (slot 0: none).
+        {world::ComponentKey::gatherable, 0, kTypeGatherableState, encode_gatherable_state, nullptr, false,
+         [](const world::Entity& entity) { return entity.creature.skinSlot; }},
     }};
     return codecs;
 }
@@ -128,12 +131,18 @@ std::uint32_t object_loot_drop_slot(const world::Entity& entity) {
     return entity.object.lootDropSlot;
 }
 
+std::uint32_t object_node_slot(const world::Entity& entity) {
+    return entity.object.nodeSlot;
+}
+
 std::span<const StateCodec> object_codecs() {
     // The slot of each state is a value of the slice of the object (game data): one Interact fragment for each bound. A level object
     // has no place state, no BuildableController state, and no Ownership state (slot 0): the client has them from its level data.
-    static constexpr std::array<StateCodec, 6> codecs{{
+    static constexpr std::array<StateCodec, 7> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::buildable, 0, kTypeBuildableState, encode_buildable_state, nullptr, false, object_buildable_slot},
+        // The node state of a gathering node (stage 3.6a): Healthy or Depleted at the slot of its GatherableController (0: none).
+        {world::ComponentKey::gatherable, 0, kTypeGatherableState, encode_gatherable_state, nullptr, false, object_node_slot},
         // The LootDrop state of a loot bag (stage 3.5b.2): the rarity (the slot of its slice; 0: not a bag).
         {world::ComponentKey::lootDrop, 0, kTypeLootDropState, encode_loot_drop_state, nullptr, false, object_loot_drop_slot},
         {world::ComponentKey::objectPlace, 0, kTypePositionInTheWorldState, encode_object_place_state, nullptr, false, object_place_slot},

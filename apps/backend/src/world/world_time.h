@@ -168,6 +168,12 @@ public:
 
     /** @return The position of the cycle now (nanoseconds from 00:00). */
     [[nodiscard]] std::uint64_t position();
+    /**
+     * @return The run clock of the world now (stage 3.6a): the time in nanoseconds that the backend ran with this world, over each start
+     *         (the stored value of the last save plus the world clock since the start). A stop of the backend stops it, as the cycle (the
+     *         decision of stage 2.2); a crash loses kSaveInterval at most. The respawn of a gathering node is a time of this clock.
+     */
+    [[nodiscard]] std::uint64_t run_ns();
     /** @return The phase now (the phase of the last tick or command: the phase that the creature system and the sessions use). */
     [[nodiscard]] DayPhase phase();
     /** @return The game second of the day now (0 to 86,400). */
@@ -213,6 +219,9 @@ private:
     bool m_started{false};
     /** The position at the reference time. */
     std::uint64_t m_base{0};
+    /** The run clock at the start and the start on the world clock (stage 3.6a). */
+    std::uint64_t m_runBase{0};
+    WorldClock::time_point m_runStart{};
     WorldClock::time_point m_reference{};
     DayPhase m_phase{DayPhase::day};
     std::uint64_t m_revision{1};

@@ -219,6 +219,11 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   `.cdf` file: the chunk CompiledBones 0x2000), with the center, the axis, the height, and the radius of its shape (374
   slices; the wolf: the bone `bind_neck_2_jnt`, radius 0.2 m). A slice with no such data has no hit from behind and no
   headshot ([Combat and health](combat-and-health.md)).
+- The skinning of a body (stage 3.6a, [Gathering](gathering.md)): at the death of a creature whose slice has a skinning row of the
+  gathering data, the creature system calls `Gathering::creature_died`: the body gets the node state Healthy in the slot of its
+  GatherableController (type 12 in the creature codecs). The removal of the creature (at the respawn of its spawn point, by a command,
+  or by the distance rule) removes the external object of its body in the interaction base (`Interactions::body_removed`), and a use
+  of it ends. A respawn makes a new entity: a new body, a new node.
 
 ## Open points
 

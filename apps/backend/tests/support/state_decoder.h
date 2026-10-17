@@ -290,6 +290,8 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
             return -1;
         }
     }
+    case 12: // GatherableController (stage 3.6a): the node state (u8: Healthy 4, Depleted 8).
+        return group == 0 && field == 0 ? 1 : -1;
     case 3139: // DelayedEvent (stage 3.3b-S2a): the remaining time (a half float) and the completed flag.
         return group == 0 && field == 0 ? 2 : group == 0 && field == 1 ? 1 : -1;
     case 13: // PositionInTheWorld (stage 3.3b-S2b, the trap): the position (x, y, a u16 height) and the rotation.
@@ -399,6 +401,7 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
 inline unsigned group_count(std::uint32_t type) {
     switch (type) {
     case 10:
+    case 12:
     case 5399:
     case 1652:
     case 4297:

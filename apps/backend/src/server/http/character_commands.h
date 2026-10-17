@@ -58,7 +58,7 @@ protected:
     ~Arguments() = default;
 };
 
-/** The arguments of a query text ("a=1&b=2"). The values of the development routes need no decoding. */
+/** The arguments of a query text ("a=1&b=2"). A value has its escapes %XX decoded (a "+" stays a "+"); a malformed escape: no value. */
 class QueryArguments final : public Arguments {
 public:
     explicit QueryArguments(const service::HttpRequest& request) : m_request(request) {}
@@ -430,6 +430,23 @@ inline constexpr float kAdminChestRange = 30.0F;
  * claim of a character in the world resets after that time, not at its time of the data.
  */
 [[nodiscard]] WorldCommand set_chest_reset(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+
+// The gathering commands (stage 3.6a, world/gathering.h, server/http/gathering_commands.cpp).
+
+/** The gathering of the admin state of a character: the nodes with a state of the server this near to it (meters, horizontal). */
+inline constexpr float kAdminGatheringRange = 30.0F;
+
+/**
+ * @return The gathering of a character (world thread): its work (the node, the row, the amount, the time, the speed parts), its speed and
+ *         luck for each trade skill of gathering (with the tools in its paperdoll), the nodes with a state of the server `radius` or less
+ *         from it (depleted, the seconds to the respawn), and the counts of the system.
+ */
+[[nodiscard]] nlohmann::json gathering_view(world::World& world, const std::string& character, float radius);
+/**
+ * set_node_respawn (a development aid; the development routes only): `node` (a placement UUID, a key REGION#RECORD, or a G) and `seconds`
+ * (1 to 604800). A depleted node respawns after that time, not at its time of the data.
+ */
+[[nodiscard]] WorldCommand set_node_respawn(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
 // The loot bag commands (stage 3.5b.2, world/loot_bags.h, server/http/loot_bag_commands.cpp).
 

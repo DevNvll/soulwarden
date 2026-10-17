@@ -6363,6 +6363,68 @@ has the wall clock pair); the level-information u64 (it stays 0); a stop of the 
 the time of day in an instance (`PauseTimeOfDay` of 15 game-mode maps; stage 7.1); the weather of an event (the stages of the
 events).
 
+### 4.44 The gathering: the natural nodes, the node state, the work, the skinning (live proof of stage 3.6a; static proof for the client code and the game data; the rules are project rules with the values of the game data)
+
+Stage 3.6a. Research: `~/Games/soulwarden/work/research/gathering-stage.md` (Q1 to Q3, Q5, the criteria I1 to I10). Live checks and
+the live proof: `~/Games/soulwarden/work/evidence/gathering/implement/` (`LIVE-CHECKS.md`, `probe/`, `RESULT.md`, the pictures and
+videos). Code: `world/gathering.h`, `server/rep/states/gatherable_state.cpp`, `gamedata/gathering_data.h`, `tools/gamedata/gathering.py`.
+Document: [Gathering](systems/gathering.md). Test cases GAT1 to GAT10.
+
+**The wire contracts** (live checks L2 to L8: a probe backend, `tools/world fragment`, and `tools/world probe` before the code; the
+stage run S1 with the backend of the stage):
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The identity of a natural node: the client gives each record of a `region.distribution` file the offline id G = ((counter & 0x7FFFF) << 13) \| ((regionY & 0x1F) << 8) \| ((regionX & 0x1F) << 3) \| 1 (the setting `javelin.offline-id-version` not 1, the live client); the counter is 1 for record 0 and counts the primary records, then the two tails. The actor of the node is G little-endian and 8 zero bytes. It is not the packed position id of 0x6160B60 (the research). | Live L2: seven nodes of r_+04_+02 (record 18627 G 0x09188221, 18628 0x0918A221, 18614 0x0916E221, 18613 0x0916C221, 18615 0x09170221, 18596 0x0914A221, 18598 0x0914E221), each the node of the focus. Test case GAT2. | Offline id `0x69D5090`, called by the record converter `0x6A01D50` for the three record arrays of a region |
+| The request of a gather is the interaction request of 4.35: the actor and G of the node, the facet target of its Interact bound (the XOR rule of 4.2: K = root XOR G, instance = entity of the bound XOR K, target = instance + component), action 14, base 14, the option GatherOption (CRC `a6e4c280`), the option entity, committed. A capital node has the UUID rule of a placement (Broccoli_a `9b81ddc9-...`: G 0x1A5D3DBA0DAC5F2B). | Live L2 (target `b0b2beac0f9664ab` of record 18627: master_minerals entity `0x00530130DB40C5A5` XOR K = `0x0000000609188221`, + component `B0B2BEA6067DE28A`). Test cases GAT2, GAT3. | Request builder `0x4918560` |
+| The capacity of a bound (MaxInteractors) does not apply to GatherResource (action 14): two characters can use one node. | Static. Test case GAT8. | Capacity check of `0x35C2E60` at `0x35C3858` |
+| GatherableControllerReplicatedState (type 12, the slot of the GatherableController of the slice: 3 for the master slices of the resources and for most creatures), group 0: field 0 gatherableState u8 (Healthy 4, Depleted 8); field 1 replenishTime u64 (not sent). Depleted on the managed actor of a node hides the node and its marker; Healthy shows the same node again. The client does not restore a node at replenishTime (now + 15 s in the server clock of 335 and in Unix milliseconds: no change after 22 s): the server sends Healthy at the respawn. | Live L2, L5 (`L2-12`, `L5-02`, `L5-05`); stage run S1 (a stone, 74 s). Test case GAT2. | Ctor `0x5B9EA90`, readers `0x17B3C60`, `0x87A190`, enum `0x3378D60`, apply `0x3371590` |
+| The Gathering state (type 81, slot 36, owner only; the layout of 4.41): Success, the remaining amount (field 1), the speed (field 2), the count 1, the G of the node (field 7): the ring of the prompt runs remaining / speed seconds, and the character kneels (a stone, a bush) or swings the tool (a tree: wood chips at each impact). Done ends the use of the client (2473 after 7 to 40 ms). Failure ends a use; None with active false does not (the character kneels, the ring stays). | Live L3, L4; stage run S1. Test cases GAT2, GAT4. | Ctor `0x4904A90`, apply `0x4905130`, status enum `0x49024D0` |
+| A row with the restriction ItemRequired and no item (BushSmall, BushWithered): the client shows the prompt "E BUSH" and sends the request (no gate of the client). | Stage run F (`F-01-bush-small.png`, the log of the request of record 18708). | — |
+| The tool of a node is in the paperdoll: 33 the logging axe, 34 the sickle, 35 the skinning knife, 36 the pick. A tool in the bag does not count: the prompt says "YOUNG TREE  No equipped Axe" ("BOULDER  No equipped Pick" with no pick), and E sends nothing. With the axe in slot 33 the prompt is "E YOUNG TREE" after a new focus. | Live L6 (`L6-01` to `L6-05`); stage run F (`F-03-refusal-no-pick.png`). Test case GAT3. | `0x48FF240` (FindFirstGatheringTool of the paperdoll) |
+| The "Gather Speed" of the tooltip of a tool instance is MinGatherEFF to MaxGatherEFF of its weapon row, linear over the gear score range of the item: 2hAxeT2 200 % at 200, 350 % at 300; 2hAxeT5 625 % at 500, 738 % at 550, 850 % at 600. The rank part (GatheringEfficiency) shows in the trade skill window as "N %" (`tradeskills_gathering.lua`). No client code composes the parts. | Live L7 (`L7-03`, `L7-06`). | — |
+| A tree falls at its depletion with the backend of the stage (the cut trunk falls, the stump stays), also at a second depletion of the same node on a record that the client had for minutes. The probe of L8 (Depleted by `tools/world fragment` on a probe record with the managed actor) gave no fall in six variants. Static: the exit events of the old state (the Healthy exit triggers the spawner Spawn_CutTrunk of master_tree) fire only with the transition flag of 0x3369430 (a facet time +0x2C8, an optional value at +0x2D0/+0x2D1); the difference between the probe and the backend is not known. | Live L8 (`L8-*`, `video-L8*.mp4`); stage runs S1 (`video-S1-tree-falls.mp4`) and F (`video-F-tree-falls.mp4`, generation 2). | Apply `0x3371590`, transition `0x3369430`, facet activation `0x3375830` |
+| The skinning of a body: the GatherableController of the creature slice (slot 3) Healthy at the death, and the Interact bound GatherBound (slot 20) with GatherOption: with the knife in slot 35 the prompt "E CHALKY RABBIT" shows on the body, and the gather works ("+32 Tracking & Skinning", "+2 Rawhide", "+1 Game Meat"). The probe of L8 (the state on a body of an earlier record) gave no prompt. | Live L8 (open in the probe); stage run S1 (`S1-07-skin-sheet.png`, `S1-09-skin-reward.png`, `video-S1-skinning.mp4`). Test case GAT10. | — |
+| A broken tool (durability 0 of a maximum above 0) is not a tool for a gather. | Static. Test case GAT3. | `0x5C65650` |
+| The loot notice: an item change of the bag with the cause 1 (ItemGathered) shows "+N NAME"; the trade skill experience shows "+N SKILL". | Live L3; stage run S1. | — |
+
+**The game data** (static; `gathering.py`, `loot_tables.py`):
+
+| Fact | Source |
+| --- | --- |
+| A gathering slice: one GatherableController (class `0b382af4-7946-4698-9223-206d1187b612`, m_replicationIndex: the slot of type 12), a VariationDataComponent with a table of the ordinary resource tables, and an Interact bound with GatherOption. The variation row names the gatherable row (GatherableEntryID). | The slices of the game copy, the VariationData tables |
+| The gatherable row: GatheringType (the tool family), Restriction, Tradeskill, RequiredTradeskillLevel, BaseGatherTime, MinRespawnRate and MaxRespawnRate, FinalLootTable, GameEventID, ResetGatherTimeOnEndInteraction, and the flags and columns of special nodes. | The GatherableData tables (Gatherables, QuestGatherables, GatherablesDunwood, GatherablesCatacombs, Gatherables_IsleOfNight) |
+| The trade skill ranks: RollBonus, GatheringEfficiency, GatheringMultiplier of each Level. | TradeskillRankData (Mining, Logging, Harvesting, Skinning) |
+| The experience of a gather: CategoricalProgressionId and CategoricalProgressionReward of the event of the row. | GameEventData |
+| A tool: GatheringTypes, MinGatherEFF, MaxGatherEFF, GatheringEfficiency, GatheringMultiplier of the weapon row (ItemStatsRef of the master item). | WeaponItemDefinitions, MasterItemDefinitions |
+| The EFF, ROL, MULT, and INS parts: the cells `EFF<skill>` and others of a status row (a food), of the status of an attribute threshold (`ATB_Str_Bonus_25_2_Effect`: EFFMining 0.1), of a perk of a tool. | The status, ability, affix, and attribute tables |
+| The action Gather ends at a hit (IfDamagedByPowerLevel 0 or more). | `playeractions_gather.actionlist` |
+| The retail census: 2,728,908 records of 49 distribution files, 2,450,322 of them gathering nodes; 33,071 capital nodes; 117 creature slices with skinning; 295 gatherable rows; 127 gathering slices; 230 tools. | `gathering.sh` of the stage |
+
+**The rules** (the source of each rule is in [Gathering](systems/gathering.md)):
+
+| Rule | What the backend does |
+| --- | --- |
+| The request | GatherOption of a node: the base checks the reference (a natural node and a body through the resolver of the gathering system), the option, the 3D range of the bound; the capacity does not apply. Then the row (supported), the node (not depleted; a body: dead), the tool (its paperdoll slot, not broken), the rank, the loot root, the event. Each refusal changes nothing (3743 result 2). |
+| The work | The amount BaseGatherTime (or the rest of an earlier work on the node), the speed tool x (1 + rank + EFF), the Gathering state Success, the timed use of the base for amount / speed. A release, 2473, a walk out of the range, a travel, the death, damage, or a source that went: Failure and no item. |
+| The completion | The node not depleted (the first valid completion of two characters wins; the other gets Failure and 3746), the tool and the rank again, the roll of the root with the luck (rank RollBonus + ROL), the experience of the event; one transaction: the items, the experience, the row of the node. |
+| A full bag | The whole result must fit, and the catalog must have each item: else no item, no experience, no depletion, Failure, 3746; the roll stays for the next completion on the node (no new roll; the whole quantity). |
+| The depletion and the respawn | Depleted (type 12) for each observer; Done for the owner. One uniform draw of the respawn bounds at the depletion, on the run clock of the world (a restart keeps the remaining time; the downtime does not count). Healthy at its time for each observer. |
+| The skinning | The body of a creature with a skinning row is Healthy at the death; a skinned body stays Depleted until the creature system removes it; a new creature is a new node. |
+
+**The live proof** (stage 3.6a, the backend of the stage and the game data of the run): the list is in `RESULT.md` of the evidence
+folder (a tree that falls, a mining node, a plant, a skinning, the materials with a tooltip, the trade skill experience, a refusal, the
+same node after its respawn).
+
+**Not known, not done** (stage 3.6a):
+
+- The action of a gather for an observer (the animation and the tool of a different player: type 11, not derived): a second client
+  sees the node change but not the gather action of the first character.
+- The rule of the original server for the composition of the speed (the tool, the rank, the EFF parts) and for the yield multiplier
+  (GatheringMultiplier, MULT) and the instant gather (INS): the speed is a decision of an agent; the yield is not applied.
+- The use of field 1 of type 12 (replenishTime): the client does not restore a node at that time.
+- Fishing (3.6b); the durability loss (3.7); the quest, event, and special nodes (the rows with a rule that the backend cannot check).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

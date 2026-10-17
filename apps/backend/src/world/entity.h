@@ -173,6 +173,11 @@ enum class ComponentKey {
     globalStorage,
     /** The LootDrop state of a loot bag (stage 3.5b.2, type 2027, the slot of its slice): m_rarityLevel. */
     lootDrop,
+    /**
+     * The GatherableController state of a gathering node or of the body of a creature (stage 3.6a, type 12, the slot of its slice;
+     * docs/systems/gathering.md): Healthy 4 or Depleted 8. Each observer gets it (the node state is shared: research Q1).
+     */
+    gatherable,
 };
 
 /**
@@ -687,6 +692,12 @@ struct Creature {
     WorldClock::time_point recordedAt{};
     /** True from the moment at which the health of the creature is 0. A dead creature does not get health again. */
     bool dead{false};
+    /**
+     * The skinning of the body (stage 3.6a, world/gathering.h): the slot of the GatherableController component of the slice (0: no
+     * state of the server) and the state (4 Healthy: the body can be skinned; 8 Depleted: it was skinned).
+     */
+    std::uint32_t skinSlot{0};
+    std::uint8_t skinState{0};
     /** The time of the death, on the world clock: the respawn time of its spawn point starts here (world/creatures.h). */
     WorldClock::time_point diedAt{};
     /**
@@ -1282,6 +1293,12 @@ struct ObjectBody {
     /** The LootDrop state of a loot bag (stage 3.5b.2): the slot of its slice (0: none) and m_rarityLevel. */
     std::uint32_t lootDropSlot{0};
     std::uint32_t rarity{0};
+    /**
+     * The node state of a gathering node (stage 3.6a, world/gathering.h): the slot of its GatherableController component (0: not a node
+     * with a state of the server) and the state (4 Healthy, 8 Depleted; client enum 0x3378D60).
+     */
+    std::uint32_t nodeSlot{0};
+    std::uint8_t nodeState{0};
 };
 
 /** Development aid: the slice of a probe entity (EntityKind::probe) and its interest distance. */

@@ -222,6 +222,10 @@ public:
     void complete(Entity& character, const InteractionContext& context);
     /** The handler: the use of a chest ends (before its completion: a cancel). */
     void ended(Entity& character, const InteractionContext& context, InteractionEnd cause);
+    /** @return True when a use is the use of a chest of the chest data (stage 3.6a: the gathering handler gives it to this system). */
+    [[nodiscard]] bool owns(const InteractionContext& context) const {
+        return chest_of(context).has_value();
+    }
     /** @return The open time of the open of a character (the time of the timed use of the base), or 0: no open. */
     [[nodiscard]] float open_seconds(const Entity& character) const;
 

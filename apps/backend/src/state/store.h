@@ -172,6 +172,24 @@ struct ClaimItemRow {
  * key; the object key is the placement UUID of the chest. The times are Unix milliseconds (the wall clock: a reset goes on while the
  * backend is off).
  */
+/**
+ * A depleted gathering node of the world (stage 3.6a, table `gathering_nodes`; docs/systems/gathering.md). The node is a value of the
+ * world, not of a character: one row for each node that waits for its respawn.
+ */
+struct GatheringNodeRow {
+    /** The durable key of the node: a placement UUID, or "REGION#RECORD" of a distribution file. */
+    std::string key;
+    /** The source of its identity and its version ("capital", or "distribution:" and the version of the region file). */
+    std::string source;
+    /** The gatherable row (its id text). */
+    std::string row;
+    std::uint64_t generation{0};
+    /** The respawn on the run clock of the world (nanoseconds; world_time.run_ns): the downtime of the backend does not count. */
+    std::uint64_t respawnRunNs{0};
+    /** Unix milliseconds of the depletion. */
+    std::int64_t depletedAt{0};
+};
+
 struct LootClaimRow {
     std::string objectKey;
     /** 1 Rolled (the roll is kept: `items`), 2 Looted (the InstancedLootState of the client). */
@@ -399,10 +417,22 @@ public:
      */
     [[nodiscard]] std::optional<std::uint64_t> world_time(const std::string& worldKey);
     /**
-     * Writes the position of the day cycle of a world (the row of the world key: the world time is not a value of a character).
+     * Writes the position of the day cycle of a world (the row of the world key: the world time is not a value of a character), and
+     * the run clock of the world when it has a value (stage 3.6a).
      * @return False when the database did not accept the row. Then the row did not change.
      */
-    [[nodiscard]] bool set_world_time(const std::string& worldKey, std::uint64_t position);
+    [[nodiscard]] bool set_world_time(const std::string& worldKey, std::uint64_t position, std::optional<std::uint64_t> run = std::nullopt);
+    /**
+     * @return The stored run clock of a world (stage 3.6a, column `run_ns` of `world_time`): the time in nanoseconds that the backend
+     *         ran with this world. No value: no row.
+     */
+    [[nodiscard]] std::optional<std::uint64_t> world_run_time(const std::string& worldKey);
+    /** @return The depleted gathering nodes of the world (stage 3.6a, table `gathering_nodes`), in the sequence of their keys. */
+    [[nodiscard]] std::vector<GatheringNodeRow> list_gathering_nodes();
+    /** Writes the row of a depleted node (in a batch: a savepoint; the items and the experience of a gather commit with it). */
+    [[nodiscard]] bool write_gathering_node(const GatheringNodeRow& row);
+    /** Removes the row of a node (its respawn). @return False: no change. */
+    [[nodiscard]] bool delete_gathering_node(const std::string& key);
 
 private:
     /** @return The first column of each row of a query with one parameter (the owner key). */

@@ -134,6 +134,10 @@
 //                                                        the chests near it (default 30 m, 2000 m at most), the counts
 //   GET  /v1/dev/lootbags?character=ID                   the loot bags of a character (stage 3.5b.2): its open bag, each bag in
 //                                                        which it has a part (the items of its own part), the counts
+//   GET  /v1/dev/gathering?character=ID[&radius=N]       the gathering of a character (stage 3.6a): its work, its speed and luck,
+//                                                        the nodes with a state of the server near it, the counts
+//   POST /v1/dev/gathering/respawn?character=ID&node=KEY&seconds=N
+//                                                        DEVELOPMENT AID: a depleted node respawns after N seconds
 //   POST /v1/dev/chests/clear?character=ID&chest=KEY     remove the claim of a character on a chest
 //   POST /v1/dev/chests/reset?character=ID&chest=KEY&seconds=N
 //                                                        DEVELOPMENT AID (live check L8): the looted claim resets after N s
@@ -1013,6 +1017,22 @@ void register_dev_routes(Router& router, const Services& services) {
             return json_reply(200, commands::loot_bags_view(target, character).dump());
         });
     });
+    // The gathering (stage 3.6a): the work and the nodes of a character, and the short respawn of a depleted node (a development aid).
+    router.add("GET", "", "/v1/dev/gathering", "dev.gathering", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        const auto radius = commands::QueryArguments(context.request).number("radius", 0.0F, 2000.0F);
+        if (commands::QueryArguments(context.request).has("radius") && !radius) {
+            return message(400, "radius must be 0 to 2000 m");
+        }
+        return in_world(services, [character = *character, radius = radius.value_or(30.0F)](world::World& target) {
+            return json_reply(200, commands::gathering_view(target, character, radius).dump());
+        });
+    });
+    router.add("POST", "", "/v1/dev/gathering/respawn", "dev.gathering_respawn", command_route(services, commands::set_node_respawn));
     router.add("POST", "", "/v1/dev/chests/clear", "dev.chests_clear", command_route(services, commands::clear_chest_claim));
     router.add("POST", "", "/v1/dev/chests/reset", "dev.chests_reset", command_route(services, commands::set_chest_reset));
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));

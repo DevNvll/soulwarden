@@ -72,8 +72,14 @@ The source of each rule is in brackets: game data, client code, live check (the 
   item (the same item, bind flag, and perks) with a place for all of the quantity. With no such stack the give is refused (the refusal
   `partFull`), and the item stays with the character. The check of the part is before the release of the item [finding LB-R4; decision
   of an agent: all of the quantity or nothing; test case RLB4]. A discard (1838 has 501 entries at most) that would make a part of more
-  than 500 stacks is refused (`partFull`): nothing changes. A roll of more than 500 stacks, and a stored part of more than 500 stacks
-  (only from a backend before stage 2.2), keep the stacks after the first 500 as kept items (see the next rule).
+  than 500 stacks is refused (`partFull`): nothing changes. A roll of more than 500 stacks keeps the stacks after the first 500 as kept
+  items (see the next rule). A stored part of more than 500 stacks (only from a backend before stage 2.2) keeps the stored stacks after
+  the first 500 as waiting instances with all their fields (`BagPart::waiting`: the instance id, the durability, the bind flag); the
+  client does not see them, and a take that frees a place shows them, in their order [code review of stage 2.2, finding WT-R2; test
+  case RWT2].
+- A kept roll keeps its whole quantity in the store, also above the stack limit of 10,000: a roll can be more than one stack. A load
+  with a catalog that has the item makes its stacks only when all of them fit into the part; else the whole roll stays kept [code
+  review of stage 2.2, finding WT-R1; test case RWT1].
 - An item of a kill that the item catalog does not have stays in the part as a kept item: a row with no instance id (the item, the
   quantity, the gear score of the roll, the perks). The client does not see it: no map entry and no panel element. A part with only
   kept items is Looted for the owner, and the bag has no fast end: it ends at its lifetime. A log line names the item. A load with a
@@ -132,8 +138,9 @@ values as `tools/world bags`).
 - A kept item gets a new instance id at each start, until a take or a give writes its part again.
 - The roll of an item that the item catalog does not have has no gear score and no perk (the range and the perk places come from the
   row of the item): a later load makes the item with the start gear score of its row (as the kept roll of a chest).
-- A stored part with more than 500 stacks (only from a backend before stage 2.2): the stacks after the first 500 become kept items. A
-  later load makes them with the start values of the item table: the durability of such a stack is then full again.
+- A stored part with more than 500 stacks (only from a backend before stage 2.2): the stacks after the first 500 wait with all their
+  fields (since stage 3.6a; a backend of stage 2.2 made them kept items with full durability and no bind flag). The panel shows them
+  only after a take.
 - The storage map of many large bags has fewer than 30 keys (the byte limit): a far bag can show no item list under its prompt until
   the character comes nearer.
 - `Store::list_loot_bags` joins the item rows to their parts with a linear search: its work grows with the number of item rows times

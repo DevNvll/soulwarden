@@ -98,6 +98,9 @@ The source of each rule is in brackets: game data, client code, live check (the 
 - The cost (MP-8): a request finds its chest by its key (a hash); the map of a character looks at its own claims and at the cells of
   64 m near it; an open is one timer of the world; a reset is one entry of the due list. No look at each chest of the world (test case
   LC8: the same work with 1,000 and with 100,000 far chest definitions).
+- The handler of GatherOption of the kind `gathering` (stage 3.6a): the gathering system wraps the chest handler. A chest of the chest
+  data goes to the chests; a node of the gathering data to the gathering; an object that neither system knows goes to the chests when
+  they have no data (they refuse it: "no chest data"), else to the gathering (it refuses it: "not a node") ([Gathering](gathering.md)).
 - The development override of a reset (`tools/world chest reset`, the route `POST /v1/dev/chests/reset`, only with
   `SOULWARDEN_HARNESS=1`): a looted claim resets after 1 s to a week. It is not a rule of the product (live check L8).
 - Not in this stage: the loot limits of the data (`LootLimits`: exported, but no chest table has a limit condition), the HWMMult and the

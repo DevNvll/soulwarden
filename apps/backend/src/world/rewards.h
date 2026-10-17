@@ -101,6 +101,12 @@ struct LootContext {
      * creature (AILootGSCeiling).
      */
     bool container{false};
+    /**
+     * The luck of a gather (stage 3.6a, docs/systems/gathering.md): the RollBonus of the trade skill rank and the ROL parts. It adds to the
+     * bonus of each table of the path (AddToRoll: to the roll; ClampMax: to the lower end; IgnoreBonus: nothing), as a numeric condition
+     * of a table does (client roller 0x368B070, loot.md 1.3). 0: no luck (a kill, a chest).
+     */
+    std::uint32_t rollBonus{0};
 };
 
 /** The reward of one character for one kill. */

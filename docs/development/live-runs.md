@@ -302,3 +302,11 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   is its health.
 - `tools/build-soulwarden-backend.sh` has no option: each call builds and installs into `apps/backend/dist`. For a test
   build, run `cmake --build` in a build folder and copy the program to a folder of the run.
+- `gamescopectl screenshot FILE` returns before the file is complete: a command that reads the file at once can find no file.
+  Wait 1 s before a crop or a montage of the picture.
+- A gathering node (stage 3.6a) shows its prompt only with the focus: put the character 1.5 m from the node on the side with no
+  other node (a bush next to a tree takes the focus), and press W for about 0.1 s (`tools/hx 'key 0x57 120'`) so that the
+  character turns to the camera. A travel does not turn the character. `tools/gamedata/gathering.sh --region REGION --near X Y
+  METERS` lists the nodes near a place with their kind and their G.
+- The development character carries more than its weight limit: the HUD shows "Encumbered" during a gather. It does not stop a
+  gather (the action Gather has no weight condition).

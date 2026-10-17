@@ -147,6 +147,11 @@ def sheets(case: str) -> dict:
         lt.VARIANT_TYPE: [FakeSheet("LevelVariantVitals_Common", ["VitalsID", "BaseVitalsId"], variants)],
         lt.LOOT_TABLE_TYPE: [loot_table_sheet(case)],
         lt.LOOT_BUCKET_TYPE: [bucket_sheet(case)],
+        # Stage 3.6a: the roots of the gatherable rows (a root with no table is named and not a stop; a loot container row and Empty are
+        # not gathering roots).
+        lt.GATHERABLE_TYPE: [FakeSheet("Gatherables", ["GatherableID", "FinalLootTable", "IsLootContainer"],
+                                       [["Test_OreNode", "Test_Common", ""], ["Test_QuestNode", "Test_NoGatherTable", ""],
+                                        ["Test_ChestNode", "Test_NoChestTable", "TRUE"], ["Test_EmptyNode", "Empty", ""]])],
     }
 
 
@@ -161,6 +166,8 @@ def valid_values(document: dict) -> list[str]:
     common = tables.get("Test_Common")
     if sorted(tables) != ["Test_ChestRoot", "Test_Common", "Test_Gear", "Test_Master"]:
         wrong.append(f"the tables {sorted(tables)}")
+    if document.get("gatheringRoots") != ["Test_Common"] or document.get("gatheringRootsWithNoTable") != ["Test_NoGatherTable"]:
+        wrong.append(f"the gathering roots {document.get('gatheringRoots')} {document.get('gatheringRootsWithNoTable')}")
     if document.get("format") != 2 or document.get("chestRoots") != ["Test_ChestRoot"] \
             or document.get("containerFloor") != [[1, 100], [2, 110]] \
             or document.get("limits") != {"TestLimit": [10, 0.0, 0.0, 86400.0, 86400.0, 86400.0, 0.2]}:

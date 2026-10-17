@@ -190,7 +190,7 @@ void Rewards::roll_table(std::uint32_t index, const LootContext& context, Inheri
     ++m_counts.tableVisits;
     // The conditions: a numeric tag of the roll adds its value to the bonus; of the other conditions
     // (the tags) one must be a tag of the roll.
-    std::uint32_t bonus = 0;
+    std::uint32_t bonus = context.rollBonus;
     bool tagCondition = false;
     bool tagPassed = false;
     for (const std::string& condition : table.conditions) {

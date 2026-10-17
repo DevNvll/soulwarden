@@ -59,6 +59,13 @@ Usage:
                                                 character can open it again
   tools/world chest reset CHARACTER KEY SECONDS DEVELOPMENT AID (live check L8): the looted claim resets after SECONDS
                                                 (not the rule of the data)
+  tools/world gathering CHARACTER [METERS]      the gathering of a character (stage 3.6a): its work (the node, the row, the
+                                                time, the speed parts), its speed and luck for each trade skill of
+                                                gathering (with its tools), the nodes with a state of the server near it
+                                                (default 30 m: depleted, the seconds to the respawn), and the counts
+  tools/world gathering respawn CHARACTER NODE SECONDS
+                                                DEVELOPMENT AID: the depleted node NODE (a placement UUID, a key
+                                                REGION#RECORD, or a G) respawns after SECONDS (not the rule of the data)
   tools/world interaction cancel CHARACTER      end the committed interaction of a character: its client
                                                 gets the message 3746
   tools/world fixture CHARACTER NAME [DX DY DZ] [--yaw DEGREES] [--permission N]
@@ -422,6 +429,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         show_interactions(document)
     elif isinstance(document, dict) and "trackerEntries" in document and "claims" in document:
         show_chests(document)
+    elif isinstance(document, dict) and "nodes" in document and "skills" in document and "work" in document:
+        show_gathering(document)
     elif isinstance(document, dict) and "lootContainer" in document and "bags" in document:
         show_bags(document)
     elif isinstance(document, dict) and "weapons" in document:
@@ -801,6 +810,34 @@ def show_chests(document: dict) -> None:
     print(f"{len(document['claims'])} claim(s), {len(document['near'])} chest(s) in {document['radius']:.0f} m, {document['trackerEntries']} "
           f"LootTracker entries; opens {counts.get('begins', 0)}, completions {counts.get('completions', 0)}, cancels "
           f"{counts.get('cancels', 0)}, kept rolls {counts.get('kept', 0)}, resets {counts.get('resets', 0)}, refusals "
+          f"{counts.get('refusals', {})}")
+
+
+def show_gathering(document: dict) -> None:
+    """Prints the gathering of a character (stage 3.6a): its work, its speed and luck for each skill, and the nodes near it."""
+    if not document.get("inWorld"):
+        print("the character is not in the world")
+        return
+    if not document.get("data"):
+        print("the backend has no gathering data: make the files with tools/gamedata/gathering.sh")
+    work = document.get("work")
+    if work:
+        parts = work["parts"]
+        print(f"work: {work['kind']} node {work['node']} ({work['row']}): amount {work['amount']:.2f}, {work['elapsed']:.1f} of "
+              f"{work['seconds']:.2f} s; speed {parts['speed']:.3f} (tool {parts['toolSpeed']:.3f} {parts['tool'] or '-'}, rank "
+              f"{parts['rankEfficiency']:+.3f}, effects {parts['effects']:+.3f}), luck {parts['rollBonus'] + parts['rollEffects']:.0f}")
+    for skill, parts in sorted(document.get("skills", {}).items()):
+        print(f"{skill:<10} speed {parts['speed']:.3f} (tool {parts['toolSpeed']:.3f} {parts['tool'] or '-'}"
+              f"{' gear score ' + str(parts['toolGearScore']) if parts['tool'] else ''}, rank {parts['rankEfficiency']:+.3f}, effects "
+              f"{parts['effects']:+.3f}), luck {parts['rollBonus']:.0f} + {parts['rollEffects']:.0f}, yield {parts['multiplier']:+.3f} "
+              f"(not used), instant {parts['instant']:.3f} (not used)")
+    for node in document["nodes"]:
+        state = f"DEPLETED, respawn in {node['respawnSeconds']:.0f} s" if node["depleted"] else "healthy"
+        print(f"{node['node']:<38} {node['kind']:<8} {node['distance']:6.1f} m  {node['row']:<26} {state} (generation {node['generation']})")
+    counts = document.get("counts", {})
+    print(f"{len(document['nodes'])} node(s) with a state of the server in {document['radius']:.0f} m; gathers {counts.get('begins', 0)}, "
+          f"completions {counts.get('completions', 0)}, cancels {counts.get('cancels', 0)}, contested {counts.get('contested', 0)}, "
+          f"full bags {counts.get('fullBags', 0)}, depleted {counts.get('depleted', 0)}, respawns {counts.get('respawns', 0)}, refusals "
           f"{counts.get('refusals', {})}")
 
 
@@ -1407,6 +1444,15 @@ def main() -> None:
     elif command == "chest" and len(arguments) == 5 and arguments[1] == "reset":
         request(data_dir, "POST", f"/v1/dev/chests/reset?character={character_id(data_dir, arguments[2])}&chest={arguments[3]}"
                                   f"&seconds={arguments[4]}")
+    elif command == "gathering" and len(arguments) == 5 and arguments[1] == "respawn":
+        node = arguments[3]
+        if not re.fullmatch(r"[A-Za-z0-9_+#-]+", node):
+            fail("NODE is a placement UUID, a key REGION#RECORD, or a G in 16 hexadecimal digits")
+        request(data_dir, "POST", f"/v1/dev/gathering/respawn?character={character_id(data_dir, arguments[2])}"
+                                  f"&node={node.replace('#', '%23').replace('+', '%2B')}&seconds={whole(arguments[4], 'the seconds')}")
+    elif command == "gathering" and len(arguments) in (2, 3):
+        radius = f"&radius={arguments[2]}" if len(arguments) == 3 else ""
+        request(data_dir, "GET", f"/v1/dev/gathering?character={character_id(data_dir, arguments[1])}{radius}")
     elif command == "interaction" and len(arguments) == 3 and arguments[1] == "cancel":
         request(data_dir, "POST", f"/v1/dev/interactions/cancel?character={character_id(data_dir, arguments[2])}")
     elif command == "time" and len(arguments) == 1:

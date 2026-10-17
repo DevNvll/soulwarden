@@ -92,7 +92,7 @@
 // "creatures": each creature that is 150 m or less from the character, the nearest one first),
 // and its interactions (the member "interactions", stage 2.5a: its committed interaction and the
 // objects of the interaction data 30 m or less from it, with their state), and its chests (the member
-// "chests", stage 3.5b.1: its loot claims and the chests 30 m or less from it), and its loot bags (the member "lootBags", stage 3.5b.2:
+// "chests", stage 3.5b.1: its loot claims and the chests 30 m or less from it), its gathering (the member "gathering", stage 3.6a), and its loot bags (the member "lootBags", stage 3.5b.2:
 // its open bag and the items of its own part of each bag), and the world time (the member "worldTime", stage 2.2: the time, the phase,
 // and the cycle of the world).
 //
@@ -278,6 +278,7 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 reply["interactions"] = commands::interactions_view(target, selected, commands::kAdminInteractionRange);
                 // The chests of the character (stage 3.5b.1): its claims and the chests near it.
                 reply["chests"] = commands::chests_view(target, selected, commands::kAdminChestRange);
+                reply["gathering"] = commands::gathering_view(target, selected, commands::kAdminGatheringRange);
                 // The loot bags of the character (stage 3.5b.2): its own parts only.
                 reply["lootBags"] = commands::loot_bags_view(target, selected);
                 // The world time (stage 2.2): one value for the whole world.

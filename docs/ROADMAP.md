@@ -194,7 +194,7 @@ below is the layout after the port.
 | 3.3 | Abilities, cooldowns, status effects, perks | 1.6, 3.2 | L | verified | 3.3a, 3.3b-S1, 3.3b-S2a, 3.3b-S4, 3.3b-S3, 3.3b-S2b, 3.3b-S5, 3.3b-S6, 3.3b-M1, 3.3b-M2 done | |
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done, 3.4f-A done, 3.4f-B done, 3.4f-C done, 3.4f-D done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done, 3.5b.1 done, 3.5b.2 done | |
-| 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | | |
+| 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | 3.6a done | |
 | 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | | |
 | 4.1 | Objective progress, completion, rewards | 1.8, 2.5 | L | verified | | |
 | 4.2 | Conversations, lore pages, cutscenes | 2.5 | M | verified | | |
@@ -252,7 +252,7 @@ stage with a letter is a part of the system with that number.
 | 15 | 3.4f | Creatures with ranged attacks and abilities: the archers and the casters of the data shoot and cast (a server projectile with its record for each observer, its hit on a player, a miss behind a wall), the dodge of the player against a projectile, and the stamina model that the dodge needs; project rules where the data is silent (the distance band, the choice of melee or ranged, the repeat time); block, encounter abilities, and summons wait (research file `creature-ranged.md`) | 2.5 | 3.4f-A done (the basic shot of the archers of the data: the ranged attacks in the creature data, the projectile of the server with its record for each observer, its hit on a character at the contact, a miss, a wall; the project rules of the band, the choice, the repeat, and the lead; the corrections of the review of 2.5b); 3.4f-B done (the basic cast of the casters, the stamina model of the server from the game data, the dodge with its payment and its immune window, a shot through a dodge, the shield of Maelstrom on a creature shot in the game, the passive rules of the stamina and of the dodge; the corrections of the review of 3.4f-A); 3.4f-C done (the ground areas of six creature spells: the status area with its statuses on the player and the poison damage, the strike with one hit in its window, the ends at the caster; the area attack in the behavior; the maximum 100 of the stamina on the HUD; the corrections of the review of 3.4f-B); 3.4f-D done (the self heal of the Inquisitor Cleric and the Howl of the Evil Knight hound from the status actions of the data, the one path of a status on a creature with its heal ticks, its DMG part, its haste, its dispel, and its due list; the four area spells at the caster with the place rule of the client and the rotation of the caster; the corrections of the review of 3.4f-C); part E (the summons and the encounter abilities) waits |
 | 16 | 3.5b | Chests and loot on the ground (research file `chests-ground-loot.md`); after 2.5, because the client handles both as interactions. Three parts (decision of the user through the orchestrator, 2026-10-16): 3.5b.1 the ordinary chests of the world (supply, provision, alchemy, the ordinary elite chests); 3.5b.2 the personal loot bag of a creature (the AILoot bag: the items of a kill go into it) and the discard of a player; 3.5b.3 the special locks, the keys, and the chests of quests and events, after their predicates exist (after 3.6 and 1.8) | 2.5 | 3.5b.1 done (the open with the time of the data, the roll of the root of a chest with the context of its territories and the container floor, the loot claim of each character in the store with its reset, the LootTracker and the Gathering state of the owner, the unavailable chests with the Locked state; the corrections of the review of 3.4f-D); 3.5b.2 done (the personal loot bag of a kill with a part for each character with the credit, the panel and the takes with the stored instances, the private Discarded bag of a drop, the lifetime of the data, the bags in the store; the mana parts of the threshold abilities; the corrections of the review of 3.5b.1); 3.5b.3 waits |
 | 17 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | done (one day and night cycle of the world with the cycle of the client: the request 4248 and the record 7036 with the ids of each own entity, the phase 4247, the clock correction 335 each 3 s; the store of the position with the stop of the cycle while the backend is stopped; the command of the tool window, of the admin interface, and of the development routes; the 405 creature points with a time constraint of the data; the local weather volumes with the shared clock; the mana prediction message 4289 of the client; the corrections of the review of 3.5b.2) |
-| 18 | 3.6 | Gathering and fishing (research file `gathering-stage.md`) | 2.5 | research |
+| 18 | 3.6 | Gathering and fishing (research file `gathering-stage.md`). Two parts (decision of the user through the orchestrator, 2026-10-16): 3.6a the gathering of the resources of the world (mining, logging, harvesting, skinning); 3.6b fishing | 2.5 | 3.6a done (the natural nodes by their offline id and the capital nodes, the tool of the paperdoll and the rank gate, the work with the speed of the tool, the rank, and the effects, the roll of the loot root with the luck, the trade skill experience, the depletion for each observer and the respawn on the run clock of the world, the skinning of a body; the corrections of the review of 2.2); 3.6b waits |
 | 19 | 3.7 | Crafting, refining, repair, salvage (research file `crafting-stage.md`) | 3.6 | research |
 | 20 | 5.1 | Shops (research file `shops-stage.md`) | 2.5 | research |
 | 21 | 5.6 | Cosmetics and transmog (research file `cosmetics-stage.md`) | 5.1 | research |
@@ -1799,6 +1799,31 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
   yields; the respawn timer; trade skill experience.
 - Test: screenshots before and after a tree is cut, with the wood in the bag and the skill
   experience higher.
+- Stage 3.6a (done; protocol notes 4.44; result file `~/Games/soulwarden/work/evidence/gathering/implement/RESULT.md`;
+  [Gathering](systems/gathering.md)). The gathering of the resources of the world: mining, logging, harvesting, skinning. Live checks
+  L2 to L8 first (a probe backend and `tools/world fragment`): the client gives each record of a distribution file an offline id (G
+  from the region and the record counter; not the packed position id of the research), and its request of E is GatherOption with that
+  G; the GatherableController state (type 12, slot 3) Depleted hides a node and Healthy brings it back, and the client restores no node
+  by itself; the Gathering state (type 81) runs the ring for amount / speed, Done ends the use, Failure cancels it; the tool must be in
+  its paperdoll slot (33 to 36); the "Gather Speed" of a tool is MinGatherEFF to MaxGatherEFF over its gear score range. A new tool
+  (`tools/gamedata/gathering.sh`, `gathering-data.json` and one file for each region, 40 MB) writes the 295 gatherable rows, the
+  ranks, the events, the 230 tools, the 127 gathering slices, the 33,071 capital nodes, the skinning of 117 creature slices, and the
+  2,450,322 natural nodes of 49 regions with their heights; `loot-tables.json` has the gathering roots. The server resolves a natural
+  node and a creature body through a resolver of the interaction base (the capacity of a bound does not apply to action 14), checks the
+  row, the tool, and the rank, runs the work (the speed: the tool times 1 plus the rank part and the EFF parts, a decision of an
+  agent), rolls the loot root with the luck of the rank and the ROL parts, and writes the items, the experience, and the depleted node
+  in one transaction; each observer gets the depletion; the respawn is one draw of the bounds of the data on the run clock of the world
+  (schema 13: the run clock and the table `gathering_nodes`; a restart keeps the remaining time, the downtime does not count). A full
+  bag keeps the roll for the next gather of the node; of two characters at one node the first completion wins (a decision of an
+  agent); a skinned body stays depleted until it goes. Test cases GAT1 to GAT10 (GAT9: 2.5 million placements, 50 characters, 1,000
+  updates, one region file read, the same work with 100 times more far placements, less than 5 s) and RWT1 to RWT5 (the findings
+  WT-R1 to WT-R5 of the review of stage 2.2, each one failing on the tree of 2.2: the whole quantity of a kept roll at a restart, the
+  fields of a stored stack beyond 500, the protection columns of the item catalog tool, the format of the catalog, the end of a time
+  text). Live: a young tree falls ("+44 Logging", "+9 Green Wood"), also at its second depletion; a boulder with the pick gives 14
+  stone; a hemp plant dissolves ("+215 Harvesting", "+26 Fiber"); the skinning of a rabbit ("+2 Rawhide", "+1 Game Meat", 32
+  Skinning); the boulder with no pick says "No equipped Pick"; the tree comes back at its respawn; the depleted nodes stay after a
+  restart. Not in this part: fishing (3.6b), the durability loss (3.7), the gather action for an observer (type 11), the yield
+  multiplier, and the nodes of quests and events.
 
 ### 3.7 Crafting, refining, repair, salvage
 
