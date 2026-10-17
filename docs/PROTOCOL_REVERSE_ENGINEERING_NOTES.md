@@ -6565,7 +6565,7 @@ gets the nearest value); the preset writes the achievement of the objective of e
 **Not known, not done** (stage B0): the code of the client that hides the places 2 to 5 (not traced: the live proof is enough for the
 preset); the objective progress of an artifact in play (the quest engine, stage 1.8); the gear system counts the perks of an artifact
 also with no objective achievement (the client shows them as locked); the jewelry stat lines and the attribute bonuses of the build
-(stage B4: the maximum health of the character is 5,109, the video shows 10,676).
+(stage B4, 4.49: the maximum health of the character is 5,330 from stage B4, the video shows 10,676).
 
 ### 4.46 The bow abilities: the shot items of a fragment, the aim of Penetrating Shot, the pierce, the explosion record (live proof of stage B1; static proof for the client code and the game data; the rules are project rules with the values of the game data)
 
@@ -6688,8 +6688,54 @@ counted as present, OnStackStatusEffect, the condition StatusEffectCategories, D
 
 **Not known, not done** (stage B3): the length of the animation of a roll (the end of the dodge action of the client; the backend uses the
 mark CanTransition, research K11); the outgoing time factor (TargetStatusEffectDurationMult: Alacrity II on a haste for a different player,
-Battle Precision: stage B4); the use of StatusEffectOverallDurationReduction (no row of the data has it); the view of a second client
+Battle Precision: done in stage B4, 4.49); the use of StatusEffectOverallDurationReduction (no row of the data has it); the view of a second client
 (the case HS7 tests two sessions).
+
+### 4.49 The other rules of the bow build: the jewelry lines, the cooldown reduction key, the attack type of a creature hit (live proof of stage B4; static proof for the client code and the game data; the rules are project rules with the values of the game data)
+
+Stage B4, the fifth part of the bow build of the user. Build sheets: `~/Games/soulwarden/work/research/bow-build.md` (section 4),
+`bow-build-2.md` (Q5 to Q8, K9, K13). The live proof: `RESULT.md` of `~/Games/soulwarden/work/evidence/bow-build/b4/implement/` (live check
+L1 before the code with the backend of stage B3; run L2 with the backend of the stage). Code: `world/passives.h` (`attribute_rules`,
+`merged`, `outgoing_factor`, `taken_reduction`, `cooldown_factor`, `consumable_cooldown_factor`, `consumable_used`, the perk scripts in
+`tick`), `world/gear.h` (the jewelry lines, the heal parts of a perk row), `world/stamina.h` (`attack_started`),
+`server/rep/states/stat_multiplier_state.cpp` (the key 0x4F), `gamedata/item_catalog.h` (`TrinketStats`), `gamedata/creature_data.h`
+(`CreatureContact::attackType`). Documents: [Passive rules](systems/passive-rules.md), [Gear and perks](systems/gear-and-perks.md),
+[Consumables](systems/consumables-and-heart-rune.md), [Stamina and dodge](systems/stamina-and-dodge.md). Test cases BR1 to BR14, BY1 to
+BY3. The stage adds one key to the stat multiplier state of 4.24; no new message.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| The key 0x4F (CooldownReduction) of the stat multiplier state of the owner (slot 43, type 1525, the entry of 4.24: key u8, value i32 big-endian x 10000, syncVitals u8). The client takes value - 1 as a part of the cooldown reduction of an ability, in one sum with the fixed cooldown rules: the tooltip of Explosive Arrow (22 s in the data) shows 20.8 s with two sources of Refreshing (2 x 2.72 percent), and 19.7 s with the value 10,500 too (22 x (1 - 0.0544 - 0.05) = 19.70). The backend sends the key only when the line is not 0. The HUD countdown of a cast with the backend of the stage (the server cooldown 19.70 s) ends 19.7 to 19.84 s after the press. | Live L1 (`L1-03-explosive-tooltip.png`: 20.8 with the backend of stage B3; `L1-04-cdr-10500.png`: 19.7 with a table of a command); run L2 (`B4-cooldown-explosive.mp4`, `B4-cooldown-explosive-hud.png`, `L2-02-explosive-tooltip.png`) | The name registry `0x3FF0810` (the enum: MaxHealth 1, HealMod 3, ConsumableHealMod 4, StaminaRate 0x0B, MoveSpeedMod 0x34, SprintSpeedMod 0x35, BaseDamage 0x4E, CooldownReduction 0x4F) |
+| The tooltip lines of the jewelry ("+4.53% Max Health" of Gorgon's Amulet at 725, "+9.06% Base Damage" of the ring at 725, "+5.00% Cooldown Reduction" of the earring at 800): gear score x Scale...PerGS x TrinketBonus x 0.01 of the row of the stats table ArmorItemDefinitions. The client computes them from the item; the server sends no line. The max health of the character sheet comes from the vitals of the server (5,109 with the backend of stage B3, 5,330 with the backend of stage B4). | Live L1 (`L1-08-tip-j1.png` to `L1-10-tip-j3.png`, `L1-05-attr-multipliers.png`); live check B4-4 in run L2 (`L2-01-attributes.png`) | The consumer of the lines `0x3636A50` |
+| The weapon damage of the character sheet: GetCoreDamage with the item callback; with a gem affix with UseWeaponAttributeScaling (+0x13d; +0x13c IsAdditiveDamage, +0x13e PreferHigherScaling) the number is core x (1 + p x (1 - p)), p the DamagePercentage (+0x4c): the rapier 1,824 (p 0.5), the Boltcaster 2,505 (p 0.99). Without the flag: (1 - p) x core + p x the core with no attribute = 1,012 (the number of the video). A number of the client only. | Live L1 (`L1-05-attr-multipliers.png`, `L1-12-rapier-tooltip.png`); static | `0x14368D200` (GetCoreDamage), `0x1436A57A0` (the callback), the affix loader `0x1443B3A40` |
+| The perk tooltips take the potency of the gear score 100 of the potency curve: Refreshing 1.36 ("2.72%"), Enchanted Ward 1.7515 ("1.8%"), Enchanted Ward II 1.27375 x 0.016 ("2.0%", stacks 2 of 5), Alchemist Reprieve 4.0 ("8%"). | Live L1; live check B4-2 in run L2 (`L2-08-tip-head.png`, `L2-09-tip-feet.png`, `L2-10-tip-chest.png`, `L2-tooltips-armor-sheet.png`) | The potency `0x67E9A70` (IsStackableMax +0x944, IsStackableDiminishingModifier +0x948) |
+| The statuses of Vital Synergy come from the server with no row of the perk in the data (the rows are empty): the icon "Anointed" (`Status_Perk_Chest_StamLowHealthRegen`) while the stamina is below half, the stamina status while the health is below half; each icon goes away when its test does not hold. | Live L1 (`L1-13-vital-synergy-low-health.png`: no icon with the backend of stage B3); live B4-3 (`B4-3-vital-synergy.mp4`, `B4-3-vital-synergy-icons.png`: in the backend log the low stamina status from 15:27:05.5 to 08.0, the low health status from 10.0 to 16.1) | The perk script `0x238DEF0` from the perk tick `0x238B500` (the tests at `0x238E2E8` to `0x238E4A3`) |
+| A status of a food on the character with the time factor of an EquipAbility (Desert Sunrise): the full map entry has the shorter time, and the HUD shows it ("15s" for a poison of 20 s). | Live run L2 (`L2-07-desert-sunrise-poison.png`) | The map of 4.24 |
+
+**The data** (the game data files of stage B4, [Game data](development/game-data.md)):
+
+| Fact | Source |
+| --- | --- |
+| The jewelry lines: the columns TrinketBonus, ScaleHealthPerGS, ScaleDamagePerGS, ScaleCDRPerGS of ArmorItemDefinitions (2,505 rows with a line; Gorgon's Amulet 0.01 / 0.625 / 0 / 0, the earring 0.01 / 0 / 0 / 0.625) | The item tables (`item-catalog.json` format 4) |
+| The attack type of a creature attack: the column AttackType of the damage row of the attack (3,290 contacts: Light 1,801, Heavy 1,347, Magic 45, blank 97) | The damage tables of the creatures (`creatures.json`, a contact of 10 values) |
+| The mark CanAttackCancel of the dodge fragments (0.266667 s) and rule 96 of `player.grid` (Dodge to Attack, Shoot, Offhand at that mark) | `player.adb`, `player.grid` (`stamina-data.json` format 2) |
+| Long Range `Passive_Bow_Hunter_DmgVsDist` (OnHit, DistFromDefender 10, GreaterThanOrEqual, BaseDamage 0.1); Finishing Shot `Passive_Bow_Hunter_DmgVsLow` (TargetHealthPercent 50, BaseDamage 0.15, no event); Battle Precision `Passive_Bow_Skirmish_DebuffDur`; Enchanted Ward `Global_Armor_DefBasic` (0.01) and `Ability_Perk_Armor_DefBasic` (0.016, IsStackableMax 5); Refreshing `Global_Common_CDR` (-0.02, IsStackableMax 3); the potion perks (`Global_Amulet_PotionHeal`, `GlobalPerk_Artifact_Set1_Earring1` and `_2` to `_5`, `Ability_Perk_Earring_OnPotionDmg`, `_OnPotionFort`); the food row `Global_Consumable_FoodDoT_DurRed_T5` | `BowAbilityTable`, the perk tables, the attribute tables (`ability-data.json` format 7, `progression-tables.json`) |
+
+**The rules** (the source of each rule is in [Passive rules](systems/passive-rules.md), [Gear and perks](systems/gear-and-perks.md),
+[Consumables](systems/consumables-and-heart-rune.md), and [Stamina and dodge](systems/stamina-and-dodge.md)): the threshold abilities as
+rules of the character, the cap of the sources of a row, the distance of Long Range from the place of the attacker at the hit, a target
+condition with no event as a rule of each hit, the outgoing time factor, the reduction of a creature hit by its attack type, the fixed
+cooldown rules and the cooldown line in one sum, the perk script of Vital Synergy, the heal parts of the perk rows in the received pool
+(decision D9: Divine counts for a potion), the consumable cooldown factor with a positive value and a cooldown id, the consumable rules
+after a use, the end of the dodge action at an attack after CanAttackCancel.
+
+**Not known, not done** (stage B4): the maximum health of the video (10,676; this client and its data give 5,330: the client of the video
+has different data, research of stage B4); the origin of the position +0x230 of the hit data of the client (Long Range, research K9: the
+backend uses the place of the attacker at the hit); the period of the perk tick of the client (the backend tests Vital Synergy each
+500 ms); the use of the outgoing factor by the server of the game (the client has no reader); the view of a second client (the case BR12
+tests two sessions); the rules of a hit do not merge the sources of a row (only the new paths of the stage do).
 
 ## 5. Open items
 

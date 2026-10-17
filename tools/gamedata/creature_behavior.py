@@ -450,6 +450,9 @@ class Tables:
                                 "charge": charge if isinstance(charge, float) and math.isfinite(charge) and charge > 0.0 else 0.0,
                                 "id": str(sheet.cell(row, "DamageID")),
                                 "type": str(sheet.cell(row, "DamageType")),
+                                # Stage B4: the attack type of the row (Light, Heavy, Magic, or empty; research bow-build-2.md Q5): the
+                                # condition AttackType of a rule of a hit that a player takes (Enchanted Ward). A table with no column: empty.
+                                "attackType": str(sheet.cell(row, "AttackType")) if "AttackType" in sheet.columns else "",
                                 "ranged": sheet.cell(row, "IsRanged") in (True, 1.0, "1", "TRUE", "true"),
                                 "factor": factor if isinstance(factor, float) and math.isfinite(factor) else 0.0,
                                 "added": added if isinstance(added, float) and math.isfinite(added) else 0.0})
@@ -903,7 +906,7 @@ class Behavior:
                 "override": bool(override), "table": row["table"], "tableKey": zlib.crc32(row["table"].lower().encode()),
                 "row": row["id"], "rowIndex": row["ordinal"], "factor": rounded(row["factor"]), "added": rounded(row["added"]),
                 "type": row["type"], "wire": wire, "category": category, "charge": rounded(row["charge"]),
-                "lead": values.get("AILeadTarget", "").lower() == "true", "aimSpeed": number("ProjectileSpeed"),
+                "attackType": row.get("attackType", ""), "lead": values.get("AILeadTarget", "").lower() == "true", "aimSpeed": number("ProjectileSpeed"),
                 "leadAngle": number("AILeadTargetMaxAngle"), "aimAngle": number("AIAimMaxAngle"),
                 "miss": [number("AIMissMinDistance"), number("AIMissMaxDistance")], "range": attack["range"],
                 "radius": attack["radius"], "accelDelay": attack["accelDelay"]}, ""
@@ -1114,7 +1117,7 @@ class Behavior:
                     break
                 wire, category = self.tables.types[row["type"]]
                 contacts.append([rounded(time), rounded(reach_of(parameters)), rounded(row["factor"]), rounded(row["added"]),
-                                 row["type"], wire, category, row["id"], rounded(row["charge"])])
+                                 row["type"], wire, category, row["id"], rounded(row["charge"]), row.get("attackType", "")])
             if not usable or not contacts:
                 continue
             attack = [index, rounded(min(self.attack_length(chosen, contacts[-1][0]), LONGEST_ATTACK)), contacts]
@@ -1277,7 +1280,7 @@ class Behavior:
                 return None, "the damage row of the spell has no damage type", True
             wire, category = self.tables.types[row["type"]]
             cast.update({"row": row["id"], "factor": rounded(row["factor"]), "added": rounded(row["added"]), "type": row["type"],
-                         "wire": wire, "category": category, "charge": rounded(row["charge"])})
+                         "wire": wire, "category": category, "charge": rounded(row["charge"]), "attackType": row.get("attackType", "")})
         return cast, "", False
 
     def read_status_actions(self, actions: list[list], databases: list[str], tags: set[str], markers: dict, slice_path: str = "") -> list[list]:

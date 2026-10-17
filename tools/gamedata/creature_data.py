@@ -1458,7 +1458,10 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                                                        bone from the skeleton of its character (stage 3.3b-S5); only
                                                        for a slice with a head volume and a skeleton in the game
                  "attacks": [[action, time, [[contact time, reach, damage factor, added damage,
-                                              damage type, type number, type category, damage row], ...]], ...]},
+                                              damage type, type number, type category, damage row, rune charge,
+                                              attack type], ...]], ...]},
+                                              (stage B4: the attack type of the damage row, Light, Heavy, Magic, or empty; also
+                                              the member "attackType" of a ranged release and of an area strike)
                 ...]
      "kinds":  [{"id", "vitals", "category", "vitalsId", "categoryId", "name", "vitalsName",
                  "family", "creatureType", "health", "damage", "level", "bodies": [[slice, percent], ...],

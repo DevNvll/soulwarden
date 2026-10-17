@@ -89,6 +89,11 @@ enum class RuleOrigin : std::uint8_t {
      * of Shirking Shock II equips Ability_Perk_Weapon_DodgeSuccess_LightningDMG while it runs).
      */
     status,
+    /**
+     * Stage B4: a threshold ability of an attribute (attributes.abilities of progression-tables.json: Dex_Bonus_25_1 at dexterity 25 and more,
+     * the value of the attribute with its bonus), with the potency 1. A row of the rules of the character for each weapon.
+     */
+    attribute,
 };
 
 /** One rule of a character for one hit. */
@@ -153,6 +158,16 @@ struct PassiveCounts {
     std::uint64_t dodgeStatuses{0};
     std::uint64_t afterDodgeRules{0};
     std::uint64_t tagRemovals{0};
+    /**
+     * Stage B4: the creature hits whose damage a rule with OnHitTaken and BaseDamageReduction lowered (Enchanted Ward), the cooldowns that a fixed
+     * cooldown rule changed (Refreshing), the statuses of the perk scripts of the client (Vital Synergy), the rules with OnUsedConsumable that
+     * acted (the Toast perks), and the statuses whose time an outgoing time factor changed (Battle Precision).
+     */
+    std::uint64_t takenReductions{0};
+    std::uint64_t cooldownFactors{0};
+    std::uint64_t scriptStatuses{0};
+    std::uint64_t consumableRules{0};
+    std::uint64_t outgoingFactors{0};
 };
 
 class Passives {
@@ -172,7 +187,7 @@ public:
      * A creature hit a character (Health::creature_hit, after the damage `dealt`): the rules with OnHitTaken of the weapon in its hand
      * and of its perks, with the conditions that a hit taken has a source for (code review of stage 3.3b-S5, finding F6).
      */
-    void hit_taken(Entity& character, float dealt);
+    void hit_taken(Entity& character, float dealt, std::string_view attackType = {});
     /**
      * A creature hit came in the immune window of the dodge of a character (stage 3.4f-B, Stamina::evaded): the rules with
      * OnHitTakenWhileInvulnerable of the weapon in its hand and of its perks (Shirking Fortification: the fortify of the armor perks),
@@ -219,6 +234,40 @@ public:
      *         0.5 and Alacrity II 0.094 x 1.274 give 1.62). Not below 0.
      */
     [[nodiscard]] float duration_factor(const Entity& character, const gamedata::StatusRow& row) const;
+    /**
+     * Stage B4: @return The outgoing time factor of a status that a character (`source`) gives a different entity (`target`): 1 plus, for each rule
+     *         of the source with TargetStatusEffectDurationMult whose TargetStatusEffectDurationCats has a category of the status and whose
+     *         conditions pass (its own values; TargetStatusEffectCategory and TargetStatusEffect on the target, the new status counted as present),
+     *         the value times the potency (Battle Precision: +0.2 for a Debilitate or DoT; Dex_Bonus_150_1: +0.05 for a DoT). 1 for a source
+     *         that is not a character and for a status of the character on itself (a decision of stage B3).
+     */
+    [[nodiscard]] float outgoing_factor(const Entity& source, const Entity& target, const gamedata::StatusRow& row) const;
+    /**
+     * Stage B4: @return The part of the damage of a creature hit that the rules of a character take away (the rules with OnHitTaken and
+     *         BaseDamageReduction whose conditions pass before the damage: Enchanted Ward, AttackType Light,Heavy of the damage row of the
+     *         creature attack), times the potency. One pool with the BaseDamageReduction of the gear (Combat::creature_damage).
+     */
+    [[nodiscard]] float taken_reduction(const Entity& character, std::string_view attackType) const;
+    /**
+     * Stage B4: @return The factor of the cooldown of an ability of a character: 1 plus the CooldownTimer (negative) times the potency of each fixed
+     *         cooldown rule (no event, CooldownTimer, the scope of CDRImmediatelyOptions: Refreshing, Global_Common_CDR) whose conditions pass,
+     *         less the cooldown reduction line of the jewelry (GearSummary::cooldownReduction). Live check L1 of stage B4: the client shows 22 x
+     *         (1 - 2 x 0.0272 - 0.05) = 19.7 s for Explosive Arrow. Not below 0.
+     */
+    [[nodiscard]] float cooldown_factor(const Entity& character, std::string_view ability) const;
+    /**
+     * Stage B4: @return The factor of the cooldown of a consumable of a character: 1 plus the CooldownTimer times the potency of each rule with
+     *         OnUsedConsumable, CooldownTimer, and no CDRImmediatelyOptions whose CooldownId is the cooldown id of the item (or that has none):
+     *         The Thirst (+0.25 for SurvivalPotion, PotionRegen, PotionMana, PotionFocus), the potion CDR perks (-0.04). Not below 0.
+     */
+    [[nodiscard]] float consumable_cooldown_factor(const Entity& character, std::string_view itemId, std::string_view cooldownId) const;
+    /**
+     * Stage B4: a character used a consumable (Consumables::use, after its statuses): the rules with OnUsedConsumable and an effect on the character
+     *         (SelfApplyStatusEffect, RemoveStatusEffects) whose conditions pass: IsConsumableIds (the item is in the list), IsNotConsumableIds,
+     *         CooldownId (the cooldown id of the item), the values of the character, and the activation cooldown (the Toast perks of the earring:
+     *         a potion gives the empower or the fortify, one time in 8 s).
+     */
+    void consumable_used(Entity& character, std::string_view itemId, std::string_view cooldownId);
     /** Each world tick: the rules of the entities near a character (a status while NumAroundMe holds), each kAroundStep. */
     void tick();
     /** A character leaves the world: the statuses of its rules near it end, and its values of the evaluator go. */
@@ -273,6 +322,18 @@ private:
     /** Stage B2: @return The rows that the statuses of a character equip (EquipAbility), with the potency of each status. */
     [[nodiscard]] std::vector<PassiveRule> status_rules(const Entity& character) const;
     /**
+     * Stage B4: @return The threshold abilities of the attributes of a character (the value with its bonus at or above the threshold), with the
+     *         potency 1. `nonCombat` true: also the rows with IsNonCombatAbility (the list only: the gathering system reads their values).
+     */
+    [[nodiscard]] std::vector<PassiveRule> attribute_rules(const Entity& character, bool nonCombat = false) const;
+    /**
+     * Code review of stage B3, finding B3-R2: @return The rules with one rule for each row of the data: the sources of a row (the perks of each
+     *         item) give one potency, the largest potencies first, IsStackableMax sources at most, and with IsStackableDiminishingModifier each
+     *         next source counts that part less (client potency 0x67E9A70: the count loop of +0x944 and +0x948). The duration factor, the rules
+     *         with no hit (a swap, the end of a dodge), and the rules of stage B4 use it; the gear values have their own cap.
+     */
+    [[nodiscard]] static std::vector<PassiveRule> merged(std::vector<PassiveRule> rules);
+    /**
      * Stage B2: @return True when the target status conditions of a row pass (TargetStatusEffect with TargetStatusEffectStackSize and
      *         TargetStatusEffectComparison, TargetStatusEffectCategory, CheckStatusEffectsOnTargetOwned; client hit test 0x67A18F0), with the
      *         effects of the target before the hit.
@@ -324,7 +385,8 @@ private:
     /** The end of the ActivationCooldown of each rule of each character (the character id and the rule id). */
     std::unordered_map<std::string, WorldClock::time_point> m_activations;
     WorldClock::time_point m_nextSweep{};
-    PassiveCounts m_counts;
+    /** Mutable: the getters of stage B4 (taken_reduction, cooldown_factor, outgoing_factor) count what they changed. */
+    mutable PassiveCounts m_counts;
 };
 
 } // namespace soulwarden::backend::world

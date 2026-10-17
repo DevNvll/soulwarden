@@ -7,6 +7,7 @@
 #include <set>
 
 #include "core/logging/log.h"
+#include "gamedata/item_catalog.h"
 #include "world/data_rules.h"
 #include "world/world.h"
 
@@ -168,7 +169,7 @@ GearValues Gear::values(const Entity& character) const {
             typeNames.push_back(type.name);
         }
     }
-    const auto add_cells = [&](const gamedata::CellValues& cells, float potency, bool ability) {
+    const auto add_cells = [&](const gamedata::CellValues& cells, float potency, bool ability, bool mana = true) {
         for (unsigned type = 0; type < attribute::kCount; ++type) {
             values.attributes[type] += cells.number(kAttributeColumns[type]) * potency;
         }
@@ -176,9 +177,19 @@ GearValues Gear::values(const Entity& character) const {
         if (ability) {
             values.baseDamage += cells.number("BaseDamage") * potency;
             values.damageReduction += cells.number("BaseDamageReduction") * potency;
-            // The mana parts of a fixed ability row (stage 3.5b.2: Global_Ring_MaxMana, MaxMana 0.1).
-            values.maxMana += cells.number("MaxMana") * potency;
-            values.manaRate += cells.number("ManaRate") * potency;
+            // The mana parts of a fixed ability row (stage 3.5b.2: Global_Ring_MaxMana, MaxMana 0.1). The threshold abilities of the attributes
+            // have their mana parts in the progress system (Progress::threshold_mana, stage 3.5b.2): `mana` false for them.
+            if (mana) {
+                values.maxMana += cells.number("MaxMana") * potency;
+                values.manaRate += cells.number("ManaRate") * potency;
+            }
+            // Stage B4: the received heal parts of a fixed ability row of a perk (game data: Global_Amulet_PotionHeal, ConsumableHealMod 0.02
+            // x potency, Alchemist Reprieve; GlobalPerk_Artifact_Set1_Earring1, 0.33, The Thirst). One pool with the parts of the statuses
+            // (Health::received; the client has one stat multiplier of each kind, enum 0x3FF0810: HealMod 3, ConsumableHealMod 4).
+            values.healTaken += cells.number("HealMod") * potency;
+            values.healConsumable += cells.number("ConsumableHealMod") * potency;
+            values.healNonConsumable += cells.number("NonConsumableHealMod") * potency;
+            values.healLifeSteal += cells.number("DmgPctToHealthHealMod") * potency;
         }
         values.physicalArmor += cells.number("PhysicalArmor") * potency;
         values.elementalArmor += cells.number("ElementalArmor") * potency;
@@ -210,6 +221,22 @@ GearValues Gear::values(const Entity& character) const {
                       : percent <= load.ratioOverburdened ? LoadClass::heavy
                                                          : LoadClass::overburdened;
         values.perks = perks_of(character);
+        // Stage B4: the stat lines of the jewelry (item catalog format 4; client code 0x3636A50: gear score x Scale...PerGS x TrinketBonus x
+        // 0.01; the tooltip "+4.53% Max Health" of Gorgon's Amulet at 725, "+9.06% Base Damage" of the Gorgonite Ring at 725, "+5.00% Cooldown
+        // Reduction" of Endless Thirst at 800). The max health and the base damage join the parts of the perks (one stat multiplier of each
+        // kind; a decision of an agent with live check L1: the cooldown line joins Refreshing in one sum, 19.7 s).
+        if (const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog) {
+            for (std::uint32_t slot = paperdoll::kHead; slot <= paperdoll::kRing; ++slot) {
+                const ItemInstance* item = character.equipment.item(slot);
+                const gamedata::TrinketStats* trinket = item != nullptr ? catalog->trinket(item->itemId) : nullptr;
+                if (trinket != nullptr) {
+                    const std::array<float, 3> parts = trinket->parts(item->gearScore);
+                    values.maxHealth += parts[0];
+                    values.baseDamage += parts[1];
+                    values.cooldownReduction += parts[2];
+                }
+            }
+        }
         // The passive ability rows with their stack limit: the largest potencies first.
         std::map<std::string, std::vector<float>> stacked;
         for (const GearPerk& perk : values.perks) {
@@ -241,8 +268,9 @@ GearValues Gear::values(const Entity& character) const {
             const std::uint32_t table = weapon != nullptr && !weapon->mastery.empty() ? gamedata::progression_id(weapon->mastery) : 0;
             for (const PassiveRule& rule : m_world.passives().rules_of(character, table)) {
                 if (rule.origin != RuleOrigin::perk && Passives::fixed(*rule.cells)) {
-                    // The potency of the rule: 1 for a node; stage B2: the potency of the status that equips a row.
-                    add_cells(*rule.cells, rule.potency, true);
+                    // The potency of the rule: 1 for a node; stage B2: the potency of the status that equips a row. Stage B4: a threshold
+                    // ability of an attribute (Con_Bonus_100_1: MaxHealth 0.03) with no mana part (the progress system has it).
+                    add_cells(*rule.cells, rule.potency, true, rule.origin != RuleOrigin::attribute);
                 }
             }
         }
@@ -294,6 +322,23 @@ void Gear::refresh(Entity& character) {
     for (unsigned type = 0; type < attribute::kCount; ++type) {
         values.attributes[type] += status.attributes[type];
     }
+    // Stage B4: the threshold abilities of the attributes are rules of the character (Passives::attribute_rules) with the value of the attribute
+    // with its bonus: a new bonus (a food of dexterity, a perk) can add or take a threshold. The values are made again with the new bonus.
+    {
+        std::array<std::uint32_t, attribute::kCount> next{};
+        for (unsigned type = 0; type < attribute::kCount; ++type) {
+            next[type] = values.attributes[type] > 0.0F ? static_cast<std::uint32_t>(std::lround(values.attributes[type])) : 0U;
+        }
+        if (next != character.attributes.bonus) {
+            const std::array<std::uint32_t, attribute::kCount> before = character.attributes.bonus;
+            character.attributes.bonus = next;
+            values = this->values(character);
+            for (unsigned type = 0; type < attribute::kCount; ++type) {
+                values.attributes[type] += status.attributes[type];
+            }
+            character.attributes.bonus = before;
+        }
+    }
     values.maxHealth += status.maxHealth;
     values.physicalArmor += status.physicalArmor;
     values.elementalArmor += status.elementalArmor;
@@ -327,10 +372,11 @@ void Gear::refresh(Entity& character) {
     character.gear.critChance = status.critChance;
     character.gear.critDamage = status.critDamage;
     // The heal parts of the statuses (stage 3.3b-S6): received (HealMod and the parts of the kinds) and outgoing.
-    character.gear.healTaken = status.healTaken;
-    character.gear.healConsumable = status.healConsumable;
-    character.gear.healNonConsumable = status.healNonConsumable;
-    character.gear.healLifeSteal = status.healLifeSteal;
+    // Stage B4: and the received parts of the fixed ability rows of the perks (Alchemist Reprieve, The Thirst).
+    character.gear.healTaken = status.healTaken + values.healTaken;
+    character.gear.healConsumable = status.healConsumable + values.healConsumable;
+    character.gear.healNonConsumable = status.healNonConsumable + values.healNonConsumable;
+    character.gear.healLifeSteal = status.healLifeSteal + values.healLifeSteal;
     character.gear.healOutgoing = status.healOutgoing;
     // The regeneration part of the stamina (stage 3.4f-B): the stamina system and the speed table of the owner (the key StaminaRate).
     const bool staminaChanged = character.gear.staminaRate != status.staminaRate;
@@ -352,7 +398,10 @@ void Gear::refresh(Entity& character) {
     };
     const float move = multiplier("MoveSpeedMod", status.moveSpeed);
     const float sprint = multiplier("SprintSpeedMod", status.sprintSpeed);
-    if (move != character.moveMultiplier || sprint != character.sprintMultiplier || staminaChanged) {
+    // Stage B4: the cooldown reduction line of the jewelry is a key of the stat multiplier state (CooldownReduction, 0x4F).
+    const bool cooldownChanged = character.gear.cooldownReduction != values.cooldownReduction;
+    character.gear.cooldownReduction = values.cooldownReduction;
+    if (move != character.moveMultiplier || sprint != character.sprintMultiplier || staminaChanged || cooldownChanged) {
         character.moveMultiplier = move;
         character.sprintMultiplier = sprint;
         m_world.touch(character.id, ComponentKey::statMultipliers);
@@ -492,6 +541,11 @@ void Gear::perk_status(Entity& attacker, Entity& target, std::string_view status
         return;
     }
     ++m_counts.perkEffects;
+    // Stage B4: the outgoing time factor of the attacker (Battle Precision, Dex_Bonus_150_1: a DoT; Passives::outgoing_factor), then DurationMax.
+    float duration = row->duration * m_world.passives().outgoing_factor(attacker, target, *row);
+    if (const float most = row->cells.number("DurationMax"); most > 0.0F && duration > row->duration) {
+        duration = std::min(duration, most);
+    }
     // A rend of the armor of the creature (Sundering Shockwave: PhysicalArmor and ElementalArmor -0.05 times the potency).
     if (row->cells.number("PhysicalArmor") != 0.0F || row->cells.number("ElementalArmor") != 0.0F) {
         CreatureEffect effect;
@@ -499,7 +553,7 @@ void Gear::perk_status(Entity& attacker, Entity& target, std::string_view status
         effect.index = row->index;
         effect.shown = row->nameplate;
         effect.armor = std::min(row->cells.number("PhysicalArmor"), row->cells.number("ElementalArmor")) * potency;
-        effect.ends = now + std::chrono::milliseconds(static_cast<long long>(std::lround(row->duration * 1000.0F)));
+        effect.ends = now + std::chrono::milliseconds(static_cast<long long>(std::lround(duration * 1000.0F)));
         effect.source = attacker.id;
         m_world.creatures().apply_effect(target, effect);
     }
@@ -554,7 +608,7 @@ void Gear::perk_status(Entity& attacker, Entity& target, std::string_view status
     // A damage over time of the damage of the hit (Abyssal Attunement: 10 percent; the Corrosion of a Runeglass gem).
     if (based > 0.0F && !type.empty()) {
         const float tick = row->cells.number("TickRate");
-        const auto ticks = tick > 0.0F ? std::max(1L, std::lround(std::floor(row->duration / tick))) : 1L;
+        const auto ticks = tick > 0.0F ? std::max(1L, std::lround(std::floor(duration / tick))) : 1L;
         const bool delayed = row->cells.number("DelayInitialTick") != 0.0F;
         const float amount = based * potency * hit.raw;
         const float onApply = row->cells.number("SourceRuneChargeOnApply");

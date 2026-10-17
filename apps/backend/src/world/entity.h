@@ -1166,6 +1166,12 @@ struct GearSummary {
     float healOutgoing{0.0F};
     /** The StaminaRate part of the statuses (stage 3.4f-B): the regeneration of the stamina is 1 + this part times its rate. */
     float staminaRate{0.0F};
+    /**
+     * Stage B4: the cooldown reduction line of the jewelry (0.05: the cooldowns of the abilities 5 percent shorter, one pool with Refreshing;
+     * Passives::cooldown_factor). The stat multiplier state of the owner has CooldownReduction (key 0x4F) with 1 plus it: the client shows the
+     * cooldown of an ability with it (live check L1 of stage B4: 19.7 s for Explosive Arrow with 1.05).
+     */
+    float cooldownReduction{0.0F};
     /** The equip load of the armor (tenths: the client shows 38.75 as 3.8) and its class: 0 light, 1 medium, 2 heavy, 3 overburdened. */
     float equipLoad{0.0F};
     std::uint8_t loadClass{0};

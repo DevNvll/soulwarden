@@ -29,6 +29,11 @@ files is replaced: no file of the game is necessary), and it runs the builder an
   action-or              an action list casts a spell below an Or of node tests   status 0: no selection of it, the cast is
                                                                                   in actionSpellsNotExported
   action-unknown-spell   an action list casts a spell that no table has            status 1, the file stays
+  stack-link             a status with OnStackStatusEffect of a status of the data   status 0: the link is in the document
+  missing-stack-link     an OnStackStatusEffect names a status that no table has  status 1, the file stays (code review of
+                                                                                  stage B3, finding B3-R3)
+  missing-OnStackStatusEffect, missing-AddOnStackSize, missing-AddOnStackSizeComparison
+                         a status table has no such column                        status 1, the file stays (finding B3-R3)
 
 Format 4 (stage 3.3b-S5): the valid document has each row of the ability tables of the players (also the row with no
 caster effect), and the spell selections of a made-up action list of the player (a Not of a node test, a Not of an Or of
@@ -144,6 +149,13 @@ def sheets(case: str) -> dict:
         potion["OnEndStatusEffect"] = "NoSuchStatus"
     if case == "missing-cast-spell":
         potion["CastSpell"] = "NoSuchSpell"
+    # Code review of stage B3, finding B3-R3: the stack chain of a status (the form of the haste of Archer's Speed and its timer).
+    if case in ("stack-link", "missing-stack-link"):
+        potion.update(OnStackStatusEffect="WarHammer_Shockwave_Stun" if case == "stack-link" else "NoSuchStatus", AddOnStackSize=1,
+                      AddOnStackSizeComparison="Equal")
+    if case in ("missing-OnStackStatusEffect", "missing-AddOnStackSize", "missing-AddOnStackSizeComparison"):
+        for row in (status, potion, sanctuary):
+            row.pop(case.removeprefix("missing-"), None)
     if case == "game-end-link":
         sanctuary["StatusID"] = "AI_IceDragon_EmpoweringLink_Stack_Apply"
         sanctuary["OnEndStatusEffect"] = "AI_IceDragon_EmpoweringLink_Stack"
@@ -358,7 +370,8 @@ def main() -> int:
              "game-duplicate", "missing-cost", "partial-cost-columns", "negative-cost", "missing-SelfApply",
              "unknown-caster-status", "unknown-target-status", "bad-limit", "missing-StackMax", "missing-caster-OnHit", "game-table-difference",
              "missing-end-link", "game-end-link", "missing-cast-spell", "missing-ABSStandard", "missing-RemoteDamageTableRow",
-             "missing-NumAroundMe", "action-or", "action-unknown-spell")
+             "missing-NumAroundMe", "action-or", "action-unknown-spell", "stack-link", "missing-stack-link", "missing-OnStackStatusEffect",
+             "missing-AddOnStackSize", "missing-AddOnStackSizeComparison")
     for case in sys.argv[2:] or cases:
         target = work / f"{case}.json"
         target.write_text(MARK, encoding="utf-8")
@@ -372,6 +385,13 @@ def main() -> int:
             except Exception as error:  # noqa: BLE001 - a crash of the tool is a failure of the case
                 status = f"exception {type(error).__name__}: {error}"
         text = target.read_text(encoding="utf-8")
+        if case == "stack-link":
+            document = json.loads(text) if status == 0 and text != MARK else {}
+            potion = {row[0]: row for row in document.get("statusEffects", [])}.get("PotionHeal")
+            passed = potion is not None and potion[9].get("OnStackStatusEffect") == "WarHammer_Shockwave_Stun"
+            print(f"{'ok  ' if passed else 'FAIL'}  {case}: status {status}, the potion row {potion}")
+            failures += 0 if passed else 1
+            continue
         if case == "action-or":
             document = json.loads(text) if status == 0 and text != MARK else {}
             passed = (document.get("actionSpells") == [["playeractions_ability_test", "Ability_Test_Slam", "WarHammer_Spell_Shockwave",

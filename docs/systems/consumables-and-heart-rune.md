@@ -44,8 +44,15 @@ values) are in [Status effects](status-effects.md).
   ends the old one). A death ends the statuses with RemoveOnDeath. The client shows the icon
   and the countdown of each status with ShowInUITray (live run s1-live2: a food, a potion, a
   dust).
-- The cooldown: CooldownDuration for the item, times 1 + the CooldownTimer of each perk with
-  OnUsedConsumable (Refreshing Toast). The other items of the same CooldownId get 80 percent of
+- The received part of a potion (stage B4): the parts of the statuses (Divine `Status_Perk_Amulet_Healing`: HealMod) and of the fixed perk
+  rows (Alchemist Reprieve: ConsumableHealMod 0.02 x potency; The Thirst: 0.33) in one sum [decision D9 of the orchestrator: Divine counts
+  for the heal of a potion; the data has HealMod with no exception for a consumable]. Live check B4-5: the received factor 1.501 =
+  1 + 0.091 + 0.08 + 0.33; the potion of the build (PotionHealT5) healed 4,696 (the amount 5,892.9, to the maximum 5,330).
+- The cooldown: CooldownDuration for the item, times 1 + the sum of the CooldownTimer of each rule with OnUsedConsumable and no
+  CDRImmediatelyOptions (`Passives::consumable_cooldown_factor`): a row with a CooldownId counts only for the items of that id, a row with
+  no id for each item, IsConsumableIds and IsNotConsumableIds select the items. A positive value makes the cooldown longer (stage B4:
+  The Thirst `GlobalPerk_Artifact_Set1_Earring1_2` to `_5`, +0.25 for one id each; before stage B4 the backend read only a negative value
+  with no id: Refreshing Toast). Live check B4-5: the potion of the build 25 x 1.25 = 31.2 s. The other items of the same CooldownId get 80 percent of
   it when the row has a SharedCooldownLocString (the client text: "Using this will put all other
   survival potions on 80% cooldown"; a project value, the data has no cell for it), else all of
   it. Each item keeps its own end, and a shared end does not make an end earlier (finding F7:
@@ -54,6 +61,12 @@ values) are in [Status effects](status-effects.md).
   bag: the key is the CRC-32 of the lower-case item id. The client shows the countdown on each
   one. A change of the bag or of the quick slots gives the map again: an item that comes during
   a cooldown of its id gets the countdown (finding F8).
+- The rules after a use (stage B4, `Passives::consumable_used`): after the effects of an accepted use, each rule with OnUsedConsumable and
+  a status (SelfApplyStatusEffect, RemoveStatusEffects) of the character whose IsConsumableIds has the item (the compare ignores the case),
+  whose IsNotConsumableIds does not have it, whose CooldownId is the id of the item (or none), and whose activation cooldown ended, gives
+  its status with the potency of the rule (the Toast perks of the earring: the empower and the fortify for 8 s, ActivationCooldown 8;
+  live check B4-5). A rule with a different effect (RefundConsumablePercentChance, NumStatusEffectsToRemove) is not applied, with the
+  column in the list of the rules.
 - The heart rune system (`world/runes.h`) owns the charge of a character (a value of the
   character, 0 to 60) and the activation. A character with a heart rune in slot 45 gets charge:
   AttackRuneCharge of each accepted hit, HitRuneCharge of each hit of a creature, and

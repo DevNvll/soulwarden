@@ -75,7 +75,8 @@ CreatureHitOutcome Health::creature_hit(Entity& creature, const gamedata::Creatu
     const std::string mark = log::session_mark(target.owner, target.characterId);
     const log::Context context(mark);
     log::write("world: hit: creature %016llx (%s, level %u) hurts %s with %s: %.1f damage of the type %s (damage of the "
-               "creature %.1f, of the attack %.1f, level factor %.2f, armor %.1f, mitigation %.3f), health %.1f to %.1f%s",
+               "creature %.1f, of the attack %.1f, level factor %.2f, armor %.1f, mitigation %.3f, attack type %s, reduction %.4f), health %.1f to "
+               "%.1f%s",
                static_cast<unsigned long long>(creature.id),
                creature.creature.kind->id.c_str(),
                creature.creature.level,
@@ -88,6 +89,8 @@ CreatureHitOutcome Health::creature_hit(Entity& creature, const gamedata::Creatu
                static_cast<double>(damage.levelFactor),
                static_cast<double>(damage.armor),
                static_cast<double>(damage.mitigation),
+               contact.attackType.empty() ? "none" : contact.attackType.c_str(),
+               static_cast<double>(damage.reduction),
                static_cast<double>(result.before),
                static_cast<double>(result.after),
                result.died ? ": dead" : "");
@@ -96,7 +99,7 @@ CreatureHitOutcome Health::creature_hit(Entity& creature, const gamedata::Creatu
     // A counter of an ability (stage 3.3b-S4, Riposte): the window took the hit (its absorption), and the counter starts.
     if (!result.died) {
         // The passive rules with OnHitTaken of the weapon in the hand (stage 3.3b-S5: Power Through Pain).
-        m_world.passives().hit_taken(target, damage.dealt);
+        m_world.passives().hit_taken(target, damage.dealt, contact.attackType);
         m_world.abilities().countered(target, creature, contact.reach + behavior_rules::kContactTolerance);
     }
     DamageTaken taken;

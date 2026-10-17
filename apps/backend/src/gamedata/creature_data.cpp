@@ -198,7 +198,8 @@ bool read_release(const json& cell, RangedRelease& release) {
         || !read_real(cell["added"], release.damage.added) || !read_text(cell, "type", release.damage.type)
         || !read_member(cell, "wire", wire) || wire == 0 || wire > 255 || !read_text(cell, "category", category)
         || !read_category(category, release.damage.category) || !cell.contains("charge")
-        || !read_real(cell["charge"], release.damage.hitCharge) || !cell.contains("lead") || !cell["lead"].is_boolean()
+        || !read_real(cell["charge"], release.damage.hitCharge) || (cell.contains("attackType") && !read_text(cell, "attackType", release.damage.attackType))
+        || !cell.contains("lead") || !cell["lead"].is_boolean()
         || !cell.contains("aimSpeed") || !read_real(cell["aimSpeed"], release.aimSpeed) || !cell.contains("leadAngle")
         || !read_real(cell["leadAngle"], release.leadAngle) || !cell.contains("aimAngle") || !read_real(cell["aimAngle"], release.aimAngle)
         || !cell.contains("miss") || !cell["miss"].is_array() || cell["miss"].size() != 2 || !read_real(cell["miss"][0], release.missMin)
@@ -238,7 +239,8 @@ bool read_area_cast(const json& cell, AreaCast& cast) {
         if (!read_text(cell, "row", cast.damage.row) || !cell.contains("factor") || !read_real(cell["factor"], cast.damage.factor)
             || !cell.contains("added") || !read_real(cell["added"], cast.damage.added) || !read_text(cell, "type", cast.damage.type)
             || !read_member(cell, "wire", wire) || wire == 0 || wire > 255 || !read_text(cell, "category", category)
-            || !read_category(category, cast.damage.category) || !cell.contains("charge") || !read_real(cell["charge"], cast.damage.hitCharge)) {
+            || !read_category(category, cast.damage.category) || !cell.contains("charge") || !read_real(cell["charge"], cast.damage.hitCharge)
+            || (cell.contains("attackType") && !read_text(cell, "attackType", cast.damage.attackType))) {
             return false;
         }
         cast.damage.wire = static_cast<std::uint8_t>(wire);
@@ -591,11 +593,16 @@ bool read_slice(const json& entry, CreatureSlice& slice) {
             for (const json& cell : row[2]) {
                 CreatureContact contact;
                 std::uint32_t wire = 0;
-                if (!cell.is_array() || (cell.size() != 8 && cell.size() != 9) || !read_real(cell[0], contact.time)
+                // Stage B4: a tenth value, the AttackType of the damage row (a text, also empty). A file of an older tool has 8 or 9 values.
+                if (!cell.is_array() || cell.size() < 8 || cell.size() > 10 || !read_real(cell[0], contact.time)
                     || !read_real(cell[1], contact.reach) || !read_real(cell[2], contact.factor) || !read_real(cell[3], contact.added)
                     || !cell[4].is_string() || !read_number(cell[5], wire) || wire == 0 || wire > 255 || !cell[6].is_string()
-                    || !cell[7].is_string() || (cell.size() == 9 && (!read_real(cell[8], contact.hitCharge) || contact.hitCharge < 0.0F))) {
+                    || !cell[7].is_string() || (cell.size() >= 9 && (!read_real(cell[8], contact.hitCharge) || contact.hitCharge < 0.0F))
+                    || (cell.size() == 10 && !cell[9].is_string())) {
                     return false;
+                }
+                if (cell.size() == 10) {
+                    contact.attackType = cell[9].get<std::string>();
                 }
                 if (!read_category(cell[6].get<std::string>(), contact.category)) {
                     return false;

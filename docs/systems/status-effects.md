@@ -23,6 +23,7 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 | The end of a status at a new application (one rule for a character and a creature, stage B2) | `Statuses::renewed_end`, `CellValues::flag` (a mark as a number or the text TRUE), test cases ST2, BC1 |
 | The status categories and the caster effect rows of the game data | `tools/gamedata/abilities.sh` (format 4), `gamedata/ability_data.h` (`StatusCategory`, `AbilityRow`), test case ST1 |
 | The time factor of a status on the character (stage B3: Speedy, Alacrity II), OnStackStatusEffect (the timer of Archer's Speed), the end of a status when the weapon of its tag leaves the hand | `Statuses::apply` (`StatusApply::fixedTime`, `on_stack`), `Passives::duration_factor`, `Passives::weapon_changed`, test cases HS1 to HS3 |
+| The outgoing time factor of a status that a player gives a different entity (stage B4: Battle Precision), the statuses of Vital Synergy, the check of the OnStackStatusEffect links | `Passives::outgoing_factor`, `Creatures::give_status`, `Passives::tick`, `gamedata/ability_data.cpp`, test cases BR6, BR9, BY3 |
 
 ## Rules
 
@@ -53,13 +54,20 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   (0.5) and Alacrity II (0.094 x 1.274) give a haste 1.62 times its time: Dodge and Weave 2 x 1.62 = 3.24 s, Archer's Speed 5 x 1.62 = 8.1 s
   (live checks B3-1, B3-3). The use of the sum (`time x (1 + sum)`) is an agent decision (research bow-build-2.md K1: the server code is not in
   the client; a product of the two factors would give 3.36 s and 8.4 s). A time of a development command with seconds stays
-  (`StatusApply::fixedTime`); with 0 seconds the time of the row has the factor. A row with no duration is one application now: a heal (Health and HealthModifierPercent of the maximum
+  (`StatusApply::fixedTime`); with 0 seconds the time of the row has the factor. From stage B4 a status that a player gives a different
+  entity has the outgoing time factor of the giver too (`Passives::outgoing_factor`: Battle Precision, `Dex_Bonus_150_1`, the "haste you
+  apply" of Alacrity II; [Passive rules](passive-rules.md)): `time x (1 + incoming sum) x (1 + outgoing sum)`, then DurationMax [agent
+  decision: the client has no reader of the outgoing columns]. The creature system applies the outgoing factor to a status of a player
+  on a creature (`Creatures::give_status`). A row with no duration is one application now: a heal (Health and HealthModifierPercent of the maximum
   health, times the potency, through the heal path of stage 3.3b-S6 with its kind), a mana change (Mana, ManaModifierPercent), a
   stamina change (Stamina, stage 3.4f-B), and its CastSpell. A status of the gear has no end.
 - OnStackStatusEffect (stage B3): after each application, the stacks of the status against AddOnStackSize with AddOnStackSizeComparison (the
   comparator of the data; a row with no size: each application) give the named statuses to the character, with the status as their source
   [game data: 46 rows; the haste of Archer's Speed gives its timer `Status_Passive_Bow_Skirmish_HasteOnSwap_Timer` (10 s, the category Timer:
-  no time factor of a haste) at its first stack]. A chain of such rows stops at the depth 4.
+  no time factor of a haste) at its first stack]. A chain of such rows stops at the depth 4. The ability data loader refuses a file
+  whose OnStackStatusEffect names a status that the file does not have, and a row with OnStackStatusEffect and no AddOnStackSize or
+  no AddOnStackSizeComparison (code review of stage B3, finding B3-R3: before, the file loaded and the timer of Archer's Speed did not
+  come, thus no block of the next haste; test case BY3). The tool `tools/gamedata/abilities.py` has the same check.
 - The end when the weapon of a tag leaves the hand (stage B3): a tag removal action of the data ends its statuses at a change of the weapon in
   the hand ([Passive rules](passive-rules.md); the end cause "the weapon of its tag left the hand", `StatusEnd::weapon`).
 - ApplicationCooldown: one application of a row for each character in that time. Only an application that changes the

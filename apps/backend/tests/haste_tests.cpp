@@ -17,6 +17,8 @@
 //   HS6   Closing In: OnHit at 50 percent health of the target or less, the cooldowns of the weapon -5 percent (the column Duration is a mark)
 //   HS7   two sessions (MP-10): the speed table and the HUD map go to the owner; the observer gets the public status only (no name plate, no
 //         speed table); the position check of the owner takes the haste; the run of the owner is accepted
+//         (code review of stage B3, finding B3-R4, corrected in stage B4: a paired boundary path at 10.5 m/s, accepted with the haste and refused
+//         in a world with no haste)
 //   HS8   the load: 300 swaps and dodges with their rules, with 40 or 4,000 far creatures, with a time limit
 //   HS9   the list of the rules: what the evaluator applies of the haste chain, and what it does not apply with the cause
 //   HS10  the ability data of format 7: the dodge status actions and the tag removal actions, the refusals, a file of format 6
@@ -347,6 +349,40 @@ void two_sessions(const Options&) {
     }
     check(refusedAfter == refusedBefore && near(shop.character()->position.x, shop.walker.position.x, 0.01F),
           "each report of the hasted run of A is accepted: the position of the world follows it");
+    // Code review of stage B3, finding B3-R4: the run above stays below the window with no haste (the clock moved two steps for each step of
+    // A). A paired boundary: one clock step for each step of A at 10.3 m/s for 40 steps (the window of 1 s allows 8 m/s x the multiplier + 2 m:
+    // 10 m with no haste, 10.56 m with 1.07), with the haste of A (no refusal) and in a world with no haste (the same path is refused). Only A
+    // sends reports in the path; B gets its messages.
+    const auto path = [](HasteShop& world, bool observer) {
+        std::uint64_t before = 0;
+        const auto refused = [&]() {
+            for (const std::uint32_t id : {1U, 2U}) {
+                if (const server::rep::RepSession* session = world.host.server->session(id); session != nullptr && session->character_id() == kCharacterA) {
+                    return session->position_track().refused();
+                }
+            }
+            return std::uint64_t{0};
+        };
+        before = refused();
+        for (int index = 0; index < 40; ++index) {
+            world.walker.position.x += 10.3F * std::chrono::duration<float>(kTick).count();
+            world.walker.idle(1);
+            if (observer) {
+                world.b.exchange(world.host);
+            }
+        }
+        return refused() - before;
+    };
+    const std::uint64_t hasted = path(shop, true);
+    HasteShop plain(true);
+    plain.enter_b();
+    plain.ready(kCharacterA, {}, {});
+    plain.walker.idle(3);
+    const std::uint64_t unhasted = path(plain, true);
+    note("the path at 10.3 m/s: " + std::to_string(hasted) + " refused reports with the haste (multiplier "
+         + std::to_string(shop.character()->sprintMultiplier) + "), " + std::to_string(unhasted) + " with no haste");
+    check(hasted == 0 && shop.character()->sprintMultiplier > 1.06F, "the path of 10.3 m/s with the haste (1.07 or more): each report is accepted");
+    check(unhasted > 0 && near(plain.character()->sprintMultiplier, 1.0F), "the same path with no haste is refused: the path needs the haste allowance");
 }
 
 /** HS8: the load of the rules of the stage: 300 swaps and dodges with their rules, with 40 or 4,000 far creatures. */
@@ -405,11 +441,14 @@ void rule_list(const Options&) {
     check(applied(kClosingIn, "OnHit"), "Closing In: applied (OnHit; the column Duration is a mark)");
     check(applied(kSpeedyTime, "time of a status"), "Speedy: the time factor is applied");
     check(applied(kSpeedyDamage, "OnHit"), "Speedy: the damage part while hasted is applied");
-    check(applied(kAlacrityRow, "outgoing part"), "Alacrity II: applied, and the list names the outgoing part that is not applied");
+    check(applied(kAlacrityRow, "outgoing part"), "Alacrity II: applied, and the list names the outgoing part (stage B4: for a status that "
+                                                  "the character gives a different entity)");
     check(applied(kDodgeCdrRow, "after the end of a dodge"), "the cooldown change after a dodge: applied");
     check(refused(kEmpowerTimeRow, "names no status and no category"), "the time factor with StatusEffectDurationCats only: not applied, with the cause");
     check(refused(kWindowRule, "window after an action"), "a row with an event in the window after an action: not applied, with the cause");
-    check(refused(kOutgoingOnly, "TargetStatusEffectDurationCats"), "the outgoing time factor alone (Battle Precision, stage B4): not applied");
+    // Stage B4: the outgoing time factor is a rule of the backend (Passives::outgoing_factor): Battle Precision leaves the list of the rules that
+    // are not applied (before stage B4 this check was "not applied").
+    check(applied(kOutgoingOnly, "outgoing time factor"), "the outgoing time factor alone (Battle Precision): applied from stage B4");
 }
 
 /** HS10: the ability data of format 7: the dodge status actions and the tag removal actions. */

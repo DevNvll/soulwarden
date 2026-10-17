@@ -43,6 +43,12 @@ struct DodgeFragment {
     float immuneEnd{0.0F};
     /** The mark CanTransition: the dodge action stops the regeneration before it (DisableStaminaRegen) and sets the delay at it. */
     float canTransition{0.0F};
+    /**
+     * The mark CanAttackCancel (format 2; code review of stage B3, finding B3-R1; game data: 0.2667 s in Dodge_Roll, Dodge_Roll_Fast,
+     * Dodge_Roll_Slow; rule 96 of player.grid: Dodge to Attack, Shoot, Offhand at this mark): an attack from it on replaces the dodge action.
+     * No value: a file of format 1.
+     */
+    std::optional<float> attackCancel;
     std::vector<DodgeCancel> cancel;
 };
 

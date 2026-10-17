@@ -1030,10 +1030,13 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     // The cooldown of the data starts at the press, as the cooldown of the client (live check L1). A bow cast that starts at the instant
     // transition of a buffered window (stage B1) starts its cooldown there: the action of the client sets its cooldown at its start (game data:
     // SetCooldownTimer of Bow_RapidShot and Bow_SpreadShot after Ability_Startup).
+    // Stage B4: the cooldown of the data times the factor of the character (Passives::cooldown_factor: the fixed cooldown rules, Refreshing, and
+    // the cooldown reduction line of the jewelry in one sum; live check L1: the client shows 19.7 s for the 22 s of Explosive Arrow).
+    const float cooldownFactor = m_world.passives().cooldown_factor(*character, rule->id);
     AbilityCooldown timer;
     timer.start = now + cast.plan.delay;
-    timer.end = timer.start + milliseconds(cooldown->time);
-    timer.minEnd = timer.start + milliseconds(cooldown->minTime);
+    timer.end = timer.start + milliseconds(cooldown->time * cooldownFactor);
+    timer.minEnd = timer.start + milliseconds(cooldown->minTime * cooldownFactor);
     timer.clientEnd = timer.end;
     if (cast.plan.spell && cast.plan.spell->role == SpellRole::summon) {
         // The Pylon (stage 3.3b-S2b): the cooldown holds while the summon lives (the action IceMagic_IcePylon_Cooldown: an
@@ -1192,11 +1195,11 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
     if (!sequenced) {
         m_world.combat().end_sequence(character->characterId, SequenceEnd::ability);
     }
-    log::write("world: ability: %s casts %s (place %u of the bar): cooldown %.1f s, %zu phase(s)%s",
+    log::write("world: ability: %s casts %s (place %u of the bar): cooldown %.2f s, %zu phase(s)%s",
                character->name.c_str(),
                ability_name(stored.plan.kind),
                press.place + 1,
-               static_cast<double>(cooldown->time),
+               static_cast<double>(cooldown->time * cooldownFactor),
                stored.plan.phases.size(),
                stored.plan.sequence ? (", the fragment " + graph->fragments[stored.plan.fragment].name
                                         + (delay.count() > 0 ? " in " + std::to_string(delay.count()) + " ms" : std::string()))
@@ -2006,8 +2009,11 @@ void Abilities::end_held_cooldown(const std::string& characterId, std::uint32_t 
     const WorldClock::time_point now = m_world.clock().now();
     timer->second.indefinite = false;
     timer->second.start = now;
-    timer->second.end = countdown ? now + milliseconds(row->time) : now;
-    timer->second.minEnd = countdown ? now + milliseconds(row->minTime) : now;
+    // Stage B4: with the cooldown factor of the character (Passives::cooldown_factor).
+    const Entity* character = m_world.find_character(characterId);
+    const float factor = character != nullptr ? m_world.passives().cooldown_factor(*character, rule->id) : 1.0F;
+    timer->second.end = countdown ? now + milliseconds(row->time * factor) : now;
+    timer->second.minEnd = countdown ? now + milliseconds(row->minTime * factor) : now;
     timer->second.clientEnd = now;
     publish(characterId);
 }

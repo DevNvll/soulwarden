@@ -75,6 +75,14 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
   the action of the client needs the mark CanTransition and the end of the fragment (IfFragmentDone), or the mark Exit_Fragment; the length of
   the animation of a roll is not in the data, thus the backend ends the action at the mark [agent decision; research bow-build-2.md K11; live
   check B3-1: the server gave the haste 0.50 s after the start of the dodge, and the HUD showed it 0.69 s after it].
+- An attack after the mark CanAttackCancel ends the dodge action (code review of stage B3, finding B3-R1; stage B4, `Stamina::attack_started`):
+  an accepted basic shot (`Projectiles::launch`, not a shot of an ability) or the start of a new attack visit of a melee attack (`Combat::step`)
+  at or after the mark CanAttackCancel of the fragment of the dodge (0.267 s of `Dodge_Roll_Fast`), with no buffered next dodge and before
+  the mark CanTransition, ends the action one time: the exit statuses and the rules after a dodge act then (`Passives::dodge_ended`), and the
+  tick does not act again at the mark CanTransition [game data: rule 96 of `player.grid` permits Dodge to Attack, Shoot, Offhand at
+  CanAttackCancel; the stamina data of format 2 has the mark]. Before the correction the haste of Dodge and Weave and the empower of
+  Evasive Tactics came only at 0.5 s, after the first arrow (test case BY1). A file of format 1 has no mark: the action ends at
+  CanTransition. Log line: `world: dodge: NAME: an attack at T s replaces the dodge action (FRAGMENT, the mark CanAttackCancel at T s)`.
 - A dodge in a bow action (stage B2; code review of stage U3, finding U3-R7): an accepted dodge ends the action of a bow ability at its
   cancel mark, and its arrows after the cancel do not fly ([Abilities](abilities.md)).
 - The window of an earlier dodge (code review of stage 3.4f-B, finding CS-R1; test case RZ1): a dodge that a next dodge replaces, or
@@ -119,7 +127,7 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
 | Winded time at 0 | `m_maxWindedTime` | 2 s |
 | Delay after a payment, at 0 | BaseVitals_Player `StaminaRegenDelay`, `StaminaRegenDelayOnEmpty` | 1 s, 1 s |
 | Dodge costs | StaminaCosts_Player `Dodge_Roll_Fast`, `Dodge_Roll`, `Dodge_Roll_Slow` | 45, 45, 50 |
-| Dodge times | `player.adb` (the fragments Dodge_Roll*: the variants with no tag and the standing variants) | pay 0.1 s, immune 0 to 0.5 s, CanTransition 0.5 s, buffered window 0.267 s to 0.5 s, instant window from 0.5 s |
+| Dodge times | `player.adb` (the fragments Dodge_Roll*: the variants with no tag and the standing variants) | pay 0.1 s, immune 0 to 0.5 s, CanTransition 0.5 s, buffered window 0.267 s to 0.5 s, instant window from 0.5 s, CanAttackCancel 0.267 s (format 2, stage B4) |
 | The delay of the exit | `playeractions_dodge.actionlist` SetStaminaRegenDelay OnExit | 1 s |
 | Load factors | EncumbranceData, row Player | 1 for the cost and the regeneration of each class |
 
@@ -140,6 +148,7 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
 | The window of an earlier dodge (1 s, 8 windows), the check of a dodge before the end of an attack visit | Rules of this project (code review of stage 3.4f-B, findings CS-R1 and CS-R2) |
 | A next dodge must start after the payment | A check of this project for the data (finding CS-R5) |
 | The dodge action: a buffered next dodge continues it; it ends at the mark CanTransition of its last dodge; no exit statuses at an interruption | Game data (the action Dodge, the fragment changes of a cancel window) and an agent decision for the end (stage B3: the length of the animation is not in the data) |
+| An accepted attack at or after CanAttackCancel ends the dodge action one time | Game data (`player.grid` rule 96, the mark CanAttackCancel of the fragment) and the finding B3-R1 of the code review of stage B3; the start of a melee attack visit as the time of the attack is an agent decision |
 
 ## Traps
 

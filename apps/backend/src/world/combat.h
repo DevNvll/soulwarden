@@ -294,6 +294,11 @@ struct CreatureDamage {
     /** The armor of the character against the category of the damage type, and the part of the damage that it stops. */
     float armor{0.0F};
     float mitigation{0.0F};
+    /**
+     * Stage B4: the part of the damage that the character does not take: BaseDamageReduction of the gear and of the statuses, and the rules with
+     * OnHitTaken and BaseDamageReduction for the attack type of the attack (Enchanted Ward).
+     */
+    float reduction{0.0F};
     /** The damage that the character takes. */
     float dealt{0.0F};
 };

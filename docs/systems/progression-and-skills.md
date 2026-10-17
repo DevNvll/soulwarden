@@ -32,6 +32,12 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   the bonus map in field 1 (only the attributes with a bonus: a character with no bonus sends
   the same bytes as before). The maximum health has the health part of the gear
   (`Progress::refresh_vitals`). The bonus is not in the database.
+- The threshold abilities of the attributes (stage B4): each ability of `attributes.abilities` of the progression tables whose threshold
+  the value with the bonus reaches is a rule of the character ([Passive rules](passive-rules.md), `Passives::attribute_rules`; the client
+  attribute screen tests the base value plus the bonus, `attributes.lua`). Before stage B4 only their mana parts acted (stage 3.5b.2) and the
+  gathering parts (stage 3.6a). The bow build (dexterity 456, strength 50, constitution 19, focus 5, intelligence 5): the combat rows
+  `Dex_Bonus_25_1` to `Dex_Bonus_350_1`, `Str_Bonus_25_1`, and `Str_Bonus_50_1` act; `Dex_Bonus_50_2`, `Dex_Bonus_300_1`, and
+  `Dex_Bonus_300_2` stay not applied (the list names the cause); the rows `_2` with IsNonCombatAbility are values of the gathering.
 - The weapon masteries, the nodes of the weapon trees, the ability bars, and the trade skills
   of a character are in its entity (`world::SkillSet`) and in the tables `progressions`,
   `ability_nodes`, and `ability_bars`, with the id on the wire of each row (the CRC-32 of the

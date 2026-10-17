@@ -59,6 +59,13 @@ a live test of an ability. The wire contracts are in the protocol notes (section
   2932): one map for each place of the bar. Only the owner gets it. A cooldown is per ability,
   not per place. A change of the bar sends the cooldown state again (code review of stage
   3.3a, finding F8): the countdown is on the new key.
+- The cooldown factor of the character (stage B4, `Passives::cooldown_factor`): the time and the minimum of the data times 1 plus one
+  sum: the fixed cooldown rules for the ability (Refreshing `Global_Common_CDR`: -0.02 x potency, 3 sources at most; `Foc_Bonus_25_1`:
+  -0.03; the scope of CDRImmediatelyOptions) less the cooldown reduction line of the jewelry ([Gear and perks](gear-and-perks.md)). The
+  end of a held cooldown (the Pylon) has the same factor. [Live check L1: the client tooltip of Explosive Arrow shows 22 s, 20.8 s with
+  Refreshing (2 x 2.72 percent), and 19.7 s with the line of the earring (CooldownReduction 1.05 in the stat multiplier state); run
+  L2 of stage B4: the server cooldown 19.70 s, the HUD countdown ends 19.7 to 19.84 s after the press.] The log line of a cast has the
+  cooldown with the factor.
 - The cooldown of the client (stage 1.3b, I8). Each cooldown has a second end: the end of the
   cooldown of the client (`AbilityCooldown::clientEnd`). The client starts its own cooldown at
   the press, and a reset of the server does not end it (live check I8-05). A press before the

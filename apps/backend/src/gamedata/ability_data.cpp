@@ -552,6 +552,14 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
         if (error.empty() && !spell.empty() && spells.count(lower_ascii(spell)) == 0) {
             error = "the status effect " + row.id + " names the spell " + std::string(spell) + " (CastSpell), which the data does not have";
         }
+        // Code review of stage B3, finding B3-R3: each status of OnStackStatusEffect is in the data too (the timer of Archer's Speed: a haste
+        // with a link that does not resolve came again in its 10 s). The 46 links of the game data resolve: no exception.
+        for (const std::string_view next : list_parts(row.cells.text("OnStackStatusEffect"))) {
+            if (error.empty() && status.count(lower_ascii(next)) == 0) {
+                error = "the status effect " + row.id + " names the stack status " + std::string(next) + " (OnStackStatusEffect), which the data "
+                        "does not have";
+            }
+        }
     }
     if (error.empty() && !tables.statusEffects.empty()) {
         // The numbers of the status effects fit together (code review of stage 3.3a, finding F10): a number is the

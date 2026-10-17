@@ -22,7 +22,9 @@ using data_rules::same_text;
 constexpr const char* kEvents[] = {"OnHit", "OnCrit", "OnKill", "OnHitTaken", "OnHeadShot", "OnHitBehind", "OnHealed",
                                    "OnHitTakenWhileInvulnerable",
                                    // Stage B3: a change of the weapon slot with the key of a weapon (Archer's Speed; Passives::weapon_changed).
-                                   "OnWeaponSwap"};
+                                   "OnWeaponSwap",
+                                   // Stage B4: the use of a consumable (the Toast perks of the earring; Passives::consumable_used).
+                                   "OnUsedConsumable"};
 
 /**
  * The columns of a rule that are marks of the data, not a condition or an effect (the place of a node, the stack rule of a
@@ -52,7 +54,9 @@ const std::set<std::string, std::less<>> kMarks = {
 const std::set<std::string, std::less<>> kValues = {
     "BaseDamage", "CritChance", "CritDamage", "ArmorPenetration", "HeadshotDamage", "HitFromBehindDamage", "PhysicalArmor",
     "ElementalArmor", "MaxHealth", "MaxHealthMod", "BaseDamageReduction", "MODStrength", "MODDexterity", "MODIntelligence",
-    "MODFocus", "MODConstitution"};
+    "MODFocus", "MODConstitution",
+    // Stage B4: the received heal parts of a fixed row (Gear::values).
+    "HealMod", "ConsumableHealMod", "NonConsumableHealMod", "DmgPctToHealthHealMod"};
 
 /** The conditions that the evaluator has (Passives::conditions_pass, counts_pass). */
 const std::set<std::string, std::less<>> kConditions = {
@@ -70,7 +74,10 @@ const std::set<std::string, std::less<>> kConditions = {
     "StatusEffectStackSize", "StatusEffectComparison", "RequiredEquippedAbilityId",
     // Stage B3: a status of a category on the character (client self test 0x67A0130: Speedy, +0.1 BaseDamage while hasted), and the end of an
     // action (AfterAction, AfterSequence: only the end of a dodge, Passives::dodge_ended; a hit does not pass such a row).
-    "StatusEffectCategories", "AfterAction", "AfterSequence"};
+    "StatusEffectCategories", "AfterAction", "AfterSequence",
+    // Stage B4: the distance from the attacker to the target (Long Range: DistFromDefender 10 with GreaterThanOrEqual; client hit test 0x67A18F0,
+    // the loader squares the value: metres), and the item of a consumable rule (IsConsumableIds, IsNotConsumableIds; Passives::consumable_used).
+    "DistFromDefender", "DistComparisonType", "IsConsumableIds", "IsNotConsumableIds"};
 
 /** The effects that the evaluator has (before the damage, after the hit, or a fixed stat through the gear values). */
 const std::set<std::string, std::less<>> kEffects = {
@@ -88,7 +95,11 @@ const std::set<std::string, std::less<>> kEffects = {
     // (RemoveStatusEffects: a list, or AbilitySpecific with the list of StatusEffectsList: the tracker of Shirking Shock II).
     "RemoveTargetStatusEffectsList", "RemoveStatusEffects", "StatusEffectsList",
     // Stage B3: the time factor of a status on the character (Speedy, Alacrity II; Passives::duration_factor).
-    "StatusEffectDurationReduction"};
+    "StatusEffectDurationReduction",
+    // Stage B4: the outgoing time factor (a status that the character gives a different entity: Battle Precision, Dex_Bonus_150_1, the part "haste
+    // you apply" of Alacrity II; Passives::outgoing_factor), and the received heal parts of a fixed row (Alchemist Reprieve, The Thirst: Gear::values).
+    "TargetStatusEffectDurationCats", "TargetStatusEffectDurationMult", "HealMod", "ConsumableHealMod", "NonConsumableHealMod",
+    "DmgPctToHealthHealMod"};
 
 /**
  * Stage B3: the conditions that a rule with no hit has a source for (a swap, the end of a dodge, a time factor): the values of the character,
@@ -118,7 +129,10 @@ const std::set<std::string, std::less<>> kOutgoingDuration = {"TargetStatusEffec
 const std::set<std::string, std::less<>> kTakenConditions = {
     "MyHealthPercent", "MyComparisonType", "MyStaminaPercent", "MyStaminaComparisonType", "MyManaPercent", "MyManaComparisonType",
     "DontHaveStatusEffect", "HasGritActive", "RequireReaction", "TrackHitCount", "NumberOfTrackedHits", "NumberOfHitsComparisonType",
-    "NumSuccessfulHits", "NumConsecutiveHits", "MaxConsecutiveHits", "ResetConsecutiveOnSuccess"};
+    "NumSuccessfulHits", "NumConsecutiveHits", "MaxConsecutiveHits", "ResetConsecutiveOnSuccess",
+    // Stage B4: the attack type of the damage row of the creature attack (game data: AttackType Light, Heavy, Magic, or empty of each creature
+    // damage row; research bow-build-2.md Q5; the creature data tool exports it).
+    "AttackType"};
 
 /**
  * The conditions that a hit in the immune window of a dodge has a source for (stage 3.4f-B, OnHitTakenWhileInvulnerable): the values of
@@ -273,6 +287,64 @@ bool duration_rule(const gamedata::CellValues& cells, const std::vector<std::str
            && self_unsourced(cells).empty() && !cells.has("AfterAction") && !cells.has("AfterSequence");
 }
 
+/** Stage B4: the conditions of a target with no event that make a row a rule of each hit (Finishing Shot: TargetHealthPercent 50, BaseDamage 0.15). */
+const std::set<std::string, std::less<>> kTargetConditions = {"TargetHealthPercent", "TargetStatusEffect", "TargetStatusEffectCategory", "DistFromDefender"};
+
+/** Stage B4: the conditions of an outgoing time factor: the values of the character and the statuses of the target (Battle Precision). */
+const std::set<std::string, std::less<>> kOutgoingConditions = {
+    "MyHealthPercent", "MyComparisonType", "MyStaminaPercent", "MyStaminaComparisonType", "MyManaPercent", "MyManaComparisonType",
+    "DontHaveStatusEffect", "HasGritActive", "EquipLoadCategory", "StatusEffect", "StatusEffectStackSize", "StatusEffectComparison",
+    "StatusEffectCategories", "TargetStatusEffectCategory", "TargetStatusEffectComparison", "TargetStatusEffect", "TargetStatusEffectStackSize",
+    "CheckStatusEffectsOnTargetOwned", "RequireReaction"};
+
+/** Stage B4: the conditions of a rule of the use of a consumable (Passives::consumable_used). */
+const std::set<std::string, std::less<>> kConsumableConditions = {
+    "MyHealthPercent", "MyComparisonType", "MyStaminaPercent", "MyStaminaComparisonType", "MyManaPercent", "MyManaComparisonType",
+    "DontHaveStatusEffect", "HasGritActive", "EquipLoadCategory", "StatusEffect", "StatusEffectStackSize", "StatusEffectComparison",
+    "StatusEffectCategories", "IsConsumableIds", "IsNotConsumableIds"};
+
+/** @return The condition columns of a row that are not in a set of conditions with a source (`allowed`). */
+std::vector<std::string> conditions_outside(const gamedata::CellValues& cells, const std::set<std::string, std::less<>>& allowed) {
+    std::vector<std::string> columns;
+    const auto check = [&](const std::string& column) {
+        if (kConditions.count(column) != 0 && allowed.count(column) == 0) {
+            columns.push_back(column);
+        }
+    };
+    for (const auto& [column, value] : cells.numbers) {
+        check(column);
+    }
+    for (const auto& [column, value] : cells.texts) {
+        check(column);
+    }
+    return columns;
+}
+
+/**
+ * Stage B4: the perk scripts of the client (function 0x238DEF0, called from the perk tick 0x238B500; research bow-build-2.md Q6): the statuses of
+ * Vital Synergy while the stamina is below half its maximum (HealMod, "Anointed") and while the health is below half (StaminaRate). The rows of the
+ * perk in the data are empty: the client has the rule in code (CRC-32 values of the lower-case ids). Code constants of the supported client build.
+ */
+struct PerkScript {
+    const char* ability;
+    const char* lowStamina;
+    const char* lowHealth;
+};
+constexpr PerkScript kPerkScripts[] = {
+    {"Global_Chest_HealthLowStamRegen", "Status_Perk_Chest_StamLowHealthRegen", "Status_Perk_Chest_HealthLowStamRegen"},
+    {"Ability_Perk_Chest_HealthLowStamRegen", "Status_ItemPerk_Chest_StamLowHealthRegen", "Status_ItemPerk_Chest_HealthLowStamRegen"}};
+/** The limit of the two tests of the script (0.5 of the maximum; client code 0x238E2E8 to 0x238E4A3). */
+constexpr float kPerkScriptLimit = 0.5F;
+/** The rows of the perk of Vital Synergy that the script reads (Global_Chest_StamLowHealthRegen: the second empty row of the perk). */
+bool perk_script_row(std::string_view id) {
+    for (const PerkScript& script : kPerkScripts) {
+        if (same_text(id, script.ability)) {
+            return true;
+        }
+    }
+    return same_text(id, "Global_Chest_StamLowHealthRegen") || same_text(id, "Ability_Perk_Chest_StamLowHealthRegen");
+}
+
 /** Stage B3: the values that a rule gives to a hit before its damage (Passives::before_hit). */
 const std::set<std::string, std::less<>> kHitValues = {"BaseDamage", "CritChance", "CritDamage", "ArmorPenetration", "HeadshotDamage",
                                                        "HitFromBehindDamage"};
@@ -304,6 +376,59 @@ bool ability_value_rule(const gamedata::CellValues& cells) {
 }
 
 /** @return True when the row has a cell of a condition (no fixed stat then). */
+bool has_condition(const gamedata::CellValues& cells);
+
+/**
+ * Stage B4: @return True for a rule of each hit with a condition of the target and no event (Finishing Shot, Passive_Bow_Hunter_DmgVsLow:
+ *         TargetHealthPercent 50, BaseDamage 0.15; the form of a hit rule of the client hit test 0x67A18F0, which tests the conditions of the
+ *         target with no event): no event, a condition of kTargetConditions, only values of a hit, no status, no other effect.
+ */
+bool target_value_rule(const gamedata::CellValues& cells) {
+    if (any_event(cells) || hit_rule(cells)
+        || std::none_of(kTargetConditions.begin(), kTargetConditions.end(), [&](const std::string& column) { return cells.has(column); })) {
+        return false;
+    }
+    bool value = false;
+    for (const auto& [column, number] : cells.numbers) {
+        if (number == 0.0F) {
+            continue;
+        }
+        if (kHitValues.count(column) != 0) {
+            value = true;
+        } else if (kEffects.count(column) != 0 || kValues.count(column) != 0 || value_column(column)) {
+            return false;
+        }
+    }
+    for (const auto& [column, text] : cells.texts) {
+        if (kEffects.count(column) != 0 && !text.empty()) {
+            return false;
+        }
+    }
+    return value;
+}
+
+/**
+ * Stage B4: @return True for a fixed cooldown rule (Refreshing, Global_Common_CDR: CooldownTimer -0.02, CDRImmediatelyOptions ActiveWeapon,
+ *         IsStackableMax 3; the client tooltip of an ability shows the cooldown with it, live check L1): no event, a negative CooldownTimer, no
+ *         action window, no condition of a hit or a target, and a scope of CDRImmediatelyOptions that the backend has (none, ActiveWeapon, All,
+ *         AbilitySpecific and AllExcept with CooldownId).
+ */
+bool fixed_cooldown_rule(const gamedata::CellValues& cells) {
+    if (any_event(cells) || !(cells.number("CooldownTimer") < 0.0F) || cells.has("AfterAction") || cells.has("AfterSequence") || hit_rule(cells)
+        || cells.has("InAction") || cells.has("InSequence") || !cells.text("SelfApplyStatusEffect").empty()
+        || !cells.text("OtherApplyStatusEffect").empty()) {
+        return false;
+    }
+    const std::string_view options = cells.text("CDRImmediatelyOptions");
+    return options.empty() || same_text(options, "ActiveWeapon") || same_text(options, "All") || same_text(options, "AbilitySpecific")
+           || same_text(options, "AllExcept");
+}
+
+/** Stage B4: @return True for an outgoing time factor (TargetStatusEffectDurationMult with TargetStatusEffectDurationCats, no event). */
+bool outgoing_rule(const gamedata::CellValues& cells) {
+    return !any_event(cells) && cells.number("TargetStatusEffectDurationMult") != 0.0F && !cells.text("TargetStatusEffectDurationCats").empty();
+}
+
 bool has_condition(const gamedata::CellValues& cells) {
     for (const auto& [column, value] : cells.numbers) {
         if (kConditions.count(column) != 0) {
@@ -470,6 +595,11 @@ std::vector<PassiveRule> Passives::rules_of(const Entity& character, std::uint32
     for (const PassiveRule& rule : status_rules(character)) {
         rules.push_back(rule);
     }
+    // Stage B4: the threshold abilities of the attributes (game data: Dex_Bonus_25_1 CritChance 0.05 at dexterity 25, Str_Bonus_25_1 +0.03 of a
+    // light hit at strength 25, ...), for each weapon.
+    for (const PassiveRule& rule : attribute_rules(character)) {
+        rules.push_back(rule);
+    }
     if (const gamedata::PerkData* perks = m_world.perk_data()) {
         for (const GearPerk& perk : m_world.gear().perks_of(character)) {
             for (const std::string& name : perk.perk->abilities) {
@@ -504,6 +634,84 @@ std::vector<PassiveRule> Passives::status_rules(const Entity& character) const {
         }
     }
     return rules;
+}
+
+std::vector<PassiveRule> Passives::attribute_rules(const Entity& character, bool nonCombat) const {
+    std::vector<PassiveRule> rules;
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::ProgressionTables* progression = m_world.options().progressionTables;
+    if (abilities == nullptr || progression == nullptr || character.kind != EntityKind::player) {
+        return rules;
+    }
+    // The threshold abilities of the attributes (attributes.abilities of progression-tables.json; the client attribute screen tests the value of
+    // the attribute with its bonus against each threshold: attributes.lua of the client, GetAttributeBaseLevel plus GetAttributeBonusLevel).
+    static constexpr std::array<std::pair<unsigned, const char*>, attribute::kCount> kNames{
+        {{attribute::kStrength, "strength"}, {attribute::kDexterity, "dexterity"}, {attribute::kIntelligence, "intelligence"},
+         {attribute::kFocus, "focus"}, {attribute::kConstitution, "constitution"}}};
+    const auto& thresholds = progression->data().attributeAbilities;
+    for (const auto& [type, name] : kNames) {
+        const auto found = thresholds.find(name);
+        if (found == thresholds.end()) {
+            continue;
+        }
+        const std::uint32_t value = character.attributes.value(type);
+        for (const gamedata::AttributeThreshold& threshold : found->second) {
+            if (threshold.value > value) {
+                break;
+            }
+            for (const std::string& id : threshold.abilities) {
+                const gamedata::AbilityRow* row = abilities->ability_row(id);
+                // A row of the gathering or of the bag (IsNonCombatAbility with OnEquipStatusEffect: Str_Bonus_25_2, EFFMining) is not a rule
+                // of the evaluator: the gathering system reads its value (stage 3.6a). The list names it.
+                if (row != nullptr && (nonCombat || row->cells.number("IsNonCombatAbility") == 0.0F)) {
+                    rules.push_back(PassiveRule{row->id, &row->cells, 1.0F, RuleOrigin::attribute});
+                }
+            }
+        }
+    }
+    return rules;
+}
+
+std::vector<PassiveRule> Passives::merged(std::vector<PassiveRule> rules) {
+    // The sources of one row (the perks of each item with the same ability, a row of a node and of a status) give one rule. Client potency
+    // 0x67E9A70: the sources count to IsStackableMax (+0x944, 0: no limit), and with IsStackableDiminishingModifier (+0x948) the factor of each
+    // next source is that part lower; the count stops at a factor of 0 or less. The largest potencies first, as the gear values (Gear::values).
+    std::vector<PassiveRule> result;
+    std::vector<std::vector<float>> potencies;
+    for (PassiveRule& rule : rules) {
+        auto found = std::find_if(result.begin(), result.end(), [&](const PassiveRule& other) { return same_text(other.id, rule.id); });
+        if (found == result.end()) {
+            potencies.push_back({rule.potency});
+            result.push_back(std::move(rule));
+        } else {
+            potencies[static_cast<std::size_t>(found - result.begin())].push_back(rule.potency);
+        }
+    }
+    for (std::size_t index = 0; index < result.size(); ++index) {
+        std::vector<float>& list = potencies[index];
+        if (list.size() == 1) {
+            continue;
+        }
+        std::sort(list.rbegin(), list.rend());
+        const float most = result[index].cells->number("IsStackableMax");
+        const float diminishing = result[index].cells->number("IsStackableDiminishingModifier");
+        float sum = 0.0F;
+        float factor = 1.0F;
+        for (std::size_t source = 0; source < list.size(); ++source) {
+            if (most > 0.0F && static_cast<float>(source) >= most) {
+                break;
+            }
+            sum += list[source] * factor;
+            if (diminishing > 0.0F) {
+                factor -= diminishing;
+                if (factor <= 0.0F) {
+                    break;
+                }
+            }
+        }
+        result[index].potency = sum;
+    }
+    return result;
 }
 
 bool Passives::target_status_pass(const gamedata::CellValues& row, const Entity& attacker, const Entity& target, const HitContext& hit) const {
@@ -702,6 +910,18 @@ bool Passives::conditions_pass(const PassiveRule& rule, const Entity& attacker, 
             return found != pool.second.end() && found->second.level != 0;
         });
         if (!learned) {
+            return false;
+        }
+    }
+    // DistFromDefender with DistComparisonType (stage B4, Long Range: 10 m, GreaterThanOrEqual): the distance from the place of the attacker at the
+    // hit to the target (client hit test 0x67A18F0: the squared distance from the position +0x230 of the hit data; the loader squares the
+    // value, thus metres). The comparator of the data (a blank kind: LessThanOrEqual).
+    if (row.has("DistFromDefender")) {
+        const state::WorldPosition& from = hit.hasOrigin ? hit.origin : attacker.position;
+        const float dx = target.position.x - from.x;
+        const float dy = target.position.y - from.y;
+        const float dz = target.position.z - from.z;
+        if (!compare(std::sqrt(dx * dx + dy * dy + dz * dz), row.number("DistFromDefender"), row.text("DistComparisonType"))) {
             return false;
         }
     }
@@ -963,8 +1183,11 @@ HitBonus Passives::before_hit(const Entity& attacker, const Entity& target, cons
         }
         // Stage B3: a value with a condition of a status of the character and no event (the form of BonusDamageSelfCCPerk1: StatusEffectCategories
         // Root,Slow, BaseDamage 0.12) is a value of each hit while the condition holds (an agent decision with the client self test 0x67A0130).
-        const bool takes = event == "OnHit" || event == "OnCrit" || (event.empty() && (hit_rule(row) || ability_value_rule(row) || conditional_value(row)))
-                           || (event == "OnHeadShot" && hit.head) || (event == "OnHitBehind" && hit.behind);
+        // Stage B4: a rule with a condition of the target and no event is a rule of each hit (Finishing Shot); a row with OnHeadShot and
+        // OnHitBehind (Dex_Bonus_200_1: HeadshotDamage and HitFromBehindDamage 0.05) takes a headshot and a hit from behind.
+        const bool takes = event == "OnHit" || event == "OnCrit"
+                           || (event.empty() && (hit_rule(row) || ability_value_rule(row) || conditional_value(row) || target_value_rule(row)))
+                           || (row.number("OnHeadShot") != 0.0F && hit.head) || (row.number("OnHitBehind") != 0.0F && hit.behind);
         if (!takes || !conditions_pass(rule, attacker, target, hit)) {
             continue;
         }
@@ -1230,7 +1453,8 @@ void Passives::weapon_changed(Entity& character, const gamedata::WeaponRow* befo
     if (own == nullptr || own->life.dead) {
         return;
     }
-    const std::vector<PassiveRule> rules = rules_of(*own, table_in_hand(*own));
+    // Code review of stage B3, finding B3-R2: one rule for each row, with the cap of its sources (merged).
+    const std::vector<PassiveRule> rules = merged(rules_of(*own, table_in_hand(*own)));
     for (const PassiveRule& rule : rules) {
         const gamedata::CellValues& row = *rule.cells;
         if (event_of(row) != "OnWeaponSwap" || !unknown_columns(row).empty() || !self_unsourced(row).empty() || !self_unsupported(row).empty()
@@ -1345,7 +1569,8 @@ void Passives::dodge_ended(Entity& character, std::string_view fragment) {
         return;
     }
     const std::string dodgeAction = stamina->tables().dodgeAction;
-    const std::vector<PassiveRule> rules = rules_of(*own, table_in_hand(*own));
+    // Code review of stage B3, finding B3-R2: one rule for each row, with the cap of its sources (Refreshing Evasion has IsStackableMax 1).
+    const std::vector<PassiveRule> rules = merged(rules_of(*own, table_in_hand(*own)));
     for (const PassiveRule& rule : rules) {
         const gamedata::CellValues& row = *rule.cells;
         if ((!row.has("AfterAction") && !row.has("AfterSequence")) || any_event(row) || !unknown_columns(row).empty()
@@ -1380,7 +1605,9 @@ float Passives::duration_factor(const Entity& character, const gamedata::StatusR
     // the new status as present for the condition StatusEffectCategories are agent decisions (the server code is not in the client).
     const std::string_view categories = row.cells.text("EffectCategories");
     float sum = 0.0F;
-    for (const PassiveRule& rule : rules_of(character, table_in_hand(character))) {
+    // Code review of stage B3, finding B3-R2: the potency of each row with the cap of its sources (Alacrity II has IsStackableMax 5; research Q1:
+    // the client getter takes the potency of 0x67E9A70, which counts the sources to that limit).
+    for (const PassiveRule& rule : merged(rules_of(character, table_in_hand(character)))) {
         const gamedata::CellValues& cells = *rule.cells;
         if (!duration_rule(cells, unknown_columns(cells))) {
             continue;
@@ -1395,6 +1622,190 @@ float Passives::duration_factor(const Entity& character, const gamedata::StatusR
         sum += cells.number("StatusEffectDurationReduction") * rule.potency;
     }
     return std::max(1.0F + sum, 0.0F);
+}
+
+float Passives::outgoing_factor(const Entity& source, const Entity& target, const gamedata::StatusRow& row) const {
+    if (source.kind != EntityKind::player || source.id == target.id) {
+        return 1.0F;
+    }
+    // The outgoing part of a time factor (TargetStatusEffectDurationCats with TargetStatusEffectDurationMult): Battle Precision
+    // (Passive_Bow_Skirmish_DebuffDur: +0.2 for a Debilitate or a DoT on a target with a Debuff), Dex_Bonus_150_1 (+0.05 for a DoT), Alacrity II
+    // (+0.094 for a haste that the character gives a different player). The client has no reader of the columns (research bow-build-2.md Q1):
+    // the sum and its use (time x (1 + sum), then DurationMax) are agent decisions with the form of the incoming factor (client getter
+    // 0x68308E0). The new status counts as present for a condition of a status of the target (the decision of stage B3 for the new haste).
+    const std::string_view categories = row.cells.text("EffectCategories");
+    float sum = 0.0F;
+    for (const PassiveRule& rule : merged(rules_of(source, table_in_hand(source)))) {
+        const gamedata::CellValues& cells = *rule.cells;
+        if (!outgoing_rule(cells) || !unknown_columns(cells).empty() || !conditions_outside(cells, kOutgoingConditions).empty()) {
+            continue;
+        }
+        bool matches = false;
+        for (const std::string_view category : parts_of(cells.text("TargetStatusEffectDurationCats"))) {
+            matches = matches || list_has(categories, category);
+        }
+        if (!matches || !self_pass(rule, source)) {
+            continue;
+        }
+        // TargetStatusEffectCategory and TargetStatusEffect: the target has the status or a status of a category (the new one too).
+        if (const std::string_view wanted = cells.text("TargetStatusEffectCategory"); !wanted.empty()) {
+            bool has = false;
+            for (const std::string_view category : parts_of(categories)) {
+                has = has || list_has(wanted, category);
+            }
+            const WorldClock::time_point now = m_world.clock().now();
+            const gamedata::AbilityData* abilities = m_world.options().abilityData;
+            const auto row_has = [&](const gamedata::StatusRow* data) {
+                bool found = false;
+                for (const std::string_view category : parts_of(data != nullptr ? data->cells.text("EffectCategories") : std::string_view{})) {
+                    found = found || list_has(wanted, category);
+                }
+                return found;
+            };
+            if (target.kind == EntityKind::creature) {
+                for (const CreatureEffect& effect : target.creature.effects) {
+                    has = has || (now < effect.ends && row_has(effect.row != nullptr ? effect.row : abilities != nullptr ? abilities->status(effect.status) : nullptr));
+                }
+            } else {
+                for (const ActiveStatus& status : target.statuses) {
+                    has = has || ((status.permanent || now < status.ends) && abilities != nullptr && row_has(abilities->status(status.status)));
+                }
+            }
+            if (has == same_text(cells.text("TargetStatusEffectComparison"), "NotEqual")) {
+                continue;
+            }
+        }
+        sum += cells.number("TargetStatusEffectDurationMult") * rule.potency;
+    }
+    if (sum != 0.0F) {
+        ++m_counts.outgoingFactors;
+    }
+    return std::max(1.0F + sum, 0.0F);
+}
+
+float Passives::taken_reduction(const Entity& character, std::string_view attackType) const {
+    if (character.kind != EntityKind::player || character.life.dead) {
+        return 0.0F;
+    }
+    // Enchanted Ward (Global_Armor_DefBasic: OnHitTaken, RequireReaction, AttackType Light,Heavy, BaseDamageReduction 0.01 x potency; the II form
+    // Ability_Perk_Armor_DefBasic 0.016) before the damage of a creature hit: the attack type of the damage row of the creature attack (game data,
+    // research bow-build-2.md Q5), the values of the character before the hit, its statuses. RequireReaction: the hit has damage (a hit with no
+    // damage needs no reduction). The sources of a row with their cap (merged).
+    float part = 0.0F;
+    for (const PassiveRule& rule : merged(rules_of(character, table_in_hand(character)))) {
+        const gamedata::CellValues& row = *rule.cells;
+        if (event_of(row) != "OnHitTaken" || row.number("BaseDamageReduction") == 0.0F || !unknown_columns(row).empty()
+            || !taken_unsourced(row).empty() || row.number("HasGritActive") != 0.0F || has_count_gate(row)) {
+            continue;
+        }
+        if (const std::string_view types = row.text("AttackType"); !types.empty() && !list_has(types, attackType)) {
+            continue;
+        }
+        if (!self_pass(rule, character)) {
+            continue;
+        }
+        part += row.number("BaseDamageReduction") * rule.potency;
+    }
+    if (part != 0.0F) {
+        ++m_counts.takenReductions;
+    }
+    return part;
+}
+
+float Passives::cooldown_factor(const Entity& character, std::string_view ability) const {
+    if (character.kind != EntityKind::player) {
+        return 1.0F;
+    }
+    // The fixed cooldown rules (Refreshing, Global_Common_CDR: CooldownTimer -0.02 x potency, IsStackableMax 3; Foc_Bonus_25_1: -0.03) for the
+    // scope of CDRImmediatelyOptions: none, ActiveWeapon, All (the ability of a cast is of the weapon in the hand), AbilitySpecific (CooldownId),
+    // AllExcept (not CooldownId); and the cooldown reduction line of the jewelry, in one sum (live check L1 of stage B4: the tooltip of the client
+    // shows 22 x (1 - 2 x 0.0272) = 20.8 s with Refreshing, and 19.7 s with CooldownReduction 1.05 too).
+    float part = -character.gear.cooldownReduction;
+    for (const PassiveRule& rule : merged(rules_of(character, table_in_hand(character)))) {
+        const gamedata::CellValues& row = *rule.cells;
+        if (!fixed_cooldown_rule(row) || !unknown_columns(row).empty() || !self_unsourced(row).empty() || !self_pass(rule, character)) {
+            continue;
+        }
+        const std::string_view options = row.text("CDRImmediatelyOptions");
+        const std::string_view cooldown = row.text("CooldownId");
+        if ((same_text(options, "AbilitySpecific") && !same_text(cooldown, ability)) || (same_text(options, "AllExcept") && same_text(cooldown, ability))) {
+            continue;
+        }
+        part += row.number("CooldownTimer") * rule.potency;
+    }
+    if (part != 0.0F) {
+        ++m_counts.cooldownFactors;
+    }
+    return std::max(1.0F + part, 0.0F);
+}
+
+float Passives::consumable_cooldown_factor(const Entity& character, std::string_view itemId, std::string_view cooldownId) const {
+    if (character.kind != EntityKind::player) {
+        return 1.0F;
+    }
+    // CooldownTimer of a rule with OnUsedConsumable and no CDRImmediatelyOptions (game data: The Thirst, GlobalPerk_Artifact_Set1_Earring1_2 to _5,
+    // +0.25 for one cooldown id each; Global_Earring_PotionCDR -0.04 with no id): the cooldown of the consumable times 1 plus the sum. The cooldown
+    // id of the row must be the one of the item (no id: each). Before stage B4 the backend read only a negative value and no id.
+    float part = 0.0F;
+    for (const PassiveRule& rule : merged(rules_of(character, table_in_hand(character)))) {
+        const gamedata::CellValues& row = *rule.cells;
+        if (row.number("OnUsedConsumable") == 0.0F || row.number("CooldownTimer") == 0.0F || !row.text("CDRImmediatelyOptions").empty()
+            || !unknown_columns(row).empty() || !conditions_outside(row, kConsumableConditions).empty()) {
+            continue;
+        }
+        if (const std::string_view id = row.text("CooldownId"); !id.empty() && !same_text(id, cooldownId)) {
+            continue;
+        }
+        if (const std::string_view items = row.text("IsConsumableIds"); !items.empty() && !list_has(items, itemId)) {
+            continue;
+        }
+        if (const std::string_view items = row.text("IsNotConsumableIds"); !items.empty() && list_has(items, itemId)) {
+            continue;
+        }
+        if (!self_pass(rule, character)) {
+            continue;
+        }
+        part += row.number("CooldownTimer") * rule.potency;
+    }
+    return std::max(1.0F + part, 0.0F);
+}
+
+void Passives::consumable_used(Entity& character, std::string_view itemId, std::string_view cooldownId) {
+    if (character.kind != EntityKind::player || character.life.dead) {
+        return;
+    }
+    // The rules with OnUsedConsumable and an effect on the character (game data: the Toast perks of the earring, Ability_Perk_Earring_OnPotionDmg
+    // and _OnPotionFort: IsConsumableIds of the potions, SelfApplyStatusEffect the empower or the fortify, ActivationCooldown 8): the item in
+    // IsConsumableIds (the compare ignores the case: the list has "serumregent5"), not in IsNotConsumableIds, the cooldown id of CooldownId, the
+    // values of the character, the activation cooldown; then the status with the potency of the rule.
+    const std::string characterId = character.characterId;
+    for (const PassiveRule& rule : merged(rules_of(character, table_in_hand(character)))) {
+        const gamedata::CellValues& row = *rule.cells;
+        if (row.number("OnUsedConsumable") == 0.0F || (row.text("SelfApplyStatusEffect").empty() && row.text("RemoveStatusEffects").empty())
+            || !unknown_columns(row).empty() || !conditions_outside(row, kConsumableConditions).empty() || row.number("CooldownTimer") != 0.0F) {
+            continue;
+        }
+        if (const std::string_view id = row.text("CooldownId"); !id.empty() && !same_text(id, cooldownId)) {
+            continue;
+        }
+        if (const std::string_view items = row.text("IsConsumableIds"); !items.empty() && !list_has(items, itemId)) {
+            continue;
+        }
+        if (const std::string_view items = row.text("IsNotConsumableIds"); !items.empty() && list_has(items, itemId)) {
+            continue;
+        }
+        Entity* current = m_world.find_character(characterId);
+        if (current == nullptr || current->life.dead) {
+            return;
+        }
+        if (!self_pass(rule, *current) || !activation_ready(characterId, rule, false)) {
+            continue;
+        }
+        (void)activation_ready(characterId, rule, true);
+        ++m_counts.consumableRules;
+        ++m_counts.applied;
+        self_effects(rule, *current);
+    }
 }
 
 void Passives::target_status(const PassiveRule& rule, Entity& attacker, Entity& target, std::string_view status, const HitContext& hit) {
@@ -1520,7 +1931,7 @@ float Passives::heal_bonus(const Entity& healer, const Entity& target, const Hea
     return part;
 }
 
-void Passives::hit_taken(Entity& character, float dealt) {
+void Passives::hit_taken(Entity& character, float dealt, std::string_view attackType) {
     if (character.kind != EntityKind::player || character.life.dead) {
         return;
     }
@@ -1532,6 +1943,10 @@ void Passives::hit_taken(Entity& character, float dealt) {
     for (const PassiveRule& rule : rules_of(character, table)) {
         const gamedata::CellValues& row = *rule.cells;
         if (event_of(row) != "OnHitTaken" || row.text("SelfApplyStatusEffect").empty() || !unknown_columns(row).empty()) {
+            continue;
+        }
+        // Stage B4: the attack type of the damage row of the creature attack (AttackType of the rule).
+        if (const std::string_view types = row.text("AttackType"); !types.empty() && !list_has(types, attackType)) {
             continue;
         }
         // The conditions of a hit taken (code review of stage 3.3b-S5, finding F6), each one before a count or the activation
@@ -1728,6 +2143,30 @@ void Passives::tick() {
                 around.push_back(rule);
             }
         }
+        // Stage B4: the perk scripts of the client (Vital Synergy, client code 0x238DEF0): a status while the stamina, and one while the health,
+        // is below half its maximum (the test of the stamina: method +0x1008, the fraction of the maximum; of the health: method +0x1370 with the
+        // arguments 1 and 4 and 0.5, an inference of the research, K13), only while the character has the perk row (HasAbility), with the row
+        // as the source. Each step of kAroundStep (the period of the perk tick of the client is not known: a decision of an agent).
+        std::vector<std::pair<std::string, std::string>> scripts;
+        if (!character->life.dead) {
+            const std::vector<PassiveRule> rules = rules_of(*character, table);
+            for (const PerkScript& script : kPerkScripts) {
+                if (std::none_of(rules.begin(), rules.end(), [&](const PassiveRule& rule) { return same_text(rule.id, script.ability); })) {
+                    continue;
+                }
+                const float stamina = character->vitals.staminaMax > 0.0F ? character->vitals.stamina / character->vitals.staminaMax : 1.0F;
+                const float health = character->vitals.healthMax > 0.0F ? character->vitals.health / character->vitals.healthMax : 1.0F;
+                if (stamina < kPerkScriptLimit) {
+                    scripts.emplace_back(std::string(script.ability) + "#" + script.lowStamina, script.lowStamina);
+                }
+                if (health < kPerkScriptLimit) {
+                    scripts.emplace_back(std::string(script.ability) + "#" + script.lowHealth, script.lowHealth);
+                }
+            }
+        }
+        for (const auto& [key, status] : scripts) {
+            wanted.insert(key);
+        }
         ++m_counts.aroundSteps;
         // A status of a rule comes while its condition holds, with no end, and goes when it does not hold (the action data:
         // ClearOnExit and ClearOnEnd of the tracking spell).
@@ -1754,6 +2193,19 @@ void Passives::tick() {
                 }
             }
             state.around.insert(rule.id);
+        }
+        for (const auto& [key, status] : scripts) {
+            if (state.around.count(key) != 0) {
+                continue;
+            }
+            StatusApply how;
+            how.permanent = true;
+            how.source = StatusSource{StatusSourceKind::ability, key, 0, character->id};
+            const StatusVerdict verdict = m_world.statuses().apply(*character, status, how);
+            if (verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed) {
+                ++m_counts.scriptStatuses;
+            }
+            state.around.insert(key);
         }
         for (const gamedata::ActionStatus* action : actions) {
             if (state.around.count(action->action) != 0) {
@@ -1955,8 +2407,8 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
             view.applied = true;
             view.note = "applied by the evaluator: the time of a status on the character (StatusEffectDurationReduction x potency in the time factor)";
             if (outgoing) {
-                view.note += "; the outgoing part TargetStatusEffectDurationMult (a status that the character gives a different entity) is not in "
-                             "the backend";
+                // Stage B4: the outgoing part acts for a status that the character gives a different entity (Passives::outgoing_factor).
+                view.note += "; the outgoing part TargetStatusEffectDurationMult for a status that the character gives a different entity";
             }
             return view;
         }
@@ -1964,6 +2416,83 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
     if (conditional_value(row)) {
         view.applied = true;
         view.note = "applied by the evaluator: a value of each hit while the character has the status (StatusEffect, StatusEffectCategories)";
+        return view;
+    }
+    // Stage B4: the rules of the bow build of this stage, each one with what the backend does, or the column that it does not have.
+    if (perk_script_row(id)) {
+        view.applied = true;
+        view.note = "applied by the evaluator: the perk script of the client 0x238DEF0 (Vital Synergy: a status while the stamina or the health is "
+                    "below half its maximum); the row has no cell";
+        return view;
+    }
+    if (origin == RuleOrigin::attribute && row.number("IsNonCombatAbility") != 0.0F) {
+        const std::string_view status = row.text("OnEquipStatusEffect");
+        view.applied = !status.empty();
+        view.note = status.empty() ? "not applied: a row of an attribute threshold with no combat use (IsNonCombatAbility) and an event or an effect "
+                                     "that the backend does not have (" + columns_text(unknown) + ")"
+                                   : "a value of the gathering or of the bag (IsNonCombatAbility): the gathering system reads the EFF, ROL, MULT values of "
+                                         + std::string(status) + "; a different value (Encumbrance, ItemClassWeightMods) is not in the backend";
+        return view;
+    }
+    // A row with grit gets the note of grit below (the backend has no grit).
+    const bool grit = row.number("HasGritActive") != 0.0F || row.number("TargetHasGritActive") != 0.0F;
+    if (target_value_rule(row) && unknown.empty() && !grit) {
+        view.applied = true;
+        view.note = "applied by the evaluator: a rule of each hit with a condition of the target and no event";
+        return view;
+    }
+    if (outgoing_rule(row) && !row.has("StatusEffectDurationReduction") && !grit) {
+        if (!unknown.empty()) {
+            view.note = "not applied: no rule in the backend for " + columns_text(unknown);
+        } else if (const std::vector<std::string> columns = conditions_outside(row, kOutgoingConditions); !columns.empty()) {
+            view.note = "not applied: an outgoing time factor has no source for the condition " + columns_text(columns);
+        } else {
+            view.applied = true;
+            view.note = "applied by the evaluator: the outgoing time factor (TargetStatusEffectDurationMult x potency for a status of the categories "
+                        + std::string(row.text("TargetStatusEffectDurationCats")) + " that the character gives a different entity)";
+        }
+        return view;
+    }
+    if (fixed_cooldown_rule(row) && !grit) {
+        if (!unknown.empty()) {
+            view.note = "not applied: no rule in the backend for " + columns_text(unknown);
+        } else if (const std::vector<std::string> columns = self_unsourced(row); !columns.empty()) {
+            view.note = "not applied: a fixed cooldown rule has no source for the condition " + columns_text(columns);
+        } else {
+            view.applied = true;
+            view.note = "applied by the evaluator: a fixed cooldown reduction (CooldownTimer x potency of the cooldown of each ability of its scope "
+                        "at the cast, with the cooldown line of the jewelry)";
+        }
+        return view;
+    }
+    if (event == "OnUsedConsumable" && !grit) {
+        if (!unknown.empty()) {
+            view.note = "not applied: no rule in the backend for " + columns_text(unknown);
+        } else if (const std::vector<std::string> columns = conditions_outside(row, kConsumableConditions); !columns.empty()) {
+            view.note = "not applied: the use of a consumable has no source for the condition " + columns_text(columns);
+        } else if (row.number("CooldownTimer") != 0.0F && row.text("CDRImmediatelyOptions").empty()) {
+            view.applied = true;
+            view.note = "applied by the evaluator (OnUsedConsumable): the cooldown of a consumable"
+                        + std::string(row.text("CooldownId").empty() ? "" : " of the cooldown id " + std::string(row.text("CooldownId")))
+                        + " times 1 + CooldownTimer x potency";
+        } else if (row.number("CooldownTimer") == 0.0F && (!row.text("SelfApplyStatusEffect").empty() || !row.text("RemoveStatusEffects").empty())) {
+            view.applied = true;
+            view.note = "applied by the evaluator (OnUsedConsumable): a status on the character at the use of a consumable of its list";
+        } else {
+            view.note = "not applied: the effect of the use of a consumable (CDRImmediatelyOptions, a cooldown change and a status together) is not in "
+                        "the backend";
+        }
+        return view;
+    }
+    if (event == "OnHitTaken" && row.number("BaseDamageReduction") != 0.0F && row.text("SelfApplyStatusEffect").empty() && unknown.empty() && !grit) {
+        if (const std::vector<std::string> columns = taken_unsourced(row); !columns.empty()) {
+            view.note = "not applied: a hit taken has no source for the condition " + columns_text(columns);
+        } else {
+            view.applied = true;
+            view.note = "applied by the evaluator (OnHitTaken): a part of the damage of a creature hit that the character does not take"
+                        + std::string(row.has("AttackType") ? " (the attack type of the damage row of the attack: " + std::string(row.text("AttackType")) + ")"
+                                                            : "");
+        }
         return view;
     }
     if ((row.has("AfterAction") || row.has("AfterSequence")) && unknown.empty() && (anyEvent || self_effect(row) || !self_unsupported(row).empty())) {
@@ -2314,6 +2843,10 @@ std::vector<RuleView> Passives::describe(const Entity& character) const {
     // Stage B2: the rows that the statuses of the character equip now (EquipAbility).
     for (const PassiveRule& rule : status_rules(character)) {
         views.push_back(describe_row(rule.id, rule.cells, RuleOrigin::status));
+    }
+    // Stage B4: the threshold abilities of the attributes of the character (also the rows with no combat use).
+    for (const PassiveRule& rule : attribute_rules(character, true)) {
+        views.push_back(describe_row(rule.id, rule.cells, RuleOrigin::attribute));
     }
     return views;
 }

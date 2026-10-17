@@ -1199,7 +1199,19 @@ bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, Enti
         effect.tickType = damage->type;
         effect.tickCharge = damage->charge;
     }
-    const auto lasting = time ? *time : std::chrono::milliseconds(std::lround(row.duration * 1000.0F));
+    auto lasting = time ? *time : std::chrono::milliseconds(std::lround(row.duration * 1000.0F));
+    // Stage B4: the outgoing time factor of a character that gives the status (Battle Precision +0.2 for a Debilitate or a DoT, Dex_Bonus_150_1
+    // +0.05 for a DoT; Passives::outgoing_factor), then DurationMax, as the time factor of a status on a character.
+    if (lasting.count() > 0 && source != 0) {
+        if (const Entity* giver = m_world.find(source); giver != nullptr && giver->kind == EntityKind::player) {
+            if (const float factor = m_world.passives().outgoing_factor(*giver, entity, row); factor != 1.0F) {
+                lasting = std::chrono::milliseconds(std::max<long long>(std::lround(static_cast<float>(lasting.count()) * factor), 1));
+                if (const float most = row.cells.number("DurationMax"); most > 0.0F) {
+                    lasting = std::min(lasting, std::chrono::milliseconds(std::lround(most * 1000.0F)));
+                }
+            }
+        }
+    }
     if (lasting.count() <= 0) {
         // No duration: one application now (the rule of a character): the heal, the dispel above, and (stage B2) one damage of the source
         // (the bolt of the Boltcaster: HealthModifierDamageBased -0.8 of the damage of the hit, Lightning) through the path of a tick.

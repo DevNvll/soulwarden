@@ -100,6 +100,12 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   NonConsumableHealMod (an ability, the gear, a life steal), and DmgPctToHealthHealMod (a life steal; game text of Anointed:
   "healing from non-consumables and lifesteal"), each with the limits of its categories (Disease -0.5), in one additive pool
   (a decision of an agent). 0 or more.
+  From stage B4 the pool has the parts of the fixed perk rows too (Alchemist Reprieve, The Thirst: [Gear and perks](gear-and-perks.md));
+  Divine (a status, HealMod) counts for a potion (decision D9 of the orchestrator). Live check B4-5: a potion of the bow build 1.501.
+- The reduction of a creature hit (stage B4): the damage reduction of the gear plus the BaseDamageReduction of the rules with OnHitTaken
+  whose AttackType has the attack type of the creature attack (Enchanted Ward and Enchanted Ward II: `Passives::taken_reduction`,
+  [Passive rules](passive-rules.md)). The log line of a creature hit has the attack type and the reduction (`attack type Light,
+  reduction 0.1108`). The rules of a hit taken after the damage (`Passives::hit_taken`) test the attack type too.
 - A target of a direct heal (Divine Embrace) must be able to gain health (code review of stage 3.3b-S6, finding S6-R3, case RW3):
   the choice skips a friend at its full health and goes on to the next friend or to the caster; a caster at its full health with
   no such friend: no heal and no cost (a rule of this project: the client plays the cast; the rule "no heal, no cost" of stage

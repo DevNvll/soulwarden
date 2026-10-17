@@ -19,6 +19,7 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
 | The rules of stage 3.3b-M2: a spell of a rule (CastSpell), the box of Blood Lust, the status actions (Guarded Sprint), the row of an ability with InSequence, the uses of a node in the weapon actions | `Passives::apply_effects`, `Passives::around_count` (`tracking_supported`), `action_holds`, `ability_value_rule`, `Passives::describe_row` (`data_use`), test cases GH9, GH10, GH13, GH14, RV9 |
 | The rules of stage B2: the conditions of a status of the target and of the attacker, DamageTypes, the helper rows of a node, the rows that a status equips, the end of statuses, the Boltcaster, Shirking Shock II, Surprise Attack | `Passives::target_status_pass`, `own_status_pass`, `status_rules`, `rules_of`, `apply_effects`, `target_status`, `HitContext::types`, `targetEffects` (`world/gear.h`), `AbilityData::helpers_of`, test cases BC3 to BC8 |
 | The rules of stage B3 (the haste chain of the bow build): the weapon swap (OnWeaponSwap), the end of a dodge (the dodge status actions, AfterAction and AfterSequence), the tag removal actions, the time factor of a status (StatusEffectDurationReduction), the condition StatusEffectCategories | `Passives::weapon_changed`, `dodge_started`, `dodge_ended`, `duration_factor`, `self_pass`, `own_status_pass`, `describe_row`, `gamedata/ability_data.h` (`ActionDodgeStatus`, `ActionTagRemoval`), test cases HS1 to HS10 |
+| The rules of stage B4 (the other rules of the bow build): the threshold abilities of the attributes, the cap of the sources of a row, DistFromDefender, a target condition with no event, the outgoing time factor, the attack type of a creature hit, the fixed cooldown rules, the consumable rules, the perk script of Vital Synergy | `Passives::attribute_rules`, `merged`, `conditions_pass`, `target_value_rule`, `outgoing_factor`, `taken_reduction`, `cooldown_factor`, `consumable_cooldown_factor`, `consumable_used`, `tick` (`kPerkScripts`), test cases BR1 to BR14, BY2 |
 
 ## Rules
 
@@ -180,9 +181,16 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   recommendation; the use of the sum and the order are server code]. StatusEffectDurationCats is a mark: the getter does not read it. A time
   factor that names no status and no category (`Ability_Perk_Amulet_DurEmpower`, `Global_Amulet_DurEmpower`) matches no status and is not
   applied, with the cause. The outgoing part (TargetStatusEffectDurationCats, TargetStatusEffectDurationMult: "haste you apply" of Alacrity II,
-  Battle Precision) is not in the backend: a row with a time factor of its own is applied for that part, and the list names the outgoing part
+  Battle Precision) is a different factor (stage B4, below): it acts only for a status that the character gives a different entity
   [agent decision: the outgoing part of Alacrity II on a haste that the character gives itself is open, research K1; applying both would give
   two times the text].
+- The sources of one row (code review of stage B3, finding B3-R2; stage B4, `Passives::merged`): the perks of each item with the same ability, a
+  node and a status that equips the row, give one rule. The potency of the rule is the sum of the potencies of its sources, the largest
+  first, to IsStackableMax sources (0: no limit); with IsStackableDiminishingModifier each next source counts that part less, and the count
+  stops at a factor of 0 or less [client code: the potency 0x67E9A70, IsStackableMax at +0x944, IsStackableDiminishingModifier at +0x948;
+  the order of the largest potencies first is the order of the gear values, an agent decision]. The time factors, the outgoing time factor,
+  the reduction of a creature hit, the cooldown factors, the consumable rules, and the rules of a weapon swap and of a dodge use it. Example:
+  Alacrity II (IsStackableMax 5) on six items counts five sources (test case BY2).
 - A status while entities are near (`Passives::tick`, each 500 ms: `passive_rules::kAroundStep`, a decision of this
   project, because the action data starts the tracking spell and has no time). The status comes with no end while the
   condition holds, with the rule as its source, and it ends when the condition does not hold and when the character leaves
@@ -343,8 +351,8 @@ The list must name each row that the evaluator does not apply (no silent rule). 
 | `Passive_Bow_Hunter_DmgVsLow` (Finishing Shot: TargetHealthPercent 50, BaseDamage 0.15) and the other node rows with a condition of a target and no event | Not applied: "the condition TargetHealthPercent with no event is not a rule of a hit in the evaluator". The evaluator takes such a row only as a rule of a hit (`before_hit`), and the gear values take a node row only with no condition (`Passives::fixed`). A perk row with such a condition keeps the rule of the earlier stages. |
 | `Global_Common_CDR` (Refreshing, a perk of the bow build: CooldownTimer -0.02 with CDRImmediatelyOptions) and the other rows with no event and the effect CooldownTimer, CDRImmediatelyOptions, DmgPctToHealth, CastSpell, Stamina, or HealScalingValueMultiplier | Not applied: "the effect ... of a row with no event (the gear values take only the values of a fixed stat)". |
 
-A condition EquipLoadCategory does not stop a row (the gear values apply it). The two rules are not in the backend: a later stage of
-the bow build implements them (the roadmap, stages B1 to B5).
+A condition EquipLoadCategory does not stop a row (the gear values apply it). Stage B4 applies the two rules (the section of stage B4
+below): Finishing Shot is a rule of each hit (`target_value_rule`), and Refreshing is a fixed cooldown rule (`fixed_cooldown_rule`).
 
 ### The rules of the bow abilities (stage B1)
 
@@ -396,10 +404,37 @@ The rows of the game data (research `bow-build.md` section 4, rows 24, 26 to 28,
 | `Passive_Bow_Skirmish_HasteOnSwap` (Archer's Speed: OnWeaponSwap, DontHaveStatusEffect the timer) | The key of the bow: `Status_Passive_Bow_Skirmish_HasteOnSwap` (5 s, haste 0.07; 8.1 s with Speedy and Alacrity II) and, by OnStackStatusEffect at its first stack, the timer (10 s). No haste while the timer runs. |
 | `GlobalPerk_Artifact_Set1_MediumFeet` (Speedy: StatusEffectDurationReduction 0.5, StatusEffectCategories Haste) | +0.5 in the time factor of each haste on the character. |
 | `GlobalPerk_Artifact_Set1_MediumFeet_2` (Speedy: OnHit, StatusEffectCategories Haste, BaseDamage 0.1) | +0.1 in the damage part of a hit while the character has a haste (live: 1.49 to 1.59 of the core of a hip shot). |
-| `Ability_Perk_Amulet_DurHaste` (Alacrity II: StatusEffectDurationReduction 0.094, the outgoing part) | +0.094 x potency (1.274 at 800) in the time factor of each haste on the character. The outgoing part is not applied (the list names it). |
+| `Ability_Perk_Amulet_DurHaste` (Alacrity II: StatusEffectDurationReduction 0.094, the outgoing part) | +0.094 x potency (1.274 at 800) in the time factor of each haste on the character. Stage B4: the outgoing part acts for a haste that the character gives a different entity (no ability of the build gives one). |
 | `Passive_Bow_Skirmish_CDRVsLow` (Closing In: OnHit, TargetHealthPercent 50, Duration -1, CooldownTimer -0.05 ActiveWeapon) | A hit on a target at 50 percent health or less: the cooldowns of the abilities of the weapon in the hand -5 percent of their time. Duration is a mark. Before stage B3 the column Duration stopped the row. |
 | `Ultimate_Bow_Skirmish` (Evasive Tactics, PvP tree: AfterAction Dodge, AfterSequence the dodge fragments, Duration 2) | At the end of a dodge: `Status_Ultimate_Bow_Skirmish_DodgeDmg` (empower 0.15 for 5 s). |
-| `Passive_Bow_Skirmish_DebuffDur` (Battle Precision, PvP tree: TargetStatusEffectDurationCats, TargetStatusEffectDurationMult) | Not applied (stage B4): the outgoing time factor is not in the backend. |
+| `Passive_Bow_Skirmish_DebuffDur` (Battle Precision, PvP tree: TargetStatusEffectDurationCats, TargetStatusEffectDurationMult) | Applied from stage B4 (the outgoing time factor, the section below). |
+
+### The other rules of the bow build (stage B4)
+
+The rows of the game data (research `bow-build.md` section 4, `bow-build-2.md` Q5 to Q8, K9, K13) and what the backend does
+(`tools/world passives NAME` with the preset `bow-boltcaster`: each row below is "applied"; live checks L1 and B4-1 to B4-6 of stage B4):
+
+| Row | What the backend does |
+| --- | --- |
+| The threshold abilities of the attributes (`attributes.abilities` of `progression-tables.json`: `Dex_Bonus_25_1`, `Dex_Bonus_50_1`, `Dex_Bonus_150_1`, `Str_Bonus_25_1`, `Con_Bonus_100_1`, `Foc_Bonus_25_1`, and the others) | Rules of the character (`RuleOrigin::attribute`, `Passives::attribute_rules`): each threshold that the value of the attribute with its bonus reaches [client: the attribute screen tests the base value plus the bonus, `attributes.lua`]. A row with no event and no condition is a fixed stat of the gear values with no mana part (the progress system has the mana parts of the thresholds since stage 3.5b.2). The other rows go to the evaluator as the rows of a node. A new bonus (a food, a perk) makes the values again. A row with IsNonCombatAbility is a row of the gathering system (the list names it). |
+| `Passive_Bow_Hunter_DmgVsDist` (Long Range: OnHit, DistFromDefender 10, DistComparisonType GreaterThanOrEqual, BaseDamage 0.1) | +0.1 in the damage part of a hit at 10 m or more. The distance: 3D, from the place of the attacker when the server takes the hit to the target [client hit test 0x67A18F0: the squared distance from the position +0x230 of the hit data, the loader squares the value: metres; the origin of +0x230 is not proved (research K9): an agent decision]. Live check B4-6: 9.915 m gave the raw damage 4,368.0, 10.103 m 4,616.1 (+0.1 of the core 2,480.9). |
+| `Passive_Bow_Hunter_DmgVsLow` (Finishing Shot: TargetHealthPercent 50, BaseDamage 0.15, no event) | A rule of each hit (`target_value_rule`): a row with no event, a condition of the target (TargetHealthPercent, TargetStatusEffect, TargetStatusEffectCategory, DistFromDefender), only values of a hit, and no other effect [client: the hit test 0x67A18F0 tests the conditions of the target of such a row with no event]. +0.15 on a target at 50 percent health or less before the hit. |
+| `Passive_Bow_Skirmish_DebuffDur` (Battle Precision, PvP tree: TargetStatusEffectDurationCats Debilitate,DoT, TargetStatusEffectDurationMult 0.2, TargetStatusEffectCategory Debuff, RequireReaction), `Dex_Bonus_150_1` (TargetStatusEffectDurationCats Dot, 0.05), the outgoing part of Alacrity II | The outgoing time factor (`Passives::outgoing_factor`): a status that the character gives a different entity (a creature or a different player) with a category of the list lasts `time x (1 + sum)`, then DurationMax. A condition of the target status counts the new status as present. The creature system (`Creatures::give_status`), the gear system (a rend and a damage over time of a perk), and the status system (a status of a player on a different player) use it. A status of the character on itself has no outgoing factor. [The client has no reader of the columns (research Q1): the sum and its use are agent decisions with the form of the incoming factor 0x68308E0.] |
+| `Global_Armor_DefBasic` (Enchanted Ward: OnHitTaken, RequireReaction, AttackType Light,Heavy, BaseDamageReduction 0.01) and `Ability_Perk_Armor_DefBasic` (Enchanted Ward II: 0.016) | The reduction of a creature hit (`Passives::taken_reduction`) before its damage: each row with OnHitTaken and BaseDamageReduction whose AttackType has the attack type of the damage row of the creature attack (the creature data of stage B4; research Q5: the client reads the type of the damage row), x potency, the sources of each row with their cap (IsStackableMax 5). It joins the damage reduction of the gear. Live check B4-1: Light 0.1108 (4 plain and 2 II), Magic 0. |
+| `Global_Common_CDR` (Refreshing: CooldownTimer -0.02, CDRImmediatelyOptions ActiveWeapon, IsStackableMax 3) and `Foc_Bonus_25_1` (-0.03; not of the bow build: focus 5) | A fixed cooldown rule (`fixed_cooldown_rule`, `Passives::cooldown_factor`): no event, a negative CooldownTimer, no action window, no condition of a hit, a scope that the backend has (none, ActiveWeapon, All, AbilitySpecific and AllExcept with CooldownId). The cooldown of a cast is `time x (1 + sum)`; the sum has the cooldown line of the jewelry too (one sum) [live check L1: the client tooltip of Explosive Arrow shows 22 x (1 - 2 x 0.0272) = 20.8 s with Refreshing, and 19.7 s with CooldownReduction 1.05 too; the HUD countdown matches the server, run L2 of stage B4]. |
+| `Global_Chest_HealthLowStamRegen` (Vital Synergy) and `Ability_Perk_Chest_HealthLowStamRegen` | The perk script of the client (`kPerkScripts`; client code 0x238DEF0 from the perk tick 0x238B500, research Q6): the rows of the perk are empty. While the stamina is below half its maximum: `Status_Perk_Chest_StamLowHealthRegen` (HealMod, the icon "Anointed"); while the health is below half: `Status_Perk_Chest_HealthLowStamRegen` (StaminaRate). Each status has no end while its test holds, with the perk row as its source, and it ends when the test does not hold. The test runs each step of the tick of the rules near a character (500 ms) [the period of the client tick is not known: an agent decision]. Live check B4-3. |
+| `Global_Amulet_PotionHeal` (Alchemist Reprieve: ConsumableHealMod 0.02), `GlobalPerk_Artifact_Set1_Earring1` (The Thirst: ConsumableHealMod 0.33) | Received heal parts of a fixed perk row (the gear values, [Gear and perks](gear-and-perks.md)): one pool with the parts of the statuses (Divine: HealMod; decision D9 of the orchestrator: Divine counts for the heal of a potion). Live check B4-5: the received factor of a potion 1.501 = 1 + 0.091 (Divine) + 0.08 (Alchemist Reprieve at the potency 4.0) + 0.33. |
+| `GlobalPerk_Artifact_Set1_Earring1_2` to `_5` (The Thirst: OnUsedConsumable, CooldownTimer +0.25, CooldownId of one kind each), `Global_Earring_PotionCDR` (Refreshing Toast: -0.04, no id) | The consumable cooldown factor (`Passives::consumable_cooldown_factor`): the cooldown of the item x (1 + the sum of the rows of its cooldown id; a row with no id: each). A positive value is a longer cooldown (before stage B4 the backend read only a negative value with no id). Live check B4-5: the cooldown of the potion 31.2 s. |
+| `Ability_Perk_Earring_OnPotionDmg`, `Ability_Perk_Earring_OnPotionFort` (the Toast perks: OnUsedConsumable, IsConsumableIds of the potions, SelfApplyStatusEffect, ActivationCooldown 8) | The consumable rules (`Passives::consumable_used`) after the effects of a use: the item in IsConsumableIds (the compare ignores the case: the list has `serumregent5`), not in IsNotConsumableIds, the cooldown id, the values of the character, the activation cooldown; then the status with the potency of the rule (live: the empower and the fortify for 8 s, potency 1.27). |
+| The EquipAbility of a food status (Desert Sunrise: the status `FoodDOTT5` equips `Global_Consumable_FoodDoT_DurRed_T5`, StatusEffectDurationReduction -0.25 for the categories Burn, Bleed, Poison, Shock, and the other DoT kinds) | A rule of the status that equips it (stage B2, `status_rules`) in the time factor of stage B3: a status of one of these categories on the character lasts 0.75 of its time (live: the poison 20 s to 15.00 s, the HUD "15s"). Stage B4 adds only the test (BR11) and the note of the list: the rule worked from stage B3. |
+
+The list of the rules (`describe_row`) names each new form: the target value rule, the outgoing time factor (with "the outgoing part acts
+for a different entity"), the fixed cooldown rule, a consumable rule, the perk script, and the threshold rows with no combat use. With the
+preset, the list of stage B4 has 76 rows "NOT APPLIED" (94 in stage B3), and 30 of the 40 rows of the bow table are applied (26 in stage B3).
+The rows of the build that stay not applied: the rapier abilities, Bile Bomb, Hardcore Parkour, and Rain of Arrows (stage B5),
+`Ultimate_Bow_Hunter_Refund` (a helper with a condition and no effect), Mortal Empowerment (`Global_PvP_Ring_OnKill_EmpowerStack`:
+OnExecuted, a kill of a player), `Dex_Bonus_300_1` (StatusEffectCategoriesList) and `Dex_Bonus_300_2` (OnExecuted), and `Dex_Bonus_50_2`
+(a non-combat row).
 
 ## Commands
 
@@ -436,5 +471,13 @@ tools/world creature effect ID STATUS 5 # give a creature a status for 5 s (a te
   a debuff for 3 s only, so Mark (+0.1 with a debuff on the target) is gone when the second arrow comes later than 3 s after the first one
   (live run of stage B3: an arrow 5 s later had the same number with Speedy and without Mark). Shoot the arrows within 3 s.
 - The first arrow on a target has Surprise Attack (+0.2) and no Mark; compare the second and the third arrow.
+- The rules of a hit (`before_hit`, `after_hit`, `hit_taken`, `hit_evaded`) do not merge the sources of a row: each source is a rule
+  (stage B4 merges them only in the new paths: the time factors, the reduction of a creature hit, the cooldown factors, the consumable rules).
+  A rule of a hit on two items acts two times.
+- The tooltip of a perk in the client takes the potency of the lowest gear score 100 (Refreshing 1.36: "2.72%"; Enchanted Ward 1.7515:
+  "1.8%"; Alchemist Reprieve 4.0: "8%"). The backend takes the same potency. A video of a different client (Season 10) shows other numbers
+  (Enchanted Ward "3.5%"): compare with a picture of this client.
+- Long Range counts the distance at the time that the server takes the hit, from the place of the attacker then, not from the place of the
+  shot. A run back after the shot changes the distance.
 - The icon of `Warhammer_Pass_ExhaustOnHit` at the name plate of a creature is the one that ends 5 s after the hit
   (Shockwave also gives the weaken for 10 s, the slow for 4 s, and the stun for 2 s): count the time in a loop of pictures.

@@ -115,6 +115,16 @@ struct GearValues {
     /** The mana parts (stage 3.5b.2): MaxMana and ManaRate of the passive ability rows of the perks (Global_Ring_MaxMana +0.1). */
     float maxMana{0.0F};
     float manaRate{0.0F};
+    /**
+     * Stage B4: the cooldown reduction line of the jewelry (TrinketStats: gear score x ScaleCDRPerGS x TrinketBonus x 0.01; the earring of the bow
+     * build at 800: 0.05), and the received heal parts of the fixed ability rows of the perks (ConsumableHealMod of Alchemist Reprieve and The
+     * Thirst, HealMod, NonConsumableHealMod, DmgPctToHealthHealMod).
+     */
+    float cooldownReduction{0.0F};
+    float healTaken{0.0F};
+    float healConsumable{0.0F};
+    float healNonConsumable{0.0F};
+    float healLifeSteal{0.0F};
     float equipLoad{0.0F};
     LoadClass load{LoadClass::light};
 };
@@ -189,6 +199,14 @@ struct HitContext {
     };
     std::vector<TargetEffect> targetEffects;
     bool targetKnown{false};
+    /**
+     * Stage B4: the place of the attacker at the hit (the condition DistFromDefender of Long Range: the distance from it to the target; client hit
+     * test 0x67A18F0 compares the squared distance from the position +0x230 of the hit data; research bow-build-2.md K9: the origin of that
+     * position is not proved, the backend uses the place of the attacker when the server takes the hit). `hasOrigin` false: the position of
+     * the attacker entity.
+     */
+    bool hasOrigin{false};
+    state::WorldPosition origin{};
 };
 
 /** Counts of the gear system, for the log and for the tests. */

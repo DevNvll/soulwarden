@@ -314,9 +314,17 @@ StepOutcome Combat::step(SessionId session, std::uint32_t inputSequence, std::ui
                        static_cast<double>(weight.max) / 10.0);
         }
     }
+    const AttackVisit* lastVisit = actions != nullptr ? m_sequences.newest(character->characterId) : nullptr;
+    const std::uint32_t lastNumber = lastVisit != nullptr ? lastVisit->number : 0;
     const std::vector<SequenceEvent> events =
         m_sequences.step(character->characterId, session, inputSequence, input, checked, weapon_key(*character), actions,
                          m_world.clock().now(), facts_of(*character));
+    // Code review of stage B3, finding B3-R1: a new basic attack (a visit of a fragment with no cast) from the mark CanAttackCancel of a dodge
+    // on replaces the dodge action (rule 96 of player.grid: Dodge to Attack).
+    if (const AttackVisit* visit = actions != nullptr ? m_sequences.newest(character->characterId) : nullptr;
+        visit != nullptr && visit->number != lastNumber && visit->cast == 0) {
+        m_world.stamina().attack_started(*character, visit->startedAt);
+    }
     // The dodge (stage 3.4f-B): the sequence permits a dodge input at rest, in a cancel window of the fragment of an attack, or at the end
     // of a buffered window; a weapon with no attack graph (a bow, a staff, no weapon) has no fragment that refuses it. The stamina system
     // decides it with its own stamina (world/stamina.h).
@@ -830,7 +838,14 @@ CreatureDamage Combat::creature_damage(const Entity& creature,
     if (const auto absorbed = target.gear.absorption.find(contact.type); absorbed != target.gear.absorption.end()) {
         damage.dealt *= std::max(1.0F - absorbed->second, 0.0F);
     }
-    damage.dealt *= std::max(1.0F - target.gear.damageReduction, 0.0F);
+    // Stage B4: and the rules with OnHitTaken and BaseDamageReduction whose conditions pass for the attack type of the damage row of the attack
+    // (Enchanted Ward: AttackType Light,Heavy; research bow-build-2.md Q5), in one pool with the BaseDamageReduction of the gear (a decision of an
+    // agent: one part of each kind, as the damage parts).
+    damage.reduction = target.gear.damageReduction;
+    if (target.kind == EntityKind::player) {
+        damage.reduction += m_world.passives().taken_reduction(target, contact.attackType);
+    }
+    damage.dealt *= std::max(1.0F - damage.reduction, 0.0F);
     if (!std::isfinite(damage.dealt) || damage.dealt < 0.0F) {
         damage.dealt = 0.0F;
     }

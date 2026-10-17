@@ -11,7 +11,9 @@ namespace {
 
 using nlohmann::json;
 
-constexpr std::uint64_t kFormat = 1;
+/** Format 2 (code review of stage B3, finding B3-R1): each dodge fragment has its mark CanAttackCancel ("attackCancel"). Format 1 has none. */
+constexpr std::uint64_t kFormat = 2;
+constexpr std::uint64_t kFormatBefore = 1;
 /** The largest value of a stamina maximum, a cost, a rate, or a time of the file (a check of the form, not a rule). */
 constexpr float kLargest = 100000.0F;
 constexpr std::array<const char*, kLoadClassCount> kClassNames{"light", "medium", "heavy", "overburdened"};
@@ -36,8 +38,15 @@ bool in_range(float value) {
     return std::isfinite(value) && value >= 0.0F && value <= kLargest;
 }
 
-bool read_fragment(const std::string& name, const json& item, DodgeFragment& fragment) {
+bool read_fragment(const std::string& name, const json& item, DodgeFragment& fragment, bool attackCancel) {
     fragment.name = name;
+    if (attackCancel) {
+        float mark = 0.0F;
+        if (!number_of(item, "attackCancel", mark)) {
+            return false;
+        }
+        fragment.attackCancel = mark;
+    }
     if (!item.is_object() || !number_of(item, "pay", fragment.pay) || !number_of(item, "canTransition", fragment.canTransition)
         || !item.contains("immune") || !item["immune"].is_array() || item["immune"].size() != 2 || !item["immune"][0].is_number()
         || !item["immune"][1].is_number() || !item.contains("cancel") || !item["cancel"].is_array()) {
@@ -73,10 +82,11 @@ bool StaminaData::load(const std::string& path) {
     }
     const json document = json::parse(input, nullptr, false);
     if (!document.is_object() || !document.contains("format") || !document["format"].is_number_unsigned()
-        || document["format"].get<std::uint64_t>() != kFormat) {
-        m_error = "the file is not a JSON object of the format 1";
+        || (document["format"].get<std::uint64_t>() != kFormat && document["format"].get<std::uint64_t>() != kFormatBefore)) {
+        m_error = "the file is not a JSON object of the format 1 or 2";
         return false;
     }
+    const bool attackCancel = document["format"].get<std::uint64_t>() >= kFormat;
     StaminaTables tables;
     const json empty = json::object();
     const json& component = document.contains("component") ? document["component"] : empty;
@@ -122,7 +132,7 @@ bool StaminaData::load(const std::string& path) {
     }
     for (const auto& [name, item] : dodge["fragments"].items()) {
         DodgeFragment fragment;
-        if (!read_fragment(name, item, fragment)) {
+        if (!read_fragment(name, item, fragment, attackCancel)) {
             m_error = "the dodge fragment " + name + " is not complete";
             return false;
         }
@@ -157,7 +167,8 @@ bool StaminaData::set(StaminaTables tables) {
     }
     for (const DodgeFragment& fragment : tables.fragments) {
         bool correct = in_range(fragment.pay) && in_range(fragment.canTransition) && fragment.pay <= fragment.canTransition
-                       && fragment.immuneStart == 0.0F && in_range(fragment.immuneEnd) && fragment.immuneEnd > 0.0F;
+                       && fragment.immuneStart == 0.0F && in_range(fragment.immuneEnd) && fragment.immuneEnd > 0.0F
+                       && (!fragment.attackCancel || (in_range(*fragment.attackCancel) && *fragment.attackCancel <= fragment.canTransition));
         for (const DodgeCancel& cancel : fragment.cancel) {
             correct = correct && in_range(cancel.start) && (!cancel.end || (in_range(*cancel.end) && *cancel.end >= cancel.start))
                       && (!cancel.buffered || cancel.end.has_value());

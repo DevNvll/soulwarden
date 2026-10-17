@@ -373,6 +373,27 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   file, a row two times, or a value that is not a number (test case BW1); a file with no member loads (the part 0 for each row).
   Write both files again with `tools/gamedata/projectiles.sh` and `tools/gamedata/combat.sh` (the projectile tool needs
   `SOULWARDEN_OODLE_LIB`).
+- Stage B4 changes three files and the checks of a fourth (the backend of stage B4 loads the older formats with the rules of before):
+  - `item-catalog.json` format 4 (`tools/gamedata/items.sh`): the member `trinkets`, one row `[item id, TrinketBonus, ScaleHealthPerGS,
+    ScaleDamagePerGS, ScaleCDRPerGS]` for each item of the stats table ArmorItemDefinitions with a stat line (`item_catalog.py`:
+    `TRINKET_COLUMNS`, `trinket_rows`). Retail: 2,505 rows (Gorgon's Amulet `Artifact_Set1_Amulet1`: 0.01, 0.625, 0, 0; the earring
+    `Artifact_Set1_Earring1`: 0.01, 0, 0, 0.625; `RingT5`: 0.01, 0, 1.25, 0). The loader refuses a file of format 4 with no `trinkets`, a
+    row that is not 5 values, a value that is not finite or below 0, an item that the catalog does not have, and an item two times. With
+    a file of format 3 the jewelry has no stat line. `check_item_catalog_tool.py`: the cases trinket, trinket-missing, trinket-invalid.
+  - `stamina-data.json` format 2 (`tools/gamedata/stamina.sh`): each dodge fragment has `attackCancel`, the time of the mark
+    CAGE-Named CanAttackCancel (retail 0.266667 for `Dodge_Roll`, `Dodge_Roll_Fast`, `Dodge_Roll_Slow`). The tool stops when a fragment
+    has no such mark or the mark is after CanTransition (`check_stamina_tool.py`: the case missing-attack-cancel). With a file of format 1
+    an attack does not end the dodge action (code review of stage B3, finding B3-R1).
+  - `creatures.json` (still format 4, `tools/gamedata/creatures.sh`): a contact of an attack has a 10th value, the AttackType of its
+    damage row (`creature_behavior.py`: the column AttackType of the damage table), and a ranged release and an area strike have the
+    member `attackType`. Retail: 3,290 contacts (Light 1,801, Heavy 1,347, Magic 45, blank 97) and 477 ranged releases and area strikes
+    (Magic 218, Light 162, Heavy 90, blank 7). A contact of 8 or 9 values has no attack type: a rule with AttackType does not act for it.
+  - `ability-data.json` (still format 7): `abilities.py` requires the columns OnStackStatusEffect, AddOnStackSize, and
+    AddOnStackSizeComparison of the status tables and stops for an OnStackStatusEffect that names a status that the tables do not have;
+    the loader refuses such a file (code review of stage B3, finding B3-R3; `check_ability_tool.py`: the cases stack-link,
+    missing-stack-link, missing-OnStackStatusEffect, missing-AddOnStackSize, missing-AddOnStackSizeComparison).
+  A backend from before stage B4 refuses the three new files (the catalog of format 4, the stamina data of format 2, a contact of 10
+  values): put the files and the backend of stage B4 together. Each release has its own copy of the game data.
 - Stage B3 changes `ability-data.json` to format 7 (`tools/gamedata/abilities.sh`, 2.5 MB): `actionDodgeStatuses` has each action of the
   player lists that gives statuses at its exit while a dodge plays (IfActionStatus of the dodge action, Status Installed;
   EffectsToApplyOnExit, also in the Then branch of an IfThenElse with a tag test, whose tags are the exit tags) with its tests (the dodge

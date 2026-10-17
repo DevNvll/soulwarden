@@ -364,9 +364,13 @@ void Stamina::step_dodge(const std::string& characterId, WorldClock::time_point 
         // mark; the length of the animation of the fragment is not in the data: an agent decision, research bow-build-2.md K11), unless a
         // buffered next dodge continues the action: the exit statuses (Dodge and Weave) and the rules after a dodge (Evasive Tactics).
         if (!state.next) {
-            // No next dodge: nothing more of this dodge is due (the state may change in the rules of the exit).
-            const std::string fragment = state.fragment != nullptr ? state.fragment->name : std::string();
-            m_world.passives().dodge_ended(*character, fragment);
+            // No next dodge: nothing more of this dodge is due (the state may change in the rules of the exit). An attack that replaced the
+            // action ended it already (finding B3-R1).
+            if (!state.ended) {
+                state.ended = true;
+                const std::string fragment = state.fragment != nullptr ? state.fragment->name : std::string();
+                m_world.passives().dodge_ended(*character, fragment);
+            }
             return;
         }
     }
@@ -380,12 +384,36 @@ void Stamina::step_dodge(const std::string& characterId, WorldClock::time_point 
         } else {
             ++m_counts.dodges[static_cast<std::size_t>(checks)];
             // Stage B3: the buffered dodge does not start: the action ends at the mark of the dodge before it.
-            if (state.transitioned) {
+            if (state.transitioned && !state.ended) {
+                state.ended = true;
                 const std::string fragment = state.fragment != nullptr ? state.fragment->name : std::string();
                 m_world.passives().dodge_ended(*character, fragment);
             }
         }
     }
+}
+
+void Stamina::attack_started(Entity& character, WorldClock::time_point at) {
+    const auto found = m_dodges.find(character.characterId);
+    if (found == m_dodges.end() || character.life.dead) {
+        return;
+    }
+    DodgeState& state = found->second;
+    // The dodge action plays (no exit yet), the attack is at or after the mark CanAttackCancel of its fragment, and no next dodge waits (a buffered
+    // dodge continues the action). A file of format 1 has no mark: the action ends at its mark CanTransition (stage B3).
+    if (state.entity != character.id || state.ended || state.transitioned || state.next || state.fragment == nullptr
+        || !state.fragment->attackCancel || at < state.start + seconds_of(*state.fragment->attackCancel)) {
+        return;
+    }
+    state.ended = true;
+    ++m_counts.attackCancels;
+    const std::string mark = log::session_mark(character.owner, character.characterId);
+    const log::Context context(mark);
+    log::write("world: dodge: %s: an attack at %.3f s replaces the dodge action (%s, the mark CanAttackCancel at %.3f s)", character.name.c_str(),
+               static_cast<double>(std::chrono::duration<float>(at - state.start).count()), state.fragment->name.c_str(),
+               static_cast<double>(*state.fragment->attackCancel));
+    const std::string fragment = state.fragment->name;
+    m_world.passives().dodge_ended(character, fragment);
 }
 
 bool Stamina::immune(const Entity& character, WorldClock::time_point at) const {

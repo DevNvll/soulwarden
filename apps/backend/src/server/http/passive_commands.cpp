@@ -26,6 +26,8 @@ const char* origin_name(world::RuleOrigin origin) {
         return "helper of a node";
     case world::RuleOrigin::status:
         return "row of a status";
+    case world::RuleOrigin::attribute:
+        return "attribute threshold";
     }
     return "?";
 }

@@ -106,6 +106,8 @@ struct StaminaCounts {
     /** Times that the stamina of a character came to 0 (the exhausted state started), and creature hits that a dodge avoided. */
     std::uint64_t emptied{0};
     std::uint64_t evaded{0};
+    /** Code review of stage B3, finding B3-R1: dodge actions that an accepted attack from the mark CanAttackCancel ended. */
+    std::uint64_t attackCancels{0};
 };
 
 class Stamina {
@@ -136,6 +138,13 @@ public:
      * input of its session is locked (a travel). The checks and the start are in the header of this file.
      */
     DodgeVerdict dodge(Entity& character, WorldClock::time_point at, bool locked);
+    /**
+     * Code review of stage B3, finding B3-R1: an attack of a character was accepted at `at` (a basic shot, the start of a melee attack). When its
+     * dodge action plays, the time is at or after the mark CanAttackCancel of the fragment of the last dodge (stamina data format 2; rule 96 of
+     * player.grid: Dodge to Attack, Shoot, Offhand), and no buffered next dodge waits, the attack replaces the dodge action: it ends now, with
+     * its exit effects (Passives::dodge_ended: Dodge and Weave, Evasive Tactics), and its mark CanTransition gives them no second time.
+     */
+    void attack_started(Entity& character, WorldClock::time_point at);
     /**
      * @return True when a dodge input of the character can start a dodge now (the checks of a start: life, lock, load, exhausted, stamina
      *         above 0). With no stamina data: true (the client plays its dodge, and the server has no rule for it). The attack sequence asks
@@ -203,6 +212,11 @@ private:
         WorldClock::time_point transitionAt{};
         bool paid{false};
         bool transitioned{false};
+        /**
+         * Code review of stage B3, finding B3-R1: an accepted attack from the mark CanAttackCancel on ended the dodge action (its exit effects
+         * came then); the mark CanTransition gives them no second time.
+         */
+        bool ended{false};
         /** A buffered second dodge: its start (the end of the buffered window). */
         std::optional<WorldClock::time_point> next;
         bool nextLocked{false};

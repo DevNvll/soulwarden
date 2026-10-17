@@ -16,6 +16,7 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
 | A perk of a hit: its conditions, its effects | [Passive rules](passive-rules.md) (`Passives::after_hit`, `conditions_pass`), `Gear::on_hit`, `Gear::perk_status`, `Gear::perk_damage`, `Combat::strike_amount`, test cases IZ5, PS1 |
 | The attribute bonus on the wire | `server/rep/states/attribute_state.cpp` (field 1), `Progress::refresh_vitals` |
 | The perk data of the game | `tools/gamedata/perks.sh` (`perks.py`), `gamedata/perk_data.h`, [Game data](../development/game-data.md) |
+| The stat lines of the jewelry, the threshold abilities in the gear values, the heal parts of a perk row, the cooldown reduction line (stage B4) | `Gear::values`, `Gear::refresh`, `gamedata/item_catalog.h` (`TrinketStats`), `server/rep/states/stat_multiplier_state.cpp`, test cases BR2, BR3, BR10 |
 
 ## Rules
 
@@ -82,7 +83,8 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   has one part.
 - The damage of a creature on a character (`Combat::creature_damage`): the armor times (1 +
   the armor part of the character for the category), then times (1 - ABS<type>) and (1 -
-  BaseDamageReduction).
+  BaseDamageReduction). From stage B4 the BaseDamageReduction has the part of the rules of a hit taken with the attack type of the
+  creature attack too (Enchanted Ward: `Passives::taken_reduction`, [Passive rules](passive-rules.md)).
 - The perks of a hit. From stage 3.3b-S5 the evaluator of the passive rules ([Passive rules](passive-rules.md),
   `world/passives.h`) evaluates each ability row of a perk and each learned node of the tree of the weapon of the hit: one
   list of conditions, one comparator (`world/data_rules.h`), and one list of effects for the two. `Combat::strike` takes the
@@ -129,6 +131,29 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   ([Status effects](status-effects.md)); the evaluator has the rules ([Passive rules](passive-rules.md)). A haste of the build lasts 1.62 times
   its time. The statuses of a perk of a hit (`Gear::perk_status`) obey the removal window of the target (code review of stage B2, finding
   B2-R4; [Creatures](creatures.md)).
+- The stat lines of the jewelry (stage B4; item catalog format 4, `trinkets`, [Game data](../development/game-data.md)): an item of the
+  slots 0 to 7 with a row of the trinket table gives `gear score x Scale...PerGS x TrinketBonus x 0.01` for each line: ScaleHealthPerGS
+  (max health), ScaleDamagePerGS (base damage), ScaleCDRPerGS (cooldown reduction) [client code 0x3636A50, the consumer of the
+  tooltip lines; live check L1: "+4.53% Max Health" of Gorgon's Amulet at 725 = 725 x 0.625 x 0.01 x 0.01, "+5.00% Cooldown Reduction" of
+  the earring at 800]. The max health and the base damage join the parts of the perks: one MaxHealth multiplier and one BaseDamage part
+  (the client has one stat multiplier of each kind, enum 0x3FF0810) [agent decision; the sum agrees with the live sheet: 5,330]. The
+  cooldown reduction joins the fixed cooldown rules in one sum (`Passives::cooldown_factor`; live check L1: the tooltip 19.7 s), and the
+  stat multiplier state of the owner has it as the key CooldownReduction (0x4F, the value 1 + the line; protocol notes 4.49).
+- The maximum health of the bow build (stage B4, live check L1 and the sheet of run L2): (856 base + 3,450 of level 70 + 560 of
+  constitution 19 = 4,866) x (1 + 0.05 Wellness + 0.0453 the amulet line) = 5,330. The video shows 10,676: the game data and the client
+  give no other source (no threshold below constitution 100, no other MaxHealth row of the build). The client of the video has
+  different data (its tooltip of Enchanted Ward shows 3.5 percent; this client shows 1.8 percent). The difference stays open: no
+  value of this client gives it [agent decision: the backend follows the data of this client].
+- The threshold abilities of the attributes (stage B4): a fixed row of a threshold (`Con_Bonus_100_1`: MaxHealth 0.03, `Dex_Bonus_25_1`,
+  `Str_Bonus_25_1`) is a passive value of the gear values with no mana part (the progress system has the MaxMana and ManaRate of the
+  thresholds since stage 3.5b.2). A change of the attribute bonus (a food, a perk) that adds or takes a threshold makes the values again
+  in the same refresh. The other threshold rows are rules of the evaluator ([Passive rules](passive-rules.md)).
+- The received heal parts of a fixed perk row (stage B4): HealMod, ConsumableHealMod, NonConsumableHealMod, and DmgPctToHealthHealMod of
+  an ability row with no event, x potency (Alchemist Reprieve `Global_Amulet_PotionHeal`: 0.02 x 4.0; The Thirst
+  `GlobalPerk_Artifact_Set1_Earring1`: 0.33). They join the parts of the statuses in the gear summary (one pool,
+  [Combat and health](combat-and-health.md)). Before stage B4 only the statuses gave them.
+- The statuses of a perk of a hit (`Gear::perk_status`: a rend, a damage over time) last the time of the row x the outgoing time factor of
+  the attacker (stage B4: Battle Precision, `Dex_Bonus_150_1`), then DurationMax; a damage over time has the ticks of that time.
 - The damage of a tick of a creature status (stage B1, `Gear::tick_damage`): the creature system gives each damage tick of a status
   with a forced damage row (the burn of Flame Arrow) to the path of the damage of a perk (`perk_damage`, `Combat::strike_amount`: a
   fixed amount, the defense of the creature, no reaction, the number for the source) [agent decision: one path for each damage of a
@@ -161,3 +186,9 @@ tools/gamedata/perks.sh --find Gravity   # the perks, buckets, and items with a 
   before a test of an OnActive perk.
 - The potency of a perk scales with the gear score of its item: a test item with no `--gs`
   has the lowest gear score of its range.
+- The weapon damage of the character sheet is a number of the client, not of the server (stage B4, client GetCoreDamage 0x14368D200 with
+  the item callback 0x1436A57A0). With a gem whose affix has UseWeaponAttributeScaling (+0x13d of the affix; loader 0x1443B3A40) the sheet
+  shows core x (1 + p x (1 - p)), p the DamagePercentage of the gem: the rapier of the bow build (p 0.5, core 1,459.6) shows 1,824, the
+  Boltcaster (p 0.99, core 2,480.9) 2,505. Without the flag the sheet shows (1 - p) x core + p x the core with no attribute: 1,012 for the
+  rapier, the number of the video. The data of this client has the flag; the client of the video does not. The server damage of a hit
+  does not use this number.

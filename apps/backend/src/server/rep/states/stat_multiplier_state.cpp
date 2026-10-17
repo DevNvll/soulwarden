@@ -18,7 +18,10 @@
 //            entry := key:u8 value:i32 (big-endian, the multiplier times 10000: DECIMAL_PLACES 4 of the slice) m_syncVitals:u8
 //          the keys 0x34 (MoveSpeedMod) and 0x35 (SprintSpeedMod) with the multipliers of the character
 //          (Entity::moveMultiplier, sprintMultiplier), and from stage 3.4f-B the key 0x0B (StaminaRate: 1 + the StaminaRate of the
-//          statuses) when it is not 1. All at 1: the empty table (live check: it gives 1.0 again).
+//          statuses) when it is not 1, and from stage B4 the key 0x4F (CooldownReduction: 1 + the cooldown reduction line of the jewelry,
+//          GearSummary::cooldownReduction) when it is not 1. All at 1: the empty table (live check: it gives 1.0 again).
+//          Live check L1 of stage B4: with CooldownReduction 1.05 the tooltip of Explosive Arrow shows 19.7 s (22 s, Refreshing 2 x 2.72
+//          percent, and 5 percent of the earring in one sum); with no key it shows 20.8 s (the client applies Refreshing itself).
 //          The sequence is the world revision of the change: a newer table has a larger sequence.
 // observer no fragment (the remote map of group 2 is not proved; the remote player needs no speed).
 // The first record of a character with both multipliers at 1 has no fragment (the client makes an empty table itself).
@@ -36,6 +39,8 @@ constexpr unsigned kMultiplierTable = 0;
 constexpr std::uint8_t kStaminaRateKey = 0x0B;
 constexpr std::uint8_t kMoveSpeedKey = 0x34;
 constexpr std::uint8_t kSprintSpeedKey = 0x35;
+/** CooldownReduction (stage B4; enum of the stat multipliers 0x3FF0810): the client computes the cooldown of an ability with it. */
+constexpr std::uint8_t kCooldownReductionKey = 0x4F;
 constexpr float kScale = 10000.0F;
 
 std::uint32_t wire_value(float multiplier) {
@@ -49,7 +54,8 @@ std::vector<hub::Bytes> encode_stat_multiplier_state(const world::Entity& entity
         return {};
     }
     const float staminaRate = world::Stamina::regeneration_multiplier(entity);
-    const bool neutral = entity.moveMultiplier == 1.0F && entity.sprintMultiplier == 1.0F && staminaRate == 1.0F;
+    const float cooldown = 1.0F + entity.gear.cooldownReduction;
+    const bool neutral = entity.moveMultiplier == 1.0F && entity.sprintMultiplier == 1.0F && staminaRate == 1.0F && cooldown == 1.0F;
     if (neutral && request.since == 0) {
         return {};
     }
@@ -70,6 +76,9 @@ std::vector<hub::Bytes> encode_stat_multiplier_state(const world::Entity& entity
     }
     entries.emplace_back(kMoveSpeedKey, entity.moveMultiplier);
     entries.emplace_back(kSprintSpeedKey, entity.sprintMultiplier);
+    if (cooldown != 1.0F) {
+        entries.emplace_back(kCooldownReductionKey, cooldown);
+    }
     table.size(entries.size());
     for (const auto& [key, value] : entries) {
         table.u8(key);

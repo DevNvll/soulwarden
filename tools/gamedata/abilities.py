@@ -145,6 +145,9 @@ STATUS_COLUMNS = ("StatusID", "BaseDuration", "MoveSpeedMod", "Stunned", "NoNav"
 STATUS_RULE_COLUMNS = ("StackMax", "InitialStackSize", "RefreshDuration", "DurationMax", "DontReplaceStack",
                        "ApplicationCooldown", "TickRate", "DelayInitialTick", "Health", "HealthModifierPercent", "Mana",
                        "RemoveOnDeath", "AllowAddIfDead", "OnEndStatusEffect", "DontApplyOnEndEffectOnRemove", "CastSpell",
+                       # Stage B3 (code review of stage B3, finding B3-R3): the stack chain (the timer of Archer's Speed). Each status
+                       # table of the supported build has the three columns.
+                       "OnStackStatusEffect", "AddOnStackSize", "AddOnStackSizeComparison",
                        "ShowInUITray", "AlwaysReplicate", "ForceReplicateToRemotes", "EffectCategories", "MaxHealthMod",
                        "PhysicalArmor", "ElementalArmor", "SprintSpeedMod", "MODStrength", "MODDexterity", "MODIntelligence",
                        "MODFocus", "MODConstitution", "ABSSlash", "ABSThrust", "ABSStrike", "ABSFire", "ABSIce", "ABSNature",
@@ -442,6 +445,12 @@ def build_data(sources: Sources) -> dict:
         spell = str(cells.get("CastSpell", "")).strip()
         if spell and spell.lower() not in spells:
             raise Failure(f"the status effect {entry[0]} names the spell {spell} (CastSpell), which the spell tables do not have")
+        # Code review of stage B3, finding B3-R3: each status of OnStackStatusEffect is a row of the data (the 46 links of the game resolve).
+        for part in re.split(r"[+,]", str(cells.get("OnStackStatusEffect", ""))):
+            target = part.strip()
+            if target and target.lower() not in statuses:
+                raise Failure(f"the status effect {entry[0]} names the stack status {target} (OnStackStatusEffect), which the status tables "
+                              "do not have")
 
     # The costs (stage 1.3b, criterion I14): the two cost tables of the players and the cost columns of the
     # ability rows. A cost id of an ability or a spell names a row of a cost table.

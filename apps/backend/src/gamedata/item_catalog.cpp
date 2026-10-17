@@ -1,6 +1,7 @@
 #include "gamedata/item_catalog.h"
 
 #include <array>
+#include <cmath>
 #include <fstream>
 
 #include <nlohmann/json.hpp>
@@ -66,12 +67,13 @@ bool ItemCatalog::load(const std::string& path) {
     // of stage 2.2 (format 2: no upgrade gear score), or the 12 columns of a file from before stage 2.2 (format 1: no removal protection).
     // The format of the file selects the layout (code review of stage 2.2, finding WT-R4): a file with fewer columns than its format is not
     // complete and does not load.
+    // Format 4 (stage B4): the columns of format 3 and the member trinkets (the stat lines of the jewelry).
     std::uint32_t format = 1;
-    if (document.contains("format") && (!read_number(document["format"], format) || format < 1 || format > 3)) {
+    if (document.contains("format") && (!read_number(document["format"], format) || format < 1 || format > 4)) {
         return false;
     }
     const json& columns = document["columns"];
-    if (columns.size() != (format == 3 ? kColumns.size() : format == 2 ? kColumnsBeforeB0 : kColumnsBefore22)) {
+    if (columns.size() != (format >= 3 ? kColumns.size() : format == 2 ? kColumnsBeforeB0 : kColumnsBefore22)) {
         return false;
     }
     for (std::size_t column = 0; column < columns.size(); ++column) {
@@ -212,8 +214,46 @@ bool ItemCatalog::load(const std::string& path) {
             }
         }
     }
+    // The trinket stat lines (format 4, stage B4): [[item id, TrinketBonus, ScaleHealthPerGS, ScaleDamagePerGS, ScaleCDRPerGS], ...]. A file
+    // of format 4 has the member (the rule of finding B0-R3: a file with no lines would give jewelry with no line); a file of an earlier format
+    // has none (the jewelry then gives no line). Each value is a finite number of 0 or more, each item is an item of the list, one row for
+    // each item.
+    std::unordered_map<std::string, TrinketStats> trinkets;
+    if (format >= 4 && !document.contains("trinkets")) {
+        return false;
+    }
+    if (document.contains("trinkets")) {
+        const json& member = document["trinkets"];
+        if (!member.is_array()) {
+            return false;
+        }
+        std::unordered_set<std::string> ids;
+        for (const ItemDefinition& item : items) {
+            ids.insert(lower_ascii(item.id));
+        }
+        for (const json& row : member) {
+            if (!row.is_array() || row.size() != 5 || !row[0].is_string()) {
+                return false;
+            }
+            std::array<float, 4> values{};
+            for (std::size_t index = 0; index < values.size(); ++index) {
+                if (!row[index + 1].is_number()) {
+                    return false;
+                }
+                values[index] = row[index + 1].get<float>();
+                if (!std::isfinite(values[index]) || values[index] < 0.0F) {
+                    return false;
+                }
+            }
+            const std::string id = lower_ascii(row[0].get<std::string>());
+            if (ids.count(id) == 0 || !trinkets.emplace(id, TrinketStats{values[0], values[1], values[2], values[3]}).second) {
+                return false;
+            }
+        }
+    }
     set(std::move(items));
     set_artifact_objectives(std::move(objectives));
+    m_trinkets = std::move(trinkets);
     m_backstories = std::move(backstories);
     m_creationBackstories.clear();
     m_hasCreationBackstories = false;
@@ -221,6 +261,15 @@ bool ItemCatalog::load(const std::string& path) {
         set_creation_backstories(creation);
     }
     return true;
+}
+
+const TrinketStats* ItemCatalog::trinket(std::string_view itemId) const {
+    const auto found = m_trinkets.find(lower_ascii(itemId));
+    return found == m_trinkets.end() ? nullptr : &found->second;
+}
+
+void ItemCatalog::set_trinkets(std::unordered_map<std::string, TrinketStats> trinkets) {
+    m_trinkets = std::move(trinkets);
 }
 
 void ItemCatalog::set(std::vector<ItemDefinition> items) {

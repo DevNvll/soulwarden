@@ -373,6 +373,9 @@ button on "Confirm").
   `bow-boltcaster` is disabled. A file of format 3 must have the member of the objectives; an objective with an achievement bit
   at or above the limit of the client, two bits of one achievement, two achievements of one bit, or two objectives of one item
   does not load (code review of stage B0). A preset with an artifact whose objective the catalog does not have is disabled.
+  From stage B4 (format 4) the catalog also has the stat lines of the jewelry (`trinkets`: TrinketBonus and the max health, base
+  damage, and cooldown reduction lines for each gear score). With a catalog of an earlier format the jewelry has no stat line. A
+  backend from before stage B4 refuses a file of format 4.
 - `tools/gamedata/progression.sh` makes the progression tables
   (`~/.local/share/soulwarden/gamedata/progression-tables.json`): the experience, the attribute
   points, and the health of each level, the health of each value of the constitution, the
@@ -549,7 +552,9 @@ button on "Confirm").
   the delays of the base vitals (1 s), the dodge of each load class (its animation and its cost: 45, 45, 50), the times of the dodge
   (the payment at 0.1 s, immune to 0.5 s, the next dodge from 0.267 s), and the exhausted state (protocol notes 4.38). It reads the
   data tables, the action lists, the animation database of the player, and the player slice of the game copy (it needs an Oodle
-  library). Without the file the backend starts: the stamina stays full and the server has no rule for a dodge.
+  library). Without the file the backend starts: the stamina stays full and the server has no rule for a dodge. From stage B4
+  (format 2) each dodge fragment also has the mark CanAttackCancel (0.267 s): an arrow or a melee attack after it ends the dodge. With
+  a file of format 1 the dodge ends at 0.5 s. A backend from before stage B4 refuses a file of format 2.
 - `tools/gamedata/projectiles.sh` makes the projectile data
   (`~/.local/share/soulwarden/gamedata/projectile-data.json`, 72 KB, stage 3.3b-S3): the ranged
   attack profiles of the game (the range, the radius, the near range, the acceleration delay),
@@ -959,6 +964,23 @@ button on "Confirm").
   of stage B2: a dodge that cancelled a bow ability no longer refuses the next ability; a hit after the end of the charges starts one new
   charge; Mark sees the rend of a perk; the rend of a perk obeys a removal window; a shot item of a press that a weapon switch holds is
   refused.
+- The other rules of the bow build (stage B4, `docs/systems/passive-rules.md`, `gear-and-perks.md`, `consumables-and-heart-rune.md`,
+  protocol notes 4.49). Run `tools/gamedata/items.sh` (format 4), `tools/gamedata/stamina.sh` (format 2), and
+  `tools/gamedata/creatures.sh` (the attack type of each creature attack) again. The jewelry lines: gear score x the scale of the line x
+  TrinketBonus x 0.01 (the amulet +4.53 percent max health at 725, the ring +9.06 percent base damage at 725, the earring 5 percent
+  cooldown reduction at 800); the max health line joins Wellness, the base damage line joins the damage part of a hit, the cooldown line
+  goes to the client in the stat multiplier state (the key 0x4F) and joins Refreshing. The threshold abilities of the attributes (with the
+  bonus of a food or a perk) are rules of the character. Long Range: +0.1 at 10 m or more from the place of the attacker at the hit.
+  Finishing Shot: +0.15 on a target at 50 percent health or less. The outgoing time factor (Battle Precision 0.2 for a debilitate or a
+  damage over time on a target with a debuff, the dexterity bonus at 150: 0.05 for a damage over time, Alacrity II for a haste on a
+  different player). Enchanted Ward: the BaseDamageReduction of the perk for a creature attack of the type Light or Heavy (the attack
+  type of the damage row of the creature data). The cooldown of an ability: the time of the data x (1 + the fixed cooldown rules - the
+  cooldown line). Vital Synergy: its two statuses below half the stamina and below half the health (the perk script of the client). The
+  potions: the ConsumableHealMod of the perk rows and Divine in the received heal, the CooldownTimer of a rule with OnUsedConsumable for
+  its cooldown id (+0.25 of The Thirst), the statuses of the Toast perks after a potion of their list. The sources of a row on more items
+  count to IsStackableMax of the row. The corrections of the code review of stage B3: an attack after CanAttackCancel ends the dodge
+  action and gives its exit statuses then; the cap of the sources in the time factor and in the rules after a dodge; the loader and the
+  ability tool refuse an OnStackStatusEffect of no status row; case HS7 tests the haste allowance of the position check.
 - Spell abilities (stage 3.3b-S2b, protocol notes 4.28, `docs/systems/spells.md`). With the
   spell data and the projectile data of this stage, the key Q uses Ice Pylon of the ice
   gauntlet, Traps of the musket, and Beacon of the life staff when they are on the bar. The

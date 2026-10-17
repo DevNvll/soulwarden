@@ -127,18 +127,11 @@ UseVerdict Consumables::use(const std::string& characterId, bool paperdoll, std:
     if (character == nullptr || row == nullptr) {
         return counted(UseVerdict::noEntity);
     }
-    // The cooldown, with the perks of the character that shorten it (OnUsedConsumable: an earring).
+    // The cooldown, with the rules of the character that change it (OnUsedConsumable with CooldownTimer: Refreshing Toast of an earring -0.04;
+    // stage B4: a positive value and the CooldownId of the row, The Thirst +0.25 for SurvivalPotion; Passives::consumable_cooldown_factor).
+    float seconds = 0.0F;
     if (!row->cooldown.empty() && row->cooldownTime > 0.0F) {
-        float factor = 1.0F;
-        for (const GearPerk& perk : m_world.gear().perks_of(*character)) {
-            for (const std::string& name : perk.perk->abilities) {
-                const gamedata::CellValues* cells = perks->ability(name);
-                if (cells != nullptr && cells->number("OnUsedConsumable") != 0.0F && cells->number("CooldownTimer") < 0.0F) {
-                    factor += cells->number("CooldownTimer") * perk.potency;
-                }
-            }
-        }
-        const float seconds = row->cooldownTime * std::max(factor, 0.0F);
+        seconds = row->cooldownTime * m_world.passives().consumable_cooldown_factor(*character, itemId, row->cooldown);
         Group& group = state.groups[lower(row->cooldown)];
         // Each item keeps its own end, and no use makes an end earlier (finding F7).
         WorldClock::time_point& own = group.ends[lower(itemId)];
@@ -155,7 +148,7 @@ UseVerdict Consumables::use(const std::string& characterId, bool paperdoll, std:
                    paperdoll ? "paperdoll" : "bag",
                    row->effects.size(),
                    row->cooldown.empty() ? "none" : row->cooldown.c_str(),
-                   static_cast<double>(row->cooldownTime));
+                   static_cast<double>(seconds));
     }
     publish(*character, state);
     // The older statuses that the item ends (a new food ends the old food), then the statuses of the item: the status
@@ -171,6 +164,10 @@ UseVerdict Consumables::use(const std::string& characterId, bool paperdoll, std:
         how.seconds = index < row->durations.size() && row->durations[index] > 0.0F ? row->durations[index] : 0.0F;
         how.source = StatusSource{StatusSourceKind::consumable, itemId, paperdoll ? slot : 0, own->id};
         m_world.statuses().apply(*own, *status, how);
+    }
+    // Stage B4: the rules of the use of a consumable (OnUsedConsumable with a status: the Toast perks of the earring, Passives::consumable_used).
+    if (Entity* own = m_world.find_character(characterId)) {
+        m_world.passives().consumable_used(*own, itemId, row->cooldown);
     }
     return counted(UseVerdict::used);
 }

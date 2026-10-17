@@ -259,12 +259,13 @@ int main(int argc, char** argv) {
     gamedata::ItemCatalog itemCatalog;
     if (itemCatalog.load(itemCatalogPath)) {
         log::write("backend: item catalog loaded from %s (%zu items, the item list of the client has %u entries, "
-                   "the items of %zu backstories, %zu artifact objectives)",
+                   "the items of %zu backstories, %zu artifact objectives, %zu items with trinket stat lines)",
                    itemCatalogPath.c_str(),
                    itemCatalog.item_count(),
                    itemCatalog.list_size(),
                    itemCatalog.backstory_count(),
-                   itemCatalog.artifact_objective_count());
+                   itemCatalog.artifact_objective_count(),
+                   itemCatalog.trinket_count());
         if (itemCatalog.backstory_count() == 0 || !itemCatalog.has_creation_backstories()) {
             log::write("backend: the item catalog has no backstory, or no list of the backstories of the character "
                        "creation: a new character gets no clothing. Make the file again with tools/gamedata/items.sh");

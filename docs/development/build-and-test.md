@@ -143,6 +143,13 @@ python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/
   and the lists of format 7, and the counts of the stage are 0, so that each case HS1 to HS10 runs and fails on the behavior of the old tree.
   The cases of the code review of stage B2 (`tests/review_b2_tests.cpp`, BV1 to BV5) need no mark. The correction of case BC7 (finding
   B2-R6) is proved with a copy of the tree whose ApplicationCooldown of a creature is broken: the corrected BC7 fails, the old one passes.
+- Stage B4 uses the mark `SOULWARDEN_B4_BASELINE` (proof on a copy of the tree of stage B3): in `tests/support/bow_rules_fixture.h` and
+  `tests/bow_rules_tests.cpp` it removes the trinket rows of the catalog, the mark CanAttackCancel of the stamina data, the counts of the
+  stage, and the call of the outgoing factor, so that the cases BR1 to BR14 and BY1 to BY3 (`tests/review_b3_tests.cpp`, the code review of
+  stage B3) run on the old tree: each one fails there except BR11 (Desert Sunrise worked from stage B3; the stage adds only the test and
+  the note of the list, which BR14 tests). Build the copy with `-DCMAKE_CXX_FLAGS=-DSOULWARDEN_B4_BASELINE`. The correction of case HS7
+  (finding B3-R4) is proved with a copy of the tree of stage B4 whose position check has no haste allowance (`PositionTrack::judge`
+  with `kWindowSpeed` only): the corrected HS7 fails (11 refused reports with the haste), the old one passes.
 - The Windows headers of the MinGW build define `near` and `far` as macros: a member or a variable with such a name in a file that a
   route includes after them does not compile (`SOULWARDEN_BACKEND_TARGET=windows`; stage 3.5b.1: `ChestsView::nearby`). Build the
   Windows target before a commit of a new header.

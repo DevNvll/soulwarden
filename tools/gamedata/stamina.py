@@ -23,19 +23,23 @@ Input: the game copy, from the same sources as the creature data tool (creature_
                                                                (SetStaminaRegenDelay OnExit)
   playerdata/cage/playeractions_global.actionlist (Exhausted)  the stamina percent that starts and that ends the exhausted state
   animations/mannequin/adb/player/player.adb                   the dodge fragments: the time of PayStaminaCost, the Invulnerability
-                                                               clip, the mark CanTransition, and the CanDodgeCancel transitions
+                                                               clip, the mark CanTransition, the mark CanAttackCancel (format 2),
+                                                               and the CanDodgeCancel transitions
 
 The variant of a dodge fragment: the variant with no tag (the roll of a character that stands). The tool checks that each standing
 variant (the tags LeftNav, RightNav, BackNav, and none) has the same times; the prone variants (Prone+...) have a later CanTransition
 and are listed in "variantsNotUsed" (the server does not know the posture of the client).
 
-Output: {"format": 1,
+Output: {"format": 2,
 "component": {"min": N, "max": N, "regenRate": N, "blockRegenRate": N, "maxWindedTime": N},
 "vitals": {"regenDelay": N, "regenDelayOnEmpty": N, "fullyDepletedDelay": N},
 "load": {"costMult": {"light": N, "medium": N, "heavy": N, "overburdened": N}, "regenMult": {...}},
 "dodge": {"action": "Dodge", "regenDelayOnExit": N,
   "classes": {"light": {"fragment": NAME, "costId": ID, "cost": N}, "medium": {...}, "heavy": {...}},
-  "fragments": {NAME: {"pay": S, "immune": [S, S], "canTransition": S, "cancel": [[start, end or null, buffered], ...]}, ...},
+  "fragments": {NAME: {"pay": S, "immune": [S, S], "canTransition": S, "attackCancel": S, "cancel": [[start, end or null, buffered],
+              ...]}, ...},
+Format 2 (code review of stage B3, finding B3-R1): "attackCancel" is the mark CanAttackCancel of the fragment (0.2667 s): an attack from
+it on replaces the dodge action (rule 96 of player.grid). A fragment with no such mark stops the tool.
   "costsNotApplied": [[condition, costId, multiplier], ...], "variantsNotUsed": [[fragment, tags], ...]},
 "exhausted": {"action": "Exhausted", "enter": PART, "exit": PART}}
 
@@ -67,7 +71,7 @@ from item_catalog import Sheet, sheet_type  # noqa: E402
 from slice_ids import find_field  # noqa: E402
 
 OUTPUT_NAME = "stamina-data.json"
-FORMAT = 1
+FORMAT = 2
 ACTION_FOLDER = "sharedassets/springboardentitites/playerdata/cage/"
 DODGE_ACTIONS = ACTION_FOLDER + "playeractions_dodge.actionlist"
 GLOBAL_ACTIONS = ACTION_FOLDER + "playeractions_global.actionlist"
@@ -270,7 +274,7 @@ def read_exhausted(sources: Sources) -> dict:
 
 def fragment_times(fragment: ElementTree.Element, name: str) -> dict:
     """@return The times of one variant of a dodge fragment (the sum of the ExitTime values before each clip of a layer)."""
-    result = {"pay": None, "immune": None, "canTransition": None, "cancel": []}
+    result = {"pay": None, "immune": None, "canTransition": None, "attackCancel": None, "cancel": []}
     for layer in fragment.findall("ProcLayer"):
         time = 0.0
         clips = []
@@ -287,6 +291,10 @@ def fragment_times(fragment: ElementTree.Element, name: str) -> dict:
                 result["pay"] = start
             elif kind == "CAGE-Named" and parameters.get("Name") == "CanTransition":
                 result["canTransition"] = start
+            elif kind == "CAGE-Named" and parameters.get("Name") == "CanAttackCancel":
+                # Format 2 (code review of stage B3, finding B3-R1): an attack from this mark on replaces the dodge action (rule 96 of
+                # player.grid: Dodge to Attack, Shoot, Offhand with the condition CanAttackCancel).
+                result["attackCancel"] = start
             elif kind == "Invulnerability":
                 if end is None:
                     raise Failure(f"{PLAYER_ADB}: the Invulnerability clip of {name} has no end")
@@ -296,7 +304,7 @@ def fragment_times(fragment: ElementTree.Element, name: str) -> dict:
                 if buffered and end is None:
                     raise Failure(f"{PLAYER_ADB}: the buffered CanDodgeCancel window of {name} has no end")
                 result["cancel"].append([start, end if buffered else None, buffered])
-    for member in ("pay", "immune", "canTransition"):
+    for member in ("pay", "immune", "canTransition", "attackCancel"):
         if result[member] is None:
             raise Failure(f"{PLAYER_ADB}: the dodge fragment {name} has no {member}")
     result["cancel"].sort()
@@ -306,7 +314,7 @@ def fragment_times(fragment: ElementTree.Element, name: str) -> dict:
 def same_times(first: dict, second: dict) -> bool:
     """@return True when the times of two variants differ by less than TIME_TOLERANCE each (a window end of none in both)."""
     def flat(times: dict) -> list:
-        values = [times["pay"], times["canTransition"], *times["immune"]]
+        values = [times["pay"], times["canTransition"], times["attackCancel"], *times["immune"]]
         values += [value for window in times["cancel"] for value in window[:2]]
         return values
     a, b = flat(first), flat(second)
@@ -366,7 +374,8 @@ def build_data(sources: Sources) -> dict:
     dodge = read_dodge_action(sources, costs)
     fragments, not_used = read_fragments(sources, {entry["fragment"] for entry in dodge["classes"].values()})
     for name, times in fragments.items():
-        if not 0.0 <= times["pay"] <= times["canTransition"] or times["immune"][0] != 0.0 or times["immune"][1] <= 0.0:
+        if (not 0.0 <= times["pay"] <= times["canTransition"] or times["immune"][0] != 0.0 or times["immune"][1] <= 0.0
+                or not 0.0 <= times["attackCancel"] <= times["canTransition"]):
             raise Failure(f"{PLAYER_ADB}: the times of the dodge fragment {name} do not fit together: {times}")
         # A next dodge of a window starts at the end of a buffered window and at the start of an instant one: not before the payment of
         # the dodge that plays (code review of stage 3.4f-B, finding CS-R5: a chain of replacements before the mark paid nothing).

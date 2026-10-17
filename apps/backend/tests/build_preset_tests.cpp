@@ -13,8 +13,8 @@
 //        does not have, a gear score outside the range of its item; the content of the project preset
 //   BP7  the routes: the admin command (a character of a different account: 404, no change), the catalog route, the development route
 //   BP8  a character not in the world: the rows only; the next world entry has the build and the achievement bit
-//   BP9  the list of the passive rules: a target condition with no event and a cooldown of a fixed row are "not applied" (the row of
-//        a fixed value stays applied)
+//   BP9  the list of the passive rules: a target condition with no event and a cooldown of a fixed row were "not applied" in stage B0;
+//        from stage B4 they are rules of the evaluator (a rule of each hit, a fixed cooldown reduction); the row of a fixed value stays applied
 //   BP10 B0-R3 (code review of stage B0, corrected in stage B1): a file of format 3 with no member artifactObjectives does not load; a
 //        preset with an artifact whose objective the catalog does not have is disabled (no apply with locked artifact perks)
 //   BP11 B0-R4: an achievement index at the bit limit of the client does not load (the tool and the loader)
@@ -812,13 +812,14 @@ void passive_list(const Options&) {
     const world::Passives& passives = shop.world().passives();
     const gamedata::CellValues target = shop::cells({{"TargetHealthPercent", 50.0F}, {"BaseDamage", 0.15F}}, {{"WeaponTag", "Bow"}});
     const world::RuleView low = passives.describe_row("Test_Bow_FinishingShot", &target, world::RuleOrigin::node);
-    check(!low.applied && low.note.find("TargetHealthPercent") != std::string::npos,
-          "a node row with a target condition and no event (Finishing Shot) is not applied: " + low.note);
+    // Stage B4: the two rules leave the list of the rules that the evaluator does not apply (before stage B4: not applied).
+    check(low.applied && low.note.find("condition of the target") != std::string::npos,
+          "a node row with a target condition and no event (Finishing Shot) is a rule of each hit from stage B4: " + low.note);
     const gamedata::CellValues refreshing =
         shop::cells({{"IsStackableAbility", 1.0F}, {"IsStackableMax", 3.0F}, {"CooldownTimer", -0.02F}}, {{"CDRImmediatelyOptions", "ActiveWeapon"}});
     const world::RuleView cdr = passives.describe_row("Test_Common_CDR", &refreshing, world::RuleOrigin::perk);
-    check(!cdr.applied && cdr.note.find("CooldownTimer") != std::string::npos,
-          "a perk row with a cooldown change and no event (Refreshing) is not applied: " + cdr.note);
+    check(cdr.applied && cdr.note.find("fixed cooldown reduction") != std::string::npos,
+          "a perk row with a cooldown change and no event (Refreshing) is a fixed cooldown reduction from stage B4: " + cdr.note);
     const gamedata::CellValues fixed = shop::cells({{"BaseDamage", 0.1F}}, {{"WeaponTag", "Bow"}});
     const world::RuleView value = passives.describe_row("Test_Bow_Fixed", &fixed, world::RuleOrigin::node);
     check(value.applied && value.note.find("fixed") != std::string::npos, "control: a fixed value with no condition stays applied: " + value.note);
@@ -949,7 +950,7 @@ std::vector<Case> build_preset_cases() {
             {"BP7", "the routes of the build presets: the admin command and its owner check, the catalog, the development route", routes},
             {"BP8", "a build preset for a character that is not in the world: the rows, then the world entry", preset_stored},
 #endif
-            {"BP9", "the list of the passive rules: a target condition with no event and a cooldown of a fixed row are not applied", passive_list},
+            {"BP9", "the list of the passive rules: a target condition with no event and a cooldown of a fixed row (applied from stage B4)", passive_list},
 #ifndef SOULWARDEN_B0_BASELINE
             {"BP10", "B0-R3: a catalog of format 3 needs its artifact objectives; a preset with an artifact and no objective is disabled",
              missing_objective},

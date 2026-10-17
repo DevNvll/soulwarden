@@ -48,10 +48,10 @@ different backstory.
 The tool needs only the standard library of Python and the module appearance_tables.py of
 this folder (pak entry reader).
 
-Output: {"format": 3, "count": N, "tables": [{"name", "rows", "first", "last"}, ...],
+Output: {"format": 4, "count": N, "tables": [{"name", "rows", "first", "last"}, ...],
 "columns": [...], "items": [[...], ...], "backstories": {"<id>": [[item id, quantity, gear
 score], ...], ...}, "creationBackstories": ["<id>", ...], "artifactObjectives": [[item id, objective id, achievement id,
-achievement index], ...]}. `count` is the length of the list of the client with entry 0. Entry
+achievement index], ...], "trinkets": [[item id, TrinketBonus, ScaleHealthPerGS, ScaleDamagePerGS, ScaleCDRPerGS], ...]}. `count` is the length of the list of the client with entry 0. Entry
 number K of `items` (from 0) is the item with the index K + 1. The columns are: id, name (the
 text key of the display name), type, class, tier, weight (tenths), maxStack, durability,
 minGearScore, maxGearScore, gearScoreOverride, bindOnPickup, nonRemovable, notDroppable, maxCraftUpgradeGS. The
@@ -82,6 +82,12 @@ client): a great axe (Weight 80, override 80) and a rapier (Weight 40, override 
 WeaponID or WeightOverride stops the tool. The format stays 3: a file from before has the Weight of each master row (a bag with
 weapons or armor is heavier for the server than for the client).
 
+Format 4 (stage B4, the jewelry of the bow build): the member trinkets has [item id, TrinketBonus, ScaleHealthPerGS, ScaleDamagePerGS,
+ScaleCDRPerGS] for each master row whose stats row (ItemStatsRef, a table of the type ArmorItemDefinitions) has a TrinketBonus above 0
+and a scale above 0 (the amulets, rings, and earrings of the game). Client code 0x3636A50: each stat line of an item is gear score x
+scale x TrinketBonus x 0.01 (a max health, a base damage, and a cooldown reduction multiplier: the tooltip of the client,
+dynamictooltip_itemstats). An armor stats table with no such column, or a cell that is not a number of 0 or more, stops the tool.
+
 A backstory has one entry for
 each item of its column InventoryItem: a quantity of 0 is an item that only the character
 creation screen shows, and a gear score of 0 is the value of the item table.
@@ -97,6 +103,7 @@ Environment: SOULWARDEN_GAME_DIR (default ~/Games/soulwarden/game),
 from __future__ import annotations
 
 import json
+import math
 import os
 import struct
 import subprocess
@@ -119,6 +126,11 @@ BACKSTORY_TYPE = "BackstoryDefinition"
 STATS_TYPES = ("WeaponItemDefinitions", "ArmorItemDefinitions")
 STATS_ID = "WeaponID"
 WEIGHT_OVERRIDE = "WeightOverride"
+# The stat lines of a trinket (format 4, stage B4: the jewelry of the bow build): the columns of an armor stats row (client loader 0x5BB6C60:
+# TrinketBonus +0x14, ScaleHealthPerGS +0x18, ScaleDamagePerGS +0x1C, ScaleCDRPerGS +0x20). Client code 0x3636A50 makes each line of an item:
+# gear score x Scale...PerGS x TrinketBonus x 0.01 (the tooltip prints it times 100: "+4.53% Max Health" at 725 for AmuletFOCT5).
+ARMOR_STATS_TYPE = "ArmorItemDefinitions"
+TRINKET_COLUMNS = ("TrinketBonus", "ScaleHealthPerGS", "ScaleDamagePerGS", "ScaleCDRPerGS")
 # A float32 cell of a whole number can be a little below it (80 as 79.99999): the cut adds this first.
 WEIGHT_EPSILON = 1.0e-3
 # The objectives of the artifacts (format 3, stage B0): the objective rows, their tasks, and the achievement table.
@@ -338,6 +350,30 @@ def weight_overrides(sheets: list[Sheet]) -> dict[str, int]:
     return overrides
 
 
+def trinket_rows(sheets: list[Sheet]) -> dict[str, list[float]]:
+    """@return The trinket values of each armor stats row (its id in lower case) with a TrinketBonus above 0 and a scale above 0:
+    [TrinketBonus, ScaleHealthPerGS, ScaleDamagePerGS, ScaleCDRPerGS]. `sheets`: the tables of the type ArmorItemDefinitions. A table with
+    no such column stops the tool (format 4, stage B4). The first row of an id wins (the tables in the byte order of their names)."""
+    trinkets: dict[str, list[float]] = {}
+    for sheet in sorted(sheets, key=lambda table: table.name.encode("utf-8")):
+        for column in TRINKET_COLUMNS:
+            if column not in sheet.columns:
+                raise Failure(f"the armor stats table {sheet.name} has no column {column}")
+        for row in range(sheet.row_count):
+            identifier = sheet.cell(row, STATS_ID)
+            values = []
+            for column in TRINKET_COLUMNS:
+                value = sheet.cell(row, column)
+                if value == "":
+                    value = 0.0
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                    raise Failure(f"the cell {column} of {identifier} in {sheet.name} is not a number of 0 or more")
+                values.append(float(value))
+            if isinstance(identifier, str) and identifier and values[0] > 0 and any(value > 0 for value in values[1:]):
+                trinkets.setdefault(identifier.lower(), [round(value, 6) for value in values])
+    return trinkets
+
+
 def item_weight(sheet: Sheet, row: int, overrides: dict[str, int]) -> int:
     """@return The weight of a master row in tenths: the override of its stats row, or its cell Weight."""
     reference = sheet.cell(row, "ItemStatsRef")
@@ -491,6 +527,7 @@ def build_catalog(contents: list[bytes]) -> dict:
     tasks: list[Sheet] = []
     achievements: list[Sheet] = []
     stats: list[Sheet] = []
+    armor_stats: list[Sheet] = []
     for data in contents:
         kind = sheet_type(data)
         try:
@@ -498,6 +535,8 @@ def build_catalog(contents: list[bytes]) -> dict:
                 masters.append(Sheet(data))
             elif kind in STATS_TYPES:
                 stats.append(Sheet(data))
+                if kind == ARMOR_STATS_TYPE:
+                    armor_stats.append(stats[-1])
             elif kind == BACKSTORY_TYPE:
                 stories.append(Sheet(data))
             elif kind == OBJECTIVES_TYPE:
@@ -520,6 +559,8 @@ def build_catalog(contents: list[bytes]) -> dict:
     # The client keeps the tables in a map with the table name as the key: bytes, then length.
     masters.sort(key=lambda sheet: sheet.name.encode("utf-8"))
     overrides = weight_overrides(stats)
+    trinket_stats = trinket_rows(armor_stats)
+    trinkets: list[list] = []
     items: list[list] = []
     tables: list[dict] = []
     seen: set[int] = set()
@@ -534,6 +575,9 @@ def build_catalog(contents: list[bytes]) -> dict:
                 continue
             item_id = sheet.cell(row, "ItemID")
             seen.add(item_id_crc(item_id))
+            reference = sheet.cell(row, "ItemStatsRef")
+            if isinstance(reference, str) and reference.lower() in trinket_stats:
+                trinkets.append([item_id, *trinket_stats[reference.lower()]])
             items.append([item_id, sheet.cell(row, "Name"), item_type, sheet.cell(row, "ItemClass"),
                           whole(sheet.cell(row, "Tier")), item_weight(sheet, row, overrides),
                           whole(sheet.cell(row, "MaxStackSize")), whole(sheet.cell(row, "Durability")),
@@ -565,9 +609,9 @@ def build_catalog(contents: list[bytes]) -> dict:
         tables.append({"name": sheet.name, "rows": sheet.row_count, "first": first, "last": len(items)})
     item_ids = {item[0].lower() for item in items}
     backstories = backstory_items(stories, item_ids)
-    return {"format": 3, "count": len(items) + 1, "tables": tables, "columns": COLUMNS, "items": items,
+    return {"format": 4, "count": len(items) + 1, "tables": tables, "columns": COLUMNS, "items": items,
             "backstories": backstories, "creationBackstories": creation_backstories(stories),
-            "artifactObjectives": artifact_objectives(objectives, tasks, achievements, item_ids)}
+            "artifactObjectives": artifact_objectives(objectives, tasks, achievements, item_ids), "trinkets": trinkets}
 
 
 def main() -> int:
@@ -611,7 +655,8 @@ def main() -> int:
           f"{catalog['count']} entries, the items of {len(catalog['backstories'])} backstories, "
           f"{len(catalog['creationBackstories'])} backstories of the character creation, "
           f"{sum(1 for item in catalog['items'] if item[-1] != 0)} items with an upgrade gear score, "
-          f"{len(catalog['artifactObjectives'])} artifact objectives (source: {source[1]})")
+          f"{len(catalog['artifactObjectives'])} artifact objectives, {len(catalog['trinkets'])} items with trinket stat lines "
+          f"(source: {source[1]})")
     if not catalog["backstories"]:
         print(f"items: the source has no table of the type {BACKSTORY_TYPE} with items: a new character gets no item")
     return 0

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -96,6 +98,24 @@ struct ArtifactObjective {
     std::uint32_t achievementIndex{0};
 };
 
+/**
+ * The stat lines of a trinket (format 4, stage B4; the columns TrinketBonus, ScaleHealthPerGS, ScaleDamagePerGS, ScaleCDRPerGS of the armor
+ * stats row of the item, client loader 0x5BB6C60). Client code 0x3636A50: each line is gear score x scale x TrinketBonus x 0.01, a part of the
+ * max health, of the base damage, and of the cooldown reduction (the tooltip: "+4.53% Max Health" for Gorgon's Amulet at 725).
+ */
+struct TrinketStats {
+    float bonus{0.0F};
+    float healthPerGearScore{0.0F};
+    float damagePerGearScore{0.0F};
+    float cooldownPerGearScore{0.0F};
+
+    /** @return The three parts of an item of this gear score: {health, base damage, cooldown reduction}. */
+    [[nodiscard]] std::array<float, 3> parts(std::uint32_t gearScore) const {
+        const float common = static_cast<float>(gearScore) * bonus * 0.01F;
+        return {common * healthPerGearScore, common * damagePerGearScore, common * cooldownPerGearScore};
+    }
+};
+
 /** @return The CRC-32 of an item id as the client computes it: only the letters A to Z go to lower case. */
 [[nodiscard]] std::uint32_t item_id_crc(std::string_view id);
 
@@ -179,6 +199,15 @@ public:
     /** Sets the artifact objectives with no file (tests). */
     void set_artifact_objectives(std::vector<ArtifactObjective> objectives);
 
+    /** Stage B4: @return The trinket stat lines of an item (the compare ignores the case of the letters A to Z), or null (no line, or a file of
+     *  an earlier format). */
+    [[nodiscard]] const TrinketStats* trinket(std::string_view itemId) const;
+    [[nodiscard]] std::size_t trinket_count() const {
+        return m_trinkets.size();
+    }
+    /** Sets the trinket stat lines with no file (tests): lower-case item id to the values. */
+    void set_trinkets(std::unordered_map<std::string, TrinketStats> trinkets);
+
 private:
     void build_keys();
 
@@ -196,6 +225,8 @@ private:
     std::vector<ArtifactObjective> m_objectives;
     std::unordered_map<std::string, std::size_t> m_objectiveByItem;
     std::unordered_map<std::string, std::size_t> m_objectiveByAchievement;
+    /** Stage B4: lower-case item id to its trinket stat lines. */
+    std::unordered_map<std::string, TrinketStats> m_trinkets;
 };
 
 } // namespace soulwarden::backend::gamedata

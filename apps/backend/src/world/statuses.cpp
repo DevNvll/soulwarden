@@ -164,6 +164,13 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
     float factor = 1.0F;
     if (!how.permanent && !how.fixedTime && seconds > 0.0F) {
         factor = m_world.passives().duration_factor(character, row);
+        // Stage B4: a status that a different character gives (a spell of a friend): the outgoing factor of that character too (Alacrity II,
+        // "haste you apply"; Passives::outgoing_factor). The product of the two factors is a decision of an agent (two getters in the client).
+        if (how.source.entity != 0 && how.source.entity != character.id) {
+            if (const Entity* giver = m_world.find(how.source.entity); giver != nullptr && giver->kind == EntityKind::player) {
+                factor *= m_world.passives().outgoing_factor(*giver, character, row);
+            }
+        }
         if (factor != 1.0F) {
             seconds *= factor;
             ++m_counts.scaledTimes;

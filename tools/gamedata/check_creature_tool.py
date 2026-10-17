@@ -286,12 +286,14 @@ def check_areas() -> int:
                    "Test_Bomb": ({"spell": "Test_Bomb", "shape": "status", "table": "", "row": ""}, "")}
     behavior.area_spells = type("Spells", (), {"shape": staticmethod(lambda spell: known_casts.get(spell, (None, "no such spell")))})()
     behavior.areas_left_out = {}
+    # Stage B4: the attack type of the damage row (Enchanted Ward; research bow-build-2.md Q5) goes into the cast.
     rows = {"test_strike": {"ordinal": 1, "table": "TestShamanTable", "id": "Test_Strike", "type": "Lightning", "factor": 0.85,
-                            "added": 0.0, "charge": 0.1}}
+                            "added": 0.0, "charge": 0.1, "attackType": "Magic"}}
     values = {"SpellName": "Test_Strike", "AIAimAtTarget": "true", "ProjectileSpeed": "100", "AILeadTargetMaxAngle": "20",
               "AIAimMaxAngle": "45", "AIMissMaxDistance": "2", "UseAllAvailableTargets": "true"}
     cast, cause, _ = behavior.area_cast(0.933333, values, rows)
     report("cast-strike", cast is not None and cast["shape"] == "strike" and cast["factor"] == 0.85 and cast["wire"] == 9
+           and cast["attackType"] == "Magic"
            and cast["lead"] is False and cast["aimSpeed"] == 100.0 and cast["miss"] == [0.0, 2.0] and cast["allTargets"] is True,
            f"{cast}, cause {cause!r}")
     other = {"test_strike": {**rows["test_strike"], "table": "OtherTable"}}
@@ -341,7 +343,7 @@ def check_ranged() -> int:
                                            "slices/items/test_override.dynamicslice": 4}.get(path)
     behavior.ranged_left_out = {}
     damage = {"test_row": {"ordinal": 2, "table": "TestBowDamageTable", "id": "Test_Row", "type": "Thrust", "ranged": True,
-                           "factor": 0.35, "added": 0.0, "charge": 0.16}}
+                           "factor": 0.35, "added": 0.0, "charge": 0.16, "attackType": "Heavy"}}
     references = {"weapons": {24: "Test_Bow", 12: "Test_Arrow", 13: "Test_NoPrefab"}}
     clip = {"RangedAttackName": "Basic", "DamageTableRow": "Test_Row", "SliceOverride": "", "UseAmmo": "true",
             "AmmoSlot": "PaperdollSlotTypes::ARROW_AMMO_SLOT", "AILeadTarget": "true", "ProjectileSpeed": "50",
@@ -350,7 +352,8 @@ def check_ranged() -> int:
     release, cause = behavior.release(clip, references, main_hand, damage)
     expected = {"index": 1, "ammo": "Test_Arrow", "ammoKey": zlib.crc32(b"test_arrow"), "projectile": 3, "override": False,
                 "table": "TestBowDamageTable", "tableKey": zlib.crc32(b"testbowdamagetable"), "row": "Test_Row", "rowIndex": 2,
-                "wire": 5, "lead": True, "aimSpeed": 50.0, "leadAngle": 10.0, "aimAngle": 45.0, "miss": [1.5, 3.0], "range": 100.0}
+                "wire": 5, "lead": True, "aimSpeed": 50.0, "leadAngle": 10.0, "aimAngle": 45.0, "miss": [1.5, 3.0], "range": 100.0,
+                "attackType": "Heavy"}
     report("ranged-release", release is not None and all(release.get(key) == value for key, value in expected.items()),
            f"{release if release is None else {key: release[key] for key in expected}} {cause}")
     override, _ = behavior.release(dict(clip, SliceOverride="Items/Test_Override", UseAmmo="false"), references, main_hand, damage)

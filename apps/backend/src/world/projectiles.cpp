@@ -526,6 +526,11 @@ ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, Attack
     result = fire(*character, launch);
     if (result.verdict == ShotVerdict::accepted) {
         track.mark_shot(pressNumber);
+        // Code review of stage B3, finding B3-R1: a basic shot from the mark CanAttackCancel of a dodge on replaces the dodge action (rule 96
+        // of player.grid: Dodge to Shoot).
+        if (Entity* own = m_world.entity_of(session); own != nullptr && (launch.rule == nullptr || !launch.rule->ability)) {
+            m_world.stamina().attack_started(*own, m_world.clock().now());
+        }
     }
     return result;
 }

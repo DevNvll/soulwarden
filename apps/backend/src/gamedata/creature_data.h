@@ -131,6 +131,11 @@ struct CreatureContact {
     DamageCategory category{DamageCategory::direct};
     /** Name of the damage row of the game. For a log line only. */
     std::string row;
+    /**
+     * Stage B4: the AttackType of the damage row ("Light", "Heavy", "Magic", or empty; research bow-build-2.md Q5: each creature damage row of the
+     * game data has one): the condition AttackType of a rule of a hit that the character takes (Enchanted Ward). A file of an older tool has none.
+     */
+    std::string attackType;
     /** The heart rune charge of the character that takes the hit (HitRuneCharge of the row, stage 1.3b). */
     float hitCharge{0.0F};
     /**

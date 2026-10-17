@@ -332,6 +332,11 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   attack). The loader refuses a file whose area attack names an action with no fragment, a cast after the end of its action or with
   a value outside its range, and a strike whose damage has no type or a value outside its range. A file of an older tool has no such member: no
   creature casts an area, and the backend works ([Creature behavior](creature-behavior.md), [Spell entities](spells.md)).
+- The attack type of a creature attack (stage B4; research `bow-build-2.md` Q5, game data): the column AttackType of the damage row of the
+  attack (Light, Heavy, Magic, or blank) is the 10th value of a contact (`CreatureContact::attackType`) and the member `attackType` of a
+  ranged release and of an area strike. The health system gives it to the rules of a hit taken (Enchanted Ward: AttackType Light,Heavy,
+  [Passive rules](passive-rules.md)), and the log line of a creature hit names it. A contact of 8 or 9 values (a file of an older tool)
+  has no attack type: a rule with AttackType does not act for it, and the backend works.
 - The hit facts of a slice (stage 3.3b-S5, protocol notes 4.30): `CreatureSlice::behind`, the two angles of the
   DamageReceiver of the slice (m_isHitFromBehindMinAngle, m_isHitByCritFromBehindMinAngle; the wolf 2.0944 and 2.3562;
   503 slices; the tool stops for an angle field that is not exactly one 32-bit float: a cut field is a fault of the
