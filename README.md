@@ -110,7 +110,21 @@ tools/gamedata/navigation.sh
 linux-compat/run-soulwarden.sh
 ```
 
-At the main menu, select a character and press Play. `tools/steam-shortcut.py add` puts the launcher in your Steam library.
+At the main menu, select a character and press Play. `tools/release.sh` makes a release, and `tools/steam-shortcut.py add` puts the launcher of the current release in your Steam library.
+
+### Releases
+
+The Steam library entry starts the current release. A release is a fixed copy of the launcher, the backend, the hook, and the game data of a tested state, in `~/Games/soulwarden/releases`. A new build or a change of this tree does not change your game. A new release does.
+
+```sh
+tools/release.sh                     # make a release of the tested commit, and make it current
+tools/release.sh status              # the current release (*) and the other releases
+tools/release.sh rollback            # go back to the release before the current one
+tools/release.sh activate VERSION    # go to a different release
+tools/steam-shortcut.py add          # with Steam closed: the entry starts the current release
+```
+
+`cat ~/Games/soulwarden/releases/current/VERSION` shows the version of the game that the entry starts. While the game runs, the release command does not change the current release: do `tools/release.sh activate VERSION` after the game stops. The command keeps the 3 newest releases and the current one. `tools/steam-shortcut.py add --launcher working-copy` makes the entry start the launcher of this tree.
 
 ### Game data
 

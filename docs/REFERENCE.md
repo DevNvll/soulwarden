@@ -102,7 +102,8 @@ because the backend listens on loopback and the game has no other network.
 | `SOULWARDEN_STEAM_DIR` | path | Steam installation (default `~/.local/share/Steam`). |
 | `SOULWARDEN_PROTON_DIR` | path | Proton (default `<SOULWARDEN_STEAM_DIR>/steamapps/common/Proton - Experimental`). |
 | `SOULWARDEN_SEED_CHARACTER` | name | Development aid: an account with no character gets a character with this name at its login. The name must not be in use. |
-| `SOULWARDEN_GAMEDATA_DIR` | path | Tables that a tool makes from the game copy (default `~/.local/share/soulwarden/gamedata`). See "Characters". |
+| `SOULWARDEN_GAMEDATA_DIR` | path | Tables that a tool makes from the game copy (default `~/.local/share/soulwarden/gamedata`; the launcher of a release uses the copy in its release). See "Characters". |
+| `SOULWARDEN_RELEASE_ROOT` | path | The folder of the releases of `tools/release.sh` (default `~/Games/soulwarden/releases`). |
 | `SOULWARDEN_OBSERVE_PLAYERS` | `1` | Each session observes the characters of other sessions that are 100 m or less from its character, and its client shows them as remote players that stand. Off by default (a client then gets only its own character); a development run turns it on. |
 
 With no `loginusers.vdf` in the Steam installation, the fallback identity applies. The
@@ -151,8 +152,17 @@ The launcher needs a copy of the game in `~/Games/soulwarden/game` and Proton Ex
 Steam. It starts `Bin64/NewWorld.exe` directly (no launcher, no anti-cheat service). At the
 main menu, select the character and press Play.
 
-`tools/steam-shortcut.py add` puts the launcher in the Steam library as a non-Steam game
-(`show` lists the entries, `remove` removes the entry). Do it with Steam closed, or start
+`tools/release.sh` makes a release: a fixed copy of the launcher of the commit, the products of
+`apps/*/dist`, and the game data folder in `~/Games/soulwarden/releases/VERSION`. The link
+`~/Games/soulwarden/releases/current` names the current release. `tools/release.sh status` lists
+the releases, `rollback` goes back to the release before the current one, and `activate VERSION`
+selects a release. While the game runs, the command does not change the current release. The
+details are in [Build and test](development/build-and-test.md), section "Releases".
+
+`tools/steam-shortcut.py add` puts the launcher of the current release in the Steam library as
+a non-Steam game, and the launcher of the working copy when there is no release (`--launcher
+release` or `--launcher working-copy` selects one; `show` lists the entries, `remove` removes the
+entry). Do it with Steam closed, or start
 Steam again directly after it: Steam reads its shortcut file only at its start. The tool
 keeps a copy of the file from before each change in `~/.local/share/soulwarden/backup`.
 

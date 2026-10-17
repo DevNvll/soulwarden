@@ -50,9 +50,10 @@ documents of the section "Documents". Before you change a system, read its docum
 - A development run shows the game in gamescope on the agent desktop. Do not turn this off
   (`SOULWARDEN_PRIVATE_DISPLAY=0`) while the user uses the computer: the input of the harness then
   gets to the other applications of the user.
-- The products in `apps/*/dist` and the game data folder `~/.local/share/soulwarden/gamedata` are
-  also what the user starts. Build a hook that is not tested to a path outside `dist`. Give a game
-  data tool an output path for a test.
+- The products in `apps/*/dist` and the game data folder `~/.local/share/soulwarden/gamedata` go
+  into the next release for the user (`tools/release.sh`), and the launcher of the working copy
+  starts them. Build a hook that is not tested to a path outside `dist`. Give a game data tool an
+  output path for a test.
 
 ### The backend
 
@@ -144,6 +145,18 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 - The backend log of a development run is `~/Games/soulwarden/work/dev-data/logs/backend.log`.
   `tools/dev-run.sh` removes the logs and the captures at each start. Copy what you need first.
 
+### Make a release for the user
+
+```sh
+tools/release.sh                           # a release of the commit: the products of dist, the launcher, the game data
+tools/release.sh status                    # the current release (*) and the other releases
+tools/release.sh rollback                  # the release before the current one
+```
+
+The Steam library entry of the user starts the current release (`~/Games/soulwarden/releases/current`),
+not the working copy. Make a release only of a commit whose products in `dist` passed a live run.
+While the game of the user runs, the command does not change the current release (status 3).
+
 ### Add a feature to the backend
 
 1. Read the document of the system and the sections of the protocol notes that it names.
@@ -172,7 +185,7 @@ tools/dev-stop.sh --check                  # status 0: no process of a developme
 | Wire contracts and client code addresses | [Protocol notes](docs/PROTOCOL_REVERSE_ENGINEERING_NOTES.md) |
 | What a user can do, the variables, the architecture | [README](README.md), [Reference](docs/REFERENCE.md) |
 | Start the game for a test: the scenarios, the harness, pictures, logs, captures | [Development runs and live tests](docs/development/live-runs.md) |
-| The build, the test program, the products in `dist` | [Build and test](docs/development/build-and-test.md) |
+| The build, the test program, the products in `dist`, the releases for the user | [Build and test](docs/development/build-and-test.md) |
 | The game data files and their tools | [Game data](docs/development/game-data.md) |
 | Static and live analysis of the client | [Analysis of the client](docs/development/client-analysis.md) |
 | The world object, the entity table, sessions, component states, bundles | [World and sessions](docs/systems/world-and-sessions.md) |

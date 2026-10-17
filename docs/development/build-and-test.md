@@ -1,13 +1,14 @@
 # Build and test
 
-Read this document before a build, a change of the test program, or a change of the products in
-`apps/*/dist`.
+Read this document before a build, a change of the test program, a change of the products in
+`apps/*/dist`, or a release for the game of the user.
 
 ## Start here
 
 | Task | Start here |
 | --- | --- |
 | Test the backend with no game process | `tools/test-soulwarden-backend.sh`, `apps/backend/tests` |
+| Make a release for the game of the user, go back to an earlier release | `tools/release.sh`, `tools/check_release.py` |
 
 ## Rules
 
@@ -25,8 +26,9 @@ Read this document before a build, a change of the test program, or a change of 
   (`tools/gamedata/vendor/open-simplex-noise`, public domain, with its license file, no
   change of its files) is a part of the navigation tool only: the client makes the noise of
   the terrain rule with this code, and the tool needs equal numbers. It goes into no product.
-- The products in `apps/*/dist` are also what the Steam library entry of the user starts. A
-  hook DLL that stops the game stops the game of the user too. Build a hook that is not
+- The products in `apps/*/dist` go into the next release for the user (section "Releases"), and
+  the launcher of the working copy starts them. A hook DLL that stops the game stops the game of
+  the user after the next release. Build a hook that is not
   tested to a path outside `dist` (`SOULWARDEN_GAME_HOOK_OUTPUT`), start it with `SOULWARDEN_HOOK_DLL`,
   and build into `dist` only after a live run. The backend of the build folder
   (`~/Games/soulwarden/work/build/native-backend/apps/backend/soulwarden-backend`, made by
@@ -42,6 +44,73 @@ tools/build-soulwarden-backend.sh
 tools/test-soulwarden-backend.sh          # tests of the backend with no game process (status 0: all pass)
 tools/build-soulwarden-game-hook.sh
 SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll tools/build-soulwarden-game-hook.sh   # a hook for a test: not into dist
+```
+
+## Releases
+
+The Steam library entry of the user starts the current release, not the working copy. A release
+is a fixed copy of a state that a live run tested. `tools/release.sh` makes it. Then a stage can
+change the working copy, `apps/*/dist`, and the game data folder, and the game of the user does
+not change.
+
+```text
+~/Games/soulwarden/releases/                the release root (SOULWARDEN_RELEASE_ROOT)
+  current -> 2026-10-16-8b4abb8             the current release: the Steam library entry starts it
+  2026-10-16-8b4abb8/
+    VERSION                                 the version name
+    release.json                            the commit, its subject, the install time, the SHA-256 of each part
+    linux-compat/run-soulwarden.sh          the launcher of the commit
+    apps/backend/dist/soulwarden-backend    a copy of the backend of dist
+    apps/game-hook/dist/steam_api64.dll     a copy of the hook of dist
+    gamedata/                               a copy of ~/.local/share/soulwarden/gamedata (SOULWARDEN_GAMEDATA_DIR)
+```
+
+- `tools/release.sh` (`install`) makes a release of the commit of the working copy, and makes it
+  current. It refuses when a tracked file differs from the commit: a release must be a commit.
+  `--allow-dirty` is only for a test: the version name then ends with `dirty`, and the launcher
+  comes from the working copy.
+- The command builds nothing. It copies the products of `apps/*/dist` and the game data folder as
+  they are. Thus make a release only after the live run of the commit, with the products of that
+  run in `dist`.
+- The launcher of a release is the file of the commit. It needs no other file of the repository.
+  When the launcher gets such a file, add the file to `LAUNCHER_FILES` in `tools/release.py`:
+  `tools/check_release.py` finds each file that the launcher names and a release does not have.
+- The layout keeps the paths of the repository: the launcher of a release finds its products with
+  no change. When `SOULWARDEN_GAMEDATA_DIR` is not set and the folder `<release>/gamedata` exists,
+  the launcher uses that folder. The working copy has no such folder: a development run uses
+  `~/.local/share/soulwarden/gamedata`.
+- The launcher uses its physical folder (`pwd -P`). A game that starts through the link `current`
+  keeps the files of its release for the whole run.
+- The version name is the date and the short commit (`2026-10-16-8b4abb8`; `-2` for a different
+  release of the same commit on the same day). When an earlier release has the same commit, the
+  same products, and the same game data, `install` makes no copy: it makes that release current.
+- On btrfs the copies are reflinks: an unchanged file uses no new space on the disk. On a different
+  file system the command makes normal copies, and it stops before a copy leaves less than 1 GiB
+  free. The files of a release are read only.
+- The lock rule: while the game of the user runs, its launcher holds `run.lock` in the data
+  directory of the user (`~/.local/share/soulwarden`, `SOULWARDEN_DATA_DIR`). Then the command does
+  not change `current`, and it removes no release. `install` puts the new release in place, prints
+  one line with the command that activates it later, and gives status 3. `activate` and `rollback`
+  change nothing and give status 3. The command opens the lock file read only.
+- The command changes `current` atomically (a new link, then a rename). Then it removes each release
+  that is not one of the 3 newest releases and that is not current.
+- `rollback` makes the release before the current one current (the order of the installs).
+  `activate VERSION` makes a different release current.
+- `tools/steam-shortcut.py add` makes the Steam library entry for the launcher of the current
+  release (`--launcher release`) or of the working copy (`--launcher working-copy`). With no option,
+  it selects the release when one exists. The entry names the link `current`: `activate` and
+  `rollback` need no change of the entry. Steam must be closed for a change of the entry.
+
+```sh
+tools/release.sh                            # install: a release of the commit, and it becomes current
+tools/release.sh status                     # the current release (*) and the other releases
+tools/release.sh activate 2026-10-16-8b4abb8
+tools/release.sh rollback                   # the release before the current one
+cat ~/Games/soulwarden/releases/current/VERSION
+tools/steam-shortcut.py add                 # with Steam closed: the entry starts the current release
+python3 -B tools/check_release.py           # the check of the release command and of the Steam entry (temporary folders)
+python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/backend/dist/soulwarden-backend
+                                            # the same on btrfs (reflinks), and a start of the backend of a release
 ```
 
 ## Traps
@@ -64,6 +133,14 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
 - The measured values of case WS2 (the times of the scans) change from run to run by 30
   percent. The limit of the case is a ratio (one tenth of a scan of all points), and
   400 ms.
+- A release needs a commit: in the main checkout, a stage with changes that are not a commit blocks
+  `tools/release.sh`. Make the release after the commit of the stage.
+- A launcher that starts in the same moment as a change of `current` (some microseconds) stops with
+  "another game process uses this data directory": the release command holds the lock of the
+  launcher for the rename. Start the game again.
+- `/tmp` is tmpfs, which makes no reflink: `tools/check_release.py` with no `--work` tests the normal
+  copy. With `--work ~/Games/soulwarden/work` (btrfs) it tests the reflinks. The check never opens
+  the real Steam directory: its Steam directory and its `HOME` are temporary folders.
 - Case HT11 runs `tools/gamedata/check_combat_tool.py` with `python3` (`SOULWARDEN_PYTHON`
   selects a different one): with no Python 3 the case fails. The check makes its tables in
   memory: no file of the game. The same for case TV9 and

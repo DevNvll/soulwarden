@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
 """Add the Soulwarden launcher to the Steam library as a non-Steam game.
 
-Usage: steam-shortcut.py [show|add|remove] [--steam-dir DIR] [--name NAME] [--no-art]
+Usage: steam-shortcut.py [show|add|remove] [--launcher auto|release|working-copy] [--steam-dir DIR]
+                         [--name NAME] [--no-art]
 
   show     list the non-Steam games of the account (default)
-  add      add the launcher (linux-compat/run-soulwarden.sh), or correct its entry
+  add      add the launcher, or correct its entry
   remove   remove the entry of the launcher and its library images
+
+The launcher of the entry (--launcher):
+  auto           the current release when it exists, else the working copy (default)
+  release        the launcher of the current release of tools/release.sh:
+                 ~/Games/soulwarden/releases/current/linux-compat/run-soulwarden.sh (SOULWARDEN_RELEASE_ROOT)
+  working-copy   linux-compat/run-soulwarden.sh of this tree
+
+The entry names the link "current", not a version: tools/release.sh activate and rollback change the
+game of the entry with no change of the entry. An entry of the working copy starts the products of
+apps/*/dist of this tree, which each build changes. The tool finds the Soulwarden entry by the two
+launcher paths: `add` changes the entry from one launcher to the other.
 
 Steam keeps the non-Steam games of an account in userdata/ACCOUNT/config/shortcuts.vdf, a
 binary key-value file. Steam reads this file only at its start, and it writes the file again
@@ -23,8 +35,7 @@ and Proton do not need them. The library images come from the image cache of Ste
 game (app 1063730), when the cache has them.
 
 The entry and a development run (tools/dev-run.sh) have different Proton prefixes, and
-tools/dev-stop.sh stops only development runs: one does not stop the game of the other. Both
-start the products of apps/backend/dist and apps/game-hook/dist of this tree.
+tools/dev-stop.sh stops only development runs: one does not stop the game of the other.
 """
 
 from __future__ import annotations
@@ -40,7 +51,7 @@ import zlib
 from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parent.parent
-LAUNCHER = REPOSITORY / "linux-compat" / "run-soulwarden.sh"
+WORKING_LAUNCHER = REPOSITORY / "linux-compat" / "run-soulwarden.sh"
 DEFAULT_NAME = "New World: Aeternum (Soulwarden)"
 GAME_APP_ID = 1063730
 LAUNCH_OPTIONS = "env -u LD_PRELOAD -u LD_LIBRARY_PATH %command%"
@@ -67,6 +78,26 @@ def shown(path: object) -> str:
     """A path for a message: the home directory shows as "~", an account id as 4 digits."""
     text = str(path).replace(str(Path.home()), "~")
     return re.sub(r"/userdata/\d*?(\d{1,4})/", r"/userdata/...\1/", text)
+
+
+def release_root() -> Path:
+    """The release root of tools/release.sh. The link "current" in it is not resolved."""
+    return Path(os.path.abspath(os.path.expanduser(os.environ.get("SOULWARDEN_RELEASE_ROOT") or "~/Games/soulwarden/releases")))
+
+
+def launchers() -> dict[str, tuple[Path, Path]]:
+    """The launcher and the start folder of each kind of entry."""
+    current = release_root() / "current"
+    return {
+        "release": (current / "linux-compat" / "run-soulwarden.sh", current),
+        "working-copy": (WORKING_LAUNCHER, REPOSITORY),
+    }
+
+
+def selected_launcher(choice: str) -> str:
+    if choice != "auto":
+        return choice
+    return "release" if os.access(launchers()["release"][0], os.X_OK) else "working-copy"
 
 
 def write_backup(data_dir: Path, content: bytes) -> Path:
@@ -221,6 +252,8 @@ def remove_art(grid_dir: Path, app_id: int) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Soulwarden launcher as a non-Steam game of Steam.")
     parser.add_argument("command", nargs="?", default="show", choices=("show", "add", "remove"))
+    parser.add_argument("--launcher", default="auto", choices=("auto", "release", "working-copy"),
+                        help="add: the launcher of the entry (auto: the current release when it exists)")
     parser.add_argument("--steam-dir", default=os.environ.get("SOULWARDEN_STEAM_DIR", "~/.local/share/Steam"))
     parser.add_argument("--name", default=DEFAULT_NAME, help="name of the entry in the library")
     parser.add_argument("--no-art", action="store_true", help="copy no library images")
@@ -242,40 +275,53 @@ def main() -> int:
                              "without a change. No change was made.")
     entries: list[Item] = next(value for kind, key, value in top if kind == TYPE_MAP and key.lower() == "shortcuts")
 
-    exe = f'"{LAUNCHER}"'
-    present = next((index for index, (_, _, entry) in enumerate(entries) if field(entry, "Exe") == exe), None)
+    kinds = {f'"{launcher}"': kind for kind, (launcher, _) in launchers().items()}
+    present = [index for index, (_, _, entry) in enumerate(entries) if field(entry, "Exe") in kinds]
+    choice = selected_launcher(arguments.launcher)
 
     if arguments.command == "show":
         print(f"steam-shortcut: account ...{str(account)[-4:]}, {len(entries)} non-Steam games.")
         for index, (_, key, entry) in enumerate(entries):
-            mark = "  <- Soulwarden launcher" if index == present else ""
+            mark = f"  <- Soulwarden launcher ({kinds[field(entry, 'Exe')]})" if index in present else ""
             print(f"  {key}: {field(entry, 'AppName')}  [{shown(field(entry, 'Exe'))}]{mark}")
-        if present is None:
+        if not present:
             print("steam-shortcut: the Soulwarden launcher is not in the list.")
+        print(f"steam-shortcut: add selects the launcher of the {choice.replace('-', ' ')}: "
+              f"{shown(launchers()[choice][0])}")
         return 0
 
     grid_dir = config_dir / "grid"
+    # The other Soulwarden entries go away: one entry starts the game.
+    for index in reversed(present[1:]):
+        old = entries[index][2]
+        remove_art(grid_dir, shortcut_id(str(field(old, "Exe")), str(field(old, "AppName"))))
+        del entries[index]
+    present_index = present[0] if present else None
     if arguments.command == "remove":
-        if present is None:
+        if present_index is None:
             print("steam-shortcut: the Soulwarden launcher is not in the list. No change was made.")
             return 0
-        entry = entries[present][2]
+        entry = entries[present_index][2]
         arguments.name = str(field(entry, "AppName"))
-        remove_art(grid_dir, shortcut_id(exe, arguments.name))
-        del entries[present]
+        remove_art(grid_dir, shortcut_id(str(field(entry, "Exe")), arguments.name))
+        del entries[present_index]
     else:
-        if not os.access(LAUNCHER, os.X_OK):
-            raise SystemExit(f"steam-shortcut: the launcher was not found at {shown(LAUNCHER)}.")
+        launcher, start_dir = launchers()[choice]
+        if not os.access(launcher, os.X_OK):
+            hint = " Make a release with tools/release.sh." if choice == "release" else ""
+            raise SystemExit(f"steam-shortcut: the launcher was not found at {shown(launcher)}.{hint} No change was made.")
+        exe = f'"{launcher}"'
         last_play = 0
-        if present is not None:
-            old = entries[present][2]
+        if present_index is not None:
+            old = entries[present_index][2]
             last_play = int(field(old, "LastPlayTime") or 0)
-            remove_art(grid_dir, shortcut_id(exe, str(field(old, "AppName"))))
+            remove_art(grid_dir, shortcut_id(str(field(old, "Exe")), str(field(old, "AppName"))))
         app_id = shortcut_id(exe, arguments.name)
         icon = "" if arguments.no_art else copy_art(steam_dir, grid_dir, app_id)
-        entry = make_entry(arguments.name, exe, f'"{REPOSITORY}"', icon, last_play)
-        if present is not None:
-            entries[present] = (TYPE_MAP, entries[present][1], entry)
+        entry = make_entry(arguments.name, exe, f'"{start_dir}"', icon, last_play)
+        print(f"steam-shortcut: the entry starts the launcher of the {choice.replace('-', ' ')}: {shown(launcher)}")
+        if present_index is not None:
+            entries[present_index] = (TYPE_MAP, entries[present_index][1], entry)
         else:
             used = {key for _, key, _ in entries}
             index = len(entries)

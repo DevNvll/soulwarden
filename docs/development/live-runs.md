@@ -9,7 +9,7 @@ of that system.
 
 | Task | Start here |
 | --- | --- |
-| The launcher in the Steam library | `tools/steam-shortcut.py` |
+| The launcher in the Steam library, the release that it starts | `tools/steam-shortcut.py`, `tools/release.sh` |
 
 ## Rules
 
@@ -252,12 +252,15 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
 - The agent desktop starts the launcher with the environment of the compositor.
   `tools/dev-run.sh` gives the launcher only the variables that it names: add a new launcher
   variable to its list, or the variable has no effect in a development run.
-- `tools/steam-shortcut.py add` puts the launcher in the Steam library of the user as a
+- `tools/steam-shortcut.py add` puts the launcher of the current release
+  (`~/Games/soulwarden/releases/current`, `tools/release.sh`) in the Steam library of the user as a
   non-Steam game. That entry and a development run have different Proton prefixes, and
   `tools/dev-stop.sh` stops only development runs: one does not stop the game of the other.
-  They share the game copy, the two products in `apps/*/dist`, and the game data folder
-  (`~/.local/share/soulwarden/gamedata`). Thus a build changes the backend and the hook of the
-  next start of the user. They do not share the data directory: a development run uses the
+  They share the game copy. The entry starts the products and the game data of its release; a
+  development run starts the two products in `apps/*/dist` and the game data folder
+  (`~/.local/share/soulwarden/gamedata`). Thus a build changes only the next release, not the game
+  of the user. An entry from before the releases starts the working copy: do
+  `tools/steam-shortcut.py add` again. They do not share the data directory: a development run uses the
   development data directory (`tools/dev-run.sh` stops with a message when a game that is
   not a development run uses its data directory).
 - A start with `SOULWARDEN_COMPAT_DIR=~/Games/soulwarden/proton/1063730` uses the prefix of the user:

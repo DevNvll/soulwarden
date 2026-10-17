@@ -3,8 +3,11 @@
 # The namespace has loopback only. The game cannot reach a public service.
 set -euo pipefail
 
-launcher_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repository_dir="$(cd -- "${launcher_dir}/.." && pwd)"
+# The physical folders: a start through the link "current" of the release root (tools/release.sh)
+# keeps the files of its release, also when the link changes during the start.
+launcher_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+launcher_script="${launcher_dir}/$(basename -- "${BASH_SOURCE[0]}")"
+repository_dir="$(cd -- "${launcher_dir}/.." && pwd -P)"
 
 game_dir="${SOULWARDEN_GAME_DIR:-${HOME}/Games/soulwarden/game}"
 compat_dir="${SOULWARDEN_COMPAT_DIR:-${HOME}/Games/soulwarden/proton/1063730}"
@@ -13,8 +16,16 @@ proton_dir="${SOULWARDEN_PROTON_DIR:-${steam_dir}/steamapps/common/Proton - Expe
 original_dir="${SOULWARDEN_ORIGINAL_DIR:-${HOME}/Games/soulwarden/original}"
 data_dir="${SOULWARDEN_DATA_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/soulwarden}"
 # Tables that a tool makes from the game copy (tools/gamedata). They are not player data: a
-# private data directory of a test run uses the same tables.
-gamedata_dir="${SOULWARDEN_GAMEDATA_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/soulwarden/gamedata}"
+# private data directory of a test run uses the same tables. A release (tools/release.sh) has its
+# own copy in <release>/gamedata, and its launcher uses that copy. The working copy has no such
+# folder.
+if [[ -n "${SOULWARDEN_GAMEDATA_DIR:-}" ]]; then
+    gamedata_dir="${SOULWARDEN_GAMEDATA_DIR}"
+elif [[ -d "${repository_dir}/gamedata" ]]; then
+    gamedata_dir="${repository_dir}/gamedata"
+else
+    gamedata_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/soulwarden/gamedata"
+fi
 client_data_dir="${data_dir}/client"
 hook_dll="${SOULWARDEN_HOOK_DLL:-${repository_dir}/apps/game-hook/dist/steam_api64.dll}"
 backend_executable="${SOULWARDEN_BACKEND_EXE:-${repository_dir}/apps/backend/dist/soulwarden-backend}"
@@ -82,7 +93,7 @@ if [[ "${SOULWARDEN_NET_ISOLATED:-0}" != "1" ]]; then
         ip link set lo up
         export SOULWARDEN_NET_ISOLATED=1
         exec "$@"
-    ' bash "$0" "$@"
+    ' bash "${launcher_script}" "$@"
 fi
 
 mkdir -p "${compat_dir}" "${original_dir}" "${client_data_dir}/logs" "${data_dir}/logs"
