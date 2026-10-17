@@ -121,6 +121,10 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   1.3b, [Items and equipment](items-and-equipment.md)), also a group that is larger than one
   carrier message (code review of stage 1.3b, finding F12: its bundle goes in chunks of the
   carrier).
+- The world time (stage 2.2, [World time and weather](world-time-and-weather.md)) is one value of the world (`World::world_time`),
+  not of a session or of a character. A session keeps only its delivery marks: the request mark of its client (a valid 4248), the
+  revision, the phase, and the time of the last record that it sent (7036), and the time of its next clock correction (335, each 3 s
+  from its registration). A time message goes only to the client of the owner, with the ids of its own entity.
 - A change of more than one system is one change of the store (review of stage 3.5a, finding
   F1): the caller opens a batch (`state::Store::Batch`, one transaction), the write of each
   system is a save point in it (`Store::begin_write`, `end_write`), and the batch commits at

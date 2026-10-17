@@ -55,6 +55,18 @@ breaks before the shape stops the tool.
   review-support-missing-asset  the catalog has no asset of the spell slice         status 1, the file stays
   review-support-missing-slice  the spell slice has no source                       status 1, the file stays
 
+The time constraint of a spawner (stage 2.2, format 4; test case WT7), with the production spawner reader, the builder, and the writer
+of the tool (made-up sources): the values 12 to 14 of the spawn point (the phase mask, the despawn flag, the cooldown flags).
+
+  case                          the spawner                                         expected result
+  phase-none                    no time constraint                                  status 0, format 4, [15, false, 0]
+  phase-night-dusk              m_night, m_dusk, m_despawnOnTimeEnd                 status 0, [9, true, 0]
+  phase-empty                   no phase, m_despawnOnTimeEnd                        status 0, [0, true, 0] (no automatic spawn)
+  phase-cooldowns               m_day, both cooldown flags of the spawner true      status 0, [4, true, 3]
+  phase-cut-flag                m_dusk with two bytes                               status 1, the file stays
+  phase-missing-flag            no m_day                                            status 1, the file stays
+  phase-two-constraints         two constraint components                           status 1, the file stays
+
 Usage: check_creature_tool.py WORK_FOLDER     status 0: each case gives its result
 """
 
@@ -93,7 +105,42 @@ def entity(identifier: int, components: list):
                                              node(cd.COMPONENTS_FIELD, children=components)])
 
 
+PHASE_CASES = {"phase-none": [15, False, 0], "phase-night-dusk": [9, True, 0], "phase-empty": [0, True, 0],
+               "phase-cooldowns": [4, True, 3], "phase-cut-flag": None, "phase-missing-flag": None, "phase-two-constraints": None}
+
+
+def constraint(flags: dict) -> object:
+    """A TimeOfDayConstraintComponent with these bool fields (a value of bytes: a cut field)."""
+    return node(kind=cd.TIME_CONSTRAINT_TYPE,
+                children=[node(children=[node(cd.field_id(name), value if isinstance(value, bytes) else bytes([int(value)]))
+                                         for name, value in flags.items()])])
+
+
+def phase_spawner(case: str) -> list:
+    roots = [node(cd.SLICE_FIELD, bytes([0x44]) * 16 + (2).to_bytes(4, "big"))]
+    if case == "phase-none":
+        return roots
+    flags = {"m_night": 0, "m_dawn": 0, "m_day": 0, "m_dusk": 0, "m_despawnOnTimeEnd": 1}
+    if case == "phase-night-dusk":
+        flags.update(m_night=1, m_dusk=1)
+    elif case in ("phase-cooldowns", "phase-two-constraints"):
+        flags.update(m_day=1)
+    elif case == "phase-cut-flag":
+        flags.update(m_dusk=b"\x00\x01")
+    elif case == "phase-missing-flag":
+        del flags["m_day"]
+    roots.append(constraint(flags))
+    if case == "phase-two-constraints":
+        roots.append(constraint(flags))
+    if case == "phase-cooldowns":
+        roots += [node(cd.COOLDOWN_FIELDS["m_cooldownAfterDespawn"], bytes([1])),
+                  node(cd.COOLDOWN_FIELDS["m_cooldownAfterConstraintFail"], bytes([1]))]
+    return roots
+
+
 def spawner(case: str) -> list:
+    if case.startswith("phase-"):
+        return phase_spawner(case)
     roots = [node(cd.SLICE_FIELD, bytes([0x44]) * 16 + (2).to_bytes(4, "big"))]
     if case == "none":
         return roots
@@ -771,6 +818,25 @@ def main() -> int:
                 passed = (status == 0 and routes == (1 if case == "valid" else 0) and "NaN" not in text
                           and (left_out == {"the patrol has no waypoint": 1} if case == "empty" else left_out == {}))
                 detail = f"status {status}, {routes} route(s), left out {left_out}"
+            else:
+                passed = status == 1 and text == MARK and not (work / f"{case}.json.tmp").exists()
+                detail = f"status {status}, file {'kept' if text == MARK else 'replaced'}: {errors.getvalue().strip()}"
+            print(f"{'ok  ' if passed else 'FAIL'}  {case}: {detail}")
+            failures += 0 if passed else 1
+        for case, expected in PHASE_CASES.items():
+            Sources.case = case
+            target = work / f"{case}.json"
+            target.write_text(MARK, encoding="utf-8")
+            errors = io.StringIO()
+            with patch.object(sys, "argv", ["creature_data.py", str(target)]), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+                status = cd.main()
+            text = target.read_text(encoding="utf-8")
+            if expected is not None:
+                document = json.loads(text) if text != MARK else {}
+                values = document["spawnPoints"][0][11:] if document.get("spawnPoints") else None
+                passed = status == 0 and document.get("format") == 4 and values == expected
+                detail = f"status {status}, format {document.get('format')}, values 12 to 14 {values}"
             else:
                 passed = status == 1 and text == MARK and not (work / f"{case}.json.tmp").exists()
                 detail = f"status {status}, file {'kept' if text == MARK else 'replaced'}: {errors.getvalue().strip()}"

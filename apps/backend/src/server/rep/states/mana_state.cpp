@@ -18,9 +18,11 @@
 // owner    group 0: the four fields. The values are the mana of the vitals state of the
 //          entity (Entity::vitals): the two states have the same values. While the mana is not
 //          full (stage 1.3b, I14), the delay that is left before the regeneration and the rate
-//          of the base vitals of a player (ManaBaseRegenRate 2): the client predicts the same
-//          gain (client code at image RVA 0x676B8E0) and compares it with the next state. Full
-//          mana: the rates are 0, and the client does not change the value.
+//          of the server (ManaBaseRegenRate 2 times the factor). Full mana: the rates are 0. The
+//          apply (0x683B740) writes only the server copy of the client and the meter one time:
+//          the prediction of the client (0x676B8E0) uses a different copy, which only the message
+//          4289 sets (stage 2.2, server/rep/mana_messages.h; the session sends it with each
+//          later mana state).
 // observer no fragment: the remote player slice has no mana component.
 
 namespace soulwarden::backend::server::rep {

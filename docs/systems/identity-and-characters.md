@@ -81,8 +81,9 @@ protocol notes (sections 2.1, 2.2, and 3.4).
   request must send the `CharacterCreationParams` text of a capture of the client. The
   reply to a different request is `400` `CreateCharacterFailed`, and the backend log has
   the cause (`gateway: no character ...`).
-- The world at the spawn of a new character is dark in some runs (the backend sends no
-  world time). For a view of the character from the front use `'look 1800 0' 'wheel 3'`.
+- Before stage 2.2 the world at the spawn of a new character was dark (the hour 0 of the mission file; the backend sent no
+  world time). Now the client gets the world time at its world entry. For a view of the character from the front use
+  `'look 1800 0' 'wheel 3'`.
 - A character that the backend seeded has no creation data and an empty `archetype`. The
   backend makes creation data with the default appearance for its menu document: the menu
   and the world show the same default body (male, grey hair, no clothing). The body is white

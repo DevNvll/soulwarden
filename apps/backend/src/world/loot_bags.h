@@ -44,7 +44,14 @@
 //
 // The lifetime (game data, live check L6): the bag ends at its lifetime (KillSelfDelay of the slice, 180 s from the bag), and FastKillSelfDelay
 // (1.25 s) after the last item of the last part. The client does not end a bag by itself (live check L6): the server removes the record.
-// The end time is on the wall clock in the rows: a restart keeps the remaining time, and the time goes on while the backend is off.
+// The end time is on the wall clock in the rows: a restart keeps the remaining time, and the time goes on while the backend is off. The fast
+// end is in the rows too (the take that empties the bag writes it; code review of stage 3.5b.2, finding LB-R9). A request at either end
+// changes nothing (finding LB-R2).
+//
+// The corrections of stage 2.2 (code review of stage 3.5b.2): a part has 500 stacks at most (the Container of the client; a give into a
+// full part merges into a stack or is refused; finding LB-R4); the GlobalStorage selection is made again after a walk (finding LB-R3); an
+// item of a kill that the item catalog does not have stays in the rows of the part with no instance (a kept roll; the client does not see
+// it; the open point of 3.5b.2, a decision of the orchestrator).
 //
 // The cost (MP-8): a request finds its bag by the entity of its use (a hash); the states of a character look only at its own bags; the
 // end of a bag is an entry of the due list; the interest of a session finds a bag in the grid of the interaction system. No look at each
@@ -71,6 +78,11 @@ inline constexpr std::uint32_t kRolled = 1;
 inline constexpr std::uint32_t kLooted = 2;
 /** A full GlobalStorage map of the client takes 30 keys at most (research storage.md, the full map reader). */
 inline constexpr std::size_t kStorageKeys = 30;
+/**
+ * The GlobalStorage selection of a character is made again after a walk of this horizontal distance (meters) from the place of the last
+ * selection (code review of stage 3.5b.2, finding LB-R3; a decision of an agent: the prompt of a bag shows at less than 2 m).
+ */
+inline constexpr float kStorageMoveDistance = 2.0F;
 /** The quantity of a take or a give: 1 to 10,000 (client check 0x2D93E30). */
 inline constexpr std::uint32_t kLargestQuantity = 10000;
 /**
@@ -84,7 +96,15 @@ inline constexpr std::chrono::seconds kRetry{10};
 
 /** The part of a bag of one eligible character: its own items. */
 struct BagPart {
+    /** The item instances: 500 stacks at most (kMaxContainerSlots, the Container of the client; finding LB-R4). */
     std::vector<ItemInstance> items;
+    /**
+     * The items of the roll with no instance (stage 2.2): the item catalog does not have them (the open point of 3.5b.2: the rule of the
+     * chests, finding CH-R3), or the part had 500 stacks. The rows keep them; the client does not see them. A load makes their instances
+     * when the catalog has the item and the part has a place. A part with only such items is Looted for the client, and the bag stays
+     * until its lifetime ends (no fast end).
+     */
+    std::vector<GrantItem> kept;
     /** The rarity of its best item (the selector of its LootTracker entry). */
     std::uint32_t rarity{0};
 };
@@ -138,8 +158,13 @@ enum class BagRefusal : std::uint8_t {
     notValid,
     /** The store did not write the change: nothing changed. */
     storeFailed,
+    /**
+     * The part would have more than 500 stacks (finding LB-R4): a give into a part of 500 stacks with no stack that takes the item, or a
+     * discard of more than 500 stacks.
+     */
+    partFull,
 };
-inline constexpr std::size_t kBagRefusalCount = 13;
+inline constexpr std::size_t kBagRefusalCount = 14;
 
 [[nodiscard]] const char* bag_refusal_text(BagRefusal refusal);
 
@@ -176,6 +201,11 @@ struct LootBagCounts {
     std::uint64_t refreshBags{0};
     /** The due ends that the tick looked at (case GL7). */
     std::uint64_t dueLooks{0};
+    /** The GlobalStorage selections after a walk (finding LB-R3). */
+    std::uint64_t moveSelections{0};
+    /** The kept items of a roll (the catalog does not have them, or the part had 500 stacks), and those that a load made. */
+    std::uint64_t keptItems{0};
+    std::uint64_t keptMade{0};
 };
 
 /** A bag of a character, for a reader (a command). */
@@ -225,16 +255,24 @@ public:
     void entered(Entity& character);
     /** The world calls it at the leave of a character (the bags and their rows stay). */
     void left(Entity& character);
+    /**
+     * The world calls it after a change of the place of a character (World::place): after a walk of kStorageMoveDistance from the place of
+     * its last selection, the GlobalStorage selection of its own bags is made again (finding LB-R3). O(1) for a character with no bag or
+     * a short walk; else the bags of the character only.
+     */
+    void moved(Entity& character);
     /** The world tick: the first one loads the bags of the store; the bags whose end came (the due list). */
     void tick();
 
     /** The start of the bag of a kill (Rewards::killed). */
     [[nodiscard]] KillBag begin_kill(const Entity& creature);
     /**
-     * In the batch of the reward of a character: the instances of its items (made one time) and the row of its part.
-     * @param unknown Gets the items that the catalog does not have (not made). @return False: the store refused the row.
+     * In the batch of the reward of a character: the instances of its items (made one time) and the row of its part. An item that the
+     * catalog does not have, and a stack beyond 500, stay in the part as a kept roll (no instance; the client does not see it; a log line
+     * names it). No item is lost.
+     * @param kept Gets the kept items. @return False: the store refused the row.
      */
-    [[nodiscard]] bool stage_part(KillBag& bag, const Entity& character, const std::vector<GrantItem>& items, std::vector<GrantItem>* unknown);
+    [[nodiscard]] bool stage_part(KillBag& bag, const Entity& character, const std::vector<GrantItem>& items, std::vector<GrantItem>* kept);
     /** After the commit of the reward of a character: its part is in the bag. A rollback: forget_part. */
     void forget_part(KillBag& bag, const std::string& characterId);
     /** After the rewards of each character: the bag with each committed part goes into the world (its record, the states). */
@@ -286,8 +324,16 @@ private:
     bool end_bag(const std::string& key, const char* cause);
     /** The bag of the open use of a character (its committed interaction on a bag), or null. */
     [[nodiscard]] LootBag* open_bag(const Entity& character);
-    /** The LootTracker entries, the storage map, and the selected Container of a character from its bags. */
-    void refresh(Entity& character);
+    /**
+     * The LootTracker entries, the storage map, and the selected Container of a character from its bags. The storage map: the open bag
+     * first (it stays in the selected keys; finding LB-R3), then the nearest bags with items, 30 keys at most.
+     * @param panel False: not the selected Container (a selection after a walk).
+     */
+    void refresh(Entity& character, bool panel = true);
+    /** @return True at the end of the lifetime of a bag or at its fast end (finding LB-R2: one end check for each operation). */
+    [[nodiscard]] bool ended(const LootBag& bag) const;
+    /** @return The fast end of a bag that is empty now (FastKillSelfDelay of the data). */
+    [[nodiscard]] WorldClock::time_point fast_end() const;
     /** The selected Container of a character: the items of its part of the open bag (a new full vector), or empty. */
     void set_panel(Entity& character, const LootBag* bag);
     /** @return The row of the part of a character. */
@@ -311,6 +357,8 @@ private:
     std::unordered_map<EntityId, std::string> m_byEntity;
     std::unordered_map<std::string, std::set<std::string>> m_byCharacter;
     std::multimap<WorldClock::time_point, Due> m_due;
+    /** The place of the last GlobalStorage selection of each character in the world (finding LB-R3). */
+    std::unordered_map<std::string, state::WorldPosition> m_selectedAt;
     bool m_loaded{false};
     LootBagCounts m_counts;
 };

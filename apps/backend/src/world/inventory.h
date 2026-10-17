@@ -76,6 +76,11 @@ enum class ItemError {
      * 1.1b: 800 with Rise of the Angry Earth, 625 with no expansion).
      */
     gearScoreAboveLimit,
+    /**
+     * The item table protects the item (Nonremovable or NotDroppable; code review of stage 3.5b.2, finding LB-R1): a discard or a give
+     * into a loot bag does not take it from its character.
+     */
+    itemProtected,
 };
 
 /** @return A short text for a log line and for the reply of a command. */
@@ -221,6 +226,8 @@ public:
      * Takes the quantities of a drop request out of the bag for a discard (stage 3.5b.2): the rules of `drop` (each entry names the
      * instance of its slot, a locked item stays, one wrong entry refuses the whole request). A whole stack leaves with its instance id; a
      * part of a stack leaves as a new instance (the rest keeps the id). One transaction of the rows (in a batch: a savepoint).
+     * An item that its row of the item table protects (Nonremovable, NotDroppable: itemProtected; code review of stage 3.5b.2, finding
+     * LB-R1) stays: the check is before any write, also for release_instance and release_equipped.
      * @param out Gets the instances that left the bag.
      */
     ItemResult release(const std::string& characterId, const std::vector<DropEntry>& entries, std::vector<ItemInstance>& out);
@@ -265,6 +272,7 @@ public:
      * character (the drop now; later the salvage, the sale, and the trade). It does not stop
      * an equip: the equip check of the client has no lock test (image RVA 0x679C7A0), and the
      * item stays an item of the character. A development command (remove) has no lock rule.
+     * An item with a removal protection of its row of the item table (itemProtected) also stays.
      */
     ItemResult drop(const std::string& characterId, const std::vector<DropEntry>& entries);
 

@@ -24,7 +24,9 @@ backend. The tool of each system is also in the document of that system.
   stage 1.3b also the HitRuneCharge of each contact, the 9th value; from stage 3.3b-S3 also the
   member `capsule` of a slice: the capsule of its CharacterComponent, radius, length, axis, and
   offset, for 501 of 503 slices; with a file from before a projectile uses the default capsule,
-  [Projectiles](../systems/projectiles.md)), the folder
+  [Projectiles](../systems/projectiles.md); from stage 2.2, format 4, also the time constraint of each spawn point: the phase mask,
+  the despawn flag, and the two cooldown flags of its spawner; with a file from before each point makes its creature in each phase,
+  [World time and weather](../systems/world-time-and-weather.md)), the folder
   `heights` (the terrain heights, one file for each region, from stage 3.4d after the
   cookies of the placements), the folder `navigation` (stage 3.4d: one file for each region
   with the floors, the water, and the sight of each cell of 0.25 m, and `navigation.json`;
@@ -237,7 +239,9 @@ backend. The tool of each system is also in the document of that system.
   of each territory with their names and positions; without it the list of the travel
   places is empty, and a travel with numbers works), `item-catalog.json` (the
   item list with the index of each item on the wire, the items of each backstory, and the
-  list of the backstories of the character creation; without it the backend gives no item,
+  list of the backstories of the character creation; from stage 2.2, format 2, also the
+  removal protections of each item (`nonRemovable`, `notDroppable`;
+  `check_item_catalog_tool.py`, case RLB1); without it the backend gives no item,
   and a new character has no clothing), and `progression-tables.json` (the level table, the
   attribute and vitals values, the rank tables of the weapons and the trade skills, and the
   nodes of the weapon trees; from stage 1.3b also the mana regeneration of the row Player of
@@ -306,6 +310,29 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 
 ## Traps
 
+- Stage 2.2 changes `creatures.json` (format 4). `creature_data.py`: the reader of a spawner slice also reads its
+  TimeOfDayConstraintComponent (type e949f549-71a8-4914-861c-20a2ca6b75c4: the flags m_night, m_dawn, m_day, m_dusk,
+  m_despawnOnTimeEnd of its server facet) and the cooldown flags of the spawner (m_cooldownAfterDespawn,
+  m_cooldownAfterConstraintFail). A spawn point has three more values: the phase mask (bit 0 night, bit 1 dawn, bit 2 day, bit 3
+  dusk; 15 with no constraint), the despawn flag, and the cooldown flags (bit 0, bit 1). The tool stops, and keeps the old file, for two
+  constraints in one spawner and for a flag that is not one byte of 0 or 1 or that is not there (`check_creature_tool.py`: cases
+  phase-*). The retail data: 405 points with a constraint (dawn and day 135, dawn, day, and dusk 12, day 1, night and dawn 27, night,
+  dawn, and dusk 17, night and dusk 213), each with the despawn flag; one point (the day-only random encounter of the Elk Elemental)
+  has the two cooldown flags. The research counted 403: it read only the point spawners. The other members and values are equal to
+  the file of stage 3.5b.2. The loader takes the formats 1 to 3 too (each point in each phase), and it refuses a file of format 4
+  with a mask above 15, a flag that is not a truth value, or cooldown flags above 3, as a whole. Write the file again with
+  `tools/gamedata/creatures.sh`.
+- Stage 2.2 changes `item-catalog.json` (format 2) and the checks of `progression_tables.py` (the corrections of the code review of
+  stage 3.5b.2). `item_catalog.py` format 2: two more columns of each item, `nonRemovable` and `notDroppable`, from the cells
+  Nonremovable and NotDroppable of the master item tables (finding LB-R1). Such a cell can be a flag, a number, or a text (`""` or
+  `"1"`); a house item has no protection. The retail tables have 3,699 rows with Nonremovable and 328 rows with NotDroppable (4,027
+  items with one of them; most are quest items). The other columns and members do not change. `check_item_catalog_tool.py` is the new
+  check of the tool (cases protections and control; case RLB1 loads the file of the case protections). The backend also loads a file
+  of format 1 (12 columns): then no item has a protection. `progression_tables.py` stops, and keeps the old file, when an attribute
+  table does not have one row for each value of the attribute range of Constitution, in sequence (finding LB-R7: a table with no row
+  for Focus 100 lost its mana threshold with no error; `check_progression_tool.py`: cases short-attribute-table and attribute-gap; its
+  made-up attribute tables now have the values 5 to 100). The retail tables pass, and the output is the same as the file of stage
+  3.5b.2: `progression-tables.json` needs no new write. Write `item-catalog.json` again with `tools/gamedata/items.sh`.
 - Stage 3.5b.2 changes `interaction-data.json` (format 3), `progression-tables.json` (still format 2), and `chest-data.json` (still
   format 1), and the loaders of `chest-data.json` and `loot-tables.json`. `interactions.py` format 3: also the member `lootContainers`
   with the personal loot container (`personal`: the template of `slices/instanced_loot_container.dynamicslice`, the kind 1 AILoot, the

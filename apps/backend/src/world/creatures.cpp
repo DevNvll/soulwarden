@@ -910,6 +910,9 @@ void Creatures::scan() {
     }
     // The creatures of the world are the creatures of the points near a player, and the
     // creatures of commands. The entity table changes in the loop: walk a copy of the ids.
+    // The phase of the world time (stage 2.2): a point with a time constraint makes its creature only in its phases (the spawner data,
+    // format 4), and the creature of a point whose constraint asks for it leaves the world at the end of its phases.
+    const std::uint8_t phase = phase_bit(m_world.world_time().phase());
     const std::vector<EntityId> creatures(m_creatures.begin(), m_creatures.end());
     for (const EntityId id : creatures) {
         const Entity* entity = find(id);
@@ -920,12 +923,40 @@ void Creatures::scan() {
         if (m_near.count(id) == 0) {
             ++m_counts.removedByDistance;
             m_world.remove_creature(id);
+            continue;
+        }
+        const std::uint32_t index = *entity->creature.spawnPoint;
+        const gamedata::SpawnPoint& point = points[index];
+        if ((point.phases & phase) == 0 && point.leavesAtPhaseEnd) {
+            // The end of the phases of the point (m_despawnOnTimeEnd of the data): the creature leaves the world. It is not a kill: no
+            // reward, and the point keeps its state (the respawn time of a death, the hold of a command). The point makes its creature
+            // again in its next phase; a point with m_cooldownAfterDespawn first waits its respawn time (a point that waits keeps
+            // its own time).
+            ++m_counts.removedByPhase;
+            log::write("world: creature %016llx (%s) of spawn point %s leaves the world: the phase %s is not a phase of its point",
+                       static_cast<unsigned long long>(id),
+                       entity->creature.kind->id.c_str(),
+                       point.id.c_str(),
+                       day_phase_text(m_world.world_time().phase()));
+            m_world.remove_creature(id);
+            if (point.cooldownAfterPhaseEnd && !m_points[index].waiting) {
+                start_cooldown(index, "the end of its phases");
+            }
         }
     }
     m_near.clear();
     for (const std::uint32_t index : entering) {
         const gamedata::SpawnPoint& point = points[index];
         SpawnPointState& state = m_points[index];
+        if ((point.phases & phase) == 0) {
+            // Not a phase of the point: no creature, and no change of the point (a respawn time stays, and comes in a later phase). A
+            // point with m_cooldownAfterConstraintFail that does not wait starts its respawn time.
+            ++m_counts.outOfPhase;
+            if (point.cooldownOutOfPhase && !state.waiting) {
+                start_cooldown(index, "a look out of its phases");
+            }
+            continue;
+        }
         if (state.waiting) {
             if (!state.respawnAt || now < *state.respawnAt) {
                 continue;
@@ -960,6 +991,16 @@ void Creatures::scan() {
     }
     m_counts.pointsLooked += m_counts.lastScanPoints;
     m_counts.creaturesLooked += m_counts.lastScanCreatures;
+}
+
+void Creatures::start_cooldown(std::uint32_t point, const char* cause) {
+    const std::chrono::milliseconds wait = respawn_time(m_data->spawn_points()[point], m_world.random_unit());
+    set_waiting(point, true);
+    m_points[point].respawnAt = m_world.clock().now() + wait;
+    log::write("world: spawn point %s waits %.0f s (%s, a cooldown flag of its spawner)",
+               m_data->spawn_points()[point].id.c_str(),
+               std::chrono::duration<double>(wait).count(),
+               cause);
 }
 
 void Creatures::first_record(EntityId creature) {

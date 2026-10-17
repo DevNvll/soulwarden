@@ -356,12 +356,17 @@ void older_schemas(const Options& options) {
         bag.source = "Test_Wolf";
         bag.position = state::WorldPosition{1.0F, 2.0F, 3.0F};
         bag.expiresAt = 180000;
+        // Schema version 12 (stage 2.2, findings LB-R8 and LB-R9 of the code review of stage 3.5b.2): the fast end of an empty bag.
+        bag.emptiedAt = 1250;
         bag.items.push_back(state::ItemRow{"00112233445566778899aabbccddee11", 0, 0, "TestSword", 1, 250, 900, 1000, 1, 1,
                                            {"PerkA", "", "", "", ""}});
         const auto bags = store.write_loot_bag(kCharacterA, bag) ? store.list_loot_bags() : std::vector<std::pair<std::string, state::LootBagRow>>{};
         const bool bagged = bags.size() == 1 && bags[0].first == kCharacterA && bags[0].second.items.size() == 1
                             && bags[0].second.items[0].gearScore == 250 && bags[0].second.items[0].durability == 900
-                            && bags[0].second.items[0].flags == 1 && bags[0].second.items[0].perks[0] == "PerkA";
+                            && bags[0].second.items[0].flags == 1 && bags[0].second.items[0].perks[0] == "PerkA"
+                            && bags[0].second.emptiedAt == 1250;
+        // The table of schema version 11 (stage 2.2): the position of the day cycle of a world (no character owns it).
+        const bool timed = !store.world_time("test_world") && store.set_world_time("test_world", 1234567) && store.world_time("test_world") == 1234567ULL;
         const bool deleted = store.delete_character(kCharacterA) == state::DeleteResult::deleted && store.list_items(kCharacterA).empty()
                              && store.list_loot_claims(kCharacterA).empty() && store.list_loot_bags().empty()
                              && store.currency(kCharacterA, state::kCurrencyCoin) == 0 && store.progress(kCharacterA).level == 1
@@ -369,14 +374,14 @@ void older_schemas(const Options& options) {
                              && store.list_skills(kCharacterA).bars.empty() && store.list_achievements(kCharacterA).empty()
                              && store.list_entitlement_rewards(kCharacterA).empty()
                              && store.list_entitlements(player.account.personaId).size() == 1;
-        check(made && opened && schema_version(path) == 10 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
-                  && deleted,
+        check(made && opened && schema_version(path) == 12 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
+                  && timed && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 10: its character row and its item stay (the item with no perk), its persona has an account, "
+                  + " opens and gets version 12: its character row and its item stay (the item with no perk), its persona has an account, "
                     "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
                     "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, a loot "
-                    "claim with a kept item (stage 3.5b.1), the part of a loot bag with a stored instance (stage 3.5b.2), and the delete of a "
-                    "character removes the rows of the character (the entitlement of the account stays)");
+                    "claim with a kept item (stage 3.5b.1), the part of a loot bag with a stored instance (stage 3.5b.2) and its fast end, the world time (stage 2.2), "
+                    "and the delete of a character removes the rows of the character (the entitlement of the account stays)");
     }
 }
 

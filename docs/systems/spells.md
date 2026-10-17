@@ -411,7 +411,7 @@ tools/gamedata/spells.sh --find TEXT...    # print the spells with a text and th
 - A wolf of a test at 14 m to 16 m that looks away from the character took no target (the vision rule); a wolf 9.5 m in
   front of the character looking at it works.
 - A video of a vortex or a Pylon: the caster stands between the camera and the spell. Turn the camera to the side, and
-  crop the frames near the spell. The client has a day and a night with no world time of the server.
+  crop the frames near the spell. Set the day before the video (`tools/world time Soulwarden 12:00`, stage 2.2).
 - A late observer must be more than 70 m away before the cast (50 m and the margin of 20 m): at 64 m it stays in the
   interest.
 - A remote test character keeps its cooldown: `tools/world cooldowns NAME reset` before the next cast.

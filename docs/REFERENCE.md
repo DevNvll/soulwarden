@@ -68,10 +68,11 @@ the attributes, the skills, the nodes and the ability bars (`assign_node`,
 `remove_status`), the cast of an ability and the spell entities (`cast_ability`,
 `end_spells`), a shot of the weapon in the hand (`shoot`), and the health of a character, for the
 creatures near it, and for a travel, and the interaction commands (`set_object_enabled` for an object 30 m or less from the
-character, `cancel_interaction`; stage 2.5a), and `clear_chest_claim` (stage 3.5b.1). The state of a character has its DLC (member
+character, `cancel_interaction`; stage 2.5a), `clear_chest_claim` (stage 3.5b.1), and `set_world_time` (stage 2.2: the time of the
+day of the whole world). The state of a character has its DLC (member
 `ownership`, stage 1.1b), its interactions (member `interactions`: its committed interaction and the objects near it, stage 2.5a), and
 its chests (member `chests`: its open, its loot claims, and the chests near it, stage 3.5b.1), and its loot bags (member `lootBags`:
-its open bag and its bags, stage 3.5b.2). The backend
+its open bag and its bags, stage 3.5b.2), and the world time (member `worldTime`, stage 2.2). The backend
 also answers the entitlement service of the client (the sync and the list of the entitlements of the account, protocol
 notes 2 and 4.29).
 A request needs the token that the launcher makes for each start (protocol notes 6.4).
@@ -238,6 +239,7 @@ it is hidden, the game has its input again. The window is for the character that
 | Skills | Set the mastery level of each weapon (each level above 1 gives one mastery point for its tree) and the level of each trade skill. |
 | Creatures | The list at the bottom has each creature that is 150 m or less from your character, the nearest one first, with its level, its health, and its distance. "Set" sets the health of a creature to the percent value above the list, "Kill" kills it, and "Remove" takes it out of the world. To make a creature, type a text in the search field (the id, the name, or the family of a kind, for example `wolf`, `risen`, `rabbit`), click a kind, set the level and the distance, and press "Spawn": the creature is that many meters to the north of your character (the window covers the left half of the picture: press F8 to see the creature). "Reset" makes each spawn point free again whose creature you killed or removed. |
 | Travel | The first line has the position of your character (meters: east, north, up). The list has each spirit shrine and each inn of the world with its territory and its distance from your character. Type a text in the filter (a part of a name or of a territory, `shrine`, or `inn`), click a place, and press "Travel": your character is at that place, with no new login. A place that is more than 100 m away shows the loading screen of the game for some seconds. The form below the list moves your character to a position in numbers ("Here" puts the position of your character into the form): give a height on the ground or above it. Your character and the camera look north after a travel. |
+| World | The time of the world (stage 2.2), its phase (night, dawn, day, dusk), and the time to the next phase. Set the hour and the minute and press "Set", or press 06:00, 12:00, 19:00, or 00:00: the time of the day changes for the whole world (each player), not only for your character. The sky changes at once. |
 
 The last line of the window shows the result of the last command, or the cause when the
 backend refused it. The client shows each change at once: the bag window (Tab), the level
@@ -264,6 +266,21 @@ for example `SOULWARDEN_TOOL_WINDOW=0 %command%`.
   start of the game: CAUSE`.
 - Not checked: a picture with HDR, frame generation, and the window on the main menu (the
   window is made for the world).
+
+## World time
+
+The world has one day and night cycle (stage 2.2, [World time and weather](systems/world-time-and-weather.md)): 30 minutes of
+real time from 06:00 to 19:00 and 15 minutes from 19:00 to 06:00. The game client shows the sky, the light, and the shadows of
+the time of the server; the backend sends the time when your character enters the world and when the time of the world changes.
+
+- A new world starts at noon. The backend keeps the time in its database (each minute and at its stop): the next start goes on
+  from that time. The time does not move while the backend is stopped, and it moves while the backend runs, also with no player.
+- The phases: night (19:00 to 06:00), dawn (06:00 to about 06:26), day, dusk (about 18:34 to 19:00). Some creatures of the world
+  come only in some phases (405 spawn points, for example night creatures), and they go away at the end of their phases.
+- The rain, the snow, the fog, and the light of an interior are local data of the level: they show at their places with the time
+  of the world. Some interiors show their own hour (the keep of Dunwood is dark at noon).
+- Set the time with the tab "World" of the tool window. In a development run: `tools/world time` and `tools/world time
+  CHARACTER HH:MM`.
 
 ## Exact position
 
@@ -362,7 +379,9 @@ button on "Confirm").
   (11 attacks of 9 models with 6 spells: the list `areaSpells` of `tools/gamedata/creature_slices.json`; with a file from before
   no creature casts an area); from stage 3.4f-D 24 attacks of 22 models with 10 spells, the status actions of 3 models (the self heal
   of the Inquisitor Cleric, the Howl of the Evil Knight hound: the list `statusActions`), and the low-health part of 119 models (with a
-  file from before no creature heals or buffs itself). `--no-attack FILE` writes one line for each kind that does not attack (747
+  file from before no creature heals or buffs itself). From stage 2.2 (format 4, 13.1 MB) each spawn point also has the time
+  constraint of its spawner: 405 points make their creature only in some phases of the day, and their creature goes away at the end
+  of them (with a file from before, each creature comes at each time). `--no-attack FILE` writes one line for each kind that does not attack (747
   kinds from stage 3.4f-D, 789 in stage 3.4f-C: a kind with the basic shot of an archer, a cast, or an area attack attacks). The tool
   leaves out the spawn points of 50 creature models that the client does not show
   correctly with this backend (1,541 spawn points: the list is in
@@ -679,6 +698,10 @@ button on "Confirm").
   or 1.25 s after its last item (the times of the game data); the rows keep the bags and their item instances over a restart. With
   an `interaction-data.json` from before stage 3.5b.2 the items of a kill go into the bag of the character and a drop removes the
   items, as before. In a development run `tools/world bags NAME` lists the bags of a character ([Loot bags](systems/loot-bags.md)).
+  Since stage 2.2 an item with Nonremovable or NotDroppable in the item table (a quest item, for example) does not leave the
+  character: a drop or a give into a bag changes nothing (with an `item-catalog.json` from before stage 2.2 no item has this
+  protection). An item of a kill that the item catalog does not have stays in the bag until a start with a catalog that has it. A bag
+  takes 500 stacks, and a restart does not renew the end of an empty bag.
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
   abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar
   of the HUD goes away at full mana ([Combat and health](systems/combat-and-health.md)).

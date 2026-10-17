@@ -1112,8 +1112,27 @@ fragment of 100 of 100:  2f b4 19 | 01 0f | 42 c8 00 00  42 c8 00 00  00 00 00 0
   regeneration rate is the base rate times 1 plus the ManaRate parts (2 x 1.2 = 2.4). Live:
   full mana hides the meter; a Divine Embrace (25) shows 85 of 110; the meter is hidden again
   at the full value (`~/Games/soulwarden/work/evidence/loot-bags/implement/final/`,
-  `mana-proof-sheet.png`, `mana-spend-regen.mp4`). The meter does not move during the
-  regeneration: it changes at the next state (the state at the full value). Test case MN1.
+  `mana-proof-sheet.png`, `mana-spend-regen.mp4`). Test case MN1.
+- **The prediction of the client** (stage 2.2: the open point of stage 3.5b.2; static proof, the analysis
+  `~/Games/soulwarden/work/evidence/world-time/implement/mana/MANA-ANALYSIS.md`; live proof). The Mana component has two copies
+  of its four values: the predicted copy A (component +0xB0) and the copy of the server B (+0xC8). The mana state writes only B
+  and the meter one time (apply 0x683B740). The regeneration (0x676B8E0, in each movement step through 0x676B310) changes only A,
+  and the meter follows A only when A changes. The client copies B into A only at a movement state of the server whose id is the
+  number of a client input (0x486D660): the backend never sends one (4.6). Thus with the state alone the meter stood still during
+  the regeneration (stage 3.5b.2). The message that sets A:
+
+  ```text
+  ManaComponentClientFacet_ClientForceSyncServerState (type 4289, reader 0x656DF80, handler 0x656DE10 -> 0x67A6940):
+    target:u64 entity:u64        the Mana facet: entity "Stats" of the player slice, component 98C89E858C53376B (slice-ids.json)
+    current:f32 maximum:f32 delay:f32 rate:f32      big-endian; maximum: the base maximum; delay: seconds; rate: a factor
+  ```
+
+  The client gains GetStatRegenRate(2) x stat 0x30 x rate in each second after the delay. Live: with `tools/world message` 50,
+  100, 0, 1.0 the meter filled at 2.0 a second; with the factor 1.2 at 2.37 a second, and it hid at the full value 25 s later (the
+  rate of the server with Focus 100: 2 x 1.2). Thus `rate` is the factor of the server (1 + the ManaRate parts). Message 4291
+  (ClientSyncServerState) does nothing in this build. The backend sends 4289 to the owner after each mana state that is not in the
+  first record (a spend, a gain, the full value, a change of the maximum; `server/rep/mana_messages.h`): live, a spend of 50 (a status
+  of the data) showed 60 of 110, and the meter filled to the full value in 21 s and hid. Test case MN2.
 
 `MB::PlayerAppearanceComponentReplicatedState` has 1 group with 12 fields of one byte each
 (indexes into the character creation databases of the client: gender, race, skin tone,
@@ -3550,8 +3569,8 @@ refused, 1 report from the place before a travel not used):
 - The first position report from the new place came 3 s to 5 s after a travel with the
   loading screen. The height of a travel place was correct at each of the 6 places of the
   runs: the character stood on the ground or on the floor of the shrine.
-- The client shows the game time of its own clock: the places were dark (the backend sends
-  no world time).
+- The client showed the game time of its own clock: the places were dark (before stage 2.2 the
+  backend sent no world time; 4.43).
 - A travel with numbers to a height that is 0.4 m below the ground worked (the spawn lift
   is 0.5 m). A height that is farther below the ground was not tested.
 
@@ -6255,6 +6274,7 @@ GlobalStorage map). Live checks and the live proof: `~/Games/soulwarden/work/evi
 | The pickup | TakeAllOption, 2939, and 2942 move the stored instances (the id, the gear score, the durability, the flags, the perks) into the bag of the character in one transaction; a full bag takes what fits. 2801 moves an item of the bag of the character into the open bag. |
 | The discard | 1838 and 826: a new Discarded bag at the feet of the character with the instances (a locked item does not move). |
 | The lifetime | 180 s from the bag, and 1.25 s after the last item of the last part; on the wall clock in the store. The server removes the record. |
+| The corrections of stage 2.2 (code review of stage 3.5b.2) | An item with Nonremovable or NotDroppable of the item table stays with the character (1838, 826, 2801; the client ground drop target refuses nonremovable equipment, research chests-ground-loot.md, static). A part has 500 stacks at most (the Container reader, static: research storage.md V17). The GlobalStorage map is one fragment below 256,000 bytes of one bundle (client `0x646C2B0`, static): the encoder writes whole keys in the sequence of the selection (the open bag, then the nearest bags) and stops before the key that makes the map field larger than 255,000 bytes; no live run sent such a large map. The fast end is in the store. A request at either end changes nothing. Test cases RLB1 to RLB10. |
 
 **The live proof** (stage 3.5b.2, the backend of the stage and the game data of the run):
 
@@ -6271,6 +6291,77 @@ GlobalStorage map). Live checks and the live proof: `~/Games/soulwarden/work/evi
   perk count).
 - The shared bag of a death, the permissions of a group, and the trade between players (decision of the user: not in this part).
 - The meaning of the panel label ("LOOT", "DROPPED ITEMS", "ITEMS") for each kind and order of the states: only the observed cases.
+
+### 4.43 The world time: the request, the record, the phase, the clock correction (live proof of stage 2.2; static proof for the client code; the cycle is the default of the client, the start and the store are decisions of the orchestrator)
+
+The world has one day and night cycle ([World time and weather](systems/world-time-and-weather.md)). The client calculates the
+hour itself from one record and its copy of the server clock: the server sends no hour stream. The research is
+`~/Games/soulwarden/work/research/world-time.md` (section 2) and `world-time-stage.md` (sections 3 to 9).
+
+**The messages.** All numbers of a body are big-endian. The Time component (`RootPlayer`, component D41EB32C0F154004) has no
+replicated state and no slot; its facet target is G + D41EB32C0F154004 (the rule of 4.2 for the root entity). The remote player
+slice has no Time component.
+
+| Type | Direction | Body | Client code | Evidence |
+| ---: | --- | --- | --- | --- |
+| 4248 `TimeComponentServerFacet_SyncToClient` | client to server | target:u64 entity:u64 (16 bytes) | callback 0x4087CE0, 0x408C2B0, sender 0x407A3C0 | [S], live L0: one request for each world entry, after the mission load of the world (0x6BDD9B0) |
+| 7036 `TimeComponentClientFacet_SyncTimeAndPhase` | server to client | target:u64 entity:u64 record:60 phase:u32 (80 bytes; frame `54 00 01 bc 6d`, 85 bytes) | reader 0x406F740, 0x69F2530; handler 0x408C520, 0x408C550, 0x644ECC0, 0x408C490 | [S], live L1, L2, L4 |
+| 4247 `TimeComponentClientFacet_SyncDayPhase` | server to client | target:u64 entity:u64 phase:u32 | handler 0x408C490 (component +0xE0) | [S], live L4, L6: the stored phase 1, then 2 at 06:26 |
+| 335 `REPClient::TimeSynchMsg` | server to client | serverTime:u64 (nanoseconds) | dispatcher 0x6B6F190, 0x6AFEDB0 | [S], live L8 |
+
+```text
+record := a:f32 b:f32 offset:f32 dawnTime:u32 dawnDuration:u32 duskTime:u32 duskDuration:u32 dayLength:u32 nightLength:u32
+          anchor:u64 dawnStart:f32 dayStart:f32 duskStart:f32 nightStart:f32                          60 bytes
+backend:  -1      -1    (below)    21600          60              68400         60              1800          900
+          (below)   0.18181818    0.20404040    0.82626263    0.84848485
+```
+
+- The anchor and the offset (client code 0x6A0ADC0). `anchor = max(1, now - cycle)`, `offset = ((position - (now - anchor)) mod
+  cycle) / (365 * cycle)`, with `now` the server clock (`WorldClock::server_time_ns`, the clock of the registration reply and of
+  335). The client adds the float32 time from the anchor and `offset` times 365 cycles, and it takes the remainder of the cycle. The
+  float error is below 1 ms for two cycles (test case WT1: 5,820 compares, the largest error 0.93 ms). An anchor of 0 or later than
+  the clock of the client is not correct (research 2.1). The session sends a new record one cycle after the last one.
+- The four edges. `dawnStart` = (dawnTime / night game seconds x nightLength) / cycle and `nightStart` = that + dayLength / cycle:
+  the hour formula of the client (0x6A09E60) needs these values. `dayStart` and `duskStart` select only the phase (0x6A08270): the
+  backend sends 60 s after `dawnStart` and 60 s before `nightStart` (decision D4).
+- The vector of the research (G 0x1000, server time 1e14, noon): `d41eb32c0f155004 0000000000001000 bf800000 bf800000 3aafc8ad
+  00005460 0000003c 00010b30 0000003c 00000708 00000384 0000587e6befc800 3e3a2e8c 3e50eff8 3f5385f3 3f59364e 00000002` (test case
+  WT1).
+- What the client does with a record (live L1, run 1 and 3): the handler keeps the record (component +0x98, game +0x730), sets the
+  engine hour at once, and sets the engine dawn and dusk hours to 6.0, 6.3667, 19.0, 19.3667 (the mission values before the record:
+  5.9167 and 18.0833). Two reads of the hour some seconds apart gave 25.9 to 26.2 game seconds in one real second by day and 43.9
+  to 44.1 by night (live L3), and the hour agreed with the model of the client within 0.005 hours (the time of the read).
+- With no record the hour is constant (research 2.7): 0.0 after a character creation (`TimeStart` of the mission: a dark world)
+  and 16.7 after a menu login in the runs of this stage (live L0). The pause flag, the override flag, and the editor byte were 0.
+  The setting byte of `javelin.enable-time-comp-sync-to-local-client` (image RVA 0x9EFF37C) read 0, and the bus path 0x408C3A0 had
+  no hit: the record comes only from 7036.
+- The entry paths (live L2): a short travel (22 m), a far travel (634 m, with the loading screen), and a respawn keep the record
+  and the motion of the hour, with no new request. A leave to the menu and a new world entry (a new session) and the first entry
+  after a creation load the level again: the record is gone (pointer 0, the mission hour), and the client asks again with the ids
+  of the new session. Each path had a noon and a midnight picture with a nonzero offset at noon.
+- The jump (live L4): a new record changes the sky in one frame; the exposure of the renderer adapts for about 1.5 s.
+- 335 (live L8): with the server clock, the client corrected its clock by 82 ms (it ran faster than the backend clock); +0.5 s
+  went to the slow correction (steps of 2 ms); +5 s moved the clock at once, and the correct value moved it back. The backend
+  sends 335 each 3 s from 3 s after the registration reply (the server sender of the image, 0x6A3D9B0: `r8d=0xBB8`).
+- The checks of a request (rule MP-5): a session in the world, 16 body bytes, the actor route of the own character, its entity
+  field, and the target of its Time facet. A request of an observed remote player, of a different facet, or with a different body
+  size gets no reply (test case WT3).
+
+**The weather.** No message. The level has local volumes (research 4.3 to 4.5): the client selects them by the position of the
+camera. Live L7 at noon of the world: the rain volume of Weaver's Fen (12098.8 5167.4 40.4) shows storm clouds and rain, and its
+sky blends in about 10 s after a travel into it; 61 m outside it the swamp sky has no rain. The snowstorm preset of Great Cleave
+(8963.4 8155.9 541.0) gives a cold blue light with some snow. In the Dunwood keep interior (3249.6 5904.6 243.4) the engine hour
+is 0.0 (the TimeOfDayOverride of the volume) while the world is at 12:13; outside it the hour is the world hour.
+
+**The creature points with a time constraint.** No message: the spawn rule of the server (4.14) and the normal record and stop of
+a creature. Live L6 at the night-dawn-dusk point of Brightwood Isle (9555.1748 5517.1914): the Ghost "Alchemical Experiment" is
+there at 00:40 and at 06:20, and it and nine more ghosts of such points leave at noon and at 06:26:00 (the natural edge from dawn
+to day), with no death and no reward.
+
+**Not known, not done.** The fields `a` and `b` of the record (no reader found); the PlayerTime component (fields 0 to 2, 4.24
+has the wall clock pair); the level-information u64 (it stays 0); a stop of the cycle of the client (no wire field); the pause of
+the time of day in an instance (`PauseTimeOfDay` of 15 game-mode maps; stage 7.1); the weather of an event (the stages of the
+events).
 
 ## 5. Open items
 
@@ -6436,7 +6527,8 @@ GlobalStorage map). Live checks and the live proof: `~/Games/soulwarden/work/evi
   item (the cause values 1, 26 and others were not compared on the screen).
 - Messages from the client in the world other than the input report have no handlers
   (`~/Games/soulwarden/work/research/client-messages.md` has the names and layouts).
-- The world time: the client asks for it one time (type 4248) and gets no answer.
+- The world time (stage 2.2, 4.43): the client gets the record 7036 to its request 4248, the phase 4247, and the clock
+  correction 335. Open: the fields `a` and `b` of the record, the PlayerTime component, and the weather of an event.
 - Other entities (4.9). The backend has the record of a remote player that stands. Open:
   the movement of a remote player (new positions, the walk animation, the rate of the
   states); an exact position (a remote character does not go to the ground by itself); the

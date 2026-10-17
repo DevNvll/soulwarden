@@ -19,6 +19,7 @@
 #include "support/interaction_fixture.h"
 #include "support/shop_fixture.h"
 #include "support/test_progression.h"
+#include "server/rep/mana_messages.h"
 #include "world/entity.h"
 
 namespace soulwarden::backend::tests {
@@ -154,10 +155,78 @@ void mana_parts(const Options&) {
     check(near(a.vitals.manaMax, 100.0F) && near(a.vitals.manaRateFactor, 1.0F), "no threshold data: the base maximum 100 and the factor 1");
 }
 
+/** MN2 (stage 2.2, the open point of stage 3.5b.2): the mana prediction message 4289 with each later mana state. */
+void mana_prediction(const Options&) {
+    gamedata::SliceIds slice;
+    slice.set(0x1111222233334444ULL, {{0x5555666677778888ULL, 0x98C89E858C53376BULL, server::rep::kManaComponentName}});
+    Shop shop(false, ":memory:", true, false, &slice);
+    gamedata::ProgressionData data = test_progression();
+    data.attributeAbilities["focus"] = {{25, {"Test_Foc_Bonus_25_1"}}};
+    data.manaRegenRate = 2.0F;
+    data.manaRegenDelay = 1.0F;
+    data.manaRegenDelayOnEmpty = 2.0F;
+    shop.host.progression.set(data);
+    gamedata::AbilityTables tables;
+    tables.cooldowns = {{"Test_Cooldown", 1.0F, 0.0F}};
+    tables.abilityRows = {{"Test_Foc_Bonus_25_1", tests::shop::cells({{"MaxMana", 0.1F}, {"ManaRate", 0.2F}}, {{"IgnoreDisabledAttackTypes", "Heartgem"}})}};
+    check(shop.host.abilities.set(tables), "setup: the ability data");
+    state::ProgressRow row;
+    row.level = 7;
+    row.experience = 2100;
+    row.spent = {0, 20, 0, 0, 0};
+    check(shop.host.store.set_progress(kCharacterA, row), "setup: the focus 25 of A");
+    shop.enter();
+    world::Entity& a = *shop.entity(kCharacterA);
+    const std::uint64_t target = slice.target(a.id, *slice.find_named(server::rep::kManaComponentName));
+    const auto syncs = [&](const FakeClient& client, std::size_t from) {
+        std::vector<std::vector<std::uint8_t>> bodies;
+        for (std::size_t index = from; index < client.got.size(); ++index) {
+            if (client.got[index].type == server::rep::kTypeManaForceSync) {
+                bodies.push_back(client.got[index].body);
+            }
+        }
+        return bodies;
+    };
+    const auto u64 = [](const std::vector<std::uint8_t>& body, std::size_t at) {
+        std::uint64_t value = 0;
+        for (std::size_t index = 0; index < 8; ++index) {
+            value = (value << 8) | body[at + index];
+        }
+        return value;
+    };
+    check(syncs(shop.clientA, 0).empty() && syncs(shop.clientB, 0).empty(),
+          "the first record (full mana) has no prediction message: the entry sequence does not change");
+    std::size_t from = shop.clientA.got.size();
+    shop.host.world.abilities().change_mana(a, -22.0F, "the test");
+    shop.host.steps(3, {&shop.clientA, &shop.clientB});
+    const auto spend = syncs(shop.clientA, from);
+    check(spend.size() == 1 && spend[0].size() == 32 && u64(spend[0], 0) == target && u64(spend[0], 8) == a.id
+              && near(f32_value(std::span(spend[0]).subspan(16, 4)), 88.0F) && near(f32_value(std::span(spend[0]).subspan(20, 4)), 100.0F)
+              && near(f32_value(std::span(spend[0]).subspan(24, 4)), 1.0F, 0.05F) && near(f32_value(std::span(spend[0]).subspan(28, 4)), 1.2F),
+          "a spend of 22: one message 4289 to A with the Mana facet of A, 88, the base maximum 100, the delay 1 s, the factor 1.2 (live check: "
+          "the factor gives the rate of the server)");
+    check(syncs(shop.clientB, 0).empty(), "B gets no prediction message of A");
+    from = shop.clientA.got.size();
+    shop.host.steps(1200, {&shop.clientA, &shop.clientB});
+    const auto full = syncs(shop.clientA, from);
+    check(near(a.vitals.mana, 110.0F) && !full.empty() && near(f32_value(std::span(full.back()).subspan(16, 4)), 110.0F)
+              && near(f32_value(std::span(full.back()).subspan(24, 4)), 0.0F),
+          "at the full value: the message 4289 with 110 and no delay");
+    // No ids of the player slice: no message, one log line.
+    Shop plain(false);
+    plain.host.progression.set(data);
+    plain.enter();
+    plain.host.world.abilities().change_mana(*plain.entity(kCharacterA), -10.0F, "the test");
+    plain.host.steps(3, {&plain.clientA, &plain.clientB});
+    check(syncs(plain.clientA, 0).empty() && log_count("no mana prediction for the client") == 1,
+          "with no ids of the player slice: no message 4289, and one log line");
+}
+
 } // namespace
 
 std::vector<Case> mana_cases() {
-    return {{"MN1", "mana: the MaxMana and ManaRate parts of a threshold ability; the values of the client; two sessions", mana_parts}};
+    return {{"MN1", "mana: the MaxMana and ManaRate parts of a threshold ability; the values of the client; two sessions", mana_parts},
+            {"MN2", "mana: the prediction message 4289 of the client with each later mana state (stage 2.2); two sessions", mana_prediction}};
 }
 
 } // namespace soulwarden::backend::tests

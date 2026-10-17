@@ -360,7 +360,10 @@ tools/world list                     # the line "basic attacks": the sequences, 
 - A change of the maximum of the client keeps a full meter full (the client scales the current value): the meter shows a wrong
   maximum only after the next mana state. Probe the maximum with `tools/world fragment NAME 47 1652 010f<current><base>0000000000000000`
   (a value under the maximum shows the bar).
-- The meter does not move during the regeneration: it changes at the next mana state (the full value).
+- Before stage 2.2 the meter did not move during the regeneration: the mana state writes only the server copy of the client. From
+  stage 2.2 the session sends the message 4289 with each later mana state, and the meter fills with the prediction of the client
+  (protocol notes 4.5, test case MN2). Without the ids of the player slice (`slice-ids.json`) the backend sends no 4289 (a log line):
+  the meter then stands still again.
 - A sword attack gives a contact at 1.8 m or less, a spear attack only at 2.0 m or more:
   select the sword (`tools/hx 'key 0x31'`) for a test of a hit at 1.5 m.
 - A click with the left pointer button in the world is an attack: each attack moves the

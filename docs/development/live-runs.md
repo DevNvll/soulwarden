@@ -288,9 +288,9 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   body: turn the camera to the target before the press (a dash of a test went into a wall after 5.8 m).
 - A test of a bow or a staff: read the traps of [Projectiles](../systems/projectiles.md) first (the aim and the
   crosshair, the camera of a staff, the heavy attack of a staff with the harness, the capture folder).
-- The client has a day and a night with no world time of the server: the videos of stage 3.3b-S4 had the night and
-  are dark. Put the creatures near a lamp of the street at the default spawn ([Creatures](../systems/creatures.md),
-  Traps), and crop the frames near the creatures.
+- The world time (stage 2.2) moves on: a night is 15 minutes of real time. Set the time before a picture or a video
+  (`tools/world time Soulwarden 12:00`; [World time and weather](../systems/world-time-and-weather.md)), and do not judge the world
+  phase from the brightness of a picture (a local volume of the level changes the light).
 - A test of a heal (stage 3.3b-S6): Divine Embrace and Sacred Ground need a confirm after the key (`tools/hx 'key 0x51'
   'wait 700' 'key 0xA2'`: Q, then LCTRL). The rest rule heals 3 percent each second after 6 s with no fight, also a
   character with no session: hurt the character (`tools/world hurt`) just before the cast, or the rest heal hides the heal

@@ -14,7 +14,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 10;
+constexpr int kSchemaVersion = 12;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -263,6 +263,29 @@ CREATE TABLE IF NOT EXISTS loot_bag_items(
 );
 )sql";
 
+/**
+ * Version 11 (stage 2.2): the world time. `world_time` has the position of the day cycle of a world (the world key is the owner key:
+ * the cycle is a value of the world, not of a character): nanoseconds from 00:00 of the cycle.
+ */
+constexpr const char* kMigration11 = R"sql(
+CREATE TABLE IF NOT EXISTS world_time(
+    world_key TEXT PRIMARY KEY,
+    cycle_position_ns INTEGER NOT NULL
+);
+)sql";
+
+/**
+ * Version 12 (stage 2.2: code review of stage 3.5b.2). The loot bags: an index on `bag_key` of each bag table (finding LB-R8: the end of a
+ * bag deletes its rows by the bag key; the primary keys start with the character id, and with no index each end scans the rows of each
+ * other bag), and the column `emptied_at` of `loot_bags` (finding LB-R9: the absolute fast end of an empty bag in Unix milliseconds; 0:
+ * none).
+ */
+constexpr const char* kMigration12LootBags = R"sql(
+CREATE INDEX IF NOT EXISTS loot_bags_bag_key ON loot_bags(bag_key);
+CREATE INDEX IF NOT EXISTS loot_bag_items_bag_key ON loot_bag_items(bag_key);
+ALTER TABLE loot_bags ADD COLUMN emptied_at INTEGER NOT NULL DEFAULT 0;
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
@@ -478,6 +501,21 @@ bool Store::migrate() {
     }
     if (version < 10) {
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration10) || !execute("PRAGMA user_version=10")
+            || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 11) {
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration11) || !execute("PRAGMA user_version=11")
+            || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 12) {
+        // Stage 2.2, the corrections of the code review of stage 3.5b.2 (findings LB-R8, LB-R9): the bag indexes and the fast end of a bag.
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration12LootBags) || !execute("PRAGMA user_version=12")
             || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
@@ -1160,8 +1198,8 @@ std::vector<std::pair<std::string, LootBagRow>> Store::list_loot_bags() {
     std::vector<std::pair<std::string, LootBagRow>> bags;
     {
         Statement statement(m_database,
-                            "SELECT character_id, bag_key, kind, source, position_x, position_y, position_z, rarity, created_at, expires_at "
-                            "FROM loot_bags ORDER BY bag_key, character_id");
+                            "SELECT character_id, bag_key, kind, source, position_x, position_y, position_z, rarity, created_at, expires_at, "
+                            "emptied_at FROM loot_bags ORDER BY bag_key, character_id");
         while (sqlite3_step(statement.handle) == SQLITE_ROW) {
             LootBagRow bag;
             const std::string character = column_text(statement.handle, 0);
@@ -1174,6 +1212,7 @@ std::vector<std::pair<std::string, LootBagRow>> Store::list_loot_bags() {
             bag.rarity = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 7));
             bag.createdAt = sqlite3_column_int64(statement.handle, 8);
             bag.expiresAt = sqlite3_column_int64(statement.handle, 9);
+            bag.emptiedAt = sqlite3_column_int64(statement.handle, 10);
             bags.emplace_back(character, std::move(bag));
         }
     }
@@ -1216,7 +1255,7 @@ bool Store::write_loot_bag(const std::string& characterId, const LootBagRow& bag
     {
         Statement statement(m_database,
                             "INSERT OR REPLACE INTO loot_bags(character_id, bag_key, kind, source, position_x, position_y, position_z, rarity, "
-                            "created_at, expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)");
+                            "created_at, expires_at, emptied_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)");
         statement.bind(1, characterId);
         statement.bind(2, bag.bagKey);
         sqlite3_bind_int64(statement.handle, 3, bag.kind);
@@ -1227,6 +1266,7 @@ bool Store::write_loot_bag(const std::string& characterId, const LootBagRow& bag
         sqlite3_bind_int64(statement.handle, 8, bag.rarity);
         sqlite3_bind_int64(statement.handle, 9, bag.createdAt);
         sqlite3_bind_int64(statement.handle, 10, bag.expiresAt);
+        sqlite3_bind_int64(statement.handle, 11, bag.emptiedAt);
         ok = sqlite3_step(statement.handle) == SQLITE_DONE;
     }
     {
@@ -1277,6 +1317,42 @@ bool Store::delete_loot_bag(const std::string& bagKey) {
     }
     if (!ok) {
         log::write("store: no removal of the loot bag %s: %s", bagKey.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::optional<std::uint64_t> Store::world_time(const std::string& worldKey) {
+    std::lock_guard lock(m_mutex);
+    Statement statement(m_database, "SELECT cycle_position_ns FROM world_time WHERE world_key=?1");
+    statement.bind(1, worldKey);
+    const int step = sqlite3_step(statement.handle);
+    if (step == SQLITE_ROW) {
+        const sqlite3_int64 position = sqlite3_column_int64(statement.handle, 0);
+        if (position < 0) {
+            log::write("store: the world time of %s is negative: no position", worldKey.c_str());
+            return std::nullopt;
+        }
+        return static_cast<std::uint64_t>(position);
+    }
+    if (step != SQLITE_DONE) {
+        log::write("store: the world time of %s did not read: %s", worldKey.c_str(), sqlite3_errmsg(m_database));
+    }
+    return std::nullopt;
+}
+
+bool Store::set_world_time(const std::string& worldKey, std::uint64_t position) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database,
+                        "INSERT INTO world_time(world_key, cycle_position_ns) VALUES(?1, ?2) "
+                        "ON CONFLICT(world_key) DO UPDATE SET cycle_position_ns=excluded.cycle_position_ns");
+    statement.bind(1, worldKey);
+    sqlite3_bind_int64(statement.handle, 2, static_cast<sqlite3_int64>(position));
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of the world time of %s: %s", worldKey.c_str(), sqlite3_errmsg(m_database));
     }
     return end_write(ok);
 }

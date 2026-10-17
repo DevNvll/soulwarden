@@ -13,9 +13,12 @@ namespace {
 using nlohmann::json;
 
 /** Columns of one item of the file, in this sequence (tools/gamedata/item_catalog.py). */
-constexpr std::array<const char*, 12> kColumns{"id",         "name",         "type",         "class",
+constexpr std::array<const char*, 14> kColumns{"id",         "name",         "type",         "class",
                                                "tier",       "weight",       "maxStack",     "durability",
-                                               "minGearScore", "maxGearScore", "gearScoreOverride", "bindOnPickup"};
+                                               "minGearScore", "maxGearScore", "gearScoreOverride", "bindOnPickup",
+                                               "nonRemovable", "notDroppable"};
+/** A file of the tool from before stage 2.2 has the first 12 columns only (no removal protection). */
+constexpr std::size_t kColumnsBefore22 = 12;
 
 std::string lower_ascii(std::string_view text) {
     std::string lower(text);
@@ -56,21 +59,24 @@ bool ItemCatalog::load(const std::string& path) {
         || !document["columns"].is_array() || !document["items"].is_array()) {
         return false;
     }
-    // The file must have the columns that this code reads, in the same sequence.
+    // The file must have the columns that this code reads, in the same sequence: all of them, or the 12 columns of a file from before
+    // stage 2.2 (no removal protection).
     const json& columns = document["columns"];
-    if (columns.size() != kColumns.size()) {
+    if (columns.size() != kColumns.size() && columns.size() != kColumnsBefore22) {
         return false;
     }
-    for (std::size_t column = 0; column < kColumns.size(); ++column) {
+    for (std::size_t column = 0; column < columns.size(); ++column) {
         if (!columns[column].is_string() || columns[column].get<std::string>() != kColumns[column]) {
             return false;
         }
     }
+    const bool protections = columns.size() == kColumns.size();
     std::vector<ItemDefinition> items;
     items.reserve(document["items"].size());
     for (const json& row : document["items"]) {
-        if (!row.is_array() || row.size() != kColumns.size() || !row[0].is_string() || !row[1].is_string()
-            || !row[2].is_string() || !row[3].is_string() || !row[11].is_boolean()) {
+        if (!row.is_array() || row.size() != columns.size() || !row[0].is_string() || !row[1].is_string()
+            || !row[2].is_string() || !row[3].is_string() || !row[11].is_boolean()
+            || (protections && (!row[12].is_boolean() || !row[13].is_boolean()))) {
             return false;
         }
         ItemDefinition item;
@@ -84,6 +90,10 @@ bool ItemCatalog::load(const std::string& path) {
             return false;
         }
         item.bindOnPickup = row[11].get<bool>();
+        if (protections) {
+            item.nonRemovable = row[12].get<bool>();
+            item.notDroppable = row[13].get<bool>();
+        }
         items.push_back(std::move(item));
     }
     if (items.empty()) {

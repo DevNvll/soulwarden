@@ -78,7 +78,8 @@ World::World(const WorldClock& clock,
       m_stamina(*this),
       m_interactions(*this, options.interactionData),
       m_chests(*this, options.chestData),
-      m_lootBags(*this) {
+      m_lootBags(*this),
+      m_worldTime(*this) {
     m_random = options.randomSeed;
 }
 
@@ -130,6 +131,8 @@ void World::tick() {
     // the spawn point rule and the behavior of the creatures, on the world clock.
     try {
         m_navigation.tick();
+        // The world time before the creatures (stage 2.2): a phase change scans the points with a time constraint in this tick.
+        m_worldTime.tick();
         m_creatures.tick();
         m_health.tick();
         m_statuses.tick();
@@ -1006,6 +1009,8 @@ void World::place(Entity& entity, const state::WorldPosition& position, bool est
     // The LootTracker of the character at a new cell (stage 3.5b.1: the claims near it; O(1) when the cell is the same).
     if (entity.kind == EntityKind::player) {
         m_chests.moved(entity);
+        // The GlobalStorage selection of its loot bags after a walk (code review of stage 3.5b.2, finding LB-R3; O(1) for a short walk).
+        m_lootBags.moved(entity);
     }
 }
 

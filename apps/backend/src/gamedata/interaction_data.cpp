@@ -813,6 +813,19 @@ bool InteractionData::set_loot_containers(std::map<std::string, LootContainer> c
                       "no LootDrop slot, no rarity particle, or a time that is not correct";
             return false;
         }
+        // One component for each slot of the slice (code review of stage 3.5b.2, finding LB-R6): the LootDrop slot is not the slot of the
+        // PositionInTheWorld, BuildableController, Ownership, or Vitals component, or of an Interact bound of its template.
+        const InteractionTemplate& entry = m_templates[container.templateIndex];
+        bool used = container.lootDropSlot == entry.positionSlot || container.lootDropSlot == entry.buildableSlot
+                    || container.lootDropSlot == entry.ownershipSlot || container.lootDropSlot == entry.vitalsSlot;
+        for (const InteractionBound& bound : entry.bounds) {
+            used = used || container.lootDropSlot == bound.slot;
+        }
+        if (used) {
+            m_error = "the LootDrop slot " + std::to_string(container.lootDropSlot) + " of the loot container " + name
+                      + " is the slot of a different component of the template " + entry.slice;
+            return false;
+        }
     }
     m_lootContainers = std::move(containers);
     return true;

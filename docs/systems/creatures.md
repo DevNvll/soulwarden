@@ -59,6 +59,12 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   creature; with no player that near, the body stays (the distance rule removes it at 200 m)
   and the point waits. The respawn times are values of the world, not of the database. A
   creature of a command has no spawn point: the distance rule does not remove it.
+- The time constraint of a spawn point (stage 2.2, game data, [World time and weather](world-time-and-weather.md)): a point whose
+  spawner has a TimeOfDayConstraintComponent (405 points of the supported build) makes its creature only in its phases of the day
+  (`SpawnPoint::phases`: night, dawn, day, dusk), and its creature leaves the world at the end of these phases when the data asks for
+  it (m_despawnOnTimeEnd: each such point of the supported build). The leave is not a kill: no reward, and the point keeps its
+  respawn time or the hold of a command. A phase change starts the normal scan in its tick. A creature of a command has no phase
+  rule. Test cases WT5 to WT8.
 - The cost of the spawn rule depends on the players and on the points near them, not on the
   size of the world. The creature data has the spawn points of the whole world, and no scan
   looks at each of them: the points are in a grid with cells of 64 m (`world::SpawnGrid`),
@@ -248,7 +254,8 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
 
 - `tools/gamedata/creatures.sh` writes `creatures.json` to the game data folder: the spawn
   points of the whole world (32,840 spawn points, 3,848 kinds, 503 slices, 25 regions; a file
-  of 12.4 MB with the 19,814 patrol routes of format 3; 60 s with `SOULWARDEN_OODLE_LIB`). The
+  of 13.1 MB with the 19,814 patrol routes of format 3 and the time constraints of format 4 (stage 2.2: 405 points); 60 s with
+  `SOULWARDEN_OODLE_LIB`). The
   tool prints the counts of the routes, the policies, the waypoints, the tasks, and the kinds
   that wander. `--radius METERS` (with `--center X Y`) writes a
   smaller file, `--report FILE` writes one line for each entry that is left out, and
@@ -311,8 +318,8 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
   "update characters set position_x=8800, position_y=4245, position_z=137.9 where
   name='Soulwarden'"` (7 m from a rabbit point; the wolf point `8815.25 4319.13` is 75 m to the
   north, and a Risen point is on the floor of a hut at `8873.61 4338.63`).
-- The world of the client has a day and a night with no world time of the server: a run
-  can be dark. The street at the default spawn has lamps: use it for a screenshot of a
+- The world time (stage 2.2) can be night: set the day for a picture (`tools/world time Soulwarden 12:00`, or the tab
+  "World" of the tool window). The street at the default spawn has lamps: use it for a screenshot of a
   creature of a command (`'look -900 0'`, then `tools/world creature spawn KIND Soulwarden -5 0.9
   0 --yaw 270`: 5 m to the west on the street, with its face to the camera).
 - An id of a kind can have a colon and a number (`Risen_L-R_Arm_6:2`): more than one kind
@@ -367,5 +374,6 @@ tools/world creature status-action 2c InqCleric_Rekindle_Self   # the status act
 - The spawn action is a rule for the slices of one list. A slice that is in no list of
   `tools/gamedata/creature_slices.json` gets no spawn action: do not start the action for
   each slice without a new tour (476 slices have a picture with no action).
-- The places of the world are dark in many runs (no world time of the server): a name
-  plate shows also in the dark.
+- A point with a time constraint (stage 2.2) makes no creature out of its phases: a creature of the data that is not there by day
+  can be a night creature. `tools/world time` gives the phase, and `tools/world list` the counts `removedByPhase` and
+  `outOfPhase` ([World time and weather](world-time-and-weather.md)). A name plate shows also in the dark.

@@ -588,7 +588,30 @@ struct SpawnPoint {
     std::optional<float> ground;
     /** The patrol route of the point: an index into CreatureData::routes. No value: none (a file before format 3). */
     std::optional<std::uint32_t> route;
+    /**
+     * The phases of the day in which the point makes its creature (stage 2.2, format 4: the four flags m_night, m_dawn, m_day, and
+     * m_dusk of the TimeOfDayConstraintComponent of its spawner slice; world/world_time.h: bit 0 night, bit 1 dawn, bit 2 day, bit 3
+     * dusk). A spawner with no constraint, and each point of a file before format 4: each phase (0x0F). 0: no phase (the spawn rule
+     * makes no creature).
+     */
+    std::uint8_t phases{0x0F};
+    /**
+     * True: the creature of the point leaves the world when the phase is not one of its phases (m_despawnOnTimeEnd of the constraint).
+     * False: it stays, and the point makes no new creature in a phase that is not one of its phases.
+     */
+    bool leavesAtPhaseEnd{false};
+    /**
+     * The two cooldown flags of a spawner with a time constraint (format 4; m_cooldownAfterDespawn, m_cooldownAfterConstraintFail):
+     * true: the end of its phases (a removal) starts the respawn time of the point; true: a look at the point out of its phases starts
+     * the respawn time of the point. False for each point spawner of the supported build; true for the random encounter of the Mirage
+     * Elemental. The rule of the flags is a rule of an agent from their names: the server code is not in the client.
+     */
+    bool cooldownAfterPhaseEnd{false};
+    bool cooldownOutOfPhase{false};
 };
+
+/** The phase mask of a spawn point with each phase (no time constraint). */
+inline constexpr std::uint8_t kEachPhase = 0x0F;
 
 /** Limits of a patrol route (the loader refuses a file with a route outside them). */
 inline constexpr std::size_t kMaxRoutePoints = 64;
@@ -705,6 +728,10 @@ public:
     [[nodiscard]] std::size_t routed_points() const {
         return m_routedPoints;
     }
+    /** @return The number of spawn points with a time constraint (stage 2.2: a phase mask that is not each phase). */
+    [[nodiscard]] std::size_t phased_points() const {
+        return m_phasedPoints;
+    }
     [[nodiscard]] std::size_t wandering_kinds() const {
         return m_wanderingKinds;
     }
@@ -784,6 +811,7 @@ private:
     std::size_t m_areaSlices{0};
     std::size_t m_statusActionSlices{0};
     std::size_t m_routedPoints{0};
+    std::size_t m_phasedPoints{0};
     std::size_t m_wanderingKinds{0};
     /** Level to the values of the level. */
     std::unordered_map<std::uint32_t, CreatureLevel> m_levels;

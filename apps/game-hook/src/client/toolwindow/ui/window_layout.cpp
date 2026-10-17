@@ -54,6 +54,9 @@ char g_placeFilter[64] = "";
 std::string g_selectedPlace;
 float g_travelPosition[3]{};
 bool g_travelPositionSet = false;
+/** The form of the world time (stage 2.2): the hour and the minute that the button "Set" sends. */
+int g_worldHour = 12;
+int g_worldMinute = 0;
 /** The time of the last request for the travel places. Below 0: no request yet. */
 double g_placesAskedAt = -1.0;
 
@@ -513,6 +516,57 @@ void draw_travel() {
     ImGui::PopStyleColor();
 }
 
+/**
+ * The tab "World" (stage 2.2): the world time of the backend, and the form that sets it. The time is a value of the whole world: the
+ * command names the selected character as the sender (rule MP-9), and each player gets the new time.
+ */
+void draw_world() {
+    ImGui::SeparatorText("World time");
+    if (!g_data.hasWorldTime) {
+        ImGui::TextColored(kDimColor, "The backend has no world time (a backend from before stage 2.2).");
+        return;
+    }
+    ImGui::Text("The time of the world is %s (%s). Next phase: %s in %u s.", g_data.worldTime.c_str(), g_data.phase.c_str(),
+                g_data.nextPhase.c_str(), g_data.secondsToNextPhase);
+    ImGui::PushStyleColor(ImGuiCol_Text, kDimColor);
+    ImGui::TextWrapped("One day of the game is %u minutes of real time: %u minutes from 06:00 to 19:00, and %u minutes of night. "
+                       "The sky of each player follows this time.",
+                       (g_data.dayLength + g_data.nightLength) / 60, g_data.dayLength / 60, g_data.nightLength / 60);
+    ImGui::PopStyleColor();
+
+    ImGui::SeparatorText("Set the time of the world");
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0F);
+    ImGui::InputInt("hour##world-hour", &g_worldHour);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0F);
+    ImGui::InputInt("minute##world-minute", &g_worldMinute);
+    const bool correct = g_worldHour >= 0 && g_worldHour <= 23 && g_worldMinute >= 0 && g_worldMinute <= 59;
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!correct || g_data.busy);
+    if (ImGui::Button("Set##world-time")) {
+        char time[8];
+        snprintf(time, sizeof(time), "%02d:%02d", g_worldHour, g_worldMinute);
+        send("set_world_time", {{"time", time}}, std::string("Set the time of the world to ") + time);
+    }
+    ImGui::EndDisabled();
+    if (!correct) {
+        ImGui::TextColored(kErrorColor, "The hour is 0 to 23, and the minute is 0 to 59.");
+    }
+    ImGui::BeginDisabled(g_data.busy);
+    for (const char* time : {"06:00", "12:00", "19:00", "00:00"}) {
+        if (ImGui::Button(time)) {
+            send("set_world_time", {{"time", time}}, std::string("Set the time of the world to ") + time);
+        }
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+    ImGui::EndDisabled();
+    ImGui::PushStyleColor(ImGuiCol_Text, kDimColor);
+    ImGui::TextWrapped("The time changes for each player of the world, not only for this character. Some places have their own "
+                       "light (a cave, a dungeon, a storm): their sky can differ from the time of the world.");
+    ImGui::PopStyleColor();
+}
+
 /** One row of the character tab: a name, the value now, a control for the new value, and a button. */
 bool begin_value_row(const char* name, const char* now) {
     ImGui::TableNextRow();
@@ -771,6 +825,10 @@ void draw() noexcept {
                         }
                         if (ImGui::BeginTabItem("Travel")) {
                             draw_travel();
+                            ImGui::EndTabItem();
+                        }
+                        if (ImGui::BeginTabItem("World")) {
+                            draw_world();
                             ImGui::EndTabItem();
                         }
                         ImGui::EndTabBar();

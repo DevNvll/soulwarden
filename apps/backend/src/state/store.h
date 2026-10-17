@@ -201,7 +201,17 @@ struct LootBagRow {
     std::uint32_t rarity{0};
     std::int64_t createdAt{0};
     std::int64_t expiresAt{0};
-    /** The item instances of the receiver in the bag, in their sequence (`slot` is the place in the list; `container` is not used). */
+    /**
+     * The fast end of an empty bag (FastKillSelfDelay; schema 11, code review of stage 3.5b.2, finding LB-R9): the absolute time that the
+     * last take of the bag wrote in the row of its character, in the transaction of the take. 0: none (a part with items, or a row of
+     * schema 10). The loader takes the largest value of the rows of a bag whose parts are all empty.
+     */
+    std::int64_t emptiedAt{0};
+    /**
+     * The item instances of the receiver in the bag, in their sequence (`slot` is the place in the list; `container` is not used). A row
+     * with an empty instance id is an item of the roll that the item catalog did not have (stage 2.2, the open point of 3.5b.2): no
+     * instance, only the item id, the quantity, the gear score (0: the value of the item table), and the perks.
+     */
     std::vector<ItemRow> items;
 };
 
@@ -382,6 +392,17 @@ public:
     [[nodiscard]] bool write_loot_bag(const std::string& characterId, const LootBagRow& bag);
     /** Removes each part of a loot bag (the end of the bag), with its items. @return False: no change. */
     [[nodiscard]] bool delete_loot_bag(const std::string& bagKey);
+
+    /**
+     * @return The stored position of the day cycle of a world (stage 2.2, table `world_time`): nanoseconds from 00:00 of the cycle.
+     *         No value: the world has no row (a new world), or the read failed (a log line).
+     */
+    [[nodiscard]] std::optional<std::uint64_t> world_time(const std::string& worldKey);
+    /**
+     * Writes the position of the day cycle of a world (the row of the world key: the world time is not a value of a character).
+     * @return False when the database did not accept the row. Then the row did not change.
+     */
+    [[nodiscard]] bool set_world_time(const std::string& worldKey, std::uint64_t position);
 
 private:
     /** @return The first column of each row of a query with one parameter (the owner key). */

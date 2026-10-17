@@ -204,6 +204,10 @@ public:
     [[nodiscard]] const MessageCounts& message_counts() const {
         return m_counts;
     }
+    /** @return True after a valid time request of its client (stage 2.2): the session sends the client the world time. */
+    [[nodiscard]] bool time_requested() const {
+        return m_timeRequested;
+    }
     /** @return The number of creatures whose first record this session sent. */
     [[nodiscard]] std::uint64_t creature_records() const {
         return m_creatureRecords;
@@ -311,6 +315,25 @@ private:
     void check_route(std::span<const std::uint8_t> route, std::uint32_t type, std::span<const std::uint8_t> body,
                      bool firstOfType);
     void handle_client_input(std::span<const std::uint8_t> body);
+    /**
+     * The time request of the client (4248, stage 2.2; server/rep/time_messages.h). A request of the own entity of an open session in
+     * the world with its full actor route, its group id, the target of its Time facet, and exactly 16 body bytes: the session sends the
+     * world time (7036), and from then on each change. A different request changes nothing (no reply, no flag), with one log line for
+     * each cause. A repeated valid request gets the record again.
+     */
+    void handle_time_request(std::span<const std::uint8_t> route, std::span<const std::uint8_t> body);
+    /**
+     * The world time for the client, in each tick (stage 2.2): the clock correction (335) at its time; for a client that asked, a new
+     * record (7036) after a command or one cycle after the last record, and the phase (4247) at a phase change of the cycle.
+     */
+    void send_world_time(carrier::Clock::time_point now);
+    /**
+     * The mana of the prediction of the client (4289; open point of stage 3.5b.2, server/rep/mana_messages.h): after each mana state of
+     * the own character after its first record (a spend, a gain, the full value, a change of the maximum).
+     */
+    void send_mana_sync(const world::Entity& own);
+    /** Sends the record of the world time now with the ids of the own entity (7036). */
+    void send_time_record(const world::Entity& own, carrier::Clock::time_point now, const char* cause);
     /** The requests of the client for its bag (server/rep/item_requests.h). */
     void handle_drop_items(std::span<const std::uint8_t> body);
     /** Stage 3.5b.2 (world/loot_bags.h): Take All (2939), the take of an item (2942), a give into a bag (2801), a paperdoll drop (826). */
@@ -519,6 +542,27 @@ private:
      * spawn action of a slice that shows its body only after it plays while the client loads).
      */
     std::optional<carrier::Clock::time_point> m_creaturesAfterTravel;
+    /**
+     * The world time of the client (stage 2.2). True after a valid time request: the client has a Time facet, and it gets the record,
+     * each change, and each phase. The revision of the world time, the phase, and the time of the last record that it got.
+     */
+    bool m_timeRequested{false};
+    std::uint64_t m_timeRevision{0};
+    world::DayPhase m_timePhase{world::DayPhase::day};
+    carrier::Clock::time_point m_timeRecordAt{};
+    /** The time of the next clock correction (335): 3 s after the accepted registration, then each 3 s. No value: none. */
+    std::optional<carrier::Clock::time_point> m_nextClockSync;
+    /** The counts of the world time of the session, for the log line at its end. */
+    std::uint32_t m_timeRequests{0};
+    std::uint32_t m_timeRefused{0};
+    std::uint32_t m_timeRecords{0};
+    std::uint32_t m_timePhases{0};
+    std::uint64_t m_clockSyncs{0};
+    /** The number of the mana prediction messages (4289), and true when the log has the line for no Mana component. */
+    std::uint64_t m_manaSyncs{0};
+    bool m_manaSyncMissing{false};
+    /** True when the cause of a refused time request has its log line (one line for each cause). */
+    std::array<bool, 6> m_timeRefusalLogged{};
     /** True when the last interest scan left the creatures out for this rule: the end of the wait starts a scan. */
     bool m_creaturesWaited{false};
     /**

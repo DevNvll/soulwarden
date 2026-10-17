@@ -187,6 +187,12 @@ struct CreatureCounts {
     std::uint64_t removedByCommand{0};
     /** Bodies of dead creatures that left the world at the respawn time of their spawn point. */
     std::uint64_t removedByRespawn{0};
+    /**
+     * Stage 2.2: the creatures that left the world at the end of the phases of their spawn point (no kill, no reward), and the points
+     * near a player that made no creature in a phase that is not one of their phases.
+     */
+    std::uint64_t removedByPhase{0};
+    std::uint64_t outOfPhase{0};
     std::uint64_t deaths{0};
     /** The largest number of creatures in the world at one time. */
     std::size_t largest{0};
@@ -467,6 +473,8 @@ private:
     void load_points();
     /** Sets or clears the mark "the point waits" of a spawn point. */
     void set_waiting(std::uint32_t point, bool waiting);
+    /** The point waits its respawn time (stage 2.2: a cooldown flag of a spawner with a time constraint), as after a death. */
+    void start_cooldown(std::uint32_t point, const char* cause);
     /** Removes the action of each creature whose action has an end that came. */
     void end_actions();
     /**

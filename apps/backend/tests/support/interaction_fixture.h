@@ -160,10 +160,12 @@ inline InteractionBlock block_for(const gamedata::InteractionData& data, std::ui
     return block;
 }
 
-inline service::RepServerOptions observing() {
+/** @param slice The ids of the player slice of the sessions (stage 2.2: the target of the Mana facet). Null: none. */
+inline service::RepServerOptions observing(const gamedata::SliceIds* slice = nullptr) {
     service::RepServerOptions options;
     options.serverVersion = "test-version";
     options.observePlayers = true;
+    options.playerSlice = slice;
     return options;
 }
 
@@ -194,8 +196,9 @@ struct Shop {
     state::WorldPosition placeA{kHere};
     state::WorldPosition placeB{101.0F, 200.0F, 30.0F};
 
-    explicit Shop(bool data = true, const std::string& database = ":memory:", bool withB = true, bool existing = false)
-        : host(observing(), database),
+    explicit Shop(bool data = true, const std::string& database = ":memory:", bool withB = true, bool existing = false,
+                  const gamedata::SliceIds* slice = nullptr)
+        : host(observing(slice), database),
           a(existing ? player_of(host.store, kSteamIdA, "Tester A", kCharacterA)
                      : add_player(host.store, kSteamIdA, "Tester A", kCharacterA, "Interone", kHere)),
           b(!withB     ? Player{}

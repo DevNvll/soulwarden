@@ -21,6 +21,13 @@ packs and the entitlements that they give), and compares the result of each case
                         Mining cap with the expansion is 250
   short-rank-source     the same with the ranks 0 to 200 of Mining: status 1, the old file stays (code review of stage 1.1b,
                         finding F3: the tool wrote the cap 200)
+  attribute-thresholds  the threshold abilities of each attribute table (stage 3.5b.2)
+  no-equip-abilities    an attribute table with no column EquipAbilities: status 1, the old file stays (stage 3.5b.2)
+  short-attribute-table the Focus table with no row of the value 100 (its mana threshold): status 1, the old file stays (stage 2.2,
+                        code review of stage 3.5b.2, finding LB-R7; case RLB7)
+  attribute-gap         the Strength table with no row of the value 50: status 1, the old file stays (finding LB-R7)
+
+The attribute tables of the entry point have one row for each value 5 to 100 (the range of Constitution).
 
 Usage: check_progression_tool.py
 Status 0: each case has the expected result. Each line starts with "ok" or "FAIL".
@@ -87,9 +94,28 @@ def run(case: str):
         return None, str(error)
 
 
-def rank_sources(short: bool, thresholds: bool = True) -> tuple[dict, dict]:
+ATTRIBUTE_VALUES = range(5, 101)
+
+
+def attribute_rows(table: str, thresholds: bool, missing: int | None) -> list[dict]:
+    """@return The rows of a made-up attribute table: the values 5 to 100 (not `missing`), the abilities of the value 100 (not for
+    Constitution), and the column EquipAbilities with `thresholds`."""
+    rows = []
+    for value in ATTRIBUTE_VALUES:
+        if value == missing:
+            continue
+        row = {"Level": value, "Health": value if table == tool.CONSTITUTION_TABLE else 0}
+        if thresholds:
+            row["EquipAbilities"] = (f"{table[:3]}_Bonus_100_1,{table[:3]}_Bonus_100_2"
+                                     if value == 100 and table != tool.CONSTITUTION_TABLE else "")
+        rows.append(row)
+    return rows
+
+
+def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None) -> tuple[dict, dict]:
     """@return The made-up tables of the entry point of the tool (the reviewer's probe RDT1 of stage 1.1b). `thresholds`: the attribute
-    tables have the column EquipAbilities (stage 3.5b.2: Focus 100 gives Foc_Bonus_100_1)."""
+    tables have the column EquipAbilities (stage 3.5b.2: Focus 100 gives Foc_Bonus_100_1). `missing`: the table and the value of a row
+    that the source does not have (stage 2.2, finding LB-R7)."""
     tables, kinds, expansions = sheets("valid")
     tables[expansions.name] = expansions
     kinds[expansions.name] = "ExpansionData"
@@ -97,11 +123,9 @@ def rank_sources(short: bool, thresholds: bool = True) -> tuple[dict, dict]:
         ("ExperienceData", FakeSheet(tool.LEVEL_TABLE, [
             {"Level Number": level, "XPToLevel": level * 100, "AttributePoints": 0, "Health": 1, "AttributeRespecCost": 0}
             for level in range(70)])),
-        ("AttributeDefinition", FakeSheet(tool.CONSTITUTION_TABLE, [{"Level": 5, "Health": 0, "EquipAbilities": ""}])),
-        *[("AttributeDefinition", FakeSheet(table, [dict({"Level": 5, "Health": 0}, **({"EquipAbilities": ""} if thresholds else {})),
-                                                    dict({"Level": 100, "Health": 0},
-                                                         **({"EquipAbilities": f"{table[:3]}_Bonus_100_1,{table[:3]}_Bonus_100_2"}
-                                                            if thresholds else {}))]))
+        ("AttributeDefinition", FakeSheet(tool.CONSTITUTION_TABLE, attribute_rows(tool.CONSTITUTION_TABLE, True, None))),
+        *[("AttributeDefinition", FakeSheet(table, attribute_rows(table, thresholds,
+                                                                  missing[1] if missing is not None and missing[0] == table else None)))
           for name, table in getattr(tool, "ATTRIBUTE_TABLES", ()) if table != tool.CONSTITUTION_TABLE],
         ("VitalsBaseData", FakeSheet(tool.PLAYER_VITALS_TABLE, [{"VitalsID": tool.PLAYER_VITALS_ROW, "HealthBaseMax": 800,
                                                                  "StaminaBaseMax": 100, "ManaBaseMax": 100, "ManaBaseRegenRate": 0,
@@ -123,10 +147,10 @@ def rank_sources(short: bool, thresholds: bool = True) -> tuple[dict, dict]:
     return tables, kinds
 
 
-def run_ranks(short: bool, thresholds: bool = True) -> tuple[int, bool, object]:
+def run_ranks(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None) -> tuple[int, bool, object]:
     """@return The status of the entry point, True when the old file stayed, and the Mining cap with the expansion (with the document:
     run_ranks.document)."""
-    tables, kinds = rank_sources(short, thresholds)
+    tables, kinds = rank_sources(short, thresholds, missing)
     with tempfile.TemporaryDirectory(prefix="soulwarden-progression-check-") as folder:
         target = Path(folder) / "progression-tables.json"
         target.write_text("earlier output\n")
@@ -182,6 +206,14 @@ def main() -> int:
     print(f"{'ok  ' if passed else 'FAIL'}  no-equip-abilities: an attribute table with no column EquipAbilities: status {status}, old file "
           f"{'kept' if kept else 'replaced'} (stage 3.5b.2)")
     failures += 0 if passed else 1
+    # Stage 2.2 (code review of stage 3.5b.2, finding LB-R7): an attribute table that does not cover the attribute range stops the tool.
+    for case, missing in (("short-attribute-table", ("Focus", 100)), ("attribute-gap", ("Strength", 50))):
+        status, kept, mining = run_ranks(False, missing=missing)
+        focus = run_ranks.document.get("attributes", {}).get("abilities", {}).get("focus")
+        passed = status == 1 and kept
+        print(f"{'ok  ' if passed else 'FAIL'}  {case}: the table {missing[0]} with no row of the value {missing[1]}: status {status}, "
+              f"old file {'kept' if kept else 'replaced'}, focus thresholds {focus}")
+        failures += 0 if passed else 1
     return 1 if failures else 0
 
 

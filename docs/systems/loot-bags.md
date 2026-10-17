@@ -13,7 +13,8 @@ of the world are in [Chests](chests.md), the roll of a kill is in [Rewards](rewa
 | The base of the use: the record of a server child, the open, the end | `world/interactions.h` (`InteractionHandler::started`, `Interactions::spawn_container`, `remove_object`), [Interactions](interactions.md) |
 | The item moves: an item instance that is made one time and moves | `world/inventory.h` (`make_instances`, `receive`, `release`, `release_instance`, `release_equipped`) |
 | The wire: GlobalStorage (type 2938, slot 77), the selected Container (type 1755, slot 76), LootDrop (type 2027), the LootTracker entries of the bags | `server/rep/states/loot_bag_states.cpp`, `container_state.cpp`, `chest_states.cpp`, `server/rep/item_requests.h` (2939, 2942, 2801, 826), `server/rep/rep_session.cpp` (`handle_bag_request`, `handle_paperdoll_drop`) |
-| The bags in the store | `state/store.h` (`LootBagRow`, `list_loot_bags`, `write_loot_bag`, `delete_loot_bag`; schema 10: the tables `loot_bags`, `loot_bag_items`), test case GL6 |
+| The bags in the store | `state/store.h` (`LootBagRow`, `list_loot_bags`, `write_loot_bag`, `delete_loot_bag`; schema 10: the tables `loot_bags`, `loot_bag_items`; schema 12: an index on `bag_key` of each table and the column `emptied_at` of `loot_bags`), test cases GL6, RLB8, RLB9 |
+| The corrections of the code review of stage 3.5b.2 (stage 2.2) | `tests/review_loot_bags_tests.cpp` (RLB1 to RLB10), the rules below with the findings LB-R1 to LB-R9 |
 | The data of the bag (`interaction-data.json` format 3, member `lootContainers`) | `gamedata/interaction_data.h` (`LootContainer`), `tools/gamedata/interactions.py`, [Game data](../development/game-data.md) |
 | The commands | `server/http/loot_bag_commands.cpp`, `tools/world bags` |
 
@@ -36,6 +37,15 @@ The source of each rule is in brackets: game data, client code, live check (the 
   part of each bag under the actor of the bag; the item list under the prompt; 30 keys at most, the nearest bags with items first), and
   the selected Container (slot 76: the items of the open bag; the panel). The client clears its selected Container at the open: the
   server sends slot 76 after it took the request.
+- The selection of the GlobalStorage map: the open bag first, then the nearest bags with items, 30 keys at most. The world makes it
+  again at each change of a bag of the character, at the open of a bag, and after a walk of 2 m from the place of the last selection
+  (`LootBags::moved`, called by `World::place`: O(1) for a short walk; else the bags of the character only, MP-8) [code review of stage
+  3.5b.2, finding LB-R3; decision of an agent: 2 m, because the prompt of a bag shows at less than 2 m; test case RLB3].
+- The byte limit of the map [finding LB-R5; research storage.md: one bundle of the client takes 256,000 bytes at most, and a key
+  replaces the whole item vector of the client]: the map is one fragment. The encoder writes the keys in the sequence of the selection
+  and stops before the first key that makes the map field larger than 255,000 bytes. Each key that goes has its whole item vector
+  [decision of an agent: fewer keys, not map journals, because a journal does not make the map of the client larger; test case RLB5:
+  30 bags of 200 items give 28 keys].
 - The rarity of a bag: the rarity of its best item from its perk count (the largest count of each rarity 0 to 4: 0, 2, 3, 4, 5); the
   selector is the rarity, not above the particles of the slice (5) [client code 0x5C528D0; an approximation: no ForceRarity column, no
   gem adjustment; decision of an agent]. A bag of two parts has the rarity 0 [decision of an agent: one LootDrop state for each bag].
@@ -53,14 +63,43 @@ The source of each rule is in brackets: game data, client code, live check (the 
 - The discard [live check L7]: 1838 (a stack of the bag into the area "Drop items") and 826 (an item of the paperdoll) put the items
   into a new Discarded bag at the feet of the character, private to the character. A locked item does not move. The recovery is the
   pickup of the bag (test case GL4).
+- An item with Nonremovable or NotDroppable in its row of the item table does not leave the character: 1838 and 826 make no Discarded
+  bag, and 2801 does not give it into a bag. The request changes nothing (the inventory error `itemProtected`, before any write) [game
+  data; client: the ground drop target refuses nonremovable equipment, research chests-ground-loot.md; finding LB-R1; test case RLB1;
+  [Items and equipment](items-and-equipment.md)].
+- A part has 500 stacks at most (the Container of the client reads 500 elements; research storage.md V17). A give (2801) into a part
+  with a free place adds a new stack (the item keeps its instance id). A give into a part of 500 stacks goes into a stack of the same
+  item (the same item, bind flag, and perks) with a place for all of the quantity. With no such stack the give is refused (the refusal
+  `partFull`), and the item stays with the character. The check of the part is before the release of the item [finding LB-R4; decision
+  of an agent: all of the quantity or nothing; test case RLB4]. A discard (1838 has 501 entries at most) that would make a part of more
+  than 500 stacks is refused (`partFull`): nothing changes. A roll of more than 500 stacks, and a stored part of more than 500 stacks
+  (only from a backend before stage 2.2), keep the stacks after the first 500 as kept items (see the next rule).
+- An item of a kill that the item catalog does not have stays in the part as a kept item: a row with no instance id (the item, the
+  quantity, the gear score of the roll, the perks). The client does not see it: no map entry and no panel element. A part with only
+  kept items is Looted for the owner, and the bag has no fast end: it ends at its lifetime. A log line names the item. A load with a
+  catalog that has the item makes its instance (the start values of the item table, and the gear score of the roll when the roll has
+  one) when the part has a place for all of its stacks [decision of the orchestrator: no item is lost, the rule of the chests (finding
+  CH-R3 of stage 3.5b.1); test case RLB10].
 - The lifetime [game data; live check L6]: KillSelfDelay of the slice (180 s from the bag), and FastKillSelfDelay (1.25 s) after the
   last item of the last part. The client does not end a bag at its time: the server removes the record, and an open panel closes (3746).
   The end time is on the wall clock in the rows: a restart keeps the remaining time, and the time goes on while the backend is off; a
   bag whose time ended while the backend was off goes at the start [decision of an agent]. A give (2801) does not start the time again
   [decision of an agent]. A request after the end finds no bag (test case GL5).
+- The fast end is in the rows too: the take of the last item of the last part writes the absolute fast end into the row of its
+  character (`emptied_at`, schema 12), in the transaction of the take. The loader takes the largest value of the rows of a bag whose
+  parts are all empty. A restart does not renew it, and a bag whose fast end came while the backend was off goes at the start. The bag
+  keeps its lifetime too [finding LB-R9; decision of an agent: the largest value, because each new empty time writes a later value;
+  test case RLB9].
+- One end check for each operation [finding LB-R2]: the open (TakeAllOption, OpenStorageOption), the takes (2939, 2942), and the give
+  (2801) are refused at the end of the lifetime and at an active fast end, before a transfer can clear the fast end. The result does
+  not depend on the order of the request and the due tick (test case RLB2). A give before the fast end refills the bag, as before.
 - The cost (MP-8): a request finds its bag by the entity of its use (a hash); the states of a character look only at its own bags; the
   end of a bag is an entry of the due list; the interest of a session finds a bag in the grid of the interaction base. No look at each
-  bag of the world (test case GL7: the same work with 2,000 and with 20,000 far bags, 50 characters, the time limit 2 s).
+  bag of the world (test case GL7: the same work with 2,000 and with 20,000 far bags, 50 characters, the time limit 2 s). The end of a
+  bag deletes its rows through the index of the bag key (schema 12, finding LB-R8; test case RLB8: no full scan with 20,000 far bags,
+  and 100 due ends in one tick below 1 s).
+- The loader of the interaction data refuses a LootDrop slot that is the slot of the PositionInTheWorld, BuildableController,
+  Ownership, or Vitals component, or of an Interact bound, of the template of the container [finding LB-R6; test case RLB6].
 - Not in this stage: the shared bag of a death, the permissions of a bag for a group, the trade between players [decision of the user];
   the special locks, keys, quests, and events (3.5b.3).
 
@@ -87,3 +126,15 @@ values as `tools/world bags`).
 - The HUD shows no time of a bag. The DelayedEvent state of the slice changes nothing in the client (live check L6): do not send it.
 - An old `interaction-data.json` (format 2) has no loot container: the items of a kill go into the bag of the character. Write the
   file again with `tools/gamedata/interactions.sh`.
+- An `item-catalog.json` from before stage 2.2 (12 columns) has no removal protection: a quest item can then go into a Discarded bag.
+  Write the file again with `tools/gamedata/items.sh`.
+- A bag of schema 10 that was empty at the restart has no stored fast end: it gets a new fast end of 1.25 s from the start.
+- A kept item gets a new instance id at each start, until a take or a give writes its part again.
+- The roll of an item that the item catalog does not have has no gear score and no perk (the range and the perk places come from the
+  row of the item): a later load makes the item with the start gear score of its row (as the kept roll of a chest).
+- A stored part with more than 500 stacks (only from a backend before stage 2.2): the stacks after the first 500 become kept items. A
+  later load makes them with the start values of the item table: the durability of such a stack is then full again.
+- The storage map of many large bags has fewer than 30 keys (the byte limit): a far bag can show no item list under its prompt until
+  the character comes nearer.
+- `Store::list_loot_bags` joins the item rows to their parts with a linear search: its work grows with the number of item rows times
+  the number of parts. It is a cost of the start only, not of the world thread after it (not measured; not a finding of the review).

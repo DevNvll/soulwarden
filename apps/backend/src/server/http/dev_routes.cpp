@@ -49,6 +49,10 @@
 //                                                        is its death)
 //   POST /v1/dev/world/force-loot?character=ID&force=0|1 the loot switch: each kill of the
 //                                                        character drops loot and coin (or not)
+//   GET  /v1/dev/world/time                              the world time (stage 2.2): the time, the phase, the
+//                                                        next phase, the cycle, the counts
+//   POST /v1/dev/world/time?character=ID&time=HH:MM[:SS] the time of the day of the whole world (the
+//                                                        character names who gives the command)
 //   GET  /v1/dev/loot/roll?kind=KIND[&level=N][&count=N][&forced=1][&character=ID]
 //                                                        roll the loot table of a kind many times
 //                                                        and count the items (nothing is given)
@@ -314,6 +318,11 @@ service::HttpResponse list_entities(const Services& services, const RouteContext
                                  {"basicAttacks", commands::basic_attacks_json(target)},
                                  {"spawnPointsWaiting", creatures.waiting_count()},
                                  {"removedByRespawn", creatures.counts().removedByRespawn},
+                                 // Stage 2.2: the creatures that left at the end of the phases of their point, the points out of
+                                 // their phases, and the world time.
+                                 {"removedByPhase", creatures.counts().removedByPhase},
+                                 {"outOfPhase", creatures.counts().outOfPhase},
+                                 {"worldTime", commands::world_time_json(target)},
                                  // The navigation: the tiles of the data, the path searches, and the sight tests.
                                  {"navigation",
                                   {{"data", navigation.has_data()},
@@ -902,6 +911,14 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/world/ignore", "dev.world_ignore", command_route(services, commands::set_creatures_ignore));
     router.add("POST", "", "/v1/dev/world/hurt", "dev.world_hurt", command_route(services, commands::hurt_character));
     router.add("POST", "", "/v1/dev/world/force-loot", "dev.world_force_loot", command_route(services, commands::set_force_loot));
+    // The world time (stage 2.2): the readback, and the command for the whole world (a character names who gives it).
+    router.add("GET", "", "/v1/dev/world/time", "dev.world_time", [&services](const RouteContext& context) {
+        if (!context.request.host.empty()) {
+            return message(403, "forbidden");
+        }
+        return in_world(services, [](world::World& target) { return json_reply(200, commands::world_time_json(target).dump()); });
+    });
+    router.add("POST", "", "/v1/dev/world/time", "dev.world_time_set", command_route(services, commands::set_world_time));
     router.add("GET", "", "/v1/dev/loot/roll", "dev.loot_roll", [&services](const RouteContext& context) {
         if (!context.request.host.empty()) {
             return message(403, "forbidden");

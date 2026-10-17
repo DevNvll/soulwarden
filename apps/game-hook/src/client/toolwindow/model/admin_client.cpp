@@ -185,6 +185,16 @@ void read_state(const json& reply, Snapshot& snapshot) {
     for (std::size_t axis = 0; axis < 3; ++axis) {
         snapshot.position[axis] = snapshot.hasPosition ? position[axis].get<float>() : 0.0F;
     }
+    // The world time (stage 2.2): a backend from before stage 2.2 has no such member.
+    const json& worldTime = member_of(reply, "worldTime");
+    snapshot.hasWorldTime = worldTime.is_object() && !text_of(worldTime, "time").empty();
+    snapshot.worldTime = text_of(worldTime, "time");
+    snapshot.phase = text_of(worldTime, "phase");
+    snapshot.nextPhase = text_of(worldTime, "nextPhase");
+    snapshot.secondsToNextPhase = number_of(worldTime, "secondsToNextPhase");
+    const json& cycle = member_of(worldTime, "cycle");
+    snapshot.dayLength = number_of(cycle, "dayLength");
+    snapshot.nightLength = number_of(cycle, "nightLength");
     // The creatures near the character (the member is there only for a character with a state).
     const json& creatures = member_of(reply, "creatures");
     snapshot.creatureData = flag_of(creatures, "data");

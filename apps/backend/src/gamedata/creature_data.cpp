@@ -27,12 +27,19 @@ constexpr std::uint64_t kBehaviorFormat = 2;
 /** Format 3 (stage 3.4e): the patrol route of a spawn point, and the wander values and the ambient speed of a slice. */
 constexpr std::uint64_t kPatrolFormat = 3;
 /**
+ * Format 4 (stage 2.2): the phase mask and the despawn flag of a spawn point (the TimeOfDayConstraintComponent of its spawner). A file
+ * of an older format has no constraint: each point makes its creature in each phase.
+ */
+constexpr std::uint64_t kPhaseFormat = 4;
+/**
  * Number of values of one spawn point: placement id, kind, level, x, y, z, yaw, respawnMin,
  * respawnMax; format 2: and the terrain height; format 3: and the index of its route (null: none).
  */
 constexpr std::size_t kSpawnPointColumns = 9;
 constexpr std::size_t kSpawnPointColumnsWithGround = 10;
 constexpr std::size_t kSpawnPointColumnsWithRoute = 11;
+/** Format 4: and the phase mask (0 to 15), the despawn flag (true or false), and the cooldown flags (0 to 3). */
+constexpr std::size_t kSpawnPointColumnsWithPhases = 14;
 /** The longest task name of a waypoint. */
 constexpr std::size_t kLongestTask = 128;
 /** Limits of the behavior values: a distance and a reach in meters, a speed in meters in one second, a time in seconds. */
@@ -580,12 +587,26 @@ bool read_spawn_point(const json& row, std::size_t columns, SpawnPoint& point) {
         return false;
     }
     point.id = row[0].get<std::string>();
-    if (columns == kSpawnPointColumnsWithRoute && !row[10].is_null()) {
+    if (columns >= kSpawnPointColumnsWithRoute && !row[10].is_null()) {
         std::uint32_t route = 0;
         if (!read_number(row[10], route)) {
             return false;
         }
         point.route = route;
+    }
+    if (columns == kSpawnPointColumnsWithPhases) {
+        // The phase mask, the despawn flag, and the cooldown flags (format 4): a mask with a bit above dusk, a flag that is not a truth
+        // value, or a cooldown value with a bit above 1 is a fault of the file.
+        std::uint32_t phases = 0;
+        std::uint32_t cooldowns = 0;
+        if (!read_number(row[11], phases) || phases > kEachPhase || !row[12].is_boolean() || !read_number(row[13], cooldowns)
+            || cooldowns > 3) {
+            return false;
+        }
+        point.phases = static_cast<std::uint8_t>(phases);
+        point.leavesAtPhaseEnd = row[12].get<bool>();
+        point.cooldownAfterPhaseEnd = (cooldowns & 1U) != 0;
+        point.cooldownOutOfPhase = (cooldowns & 2U) != 0;
     }
     if (columns >= kSpawnPointColumnsWithGround && !row[9].is_null()) {
         // The terrain height at the point. Null: the world has no height map there.
@@ -640,6 +661,7 @@ void CreatureData::clear() {
     m_areaSlices = 0;
     m_statusActionSlices = 0;
     m_routedPoints = 0;
+    m_phasedPoints = 0;
     m_wanderingKinds = 0;
     m_levels.clear();
     m_fightingSlices = 0;
@@ -669,8 +691,8 @@ bool CreatureData::load(const std::string& path) {
     const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned()
                                      ? document["format"].get<std::uint64_t>()
                                      : 0;
-    if (format != kFirstFormat && format != kBehaviorFormat && format != kPatrolFormat) {
-        m_error = "the file does not have the format 1, 2, or 3";
+    if (format != kFirstFormat && format != kBehaviorFormat && format != kPatrolFormat && format != kPhaseFormat) {
+        m_error = "the file does not have the format 1, 2, 3, or 4";
         return false;
     }
     const bool withBehavior = format >= kBehaviorFormat;
@@ -708,7 +730,8 @@ bool CreatureData::load(const std::string& path) {
     }
     std::vector<SpawnPoint> points;
     points.reserve(document["spawnPoints"].size());
-    const std::size_t columns = withRoutes ? kSpawnPointColumnsWithRoute
+    const std::size_t columns = format >= kPhaseFormat ? kSpawnPointColumnsWithPhases
+                                : withRoutes ? kSpawnPointColumnsWithRoute
                                 : withBehavior ? kSpawnPointColumnsWithGround
                                                : kSpawnPointColumns;
     for (const json& row : document["spawnPoints"]) {
@@ -900,6 +923,7 @@ bool CreatureData::set_full(std::vector<CreatureSlice> slices,
             m_rootedPoints += on_terrain(point) ? 0 : 1;
         }
         m_routedPoints += point.route ? 1 : 0;
+        m_phasedPoints += point.phases != kEachPhase ? 1 : 0;
     }
     build_keys();
     return true;
@@ -1121,6 +1145,10 @@ bool CreatureData::check() {
         if (m_levels.count(point.level) == 0) {
             m_error = "spawn point " + std::to_string(index) + " has the level " + std::to_string(point.level)
                       + ", and the level table has no row for this level";
+            return false;
+        }
+        if (point.phases > kEachPhase) {
+            m_error = "spawn point " + std::to_string(index) + " has a phase mask with a bit that is not a phase of the day";
             return false;
         }
         if (point.ground && (!std::isfinite(*point.ground) || std::abs(*point.ground) > kMaxVertical)) {

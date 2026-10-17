@@ -37,6 +37,12 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   that names the entity of a different character changes nothing and gets no reply.
 - The lock of an item protects it from a request of a client that takes it away from the
   character (the drop). It does not stop an equip, and a development command has no lock rule.
+- The removal protections of the item table (stage 2.2; code review of stage 3.5b.2, finding LB-R1): an item with Nonremovable or
+  NotDroppable in its row (the catalog columns `nonRemovable` and `notDroppable`; for example the quest items, the Azoth staffs, and
+  the artifacts) does not leave the character by a request of a client. The inventory discard (1838, with and with no loot
+  container), the equipped discard (826), and the give into a loot bag (2801) refuse it with the error `itemProtected`, before any
+  write (`Inventory::release`, `release_equipped`, `drop`). A development command has no such rule. A catalog file from before stage
+  2.2 has no protection [game data; client: the ground drop target refuses nonremovable equipment; test case RLB1].
 - The drop of a player (stage 3.5b.2; [Loot bags](loot-bags.md)): 1838 (a stack of the bag) and 826 (an item of the paperdoll) put
   the item instances into a new Discarded bag at the feet of the character, private to it, in one transaction with the bag rows; the
   character can take them back until the end of the bag (180 s). A whole stack keeps its instance id; a part of a stack gets a new id.

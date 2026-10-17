@@ -34,8 +34,9 @@ This is an independent project with no connection to Amazon Games. The repositor
 - Creatures walk their patrol routes from the game files, or wander near their place. After a fight a creature runs back to the place where it saw you. On that way it is immune and walks the way that it came, and at that place it has its full health and patrols again.
 - Health and death. Your character loses health and dies, and it comes back at the nearest spirit shrine or inn.
 - Rewards of a kill. A creature that you kill gives experience and weapon mastery experience, sometimes coin, and sometimes loot from the loot tables of the game, with the notices of the HUD. A loot item gets its perks with the perk roll of the game. A creature of a spawn point comes back after its respawn time, 6 minutes for most of them.
-- Loot bags. The loot of a kill goes into a loot bag at the place of the creature, with a light beam of the color of its best item. Only you see your bag; each character with a part of the kill has its own bag content. Press E at the bag to take all, or T (or Tab near the bag) to open its panel: take one item with LSHIFT and a click, a part of a stack with LCTRL and a click, or all with Take All. When your bag is full, you take what fits and the rest stays. The bag goes away 3 minutes after the kill, or 1.25 s after you took the last item. An item that you drag to "Drop items" (also an equipped item) goes into a bag at your feet, and you can take it back for 3 minutes.
-- Mana. Your maximum mana has the bonus of your Focus (Focus 100 or more: 110) and the bonuses of your perks and effects, and the mana bar below the crosshair goes away at full mana.
+- Loot bags. The loot of a kill goes into a loot bag at the place of the creature, with a light beam of the color of its best item. Only you see your bag; each character with a part of the kill has its own bag content. Press E at the bag to take all, or T (or Tab near the bag) to open its panel: take one item with LSHIFT and a click, a part of a stack with LCTRL and a click, or all with Take All. When your bag is full, you take what fits and the rest stays. The bag goes away 3 minutes after the kill, or 1.25 s after you took the last item. An item that you drag to "Drop items" (also an equipped item) goes into a bag at your feet, and you can take it back for 3 minutes. A quest item, and each other item that the game does not let you drop, stays in your bag.
+- Mana. Your maximum mana has the bonus of your Focus (Focus 100 or more: 110) and the bonuses of your perks and effects. After a spell the mana bar below the crosshair fills again while your mana comes back, and it goes away at full mana.
+- Day and night. The world has one day and night cycle for each player: 30 minutes of real time from 06:00 to 19:00, and 15 minutes of night, as in the game. The sky, the sun, the moon, the light, and the shadows follow it, and the time goes on after a restart from where it stopped (it does not move while the server is stopped; a new world starts at noon). Some creatures of the world come only at night or only by day, and they go away at the end of their time (for example the ghosts near the lake of Brightwood Isle come at night and go at 06:26). The rain, the snow, the fog, and the light of caves and dungeons show at their places, as before. The tab "World" of the tool window shows the time and sets it for the whole world.
 - Item perks and gems. An item has up to five perks; the tooltip shows them, the gem, the gear score, and the rarity. The perks of your gear give their values: health, armor, absorption, damage, the gem conversion, the regeneration, and the perks of a hit (Sundering Shockwave, Insatiable Gravity Well, Refreshing Move, the void perks). The equip load changes your damage.
 - Potions, food, and dust. The quick slot keys (3 to 6) use the item of the slot: it heals, gives its effect, and starts its cooldown, with the countdown on the slot. The other potions of the same kind get 80 percent of the cooldown. An item above the level of your character does nothing. The HUD shows the icon of the effect with its countdown, and the character sheet shows the attributes of a food and the armor of a dust.
 - The heart rune. Hits fill the charge of the heart rune (key G). At a full charge, G starts Detonate: its icon and its effect show on your character, and 3 seconds later it hurts each creature within 5 m.
@@ -64,7 +65,7 @@ This is an independent project with no connection to Amazon Games. The repositor
 - No quests, no ranged weapons, and no magic. People in the settlements say only their first line: talk to them and press E or Escape to end the talk.
 - Storage sheds, the chests with a key, a lock, a quest, or an event, gathering nodes, shops, inns, and teleport doors do not work yet: the server refuses their use (a window of the client can open and stays empty). A crafting station opens its screen, but a craft does nothing. No camps. A lore page gives no experience yet.
 - Some persons of the settlements (the artificer at the forge of Oxboro) are not in the interaction data: a talk with them closes at once.
-- No world clock, so some sessions are dark.
+- The weather does not change by itself: the rain and the storms of the game are at their places, and the weather of an event (a siege, a corruption breach, a boss) comes with its event, which is not there yet.
 - One player. In a development run a second character can stand in the world, and that is all.
 
 The [roadmap](docs/ROADMAP.md) has the order of the work. Combat comes first.
@@ -119,9 +120,9 @@ The backend reads its tables from your game copy. Each tool above writes one fil
 | --- | --- |
 | `appearance.sh` | Each character has the same default body |
 | `slice_ids.sh` | The server does not check the target of a client message |
-| `items.sh` | No items, and a new character has no clothing |
+| `items.sh` | No items, and a new character has no clothing. With a file from before stage 2.2 you can drop a quest item into a bag that goes away: run the tool again |
 | `progression.sh` | No levels and no skill points. With a file from before stage 1.1b, no DLC: level 60 and trade skill 200 at most, and the flail tree is locked. With a file from before stage 3.5b.2 your Focus gives no mana bonus, and the mana bar stays at 91 percent at full mana: run the tool again |
-| `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still; with a file from before the ability stage, a knockdown shows the small hit reaction; with a file from before the projectile stage, a shot hits each creature with one size: run the tool again |
+| `creatures.sh` | No creatures. With a file from before the fight stage, the creatures stand still; with a file from before the ability stage, a knockdown shows the small hit reaction; with a file from before the projectile stage, a shot hits each creature with one size; with a file from before stage 2.2, the creatures of the night and of the day come at each time: run the tool again |
 | `combat.sh` | An attack does nothing. With a file from before the fight stage, your armor does not lower the damage of a creature; with a file from before the loot stage, a kill gives no weapon mastery experience; with a file from before the stage of the pulls and pushes, a hit moves no creature: run the tool again |
 | `loot.sh` | A kill gives no experience, no coin, and no loot |
 | `abilities.sh` | An ability does nothing. With a file from before the itemization stage, a perk of a hit, a consumable, and the heart rune have no status data, and the mana does not come back: run the tool again |
@@ -139,13 +140,15 @@ Some tables of the game have Oodle compression. `creatures.sh`, `places.sh`, `in
 
 ## The tool window
 
-Press F8 in the world. The window has five tabs for items, the character, skills, creatures, and travel. It gives items, levels, and skills at once; in the world only kills give them yet.
+Press F8 in the world. The window has six tabs for items, the character, skills, creatures, travel, and the world. It gives items, levels, and skills at once; in the world only kills give them yet.
 
 The tab "Items" gives an item with a gear score and with perks: type the PerkID texts with "," between them (for example `PerkID_Stat_TwoHandSoldier,PerkID_Weapon_CDRBasic,PerkID_Gem_VoidDMG4`; a gem is a perk).
 
 The tab "Character" shows your health. "Heal" gives your character its full health, and it makes a dead character live again at its place. With the mark "Creatures ignore this character", no creature attacks you, and your kills give nothing. With the mark "Each kill drops loot and coin", each kill of your character drops loot and coin (without it, a wolf drops loot in about 1 of 10 kills). `SOULWARDEN_CREATURE_BEHAVIOR=0` starts the game with creatures that stand still. After you come into the world, travel, or respawn, no creature attacks you for 10 seconds unless you hit it. Out of a fight, your health comes back in about 30 seconds.
 
 The tab "Travel" lists the spirit shrines and the inns of each territory. Type a part of a name in the filter, click a place, and press "Travel". Your character is there after a loading screen of some seconds, with the creatures of that place around it.
+
+The tab "World" shows the time of the world and its phase (night, dawn, day, dusk). Set the hour and the minute and press "Set", or press 06:00, 12:00, 19:00, or 00:00: the sky changes at once, for each player of the world.
 
 While the window is open, the keyboard and the pointer go to it and not to the game. `SOULWARDEN_TOOL_WINDOW=0` starts the game without it.
 

@@ -116,6 +116,22 @@ SOULWARDEN_GAME_HOOK_OUTPUT=~/Games/soulwarden/work/hook-test/steam_api64.dll to
   (`InteractionBlock`, `InputEntry::interaction`), and the state decoder knows the states 3752 and 2930. IT10 runs
   `tools/gamedata/check_interactions_tool.py`. IT5 adds a trigger to a database file (a refused row); IT8 has a time limit of 300 ms
   for 400,000 lookups and of 2 s for 300 reports with a catalog of 90,008 objects.
+- Stage 2.2 adds the cases WT1 to WT9 (`tests/world_time_tests.cpp`: the world time: the cycle and the wire with the vector of
+  the research and the float model of the client, two sessions and a third one with the deliveries and the clock correction, the
+  requests that change nothing, the store with a database file and a refused write (a trigger), the creature points with a time
+  constraint with two observers, the load at the size of the world with 50 players (limit 50 ms for the tick of a phase edge and of
+  a command), the creature file of format 4, the cases phase-* of `check_creature_tool.py` (WT8), and the admin and development
+  commands) and MN2 (`tests/mana_tests.cpp`: the mana prediction message 4289). The fixture `TimeHost` of WT2 to WT5 passes time in
+  steps of 1 s (`pass`): a larger step of the manual clock ends each session (the idle limit of 30 s). The interaction fixture
+  (`Shop`) takes the ids of the player slice for MN2.
+- Stage 2.2 adds the cases RLB1 to RLB10 (`tests/review_loot_bags_tests.cpp`: the corrections of the code review of stage 3.5b.2,
+  findings LB-R1 to LB-R9, and the open point of 3.5b.2, an item of a kill that the item catalog does not have; each one fails on the
+  tree of stage 3.5b.2 and passes with the correction, with only the interfaces of that tree). RLB1 runs the new check
+  `tools/gamedata/check_item_catalog_tool.py`: it writes a catalog of made-up rows into the work folder, and the case loads that file.
+  RLB7 runs the review cases of `check_progression_tool.py`. RLB4, RLB8, RLB9, and RLB10 write database files into the work folder
+  (RLB4 and RLB8 change them with SQL: a row of a 501st stack, and the tables of schema 10 for the migration). RLB8 has a load case with
+  100 due ends and 20,000 far bags and a limit of 1 s, written in the case before it runs; RLB5 makes 30 bags of 200 items. B11 now
+  checks the schema version 12 (version 11: the table `world_time`; version 12: the bag index and `emptied_at`).
 - Stage 3.5b.2 adds the cases GL1 to GL7 (`tests/loot_bag_tests.cpp`: the personal loot bags of a kill and of a discard: the bag and
   its states, the panel and the takes, two sessions and a known reference of a different character, the discard and its recovery, the
   lifetime on a synthetic clock at its boundaries, a refused write and a restart, and the load with 2,000 and 20,000 far bags and a limit

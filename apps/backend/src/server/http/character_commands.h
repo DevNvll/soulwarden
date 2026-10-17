@@ -254,6 +254,19 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
  */
 [[nodiscard]] nlohmann::json health_json(world::World& world, const std::string& character);
 
+// The world time commands (stage 2.2, world/world_time.h, server/http/world_time_commands.cpp).
+// set_world_time: `time` ("HH:MM" or "HH:MM:SS", 00:00 to 23:59:59): the time of the day of the whole world, not of the character
+// (the character names who gives the command, rule MP-9). Each player gets the new time; the reply has "scope":"world" and
+// "worldTime". A time that is not a time of the day gives the reply 400, and a refused database write the reply 500: the time does
+// not change.
+[[nodiscard]] WorldCommand set_world_time(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * @return The world time (world thread): the time ("HH:MM:SS"), the hour, the phase and its number, the next phase and the seconds to
+ *         it, the position in the cycle, the cycle (its lengths, dawn, dusk), and the counts (a stored position at the start, the phase
+ *         changes, the commands, the saves).
+ */
+[[nodiscard]] nlohmann::json world_time_json(world::World& world);
+
 /** @return The travel places of the backend: "loaded", and the list "places" (id, kind, name, territory, position). */
 [[nodiscard]] nlohmann::json travel_places_json(const gamedata::TravelPlaces* places);
 

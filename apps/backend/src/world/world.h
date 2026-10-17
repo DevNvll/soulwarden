@@ -52,6 +52,7 @@
 #include "world/stamina.h"
 #include "world/statuses.h"
 #include "world/world_clock.h"
+#include "world/world_time.h"
 
 // The world object. It has the clock of the world, the task queue, the timers, and the entity
 // table: each character that is in the world is one entity, with the character id as its key
@@ -830,6 +831,10 @@ public:
     [[nodiscard]] const Projectiles& projectiles() const {
         return m_projectiles;
     }
+    /** @return The world time (stage 2.2): the day cycle of the world, its phase, and its record for the clients. */
+    [[nodiscard]] WorldTime& world_time() {
+        return m_worldTime;
+    }
     /** @return The navigation: the ground, the next step, and the sight of a creature. */
     [[nodiscard]] Navigation& navigation() {
         return m_navigation;
@@ -939,6 +944,8 @@ private:
     LootBags m_lootBags;
     Revision m_lastSpell{0};
     Revision m_lastProjectile{0};
+    /** The world time (stage 2.2): one day cycle for the whole world. */
+    WorldTime m_worldTime;
 };
 
 template <class Result>

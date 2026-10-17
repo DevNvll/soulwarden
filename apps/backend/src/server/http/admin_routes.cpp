@@ -74,6 +74,8 @@
 //                              gets 3746)
 //          clear_chest_claim   chest (the placement key of a chest): the loot claim of the character on it goes away
 //                              (stage 3.5b.1): the character can open the chest again
+//          set_world_time      time ("HH:MM" or "HH:MM:SS"): the time of the day of the whole world (stage 2.2): each
+//                              player gets it; the character of the command names who gives it
 //        remove_creature, set_creature_health, and kill_creature change only a creature of
 //        the list of the character (150 m or less from it), and the character must be in the
 //        world: a different creature gives the reply 404, and nothing changes.
@@ -91,7 +93,8 @@
 // and its interactions (the member "interactions", stage 2.5a: its committed interaction and the
 // objects of the interaction data 30 m or less from it, with their state), and its chests (the member
 // "chests", stage 3.5b.1: its loot claims and the chests 30 m or less from it), and its loot bags (the member "lootBags", stage 3.5b.2:
-// its open bag and the items of its own part of each bag).
+// its open bag and the items of its own part of each bag), and the world time (the member "worldTime", stage 2.2: the time, the phase,
+// and the cycle of the world).
 //
 // Rules of each route:
 // - The request has the token of this start in the header X-Soulwarden-Admin. With no token or
@@ -160,6 +163,8 @@ constexpr NamedCommand kCommands[] = {
     {"cancel_interaction", commands::cancel_interaction},
     // The chest command (stage 3.5b.1): a claim of the character.
     {"clear_chest_claim", commands::clear_chest_claim},
+    // The world time (stage 2.2): a command for the whole world; the character names who gives it.
+    {"set_world_time", commands::set_world_time},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
@@ -275,6 +280,8 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 reply["chests"] = commands::chests_view(target, selected, commands::kAdminChestRange);
                 // The loot bags of the character (stage 3.5b.2): its own parts only.
                 reply["lootBags"] = commands::loot_bags_view(target, selected);
+                // The world time (stage 2.2): one value for the whole world.
+                reply["worldTime"] = commands::world_time_json(target);
             }
         }
         return json_reply(200, reply.dump());

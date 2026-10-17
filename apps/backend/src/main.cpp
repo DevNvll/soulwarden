@@ -401,6 +401,15 @@ int main(int argc, char** argv) {
                        creatureData.spawn_points().size(),
                        creatureData.wandering_kinds());
         }
+        // The time constraints of the spawners (stage 2.2, format 4): a point makes its creature only in its phases of the day.
+        if (creatureData.phased_points() == 0) {
+            log::write("backend: no spawn point of the creature data has a time constraint (a file of a tool from before stage 2.2): "
+                       "each point makes its creature in each phase of the day. Make the file again with tools/gamedata/creatures.sh");
+        } else {
+            log::write("backend: creature time constraints: %zu of %zu spawn points make their creature only in some phases of the day",
+                       creatureData.phased_points(),
+                       creatureData.spawn_points().size());
+        }
     }
     if (options.creatureBehavior) {
         log::write("backend: the behavior of the creatures is on");
@@ -747,6 +756,10 @@ int main(int argc, char** argv) {
     world.forget_thread();
     // No thread calls the game server now. The world saves the position of each character.
     repServer.stop();
+    // The position of the day cycle (stage 2.2, decision D3): the next start continues from it.
+    if (world.world_time().save("orderly stop")) {
+        log::write("backend: the world time is saved");
+    }
     log::write("backend: stopped");
     return 0;
 }

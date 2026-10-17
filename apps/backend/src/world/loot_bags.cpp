@@ -40,8 +40,39 @@ std::uint32_t quantity_of(const std::vector<ItemInstance>& items) {
     return total;
 }
 
+std::uint32_t quantity_of(const BagPart& part) {
+    std::uint32_t total = quantity_of(part.items);
+    for (const GrantItem& item : part.kept) {
+        total += item.quantity;
+    }
+    return total;
+}
+
+std::string kept_text(const std::vector<GrantItem>& items) {
+    std::string text;
+    for (const GrantItem& item : items) {
+        text += (text.empty() ? "" : ", ") + std::to_string(item.quantity) + " " + item.itemId;
+    }
+    return text;
+}
+
+/** @return True when the part has no item: no instance and no kept roll. */
+bool part_empty(const BagPart& part) {
+    return part.items.empty() && part.kept.empty();
+}
+
+/** @return True when each part of the bag has no item (the fast end; a kept roll keeps the bag). */
+bool bag_empty(const LootBag& bag) {
+    return std::all_of(bag.parts.begin(), bag.parts.end(), [](const auto& part) { return part_empty(part.second); });
+}
+
+/** @return The kept roll of an instance (a stack beyond the 500 stacks of a part): its item, quantity, gear score, and perks. */
+GrantItem roll_of(const ItemInstance& item) {
+    return GrantItem{item.itemId, item.quantity, item.gearScore != 0 ? std::optional<std::uint32_t>(item.gearScore) : std::nullopt, item.perks};
+}
+
 state::LootBagRow make_row(const std::string& key, std::uint32_t kind, const std::string& source, const state::WorldPosition& position,
-                           const BagPart& part, std::int64_t createdAt, std::int64_t expiresAt) {
+                           const BagPart& part, std::int64_t createdAt, std::int64_t expiresAt, std::int64_t emptiedAt = 0) {
     state::LootBagRow row;
     row.bagKey = key;
     row.kind = kind;
@@ -50,6 +81,7 @@ state::LootBagRow make_row(const std::string& key, std::uint32_t kind, const std
     row.rarity = part.rarity;
     row.createdAt = createdAt;
     row.expiresAt = expiresAt;
+    row.emptiedAt = emptiedAt;
     for (std::size_t index = 0; index < part.items.size(); ++index) {
         const ItemInstance& item = part.items[index];
         state::ItemRow entry;
@@ -63,6 +95,17 @@ state::LootBagRow make_row(const std::string& key, std::uint32_t kind, const std
         entry.maxDurability = item.maxDurability;
         entry.flags = item.flags;
         entry.chrono = item.chrono;
+        entry.perks = item.perks;
+        row.items.push_back(std::move(entry));
+    }
+    // The kept rolls (stage 2.2): an empty instance id; the item, the quantity, the gear score (0: the value of the item table), the perks.
+    for (const GrantItem& item : part.kept) {
+        state::ItemRow entry;
+        entry.container = 0;
+        entry.slot = static_cast<std::uint32_t>(row.items.size());
+        entry.itemId = item.itemId;
+        entry.quantity = item.quantity;
+        entry.gearScore = item.gearScore.value_or(0);
         entry.perks = item.perks;
         row.items.push_back(std::move(entry));
     }
@@ -121,6 +164,8 @@ const char* bag_refusal_text(BagRefusal refusal) {
         return "the character is dead or out of the range of the bag";
     case BagRefusal::storeFailed:
         return "the store did not write the change";
+    case BagRefusal::partFull:
+        return "the part of the bag would have more than 500 stacks";
     }
     return "?";
 }
@@ -140,6 +185,17 @@ const gamedata::LootContainer* LootBags::container() const {
 
 std::int64_t LootBags::wall_ms(WorldClock::time_point time) const {
     return static_cast<std::int64_t>(m_world.clock().wall_time_ns(time) / 1000000ULL);
+}
+
+WorldClock::time_point LootBags::fast_end() const {
+    const gamedata::LootContainer* data = container();
+    return m_world.clock().now()
+           + std::chrono::milliseconds(data != nullptr ? static_cast<long long>(std::lround(data->emptyLifetime * 1000.0F)) : 0LL);
+}
+
+bool LootBags::ended(const LootBag& bag) const {
+    const WorldClock::time_point now = m_world.clock().now();
+    return now >= bag.expires || (bag.emptied && now >= *bag.emptied);
 }
 
 std::uint32_t LootBags::rarity_of(const std::vector<ItemInstance>& items) const {
@@ -173,7 +229,7 @@ const LootBag* LootBags::find_entity(EntityId entity) const {
 state::LootBagRow LootBags::row_of(const LootBag& bag, const std::string& characterId) const {
     const auto part = bag.parts.find(characterId);
     return make_row(bag.key, bag.kind, bag.source, bag.position, part != bag.parts.end() ? part->second : BagPart{}, bag.createdAt,
-                    bag.expiresAt);
+                    bag.expiresAt, bag.emptied ? wall_ms(*bag.emptied) : 0);
 }
 
 BagResult LootBags::refuse(BagRefusal refusal, const Entity& character, const char* what, const std::string& bag) {
@@ -198,6 +254,11 @@ void LootBags::load() {
     const WorldClock::time_point now = m_world.clock().now();
     const std::int64_t wallNow = wall_ms(now);
     std::map<std::string, LootBag> bags;
+    // The fast end of each bag: the largest value of its rows (finding LB-R9; the take that emptied the bag wrote it).
+    std::map<std::string, std::int64_t> emptiedAt;
+    std::size_t beyond = 0;
+    std::size_t made = 0;
+    std::size_t kept = 0;
     for (auto& [characterId, row] : m_world.store().list_loot_bags()) {
         LootBag& bag = bags[row.bagKey];
         if (bag.key.empty()) {
@@ -209,11 +270,22 @@ void LootBags::load() {
             bag.expiresAt = row.expiresAt;
         }
         bag.expiresAt = std::min(bag.expiresAt, row.expiresAt);
+        emptiedAt[row.bagKey] = std::max(emptiedAt[row.bagKey], row.emptiedAt);
         BagPart& part = bag.parts[characterId];
         part.rarity = row.rarity;
+        std::vector<GrantItem> rolls;
         for (const state::ItemRow& item : row.items) {
+            if (item.quantity == 0) {
+                continue;
+            }
+            if (item.instanceId.empty()) {
+                // A kept roll (stage 2.2): the item catalog did not have the item, or the part had 500 stacks.
+                rolls.push_back(GrantItem{item.itemId, std::min(item.quantity, kMaxItemQuantity),
+                                          item.gearScore != 0 ? std::optional<std::uint32_t>(item.gearScore) : std::nullopt, item.perks});
+                continue;
+            }
             const auto instance = read_instance(item.instanceId);
-            if (!instance || item.quantity == 0) {
+            if (!instance) {
                 continue;
             }
             ItemInstance value;
@@ -229,29 +301,66 @@ void LootBags::load() {
             const gamedata::ItemDefinition* definition = catalog != nullptr ? catalog->find(item.itemId) : nullptr;
             value.index = definition != nullptr ? definition->index : 0;
             m_world.inventory().resolve_perks(value);
+            if (part.items.size() >= kMaxContainerSlots) {
+                // The bound of a part (finding LB-R4): a stack beyond 500 (a part of a backend before stage 2.2) is a kept roll.
+                rolls.push_back(roll_of(value));
+                ++beyond;
+                continue;
+            }
             part.items.push_back(std::move(value));
+        }
+        // A kept roll whose item the catalog has now gets its instances (made one time, with the values of the item table) when the part
+        // has a place for all of them; the others stay kept.
+        bool changed = false;
+        for (const GrantItem& roll : rolls) {
+            std::vector<ItemInstance> instances = m_world.inventory().make_instances({roll}, nullptr);
+            if (!instances.empty() && part.items.size() + instances.size() <= kMaxContainerSlots) {
+                for (ItemInstance& instance : instances) {
+                    part.items.push_back(std::move(instance));
+                }
+                changed = true;
+                ++made;
+            } else {
+                part.kept.push_back(roll);
+                ++kept;
+            }
+        }
+        if (changed) {
+            part.rarity = rarity_of(part.items);
         }
     }
     std::size_t expired = 0;
+    std::size_t emptied = 0;
     for (auto& [key, bag] : bags) {
-        if (bag.expiresAt <= wallNow) {
-            // The end came while the backend was off (the wall clock of the rows).
+        const bool empty = bag_empty(bag);
+        const std::int64_t fastEnd = empty ? emptiedAt[key] : 0;
+        if (bag.expiresAt <= wallNow || (fastEnd != 0 && fastEnd <= wallNow)) {
+            // The end came while the backend was off (the wall clock of the rows): the lifetime, or the fast end of an empty bag
+            // (finding LB-R9: a restart does not renew it).
             if (m_world.store().delete_loot_bag(key)) {
-                ++expired;
-                ++m_counts.expired;
+                const bool lifetime = bag.expiresAt <= wallNow;
+                ++(lifetime ? expired : emptied);
+                ++(lifetime ? m_counts.expired : m_counts.emptied);
             }
             continue;
         }
         bag.expires = now + std::chrono::milliseconds(bag.expiresAt - wallNow);
-        const bool empty = std::all_of(bag.parts.begin(), bag.parts.end(), [](const auto& part) { return part.second.items.empty(); });
         if (empty) {
-            bag.emptied = now + std::chrono::milliseconds(static_cast<long long>(std::lround(data->emptyLifetime * 1000.0F)));
+            // The stored fast end, unchanged. A bag of schema 10 has none: a new fast end from now.
+            bag.emptied = fastEnd != 0 ? now + std::chrono::milliseconds(fastEnd - wallNow) : fast_end();
         }
         ++m_counts.loaded;
         place(std::move(bag));
     }
+    m_counts.keptMade += made;
     if (!bags.empty()) {
-        log::write("world: loot bags: %zu bag(s) of the store, %zu ended while the backend was off", bags.size() - expired, expired);
+        log::write("world: loot bags: %zu bag(s) of the store, %zu ended while the backend was off (%zu at the end after the last item)",
+                   bags.size() - expired - emptied, expired + emptied, emptied);
+    }
+    if (made != 0 || kept != 0 || beyond != 0) {
+        log::write("world: loot bags: %zu kept item(s) of the store got their instances, %zu stay kept (the item catalog does not have "
+                   "them, or the part has 500 stacks; the client does not see them), %zu stack(s) beyond 500 stacks became kept items",
+                   made, kept, beyond);
     }
 }
 
@@ -314,7 +423,7 @@ bool LootBags::end_bag(const std::string& key, const char* cause) {
     }
     std::uint32_t left = 0;
     for (const auto& [characterId, part] : bag.parts) {
-        left += quantity_of(part.items);
+        left += quantity_of(part);
         const auto own = m_byCharacter.find(characterId);
         if (own != m_byCharacter.end()) {
             own->second.erase(key);
@@ -339,7 +448,21 @@ void LootBags::entered(Entity& character) {
 }
 
 void LootBags::left(Entity& character) {
-    (void)character; // The bags and their rows stay: the next entry gets their states.
+    // The bags and their rows stay: the next entry gets their states.
+    m_selectedAt.erase(character.characterId);
+}
+
+void LootBags::moved(Entity& character) {
+    if (m_byCharacter.find(character.characterId) == m_byCharacter.end()) {
+        return; // No bag of the character.
+    }
+    const auto last = m_selectedAt.find(character.characterId);
+    if (last != m_selectedAt.end() && horizontal_distance(last->second, character.position) < loot_bag_rules::kStorageMoveDistance) {
+        return;
+    }
+    // A walk from the place of the last selection (finding LB-R3): the nearest bags of now. The bags of the character only (MP-8).
+    ++m_counts.moveSelections;
+    refresh(character, false);
 }
 
 void LootBags::tick() {
@@ -383,16 +506,39 @@ KillBag LootBags::begin_kill(const Entity& creature) {
     return bag;
 }
 
-bool LootBags::stage_part(KillBag& bag, const Entity& character, const std::vector<GrantItem>& items, std::vector<GrantItem>* unknown) {
+bool LootBags::stage_part(KillBag& bag, const Entity& character, const std::vector<GrantItem>& items, std::vector<GrantItem>* kept) {
     BagPart part;
-    part.items = m_world.inventory().make_instances(items, unknown);
-    if (part.items.empty()) {
-        return true; // Nothing to keep (an item that the catalog does not have is not made).
+    std::vector<GrantItem> unknown;
+    part.items = m_world.inventory().make_instances(items, &unknown);
+    // The Container of the client takes 500 stacks (finding LB-R4): a stack beyond it is a kept roll of the part (a load makes it when the
+    // part has a place).
+    while (part.items.size() > kMaxContainerSlots) {
+        part.kept.push_back(roll_of(part.items.back()));
+        part.items.pop_back();
+    }
+    // An item that the catalog does not have (the open point of 3.5b.2, a decision of the orchestrator; the rule of the chests, finding
+    // CH-R3): the part keeps the roll in its rows, and the client does not see it. A load with a catalog that has the item makes it.
+    for (GrantItem& grant : unknown) {
+        part.kept.push_back(std::move(grant));
+    }
+    if (part_empty(part)) {
+        return true; // Nothing to keep.
     }
     part.rarity = rarity_of(part.items);
     if (!m_world.store().write_loot_bag(character.characterId,
                                         make_row(bag.key, loot_bag_rules::kAiLoot, bag.source, bag.position, part, bag.createdAt, bag.expiresAt))) {
         return false;
+    }
+    if (!part.kept.empty()) {
+        m_counts.keptItems += part.kept.size();
+        const std::string mark = log::session_mark(character.owner, character.characterId);
+        const log::Context logContext(mark);
+        log::write("world: loot bags: the part of character %s of the bag %s keeps %s with no instance (the item catalog does not have it, "
+                   "or the part has 500 stacks): the rows keep it, and the client does not see it",
+                   character.characterId.c_str(), bag.key.c_str(), kept_text(part.kept).c_str());
+    }
+    if (kept != nullptr) {
+        kept->insert(kept->end(), part.kept.begin(), part.kept.end());
     }
     bag.parts[character.characterId] = std::move(part);
     return true;
@@ -451,7 +597,8 @@ InteractionVerdict LootBags::begin(Entity& character, const InteractionContext& 
     }
     const auto entity = m_byEntity.find(context.instance);
     const auto bag = entity != m_byEntity.end() ? m_bags.find(entity->second) : m_bags.end();
-    if (bag == m_bags.end() || bag->second.generation != context.generation || m_world.clock().now() >= bag->second.expires) {
+    // The end of the lifetime or the fast end of an empty bag (finding LB-R2): the bag is not there for a request.
+    if (bag == m_bags.end() || bag->second.generation != context.generation || ended(bag->second)) {
         (void)refuse(BagRefusal::noBag, character, what);
         return InteractionVerdict::refused;
     }
@@ -475,7 +622,8 @@ void LootBags::started(Entity& character, const InteractionContext& context) {
     }
     if (context.option->name == kOpenOption) {
         // The panel: the client cleared its selected Container at its request; the full vector of the part goes after it (live check L5).
-        set_panel(character, bag);
+        // The open bag is the first of the selected storage keys (finding LB-R3): the selection is made again with the panel.
+        refresh(character);
         const std::string mark = log::session_mark(character.owner, character.characterId);
         const log::Context logContext(mark);
         log::write("world: loot bags: character %s opened the bag %s: %s", character.characterId.c_str(), bag->key.c_str(),
@@ -526,11 +674,12 @@ void LootBags::set_panel(Entity& character, const LootBag* bag) {
     character.selectedContainer = std::move(panel);
 }
 
-void LootBags::refresh(Entity& character) {
+void LootBags::refresh(Entity& character, bool panel) {
     ++m_counts.refreshes;
     std::vector<LootTrackerEntry> entries;
     std::vector<std::pair<float, StorageKey>> keys;
     const gamedata::LootContainer* data = container();
+    const LootBag* open = open_bag(character);
     const auto own = m_byCharacter.find(character.characterId);
     if (own != m_byCharacter.end()) {
         for (const std::string& key : own->second) {
@@ -552,7 +701,9 @@ void LootBags::refresh(Entity& character) {
             entry.selector = static_cast<std::uint8_t>(std::min<std::uint32_t>(part.rarity, particles > 0 ? particles - 1 : 0));
             entries.push_back(entry);
             if (!part.items.empty()) {
-                keys.emplace_back(horizontal_distance(character.position, bag.position), StorageKey{entity->actor.bytes, part.items});
+                // The open bag first: it stays in the selected keys (finding LB-R3). Then the nearest bags.
+                const float distance = &bag == open ? -1.0F : horizontal_distance(character.position, bag.position);
+                keys.emplace_back(distance, StorageKey{entity->actor.bytes, part.items});
             }
         }
     }
@@ -574,9 +725,10 @@ void LootBags::refresh(Entity& character) {
         character.storageMap = std::move(map);
         m_world.touch(character.id, ComponentKey::globalStorage);
     }
+    m_selectedAt[character.characterId] = character.position;
     // The panel of the open bag: the items of now.
-    if (const LootBag* bag = open_bag(character)) {
-        set_panel(character, bag);
+    if (panel && open != nullptr) {
+        set_panel(character, open);
     }
 }
 
@@ -588,7 +740,9 @@ LootBag* LootBags::checked_open(Entity& character, const InteractionReference& c
         return nullptr;
     }
     LootBag* bag = open_bag(character);
-    if (bag == nullptr || m_world.clock().now() >= bag->expires) {
+    // The end of the lifetime or an active fast end (finding LB-R2): refused before a transfer can clear the fast end, with either order of
+    // the request and the due tick.
+    if (bag == nullptr || ended(*bag)) {
         refusal = BagRefusal::notOpen;
         return nullptr;
     }
@@ -641,8 +795,15 @@ BagResult LootBags::transfer(Entity& character, LootBag& bag, const std::vector<
                          next.items.end());
         next.rarity = rarity_of(next.items);
         if (moved != 0) {
+            // The take of the last item of the last part (finding LB-R9): the absolute fast end goes into the row, in the transaction of the
+            // take. A restart keeps it.
+            const bool last = container() != nullptr && part_empty(next)
+                              && std::all_of(bag.parts.begin(), bag.parts.end(), [&](const auto& other) {
+                                     return other.first == character.characterId || part_empty(other.second);
+                                 });
             written = m_world.store().write_loot_bag(character.characterId,
-                                                     make_row(bag.key, bag.kind, bag.source, bag.position, next, bag.createdAt, bag.expiresAt));
+                                                     make_row(bag.key, bag.kind, bag.source, bag.position, next, bag.createdAt, bag.expiresAt,
+                                                              last ? wall_ms(fast_end()) : 0));
         }
     }
     written = written && batch.commit();
@@ -672,10 +833,11 @@ BagResult LootBags::transfer(Entity& character, LootBag& bag, const std::vector<
 
 void LootBags::part_changed(LootBag& bag, Entity& character) {
     const gamedata::LootContainer* data = container();
-    const bool empty = std::all_of(bag.parts.begin(), bag.parts.end(), [](const auto& part) { return part.second.items.empty(); });
+    const bool empty = bag_empty(bag);
     if (empty && !bag.emptied && data != nullptr) {
-        // The last item of the last part: FastKillSelfDelay of the slice (m_completelyLootedEvents of the server facet; game data).
-        bag.emptied = m_world.clock().now() + std::chrono::milliseconds(static_cast<long long>(std::lround(data->emptyLifetime * 1000.0F)));
+        // The last item of the last part: FastKillSelfDelay of the slice (m_completelyLootedEvents of the server facet; game data). The
+        // take wrote the same time into its row (finding LB-R9).
+        bag.emptied = fast_end();
         m_due.emplace(*bag.emptied, Due{bag.key});
     } else if (!empty) {
         bag.emptied.reset();
@@ -752,9 +914,33 @@ BagResult LootBags::give_item(const std::string& characterId, const InteractionR
     if (bag == nullptr) {
         return refuse(refusal, *character, "a give into a bag (2801)");
     }
-    // One transaction: the item leaves the bag of the character (the lock rule of a drop) and goes into its part of the open bag.
-    const Bag bagBefore = character->bag;
+    // The destination first (finding LB-R4): a part has 500 stacks at most (the Container of the client). A full part takes the item only
+    // into a stack of the same item (same_stack) with a place for all of it; else nothing changes, and the item stays with the character.
     BagPart next = bag->parts.at(characterId);
+    std::optional<std::size_t> merge;
+    if (next.items.size() >= kMaxContainerSlots) {
+        const ItemInstance* source = nullptr;
+        for (const BagSlot& slot : character->bag.slots) {
+            if (slot.item && slot.item->instance == instance) {
+                source = &*slot.item;
+                break;
+            }
+        }
+        const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
+        const gamedata::ItemDefinition* definition = source != nullptr && catalog != nullptr ? catalog->find(source->itemId) : nullptr;
+        const std::uint32_t maxStack = definition != nullptr ? std::clamp<std::uint32_t>(definition->maxStack, 1, kMaxItemQuantity) : 1;
+        for (std::size_t index = 0; source != nullptr && index < next.items.size() && !merge; ++index) {
+            if (same_stack(next.items[index], *source) && next.items[index].quantity + quantity <= maxStack) {
+                merge = index;
+            }
+        }
+        if (source != nullptr && !merge) {
+            return refuse(BagRefusal::partFull, *character, "a give into a bag (2801)", bag->key);
+        }
+    }
+    // One transaction: the item leaves the bag of the character (the lock rule of a drop, the protections of the item table) and goes into
+    // its part of the open bag.
+    const Bag bagBefore = character->bag;
     std::vector<ItemInstance> out;
     state::Store::Batch batch(m_world.store());
     bool written = batch.open();
@@ -765,7 +951,11 @@ BagResult LootBags::give_item(const std::string& characterId, const InteractionR
     }
     if (written && released.ok()) {
         for (ItemInstance& item : out) {
-            next.items.push_back(std::move(item));
+            if (merge) {
+                next.items[*merge].quantity += item.quantity; // The stack of the part keeps its instance id.
+            } else {
+                next.items.push_back(std::move(item));
+            }
         }
         next.rarity = rarity_of(next.items);
         written = m_world.store().write_loot_bag(characterId, make_row(bag->key, bag->kind, bag->source, bag->position, next, bag->createdAt,
@@ -822,12 +1012,14 @@ BagResult LootBags::make_discard(Entity& character, Release&& release) {
         released = release(part.items);
         written = released.error != ItemError::storeFailed;
     }
-    if (written && released.ok()) {
+    // A part has 500 stacks at most (finding LB-R4): a discard of more stacks (1838 has 501 entries at most) changes nothing.
+    const bool fits = part.items.size() <= kMaxContainerSlots;
+    if (written && released.ok() && fits) {
         part.rarity = rarity_of(part.items);
         written = m_world.store().write_loot_bag(character.characterId,
                                                  make_row(bag.key, bag.kind, bag.source, bag.position, part, bag.createdAt, bag.expiresAt));
     }
-    written = written && batch.commit();
+    written = written && fits && batch.commit();
     if (!written) {
         const bool equipped = !(equipmentBefore.slots.size() == character.equipment.slots.size()
                                 && std::equal(equipmentBefore.slots.begin(), equipmentBefore.slots.end(), character.equipment.slots.begin(),
@@ -840,6 +1032,9 @@ BagResult LootBags::make_discard(Entity& character, Release&& release) {
         m_world.touch(character.id, ComponentKey::paperdoll);
         if (equipped) {
             m_world.gear().refresh(character);
+        }
+        if (released.ok() && !fits) {
+            return refuse(BagRefusal::partFull, character, "a discard"); // The batch is not committed: no row changed.
         }
         ++m_counts.storeFailures;
         return refuse(BagRefusal::storeFailed, character, "a discard");

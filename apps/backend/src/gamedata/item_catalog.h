@@ -54,6 +54,18 @@ struct ItemDefinition {
     std::uint32_t maxGearScore{0};
     std::uint32_t gearScoreOverride{0};
     bool bindOnPickup{false};
+    /**
+     * The removal protections of the row (Nonremovable, NotDroppable; code review of stage 3.5b.2, finding LB-R1): the item cannot leave
+     * its character by a discard (1838, 826) or a give into a loot bag (2801). A file of the tool from before stage 2.2 has no such
+     * column: no item has a protection.
+     */
+    bool nonRemovable{false};
+    bool notDroppable{false};
+
+    /** @return True when a protection of the row keeps the item with its character. */
+    [[nodiscard]] bool removal_protected() const {
+        return nonRemovable || notDroppable;
+    }
 };
 
 /** One item of a backstory: one entry of the column InventoryItem of the backstory table. */

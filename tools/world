@@ -267,6 +267,12 @@ The creatures of the world (protocol notes 4.14):
                                                 WarHammer_Ult_SlowOnCC), or knockdown or stagger, as
                                                 from an ability (stage 3.3a)
 
+The world time (stage 2.2, protocol notes 4.43):
+  tools/world time                              the time of the world: the time of the day, the phase, the next phase and
+                                                the seconds to it, the cycle, and the counts
+  tools/world time CHARACTER HH:MM[:SS]         set the time of the day of the whole world (each player gets it; the
+                                                character names who gives the command)
+
 The rewards of a kill (protocol notes 4.21):
   tools/world loot CHARACTER on|off             the loot switch: each kill of the character drops
                                                 loot and coin (the outer chances pass), or the
@@ -385,6 +391,17 @@ def meter_of(entry: dict) -> str:
     return f"{entry['count']} ({entry['mean']:.1f} us each, the largest {entry['largest']:.1f} us)"
 
 
+def world_time_text(time: dict) -> str:
+    """@return One line of the world time (stage 2.2)."""
+    cycle = time["cycle"]
+    counts = time["counts"]
+    return (f"{time['time']} ({time['phase']}), {time['nextPhase']} in {time['secondsToNextPhase']:.0f} s; a cycle of "
+            f"{cycle['seconds']} s ({cycle['dayLength']} s of day from {cycle['dawn']}, {cycle['nightLength']} s of night from "
+            f"{cycle['dusk']}); {'stored position at the start' if counts['loaded'] else 'a new world at noon'}, "
+            f"{counts['phaseChanges']} phase changes, {counts['sets']} commands, {counts['saves']} saves "
+            f"({counts['failedSaves']} failed)")
+
+
 def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filter_text: str = "") -> None:
     process, port = backend(data_dir)
     command = ["nsenter", "-t", str(process), "-U", "-n", "--preserve-credentials", "curl", "--silent", "--max-time", "5",
@@ -397,7 +414,11 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         document = json.loads(body)
     except ValueError:
         document = {"message": body}
-    if isinstance(document, dict) and "objectEntities" in document and "objects" in document:
+    if isinstance(document, dict) and "phaseNumber" in document and "cycle" in document:
+        print("world: " + world_time_text(document))
+    elif isinstance(document, dict) and "worldTime" in document and "scope" in document:
+        print(f"world: {document['message']}; " + world_time_text(document["worldTime"]))
+    elif isinstance(document, dict) and "objectEntities" in document and "objects" in document:
         show_interactions(document)
     elif isinstance(document, dict) and "trackerEntries" in document and "claims" in document:
         show_chests(document)
@@ -455,6 +476,9 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
                           f"{load['returns']} ways back, {load['holds']} waits at the place nearest to a target with no way, "
                           f"{load['retraces']} ways back on the trail, {load['jumps']} jumps to the anchor, {load['immuneHits']} "
                           f"hits on a creature on its way back")
+            if "worldTime" in load:
+                print(f"world time: {world_time_text(load['worldTime'])}; {load.get('removedByPhase', 0)} creatures left at the "
+                      f"end of the phases of their point, {load.get('outOfPhase', 0)} looks at a point out of its phases")
             rewards = load.get("rewards")
             if rewards:
                 if rewards["data"]:
@@ -1385,6 +1409,12 @@ def main() -> None:
                                   f"&seconds={arguments[4]}")
     elif command == "interaction" and len(arguments) == 3 and arguments[1] == "cancel":
         request(data_dir, "POST", f"/v1/dev/interactions/cancel?character={character_id(data_dir, arguments[2])}")
+    elif command == "time" and len(arguments) == 1:
+        request(data_dir, "GET", "/v1/dev/world/time")
+    elif command == "time" and len(arguments) == 3:
+        if not re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", arguments[2]):
+            fail("the time must be HH:MM or HH:MM:SS")
+        request(data_dir, "POST", f"/v1/dev/world/time?character={character_id(data_dir, arguments[1])}&time={arguments[2]}")
     elif command == "heal" and len(arguments) == 2:
         request(data_dir, "POST", f"/v1/dev/world/heal?character={character_id(data_dir, arguments[1])}")
     elif command == "ignore" and len(arguments) == 3 and arguments[2] in ("on", "off"):

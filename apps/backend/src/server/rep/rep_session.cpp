@@ -14,7 +14,9 @@
 #include "server/rep/combat_messages.h"
 #include "server/rep/item_requests.h"
 #include "server/rep/lock_messages.h"
+#include "server/rep/mana_messages.h"
 #include "server/rep/replication.h"
+#include "server/rep/time_messages.h"
 #include "server/rep/travel_messages.h"
 #include "state/identity.h"
 
@@ -97,6 +99,14 @@ constexpr std::size_t kRecordHeader = 6;
  * backend sends no bundle that is larger.
  */
 constexpr std::size_t kClientBundleLimit = 256000;
+/**
+ * The interval of the clock correction (335) of a session (stage 2.2): the server sender of the image rearms its timer with 3,000 ms
+ * (client image 0x6A3D9B0, `r8d=0xBB8` at 0x6A3DB2F; research world-time-stage.md 6 item 6). The first one is this time after the
+ * registration: the registration reply has the clock.
+ */
+constexpr std::chrono::milliseconds kClockSyncInterval{3000};
+/** The causes of a refused time request, for one log line each (RepSession::m_timeRefusalLogged). */
+enum TimeRefusal : std::size_t { kTimeNoCharacter, kTimeBodySize, kTimeRoute, kTimeEntity, kTimeTarget };
 /** The fragment count of a record is one byte. */
 constexpr unsigned kMaxFragmentsInRecord = 255;
 /**
@@ -401,6 +411,10 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_use_item(body);
         break;
+    case kTypeTimeRequest:
+        check_route(route, type, body, firstOfType);
+        handle_time_request(route, body);
+        break;
     default:
         check_route(route, type, body, firstOfType);
         if (firstOfType) {
@@ -511,6 +525,19 @@ void RepSession::check_route(std::span<const std::uint8_t> route,
 void RepSession::log_message_counts() const {
     if (!m_registered) {
         return;
+    }
+    if (m_manaSyncs != 0) {
+        log::write("rep: mana of the session: %llu prediction message(s) (type %u)", static_cast<unsigned long long>(m_manaSyncs),
+                   kTypeManaForceSync);
+    }
+    if (m_timeRequests + m_timeRecords + m_clockSyncs != 0) {
+        log::write("rep: world time of the session: %u request(s) of the client (%u refused), %u record(s) (type 7036), %u phase "
+                   "message(s) (type 4247), %llu clock correction(s) (type 335)",
+                   m_timeRequests,
+                   m_timeRefused,
+                   m_timeRecords,
+                   m_timePhases,
+                   static_cast<unsigned long long>(m_clockSyncs));
     }
     if (m_spellRecords != 0) {
         log::write("rep: spells of the session: %llu first record(s) of a spell or a probe", static_cast<unsigned long long>(m_spellRecords));
@@ -627,6 +654,7 @@ void RepSession::log_message_counts() const {
 
 void RepSession::tick(carrier::Clock::time_point now) {
     replicate(now);
+    send_world_time(now);
     if (m_researchKickAt) {
         send_research_kick(now);
     }
@@ -1228,6 +1256,11 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
         // stage 3.3b-S1, finding F1).
         m_track.set_client_speed(std::max(entity.moveMultiplier, entity.sprintMultiplier), m_clock.now());
     }
+    if (owner && !first && std::any_of(fragments.begin(), fragments.end(), [](const PendingFragment& fragment) {
+            return fragment.slot == kManaSlot && fragment.type == kTypeManaState;
+        })) {
+        send_mana_sync(entity);
+    }
     if (owner && movement) {
         m_lastAnchor = now;
     }
@@ -1248,6 +1281,24 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
     if (owner && first) {
         log::write("rep: local player record sent");
     }
+}
+
+void RepSession::send_mana_sync(const world::Entity& own) {
+    // The mana of the prediction of the client (server/rep/mana_messages.h): the values of the mana state that went out, into the
+    // predicted copy of the client. The target is a facet of the entity "Stats": with no ids of the player slice there is none.
+    const gamedata::SliceIds* slice = m_options.playerSlice;
+    const gamedata::SliceIds::Component* component =
+        slice != nullptr && slice->loaded() ? slice->find_named(kManaComponentName) : nullptr;
+    if (component == nullptr) {
+        if (!m_manaSyncMissing) {
+            m_manaSyncMissing = true;
+            log::write("rep: no mana prediction for the client (type %u): the ids of the player slice have no Mana component",
+                       kTypeManaForceSync);
+        }
+        return;
+    }
+    send_message(kTypeManaForceSync, encode_mana_sync(slice->target(own.id, *component), own, m_clock));
+    ++m_manaSyncs;
 }
 
 void RepSession::character_lost(world::LostCause cause) {
@@ -1896,6 +1947,96 @@ void RepSession::end_input_lock(const char* cause) {
                cause,
                kTypeCancelCurrentInteraction,
                kTypeCutsceneEndFinalized);
+}
+
+void RepSession::handle_time_request(std::span<const std::uint8_t> route, std::span<const std::uint8_t> body) {
+    ++m_timeRequests;
+    const auto refuse = [&](TimeRefusal cause, const char* text) {
+        ++m_timeRefused;
+        if (!m_timeRefusalLogged[cause]) {
+            m_timeRefusalLogged[cause] = true;
+            log::write("rep: time request (type %u, %zu bytes) refused: %s", kTypeTimeRequest, body.size(), text);
+        }
+    };
+    // The session finds the own entity itself (rule MP-5): the ids of the request only have to agree with it.
+    const world::Entity* own = m_inWorld ? m_world.find(m_observer.own()) : nullptr;
+    if (own == nullptr) {
+        refuse(kTimeNoCharacter, "the session has no character in the world");
+        return;
+    }
+    if (body.size() != kTimeRequestSize) {
+        refuse(kTimeBodySize, "the body is not 16 bytes");
+        return;
+    }
+    if (route.size() != kRouteSize || !std::equal(route.begin(), route.end(), own->actor.bytes.begin())) {
+        refuse(kTimeRoute, "the route is not the actor of the own character");
+        return;
+    }
+    if (read_u64(body.subspan(8, 8)) != own->id) {
+        refuse(kTimeEntity, "the entity field is not the entity of the own character");
+        return;
+    }
+    if (read_u64(body.subspan(0, 8)) != time_target(own->id)) {
+        refuse(kTimeTarget, "the target is not the Time facet of the own character");
+        return;
+    }
+    const bool first = !m_timeRequested;
+    m_timeRequested = true;
+    send_time_record(*own, m_clock.now(), first ? "the request of the client" : "a new request of the client");
+}
+
+void RepSession::send_time_record(const world::Entity& own, carrier::Clock::time_point now, const char* cause) {
+    world::WorldTime& time = m_world.world_time();
+    // One world value, with the ids of the own entity of this session (rules MP-1 and MP-4).
+    const world::TimeRecord record = time.record(m_clock.server_time_ns());
+    const world::DayPhase phase = time.phase();
+    send_message(kTypeTimeAndPhase, encode_time_and_phase(own.id, record, phase));
+    m_timeRevision = time.revision();
+    m_timePhase = phase;
+    m_timeRecordAt = now;
+    ++m_timeRecords;
+    const auto second = static_cast<unsigned>(std::llround(time.game_second())) % world::day_cycle::kDaySeconds;
+    log::write("rep: world time %02u:%02u:%02u (%s) sent to the client (type 7036, %s)",
+               second / 3600,
+               second / 60 % 60,
+               second % 60,
+               world::day_phase_text(phase),
+               cause);
+}
+
+void RepSession::send_world_time(carrier::Clock::time_point now) {
+    if (!m_inWorld || m_closing) {
+        return;
+    }
+    if (m_nextClockSync && now >= *m_nextClockSync) {
+        send_message(kTypeClockSync, encode_clock_sync(m_clock.server_time_ns()));
+        ++m_clockSyncs;
+        m_nextClockSync = now + kClockSyncInterval;
+    }
+    if (!m_timeRequested) {
+        return;
+    }
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    world::WorldTime& time = m_world.world_time();
+    if (time.revision() != m_timeRevision) {
+        send_time_record(*own, now, "a command for the world time");
+        return;
+    }
+    // A new record each cycle: the float32 time from the anchor of the client keeps steps below 1 ms (research world-time-stage.md
+    // 7.2: a rule of the precision, not a value of the original server).
+    if (now - m_timeRecordAt >= std::chrono::nanoseconds(world::day_cycle::length_ns(time.cycle()))) {
+        send_time_record(*own, now, "the record of the next cycle");
+        return;
+    }
+    if (time.phase() != m_timePhase) {
+        m_timePhase = time.phase();
+        send_message(kTypeDayPhase, encode_day_phase(own->id, m_timePhase));
+        ++m_timePhases;
+        log::write("rep: day phase %s sent to the client (type 4247)", world::day_phase_text(m_timePhase));
+    }
 }
 
 void RepSession::development_message(std::uint32_t type, const std::vector<std::uint8_t>& body) {
@@ -2668,6 +2809,8 @@ void RepSession::handle_registration(std::uint32_t type, std::span<const std::ui
                world::actor_text(entity.actor).c_str());
     send_registration_reply(0);
     log::write("rep: registration request (type %u, %zu bytes) accepted", type, body.size());
+    // The clock corrections of the client (stage 2.2): the first one 3 s after the clock of the registration reply.
+    m_nextClockSync = m_clock.now() + kClockSyncInterval;
     if (research.rejectReason) {
         // PlayerManagerRejectedMsg, client reader at image RVA 0x14FF630: reason:u32 text.
         hub::Writer rejected;

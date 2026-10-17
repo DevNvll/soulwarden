@@ -33,9 +33,11 @@ protocol notes (section 6).
   (`model::command(character, ...)`): do not read the selected character at send time. The
   tabs: "Items", "Character" (with the health of the character, the button "Heal", which
   has the text "Revive" for a dead character, the mark "Creatures ignore this
-  character", and the mark "Each kill drops loot and coin"), "Skills", "Creatures", and "Travel" (the position of the
+  character", and the mark "Each kill drops loot and coin"), "Skills", "Creatures", "Travel" (the position of the
   character, the list of the travel places with a filter and the distance of each place, a
-  button "Travel" for the selected place, and a form with three numbers). The tab
+  button "Travel" for the selected place, and a form with three numbers), and "World" (stage 2.2: the time of the world and
+  its phase, a form with the hour and the minute and the button "Set", and the buttons 06:00, 12:00, 19:00, 00:00; the time
+  changes for each player, [World time and weather](world-time-and-weather.md)). The tab
   asks the worker thread for the list of the places (`model::load_places`) until the
   backend gave it, one time each 5 s at most.
 - The admin interface of the backend (routes `/admin/v1`, `server/http/admin_routes.cpp`) is
@@ -89,7 +91,9 @@ protocol notes (section 6).
   of `commands::CreatureReach`) and `cancel_interaction` (no argument), and the member
   `interactions` of the state (the committed interaction and the objects 30 m or less from the
   character, with the stations of a settlement, the facts of a station use (`station`), and the service
-  grant (`grant`) from stage 2.5b; [Interactions](interactions.md)); the tool window has no button for them. The
+  grant (`grant`) from stage 2.5b; [Interactions](interactions.md)); the tool window has no button for them.
+  Stage 2.2: the command `set_world_time` (argument `time`, "HH:MM" or "HH:MM:SS") sets the time of the day of the whole world (the character of the command names who gives it; the reply has `"scope":"world"`), and the state of a character
+  has the member `worldTime` (the time, the phase, the next phase, the cycle); the tab "World" of the tool window uses them. The
   perk roll of an item (`tools/world perkroll`) is a development
   route only. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn
@@ -116,7 +120,9 @@ tools/hx 'toolwindow 1'              # show the tool window with no key ('toolwi
   is 29 pixels lower than in stage 3.4e. Take a screenshot before you use a position.
 - The tool window (F8), positions in the window of 1256x660 at its first place (the window is
   at the left side; a user can move it, and it has no saved place): tabs "Items" `50 113`,
-  "Character" `125 113`, "Skills" `204 113`, "Creatures" `283 113`, "Travel" `362 113`.
+  "Character" `125 113`, "Skills" `204 113`, "Creatures" `283 113`, "Travel" `362 113`, "World" `425 113` (stage 2.2: the hour
+  field `38 268`, the minute field `175 268`, "Set" `326 268`, the buttons 06:00 `50 297`, 12:00 `112 297`, 19:00 `174 297`,
+  00:00 `236 297`).
   Travel tab: filter field `203 190`, first row of the list `76 239` (each next row is 21
   pixels lower), the button "Travel" of the selected place directly after the text
   "Selected: NAME, TERRITORY" at y `461` (x `358` for "Shadowmine Shrine, Everfall": take a

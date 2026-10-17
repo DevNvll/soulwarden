@@ -61,7 +61,9 @@ the client (EntitlementIndex), `rewards` the text of the column Reward(s), `achi
 achievement that the entitlement gives each character (AchievementId; empty: none). The tool
 stops (and keeps the old file) when an expansion names an entitlement that the table does not
 have, an entitlement of the list is not enabled or names an achievement that the table does not
-have, or a bit index is outside the range of the client.
+have, or a bit index is outside the range of the client. It also stops when an attribute table does not have one row
+for each value of the attribute range of Constitution, in sequence (stage 2.2: code review of stage 3.5b.2, finding
+LB-R7).
 
 Usage: progression_tables.py [OUTPUT.json]
 Default output: <SOULWARDEN_GAMEDATA_DIR>/progression-tables.json
@@ -271,12 +273,20 @@ def build_tables(contents: list[bytes]) -> dict:
             raise Failure(f"row {row} of the table {CONSTITUTION_TABLE} is not the value {minimum + row}")
         health.append(whole(constitution.cell(row, "Health")))
 
-    # The threshold abilities of each attribute (stage 3.5b.2): [value, [ability ids]] for each row with EquipAbilities.
+    # The threshold abilities of each attribute (stage 3.5b.2): [value, [ability ids]] for each row with EquipAbilities. Each attribute
+    # table has one row for each value of the attribute range of Constitution, in sequence (stage 2.2, code review of stage 3.5b.2, finding
+    # LB-R7): a table with a row that is not there would lose its thresholds with no error (Focus 100: the mana of the client).
     attribute_abilities: dict[str, list] = {}
     for name, table in ATTRIBUTE_TABLES:
         sheet = one_table(sheets, table)
         if "EquipAbilities" not in sheet.columns:
             raise Failure(f"the table {table} has no column EquipAbilities")
+        if sheet.row_count != len(health):
+            raise Failure(f"the table {table} has {sheet.row_count} rows, not one row for each value {minimum} to "
+                          f"{minimum + len(health) - 1} of the attribute range of {CONSTITUTION_TABLE}")
+        for row in range(sheet.row_count):
+            if whole(sheet.cell(row, "Level")) != minimum + row:
+                raise Failure(f"row {row} of the table {table} is not the value {minimum + row} of the attribute range")
         thresholds = []
         for row in range(sheet.row_count):
             text = str(sheet.cell(row, "EquipAbilities") or "").strip()

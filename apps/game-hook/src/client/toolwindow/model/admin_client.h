@@ -171,6 +171,20 @@ struct Snapshot {
     bool placesLoaded{false};
     bool placesDone{false};
 
+    /**
+     * The world time (stage 2.2, the member "worldTime" of the state): one value for the whole world. `hasWorldTime`: a backend from
+     * before stage 2.2 has no such member.
+     */
+    bool hasWorldTime{false};
+    /** The time of the day "HH:MM:SS", the phase, the next phase, and the seconds to it, at the time of the last state. */
+    std::string worldTime;
+    std::string phase;
+    std::string nextPhase;
+    unsigned secondsToNextPhase{0};
+    /** The cycle: the real seconds of the day part and of the night part. */
+    unsigned dayLength{0};
+    unsigned nightLength{0};
+
     /** True while a command is with the backend. */
     bool busy{false};
     /** The result of the last command, or empty. */

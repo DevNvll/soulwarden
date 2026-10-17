@@ -48,12 +48,17 @@ different backstory.
 The tool needs only the standard library of Python and the module appearance_tables.py of
 this folder (pak entry reader).
 
-Output: {"format": 1, "count": N, "tables": [{"name", "rows", "first", "last"}, ...],
+Output: {"format": 2, "count": N, "tables": [{"name", "rows", "first", "last"}, ...],
 "columns": [...], "items": [[...], ...], "backstories": {"<id>": [[item id, quantity, gear
 score], ...], ...}, "creationBackstories": ["<id>", ...]}. `count` is the length of the list of the client with entry 0. Entry
 number K of `items` (from 0) is the item with the index K + 1. The columns are: id, name (the
 text key of the display name), type, class, tier, weight (tenths), maxStack, durability,
-minGearScore, maxGearScore, gearScoreOverride, bindOnPickup. A backstory has one entry for
+minGearScore, maxGearScore, gearScoreOverride, bindOnPickup, nonRemovable, notDroppable. The last
+two (format 2, stage 2.2: code review of stage 3.5b.2, finding LB-R1) are the removal protections
+of the row (the columns Nonremovable and NotDroppable; a cell can be a text, a number, or a flag):
+the backend keeps such an item with its character (no discard, no give into a loot bag). A
+house item has no protection. tools/gamedata/check_item_catalog_tool.py is the check of these
+columns. A backstory has one entry for
 each item of its column InventoryItem: a quantity of 0 is an item that only the character
 creation screen shows, and a gear score of 0 is the value of the item table.
 
@@ -97,7 +102,9 @@ OODLE = 15
 HEADER_SIZE = 0x5C
 CELL_TEXT, CELL_NUMBER, CELL_FLAG = 1, 2, 3
 COLUMNS = ["id", "name", "type", "class", "tier", "weight", "maxStack", "durability", "minGearScore",
-           "maxGearScore", "gearScoreOverride", "bindOnPickup"]
+           "maxGearScore", "gearScoreOverride", "bindOnPickup", "nonRemovable", "notDroppable"]
+# The removal protections of a master item row (format 2; code review of stage 3.5b.2, finding LB-R1).
+PROTECTION_COLUMNS = ("Nonremovable", "NotDroppable")
 
 
 class Sheet:
@@ -262,6 +269,13 @@ def whole(value) -> int:
     return int(value) if isinstance(value, (int, float)) else 0
 
 
+def flag(value) -> bool:
+    """@return The value of a flag cell. The item tables have a flag as a flag, a number (0 or 1), or a text ("" or "1")."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1")
+    return bool(value)
+
+
 def backstory_items(sheets: list[Sheet], item_ids: set[str]) -> dict[str, list[list]]:
     """@return For each backstory with items: [item id, quantity, gear score] for each entry of its column
     InventoryItem. An entry is `ItemID[-gearScore[-perk...]][:quantity]` (no quantity: 1). The perks of an entry
@@ -340,7 +354,8 @@ def build_catalog(contents: list[bytes]) -> dict:
                           whole(sheet.cell(row, "Tier")), whole(sheet.cell(row, "Weight")),
                           whole(sheet.cell(row, "MaxStackSize")), whole(sheet.cell(row, "Durability")),
                           whole(sheet.cell(row, "MinGearScore")), whole(sheet.cell(row, "MaxGearScore")),
-                          whole(sheet.cell(row, "GearScoreOverride")), bool(sheet.cell(row, "BindOnPickup"))])
+                          whole(sheet.cell(row, "GearScoreOverride")), bool(sheet.cell(row, "BindOnPickup")),
+                          *(flag(sheet.cell(row, column)) for column in PROTECTION_COLUMNS)])
         # A table with no row that gets an index has no range.
         tables.append({"name": sheet.name, "rows": sheet.row_count, "first": first, "last": len(items)})
     for name in HOUSE_TABLES:
@@ -360,10 +375,10 @@ def build_catalog(contents: list[bytes]) -> dict:
                 items.append([item_id, sheet.cell(row, "Name"), sheet.cell(row, "ItemType"), "",
                               whole(sheet.cell(row, "Tier")), whole(sheet.cell(row, "Weight")),
                               whole(sheet.cell(row, "MaxStackSize")), 0, 0, 0, 0,
-                              bool(sheet.cell(row, "BindOnPickup"))])
+                              bool(sheet.cell(row, "BindOnPickup")), False, False])
         tables.append({"name": sheet.name, "rows": sheet.row_count, "first": first, "last": len(items)})
     backstories = backstory_items(stories, {item[0].lower() for item in items})
-    return {"format": 1, "count": len(items) + 1, "tables": tables, "columns": COLUMNS, "items": items,
+    return {"format": 2, "count": len(items) + 1, "tables": tables, "columns": COLUMNS, "items": items,
             "backstories": backstories, "creationBackstories": creation_backstories(stories)}
 
 

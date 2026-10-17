@@ -14,6 +14,13 @@
 // owner    the full map at each change (also the empty map after a change). No fragment in the first record of a character with no bag.
 // observer no fragment.
 //
+// The byte limit (code review of stage 3.5b.2, finding LB-R5): the map is one fragment, and the client reads 256,000 bytes of one bundle
+// at most (client 0x646C2B0; rep_session.cpp, kClientBundleLimit). A key is whole or not in the map: its item vector replaces the vector of
+// the client, and two parts of one vector do not add (research storage.md, K13). The encoder writes the keys in the sequence of the
+// selection of the world (the open bag first, then the nearest bags; world/loot_bags.cpp) and stops before the first key that makes the
+// map larger than kMapLimit. A decision of an agent: fewer keys, not map journals (the simplest rule; a journal does not make the map of
+// the client larger).
+//
 // MB::LootDropReplicatedState (type 2027; constructor 0x2D356F0, apply 0x2D3F460), the slot of the LootDrop component of the slice of a
 // bag (6 for the personal bag, game data). Group 0, field 0: m_rarityLevel u32 (reader 0x17B3620).
 //
@@ -24,6 +31,11 @@ namespace soulwarden::backend::server::rep {
 namespace {
 
 constexpr unsigned kGroups = 1;
+/**
+ * The largest size of the map field (bytes; finding LB-R5). The bundle of the fragment also has the record header (6 bytes), the slot,
+ * the type, and the header of the state (less than 20 bytes): 255,000 keeps it below the 256,000 bytes of one bundle of the client.
+ */
+constexpr std::size_t kMapLimit = 255000;
 
 } // namespace
 
@@ -32,18 +44,30 @@ std::vector<hub::Bytes> encode_global_storage_state(const world::Entity& entity,
     if (view != View::owner || (request.since == 0 && entity.storageMap.empty())) {
         return parts;
     }
+    // Each key whole, in the sequence of the selection, while the map stays below the byte limit (finding LB-R5).
+    hub::Writer entries;
+    std::uint32_t count = 0;
+    std::size_t size = 1 + 1 + 5; // The change count, the version byte, and the key count (5 bytes at most).
+    for (const world::StorageKey& key : entity.storageMap) {
+        hub::Writer entry;
+        entry.raw(key.actor);
+        entry.size(static_cast<std::uint32_t>(key.items.size()));
+        for (std::size_t index = 0; index < key.items.size(); ++index) {
+            entry.raw(encode_item(&key.items[index], static_cast<std::uint32_t>(index), world::sync::kLoad));
+        }
+        if (size + entry.data().size() > kMapLimit) {
+            break; // This key and the farther keys do not go: the client gets the nearer keys whole.
+        }
+        size += entry.data().size();
+        entries.raw(entry.data());
+        ++count;
+    }
     StateWriter state(kGroups);
     hub::Writer& map = state.field(0, 0);
     map.size(0); // No change entries: the full form.
     map.u8(0);   // No version.
-    map.size(static_cast<std::uint32_t>(entity.storageMap.size()));
-    for (const world::StorageKey& key : entity.storageMap) {
-        map.raw(key.actor);
-        map.size(static_cast<std::uint32_t>(key.items.size()));
-        for (std::size_t index = 0; index < key.items.size(); ++index) {
-            map.raw(encode_item(&key.items[index], static_cast<std::uint32_t>(index), world::sync::kLoad));
-        }
-    }
+    map.size(count);
+    map.raw(entries.data());
     parts.push_back(state.finish());
     return parts;
 }

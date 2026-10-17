@@ -507,7 +507,9 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
             std::vector<GrantItem> grants = grant_items(reward.items, character.progression.level);
             std::vector<GrantItem> lost;
             if (bagged && !grants.empty()) {
-                written = m_world.loot_bags().stage_part(bag, character, grants, &lost);
+                // An item that the catalog does not have stays in the part as a kept roll (stage 2.2, the open point of 3.5b.2): not lost.
+                std::vector<GrantItem> kept;
+                written = m_world.loot_bags().stage_part(bag, character, grants, &kept);
                 const auto part = bag.parts.find(character.characterId);
                 itemsBagged = part != bag.parts.end() ? part->second.items.size() : 0;
                 granted = written;

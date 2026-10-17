@@ -11,6 +11,15 @@
 namespace soulwarden::backend::world {
 namespace {
 
+/**
+ * @return True when the row of the item table protects the item from a removal by a request of a client (Nonremovable, NotDroppable; code
+ *         review of stage 3.5b.2, finding LB-R1). An item that the catalog does not have has no protection.
+ */
+bool removal_protected(const gamedata::ItemCatalog* catalog, const ItemInstance& item) {
+    const gamedata::ItemDefinition* definition = catalog != nullptr ? catalog->find(item.itemId) : nullptr;
+    return definition != nullptr && definition->removal_protected();
+}
+
 /** @return A new instance id: 16 random bytes, not all zero (the client reads zero as "no instance"). */
 InstanceId new_instance() {
     static std::mutex mutex;
@@ -235,6 +244,8 @@ const char* item_error_text(ItemError error) {
         return "the item cannot be used now";
     case ItemError::gearScoreAboveLimit:
         return "the gear score of the item is above the largest gear score of an equipped item (the limit of the expansion)";
+    case ItemError::itemProtected:
+        return "the item table protects the item (Nonremovable or NotDroppable): it stays with the character";
     }
     return "unknown error";
 }
@@ -790,6 +801,9 @@ ItemResult Inventory::release(const std::string& characterId, const std::vector<
             if ((source.item->flags & kItemLocked) != 0) {
                 return ItemError::itemLocked;
             }
+            if (removal_protected(m_catalog, *source.item)) {
+                return ItemError::itemProtected; // Nonremovable or NotDroppable of the item table (finding LB-R1): before any write.
+            }
             if (entry.quantity == 0 || entry.quantity > source.item->quantity) {
                 return ItemError::badQuantity;
             }
@@ -846,6 +860,9 @@ ItemResult Inventory::release_equipped(const std::string& characterId, std::uint
         ItemInstance& item = *found->second.item;
         if ((item.flags & kItemLocked) != 0) {
             return ItemError::itemLocked;
+        }
+        if (removal_protected(m_catalog, item)) {
+            return ItemError::itemProtected; // Nonremovable or NotDroppable of the item table (finding LB-R1): before any write.
         }
         // The request names the quantity of the slot (the client sends 1 for a piece of equipment).
         if (quantity == 0 || quantity > item.quantity) {
@@ -1025,6 +1042,9 @@ ItemResult Inventory::drop(const std::string& characterId, const std::vector<Dro
             }
             if ((source.item->flags & kItemLocked) != 0) {
                 return ItemError::itemLocked; // The lock of the player keeps the item.
+            }
+            if (removal_protected(m_catalog, *source.item)) {
+                return ItemError::itemProtected; // The item table keeps the item (finding LB-R1).
             }
             if (entry.quantity == 0 || entry.quantity > source.item->quantity) {
                 return ItemError::badQuantity;

@@ -273,6 +273,19 @@ ENTRY_FIELDS = {name: field_id(name) for name in ("VitalsId", "VitalsCategoryId"
 SPAWNER_FIELDS = {name: field_id(name) for name in ("m_minRespawnCooldown", "m_maxRespawnCooldown",
                                                     "m_respawnAfterDeath", "m_spawnOnInitialize",
                                                     "m_spawnOnlyOnce")}
+# The time constraint of a spawner (stage 2.2, research world-time-stage.md 5.1): the component TimeOfDayConstraintComponent of the
+# spawner slice, with the flags of its server facet: m_night, m_dawn, m_day, m_dusk (the phases of the day in which the spawner makes
+# its creature) and m_despawnOnTimeEnd (the creature leaves at the end of these phases). The mask of a spawn point has the phase
+# numbers of the client as bits (bit 0 night, bit 1 dawn, bit 2 day, bit 3 dusk); a spawner with no constraint has each phase. The two
+# cooldown flags of a constrained spawner (m_cooldownAfterDespawn, m_cooldownAfterConstraintFail) are a third value of the point (bit 0,
+# bit 1): they are false on each point spawner of the supported build and true on one random encounter spawner (the Mirage Elemental,
+# day only, 3,600 s).
+TIME_CONSTRAINT_TYPE = uuid.UUID("e949f549-71a8-4914-861c-20a2ca6b75c4")
+PHASE_FLAGS = ("m_night", "m_dawn", "m_day", "m_dusk")
+PHASE_FIELDS = tuple(field_id(name) for name in PHASE_FLAGS)
+DESPAWN_FIELD = field_id("m_despawnOnTimeEnd")
+COOLDOWN_FIELDS = {name: field_id(name) for name in ("m_cooldownAfterDespawn", "m_cooldownAfterConstraintFail")}
+EACH_PHASE = 0x0F
 # The patrol of a spawner (research navigation.md, Q6). The spawner component names the entity of
 # its patrol (m_patrolPathEntity); that entity has the component AIPatrol with the ids of its
 # waypoint entities in their sequence (m_waypointIds) and, in its server facet, the policy of the
@@ -614,11 +627,47 @@ def spawner_path(placement: dict, catalog: Catalog, sources: Sources) -> str | N
     return catalog.path((uuid.UUID(match[1]).bytes, int(match[2], 16))) if match else None
 
 
+def flag(element: Element | None, name: str) -> bool:
+    """@return The value of a bool field of a time constraint. The tool stops for a field that is not there or that is not one byte of
+    0 or 1: a cut flag is a fault of the source, not the value false."""
+    while element is not None and element.value is None and len(element.children) == 1:
+        element = element.children[0]
+    if element is None or element.value is None or len(element.value) != 1 or element.value[0] > 1:
+        raise Failure(f"a time constraint of a spawner has no correct flag {name}")
+    return element.value[0] == 1
+
+
+def read_time_constraint(roots: list[Element], cooldowns: dict[str, Element]) -> tuple[int, bool, int]:
+    """@return The phase mask, the despawn flag, and the cooldown flags (bit 0 m_cooldownAfterDespawn, bit 1
+    m_cooldownAfterConstraintFail) of a spawner slice (stage 2.2): each phase, False, and 0 for a spawner with no time constraint. The
+    tool stops for two constraints in one spawner and for a flag that is not correct."""
+    constraints = [node for root in roots for node in walk(root) if node.type_id == TIME_CONSTRAINT_TYPE]
+    if not constraints:
+        return EACH_PHASE, False, 0
+    if len(constraints) > 1:
+        raise Failure("a spawner slice has more than one time constraint")
+    constraint = constraints[0]
+    mask = 0
+    for bit, (name, field) in enumerate(zip(PHASE_FLAGS, PHASE_FIELDS)):
+        if flag(first(constraint, field), name):
+            mask |= 1 << bit
+    leaves = flag(first(constraint, DESPAWN_FIELD), "m_despawnOnTimeEnd")
+    # A cooldown flag that the spawner does not have is false (the defaults of the spawner component); one that is there must be a
+    # correct bool.
+    cooldown = 0
+    for bit, name in enumerate(COOLDOWN_FIELDS):
+        if cooldowns.get(name) is not None and flag(cooldowns[name], name):
+            cooldown |= 1 << bit
+    return mask, leaves, cooldown
+
+
 def read_spawner(roots: list[Element]) -> dict:
-    """@return The asset of the spawn (an alias or a slice) and the respawn values of a spawner slice."""
+    """@return The asset of the spawn (an alias or a slice), the respawn values, the patrol, and the time constraint of a spawner
+    slice."""
     alias = None
     direct = None
     values: dict[str, Element] = {}
+    cooldowns: dict[str, Element] = {}
     for root in roots:
         for node in walk(root):
             if node.name == ALIAS_FIELD and alias is None:
@@ -629,8 +678,13 @@ def read_spawner(roots: list[Element]) -> dict:
                 for name, wanted in SPAWNER_FIELDS.items():
                     if node.name == wanted:
                         values.setdefault(name, node)
+                for name, wanted in COOLDOWN_FIELDS.items():
+                    if node.name == wanted:
+                        cooldowns.setdefault(name, node)
     patrol, cause = read_patrol(roots)
-    return {"alias": alias, "slice": direct, "patrol": patrol, "patrolCause": cause,
+    phases, leaves, cooldown = read_time_constraint(roots, cooldowns)
+    return {"alias": alias, "slice": direct, "patrol": patrol, "patrolCause": cause, "phases": phases, "leavesAtPhaseEnd": leaves,
+            "phaseCooldowns": cooldown,
             "respawnMin": real(values.get("m_minRespawnCooldown")),
             "respawnMax": real(values.get("m_maxRespawnCooldown")),
             "respawnAfterDeath": number(values.get("m_respawnAfterDeath")) != 0,
@@ -1211,7 +1265,12 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
      "kinds":  [{"id", "vitals", "category", "vitalsId", "categoryId", "name", "vitalsName",
                  "family", "creatureType", "health", "damage", "level", "bodies": [[slice, percent], ...],
                  "points": N}, ...]
-     "spawnPoints": [[placement id, kind, level, x, y, z, yaw, respawnMin, respawnMax, ground], ...]}
+     "spawnPoints": [[placement id, kind, level, x, y, z, yaw, respawnMin, respawnMax, ground, route, phases, leaves, cooldowns],
+                     ...]}
+    Format 4 (stage 2.2): "phases" of a spawn point is the phase mask of the time constraint of its spawner (bit 0 night, bit 1 dawn,
+    bit 2 day, bit 3 dusk; 15: no constraint), "leaves" is its m_despawnOnTimeEnd (true: the creature leaves at the end of its
+    phases), and "cooldowns" its two cooldown flags (bit 0 m_cooldownAfterDespawn, bit 1 m_cooldownAfterConstraintFail; 0 with no
+    constraint).
     The members of the behavior (creature_behavior.py, protocol notes 4.17): "behavior" has the two
     vision profiles (degrees and meters), the two leash distances (meters), and the two speeds (m/s)
     of the slice; "attacks" has one entry for each attack: the index of its action in "actions", its
@@ -1287,6 +1346,8 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     # The patrol route of each spawn point (an index into `routes`, or no value), in the sequence of `points`.
     routes: list[list] = []
     point_routes: list[int | None] = []
+    # The phase mask, the despawn flag, and the cooldown flags of each spawn point (stage 2.2, format 4).
+    point_phases: list[tuple[int, bool, int]] = []
     route_left_out: dict[str, int] = {}
     # The entry and the layer of the loop below, for the report of an entry that is left out.
     current: dict = {}
@@ -1470,6 +1531,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
                         raise Failure(f"the patrol of the spawner of placement {placement.get('id', '')} is not complete: {cause}")
                     route_left_out[cause] = route_left_out.get(cause, 0) + 1
                 point_routes.append(len(routes) if route is not None else None)
+                point_phases.append((spawner["phases"], spawner["leavesAtPhaseEnd"], spawner["phaseCooldowns"]))
                 if route is not None:
                     routes.append(route)
     sources.check_complete()
@@ -1575,9 +1637,14 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
         for point in points:
             point.append(None)
     counts["spawnPointsAtTerrainHeight"] = {"0.3": near[0], "1.0": near[1]}
-    # Value 11 of a spawn point: the index of its patrol route (format 3), or null.
-    for point, route in zip(points, point_routes):
+    # Value 11 of a spawn point: the index of its patrol route (format 3), or null. Values 12 to 14 (format 4, stage 2.2): the phase
+    # mask, the despawn flag, and the cooldown flags of its time constraint.
+    for point, route, (phases, leaves, cooldown) in zip(points, point_routes, point_phases):
         point.append(route)
+        point.append(phases)
+        point.append(leaves)
+        point.append(cooldown)
+    counts.update(phase_counts(point_phases))
     counts.update(patrol_counts(routes, point_routes, points, kind_list, document_kinds, slices, used))
     counts["routesLeftOut"] = dict(sorted(route_left_out.items()))
     counts.update({"spawnPoints": len(points), "kinds": len(document_kinds), "slices": len(used),
@@ -1591,7 +1658,7 @@ def build_document(sources: Sources, center: tuple[float, float] | None = None, 
     player_roots = sources.stream(PLAYER_SLICE)
     player_capsule = read_capsule(PLAYER_SLICE, player_roots) if player_roots is not None else None
     # The whole world: the radius 0, and the center has no meaning.
-    document = {"format": 3, "world": WORLD, "center": list(center), "radius": 0.0 if whole_world else radius,
+    document = {"format": 4, "world": WORLD, "center": list(center), "radius": 0.0 if whole_world else radius,
                 "regions": regions,
                 "counts": counts,
                 "levels": [[level, health, damage, gear_score]
@@ -1705,6 +1772,19 @@ def status_counts(slices: list[dict], points: list[list], kinds: list[dict], lef
             "spawnPointsWithStatusActions": sum(1 for point in points if point[1] in status_kinds),
             "slicesWithLowHealth": sum(1 for entry in slices if "lowHealth" in entry),
             "statusActionsLeftOut": dict(sorted(left_out.items()))}
+
+
+def phase_counts(point_phases: list[tuple[int, bool, int]]) -> dict:
+    """@return The counts of the time constraints (stage 2.2): the spawn points of each phase mask that is not each phase (the names of
+    its phases), the points whose creature leaves at the end of its phases, and the points with a cooldown flag."""
+    masks: dict[str, int] = {}
+    for phases, _, _ in point_phases:
+        if phases != EACH_PHASE:
+            name = ",".join(flag_name[2:] for bit, flag_name in enumerate(PHASE_FLAGS) if phases & (1 << bit)) or "none"
+            masks[name] = masks.get(name, 0) + 1
+    return {"spawnPointsWithPhases": sum(masks.values()), "phaseMasks": dict(sorted(masks.items())),
+            "spawnPointsLeavingAtPhaseEnd": sum(1 for phases, leaves, _ in point_phases if phases != EACH_PHASE and leaves),
+            "spawnPointsWithPhaseCooldown": sum(1 for _, _, cooldown in point_phases if cooldown)}
 
 
 def patrol_counts(routes: list[list], point_routes: list[int | None], points: list[list], kind_list: list[dict],
@@ -1862,6 +1942,10 @@ def main() -> int:
           f"loop {policies['loop']}, back and forth {policies['bounce']}, random {policies['random']}, "
           f"undefined {policies['undefined']}; waypoints: "
           + ", ".join(f"{size}: {count}" for size, count in counts["routeWaypoints"].items()) + ")")
+    print(f"  spawn points with a time constraint: {counts['spawnPointsWithPhases']} "
+          f"({counts['spawnPointsLeavingAtPhaseEnd']} leave at the end of their phases, {counts['spawnPointsWithPhaseCooldown']} with a "
+          f"cooldown flag; "
+          + ", ".join(f"{mask}: {count}" for mask, count in counts["phaseMasks"].items()) + ")")
     for cause, count in counts["routesLeftOut"].items():
         print(f"  no route, {cause}: {count}")
     print(f"  waypoints with a task: {counts['waypointsWithTask']}; the action table of the slice has the task: "

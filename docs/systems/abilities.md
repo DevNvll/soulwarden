@@ -401,5 +401,5 @@ tools/gamedata/abilities.sh          # write ability-data.json to the game data 
 - Before stage 3.3b-M2b the Homing clips of an ability (Wrecking Ball, Mighty Gavel) did not turn the character to a creature: the
   movement state of a creature had `dataBits` 0, and the client takes its homing flag from bit 1 of that field. A backend of an
   older stage shows this again in a test of an old tree.
-- The time of day of the game changes fast: the street of the test place is dark at some times. Make a video again when it
-  is day.
+- The time of day of the game changes (a cycle of 45 minutes, stage 2.2): set the day before a video (`tools/world time
+  Soulwarden 12:00`).
