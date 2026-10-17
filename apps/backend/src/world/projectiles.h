@@ -154,7 +154,8 @@ enum class ShotVerdict : std::uint8_t {
     unsupported,
     /**
      * The press of the item started no attack from rest: the bag of the character was over 1.5 x its weight limit at the press (code review
-     * of stage U3, finding U3-R4; the client shows "Overencumbered - Cannot attack").
+     * of stage U3, finding U3-R4; the client shows "Overencumbered - Cannot attack"), or a weapon switch held the press (code review of stage
+     * B2, finding B2-R5: the shot of a held press comes with the press that the switch gives back, with its own weight verdict).
      */
     encumbered,
 };

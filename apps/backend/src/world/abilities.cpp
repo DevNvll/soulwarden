@@ -938,7 +938,11 @@ CastVerdict Abilities::press_entity(Entity& entity, SessionId session, const Abi
                 std::optional<float>& slot = transition.buffered ? buffered : instant;
                 slot = slot ? std::min(*slot, transition.time) : transition.time;
             }
-            const float windowEnd = std::chrono::duration<float>(earlier.plan.length).count();
+            // A dodge that cancelled the action (Abilities::dodged) ends it at its cancel time: after that time the action no longer gates a
+            // new cast (code review of stage B2, finding B2-R1: a cancelled Rapid Shot refused Explosive Arrow with "casting" to its full length).
+            // The cast record stays for a shot that flies or a late item of a shot before the cancel.
+            const float windowEnd = earlier.cancelAt ? std::chrono::duration<float>(*earlier.cancelAt - begun).count()
+                                                     : std::chrono::duration<float>(earlier.plan.length).count();
             if (elapsed >= 0.0F && elapsed < windowEnd && !(instant && elapsed >= *instant)) {
                 if (buffered && elapsed >= *buffered && instant) {
                     planned->delay = std::chrono::milliseconds(static_cast<long long>(std::lround((*instant - elapsed) * 1000.0F)));

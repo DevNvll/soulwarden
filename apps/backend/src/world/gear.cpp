@@ -226,7 +226,9 @@ GearValues Gear::values(const Entity& character) const {
                 const gamedata::CellValues* row = data->ability(name);
                 // EquipLoadCategory (the names of the load classes of the data: Fast, Normal, Slow, Overburdened): the fixed values of the
                 // row count only in its classes (finding CS-R6: GlobalPerk_Artifact_Set2_HeavyLegs, Fast and Normal).
-                if (row != nullptr && !has_event(*row) && load_allows(*row, values.load)) {
+                // A value with a condition of a status of the character (stage B3, Passives::conditional_value) is a value of a hit, not a
+                // fixed value (before stage B3 the gear values gave BonusDamageSelfCCPerk1 its BaseDamage with no slow or root).
+                if (row != nullptr && !has_event(*row) && load_allows(*row, values.load) && !Passives::conditional_value(*row)) {
                     stacked[name].push_back(perk.potency);
                 }
             }
@@ -479,6 +481,11 @@ void Gear::perk_status(Entity& attacker, Entity& target, std::string_view status
         return;
     }
     const WorldClock::time_point now = m_world.clock().now();
+    // The removal window of a running effect of the target (code review of stage B2, finding B2-R4: the rend of a perk came in a window that
+    // refused it in Creatures::give_status): the same test before the cooldown, the effect, and a damage that waits.
+    if (m_world.creatures().removal_blocks(target, *row)) {
+        return;
+    }
     // The ApplicationCooldown of the status: one application for each creature and status in that time (stage B2: the key is the target, the
     // rule of a character and of the one status path of a creature, Creatures::application_ready; before: the attacker).
     if (!m_world.creatures().application_ready(target, *row, true)) {

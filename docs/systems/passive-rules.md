@@ -18,6 +18,7 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
 | The fixed stats of the nodes in the gear values | `Gear::values` ([Gear and perks](gear-and-perks.md)) |
 | The rules of stage 3.3b-M2: a spell of a rule (CastSpell), the box of Blood Lust, the status actions (Guarded Sprint), the row of an ability with InSequence, the uses of a node in the weapon actions | `Passives::apply_effects`, `Passives::around_count` (`tracking_supported`), `action_holds`, `ability_value_rule`, `Passives::describe_row` (`data_use`), test cases GH9, GH10, GH13, GH14, RV9 |
 | The rules of stage B2: the conditions of a status of the target and of the attacker, DamageTypes, the helper rows of a node, the rows that a status equips, the end of statuses, the Boltcaster, Shirking Shock II, Surprise Attack | `Passives::target_status_pass`, `own_status_pass`, `status_rules`, `rules_of`, `apply_effects`, `target_status`, `HitContext::types`, `targetEffects` (`world/gear.h`), `AbilityData::helpers_of`, test cases BC3 to BC8 |
+| The rules of stage B3 (the haste chain of the bow build): the weapon swap (OnWeaponSwap), the end of a dodge (the dodge status actions, AfterAction and AfterSequence), the tag removal actions, the time factor of a status (StatusEffectDurationReduction), the condition StatusEffectCategories | `Passives::weapon_changed`, `dodge_started`, `dodge_ended`, `duration_factor`, `self_pass`, `own_status_pass`, `describe_row`, `gamedata/ability_data.h` (`ActionDodgeStatus`, `ActionTagRemoval`), test cases HS1 to HS10 |
 
 ## Rules
 
@@ -41,13 +42,13 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
     (`Status_ItemPerk_Weapon_DodgeSuccess_LightningDMG_Tracker`)
     equips `Ability_Perk_Weapon_DodgeSuccess_LightningDMG` while it runs. The list names them with the origin "row of a status".
 - The events that the backend has a source for: OnHit, OnCrit, OnKill, OnHitTaken, OnHeadShot, OnHitBehind, OnHealed (only
-  its HealScalingValueMultiplier, stage 3.3b-S6). A row with no
+  its HealScalingValueMultiplier, stage 3.3b-S6), and from stage B3 OnWeaponSwap and the end of a dodge (below). A row with no
   event and a condition of a hit (DamageTableRow, AttackType, RemoteDamageTableRow) is a rule of that hit (Crowded Well:
   `Upgrade_Greataxe_GravityWell_DmgPerFoe` on the burst of the vortex). A row with no event, no condition, and a value is a
   fixed stat. A row with no event, NumAroundMe, and SelfApplyStatusEffect is a status while the condition holds. A row
   with OnBlockedHit and OnHit applies its OnHit part (the backend has no block).
 - A row with a column that is not a condition, an effect, or a mark of the evaluator, or with an event that the backend does
-  not have (a block, a weapon swap, a dodge with no hit), has no effect. A row with OnHealed and an effect after the heal (a status, a
+  not have (a block, a traversal), has no effect. A row with OnHealed and an effect after the heal (a status, a
   cooldown change, a heal of the healer: `Passive_Lifestaff_Healing_CDROnLow`) has no effect: the backend applies only the
   outgoing heal part. The list names it with the column (rule "no silent
   rule").
@@ -68,10 +69,22 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
     CheckStatusEffectsOnTargetOwned only an effect whose source is the attacker (a creature has one source for each effect: the last
     application). The conditions of a target status see the effects of the target before the hit (`HitContext::targetEffects`, a copy in
     `Combat::strike`): an earlier rule of the same hit does not change them (the bolt of the Boltcaster tests the 3 charges before the
-    charge of its own hit).
+    charge of its own hit). An effect with no row in the creature (the rend of a perk) gets its row from its status id in the copy (code
+    review of stage B2, finding B2-R3, test case BV3: Mark lost its +0.1 on a creature with the rend of Sundering Shockwave).
   - StatusEffect, StatusEffectStackSize, StatusEffectComparison (stage B2; client self test 0x67A0130): with no size, the attacker has the
     status (each source; the comparison is not read); with a size, its stacks with the comparison. CheckOwnedStatusEffects is not in the
     evaluator (a row with it is not applied).
+  - StatusEffectCategories (stage B3; client self test 0x67A0130, research bow-build-2.md Q1): the attacker has a status of a category of the
+    list (each source); StatusEffectComparison NotEqual: none. Speedy (`GlobalPerk_Artifact_Set1_MediumFeet_2`: +0.1 BaseDamage while
+    hasted). A rule with no hit (a swap, the end of a dodge, a time factor) has the same condition on its character. A row with no event,
+    the condition StatusEffect or StatusEffectCategories, only the conditions of a rule with no hit, and only values of a hit (BaseDamage,
+    CritChance, CritDamage, ArmorPenetration, HeadshotDamage, HitFromBehindDamage) is a value of each hit while the condition holds
+    (`Passives::conditional_value`; the perks `BonusDamageSelfCCPerk1` to `4`: +0.12 to +0.24 while the character has a root or a slow)
+    [agent decision with the client self test 0x67A0130]. The gear values do not take such a row (before stage B3 they gave it with no
+    condition).
+  - AfterAction, AfterSequence (stage B3): the end of an action. Only the end of a dodge is such an event in the backend (below); a hit does
+    not pass a row with them (a row with an event in the window after an action, `PowerThrowBlockBreakPerk1`, `Rapier_Slash_Mod2`, is not
+    applied, with the cause in the list).
   - DamageTypes (stage B2): the hit has a part of a type of the list (`HitContext::types`: the type of the row when a part keeps it, and
     the type of the conversion of a gem or an affix with a part above 0). The Boltcaster converts 99 percent: a light arrow has Thrust and
     Lightning, and passes DamageTypes Lightning (decision K6 of the research: a hit with a part of the type passes; the client reader of
@@ -137,6 +150,39 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
     gear system gave the damage with an ApplicationCooldown for each attacker and no dispel.
   - A fixed stat: its CritChance and CritDamage count at each hit; its other values (PhysicalArmor, MaxHealth, the
     attributes) are in the gear values of the weapon in the hand (`Gear::values`).
+- The weapon swap (stage B3, `Passives::weapon_changed`). The key of a weapon that changes the weapon slot in the hand (`Combat::change_weapon`)
+  is the event OnWeaponSwap: the rows with OnWeaponSwap of the tree of the new weapon and of the perks, with the conditions of a rule with no
+  hit (the values of the character, DontHaveStatusEffect, EquipLoadCategory, StatusEffect, StatusEffectCategories), the activation cooldown,
+  and the effects SelfApplyStatusEffect, CooldownTimer with CDRImmediatelyOptions, and RemoveStatusEffects. Archer's Speed
+  (`Passive_Bow_Skirmish_HasteOnSwap`: no timer, the haste; the haste gives its timer by OnStackStatusEffect, [Status effects](status-effects.md)).
+  An equipment change that puts a different weapon into the hand (an equip, an unequip, a preset) is no swap [agent decision; research
+  bow-build-2.md K2: the client does not test the bit of OnWeaponSwap, the event is server code]. Each change of the weapon in the hand (a swap
+  and an equipment change) runs the tag removal actions of the data (`actionTagRemovals` of the ability data of format 7): a status of such an
+  action ends when a tag of the weapon before goes (`Bow_Remove_StatusEffects_Sheathe`: the haste of Dodge and Weave ends when the bow leaves
+  the hand; the end cause "the weapon of its tag left the hand"; client code 0x1E140A0 removes the same haste when the weapon in the hand is
+  not a bow) [game data; client code].
+- The end of a dodge (stage B3, `Passives::dodge_started`, `dodge_ended`; [Stamina and dodge](stamina-and-dodge.md): the dodge action). The
+  dodge status actions of the data (`actionDodgeStatuses` of format 7: `Passive_Bow_Skirmish_HasteOnDodge` of `playeractions_ability_bow`)
+  test at the start of the action the learned node, the tag of the weapon in the hand, the stamina before the payment as a part of the maximum
+  (0.99 or more: "after dodging with full stamina"), and the statuses that the character must not have (of each source: no new haste while one
+  runs); at the end of the action they give their statuses when the exit tags hold (the bow still in the hand), with the action as the source
+  [game data; research bow-build-2.md Q1]. The rows with AfterAction (the dodge action of the stamina data) or AfterSequence (the fragment of
+  the last dodge) and no event act one time at the end, with the conditions and the effects of a rule with no hit: Evasive Tactics
+  (`Ultimate_Bow_Skirmish`: the empower `Status_Ultimate_Bow_Skirmish_DodgeDmg` for 5 s), the cooldown change after a dodge
+  (`Global_Common_CDRonDodge`, `CDROnDodgePerk1` to `3`). The column Duration (the window after the action) is a mark: a rule with no event
+  acts one time [agent decision: the reader of the column was not found].
+- The time factor of a status on the character (stage B3, `Passives::duration_factor`; client getter 0x68308E0,
+  `AbilityComponent::GetStatusEffectDurationMultipliers`, research bow-build-2.md Q1). A row with StatusEffectDurationReduction and no event
+  is a time factor: for a status that its StatusEffect names or that has a category of its StatusEffectCategories, and whose own conditions
+  pass, the value times the potency of the rule joins one sum (the client sums the parts). The status system applies `time x (1 + sum)`, then
+  DurationMax ([Status effects](status-effects.md)). The new status counts as present for the condition StatusEffectCategories (else the first
+  haste of a character with no haste is not longer; the text of each perk says that each haste is longer) [agent decision with the research
+  recommendation; the use of the sum and the order are server code]. StatusEffectDurationCats is a mark: the getter does not read it. A time
+  factor that names no status and no category (`Ability_Perk_Amulet_DurEmpower`, `Global_Amulet_DurEmpower`) matches no status and is not
+  applied, with the cause. The outgoing part (TargetStatusEffectDurationCats, TargetStatusEffectDurationMult: "haste you apply" of Alacrity II,
+  Battle Precision) is not in the backend: a row with a time factor of its own is applied for that part, and the list names the outgoing part
+  [agent decision: the outgoing part of Alacrity II on a haste that the character gives itself is open, research K1; applying both would give
+  two times the text].
 - A status while entities are near (`Passives::tick`, each 500 ms: `passive_rules::kAroundStep`, a decision of this
   project, because the action data starts the tracking spell and has no time). The status comes with no end while the
   condition holds, with the rule as its source, and it ends when the condition does not hold and when the character leaves
@@ -260,7 +306,9 @@ common game data folder) names each row of the data (a node or a perk) with a pa
 this stage gives the source of each applied row; the rows that are not applied need a different system, and the list names the cause.
 From stage B2 the list has 61 of the 115 rows applied (the run `b2-live2` of stage B2 with the game data of the stage): the 12 elemental
 weapon perks, `Ability_Spear_CDROnHitAfterDodge`, `GlobalPerk_Artifact_Set2_MediumLegs`, `Helper_Passive_Greatsword_Off_8`, and
-`Passive_Dagger_Blade_LightFinish_Helper_Rend` came with the conditions and the effects of stage B2 (the rows of the table below).
+`Passive_Dagger_Blade_LightFinish_Helper_Rend` came with the conditions and the effects of stage B2 (the rows of the table below). From
+stage B3 the list has 67 of the 115 rows applied (the final run of stage B3 with the files of `dist` and of the common game data folder): the
+six rows after the end of a dodge of the table below.
 
 | Rows | What the backend does |
 | --- | --- |
@@ -276,7 +324,7 @@ weapon perks, `Ability_Spear_CDROnHitAfterDodge`, `GlobalPerk_Artifact_Set2_Medi
 | 3 cleanse amulets (`Global_Amulet_DodgeSuccess_CleanseDoT`, `_CleanseDebilitate`, `Ability_Perk_Amulet_DodgeSuccess_Cleanse`), `GlobalPerk_Artifact_Set2_HeavyChest` | Not applied: NumStatusEffectsToRemove and StatusEffectCategoriesList (the removal of a number of statuses of a category) are not in the backend. |
 | `Ability_Spear_CDROnHitAfterDodge` | Applied from stage B2 (StatusEffect, RemoveStatusEffects); the spear has no ability in this backend yet. |
 | 3 block perks (`Global_Chest_OnBlockedHitTaken_StaminaRegen`, its `Ability_Perk_*` form, `Passive_Flail_Eldritch_Passive2`), `AbilityID_Catacombs_Revitalize_Ability` | Not applied: the backend has no block (OnBlockedHitTaken). |
-| 22 rows after a dodge (`CDROnDodgePerk1` to `3`, `Global_Common_CDRonDodge`, `Global_Earring_ThreatSubOnDodge`, the 10 `Mut_Curse1_*` rows, `Passive_Lifestaff_Protection_HealingOnDodge`, `Passive_Musket_Trapper_*`, `Passive_VoidGauntlet_HealOnDodgeMaxMana`, `Passive_Greatsword_Off_8`, `Ultimate_Bow_Skirmish`, `AbilityTable_SetBonus_Infix_Stifling_Legs`) | Not applied: AfterAction, AfterSequence, and Duration (a rule after the end of an action) are not in the evaluator. |
+| 22 rows after a dodge (`CDROnDodgePerk1` to `3`, `Global_Common_CDRonDodge`, `Global_Earring_ThreatSubOnDodge`, the 10 `Mut_Curse1_*` rows, `Passive_Lifestaff_Protection_HealingOnDodge`, `Passive_Musket_Trapper_*`, `Passive_VoidGauntlet_HealOnDodgeMaxMana`, `Passive_Greatsword_Off_8`, `Ultimate_Bow_Skirmish`, `AbilityTable_SetBonus_Infix_Stifling_Legs`) | From stage B3: applied at the end of a dodge (`CDROnDodgePerk1` to `3`, `Global_Common_CDRonDodge`, `Passive_Lifestaff_Protection_HealingOnDodge`, `Ultimate_Bow_Skirmish`). Not applied, with the cause: ModifySelfApplyStatusEffectDuration and ThreatDamage (`Global_Earring_ThreatSubOnDodge`), OnEquipStatusEffect (the `Mut_Curse1_*` rows), ModifySelfApplyStatusEffectDuration (`Passive_Musket_Trapper_HasteOnDodge`), DisableApplyPerStatusEffectStack (`Passive_VoidGauntlet_HealOnDodgeMaxMana`), IsInCombatState (`Passive_Greatsword_Off_8`), a CastSpell after a dodge (`AbilityTable_SetBonus_Infix_Stifling_Legs`), and an action of the client that the backend does not have (`Passive_Musket_Trapper_DodgeReload`: its reload). Before stage B3 none was applied. |
 | 13 rows of an equipped ability or a trigger (`RequiredEquippedAbilityId`, `AbilityTrigger`, `AbilityList`: the helpers of the flail, the sword, the dagger, and the greatsword, the greatsword counter, `Passive_Flail_Crusader_Passive4`) | From stage B2 RequiredEquippedAbilityId is a condition (the helper rows of a node): `Helper_Passive_Greatsword_Off_8` and `Passive_Dagger_Blade_LightFinish_Helper_Rend` are applied. The others keep a cause: AbilityTrigger, AbilityList, HealthDamageMitigation, ThreatDamage, or an ability with no plan. |
 | 5 rows of an ability with no plan (`Ability_Greatsword_DrainAttack`, `Ability_Spear_Cyclone_BonusStaminaOnMultiHit`, `Rapier_Evasion_Mod2`, `_Mod4`, `Upgrade_Sword_WhirlingBlade_Rend`) | Not applied yet: the weapon part of their ability comes later. |
 | `Global_Conqueror_Longsword_ShieldlessAgility_HitStaminaCostTracker`, `Global_Conqueror_Musket_LimbDebilitation_Legshot`, `Passive_Firestaff_Pyro_ManaOnblock` | Not applied: OnEquipStatusEffect, OnLegShot, UseDefenderWeaponOnApplyOtherSE are not in the evaluator. `GlobalPerk_Artifact_Set2_MediumLegs` is applied from stage B2 (DamageTypes). |
@@ -337,6 +385,22 @@ NAME` with the preset `bow-boltcaster`: each row below is "applied"; live checks
 | `Passive_Bow_Hunter_DmgOnFirst` (Surprise Attack) and its helper `Passive_Bow_Hunter_DmgOnFirst_Tracker` | +0.2 (the data; the text says 15 percent: a literal number of an older text; decision of the orchestrator) on a hit of a target with no tracker of Surprise Attack of any source (decision D10); the tracker (10 s) goes on the target and the self tracker (15 s) on the attacker. The helper renews the tracker of the target at each later hit of an attacker with the self tracker. A second character gets no bonus while the tracker of the first is on the target. |
 | `Rapier_BonusDMGAfterAbility` (Momentum) | Applied by the evaluator (StatusEffect, RemoveStatusEffects AbilitySpecific): +0.25 on a light or heavy hit while the character has the status, then the status ends. The status comes from an action of a rapier ability, which has no plan in this backend: only a command gives it now. |
 
+### The haste chain of the bow build (stage B3)
+
+The rows of the game data (research `bow-build.md` section 4, rows 24, 26 to 28, 36, 44, 45; `bow-build-2.md` Q1) and what the backend does
+(`tools/world passives NAME` with the preset `bow-boltcaster`: each row below is "applied"; live checks B3-1 to B3-4 of stage B3):
+
+| Row | What the backend does |
+| --- | --- |
+| `Passive_Bow_Skirmish_DodgeHaste` (Dodge and Weave: only WeaponTag; the action `Passive_Bow_Skirmish_HasteOnDodge` of the data) | At the end of a dodge that started with the node, the bow in the hand, 99 percent stamina or more, and no haste of Dodge and Weave: `Status_Passive_Bow_Skirmish_DodgeHaste` (2 s, haste 0.07; 3.24 s with Speedy and Alacrity II), when the bow is still in the hand. It ends when the bow leaves the hand. |
+| `Passive_Bow_Skirmish_HasteOnSwap` (Archer's Speed: OnWeaponSwap, DontHaveStatusEffect the timer) | The key of the bow: `Status_Passive_Bow_Skirmish_HasteOnSwap` (5 s, haste 0.07; 8.1 s with Speedy and Alacrity II) and, by OnStackStatusEffect at its first stack, the timer (10 s). No haste while the timer runs. |
+| `GlobalPerk_Artifact_Set1_MediumFeet` (Speedy: StatusEffectDurationReduction 0.5, StatusEffectCategories Haste) | +0.5 in the time factor of each haste on the character. |
+| `GlobalPerk_Artifact_Set1_MediumFeet_2` (Speedy: OnHit, StatusEffectCategories Haste, BaseDamage 0.1) | +0.1 in the damage part of a hit while the character has a haste (live: 1.49 to 1.59 of the core of a hip shot). |
+| `Ability_Perk_Amulet_DurHaste` (Alacrity II: StatusEffectDurationReduction 0.094, the outgoing part) | +0.094 x potency (1.274 at 800) in the time factor of each haste on the character. The outgoing part is not applied (the list names it). |
+| `Passive_Bow_Skirmish_CDRVsLow` (Closing In: OnHit, TargetHealthPercent 50, Duration -1, CooldownTimer -0.05 ActiveWeapon) | A hit on a target at 50 percent health or less: the cooldowns of the abilities of the weapon in the hand -5 percent of their time. Duration is a mark. Before stage B3 the column Duration stopped the row. |
+| `Ultimate_Bow_Skirmish` (Evasive Tactics, PvP tree: AfterAction Dodge, AfterSequence the dodge fragments, Duration 2) | At the end of a dodge: `Status_Ultimate_Bow_Skirmish_DodgeDmg` (empower 0.15 for 5 s). |
+| `Passive_Bow_Skirmish_DebuffDur` (Battle Precision, PvP tree: TargetStatusEffectDurationCats, TargetStatusEffectDurationMult) | Not applied (stage B4): the outgoing time factor is not in the backend. |
+
 ## Commands
 
 ```sh
@@ -368,5 +432,9 @@ tools/world creature effect ID STATUS 5 # give a creature a status for 5 s (a te
 - The ability file of a tool from before stage 3.3b-S5 (format 3) has only a part of the rows (497 of 2,025) and no spell
   selections of the action data: the evaluator applies only the rows of the file, and the plans keep the node rules of
   stage 3.3a. Write the file again with `tools/gamedata/abilities.sh`.
+- A compare of the damage of two arrows with and without a rule (Speedy) must keep the other parts equal: the charges of the Boltcaster are
+  a debuff for 3 s only, so Mark (+0.1 with a debuff on the target) is gone when the second arrow comes later than 3 s after the first one
+  (live run of stage B3: an arrow 5 s later had the same number with Speedy and without Mark). Shoot the arrows within 3 s.
+- The first arrow on a target has Surprise Attack (+0.2) and no Mark; compare the second and the third arrow.
 - The icon of `Warhammer_Pass_ExhaustOnHit` at the name plate of a creature is the one that ends 5 s after the hit
   (Shockwave also gives the weaken for 10 s, the slow for 4 s, and the stun for 2 s): count the time in a loop of pictures.

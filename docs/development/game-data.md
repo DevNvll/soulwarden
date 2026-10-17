@@ -373,6 +373,18 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
   file, a row two times, or a value that is not a number (test case BW1); a file with no member loads (the part 0 for each row).
   Write both files again with `tools/gamedata/projectiles.sh` and `tools/gamedata/combat.sh` (the projectile tool needs
   `SOULWARDEN_OODLE_LIB`).
+- Stage B3 changes `ability-data.json` to format 7 (`tools/gamedata/abilities.sh`, 2.5 MB): `actionDodgeStatuses` has each action of the
+  player lists that gives statuses at its exit while a dodge plays (IfActionStatus of the dodge action, Status Installed;
+  EffectsToApplyOnExit, also in the Then branch of an IfThenElse with a tag test, whose tags are the exit tags) with its tests (the dodge
+  action, the nodes, the tags, the stamina as a part of the maximum, the statuses that the character must not have); `actionTagRemovals`
+  has each action whose condition is only tag tests and whose only activity removes statuses at its exit; `actionDodgeStatusesNotExported`
+  names the dodge actions with a different form and the cause. Retail: one of each (`Passive_Bow_Skirmish_HasteOnDodge`: Dodge, the node
+  `Passive_Bow_Skirmish_DodgeHaste`, the tag Bow, GreaterThanOrEqual 0.99, without the haste, the exit tag Bow;
+  `Bow_Remove_StatusEffects_Sheathe`: the tag Bow, the haste), none not exported. The other lists are the same as in format 6 (the run of
+  stage B3 compared them). The tool stops for a status of such an action that the status tables do not have (`check_ability_tool.py`: the
+  case valid tests the two lists and a dodge action with a spell cast, which is not exported). The loader takes the formats 1 to 7 (a file
+  of format 6 has no dodge status action: a dodge then gives no haste of Dodge and Weave, and the haste does not end when the bow leaves the
+  hand; test case HS10). A backend from before stage B3 refuses a file of format 7: put the file and the backend of stage B3 together.
 - Stage B2 (the code review of stage U3, findings U3-R7 and U3-R8) changes `projectile-data.json` to format 3: each entry of
   `abilityActions` has a 9th member `[switchBuffer, switchAt, [[time, "buffer"|"cancel"], ...]]`: the start of CanUnsheathe_Buffer, the
   first start of CanUnsheathe or CanTransition (the switch rule of a melee fragment of `weapon_actions.py`; -1: none), and the

@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 #include "core/logging/log.h"
 #include "gamedata/progression_tables.h"
+#include "world/data_rules.h"
 #include "world/world.h"
 
 namespace soulwarden::backend::world {
@@ -94,6 +96,8 @@ const char* status_end_text(StatusEnd cause) {
         return "the character left the world";
     case StatusEnd::command:
         return "a command";
+    case StatusEnd::weapon:
+        return "the weapon of its tag left the hand";
     }
     return "unknown";
 }
@@ -154,8 +158,17 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
             state.applied[key] = now + milliseconds_of(wait);
         }
     };
-    // The duration: of the source, else BaseDuration; not more than DurationMax.
+    // The duration: of the source, else BaseDuration; times the time factor of the character (stage B3: Speedy and Alacrity II give a haste
+    // 1 + 0.5 + 0.094 x 1.274 of its time; client getter 0x68308E0 sums the parts, Passives::duration_factor); not more than DurationMax.
     float seconds = how.seconds > 0.0F ? how.seconds : row.duration;
+    float factor = 1.0F;
+    if (!how.permanent && !how.fixedTime && seconds > 0.0F) {
+        factor = m_world.passives().duration_factor(character, row);
+        if (factor != 1.0F) {
+            seconds *= factor;
+            ++m_counts.scaledTimes;
+        }
+    }
     const float most = row.cells.number("DurationMax");
     if (most > 0.0F && seconds > most) {
         seconds = most;
@@ -198,8 +211,12 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
             status.damage = how.damage;
         }
         status.serial = m_nextSerial++;
+        const unsigned stacks = status.stacks;
         schedule(character.characterId, status);
         publish(character, state);
+        if (Entity* again = m_world.find_character(character.characterId)) {
+            on_stack(*again, row, stacks, how.source);
+        }
         return counted(StatusVerdict::renewed);
     }
     start_cooldown();
@@ -231,15 +248,27 @@ StatusVerdict Statuses::apply(Entity& character, const gamedata::StatusRow& row,
     {
         const std::string mark = log::session_mark(character.owner, character.characterId);
         const log::Context context(mark);
+        char time[96];
+        if (how.permanent) {
+            std::snprintf(time, sizeof(time), "no end");
+        } else if (factor != 1.0F) {
+            // Stage B3: the time with a time factor of the character, with two decimals (3.24 s of a haste of 2 s).
+            std::snprintf(time, sizeof(time), "%.2f s (time factor %.4f)", static_cast<double>(seconds), static_cast<double>(factor));
+        } else {
+            std::snprintf(time, sizeof(time), "%d s", static_cast<int>(std::lround(seconds)));
+        }
         log::write("world: status: %s gets %s (%s), %s, potency %.2f",
                    character.name.c_str(),
                    row.id.c_str(),
                    how.source.id.empty() ? "no source" : how.source.id.c_str(),
-                   how.permanent ? "no end" : (std::to_string(static_cast<int>(std::lround(seconds))) + " s").c_str(),
+                   time,
                    static_cast<double>(how.potency));
     }
     if (Entity* again = m_world.find_character(character.characterId)) {
         cast(*again, row, how.source);
+    }
+    if (Entity* again = m_world.find_character(character.characterId)) {
+        on_stack(*again, row, status.stacks, how.source);
     }
     return counted(StatusVerdict::applied);
 }
@@ -390,6 +419,31 @@ void Statuses::cast(Entity& character, const gamedata::StatusRow& row, const Sta
     if (!m_world.runes().status_spell(character, spell, source)) {
         ++m_counts.spellsNotDone;
     }
+}
+
+void Statuses::on_stack(Entity& character, const gamedata::StatusRow& row, unsigned stacks, const StatusSource& source) {
+    const std::string_view next = row.cells.text("OnStackStatusEffect");
+    if (next.empty() || m_onStackDepth >= 4) {
+        return;
+    }
+    // The stacks against AddOnStackSize with AddOnStackSizeComparison (the comparator of the data; game data: the haste of Archer's Speed,
+    // AddOnStackSize 1 Equal, gives its timer at its first stack). A row with no size gives the statuses at each application.
+    if (row.cells.has("AddOnStackSize")
+        && !data_rules::compare(static_cast<float>(stacks), row.cells.number("AddOnStackSize"), row.cells.text("AddOnStackSizeComparison"))) {
+        return;
+    }
+    ++m_onStackDepth;
+    for (const std::string_view status : parts_of(next)) {
+        StatusApply how;
+        how.source = StatusSource{StatusSourceKind::status, row.id, 0, source.entity};
+        if (Entity* own = m_world.find_character(character.characterId)) {
+            const StatusVerdict verdict = apply(*own, status, how);
+            if (verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed) {
+                ++m_counts.onStack;
+            }
+        }
+    }
+    --m_onStackDepth;
 }
 
 void Statuses::publish(Entity& character, CharacterState& state, bool refresh) {

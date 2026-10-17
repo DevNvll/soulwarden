@@ -533,7 +533,9 @@ button on "Confirm").
   and the Beacon keep the spells of stage 3.3a. The combat tool writes the critical values of
   each weapon and the head and critical cells of each damage row, and the creature tool
   writes the angles of a hit from behind and the head volume of each creature model (from
-  its skeleton): with older files no hit is critical.
+  its skeleton): with older files no hit is critical. From stage B3 the file (format 7) also has the dodge status actions and the
+  tag removal actions of the action lists (Dodge and Weave of the bow): with a file of format 6 a dodge gives no haste of Dodge and
+  Weave. A backend from before stage B3 refuses a file of format 7.
 - `tools/gamedata/weapon-actions.sh` makes the weapon actions
   (`~/.local/share/soulwarden/gamedata/weapon-actions.json`, 0.4 MB, stage 3.3b-M1, format 2 from stage 3.3b-M2): the attack
   graph of each melee weapon of the game (the light chain, the charges, the swings and the thrusts with their damage rows and
@@ -942,6 +944,21 @@ button on "Confirm").
   arrows after it do not fly); a weapon key in a bow ability waits for its switch marks; the weight limit refuses the press of a
   bow; the first arrow after a weapon switch to the bow flies; the turn and the walk of a creature attack follow each clip of the
   attack, also when two clips overlap.
+- The haste chain of the bow build (stage B3, `docs/systems/passive-rules.md`, `status-effects.md`, `stamina-and-dodge.md`). Run
+  `tools/gamedata/abilities.sh` again (format 7). Dodge and Weave: a dodge that starts with the node, the bow in the hand, 99 percent
+  stamina or more, and no haste of Dodge and Weave gives the haste (2 s, 0.07) at the end of the dodge action (the mark CanTransition of
+  its last dodge; a buffered next dodge continues the action), when the bow is still in the hand; the haste ends when the bow leaves the
+  hand (a key, an equipment change). Archer's Speed: the key of a weapon that puts the bow into the hand (OnWeaponSwap) gives the haste
+  (5 s) and its timer (10 s, OnStackStatusEffect of the status row); no haste while the timer runs; an equipment change is no swap. The
+  time factor of a status on a character: 1 plus the StatusEffectDurationReduction of its rules for the status (Speedy 0.5, Alacrity II
+  0.094 x 1.274): each haste of the build lasts 1.62 times its time (3.24 s, 8.1 s), not more than DurationMax. Speedy: +0.1 base
+  damage while hasted (the condition StatusEffectCategories). Closing In: a hit at 50 percent health of the target or less takes 5
+  percent off the cooldowns of the bow abilities. Evasive Tactics (PvP tree): empower 0.15 for 5 s after a dodge. The cooldown change
+  after a dodge of the perks (`Global_Common_CDRonDodge`, `CDROnDodgePerk1` to `3`) works too. A development command with seconds keeps
+  its time (no time factor); `tools/world status NAME STATUS SECONDS COUNT POTENCY` has a potency. The corrections of the code review
+  of stage B2: a dodge that cancelled a bow ability no longer refuses the next ability; a hit after the end of the charges starts one new
+  charge; Mark sees the rend of a perk; the rend of a perk obeys a removal window; a shot item of a press that a weapon switch holds is
+  refused.
 - Spell abilities (stage 3.3b-S2b, protocol notes 4.28, `docs/systems/spells.md`). With the
   spell data and the projectile data of this stage, the key Q uses Ice Pylon of the ice
   gauntlet, Traps of the musket, and Beacon of the life staff when they are on the bar. The

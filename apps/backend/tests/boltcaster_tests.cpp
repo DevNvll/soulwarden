@@ -17,7 +17,8 @@
 //   BC6   two sessions (MP-10): the observer gets the charge icon with its count and the health of the wolf with the bytes of the owner, and
 //         no number; the shot of a client gives the charge
 //   BC7   two attackers on one creature (decision D10): the charges of each source count for the bolt of the third one; the cooldown of
-//         the bolt is on the target
+//         the bolt is on the target (code review of stage B2, finding B2-R6: 3 new charges after the removal window, one refusal of the
+//         cooldown of the target)
 //   BC8   the conditions with an owner and with the stacks of the attacker (CheckStatusEffectsOnTargetOwned, StatusEffectStackSize), the end
 //         of a status of the attacker (AbilitySpecific with StatusEffectsList), and the list of the rules (the helper row, the row of a status)
 //   BC9   the load: 300 hits with charges on 40 near creatures, with 4,000 far creatures, look only at the target
@@ -379,13 +380,30 @@ void two_attackers(const Options&) {
     const std::size_t boltsB = single_numbers(shop.b, kLightningWire, fromB).size();
     note("charges before the hit of B: " + std::to_string(charges) + "; bolts: A " + std::to_string(boltsA) + ", B " + std::to_string(boltsB));
     check(charges == 3 && boltsB == 1 && boltsA == 0, "the charges of each source count: the hit of B on 3 charges (2 of A, 1 of B) gives B the bolt");
-    // The cooldown of the bolt is on the target: A in the 3 s gets no bolt with 3 new charges.
+    // The cooldown of the bolt is on the target: A in the 3 s gets no bolt with 3 new charges. The first new charge comes after the removal
+    // window of the bolt (0.2 s), so that the target has 3 charges before the hit of A and the bolt rule reaches the cooldown of the target
+    // (code review of stage B2, finding B2-R6: with only 0.2 s the window refused the first charge, and the case did not test the cooldown).
+    step(6);
+#ifndef SOULWARDEN_B2_BASELINE
+    const std::uint64_t cooldowns = shop.host.world.creatures().counts().applicationCooldowns;
+#else
+    const std::uint64_t cooldowns = 0;
+#endif
     for (int index = 0; index < 3; ++index) {
         (void)shop.shot(target(), "TestBowLight", "", index % 2 == 0 ? kCharacterA : kCharacterB);
         step(5);
     }
+    const unsigned recharged = shop.stacks(wolf, kCharge);
     (void)shop.shot(target(), "TestBowLight");
     step(3);
+#ifndef SOULWARDEN_B2_BASELINE
+    const std::uint64_t refused = shop.host.world.creatures().counts().applicationCooldowns - cooldowns;
+#else
+    const std::uint64_t refused = 0;
+#endif
+    note("charges before the second bolt of the 3 s: " + std::to_string(recharged) + "; refusals of the cooldown of the target: " + std::to_string(refused));
+    check(recharged == 3, "the target has 3 new charges before the hit of A (the removal window of the bolt ended)");
+    check(refused == 1, "the bolt of A in the 3 s reaches the ApplicationCooldown of the target, which refuses it");
     check(single_numbers(shop.a, kLightningWire, fromA).empty(), "a bolt of A in the 3 s after the bolt of B on the same target is refused");
 }
 

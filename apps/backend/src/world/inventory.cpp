@@ -486,8 +486,11 @@ ItemResult Inventory::finish(Plan& plan, const char* what) {
                 }
             }
         }
-        // The weapon in the hand before the change (its slot and its instance: Combat::weapon_key).
+        // The weapon in the hand before the change (its slot and its instance: Combat::weapon_key), and its weapon row (stage B3: its tags).
         const std::string heldBefore = Combat::weapon_key(*entity);
+        const ItemInstance* held = Combat::weapon_in_hand(*entity);
+        const gamedata::CombatTables* combatTables = m_world.combat().tables();
+        const gamedata::WeaponRow* before = held != nullptr && combatTables != nullptr ? combatTables->weapon_of(held->itemId) : nullptr;
         entity->bag = std::move(items.bag);
         entity->equipment = std::move(items.equipment);
         // The perks, the attributes, the armor, and the equip load of the new equipment (stage 1.3b).
@@ -498,6 +501,11 @@ ItemResult Inventory::finish(Plan& plan, const char* what) {
             // rule of Combat::select_weapon). An unchanged weapon in the hand gets no notification.
             if (Combat::weapon_key(*entity) != heldBefore) {
                 m_world.abilities().weapon_changed(*entity);
+                // Stage B3: the tag removals of the data (the haste of Dodge and Weave ends when the bow leaves the hand). An equip is not a
+                // weapon swap: no rule with OnWeaponSwap (an agent decision, research bow-build-2.md K2).
+                if (Entity* own = m_world.find_character(characterId)) {
+                    m_world.passives().weapon_changed(*own, before, false);
+                }
             }
         }
         // The countdown of each item of a consumable cooldown that runs, also for a new item (finding F8 of the review of

@@ -43,7 +43,9 @@ The first six cases after valid are the corrections of the findings F11 and F12 
 stage 1.3b (criterion I14). The last three are the caster effect rows and the status categories of stage 3.3b-S1
 (format 3). The values of the valid document: the format 6 (stage 3.3b-M2: the status actions of the player: a status that the action
 applies at its enter and takes at its exit, with its condition of nodes and tags as terms; a tracker that stays is not one; stage 3.4f-B:
-a hit-taken action with its tests, and a hit-taken action that also casts a spell is not exported); the status row with its number among
+a hit-taken action with its tests, and a hit-taken action that also casts a spell is not exported; format 7, stage B3: a dodge status action
+with its tests and the tag of its exit, a dodge action that also casts a spell is not exported, and a tag removal action); the status row
+with its number among
 the CRC values of all rows; its other cells (Health 400, TickRate 1, EffectCategories); the spell with its cost id
 "SpecialAttack" (an id that the game itself does not resolve: no cost); the mana cost 25 of a cost id; the cost
 columns of an ability row.
@@ -232,6 +234,24 @@ def action_list(case: str) -> bytes:
             f"<IfDamagedByPowerLevel Comparison='GreaterThan' Value='0'/></And></ActivationCondition>"
             f"<Activities><ModifyStatusEffects><Default><EffectsToApplyOnEnter><EffectId EffectId='PotionHeal'/></EffectsToApplyOnEnter>"
             f"</Default></ModifyStatusEffects><CastSpell><Default SpellName='WarHammer_Spell_Shockwave'/></CastSpell></Activities></Action>"
+            # Format 7 (stage B3): a dodge status action (the form of Passive_Bow_Skirmish_HasteOnDodge: the status at the exit of the
+            # action, in the Then branch of a tag test), a dodge action that also casts a spell (not exported, with its cause), and a tag
+            # removal action (the form of Bow_Remove_StatusEffects_Sheathe).
+            f"<Action Name='Test_Dodge_Haste'><ActivationCondition><And><IfAbilityActive AbilityName='Passive_Test_Sprint'/>"
+            f"<IfMannequinTag TagName='Warhammer'/><IfActionStatus ActionName='Dodge' Status='Installed'/>"
+            f"<IfStaminaValue ComparisonValue='0.99' ComparisonValueIsPercentage='true' ComparisonType='GreaterThanOrEqual'/>"
+            f"<Not><IfHasStatusEffect StatusEffect='PotionHeal' OnlyCheckOwnedStatusEffects='false'/></Not></And></ActivationCondition>"
+            f"<DeactivationCondition><Not><IfActionStatus ActionName='Dodge' Status='Installed'/></Not></DeactivationCondition>"
+            f"<Activities><IfThenElse ResetWhenReinstalled='true'><IfCondition><IfMannequinTag TagName='Warhammer'/></IfCondition>"
+            f"<ThenActivity><ModifyStatusEffects><Default><EffectsToApplyOnExit><EffectId EffectId='PotionHeal'/></EffectsToApplyOnExit>"
+            f"</Default></ModifyStatusEffects></ThenActivity><ElseActivity/></IfThenElse></Activities></Action>"
+            f"<Action Name='Test_Dodge_Spell'><ActivationCondition><And><IfAbilityActive AbilityName='Passive_Test_Sprint'/>"
+            f"<IfActionStatus ActionName='Dodge' Status='Installed'/></And></ActivationCondition>"
+            f"<Activities><ModifyStatusEffects><Default><EffectsToApplyOnExit><EffectId EffectId='PotionHeal'/></EffectsToApplyOnExit>"
+            f"</Default></ModifyStatusEffects><CastSpell><Default SpellName='WarHammer_Spell_Shockwave'/></CastSpell></Activities></Action>"
+            f"<Action Name='Test_Remove_Sheathe'><ActivationCondition><And><IfMannequinTag TagName='Warhammer'/></And></ActivationCondition>"
+            f"<DeactivationCondition/><Activities><ModifyStatusEffects><Default RemoveNothingOnMigrate='true'><EffectsToRemoveOnExit>"
+            f"<EffectId EffectId='PotionHeal'/></EffectsToRemoveOnExit></Default></ModifyStatusEffects></Activities></Action>"
             f"</Actions></ActionList>").encode()
 
 
@@ -259,7 +279,7 @@ def valid_values(document: dict, case: str) -> list[str]:
     """@return The values of the valid document that are not correct."""
     wrong = []
     statuses = {row[0]: row for row in document["statusEffects"]}
-    if document["format"] != 6:
+    if document["format"] != 7:
         wrong.append(f"the format {document['format']}")
     potion = statuses.get("PotionHeal")
     if potion is None or potion[9] != {"Health": 400.0, "TickRate": 1.0, "EffectCategories": "SurvivalPotion"}:
@@ -311,6 +331,15 @@ def valid_values(document: dict, case: str) -> list[str]:
     if document.get("actionHitStatusesNotExported") != [["playeractions_ability_test", "Test_Hit_Aura",
                                                          "an activity other than the statuses (CastSpell)"]]:
         wrong.append(f"the hit-taken actions that are not exported {document.get('actionHitStatusesNotExported')}")
+    dodge = {"dodge": "Dodge", "nodes": ["Passive_Test_Sprint"], "tags": ["Warhammer"], "stamina": ["GreaterThanOrEqual", 0.99],
+             "without": ["PotionHeal"], "exitTags": ["Warhammer"]}
+    if document.get("actionDodgeStatuses") != [["playeractions_ability_test", "Test_Dodge_Haste", dodge, ["PotionHeal"]]]:
+        wrong.append(f"the dodge status actions (format 7) {document.get('actionDodgeStatuses')}")
+    if document.get("actionDodgeStatusesNotExported") != [["playeractions_ability_test", "Test_Dodge_Spell",
+                                                           "an activity other than the statuses (CastSpell)"]]:
+        wrong.append(f"the dodge actions that are not exported {document.get('actionDodgeStatusesNotExported')}")
+    if document.get("actionTagRemovals") != [["playeractions_ability_test", "Test_Remove_Sheathe", ["Warhammer"], ["PotionHeal"]]]:
+        wrong.append(f"the tag removal actions (format 7) {document.get('actionTagRemovals')}")
     if document["statusCategories"] != [["Buff", {}], ["Haste", {"MoveSpeedMod": 0.4, "SprintSpeedMod": 0.4}]]:
         wrong.append(f"the status categories {document['statusCategories']}")
     if document.get("statMultipliers") != [["MoveSpeedMod", 0.0, 1.5], ["SprintSpeedMod", 0.0, 1.5]]:

@@ -824,6 +824,28 @@ bool Creatures::apply_effect(Entity& entity, const CreatureEffect& effect) {
         return false;
     }
     const WorldClock::time_point now = m_world.clock().now();
+    // An entry of the same status whose end came, and that the sweep of the due list did not take yet (a world task or a hit of a client item
+    // before the sweep), is not renewed (code review of stage B2, finding B2-R2: a hit after the end of 2 charges gave 3 charges). The sweep
+    // of the creature first: the ticks due before the end come (review SU-R2), then the entry ends; the application starts a new entry with
+    // its initial stacks and a new serial. Inside a sweep or a tick the old entry only ends (its due ticks stay in the due list of the sweep).
+    const auto ended = [&]() {
+        return std::find_if(creature.effects.begin(), creature.effects.end(),
+                            [&](const CreatureEffect& existing) { return existing.status == effect.status && existing.ends <= now; });
+    };
+    if (ended() != creature.effects.end()) {
+        if (m_effectDepth == 0) {
+            sweep(entity);
+            if (creature.dead || creature.immune()) {
+                return false;
+            }
+        }
+        if (const auto old = ended(); old != creature.effects.end()) {
+            if (old->shown) {
+                m_world.touch(entity.id, ComponentKey::status);
+            }
+            creature.effects.erase(old);
+        }
+    }
     const bool wasHeld = creature.held(now);
     const auto same = std::find_if(creature.effects.begin(), creature.effects.end(),
                                    [&](const CreatureEffect& existing) { return existing.status == effect.status; });
@@ -993,6 +1015,13 @@ void Creatures::end_effects() {
 void Creatures::sweep(Entity& entity) {
     const WorldClock::time_point now = m_world.clock().now();
     Creature& creature = entity.creature;
+    ++m_effectDepth;
+    struct Leave {
+        unsigned& depth;
+        ~Leave() {
+            --depth;
+        }
+    } leave{m_effectDepth};
     // The ticks that are due before the end of an effect come before the effect ends: a late world step can take an earlier entry of
     // the same creature first (review SU-R2). A death ends the ticks.
     std::vector<std::pair<std::uint64_t, WorldClock::time_point>> pending;
@@ -1046,6 +1075,13 @@ void Creatures::sweep(Entity& entity) {
 
 void Creatures::effect_tick(Entity& entity, std::uint64_t serial, WorldClock::time_point at) {
     const WorldClock::time_point now = m_world.clock().now();
+    ++m_effectDepth;
+    struct Leave {
+        unsigned& depth;
+        ~Leave() {
+            --depth;
+        }
+    } leave{m_effectDepth};
     const auto find_effect = [&]() {
         return std::find_if(entity.creature.effects.begin(), entity.creature.effects.end(),
                             [serial](const CreatureEffect& effect) { return effect.serial == serial; });
@@ -1127,27 +1163,9 @@ bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, Enti
         return false;
     }
     const WorldClock::time_point now = m_world.clock().now();
-    // Stage B2, the removal window: a running effect whose row removes statuses (RemoveStatusEffects, RemoveStatusEffectCategories) refuses
-    // those rows while it runs. Game data: Status_Perk_Artifact_Set1_Bow_StaticCharge_Removal (0.2 s) is the partner of the bolt of the
-    // Boltcaster and takes the charge that the hit of the bolt adds; Status_SetBonusInfix_Focused_CCEffectImmunity (1 s, the category CC)
-    // has the same form. A reading of the data (a decision of an agent: the client has no add code of the server).
-    for (const CreatureEffect& running : creature.effects) {
-        if (running.row == nullptr || now >= running.ends || data_rules::same_text(running.status, row.id)) {
-            continue;
-        }
-        const std::string_view rows = running.row->cells.text("RemoveStatusEffects");
-        const std::string_view categories = running.row->cells.text("RemoveStatusEffectCategories");
-        bool blocked = data_rules::list_has(rows, row.id);
-        for (const std::string_view category : data_rules::parts_of(row.cells.text("EffectCategories"))) {
-            blocked = blocked || data_rules::list_has(categories, category);
-        }
-        if (blocked) {
-            ++m_counts.statusesBlocked;
-            ++m_counts.statusesRefused;
-            log::write("world: effect: creature %016llx (%s) takes no %s: %s removes it", static_cast<unsigned long long>(entity.id),
-                       creature.kind->id.c_str(), row.id.c_str(), running.status.c_str());
-            return false;
-        }
+    if (removal_blocks(entity, row)) {
+        ++m_counts.statusesRefused;
+        return false;
     }
     // Stage B2: ApplicationCooldown, one application of the row for each creature in that time (the rule of a character).
     if (!application_ready(entity, row, false)) {
@@ -1226,6 +1244,32 @@ bool Creatures::give_status(Entity& entity, const gamedata::StatusRow& row, Enti
     }
     ++(given ? m_counts.statusesGiven : m_counts.statusesRefused);
     return given;
+}
+
+bool Creatures::removal_blocks(const Entity& entity, const gamedata::StatusRow& row) {
+    // Stage B2, the removal window: a running effect whose row removes statuses (RemoveStatusEffects, RemoveStatusEffectCategories) refuses
+    // those rows while it runs. Game data: Status_Perk_Artifact_Set1_Bow_StaticCharge_Removal (0.2 s) is the partner of the bolt of the
+    // Boltcaster and takes the charge that the hit of the bolt adds; Status_SetBonusInfix_Focused_CCEffectImmunity (1 s, the category CC)
+    // has the same form. A reading of the data (a decision of an agent: the client has no add code of the server).
+    const WorldClock::time_point now = m_world.clock().now();
+    for (const CreatureEffect& running : entity.creature.effects) {
+        if (running.row == nullptr || now >= running.ends || data_rules::same_text(running.status, row.id)) {
+            continue;
+        }
+        const std::string_view rows = running.row->cells.text("RemoveStatusEffects");
+        const std::string_view categories = running.row->cells.text("RemoveStatusEffectCategories");
+        bool blocked = data_rules::list_has(rows, row.id);
+        for (const std::string_view category : data_rules::parts_of(row.cells.text("EffectCategories"))) {
+            blocked = blocked || data_rules::list_has(categories, category);
+        }
+        if (blocked) {
+            ++m_counts.statusesBlocked;
+            log::write("world: effect: creature %016llx (%s) takes no %s: %s removes it", static_cast<unsigned long long>(entity.id),
+                       entity.creature.kind->id.c_str(), row.id.c_str(), running.status.c_str());
+            return true;
+        }
+    }
+    return false;
 }
 
 bool Creatures::application_ready(const Entity& entity, const gamedata::StatusRow& row, bool start) {

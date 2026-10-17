@@ -60,7 +60,9 @@ line test of a wall in [Navigation](navigation.md), and the projectile of Gravit
 - The weight (code review of stage U3, finding U3-R4, test case UR4): a basic press of a ranged weapon with the bag over 1.5 x its
   weight limit starts no attack (the rule of a melee press at rest, [Combat and health](combat-and-health.md)); the track keeps the
   verdict with the press (`AttackTrack::Press::allowed`), and each shot item of that press is refused (`encumbered`, also a late
-  item).
+  item). A press that a weapon switch holds (`StepOutcome::held`) fires nothing: its raw press gets the verdict "not allowed", and the press
+  that the switch gives back gets its own weight verdict (code review of stage B2, finding B2-R5, test case BV5: a shot item of a held press
+  went past the weight gate of the bow and did 96 damage). The verdict `encumbered` counts both.
 - The hold on the world clock (finding F5, test case RJ5): the time from the step of the press to the step of the release
   (or of the shot), as the session got them, must not be shorter than the steps of the hold (1/30 s each) less 200 ms
   (`kHoldSlack`, a decision of an agent: the reports of a client come with a delay). Input numbers alone do not give the

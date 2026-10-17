@@ -20,7 +20,9 @@ using data_rules::same_text;
 
 /** The events that the backend has a source for (stage 3.3b-S5; OnHealed: stage 3.3b-S6, a heal that the character gives). */
 constexpr const char* kEvents[] = {"OnHit", "OnCrit", "OnKill", "OnHitTaken", "OnHeadShot", "OnHitBehind", "OnHealed",
-                                   "OnHitTakenWhileInvulnerable"};
+                                   "OnHitTakenWhileInvulnerable",
+                                   // Stage B3: a change of the weapon slot with the key of a weapon (Archer's Speed; Passives::weapon_changed).
+                                   "OnWeaponSwap"};
 
 /**
  * The columns of a rule that are marks of the data, not a condition or an effect (the place of a node, the stack rule of a
@@ -40,7 +42,11 @@ const std::set<std::string, std::less<>> kMarks = {
     "IgnoreResetConsecutiveOnDeath",
     // Stage B2: the potency of a rule is not multiplied by the stacks of the status of the target (the bolt of the Boltcaster). The backend
     // multiplies no rule by such stacks: the mark changes nothing.
-    "DisableScalePerTargetSEStack"};
+    "DisableScalePerTargetSEStack",
+    // Stage B3: the time window of a rule after an action (AfterAction, AfterSequence: Evasive Tactics 2, Closing In -1 with no action). The
+    // backend applies a rule with no event once at the end of the dodge, and a row with no action has no window. The client getter of the time
+    // factors (0x68308E0) does not read StatusEffectDurationCats: the rule matches a status by StatusEffect or StatusEffectCategories.
+    "Duration", "StatusEffectDurationCats"};
 
 /** The columns of a value of a rule (a fixed stat, or a part of a hit). */
 const std::set<std::string, std::less<>> kValues = {
@@ -61,7 +67,10 @@ const std::set<std::string, std::less<>> kConditions = {
     // CheckStatusEffectsOnTargetOwned: client 0x67A18F0), a status of the attacker with its stacks (client 0x67A0130), and the node of a
     // helper row.
     "DamageTypes", "TargetStatusEffect", "TargetStatusEffectStackSize", "CheckStatusEffectsOnTargetOwned", "StatusEffect",
-    "StatusEffectStackSize", "StatusEffectComparison", "RequiredEquippedAbilityId"};
+    "StatusEffectStackSize", "StatusEffectComparison", "RequiredEquippedAbilityId",
+    // Stage B3: a status of a category on the character (client self test 0x67A0130: Speedy, +0.1 BaseDamage while hasted), and the end of an
+    // action (AfterAction, AfterSequence: only the end of a dodge, Passives::dodge_ended; a hit does not pass such a row).
+    "StatusEffectCategories", "AfterAction", "AfterSequence"};
 
 /** The effects that the evaluator has (before the damage, after the hit, or a fixed stat through the gear values). */
 const std::set<std::string, std::less<>> kEffects = {
@@ -77,7 +86,28 @@ const std::set<std::string, std::less<>> kEffects = {
     "ForceStatusEffectDamageTableRow", "DamageTableRowOverride",
     // Stage B2: the end of statuses of the target (RemoveTargetStatusEffectsList: the charges of the Boltcaster) and of the attacker
     // (RemoveStatusEffects: a list, or AbilitySpecific with the list of StatusEffectsList: the tracker of Shirking Shock II).
-    "RemoveTargetStatusEffectsList", "RemoveStatusEffects", "StatusEffectsList"};
+    "RemoveTargetStatusEffectsList", "RemoveStatusEffects", "StatusEffectsList",
+    // Stage B3: the time factor of a status on the character (Speedy, Alacrity II; Passives::duration_factor).
+    "StatusEffectDurationReduction"};
+
+/**
+ * Stage B3: the conditions that a rule with no hit has a source for (a swap, the end of a dodge, a time factor): the values of the character,
+ * grit (none: such a row does not pass), a status that it must not have, its load class, and its statuses (StatusEffect, StatusEffectCategories).
+ */
+const std::set<std::string, std::less<>> kSelfConditions = {
+    "MyHealthPercent", "MyComparisonType", "MyStaminaPercent", "MyStaminaComparisonType", "MyManaPercent", "MyManaComparisonType",
+    "DontHaveStatusEffect", "HasGritActive", "EquipLoadCategory", "StatusEffect", "StatusEffectStackSize", "StatusEffectComparison",
+    "StatusEffectCategories"};
+
+/** Stage B3: the effects that a rule with no hit has (a swap, the end of a dodge): a status on the character, a cooldown change, an end of statuses. */
+const std::set<std::string, std::less<>> kSelfEffects = {"SelfApplyStatusEffect", "CooldownTimer", "CDRImmediatelyOptions",
+                                                         "RemoveStatusEffects", "StatusEffectsList"};
+
+/**
+ * Stage B3: the columns of the outgoing time factor (a status that the character gives a different entity: Alacrity II "haste you apply",
+ * Battle Precision). The backend does not apply them; a time factor row with them is applied for its own part.
+ */
+const std::set<std::string, std::less<>> kOutgoingDuration = {"TargetStatusEffectDurationCats", "TargetStatusEffectDurationMult"};
 
 /**
  * The conditions that a hit taken has a source for (code review of stage 3.3b-S5, finding F6): the values of the character (its
@@ -183,6 +213,69 @@ std::vector<std::string> taken_unsourced(const gamedata::CellValues& cells) {
     }
     return columns;
 }
+
+/** Stage B3: @return The condition columns of a rule with no hit (a swap, the end of a dodge) that have no source (`after`: AfterAction too). */
+std::vector<std::string> self_unsourced(const gamedata::CellValues& cells, bool after = false) {
+    std::vector<std::string> columns;
+    const auto check = [&](const std::string& column) {
+        const bool afterColumn = column == "AfterAction" || column == "AfterSequence";
+        if (kConditions.count(column) != 0 && kSelfConditions.count(column) == 0 && !(after && afterColumn)) {
+            columns.push_back(column);
+        }
+    };
+    for (const auto& [column, value] : cells.numbers) {
+        check(column);
+    }
+    for (const auto& [column, value] : cells.texts) {
+        check(column);
+    }
+    return columns;
+}
+
+/** Stage B3: @return The effect columns of a rule with no hit that the backend does not apply for it (a value, a heal, a spell, a target status). */
+std::vector<std::string> self_unsupported(const gamedata::CellValues& cells) {
+    std::vector<std::string> columns;
+    for (const auto& [column, value] : cells.numbers) {
+        if ((kEffects.count(column) != 0 || column.rfind("DMG", 0) == 0 || column.rfind("ABS", 0) == 0) && kSelfEffects.count(column) == 0
+            && column != "StatusEffectDurationReduction" && value != 0.0F) {
+            columns.push_back(column);
+        }
+    }
+    for (const auto& [column, value] : cells.texts) {
+        if (kEffects.count(column) != 0 && kSelfEffects.count(column) == 0 && !value.empty()) {
+            columns.push_back(column);
+        }
+    }
+    return columns;
+}
+
+/** Stage B3: @return True when a rule with no hit has an effect that the backend applies for it (a status, a cooldown change, an end of statuses). */
+bool self_effect(const gamedata::CellValues& cells) {
+    return !cells.text("SelfApplyStatusEffect").empty() || !cells.text("RemoveStatusEffects").empty()
+           || (cells.number("CooldownTimer") < 0.0F && !cells.text("CDRImmediatelyOptions").empty());
+}
+
+/** Stage B3: @return True when a row has an event of each kind (a column On<event> with a value; also an event that the backend does not have). */
+bool any_event(const gamedata::CellValues& cells) {
+    return std::any_of(cells.numbers.begin(), cells.numbers.end(),
+                       [](const auto& cell) { return cell.first.size() > 2 && cell.first[0] == 'O' && cell.first[1] == 'n' && cell.second != 0.0F; })
+           || std::any_of(cells.texts.begin(), cells.texts.end(),
+                          [](const auto& cell) { return cell.first.size() > 2 && cell.first[0] == 'O' && cell.first[1] == 'n' && !cell.second.empty(); });
+}
+
+/**
+ * Stage B3: @return True for a rule of the time of a status on the character (client getter 0x68308E0): no event, StatusEffectDurationReduction,
+ *         no column that the evaluator does not have but the outgoing time factor (`unknown`), and only conditions of a rule with no hit.
+ */
+bool duration_rule(const gamedata::CellValues& cells, const std::vector<std::string>& unknown) {
+    return !any_event(cells) && cells.number("StatusEffectDurationReduction") != 0.0F
+           && std::all_of(unknown.begin(), unknown.end(), [](const std::string& column) { return kOutgoingDuration.count(column) != 0; })
+           && self_unsourced(cells).empty() && !cells.has("AfterAction") && !cells.has("AfterSequence");
+}
+
+/** Stage B3: the values that a rule gives to a hit before its damage (Passives::before_hit). */
+const std::set<std::string, std::less<>> kHitValues = {"BaseDamage", "CritChance", "CritDamage", "ArmorPenetration", "HeadshotDamage",
+                                                       "HitFromBehindDamage"};
 
 /** The conditions of a hit: a row with no event and one of them is a rule of that hit (Crowded Well: the row of the burst). */
 constexpr const char* kHitConditions[] = {"DamageTableRow", "AttackType", "RemoteDamageTableRow"};
@@ -293,6 +386,31 @@ std::string Passives::event_of(const gamedata::CellValues& cells) {
 
 bool Passives::fixed(const gamedata::CellValues& cells) {
     return event_of(cells).empty() && !has_condition(cells) && unknown_columns(cells).empty();
+}
+
+bool Passives::conditional_value(const gamedata::CellValues& cells) {
+    if (any_event(cells) || hit_rule(cells) || (!cells.has("StatusEffect") && !cells.has("StatusEffectCategories")) || !unknown_columns(cells).empty()
+        || !self_unsourced(cells).empty()) {
+        return false;
+    }
+    // Only values of a hit (no armor, no health, no attribute, no status, no cooldown change): the gear values cannot hold a condition.
+    bool value = false;
+    for (const auto& [column, number] : cells.numbers) {
+        if (number == 0.0F) {
+            continue;
+        }
+        if (kHitValues.count(column) != 0) {
+            value = true;
+        } else if (kValues.count(column) != 0 || kEffects.count(column) != 0 || value_column(column)) {
+            return false;
+        }
+    }
+    for (const auto& [column, text] : cells.texts) {
+        if (kEffects.count(column) != 0 && !text.empty()) {
+            return false;
+        }
+    }
+    return value;
 }
 
 std::vector<std::string> Passives::unknown_columns(const gamedata::CellValues& cells) {
@@ -455,21 +573,57 @@ bool Passives::target_status_pass(const gamedata::CellValues& row, const Entity&
     return true;
 }
 
-bool Passives::own_status_pass(const gamedata::CellValues& row, const Entity& character) const {
+bool Passives::own_status_pass(const gamedata::CellValues& row, const Entity& character, const gamedata::StatusRow* adding) const {
     const std::string_view named = row.text("StatusEffect");
-    if (named.empty()) {
+    const std::string_view categories = row.text("StatusEffectCategories");
+    if (named.empty() && categories.empty()) {
         return true;
     }
     // Client self test 0x67A0130: with no StatusEffectStackSize the character must have the status (each source); with a size, its stacks
-    // with StatusEffectComparison.
+    // with StatusEffectComparison. Stage B3: StatusEffectCategories: the character has a status of a category of the list (each source);
+    // StatusEffectComparison NotEqual (the comparison 1 of the client): none.
     const WorldClock::time_point now = m_world.clock().now();
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const auto in_categories = [&](const gamedata::StatusRow* data) {
+        if (data == nullptr) {
+            return false;
+        }
+        for (const std::string_view category : parts_of(data->cells.text("EffectCategories"))) {
+            if (list_has(categories, category)) {
+                return true;
+            }
+        }
+        return false;
+    };
     std::uint32_t stacks = 0;
     bool has = false;
+    bool hasCategory = false;
     for (const ActiveStatus& status : character.statuses) {
-        if ((status.permanent || now < status.ends) && list_has(named, status.status)) {
+        if (!status.permanent && now >= status.ends) {
+            continue;
+        }
+        if (!named.empty() && list_has(named, status.status)) {
             has = true;
             stacks += std::max<std::uint32_t>(status.stacks, 1);
         }
+        if (!categories.empty() && !hasCategory && abilities != nullptr) {
+            hasCategory = in_categories(abilities->status(status.status));
+        }
+    }
+    // A status that comes now counts as present (stage B3, the time factor of a new haste: an agent decision with research bow-build-2.md Q1;
+    // the text of Speedy and of Alacrity says that each haste is longer, also the first one).
+    if (adding != nullptr) {
+        if (!named.empty() && list_has(named, adding->id)) {
+            has = true;
+            stacks += 1;
+        }
+        hasCategory = hasCategory || (!categories.empty() && in_categories(adding));
+    }
+    if (!categories.empty() && hasCategory != (lower(row.text("StatusEffectComparison")) != "notequal")) {
+        return false;
+    }
+    if (named.empty()) {
+        return true;
     }
     if (const float size = row.number("StatusEffectStackSize"); size >= 1.0F) {
         return compare(static_cast<float>(stacks), size, row.text("StatusEffectComparison"));
@@ -477,9 +631,48 @@ bool Passives::own_status_pass(const gamedata::CellValues& row, const Entity& ch
     return has;
 }
 
+bool Passives::self_pass(const PassiveRule& rule, const Entity& character, const gamedata::StatusRow* adding) const {
+    const gamedata::CellValues& row = *rule.cells;
+    if (row.number("HasGritActive") != 0.0F) {
+        return false; // The backend has no grit.
+    }
+    if (row.has("MyHealthPercent")
+        && !compare(percent_of(character.vitals.health, character.vitals.healthMax), row.number("MyHealthPercent"), row.text("MyComparisonType"))) {
+        return false;
+    }
+    if (row.has("MyStaminaPercent")
+        && !compare(percent_of(character.vitals.stamina, character.vitals.staminaMax), row.number("MyStaminaPercent"),
+                    row.text("MyStaminaComparisonType"))) {
+        return false;
+    }
+    if (row.has("MyManaPercent")
+        && !compare(percent_of(character.vitals.mana, character.vitals.manaMax), row.number("MyManaPercent"), row.text("MyManaComparisonType"))) {
+        return false;
+    }
+    if (const std::string_view status = row.text("DontHaveStatusEffect"); !status.empty() && m_world.statuses().has(character, status)) {
+        return false;
+    }
+    if (const std::string_view loads = row.text("EquipLoadCategory"); !loads.empty() && !list_has(loads, load_category(character))) {
+        return false;
+    }
+    return own_status_pass(row, character, adding);
+}
+
+std::uint32_t Passives::table_in_hand(const Entity& character) const {
+    const ItemInstance* item = Combat::weapon_in_hand(character);
+    const gamedata::CombatTables* tables = m_world.combat().tables();
+    const gamedata::WeaponRow* weapon = item != nullptr && tables != nullptr ? tables->weapon_of(item->itemId) : nullptr;
+    return weapon != nullptr && !weapon->mastery.empty() ? gamedata::progression_id(weapon->mastery) : 0;
+}
+
 bool Passives::conditions_pass(const PassiveRule& rule, const Entity& attacker, const Entity& target, const HitContext& hit) const {
     const gamedata::CellValues& row = *rule.cells;
     if (!unknown_columns(row).empty()) {
+        return false;
+    }
+    // Stage B3: a rule after the end of an action (AfterAction, AfterSequence: Evasive Tactics) acts only at the end of a dodge
+    // (Passives::dodge_ended); a hit has no window after an action in this backend.
+    if (row.has("AfterAction") || row.has("AfterSequence")) {
         return false;
     }
     if (const std::string_view types = row.text("AttackType"); !types.empty() && !list_has(types, hit.attackType)) {
@@ -768,7 +961,9 @@ HitBonus Passives::before_hit(const Entity& attacker, const Entity& target, cons
             bonus.critDamage += row.number("CritDamage") * rule.potency;
             continue;
         }
-        const bool takes = event == "OnHit" || event == "OnCrit" || (event.empty() && (hit_rule(row) || ability_value_rule(row)))
+        // Stage B3: a value with a condition of a status of the character and no event (the form of BonusDamageSelfCCPerk1: StatusEffectCategories
+        // Root,Slow, BaseDamage 0.12) is a value of each hit while the condition holds (an agent decision with the client self test 0x67A0130).
+        const bool takes = event == "OnHit" || event == "OnCrit" || (event.empty() && (hit_rule(row) || ability_value_rule(row) || conditional_value(row)))
                            || (event == "OnHeadShot" && hit.head) || (event == "OnHitBehind" && hit.behind);
         if (!takes || !conditions_pass(rule, attacker, target, hit)) {
             continue;
@@ -906,21 +1101,7 @@ void Passives::apply_effects(const PassiveRule& rule, Entity& attacker, Entity& 
         // potency, through the one stamina path.
         m_world.stamina().change(attacker, stamina * rule.potency, rule.id.c_str());
     }
-    if (const float part = row.number("CooldownTimer"); part < 0.0F) {
-        // CDRImmediatelyOptions: ActiveWeapon (each ability of the bar of the weapon in the hand), AbilitySpecific (the
-        // ability of CooldownId), AllExcept (each ability of the bar but the one of CooldownId). A part of the time of the data.
-        const std::string_view options = row.text("CDRImmediatelyOptions");
-        const std::string_view cooldown = row.text("CooldownId");
-        if (same_text(options, "ActiveWeapon")) {
-            m_world.abilities().reduce_weapon_cooldowns(attacker, -part * rule.potency);
-        } else if (same_text(options, "AbilitySpecific")) {
-            m_world.abilities().reduce_weapon_cooldowns(attacker, -part * rule.potency, cooldown);
-        } else if (same_text(options, "AllExcept")) {
-            m_world.abilities().reduce_weapon_cooldowns(attacker, -part * rule.potency, {}, cooldown);
-        }
-        ++m_counts.cooldownReductions;
-        ++m_world.gear().m_counts.cooldownReductions;
-    }
+    cooldown_effect(rule, attacker);
     if (const std::string_view statuses = row.text("OtherApplyStatusEffect"); !statuses.empty()) {
         for (const std::string_view status : parts_of(statuses)) {
             if (Entity* hurt = m_world.creatures().find(targetId); hurt != nullptr) {
@@ -937,18 +1118,8 @@ void Passives::apply_effects(const PassiveRule& rule, Entity& attacker, Entity& 
             (void)m_world.creatures().remove_statuses(*hurt, list, {}, rule.id);
         }
     }
-    // RemoveStatusEffects (stage B2): statuses of the attacker end: the statuses of the list, or with AbilitySpecific the statuses of
-    // StatusEffectsList (game data: Shirking Shock II takes its tracker; Momentum of the rapier, Rapier_BonusDMGAfterAbility). A name that is
-    // not a status of the character ends nothing (Global_Weapon_DodgeSuccess_LightningDMG names an ability row).
-    if (const std::string_view removed = row.text("RemoveStatusEffects"); !removed.empty()) {
-        const std::string_view list = same_text(removed, "AbilitySpecific") ? row.text("StatusEffectsList") : removed;
-        std::vector<std::string> ids;
-        for (const std::string_view part : parts_of(list)) {
-            ids.emplace_back(part);
-        }
-        if (Entity* own = m_world.find(attackerId); own != nullptr && !ids.empty()) {
-            (void)m_world.statuses().remove_rows(*own, ids, {}, StatusEnd::replaced);
-        }
+    if (Entity* own = m_world.find(attackerId)) {
+        remove_own(rule, *own);
     }
     if (Entity* own = m_world.find(attackerId); own != nullptr && !row.text("SelfApplyStatusEffect").empty()) {
         const std::uint64_t before = m_world.gear().counts().casterEffects;
@@ -966,6 +1137,264 @@ void Passives::apply_effects(const PassiveRule& rule, Entity& attacker, Entity& 
             m_world.abilities().rule_spell(*own, spell, rule.id);
         }
     }
+}
+
+void Passives::cooldown_effect(const PassiveRule& rule, Entity& character) {
+    const gamedata::CellValues& row = *rule.cells;
+    const float part = row.number("CooldownTimer");
+    if (!(part < 0.0F)) {
+        return;
+    }
+    // CDRImmediatelyOptions: ActiveWeapon (each ability of the bar of the weapon in the hand), AbilitySpecific (the ability of CooldownId),
+    // AllExcept (each ability of the bar but the one of CooldownId). A part of the time of the data.
+    const std::string_view options = row.text("CDRImmediatelyOptions");
+    const std::string_view cooldown = row.text("CooldownId");
+    if (same_text(options, "ActiveWeapon")) {
+        m_world.abilities().reduce_weapon_cooldowns(character, -part * rule.potency);
+    } else if (same_text(options, "AbilitySpecific")) {
+        m_world.abilities().reduce_weapon_cooldowns(character, -part * rule.potency, cooldown);
+    } else if (same_text(options, "AllExcept")) {
+        m_world.abilities().reduce_weapon_cooldowns(character, -part * rule.potency, {}, cooldown);
+    }
+    ++m_counts.cooldownReductions;
+    ++m_world.gear().m_counts.cooldownReductions;
+}
+
+void Passives::remove_own(const PassiveRule& rule, Entity& character) {
+    // RemoveStatusEffects (stage B2): statuses of the character end: the statuses of the list, or with AbilitySpecific the statuses of
+    // StatusEffectsList (game data: Shirking Shock II takes its tracker; Momentum of the rapier, Rapier_BonusDMGAfterAbility). A name that is
+    // not a status of the character ends nothing (Global_Weapon_DodgeSuccess_LightningDMG names an ability row).
+    const gamedata::CellValues& row = *rule.cells;
+    const std::string_view removed = row.text("RemoveStatusEffects");
+    if (removed.empty()) {
+        return;
+    }
+    const std::string_view list = same_text(removed, "AbilitySpecific") ? row.text("StatusEffectsList") : removed;
+    std::vector<std::string> ids;
+    for (const std::string_view part : parts_of(list)) {
+        ids.emplace_back(part);
+    }
+    if (!ids.empty()) {
+        (void)m_world.statuses().remove_rows(character, ids, {}, StatusEnd::replaced);
+    }
+}
+
+void Passives::self_effects(const PassiveRule& rule, Entity& character) {
+    const std::string characterId = character.characterId;
+    if (rule.origin == RuleOrigin::perk) {
+        ++m_world.gear().m_counts.perkHits;
+    }
+    cooldown_effect(rule, character);
+    if (Entity* own = m_world.find_character(characterId)) {
+        remove_own(rule, *own);
+    }
+    if (Entity* own = m_world.find_character(characterId); own != nullptr && !rule.cells->text("SelfApplyStatusEffect").empty()) {
+        const std::uint64_t before = m_world.gear().counts().casterEffects;
+        m_world.gear().caster_effect(*own, *rule.cells, rule.id, rule.potency);
+        m_counts.casterStatuses += m_world.gear().counts().casterEffects - before;
+    }
+}
+
+void Passives::weapon_changed(Entity& character, const gamedata::WeaponRow* before, bool swap) {
+    if (character.kind != EntityKind::player) {
+        return;
+    }
+    const std::string characterId = character.characterId;
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const ItemInstance* item = Combat::weapon_in_hand(character);
+    const gamedata::CombatTables* tables = m_world.combat().tables();
+    const gamedata::WeaponRow* weapon = item != nullptr && tables != nullptr ? tables->weapon_of(item->itemId) : nullptr;
+    // The tag removal actions of the data (game data: Bow_Remove_StatusEffects_Sheathe of playeractions_ability_bow, EffectsToRemoveOnExit
+    // while the tag Bow holds; client code 0x1E140A0 also removes the haste of Dodge and Weave when the weapon in the hand is not a bow): the
+    // action was active with the weapon before and is not active with the new one, thus its exit ends its statuses (of each source).
+    if (abilities != nullptr) {
+        const auto has_tags = [](const gamedata::WeaponRow* row, const std::vector<std::string>& tags) {
+            return row != nullptr && std::all_of(tags.begin(), tags.end(), [&](const std::string& tag) { return list_has(row->tags, tag); });
+        };
+        for (const gamedata::ActionTagRemoval& action : abilities->tables().actionTagRemovals) {
+            if (!has_tags(before, action.tags) || has_tags(weapon, action.tags)) {
+                continue;
+            }
+            if (Entity* own = m_world.find_character(characterId)) {
+                m_counts.tagRemovals += m_world.statuses().remove_rows(*own, action.statuses, {}, StatusEnd::weapon);
+            }
+        }
+    }
+    if (!swap) {
+        return;
+    }
+    // The rules with OnWeaponSwap (game data: Archer's Speed, Passive_Bow_Skirmish_HasteOnSwap) of the tree of the new weapon and of the perks:
+    // a change of the weapon slot with the key of a weapon (research bow-build-2.md K2; an agent decision: an equip that changes the item of the
+    // slot in the hand is not a swap). The conditions with no hit, the activation cooldown, then the effects on the character.
+    Entity* own = m_world.find_character(characterId);
+    if (own == nullptr || own->life.dead) {
+        return;
+    }
+    const std::vector<PassiveRule> rules = rules_of(*own, table_in_hand(*own));
+    for (const PassiveRule& rule : rules) {
+        const gamedata::CellValues& row = *rule.cells;
+        if (event_of(row) != "OnWeaponSwap" || !unknown_columns(row).empty() || !self_unsourced(row).empty() || !self_unsupported(row).empty()
+            || !self_effect(row)) {
+            continue;
+        }
+        Entity* current = m_world.find_character(characterId);
+        if (current == nullptr || current->life.dead) {
+            return;
+        }
+        if (!self_pass(rule, *current) || !activation_ready(characterId, rule, false)) {
+            continue;
+        }
+        (void)activation_ready(characterId, rule, true);
+        ++m_counts.swapRules;
+        ++m_counts.applied;
+        self_effects(rule, *current);
+    }
+}
+
+void Passives::dodge_started(Entity& character) {
+    if (character.kind != EntityKind::player) {
+        return;
+    }
+    CharacterState& state = m_characters[character.characterId];
+    state.dodgeActions.clear();
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::StaminaData* stamina = m_world.options().staminaData;
+    if (abilities == nullptr || stamina == nullptr || character.life.dead) {
+        return;
+    }
+    const ItemInstance* item = Combat::weapon_in_hand(character);
+    const gamedata::CombatTables* tables = m_world.combat().tables();
+    const gamedata::WeaponRow* weapon = item != nullptr && tables != nullptr ? tables->weapon_of(item->itemId) : nullptr;
+    const float part = character.vitals.staminaMax > 0.0F ? character.vitals.stamina / character.vitals.staminaMax : 0.0F;
+    const auto learned = [&](const std::string& node) {
+        const std::uint32_t id = gamedata::progression_id(node);
+        return std::any_of(character.skills.pools.begin(), character.skills.pools.end(), [&](const auto& pool) {
+            const auto found = pool.second.find(id);
+            return found != pool.second.end() && found->second.level != 0;
+        });
+    };
+    // The start tests of each dodge status action of the data (game data: Passive_Bow_Skirmish_HasteOnDodge: the node, the tag Bow, the stamina
+    // 0.99 of the maximum or more, no status Status_Passive_Bow_Skirmish_DodgeHaste of each source): the stamina before the payment of the dodge
+    // (the payment comes at its mark PayStaminaCost, 0.1 s; research bow-build-2.md Q1: "after dodging with full stamina").
+    const std::vector<gamedata::ActionDodgeStatus>& actions = abilities->tables().actionDodgeStatuses;
+    for (std::size_t index = 0; index < actions.size(); ++index) {
+        const gamedata::ActionDodgeStatus& action = actions[index];
+        if (!same_text(action.dodge, stamina->tables().dodgeAction) || !std::all_of(action.nodes.begin(), action.nodes.end(), learned)
+            || !std::all_of(action.tags.begin(), action.tags.end(), [&](const std::string& tag) { return weapon != nullptr && list_has(weapon->tags, tag); })
+            || (action.stamina && !compare(part, action.stamina->value, action.stamina->comparison))
+            || std::any_of(action.without.begin(), action.without.end(), [&](const std::string& status) { return m_world.statuses().has(character, status); })) {
+            continue;
+        }
+        state.dodgeActions.push_back(index);
+    }
+}
+
+void Passives::dodge_cancelled(const std::string& characterId) {
+    if (const auto found = m_characters.find(characterId); found != m_characters.end()) {
+        found->second.dodgeActions.clear();
+    }
+}
+
+void Passives::dodge_ended(Entity& character, std::string_view fragment) {
+    if (character.kind != EntityKind::player) {
+        return;
+    }
+    const std::string characterId = character.characterId;
+    std::vector<std::size_t> pending;
+    if (const auto found = m_characters.find(characterId); found != m_characters.end()) {
+        pending.swap(found->second.dodgeActions);
+    }
+    const gamedata::AbilityData* abilities = m_world.options().abilityData;
+    const gamedata::StaminaData* stamina = m_world.options().staminaData;
+    if (abilities == nullptr || stamina == nullptr || character.life.dead) {
+        return;
+    }
+    const ItemInstance* item = Combat::weapon_in_hand(character);
+    const gamedata::CombatTables* tables = m_world.combat().tables();
+    const gamedata::WeaponRow* weapon = item != nullptr && tables != nullptr ? tables->weapon_of(item->itemId) : nullptr;
+    // 1. The statuses of the dodge status actions whose start tests passed, at the exit of the action, when the tags of the exit hold (game data:
+    // the IfThenElse IfMannequinTag Bow of Passive_Bow_Skirmish_HasteOnDodge: the bow still in the hand), with the action as the source.
+    const std::vector<gamedata::ActionDodgeStatus>& actions = abilities->tables().actionDodgeStatuses;
+    for (const std::size_t index : pending) {
+        if (index >= actions.size()) {
+            continue;
+        }
+        const gamedata::ActionDodgeStatus& action = actions[index];
+        if (!std::all_of(action.exitTags.begin(), action.exitTags.end(),
+                         [&](const std::string& tag) { return weapon != nullptr && list_has(weapon->tags, tag); })) {
+            continue;
+        }
+        for (const std::string& status : action.statuses) {
+            Entity* own = m_world.find_character(characterId);
+            if (own == nullptr) {
+                return;
+            }
+            StatusApply how;
+            how.source = StatusSource{StatusSourceKind::ability, action.action, 0, own->id};
+            const StatusVerdict verdict = m_world.statuses().apply(*own, status, how);
+            if (verdict == StatusVerdict::applied || verdict == StatusVerdict::renewed) {
+                ++m_counts.dodgeStatuses;
+            }
+        }
+    }
+    // 2. The rules after the end of a dodge (game data: Evasive Tactics, Ultimate_Bow_Skirmish: AfterAction Dodge, AfterSequence the dodge
+    // fragments, SelfApplyStatusEffect; the CDR rows of the perks): no event, the action of the stamina data and the fragment of the last dodge.
+    // Duration (the window after the action) is a mark: a rule with no event acts one time at the end (an agent decision).
+    Entity* own = m_world.find_character(characterId);
+    if (own == nullptr) {
+        return;
+    }
+    const std::string dodgeAction = stamina->tables().dodgeAction;
+    const std::vector<PassiveRule> rules = rules_of(*own, table_in_hand(*own));
+    for (const PassiveRule& rule : rules) {
+        const gamedata::CellValues& row = *rule.cells;
+        if ((!row.has("AfterAction") && !row.has("AfterSequence")) || any_event(row) || !unknown_columns(row).empty()
+            || !self_unsourced(row, true).empty() || !self_unsupported(row).empty() || !self_effect(row)) {
+            continue;
+        }
+        if ((row.has("AfterAction") && !list_has(row.text("AfterAction"), dodgeAction))
+            || (row.has("AfterSequence") && !list_has(row.text("AfterSequence"), fragment))) {
+            continue;
+        }
+        Entity* current = m_world.find_character(characterId);
+        if (current == nullptr || current->life.dead) {
+            return;
+        }
+        if (!self_pass(rule, *current) || !activation_ready(characterId, rule, false)) {
+            continue;
+        }
+        (void)activation_ready(characterId, rule, true);
+        ++m_counts.afterDodgeRules;
+        ++m_counts.applied;
+        self_effects(rule, *current);
+    }
+}
+
+float Passives::duration_factor(const Entity& character, const gamedata::StatusRow& row) const {
+    if (character.kind != EntityKind::player) {
+        return 1.0F;
+    }
+    // Client getter 0x68308E0 (AbilityComponent::GetStatusEffectDurationMultipliers; research bow-build-2.md Q1): for each ability of the
+    // character with StatusEffectDurationReduction, whose own conditions pass (0x67A0130) and that names the status (StatusEffect) or a
+    // category of it (StatusEffectCategories), the value times the potency of the ability, summed. The use of the sum (time x (1 + sum)) and
+    // the new status as present for the condition StatusEffectCategories are agent decisions (the server code is not in the client).
+    const std::string_view categories = row.cells.text("EffectCategories");
+    float sum = 0.0F;
+    for (const PassiveRule& rule : rules_of(character, table_in_hand(character))) {
+        const gamedata::CellValues& cells = *rule.cells;
+        if (!duration_rule(cells, unknown_columns(cells))) {
+            continue;
+        }
+        bool matches = list_has(cells.text("StatusEffect"), row.id);
+        for (const std::string_view category : parts_of(cells.text("StatusEffectCategories"))) {
+            matches = matches || list_has(categories, category);
+        }
+        if (!matches || !self_pass(rule, character, &row)) {
+            continue;
+        }
+        sum += cells.number("StatusEffectDurationReduction") * rule.potency;
+    }
+    return std::max(1.0F + sum, 0.0F);
 }
 
 void Passives::target_status(const PassiveRule& rule, Entity& attacker, Entity& target, std::string_view status, const HitContext& hit) {
@@ -1413,6 +1842,16 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
     if (row.has("NumAroundMe")) {
         kind("entities near");
     }
+    // Stage B3: the time factor of a status, a weapon swap, a rule after an action.
+    if (row.number("StatusEffectDurationReduction") != 0.0F) {
+        kind("time of a status");
+    }
+    if (row.number("OnWeaponSwap") != 0.0F) {
+        kind("weapon swap");
+    }
+    if (row.has("AfterAction") || row.has("AfterSequence")) {
+        kind("after an action");
+    }
     const bool actionTested = abilities != nullptr && abilities->action_tests(id);
     if (actionTested && !hasEffect) {
         kind("rule of an action");
@@ -1486,8 +1925,81 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
                 return true;
             }
         }
+        // The dodge status actions (stage B3: Dodge and Weave, Passive_Bow_Skirmish_HasteOnDodge).
+        for (const gamedata::ActionDodgeStatus& action : abilities->tables().actionDodgeStatuses) {
+            if (std::any_of(action.nodes.begin(), action.nodes.end(), [&](const std::string& node) { return same_text(node, id); })) {
+                view.applied = true;
+                view.note = "applied by the evaluator: the dodge status action " + action.action + " of the data (its statuses at the end of a dodge)";
+                return true;
+            }
+        }
         return false;
     };
+    // Stage B3: a rule of the time of a status on the character (Speedy, Alacrity II; client getter 0x68308E0), a rule after the end of a dodge
+    // (Evasive Tactics), and a rule of a weapon swap (Archer's Speed). Each one names the part that the backend does not apply.
+    const auto columns_text = [](const std::vector<std::string>& columns) {
+        std::string list;
+        for (const std::string& column : columns) {
+            list += (list.empty() ? "" : ", ") + column;
+        }
+        return list;
+    };
+    if (!anyEvent && row.number("StatusEffectDurationReduction") != 0.0F) {
+        const bool outgoing = row.has("TargetStatusEffectDurationMult") || row.has("TargetStatusEffectDurationCats");
+        if (duration_rule(row, unknown)) {
+            if (row.text("StatusEffect").empty() && row.text("StatusEffectCategories").empty()) {
+                view.note = "not applied: the time factor names no status and no category (the client getter 0x68308E0 matches a status by "
+                            "StatusEffect or StatusEffectCategories; it does not read StatusEffectDurationCats)";
+                return view;
+            }
+            view.applied = true;
+            view.note = "applied by the evaluator: the time of a status on the character (StatusEffectDurationReduction x potency in the time factor)";
+            if (outgoing) {
+                view.note += "; the outgoing part TargetStatusEffectDurationMult (a status that the character gives a different entity) is not in "
+                             "the backend";
+            }
+            return view;
+        }
+    }
+    if (conditional_value(row)) {
+        view.applied = true;
+        view.note = "applied by the evaluator: a value of each hit while the character has the status (StatusEffect, StatusEffectCategories)";
+        return view;
+    }
+    if ((row.has("AfterAction") || row.has("AfterSequence")) && unknown.empty() && (anyEvent || self_effect(row) || !self_unsupported(row).empty())) {
+        const gamedata::StaminaData* stamina = m_world.options().staminaData;
+        const std::string dodgeAction = stamina != nullptr ? stamina->tables().dodgeAction : std::string("Dodge");
+        bool dodge = !row.has("AfterAction") || list_has(row.text("AfterAction"), dodgeAction);
+        for (const std::string_view fragment : parts_of(row.text("AfterSequence"))) {
+            dodge = dodge && stamina != nullptr
+                    && std::any_of(stamina->tables().fragments.begin(), stamina->tables().fragments.end(),
+                                   [&](const gamedata::DodgeFragment& known) { return same_text(known.name, fragment); });
+        }
+        if (anyEvent) {
+            view.note = "not applied: an event in the window after an action (AfterAction, AfterSequence, Duration) is not in the backend";
+        } else if (!dodge) {
+            view.note = "not applied: a rule after the action " + std::string(row.text("AfterAction")) + " (the backend has only the end of a dodge)";
+        } else if (const std::vector<std::string> columns = self_unsourced(row, true); !columns.empty()) {
+            view.note = "not applied: the end of a dodge has no source for the condition " + columns_text(columns);
+        } else if (const std::vector<std::string> effects = self_unsupported(row); !effects.empty()) {
+            view.note = "not applied: the effect " + columns_text(effects) + " after the end of a dodge is not in the backend";
+        } else {
+            view.applied = true;
+            view.note = "applied by the evaluator: after the end of a dodge (AfterAction, AfterSequence; one time at the mark CanTransition of the last dodge)";
+        }
+        return view;
+    }
+    if (event == "OnWeaponSwap" && unknown.empty() && (self_effect(row) || !self_unsupported(row).empty())) {
+        if (const std::vector<std::string> columns = self_unsourced(row); !columns.empty()) {
+            view.note = "not applied: a weapon swap has no source for the condition " + columns_text(columns);
+        } else if (const std::vector<std::string> effects = self_unsupported(row); !effects.empty()) {
+            view.note = "not applied: the effect " + columns_text(effects) + " of a weapon swap is not in the backend";
+        } else {
+            view.applied = true;
+            view.note = "applied by the evaluator (OnWeaponSwap: a change of the weapon slot with the key of a weapon)";
+        }
+        return view;
+    }
     // 2. A node with no cell of an effect: the action data tests it (a rule of an action: Meteoric Crater has the marks OnHit and
     // InAction and no effect), the data of the actions uses it, or it has no effect of its own.
     if (!hasEffect && unknown.empty()) {

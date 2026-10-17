@@ -214,8 +214,11 @@ private:
     }
     /** The checks of a dodge start that do not depend on a dodge that plays. */
     DodgeVerdict start_checks(const Entity& character, bool locked) const;
-    /** Starts an accepted dodge at `at`. */
-    void start(Entity& character, WorldClock::time_point at);
+    /**
+     * Starts an accepted dodge at `at`. `chained` (stage B3): the buffered next dodge of the dodge that plays: it continues the dodge action of
+     * the client (no new action, no end of the action).
+     */
+    void start(Entity& character, WorldClock::time_point at, bool chained = false);
     /** The work of one dodge that is due now (its payment, its mark CanTransition, its buffered next dodge). */
     void step_dodge(const std::string& characterId, WorldClock::time_point now);
     /** The regeneration of one character to `now`. @return False when it has no more regeneration to do (full). */

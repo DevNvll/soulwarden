@@ -367,6 +367,13 @@ public:
      */
     bool application_ready(const Entity& entity, const gamedata::StatusRow& row, bool start);
     /**
+     * @return True when a running effect of the creature refuses a status row (stage B2, the removal window: its row names the status in
+     *         RemoveStatusEffects or a category of it in RemoveStatusEffectCategories). The one test of give_status and, from the code review
+     *         of stage B2 (finding B2-R4), of the statuses of a perk (Gear::perk_status: a rend, a damage over time, a chain). It counts and logs
+     *         a refusal.
+     */
+    bool removal_blocks(const Entity& entity, const gamedata::StatusRow& row);
+    /**
      * Stage B2: @return The stacks of the effect of a status row on a creature now (0: none). The client keeps one entry for each status
      *         number of an entity (0x4038E80): the stacks of each source count (decision D10 of the orchestrator). `source` not 0: only when
      *         the effect has that source (CheckStatusEffectsOnTargetOwned).
@@ -631,6 +638,11 @@ private:
     };
     std::multimap<WorldClock::time_point, EffectDue> m_effectDue;
     std::uint64_t m_nextEffect{0};
+    /**
+     * The depth of the sweeps and the ticks of the effects that run now (code review of stage B2, finding B2-R2): a new application of an
+     * effect whose end came sweeps the creature first, but not inside a sweep or a tick (a tick does not run two times).
+     */
+    unsigned m_effectDepth{0};
     /** Stage B2: the end of the ApplicationCooldown of each status row (lower case) on each creature. */
     std::map<std::pair<EntityId, std::string>, WorldClock::time_point> m_applications;
     CreatureCounts m_counts;

@@ -125,10 +125,12 @@ not: a command for a character that is not in the world changes its rows in the 
   tools/world status CHARACTER                  the status effects of a character (stage 3.3b-S1): each
                                                 status with its seconds, stacks, potency, and source,
                                                 the speed and armor parts, the counts
-  tools/world status CHARACTER STATUS [SECONDS [COUNT]]
+  tools/world status CHARACTER STATUS [SECONDS [COUNT [POTENCY]]]
                                                 put a status row of the game data on the character
-                                                (SECONDS 0: the duration of the row; COUNT: 1 to 25
-                                                applications, the stacks), with the rules of the game
+                                                (SECONDS 0: the duration of the row with the time
+                                                factors of the character; a time above 0 stays; COUNT:
+                                                1 to 25 applications, the stacks; POTENCY: 0.01 to 100,
+                                                default 1), with the rules of the game
   tools/world heals CHARACTER [TARGET]          the heal values of a character (stage 3.3b-S6): the heal
                                                 base with the weapon in the hand, the outgoing factor to
                                                 TARGET (or itself), the received factors, its friends,
@@ -1581,7 +1583,7 @@ def main() -> None:
     elif command == "friends" and len(arguments) == 3:
         request(data_dir, "POST", f"/v1/dev/world/friends?character={character_id(data_dir, arguments[1])}"
                                   f"&friend={character_id(data_dir, arguments[2])}")
-    elif command == "status" and 2 <= len(arguments) <= 5:
+    elif command == "status" and 2 <= len(arguments) <= 6:
         target = character_id(data_dir, arguments[1])
         if len(arguments) == 2:
             document = fetch(data_dir, f"/v1/dev/status?character={target}")
@@ -1594,11 +1596,13 @@ def main() -> None:
             query = f"character={target}&status={arguments[2]}"
             if len(arguments) >= 4:
                 query += f"&seconds={numbers(arguments[3:4], 1)[0]}"
-            if len(arguments) == 5:
+            if len(arguments) >= 5:
                 query += f"&count={whole(arguments[4], 'the count')}"
+            if len(arguments) == 6:
+                query += f"&potency={numbers(arguments[5:6], 1)[0]}"
             request(data_dir, "POST", f"/v1/dev/status?{query}", show_bag=False)
         else:
-            fail("tools/world status CHARACTER [STATUS [SECONDS [COUNT]]] | tools/world status CHARACTER remove STATUS|all")
+            fail("tools/world status CHARACTER [STATUS [SECONDS [COUNT [POTENCY]]]] | tools/world status CHARACTER remove STATUS|all")
     elif command == "perkroll" and len(arguments) >= 2:
         if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[1]):
             fail("the item must be an ItemID of the item catalog")

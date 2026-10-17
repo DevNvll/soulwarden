@@ -23,6 +23,8 @@ constexpr std::uint64_t kRulesFormat = 4;
 constexpr std::uint64_t kActionStatusFormat = 5;
 /** Format 6 (stage 3.4f-B): the hit-taken status actions (actionHitStatuses). */
 constexpr std::uint64_t kHitStatusFormat = 6;
+/** Format 7 (stage B3): the dodge status actions (actionDodgeStatuses) and the tag removal actions (actionTagRemovals). */
+constexpr std::uint64_t kDodgeStatusFormat = 7;
 constexpr std::uint64_t kCostFormat = 2;
 constexpr std::uint64_t kOldFormat = 1;
 
@@ -255,6 +257,34 @@ bool read_action_hit_status(const json& row, ActionHitStatus& action) {
     return true;
 }
 
+bool read_action_dodge_status(const json& row, ActionDodgeStatus& action) {
+    if (!row.is_array() || row.size() != 4 || !text(row, 0, action.list) || !text(row, 1, action.action) || !row[2].is_object()
+        || !read_texts(row[3], action.statuses) || action.statuses.empty()) {
+        return false;
+    }
+    const json& tests = row[2];
+    if (!tests.contains("dodge") || !tests["dodge"].is_string() || tests["dodge"].get<std::string>().empty() || !tests.contains("nodes")
+        || !read_texts(tests["nodes"], action.nodes) || action.nodes.empty() || !tests.contains("tags") || !read_texts(tests["tags"], action.tags)
+        || !tests.contains("without") || !read_texts(tests["without"], action.without) || !tests.contains("exitTags")
+        || !read_texts(tests["exitTags"], action.exitTags) || !tests.contains("stamina")) {
+        return false;
+    }
+    action.dodge = tests["dodge"].get<std::string>();
+    if (!tests["stamina"].is_null()) {
+        ActionHitStatus::Compare compare;
+        if (!read_compare(tests["stamina"], compare)) {
+            return false;
+        }
+        action.stamina = compare;
+    }
+    return true;
+}
+
+bool read_action_tag_removal(const json& row, ActionTagRemoval& action) {
+    return row.is_array() && row.size() == 4 && text(row, 0, action.list) && text(row, 1, action.action) && read_texts(row[2], action.tags)
+           && !action.tags.empty() && read_texts(row[3], action.statuses) && !action.statuses.empty();
+}
+
 bool read_action_status(const json& row, ActionStatus& status) {
     if (!row.is_array() || row.size() != 4 || !text(row, 0, status.list) || !text(row, 1, status.action) || !row[2].is_array()
         || !read_texts(row[3], status.statuses) || status.statuses.empty()) {
@@ -355,9 +385,9 @@ bool AbilityData::load(const std::string& path) {
     }
     const std::uint64_t format =
         document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kHitStatusFormat && format != kActionStatusFormat && format != kRulesFormat && format != kFormat && format != kCostFormat
-        && format != kOldFormat) {
-        m_error = "the file does not have the format 1, 2, 3, 4, 5, or 6";
+    if (format != kDodgeStatusFormat && format != kHitStatusFormat && format != kActionStatusFormat && format != kRulesFormat && format != kFormat
+        && format != kCostFormat && format != kOldFormat) {
+        m_error = "the file does not have the format 1, 2, 3, 4, 5, 6, or 7";
         return false;
     }
     AbilityTables tables;
@@ -399,6 +429,11 @@ bool AbilityData::load(const std::string& path) {
     }
     if (format >= kHitStatusFormat
         && !read_list(document, "actionHitStatuses", read_action_hit_status, tables.actionHitStatuses, m_error)) {
+        return false;
+    }
+    if (format >= kDodgeStatusFormat
+        && (!read_list(document, "actionDodgeStatuses", read_action_dodge_status, tables.actionDodgeStatuses, m_error)
+            || !read_list(document, "actionTagRemovals", read_action_tag_removal, tables.actionTagRemovals, m_error))) {
         return false;
     }
     return accept(std::move(tables), true);
@@ -566,6 +601,23 @@ bool AbilityData::accept(AbilityTables tables, bool fromFile) {
                 if (error.empty() && status.count(lower_ascii(name)) == 0) {
                     error = "the hit status action " + action.action + " names the status " + name + ", which the data does not have";
                 }
+            }
+        }
+    }
+    // The dodge status actions and the tag removal actions (stage B3): each status that they give, test, or remove is a status row of the data.
+    for (const ActionDodgeStatus& action : tables.actionDodgeStatuses) {
+        for (const auto* names : {&action.statuses, &action.without}) {
+            for (const std::string& name : *names) {
+                if (error.empty() && status.count(lower_ascii(name)) == 0) {
+                    error = "the dodge status action " + action.action + " names the status " + name + ", which the data does not have";
+                }
+            }
+        }
+    }
+    for (const ActionTagRemoval& action : tables.actionTagRemovals) {
+        for (const std::string& name : action.statuses) {
+            if (error.empty() && status.count(lower_ascii(name)) == 0) {
+                error = "the tag removal action " + action.action + " names the status " + name + ", which the data does not have";
             }
         }
     }

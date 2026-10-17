@@ -138,6 +138,11 @@ python3 -B tools/check_release.py --work ~/Games/soulwarden/work --backend apps/
   `tests/boltcaster_tests.cpp`, and `tests/review_u3_tests.cpp` it removes the stacks of a creature effect, the counts of the stage, the
   marks of the projectile data of format 3, so that each case BC1 to BC11 and UR1 to UR9 runs and fails on the behavior of the old
   tree. Copy the new test files and their registration in `tests/cases.cpp` into the copy.
+- Stage B3 uses the mark `SOULWARDEN_B3_BASELINE` (proof on a copy of the tree of stage B2): in `tests/support/haste_fixture.h` and
+  `tests/haste_tests.cpp` it removes the dodge status actions, the tag removal actions, the fixed time of a command, the time factor call,
+  and the lists of format 7, and the counts of the stage are 0, so that each case HS1 to HS10 runs and fails on the behavior of the old tree.
+  The cases of the code review of stage B2 (`tests/review_b2_tests.cpp`, BV1 to BV5) need no mark. The correction of case BC7 (finding
+  B2-R6) is proved with a copy of the tree whose ApplicationCooldown of a creature is broken: the corrected BC7 fails, the old one passes.
 - The Windows headers of the MinGW build define `near` and `far` as macros: a member or a variable with such a name in a file that a
   route includes after them does not compile (`SOULWARDEN_BACKEND_TARGET=windows`; stage 3.5b.1: `ChestsView::nearby`). Build the
   Windows target before a commit of a new header.

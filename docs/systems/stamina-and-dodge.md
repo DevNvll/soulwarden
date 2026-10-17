@@ -18,6 +18,7 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
 | A creature hit in a dodge, a shot through a dodge, no immunity for a different character | `Health::creature_hit` (`CreatureHitOutcome`), `Projectiles` (`CreatureFlight::passed`), test cases CRG11, CRG12 |
 | The corrections of the code review of stage 3.4f-B: the window of an earlier dodge (CS-R1), a refused dodge in an attack (CS-R2), a next dodge before the payment (CS-R5) | `Stamina::keep_window`, `Stamina::immune_since`, `Stamina::can_dodge`, `AttackBits::dodgeAllowed`, `gamedata/stamina_data.cpp`, `tools/gamedata/stamina.py`, test cases RZ1, RZ2, RZ5 |
 | The first record of the owner: the Stamina state 100 of 100 (stage 3.4f-C) | `server/rep/states/stamina_state.cpp`, protocol notes 4.38, test cases SM6, T1, T2 |
+| The dodge action of the client (stage B3): its start and its end, the haste of Dodge and Weave, the rules after a dodge | `Stamina::start` (`chained`), `Stamina::step_dodge`, `Passives::dodge_started`, `dodge_ended`, [Passive rules](passive-rules.md), test cases HS1, HS5 |
 | The development list | `tools/world stamina`, the lines `stamina` of `tools/world list` |
 
 ## Rules
@@ -63,6 +64,17 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
   get it (`Passives::hit_evaded`). The immunity is of the character of the dodge only (test case CRG12). From stage B2 the trackers of
   the 12 elemental weapon perks act on the next hit (Shirking Shock II of the bow build: [Passive rules](passive-rules.md); live check
   B2-3: an arcane arrow of an elite archer at 0.31 s of a dodge gave the tracker, and the next arrow had 713.6 Lightning).
+- The dodge action (stage B3). The action Dodge of the client keeps its fragments for a chain of dodges: a next dodge of a cancel window
+  changes the fragment of the action (CAGE-TransitionInstant with NewFragment, no new action; game data `player.adb`, the action Dodge of
+  `playeractions_dodge`). The backend has one action for a dodge with no dodge that plays and for each buffered next dodge of it
+  (`Stamina::start` with `chained`). The action starts with the first dodge: the start tests of the dodge status actions read the stamina
+  before the payment, with the regeneration to now (`Passives::dodge_started`). It ends at the mark CanTransition (0.5 s) of its last dodge
+  (`step_dodge`), or when a dodge starts after that mark and the tick did not take the mark yet; a buffered next dodge that the checks refuse
+  ends it at the mark of the dodge before it. Then the exit statuses (Dodge and Weave) and the rules after a dodge (Evasive Tactics) act
+  (`Passives::dodge_ended`). A death, a travel, a leave, a refill, or a new entry ends the action with no exit statuses. The deactivation of
+  the action of the client needs the mark CanTransition and the end of the fragment (IfFragmentDone), or the mark Exit_Fragment; the length of
+  the animation of a roll is not in the data, thus the backend ends the action at the mark [agent decision; research bow-build-2.md K11; live
+  check B3-1: the server gave the haste 0.50 s after the start of the dodge, and the HUD showed it 0.69 s after it].
 - A dodge in a bow action (stage B2; code review of stage U3, finding U3-R7): an accepted dodge ends the action of a bow ability at its
   cancel mark, and its arrows after the cancel do not fly ([Abilities](abilities.md)).
 - The window of an earlier dodge (code review of stage 3.4f-B, finding CS-R1; test case RZ1): a dodge that a next dodge replaces, or
@@ -127,6 +139,7 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
 | The first record has the Stamina state | Live trace and memory read of stage 3.4f-C (the cause of the 95) |
 | The window of an earlier dodge (1 s, 8 windows), the check of a dodge before the end of an attack visit | Rules of this project (code review of stage 3.4f-B, findings CS-R1 and CS-R2) |
 | A next dodge must start after the payment | A check of this project for the data (finding CS-R5) |
+| The dodge action: a buffered next dodge continues it; it ends at the mark CanTransition of its last dodge; no exit statuses at an interruption | Game data (the action Dodge, the fragment changes of a cancel window) and an agent decision for the end (stage B3: the length of the animation is not in the data) |
 
 ## Traps
 
@@ -142,5 +155,8 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
   proof P2, the first dodge: no contact, no avoided hit). A dodge 0.25 s before the contact keeps the body on the line.
 - The arrow of an archer crosses 10 m in 0.2 s: the pictures of `gamescopectl screenshot` (about 10 in a second) do not show it in
   the dodge. Use the log lines (`world: dodge: ... avoids the hit`) for the arrow, and the slow ball of a mage (20 m/s) for a video.
+- A dodge at 98 stamina for a test of Dodge and Weave: `tools/world status NAME AI_Gravedigger_TakeMinStamDMG 0 1 0.4` takes 2 stamina on
+  the server (the client keeps its own predicted stamina, and the HUD bar shows no visible change); dodge at once, before the regeneration
+  (its delay is 1 s). Read the stamina of the server in the log line of the dodge (`starts a dodge ..., stamina 98.0 of 100.0`).
 - The development route `/v1/dev/passives/table?table=stamina` lists the rows of the data with a stamina or dodge part; the
   character of a live run needs the great axe in the hand for the rules of its tree.

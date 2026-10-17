@@ -157,7 +157,7 @@ const char* shot_verdict_text(ShotVerdict verdict) {
     case ShotVerdict::busy:
         return "the character has too many projectiles in the air";
     case ShotVerdict::encumbered:
-        return "the press started no attack: the bag is over 1.5 x its weight limit";
+        return "the press started no attack: the bag is over 1.5 x its weight limit, or a weapon switch held the press";
     case ShotVerdict::unsupported:
         return "the attack has no flight or a grouped spread";
     }

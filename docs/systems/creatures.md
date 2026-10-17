@@ -248,7 +248,11 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
     the end (RemoveUnappliedStacks and a row with no such cell: the backend has one end for each effect; the client has no reader of the
     cell, research bow-build-2.md K3: a decision of an agent). The DMG parts and the speed part of the row count for each stack. Each
     observer gets the stack count in the compact map (the packed byte: bits 0 to 6 the stacks; live check L1 of stage B2: the name plate
-    shows "x2", "x3"); a new stack sends the list, a renewal with the same stacks sends nothing (the compact map has no end). Test case BC1;
+    shows "x2", "x3"); a new stack sends the list, a renewal with the same stacks sends nothing (the compact map has no end). Test case BC1.
+    An entry whose end came and that the sweep of the due list did not take yet (a hit of a world task or of an item of a client before the
+    sweep) is not renewed: the application sweeps the creature first (the ticks due before the end come, review SU-R2), and the new entry
+    starts with its initial stacks and a new serial (code review of stage B2, finding B2-R2, test case BV2: a hit after the end of 2 charges
+    gave 3 charges, and two more hits gave a bolt). Inside a sweep or a tick the old entry only ends;
   - the ApplicationCooldown of a row (stage B2, `Creatures::application_ready`): one application of the row for each creature in that
     time, of each source (the key is the creature, as for a character; research bow-build-2.md Q4: the bolt of the Boltcaster at most once
     in 3 s on each target). Only an application that changes the creature starts it. The status of a damage row (`Abilities::row_effects`)
@@ -257,7 +261,9 @@ The behavior of a creature is in [Creature behavior](creature-behavior.md), and 
   - the removal window (stage B2; game data, a decision of an agent): a running effect whose row removes rows or categories
     (RemoveStatusEffects, RemoveStatusEffectCategories with a duration) refuses those rows while it runs (the count `statusesBlocked`):
     `Status_Perk_Artifact_Set1_Bow_StaticCharge_Removal` (0.2 s) takes the charge that the hit of the bolt adds;
-    `Status_SetBonusInfix_Focused_CCEffectImmunity` (1 s, the category CC) has the same form. Test case BC2;
+    `Status_SetBonusInfix_Focused_CCEffectImmunity` (1 s, the category CC) has the same form. Test case BC2. The statuses of a perk
+    (`Gear::perk_status`: a rend, a damage over time, a chain) have the same test before their cooldown, their effect, and their damage
+    (`Creatures::removal_blocks`; code review of stage B2, finding B2-R4, test case BV4: the rend of a perk came in the window);
   - a row with no duration and a damage of its source (stage B2: the bolt, `Status_Perk_Artifact_Set1_Bow_StaticDischarge`,
     [Passive rules](passive-rules.md)) is one damage now through the path of a tick (`Gear::tick_damage`, the count `instantDamage`), and
     a row with ShowInNameplates and a DurationMax stays for the DurationMax (0.1 s) with no tick: each observer gets its icon and the

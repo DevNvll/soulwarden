@@ -22,6 +22,7 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
 | The statuses of a creature (stage 3.4f-D: its heals and buffs; stage B2: the stacks, the ApplicationCooldown on the target, the removal window) | [Creatures](creatures.md) (`Creatures::give_status`) |
 | The end of a status at a new application (one rule for a character and a creature, stage B2) | `Statuses::renewed_end`, `CellValues::flag` (a mark as a number or the text TRUE), test cases ST2, BC1 |
 | The status categories and the caster effect rows of the game data | `tools/gamedata/abilities.sh` (format 4), `gamedata/ability_data.h` (`StatusCategory`, `AbilityRow`), test case ST1 |
+| The time factor of a status on the character (stage B3: Speedy, Alacrity II), OnStackStatusEffect (the timer of Archer's Speed), the end of a status when the weapon of its tag leaves the hand | `Statuses::apply` (`StatusApply::fixedTime`, `on_stack`), `Passives::duration_factor`, `Passives::weapon_changed`, test cases HS1 to HS3 |
 
 ## Rules
 
@@ -46,10 +47,21 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   From stage B2 one function has the end rule (`Statuses::renewed_end`), for a character and for a creature, and a mark in the text
   form "TRUE" counts (`CellValues::flag`: RefreshDuration "TRUE" of `Status_ExplosiveShot_Burn`). At the end all stacks go together
   (RemoveUnappliedStacks: the backend has one end for each status; a decision of an agent).
-- The duration: the duration of the source (DurationOverrides of a consumable), else BaseDuration; not more than
-  DurationMax. A row with no duration is one application now: a heal (Health and HealthModifierPercent of the maximum
+- The duration: the duration of the source (DurationOverrides of a consumable), else BaseDuration, times the time factor of the
+  character (stage B3), not more than DurationMax. The time factor is 1 plus the sum of the StatusEffectDurationReduction parts of the rules of
+  the character for the status (client getter 0x68308E0 sums them; [Passive rules](passive-rules.md), `Passives::duration_factor`): Speedy
+  (0.5) and Alacrity II (0.094 x 1.274) give a haste 1.62 times its time: Dodge and Weave 2 x 1.62 = 3.24 s, Archer's Speed 5 x 1.62 = 8.1 s
+  (live checks B3-1, B3-3). The use of the sum (`time x (1 + sum)`) is an agent decision (research bow-build-2.md K1: the server code is not in
+  the client; a product of the two factors would give 3.36 s and 8.4 s). A time of a development command with seconds stays
+  (`StatusApply::fixedTime`); with 0 seconds the time of the row has the factor. A row with no duration is one application now: a heal (Health and HealthModifierPercent of the maximum
   health, times the potency, through the heal path of stage 3.3b-S6 with its kind), a mana change (Mana, ManaModifierPercent), a
   stamina change (Stamina, stage 3.4f-B), and its CastSpell. A status of the gear has no end.
+- OnStackStatusEffect (stage B3): after each application, the stacks of the status against AddOnStackSize with AddOnStackSizeComparison (the
+  comparator of the data; a row with no size: each application) give the named statuses to the character, with the status as their source
+  [game data: 46 rows; the haste of Archer's Speed gives its timer `Status_Passive_Bow_Skirmish_HasteOnSwap_Timer` (10 s, the category Timer:
+  no time factor of a haste) at its first stack]. A chain of such rows stops at the depth 4.
+- The end when the weapon of a tag leaves the hand (stage B3): a tag removal action of the data ends its statuses at a change of the weapon in
+  the hand ([Passive rules](passive-rules.md); the end cause "the weapon of its tag left the hand", `StatusEnd::weapon`).
 - ApplicationCooldown: one application of a row for each character in that time. Only an application that changes the
   character starts it: an application that DontReplaceStack refuses does not (finding F7, test case RS7).
 - A positive time of a status row (BaseDuration, TickRate, DurationMax, ApplicationCooldown) is 1 ms at least: the
@@ -180,6 +192,13 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   potency; Holy Ground +0.25, an earring affix) is `GearSummary::staminaRate`. The stamina system regenerates 1 + that part times its
   rate, and the speed table of the owner has the key 0x0B (StaminaRate) with that value when it is not 1 (client code 0x6888790;
   test case SM3). The value of a creature changes nothing (a creature has no stamina).
+- The hastes of the bow build (stage B3): each one has MoveSpeedMod and SprintSpeedMod 0.07; two hastes give 1.14 (the limit of the category
+  Haste: 0.4). Live check L1 of stage B3 (before the code, a haste of a command): a run of 4 s went 22.0 m with no haste and 23.4 m with 1.07
+  (1.065, the start and the stop are the same); live check B3-4 (the haste of Archer's Speed): 19.05 m and 20.37 m in 3.5 s (1.069), no report
+  of the position refused. The HUD icon of the owner comes from the full map entry: "3s" for 3.24 s, "8s" for 8.1 s (the HUD rounds up),
+  and the timer of Archer's Speed shows its own icon (live checks L1, B3-1, B3-3). The client predicts no haste of Dodge and Weave (live
+  check L1: a dodge of the client with the node and full stamina showed no icon with the backend of stage B2): the icon comes only from the
+  server, about 0.2 s after the end of the dodge on the server.
 - The position check takes the multiplier that the client has: the window speed (8 m/s) times the larger multiplier of
   the last speed table that the session sent (`PositionTrack::client_speed`), not less than 1; after a change the
   multiplier before it counts for 1 s more (the client gets the table some time after the send). Each older value keeps
@@ -200,6 +219,7 @@ tools/world status NAME                              # the statuses (seconds, st
 tools/world status NAME UncategorizedHaste_40pct 30  # a status row of the game data for 30 s (0: the duration of the row)
 tools/world status NAME Status_Passive_Greataxe_Reaper_DmgOnLight 0 3   # three applications: three stacks
 tools/world status NAME remove FoodCONT4             # end a status (all: each status but the gear)
+tools/world status NAME AI_Gravedigger_TakeMinStamDMG 0 1 0.4   # potency 0.4: -2 stamina (a dodge at 98 stamina; stage B3)
 tools/world gear NAME                                # the gear values with the status values in them
 ```
 
@@ -212,6 +232,8 @@ tools/world gear NAME                                # the gear values with the 
 - The poison of a mushroom continues after the death of its caster: the area stays to its end of 26 s. A character that stays
   in the area of a level 30 shaman dies in about 70 s. A test that is not a fight takes the character out of the area.
 
+- A command with seconds keeps its time (no time factor of Speedy or Alacrity); a command with 0 seconds gives the time of the row with the
+  factor. Use 0 for a check of the time factor.
 - The DurationMax of a row also limits a command: `tools/world status NAME Rune_Detonate_Major 60` gives 3 s (its
   DurationMax is 3). Use a row with a longer time for a test of a value (UncategorizedHaste_40pct: 30 s).
 - The tray of the owner stays empty: a tray entry and a full map entry of one status show two icons (live run s1-live).

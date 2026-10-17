@@ -567,6 +567,11 @@ struct StepOutcome {
     bool kept{false};
     /** False: the press starts no attack from rest (the bag is over 1.5 x its weight limit; stage U3, research Q4). */
     bool allowed{true};
+    /**
+     * True for a press of the step that a weapon switch holds (the client plays it after the switch: `kept` at that step). The raw press of
+     * the step fires no shot (code review of stage B2, finding B2-R5: a shot item of a held press passed the weight gate of the bow).
+     */
+    bool held{false};
 };
 
 class Combat {

@@ -45,7 +45,7 @@ the list of the CRC values of all rows of all status tables, in the unsigned ord
 duplicate (the list of the client: live check L5 of stage 3.3a, 4,517 rows of the supported
 build). A duplicate id has the first position.
 
-Output: {"format": 5, "statusRows": N,
+Output: {"format": 7, "statusRows": N,
 "counts": {"cooldowns": N, "statusEffects": N, "spells": N, "manaCosts": N, "staminaCosts": N, "abilityCosts": N,
 "abilityRows": N, "statusCategories": N, "statMultipliers": N},
 "cooldowns": [[id, time, minTime], ...],
@@ -61,7 +61,19 @@ Output: {"format": 5, "statusRows": N,
 "actionStatuses": [[action list, action, [[[kind, name, negated], ...], ...], [status, ...]], ...],
 "actionHitStatuses": [[action list, action, {"nodes": [...], "tags": [...], "health": [comparison, part] or null,
   "stamina": [comparison, part] or null, "without": [status, ...], "power": [comparison, value, needs reaction]}, [status, ...]], ...],
-"actionHitStatusesNotExported": [[action list, action, cause], ...]}.
+"actionHitStatusesNotExported": [[action list, action, cause], ...],
+"actionDodgeStatuses": [[action list, action, {"dodge": action, "nodes": [...], "tags": [...], "stamina": [comparison, part] or null,
+  "without": [status, ...], "exitTags": [...]}, [status, ...]], ...],
+"actionDodgeStatusesNotExported": [[action list, action, cause], ...],
+"actionTagRemovals": [[action list, action, [tag, ...], [status, ...]], ...]}.
+Format 7 (stage B3): `actionDodgeStatuses` has each action of the player lists that gives statuses at its exit while a dodge plays (an
+activation condition with IfActionStatus of the dodge action, Status Installed; ModifyStatusEffects EffectsToApplyOnExit, also in the Then
+branch of an IfThenElse whose condition is an IfMannequinTag and whose Else branch is empty: the tags at the exit). Its tests: an AND of
+IfActionStatus, IfAbilityActive, IfMannequinTag, IfStaminaValue (a part of the maximum), and Not of IfHasStatusEffect. The node Dodge and
+Weave of the bow (Passive_Bow_Skirmish_HasteOnDodge) is such an action. An action with a different test or activity is in
+`actionDodgeStatusesNotExported` with its cause. `actionTagRemovals` has each action whose activation condition is only IfMannequinTag tests
+and whose only activity removes statuses at its exit (EffectsToRemoveOnExit): the statuses end when the tag goes (the weapon leaves the
+hand: Bow_Remove_StatusEffects_Sheathe ends the haste of Dodge and Weave).
 Format 6 (stage 3.4f-B): `actionHitStatuses` has each action of the player lists that applies statuses at a hit that the character
 takes (an activation condition with IfDamagedByPowerLevel, ModifyStatusEffects EffectsToApplyOnEnter) and that tests a learned node: an
 AND of IfDamagedByPowerLevel, IfHealthPercentage, IfStaminaValue (a part of the maximum), IfAbilityActive, IfMannequinTag, and Not of
@@ -503,6 +515,8 @@ def build_data(sources: Sources) -> dict:
     action_spells, action_nodes, action_skipped = read_action_lists(sources, spells)
     action_statuses = read_action_statuses(sources)
     action_hit_statuses, action_hit_skipped = read_action_hit_statuses(sources)
+    action_dodge_statuses, action_dodge_skipped = read_action_dodge_statuses(sources)
+    action_tag_removals = read_action_tag_removals(sources)
 
     # The status categories (stage 3.3b-S1): the ValueLimits of each category ("MoveSpeedMod:0.4,SprintSpeedMod:0.4").
     categories: dict[str, list] = {}
@@ -540,28 +554,31 @@ def build_data(sources: Sources) -> dict:
     if not cooldowns:
         raise Failure("the cooldown tables have no row")
     # A status of an action names a row of the status tables (else the tool stops).
-    for entry in action_statuses + action_hit_statuses:
+    for entry in action_statuses + action_hit_statuses + action_dodge_statuses + action_tag_removals:
         for status in entry[3]:
             if status.lower() not in statuses:
                 raise Failure(f"the action {entry[1]} of {entry[0]} applies the status {status}, which the status tables do not have")
-    for entry in action_hit_statuses:
+    for entry in action_hit_statuses + action_dodge_statuses:
         for status in entry[2]["without"]:
             if status.lower() not in statuses:
                 raise Failure(f"the action {entry[1]} of {entry[0]} tests the status {status}, which the status tables do not have")
-    data = {"format": 6, "statusRows": len(all_crcs),
+    data = {"format": 7, "statusRows": len(all_crcs),
             "counts": {"cooldowns": len(cooldowns), "statusEffects": len(statuses), "spells": len(spells),
                        "manaCosts": len(mana_costs), "staminaCosts": len(stamina_costs), "abilityCosts": len(ability_costs),
                        "abilityRows": len(ability_rows), "statusCategories": len(categories),
                        "statMultipliers": len(multipliers), "actionSpells": len(action_spells),
                        "actionNodes": len(action_nodes), "actionSpellsNotExported": len(action_skipped),
-                       "actionStatuses": len(action_statuses), "actionHitStatuses": len(action_hit_statuses)},
+                       "actionStatuses": len(action_statuses), "actionHitStatuses": len(action_hit_statuses),
+                       "actionDodgeStatuses": len(action_dodge_statuses), "actionTagRemovals": len(action_tag_removals)},
             "cooldowns": sorted(cooldowns.values()), "statusEffects": sorted(statuses.values(), key=lambda entry: entry[1]),
             "spells": sorted(spells.values()), "manaCosts": sorted(mana_costs.values()),
             "staminaCosts": sorted(stamina_costs.values()), "abilityCosts": sorted(ability_costs.values()),
             "abilityRows": sorted(ability_rows.values()), "statusCategories": sorted(categories.values()),
             "statMultipliers": sorted(multipliers.values()), "actionSpells": action_spells, "actionNodes": action_nodes,
             "actionSpellsNotExported": action_skipped, "actionStatuses": action_statuses,
-            "actionHitStatuses": action_hit_statuses, "actionHitStatusesNotExported": action_hit_skipped}
+            "actionHitStatuses": action_hit_statuses, "actionHitStatusesNotExported": action_hit_skipped,
+            "actionDodgeStatuses": action_dodge_statuses, "actionDodgeStatusesNotExported": action_dodge_skipped,
+            "actionTagRemovals": action_tag_removals}
     return data
 
 
@@ -674,14 +691,10 @@ def hit_conditions(activation) -> tuple[dict | None, str]:
                 return None, "IfHealthPercentage with a comparison or a part that the reader does not know"
             tests["health"] = [comparison, rounded(value)]
         elif part.tag == "IfStaminaValue":
-            comparison = part.get("ComparisonType", "")
-            try:
-                value = float(part.get("ComparisonValue", ""))
-            except ValueError:
-                return None, "IfStaminaValue with a value that is not a number"
-            if comparison not in HIT_COMPARISONS or not math.isfinite(value) or str(part.get("ComparisonValueIsPercentage", "")).lower() != "true":
-                return None, "IfStaminaValue that is not a part of the maximum"
-            tests["stamina"] = [comparison, rounded(value)]
+            test, cause = stamina_test(part)
+            if test is None:
+                return None, cause
+            tests["stamina"] = test
         elif part.tag == "IfAbilityActive" and part.get("AbilityName", "").strip():
             tests["nodes"].append(part.get("AbilityName").strip())
         elif part.tag == "IfMannequinTag" and part.get("TagName", "").strip():
@@ -732,6 +745,146 @@ def read_action_hit_statuses(sources: Sources) -> tuple[list, list]:
                 continue
             found.append([stem, action.get("Name", ""), tests, applied])
     return found, skipped
+
+
+def stamina_test(part) -> tuple[list | None, str]:
+    """@return The test of an IfStaminaValue as a part of the maximum ([comparison, part]), or no value and the cause."""
+    comparison = part.get("ComparisonType", "")
+    try:
+        value = float(part.get("ComparisonValue", ""))
+    except ValueError:
+        return None, "IfStaminaValue with a value that is not a number"
+    if comparison not in HIT_COMPARISONS or not math.isfinite(value) or str(part.get("ComparisonValueIsPercentage", "")).lower() != "true":
+        return None, "IfStaminaValue that is not a part of the maximum"
+    return [comparison, rounded(value)], ""
+
+
+def dodge_conditions(activation) -> tuple[dict | None, str]:
+    """@return The tests of the activation condition of a dodge status action (format 7), or no value and the cause."""
+    tests = {"dodge": None, "nodes": [], "tags": [], "stamina": None, "without": []}
+    parts = list(activation)
+    while len(parts) == 1 and parts[0].tag == "And":
+        parts = list(parts[0])
+    for part in parts:
+        if part.tag == "IfActionStatus":
+            if part.get("Status", "") != "Installed" or not part.get("ActionName", "").strip() or tests["dodge"] is not None:
+                return None, "IfActionStatus that is not one test of an installed action"
+            tests["dodge"] = part.get("ActionName").strip()
+        elif part.tag == "IfStaminaValue":
+            test, cause = stamina_test(part)
+            if test is None:
+                return None, cause
+            tests["stamina"] = test
+        elif part.tag == "IfAbilityActive" and part.get("AbilityName", "").strip():
+            tests["nodes"].append(part.get("AbilityName").strip())
+        elif part.tag == "IfMannequinTag" and part.get("TagName", "").strip():
+            tests["tags"].append(part.get("TagName").strip())
+        elif part.tag == "Not" and len(part) == 1 and part[0].tag == "IfHasStatusEffect" and part[0].get("StatusEffect", "").strip():
+            tests["without"].append(part[0].get("StatusEffect").strip())
+        else:
+            return None, f"a test {part.tag} that the reader does not know"
+    if tests["dodge"] is None:
+        return None, "no IfActionStatus"
+    if not tests["nodes"]:
+        return None, "no test of a learned node"
+    return tests, ""
+
+
+def exit_statuses(activities) -> tuple[list[str] | None, list[str], str]:
+    """@return The statuses that the activities give at the exit of the action (EffectsToApplyOnExit), the mannequin tags of the
+    IfThenElse that holds them, and a cause when the activities have a different form."""
+    statuses: list[str] = []
+    tags: list[str] = []
+    for child in activities:
+        if child.tag == "ModifyStatusEffects":
+            holder = child
+        elif child.tag == "IfThenElse":
+            condition = child.find("IfCondition")
+            then = child.find("ThenActivity")
+            otherwise = child.find("ElseActivity")
+            tests = list(condition) if condition is not None else []
+            if (len(tests) != 1 or tests[0].tag != "IfMannequinTag" or not tests[0].get("TagName", "").strip() or then is None
+                    or (otherwise is not None and len(otherwise) != 0) or any(node.tag != "ModifyStatusEffects" for node in then)):
+                return None, [], "an IfThenElse that is not a test of one tag with statuses"
+            tags.append(tests[0].get("TagName").strip())
+            holder = then
+        else:
+            return None, [], f"an activity other than the statuses ({child.tag})"
+        for modify in holder.iter("ModifyStatusEffects"):
+            for default in modify:
+                for group in default:
+                    if group.tag != "EffectsToApplyOnExit":
+                        return None, [], f"a status change other than at the exit ({group.tag})"
+                    statuses.extend(effect.get("EffectId", "").strip() for effect in group.iter("EffectId"))
+    statuses = sorted(set(statuses) - {""})
+    return statuses, tags, ""
+
+
+def read_action_dodge_statuses(sources: Sources) -> tuple[list, list]:
+    """@return The dodge status actions of the player lists (format 7, stage B3): [list, action, tests, statuses] for each action that
+    gives statuses at its exit while a dodge plays (IfActionStatus ... Installed, EffectsToApplyOnExit) and that tests a learned node; and
+    each such action with a test or an activity of a different kind, [list, action, cause]."""
+    found: list = []
+    skipped: list = []
+    for path in sources.paths(ACTION_FOLDER, ACTION_SUFFIX):
+        stem = path.rsplit("/", 1)[-1][:-len(ACTION_SUFFIX)]
+        if not stem.startswith(ACTION_PREFIX):
+            continue
+        root = read_xml(sources, path, "the folder of the player actions")
+        if root is None:
+            continue
+        for action in root.iter("Action"):
+            activation = action.find("ActivationCondition")
+            activities = action.find("Activities")
+            if activation is None or activities is None or not any(node.tag == "IfActionStatus" for node in activation.iter()):
+                continue
+            if not any(node.tag == "EffectsToApplyOnExit" for node in activities.iter()):
+                continue
+            if not any(node.tag == "IfAbilityActive" for node in activation.iter()):
+                continue
+            statuses, exit_tags, cause = exit_statuses(activities)
+            if statuses is None:
+                skipped.append([stem, action.get("Name", ""), cause])
+                continue
+            tests, cause = dodge_conditions(activation)
+            if tests is None:
+                skipped.append([stem, action.get("Name", ""), cause])
+                continue
+            if not statuses:
+                continue
+            tests["exitTags"] = exit_tags
+            found.append([stem, action.get("Name", ""), tests, statuses])
+    return found, skipped
+
+
+def read_action_tag_removals(sources: Sources) -> list:
+    """@return The tag removal actions of the player lists (format 7, stage B3): [list, action, tags, statuses] for each action whose
+    activation condition is only IfMannequinTag tests (in an And) and whose only activity removes statuses at its exit."""
+    found: list = []
+    for path in sources.paths(ACTION_FOLDER, ACTION_SUFFIX):
+        stem = path.rsplit("/", 1)[-1][:-len(ACTION_SUFFIX)]
+        if not stem.startswith(ACTION_PREFIX):
+            continue
+        root = read_xml(sources, path, "the folder of the player actions")
+        if root is None:
+            continue
+        for action in root.iter("Action"):
+            activation = action.find("ActivationCondition")
+            activities = action.find("Activities")
+            if activation is None or activities is None:
+                continue
+            tests = [node for node in activation.iter() if node.tag not in ("ActivationCondition", "And")]
+            if not tests or any(node.tag != "IfMannequinTag" or not node.get("TagName", "").strip() for node in tests):
+                continue
+            if any(child.tag != "ModifyStatusEffects" for child in activities):
+                continue
+            groups = [group for modify in activities for default in modify for group in default]
+            if not groups or any(group.tag != "EffectsToRemoveOnExit" for group in groups):
+                continue
+            statuses = sorted({effect.get("EffectId", "").strip() for group in groups for effect in group.iter("EffectId")} - {""})
+            if statuses:
+                found.append([stem, action.get("Name", ""), [node.get("TagName").strip() for node in tests], statuses])
+    return found
 
 
 def read_action_lists(sources: Sources, spells: dict[str, list]) -> tuple[list, list]:

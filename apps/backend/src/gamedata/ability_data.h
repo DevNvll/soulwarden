@@ -190,6 +190,38 @@ struct ActionHitStatus {
     std::vector<std::string> statuses;
 };
 
+/**
+ * An action of the player lists that gives statuses at the end of a dodge (stage B3, file format 7; the node Dodge and Weave of the bow:
+ * Passive_Bow_Skirmish_HasteOnDodge of playeractions_ability_bow). Its activation condition tests the dodge action (IfActionStatus
+ * `dodge` Installed), the learned nodes, the mannequin tags (the tag of the weapon in the hand), the stamina as a part of the maximum, and the
+ * statuses that the character must not have (of each source). Its activities give the statuses at the exit of the action
+ * (EffectsToApplyOnExit), only while the character has the tags of `exitTags` (the Then branch of an IfThenElse with a tag test).
+ */
+struct ActionDodgeStatus {
+    std::string list;
+    std::string action;
+    /** The action of the dodge that the condition tests ("Dodge": the action of the stamina data). */
+    std::string dodge;
+    std::vector<std::string> nodes;
+    std::vector<std::string> tags;
+    std::optional<ActionHitStatus::Compare> stamina;
+    std::vector<std::string> without;
+    std::vector<std::string> exitTags;
+    std::vector<std::string> statuses;
+};
+
+/**
+ * An action of the player lists whose activation condition is only tests of mannequin tags and whose only activity removes statuses at its
+ * exit (stage B3, file format 7): the statuses end when a tag goes. Bow_Remove_StatusEffects_Sheathe ends the haste of Dodge and Weave when
+ * the bow leaves the hand (the tag Bow of the weapon).
+ */
+struct ActionTagRemoval {
+    std::string list;
+    std::string action;
+    std::vector<std::string> tags;
+    std::vector<std::string> statuses;
+};
+
 /** The data as plain values: the content of the file, and what a test sets. */
 struct AbilityTables {
     std::vector<CooldownRow> cooldowns;
@@ -214,6 +246,9 @@ struct AbilityTables {
     std::vector<ActionStatus> actionStatuses;
     /** The hit-taken status actions of the player (stage 3.4f-B, file format 6; empty for an older file). */
     std::vector<ActionHitStatus> actionHitStatuses;
+    /** The dodge status actions and the tag removal actions of the player (stage B3, file format 7; empty for an older file). */
+    std::vector<ActionDodgeStatus> actionDodgeStatuses;
+    std::vector<ActionTagRemoval> actionTagRemovals;
     /**
      * The number of the rows of the status tables of the game, with each duplicate: the length of the
      * status list of the client. Each status number is below it (code review of stage 3.3a, finding F10).

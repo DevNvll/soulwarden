@@ -297,6 +297,7 @@ StepOutcome Combat::step(SessionId session, std::uint32_t inputSequence, std::ui
     checked.dodgeAllowed = m_world.stamina().can_dodge(*character, bits.locked);
     outcome.press = checked.press;
     outcome.kept = checked.press && !bits.press;
+    outcome.held = bits.press && !checked.press;
     // Stage U3 (research Q4): a press at rest starts no attack while the bag is over 1.5 x its weight limit (the client refuses it too). The
     // press after the switch (code review of stage U3, finding U3-R3: a press that a switch kept), for a melee weapon and for a ranged weapon
     // (finding U3-R4: the attack track keeps the verdict with the press for the projectile check).
@@ -525,6 +526,10 @@ void Combat::change_weapon(Entity& entity, std::uint32_t slot) {
     if (entity.combat.selectedWeapon == slot) {
         return;
     }
+    // Stage B3: the weapon before the change (its tags end the statuses of a tag removal action of the data).
+    const ItemInstance* held = weapon_in_hand(entity);
+    const gamedata::WeaponRow* before = held != nullptr && tables() != nullptr ? tables()->weapon_of(held->itemId) : nullptr;
+    const std::string heldBefore = weapon_key(entity);
     entity.combat.selectedWeapon = slot;
     // The attack of the weapon before the change ends (stage 3.3b-M1).
     m_sequences.end(entity.characterId, SequenceEnd::weapon);
@@ -532,6 +537,11 @@ void Combat::change_weapon(Entity& entity, std::uint32_t slot) {
     m_world.gear().refresh(entity);
     // The window of a counter ends with the weapon of its cast (finding F2 of the review of stage 3.3b-S4).
     m_world.abilities().weapon_changed(entity);
+    // Stage B3: a swap of the weapon slot with the key of a weapon: the rules with OnWeaponSwap (Archer's Speed) and the tag removals (the haste
+    // of Dodge and Weave ends when the bow leaves the hand). A slot with the same item instance is no change of the weapon.
+    if (Entity* own = m_world.find_character(entity.characterId); own != nullptr && weapon_key(*own) != heldBefore) {
+        m_world.passives().weapon_changed(*own, before, true);
+    }
 }
 
 bool Combat::switching(const Entity& character) {
@@ -1109,9 +1119,13 @@ HitResult Combat::strike(Entity& attacker, Entity& target, const HitWeapon& use,
         hit.types.push_back(modifiers.conversionType);
     }
     const WorldClock::time_point before = m_world.clock().now();
+    const gamedata::AbilityData* statusData = m_world.options().abilityData;
     for (const CreatureEffect& effect : target.creature.effects) {
         if (before < effect.ends) {
-            hit.targetEffects.push_back(HitContext::TargetEffect{effect.status, effect.row, effect.stacks, effect.source});
+            // An effect with no row (the rend of a perk: Gear::perk_status) gets its row from its status id, as the evaluator does with no
+            // snapshot (code review of stage B2, finding B2-R3: Mark lost its bonus on a creature with the rend of Sundering Shockwave).
+            const gamedata::StatusRow* data = effect.row != nullptr ? effect.row : statusData != nullptr ? statusData->status(effect.status) : nullptr;
+            hit.targetEffects.push_back(HitContext::TargetEffect{effect.status, data, effect.stacks, effect.source});
         }
     }
     hit.targetKnown = true;

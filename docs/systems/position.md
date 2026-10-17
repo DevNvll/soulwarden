@@ -53,6 +53,10 @@ contracts are in the protocol notes (sections 4.6 and 4.7).
   press is not more than the window speed times the time since the press, the window margin, and the distance of the
   envelope (`MotionAllowance::from`, `since`). Before the correction one Charge moved a client 55 m in 2.5 s. The speed multiplier of a speed table (stage 3.3b-S2a) counts one window after
   its change, and a later lower table does not move that end (code review of stage 3.3b-S2a, finding F1, test case RG1).
+- A haste of a status (stage B3, the hastes of the bow build: 1.07 and 1.14 with two): the session gives the check the multiplier of the
+  speed table that it sent (`PositionTrack::set_client_speed`; [Status effects](status-effects.md)), and the window speed is larger by that
+  factor. A hasted run is far below the limits: live check B3-4 (19.05 m and 20.37 m in 3.5 s) had no refused report, and test case HS7
+  accepts a hasted sprint with a dodge in it for the owner while the check of an observer stays 1.0.
 - The heartbeat state of the movement component (each 200 ms, owner view) has the time anchor
   and the id of the rule (`movement_state_id`, protocol notes 4.6): 0x8000 or 0x0000,
   0x4000 or more from the newest input number of the client of the session. Never send a

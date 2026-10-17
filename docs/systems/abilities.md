@@ -357,6 +357,10 @@ The three bow abilities of the build of the user: Penetrating Shot (`Ability_Bow
   A shot also needs the weapon of the cast in the hand. An item in the lock of the session (the loading screen of a travel) is no shot,
   and it changes nothing of the volley. A projectile that flies already flies on. [Before the correction an item after a weapon
   change, in the loading screen of a travel, or 30 s after the cast shot the arrow that did not fly.]
+- The cancel time ends the action for the next ability too [code review of stage B2, finding B2-R1, test case BV1]: after the cancel time
+  of a dodge (`Cast::cancelAt`) the transition check of a new cast does not read the windows of the cancelled action (before the
+  correction, Explosive Arrow 1.6 s after a cancelled Rapid Shot was refused with `casting` to the full length of 2.6 s). The cast record
+  stays for a shot that flies and for a late item of a shot before the cancel.
 - A dodge cancels a bow action [code review of stage U3, finding U3-R7, test cases UR7 and UR9; game data: the CanDodgeBuffer and
   CanDodgeCancel marks of the fragment, the projectile data of format 3; agent decision with the rule of a buffered input]. An accepted
   dodge (`Combat::step`, then `Abilities::dodged`) ends the action at its cancel: at once in a cancel window, else (a buffer window, or

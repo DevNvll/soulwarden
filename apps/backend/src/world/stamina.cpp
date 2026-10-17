@@ -253,13 +253,19 @@ DodgeVerdict Stamina::dodge(Entity& character, WorldClock::time_point at, bool l
     return counted(DodgeVerdict::accepted);
 }
 
-void Stamina::start(Entity& character, WorldClock::time_point at) {
+void Stamina::start(Entity& character, WorldClock::time_point at, bool chained) {
     const gamedata::StaminaData& data = *m_world.options().staminaData;
     const gamedata::DodgeClass* dodge = data.dodge_of(load_of(character));
     const gamedata::DodgeFragment* fragment = dodge != nullptr ? data.fragment_of(*dodge) : nullptr;
     if (fragment == nullptr) {
         return;
     }
+    // Stage B3: the dodge action of the client. A next dodge of a cancel window before the mark CanTransition of the dodge that plays (a
+    // buffered dodge starts at the end of its window, 0.5 s, the time of the mark) continues the action: the client changes the fragment of
+    // the action Dodge (CAGE-TransitionInstant NewFragment, no new action). Else the dodge starts a new action, and a dodge that plays and
+    // whose mark the tick did not take yet ends its action first (its exit statuses).
+    bool continuing = chained;
+    std::string endedFragment;
     // A buffered next dodge replaces the dodge that plays: the immune window of that dodge stays for the contacts of its time that the world
     // did not test yet (code review of stage 3.4f-B, finding CS-R1).
     if (const auto playing = m_dodges.find(character.characterId); playing != m_dodges.end() && playing->second.fragment != nullptr) {
@@ -269,6 +275,23 @@ void Stamina::start(Entity& character, WorldClock::time_point at) {
             playing->second.paid = true;
             change(character, -playing->second.cost, "a dodge");
         }
+        if (!chained && playing->second.entity == character.id && !playing->second.transitioned) {
+            continuing = at <= playing->second.transitionAt;
+            if (!continuing) {
+                playing->second.transitioned = true;
+                endedFragment = playing->second.fragment->name;
+            }
+        }
+    }
+    if (!endedFragment.empty()) {
+        m_world.passives().dodge_ended(character, endedFragment);
+    }
+    if (!continuing) {
+        // The start tests of the dodge status actions read the stamina before the payment, with the regeneration to now (stage B3).
+        if (m_regenerating.count(character.characterId) != 0 && !regenerate(character, m_world.clock().now())) {
+            m_regenerating.erase(character.characterId);
+        }
+        m_world.passives().dodge_started(character);
     }
     DodgeState state;
     state.generation = ++m_generation;
@@ -337,6 +360,15 @@ void Stamina::step_dodge(const std::string& characterId, WorldClock::time_point 
             watch(*character);
             m_world.touch(character->id, ComponentKey::stamina);
         }
+        // Stage B3: the end of the dodge action at the mark CanTransition of its last dodge (the deactivation of the action Dodge needs the
+        // mark; the length of the animation of the fragment is not in the data: an agent decision, research bow-build-2.md K11), unless a
+        // buffered next dodge continues the action: the exit statuses (Dodge and Weave) and the rules after a dodge (Evasive Tactics).
+        if (!state.next) {
+            // No next dodge: nothing more of this dodge is due (the state may change in the rules of the exit).
+            const std::string fragment = state.fragment != nullptr ? state.fragment->name : std::string();
+            m_world.passives().dodge_ended(*character, fragment);
+            return;
+        }
     }
     if (state.next && now >= *state.next) {
         const WorldClock::time_point at = *state.next;
@@ -344,9 +376,14 @@ void Stamina::step_dodge(const std::string& characterId, WorldClock::time_point 
         state.next.reset();
         const DodgeVerdict checks = start_checks(*character, locked);
         if (checks == DodgeVerdict::accepted) {
-            start(*character, at);
+            start(*character, at, true);
         } else {
             ++m_counts.dodges[static_cast<std::size_t>(checks)];
+            // Stage B3: the buffered dodge does not start: the action ends at the mark of the dodge before it.
+            if (state.transitioned) {
+                const std::string fragment = state.fragment != nullptr ? state.fragment->name : std::string();
+                m_world.passives().dodge_ended(*character, fragment);
+            }
         }
     }
 }
@@ -410,6 +447,7 @@ void Stamina::evaded(Entity& character, const Entity& creature, float wouldDeal,
 
 void Stamina::entered(Entity& character) {
     m_dodges.erase(character.characterId);
+    m_world.passives().dodge_cancelled(character.characterId);
     m_pastWindows.erase(character.characterId);
     m_regenerating.erase(character.characterId);
     character.vitals.staminaMax = maximum(character);
@@ -425,6 +463,8 @@ void Stamina::interrupted(const std::string& characterId, const char* why) {
     if (found == m_dodges.end()) {
         return;
     }
+    // Stage B3: an action that a death, a travel, or a leave ends gives no exit statuses (an agent decision).
+    m_world.passives().dodge_cancelled(characterId);
     if (!found->second.paid) {
         ++m_counts.paymentsCancelled;
         log::write("world: dodge: the dodge of character %s ends before its payment: %s", characterId.c_str(), why);
@@ -448,6 +488,7 @@ void Stamina::refilled(Entity& character) {
         return;
     }
     m_dodges.erase(character.characterId);
+    m_world.passives().dodge_cancelled(character.characterId);
     m_pastWindows.erase(character.characterId);
     m_regenerating.erase(character.characterId);
     const bool changed = character.vitals.stamina < maximum(character) || character.vitals.exhausted;

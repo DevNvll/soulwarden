@@ -1447,6 +1447,10 @@ void RepSession::handle_attacks(const ClientInput& input) {
             m_attack.keep(step.sequence, now, world::Combat::weapon_key(*after), outcome.allowed);
         } else if (outcome.press) {
             m_attack.verdict(step.sequence, outcome.allowed);
+        } else if (outcome.held) {
+            // A press that the switch holds fires nothing now (code review of stage B2, finding B2-R5): its shot comes with the new press of
+            // the switch (`kept`), which gets its own weight verdict.
+            m_attack.verdict(step.sequence, false);
         }
         m_projectileItems += step.projectileHits + step.shots;
         if (step.abilityKey != 0) {

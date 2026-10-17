@@ -56,6 +56,8 @@ WorldCommand apply_status(const std::string& character, const Arguments& argumen
         }
         world::StatusApply how;
         how.seconds = seconds;
+        // Stage B3: a time of the command stays (no time factor of the character); with 0 the time of the row has the factor.
+        how.fixedTime = seconds > 0.0F;
         how.potency = potency;
         how.source = world::StatusSource{world::StatusSourceKind::command, "command", 0, 0};
         world::StatusVerdict verdict = world::StatusVerdict::unknown;

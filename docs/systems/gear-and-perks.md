@@ -123,6 +123,12 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
   the conversion; the condition DamageTypes of a rule reads them ([Passive rules](passive-rules.md)).
 - The rules of the Boltcaster of the bow build (stage B2: Electrified, Bolt and its bolt, Shirking Shock II, and Surprise Attack of the
   tree): [Passive rules](passive-rules.md).
+- The haste perks of the bow build (stage B3): Speedy of the Winged Leather Shoes (`PerkID_Artifact_Set1_MediumFeet`: +0.5 in the time
+  factor of each haste on the character, +0.1 BaseDamage while hasted) and Alacrity II of the charm of the Boltcaster
+  (`PerkID_Slottable_Common_DurHaste`: +0.094 x potency in the time factor; 1.274 at 800). The status system applies the time factor
+  ([Status effects](status-effects.md)); the evaluator has the rules ([Passive rules](passive-rules.md)). A haste of the build lasts 1.62 times
+  its time. The statuses of a perk of a hit (`Gear::perk_status`) obey the removal window of the target (code review of stage B2, finding
+  B2-R4; [Creatures](creatures.md)).
 - The damage of a tick of a creature status (stage B1, `Gear::tick_damage`): the creature system gives each damage tick of a status
   with a forced damage row (the burn of Flame Arrow) to the path of the damage of a perk (`perk_damage`, `Combat::strike_amount`: a
   fixed amount, the defense of the creature, no reaction, the number for the source) [agent decision: one path for each damage of a

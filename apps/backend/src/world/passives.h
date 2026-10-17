@@ -26,17 +26,21 @@
 // before the damage of each hit (Passives::before_hit) and gives it the result (Passives::after_hit), the health system gives it
 // each hit that a character takes (hit_taken), and the world tick runs its rules of the entities near a character (tick).
 //
-//   Event      A cell On<event> that is not 0: OnHit, OnCrit, OnKill, OnHitTaken, OnHeadShot, OnHitBehind. A row with no event
-//              and a condition of a hit (DamageTableRow, AttackType) is a rule of that hit (Crowded Well: the burst of Gravity
-//              Well). A row with no event, no condition, and a value is a fixed stat. A row with no event, NumAroundMe, and a
-//              SelfApplyStatusEffect is a status while the condition holds (Center of Attention).
+//   Event      A cell On<event> that is not 0: OnHit, OnCrit, OnKill, OnHitTaken, OnHeadShot, OnHitBehind, and from stage B3
+//              OnWeaponSwap (the key of a weapon: weapon_changed). A row with no event and a condition of a hit (DamageTableRow,
+//              AttackType) is a rule of that hit (Crowded Well: the burst of Gravity Well). A row with no event, no condition, and a
+//              value is a fixed stat. A row with no event, NumAroundMe, and a SelfApplyStatusEffect is a status while the condition
+//              holds (Center of Attention). Stage B3: a row with no event and AfterAction or AfterSequence of the dodge acts at the
+//              end of a dodge (dodge_ended: Evasive Tactics); a row with no event and StatusEffectDurationReduction is a time factor
+//              of a status on the character (duration_factor: Speedy, Alacrity II); the dodge status actions of the data give their
+//              statuses at the end of a dodge (Dodge and Weave), and the tag removal actions end them when the weapon tag goes.
 //   Conditions The conditions of a perk row (Gear: AttackType, DamageTableRow, the health, stamina, and mana percents with the
 //              comparator of the client, TargetStatusEffectCategory, DontHaveStatusEffect, InSequence) and InAction,
 //              RequireReaction, DamageIsMelee, DamageIsRanged, the hit counts (TrackHitCount with NumberOfTrackedHits,
 //              NumSuccessfulHits, NumConsecutiveHits), and NumAroundMe (the entities in the tracking spell of the rule). From
 //              stage B2: DamageTypes, TargetStatusEffect with its stack size and comparison (the stacks of each source on the
 //              target before the hit, unless CheckStatusEffectsOnTargetOwned), and StatusEffect with its stack size and
-//              comparison (the attacker).
+//              comparison (the attacker). From stage B3: StatusEffectCategories (the attacker has a status of a category: Speedy).
 //   Effects    BaseDamage, CritChance, CritDamage, ArmorPenetration, HeadshotDamage, HitFromBehindDamage (before the
 //              damage); SelfApplyStatusEffect, OtherApplyStatusEffect, DmgPctToHealth, CooldownTimer with
 //              CDRImmediatelyOptions, and from stage B2 RemoveTargetStatusEffectsList and RemoveStatusEffects (after the hit);
@@ -141,6 +145,14 @@ struct PassiveCounts {
     std::uint64_t hitTakenRules{0};
     /** Rules with OnHitTakenWhileInvulnerable that acted (stage 3.4f-B). */
     std::uint64_t evadedRules{0};
+    /**
+     * Stage B3: the rules with OnWeaponSwap that acted (Archer's Speed), the statuses of the dodge status actions at the end of a dodge (Dodge
+     * and Weave), the rules after the end of a dodge that acted (Evasive Tactics), and the statuses that a tag removal action ended.
+     */
+    std::uint64_t swapRules{0};
+    std::uint64_t dodgeStatuses{0};
+    std::uint64_t afterDodgeRules{0};
+    std::uint64_t tagRemovals{0};
 };
 
 class Passives {
@@ -179,6 +191,34 @@ public:
      *         the target (its health before the heal, the row of the spell, the categories of its statuses), times the potency.
      */
     [[nodiscard]] float heal_bonus(const Entity& healer, const Entity& target, const HealSource& source) const;
+    /**
+     * Stage B3: the weapon in the hand of a character changed (`before`: the weapon row before the change, or null). The tag removal actions of
+     * the data end their statuses when a tag of the weapon before goes (Bow_Remove_StatusEffects_Sheathe: the haste of Dodge and Weave ends
+     * when the bow leaves the hand). `swap` true: a change of the weapon slot with the key of a weapon (Combat::change_weapon): the rules with
+     * OnWeaponSwap of the tree of the new weapon and of the perks (Archer's Speed), with the conditions that a swap has a source for.
+     */
+    void weapon_changed(Entity& character, const gamedata::WeaponRow* before, bool swap);
+    /**
+     * Stage B3: a dodge action of a character starts (a dodge while no dodge of the character plays; a next dodge of a cancel window continues
+     * the action). The start tests of the dodge status actions of the data (Passive_Bow_Skirmish_HasteOnDodge: the node, the tag of the weapon
+     * in the hand, the stamina before the payment as a part of the maximum, the statuses that the character must not have) are read now.
+     */
+    void dodge_started(Entity& character);
+    /**
+     * Stage B3: the dodge action of a character ended (the mark CanTransition of its last dodge, `fragment`): the statuses of the dodge status
+     * actions whose start tests passed and whose exit tags hold (the bow still in the hand), and the rules with AfterAction and AfterSequence of
+     * the dodge and no event (Evasive Tactics).
+     */
+    void dodge_ended(Entity& character, std::string_view fragment);
+    /** Stage B3: the dodge action of a character ended with no exit (a death, a travel, a leave, a new entry): its start tests are forgotten. */
+    void dodge_cancelled(const std::string& characterId);
+    /**
+     * Stage B3: @return The time factor of a status row on a character: 1 plus, for each rule of the character with StatusEffectDurationReduction
+     *         and no event whose StatusEffect names the status or whose StatusEffectCategories has a category of the status, and whose own
+     *         conditions pass with the new status counted as present, the value times the potency (client getter 0x68308E0 sums them: Speedy
+     *         0.5 and Alacrity II 0.094 x 1.274 give 1.62). Not below 0.
+     */
+    [[nodiscard]] float duration_factor(const Entity& character, const gamedata::StatusRow& row) const;
     /** Each world tick: the rules of the entities near a character (a status while NumAroundMe holds), each kAroundStep. */
     void tick();
     /** A character leaves the world: the statuses of its rules near it end, and its values of the evaluator go. */
@@ -196,6 +236,12 @@ public:
     }
     /** @return True for a fixed stat: a row with no event, no condition, and only columns that the evaluator has (Gear::values). */
     [[nodiscard]] static bool fixed(const gamedata::CellValues& cells);
+    /**
+     * Stage B3: @return True for a value of a hit with a condition of a status of the character and no event (StatusEffect or
+     *         StatusEffectCategories, only the conditions of a rule with no hit, only values of a hit: the form of BonusDamageSelfCCPerk1). The
+     *         evaluator gives its values to each hit while the condition holds; the gear values do not take it.
+     */
+    [[nodiscard]] static bool conditional_value(const gamedata::CellValues& cells);
 
     /**
      * @return True when the conditions of a rule pass for a hit (no hit count is spent). The tests of the comparator use it.
@@ -220,6 +266,8 @@ private:
         /** The rules near the character whose status it has now. */
         std::set<std::string> around;
         WorldClock::time_point nextAround{};
+        /** Stage B3: the dodge status actions (indexes of actionDodgeStatuses) whose start tests passed in the dodge action that plays. */
+        std::vector<std::size_t> dodgeActions;
     };
 
     /** Stage B2: @return The rows that the statuses of a character equip (EquipAbility), with the potency of each status. */
@@ -230,8 +278,25 @@ private:
      *         effects of the target before the hit.
      */
     [[nodiscard]] bool target_status_pass(const gamedata::CellValues& row, const Entity& attacker, const Entity& target, const HitContext& hit) const;
-    /** Stage B2: @return True when the condition StatusEffect (with StatusEffectStackSize, StatusEffectComparison) of a row passes (client 0x67A0130). */
-    [[nodiscard]] bool own_status_pass(const gamedata::CellValues& row, const Entity& character) const;
+    /**
+     * Stage B2: @return True when the condition StatusEffect (with StatusEffectStackSize, StatusEffectComparison) of a row passes (client
+     *         0x67A0130). Stage B3: also StatusEffectCategories (the character has a status of a category of the list; StatusEffectComparison
+     *         NotEqual: none). `adding`: a status that comes now and counts as present (the time factor of a new haste).
+     */
+    [[nodiscard]] bool own_status_pass(const gamedata::CellValues& row, const Entity& character, const gamedata::StatusRow* adding = nullptr) const;
+    /**
+     * Stage B3: @return True when the conditions of a rule with no hit pass for a character (a swap, the end of a dodge, a time factor): its
+     *         values (health, stamina, mana), grit (none), DontHaveStatusEffect, EquipLoadCategory, StatusEffect, StatusEffectCategories.
+     */
+    [[nodiscard]] bool self_pass(const PassiveRule& rule, const Entity& character, const gamedata::StatusRow* adding = nullptr) const;
+    /** Stage B3: the effects of a rule with no hit on its character: a cooldown change, RemoveStatusEffects, SelfApplyStatusEffect. */
+    void self_effects(const PassiveRule& rule, Entity& character);
+    /** The cooldown change of a rule (CooldownTimer with CDRImmediatelyOptions; stage B3: one function for a hit and a rule with no hit). */
+    void cooldown_effect(const PassiveRule& rule, Entity& character);
+    /** RemoveStatusEffects of a rule on its character (stage B2; stage B3: one function for a hit and a rule with no hit). */
+    void remove_own(const PassiveRule& rule, Entity& character);
+    /** Stage B3: @return The progression id of the ability table of the weapon in the hand of a character (0: none). */
+    [[nodiscard]] std::uint32_t table_in_hand(const Entity& character) const;
     /** @return The event of a rule, or an empty text (no event). */
     [[nodiscard]] static std::string event_of(const gamedata::CellValues& cells);
     /** @return The columns of a rule that the evaluator does not have (no effect for the rule), and the unsupported events. */

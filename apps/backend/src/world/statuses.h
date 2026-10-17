@@ -30,9 +30,12 @@
 //     is 1: client loader 0x44B65F5); the end: RefreshDuration: now + the duration; a DurationMax above the duration:
 //     the old end + the duration, to now + DurationMax; else the later end. The larger potency stays. At StackMax with
 //     DontReplaceStack the application changes nothing.
-//   - The duration: the duration of the source (DurationOverrides of a consumable), else BaseDuration; not more than
-//     DurationMax. A row with no duration is one application now (a heal, a mana change, CastSpell). The gear gives a
+//   - The duration: the duration of the source (DurationOverrides of a consumable), else BaseDuration, times the time factor of the
+//     character (stage B3: 1 plus the StatusEffectDurationReduction of its rules for the status, Passives::duration_factor); not more
+//     than DurationMax. A row with no duration is one application now (a heal, a mana change, CastSpell). The gear gives a
 //     permanent status.
+//   - OnStackStatusEffect (stage B3): after an application, the stacks of the status against AddOnStackSize with
+//     AddOnStackSizeComparison: the named statuses come on the character (the timer of Archer's Speed at the first stack of its haste).
 //   - ApplicationCooldown: one application of the row for each character in that time.
 //   - A TickRate with Health, HealthModifierPercent, Mana, or ManaModifierPercent: a heal (times the heal factor of the
 //     equip load) and a mana change at each tick, the first tick at the application (DelayInitialTick: one tick later).
@@ -71,8 +74,13 @@ enum class StatusEnd : std::uint8_t {
     leave,
     /** A development command. */
     command,
+    /**
+     * Stage B3: the weapon with a tag left the hand (a tag removal action of the data: Bow_Remove_StatusEffects_Sheathe ends the haste of
+     * Dodge and Weave when the bow leaves the hand).
+     */
+    weapon,
 };
-inline constexpr std::size_t kStatusEndCount = 7;
+inline constexpr std::size_t kStatusEndCount = 8;
 
 [[nodiscard]] const char* status_end_text(StatusEnd cause);
 
@@ -102,6 +110,11 @@ struct StatusApply {
     float seconds{0.0F};
     /** True: no end (the status of an affix of an equipped item). */
     bool permanent{false};
+    /**
+     * Stage B3: true: `seconds` is the time of a development command, and the time factors of the character (StatusEffectDurationReduction
+     * of its rules: Speedy, Alacrity) do not change it. False: the time of the source or of the row times the time factor of the character.
+     */
+    bool fixedTime{false};
     float potency{1.0F};
     StatusSource source;
     /**
@@ -173,6 +186,9 @@ struct StatusCounts {
     std::uint64_t spellsNotDone{0};
     /** Stage 3.4f-C: the ticks of a row with a negative health term that hurt their character (a poison of a creature area). */
     std::uint64_t damageTicks{0};
+    /** Stage B3: the applications whose time a time factor of the character changed (Speedy, Alacrity), and the OnStackStatusEffect statuses. */
+    std::uint64_t scaledTimes{0};
+    std::uint64_t onStack{0};
 };
 
 class Statuses {
@@ -285,12 +301,19 @@ private:
                           const std::function<bool(const ActiveStatus&)>& select, StatusEnd cause);
     /** The CastSpell of a row (the rune explosion). */
     void cast(Entity& character, const gamedata::StatusRow& row, const StatusSource& source);
+    /**
+     * Stage B3: OnStackStatusEffect of a row after an application that left the status with `stacks` stacks: the stacks against AddOnStackSize
+     * with AddOnStackSizeComparison (no size: each application), and then the named statuses on the character (source: the status).
+     */
+    void on_stack(Entity& character, const gamedata::StatusRow& row, unsigned stacks, const StatusSource& source);
     [[nodiscard]] const gamedata::StatusRow* row_of(std::string_view status) const;
 
     World& m_world;
     std::unordered_map<std::string, CharacterState> m_characters;
     std::multimap<WorldClock::time_point, Due> m_due;
     std::uint64_t m_nextSerial{1};
+    /** Stage B3: the depth of the OnStackStatusEffect applications (a bound: a row of the data that names itself does not loop). */
+    unsigned m_onStackDepth{0};
     StatusCounts m_counts;
 };
 

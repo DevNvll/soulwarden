@@ -6652,6 +6652,45 @@ hit is the bolt), the trackers of the dodge perks, Surprise Attack with 0.2 of t
 **Not known, not done** (stage B2): the view of a second client (only one client can run: the case BC6 tests two sessions); the
 meaning of DisableScalePerTargetSEStack; the source of the Momentum status of the rapier (no plan of a rapier ability).
 
+### 4.48 The haste chain of the bow build (live proof of stage B3; static proof for the client code and the game data; the rules are project rules with the values of the game data)
+
+Stage B3, the fourth part of the bow build of the user. Build sheets: `~/Games/soulwarden/work/research/bow-build.md` (rows 24, 26 to
+28, 36, 44, 45), `bow-build-2.md` (Q1, K1, K2, K11, the live checks B3-1 to B3-4). The live proof: `RESULT.md` of
+`~/Games/soulwarden/work/evidence/bow-build/b3/implement/` (live check L1 before the code; run L2 with the backend of the stage). Code:
+`world/passives.h` (`weapon_changed`, `dodge_started`, `dodge_ended`, `duration_factor`), `world/statuses.h` (the time factor,
+`on_stack`), `world/stamina.h` (the dodge action), `gamedata/ability_data.h` (format 7). Documents: [Passive rules](systems/passive-rules.md),
+[Status effects](systems/status-effects.md), [Stamina and dodge](systems/stamina-and-dodge.md). Test cases HS1 to HS10. The stage uses no
+new message and no new state: the status map of 4.24 (the full map entry of the owner gives the HUD icon), the speed table of 4.24.
+
+**The wire contracts**
+
+| Contract | Evidence | Client code (image RVA) |
+| --- | --- | --- |
+| A full map entry of the owner (state type 4236, group 1 field 0) of a haste with ShowInUITray gives the HUD icon and its countdown: `Status_Passive_Bow_Skirmish_DodgeHaste` (index 2500) "4s" for 3.24 s (the HUD rounds up), `Status_Passive_Bow_Skirmish_HasteOnSwap` (index 1120) "9s" for 8.1 s, its timer `_HasteOnSwap_Timer` (index 3361, the category Timer, UseLightweightReplication) its own icon "10s" in the full map; the empower of Evasive Tactics `Status_Ultimate_Bow_Skirmish_DodgeDmg` (index 3326) "5s". The icon goes away at the end and at a removal (the bow leaves the hand). | Live L1 (a command: `L1-sheet-icon.png`, `L1-sheet-swap-timer.png`); live B3-1, B3-3, B3-5 (`B3-1-sheet-icon.png`, `B3-3-sheet-icons.png`, `B3-5-sheet-evasive.png`) | The map of 4.24 |
+| The speed table of the owner (slot 43, type 1525) with 1.07 makes the run 1.065 to 1.069 times longer in the same time (L1: 22.0 m and 23.4 m in 4 s; B3-4: 19.05 m and 20.37 m in 3.5 s). The position check accepts each report (no refusal in the run). | Live L1, B3-4 (`B3-4-run-compare.mp4`) | 4.24 |
+| The client predicts no status of the dodge status action `Passive_Bow_Skirmish_HasteOnDodge` that the HUD shows: a dodge of the client with the node, the bow, and full stamina showed no icon with the backend of stage B2 (no server entry). The icon of the haste comes from the server entry only: 0.18 s after the server applies it (live B3-1: the server at 0.50 s after the start of the dodge, the first frame of the icon at 0.69 s). | Live L1 (`L1-sheet-dodge-predict.png`), B3-1 | The action list runs in the client (`playeractions_ability_bow`); the predicted entry rule `0x4039600` (research `abilities-shared.md` Q1) did not show here |
+| The client sums the time factors of a status: `AbilityComponent::GetStatusEffectDurationMultipliers(statusId, reduction, overall)` adds `potency x StatusEffectDurationReduction` of each ability of the character that names the status (StatusEffect) or a category of it (StatusEffectCategories) and whose self conditions pass; it does not read StatusEffectDurationCats. The client has no consumer of the sum: its use is server code. | Static (research `bow-build-2.md` Q1) | `0x68308E0` (sum helper `0x6830710`, lambdas `0x6987A20`, `0x6987A30`), self conditions `0x67A16A0`, `0x67A0130` |
+| The loader reads OnWeaponSwap into bit 29 of the flags at +0xB8 of an ability row; no client code tests the bit: the event is server code. A hard-coded perk script removes the haste of Dodge and Weave when the weapon in the hand is not a bow. | Static (research Q1) | Loader `0x43AB5E4`; script `0x1E140A0` (from the perk tick `0x238B500`) |
+
+**The data** (`ability-data.json` format 7, [Game data](development/game-data.md)):
+
+| Fact | Source |
+| --- | --- |
+| The action `Passive_Bow_Skirmish_HasteOnDodge`: IfAbilityActive `Passive_Bow_Skirmish_DodgeHaste`, IfMannequinTag Bow, IfActionStatus Dodge Installed, IfStaminaValue 0.99 Percentage GreaterThanOrEqual, Not IfHasStatusEffect the haste (OnlyCheckOwned false); the exit: IfThenElse IfMannequinTag Bow, EffectsToApplyOnExit the haste. The action `Bow_Remove_StatusEffects_Sheathe`: IfMannequinTag Bow, EffectsToRemoveOnExit the haste | `playeractions_ability_bow.actionlist` |
+| The haste of Dodge and Weave (2 s, DurationMax 4, Buff+Haste, MoveSpeedMod and SprintSpeedMod 0.07, AlwaysReplicate); the haste of Archer's Speed (5 s, DurationMax 10, OnStackStatusEffect its timer at AddOnStackSize 1 Equal); the timer (10 s, the category Timer); the empower of Evasive Tactics (5 s, Buff+Empower, DMG 0.15) | The status tables of the weapons |
+| Archer's Speed `Passive_Bow_Skirmish_HasteOnSwap` (OnWeaponSwap, DontHaveStatusEffect the timer); Closing In `Passive_Bow_Skirmish_CDRVsLow` (OnHit, TargetHealthPercent 50, Duration -1, CooldownTimer -0.05 ActiveWeapon); Evasive Tactics `Ultimate_Bow_Skirmish` (AfterAction Dodge, AfterSequence the three dodge fragments, Duration 2); Speedy `GlobalPerk_Artifact_Set1_MediumFeet` (StatusEffectDurationReduction 0.5, StatusEffectCategories Haste) and `_2` (OnHit, StatusEffectCategories Haste, BaseDamage 0.1); Alacrity II `Ability_Perk_Amulet_DurHaste` (0.094, the outgoing part 0.094) | `BowAbilityTable`, the perk tables |
+
+**The rules** (the source of each rule is in [Passive rules](systems/passive-rules.md), [Status effects](systems/status-effects.md), and
+[Stamina and dodge](systems/stamina-and-dodge.md)): the dodge action of the backend (a buffered next dodge continues it; its end at the mark
+CanTransition of its last dodge), the start tests and the exit tags of a dodge status action, the tag removal at a change of the weapon in
+the hand, the swap event of the key of a weapon (an equipment change is no swap), the time factor `time x (1 + sum)` with the new status
+counted as present, OnStackStatusEffect, the condition StatusEffectCategories, Duration as a mark.
+
+**Not known, not done** (stage B3): the length of the animation of a roll (the end of the dodge action of the client; the backend uses the
+mark CanTransition, research K11); the outgoing time factor (TargetStatusEffectDurationMult: Alacrity II on a haste for a different player,
+Battle Precision: stage B4); the use of StatusEffectOverallDurationReduction (no row of the data has it); the view of a second client
+(the case HS7 tests two sessions).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are
