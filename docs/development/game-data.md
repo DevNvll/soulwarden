@@ -309,6 +309,21 @@ backend. The tool of each system is also in the document of that system.
   region file that is not complete or that has another digest than the document gives no node of its region, and the stored
   depletions of the region stay (findings GA-R2 and GA-R6, cases GAT1, GR2, GR6); without the files each gather is refused.
 
+- `crafting-data.json` (stage 3.7a, `tools/gamedata/crafting.sh`, [Crafting](../systems/crafting.md)): the recipes of the 15 tables of the
+  type CraftingRecipeData (8,294 ids: the station keys, the trade skill and RecipeLevel, the typed ingredients, the output and its quantity,
+  the fee and its tax flag, the gear score and perk options with the loader defaults of the client, the event, the achievements, the
+  expansion, the world tags, the cooldown, and the causes of a recipe that the backend does not craft yet), the 63 rows of the crafting
+  station database (`craftingstations.craftstationdb`: the name, the station keys, the Azoth discount, the mannequin tag), the authored
+  Assembly keys of the station slices with no row (Smelting2, Carpentry2, Masonry2, Tanning2, Weaving2: a diagnostic), the members of each
+  ingredient category (617, from the IngredientCategories of the master items), the events of the recipes, and the resource items (694:
+  the perk bucket of a charm; 20 buckets with no row: a diagnostic). 9 MB, 5 s; needs an Oodle source. The tool stops (the earlier file
+  stays) for a missing table or column, two recipe rows of one id or two ids of one CRC-32, an ingredient type that is not "Item",
+  "Category_Only", "Currency", or blank, a number that is not a whole number in the limits of the request of the client, a flag text that
+  is not a flag, no station row, or a station row with no type (`check_crafting_tool.py`, case CRAFT-TOOL). A reference that does not
+  resolve is a cause of the recipe. With no file each craft request is refused with no change. Stage 3.7a also changes
+  `interaction-data.json` (format 3, the same form): a station child of decision D1 has the `_t2` variant as its template, with the members
+  `authoredTemplate` and `override` (`interactions.py`, `station_overrides`; the case "decision D1" of `check_interactions_tool.py`).
+
 ## Commands
 
 ```sh
@@ -328,6 +343,7 @@ tools/gamedata/weapon-actions.sh     # one time: the attack graphs and the abili
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/chests.sh             # one time: the chests of the world for the backend (placements, gatherable rows, loot roots, territories; 3.6 MB); needs an Oodle source
 tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, the stations, ...; 25 MB, 2 to 4 minutes); needs an Oodle source
+tools/gamedata/crafting.sh           # one time: the recipes, the station rows, the ingredient categories for the backend (9 MB, 5 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
 tools/gamedata/gathering.sh --region r_+04_+02 --near 8817 4281 30   # the gathering nodes near a place, with their G (no file)
@@ -380,6 +396,10 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
     `Artifact_Set1_Earring1`: 0.01, 0, 0, 0.625; `RingT5`: 0.01, 0, 1.25, 0). The loader refuses a file of format 4 with no `trinkets`, a
     row that is not 5 values, a value that is not finite or below 0, an item that the catalog does not have, and an item two times. With
     a file of format 3 the jewelry has no stat line. `check_item_catalog_tool.py`: the cases trinket, trinket-missing, trinket-invalid.
+    Code review of stage B4, finding B4-R4: the tool keeps the id of each armor stats row (also a row with no line), and a jewelry item
+    (the tag Jewelry of its ItemClass) whose ItemStatsRef is not in the source, or jewelry with no table of the type ArmorItemDefinitions,
+    stops the tool: the old catalog stays (the cases trinket-missing-row and trinket-missing-table; test case BZ4). The retail data has no
+    such row: the catalog of the supported build is the same file.
   - `stamina-data.json` format 2 (`tools/gamedata/stamina.sh`): each dodge fragment has `attackCancel`, the time of the mark
     CAGE-Named CanAttackCancel (retail 0.266667 for `Dodge_Roll`, `Dodge_Roll_Fast`, `Dodge_Roll_Slow`). The tool stops when a fragment
     has no such mark or the mark is after CanTransition (`check_stamina_tool.py`: the case missing-attack-cancel). With a file of format 1

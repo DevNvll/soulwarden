@@ -2308,6 +2308,20 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
     if (actionTested && !hasEffect) {
         kind("rule of an action");
     }
+    // Code review of stage B4, finding B4-R5: the outgoing time factor (TargetStatusEffectDurationCats, TargetStatusEffectDurationMult) has a
+    // consumer only for a row with no event (Passives::outgoing_factor). A row with an event and these columns (Global_Weapon_HercyneRaid_1:
+    // OnHit) is not applied for that part: with no other effect the whole row is not applied, else the note of the row names the part.
+    const bool eventDuration = anyEvent && (row.has("TargetStatusEffectDurationCats") || row.has("TargetStatusEffectDurationMult"));
+    if (eventDuration) {
+        const bool otherEffect = hasValue || std::any_of(kEffects.begin(), kEffects.end(), [&](const std::string& column) {
+                                     return column != "TargetStatusEffectDurationCats" && column != "TargetStatusEffectDurationMult" && row.has(column);
+                                 });
+        if (!otherEffect) {
+            view.note = "not applied: the outgoing time factor of an event (" + event_of(row)
+                        + ": TargetStatusEffectDurationCats, TargetStatusEffectDurationMult) has no path in the backend (only a row with no event)";
+            return view;
+        }
+    }
     // 1. An active ability: its plan (the plans of this backend), and its rules of a hit only with a plan.
     if (origin == RuleOrigin::active) {
         if (!Abilities::has_plan(id)) {
@@ -2806,6 +2820,9 @@ RuleView Passives::describe_row(const std::string& id, const gamedata::CellValue
                                                              : ability_value_rule(row) ? " (the values of the row at each hit of its ability)"
                                                              : (row.has("NumAroundMe") ? " (a status while the condition holds)" : " (fixed)"))
                                             : " (" + event + ")");
+    if (eventDuration) {
+        view.note += "; not applied: its outgoing time factor (TargetStatusEffectDurationCats, TargetStatusEffectDurationMult: no path for an event)";
+    }
     return view;
 }
 

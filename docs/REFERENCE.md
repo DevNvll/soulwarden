@@ -138,6 +138,7 @@ tools/gamedata/interactions.sh     # one time: the interaction objects of the wo
 tools/gamedata/chests.sh           # one time: the chests of the world (without them no chest opens); 3.6 MB; needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/gathering.sh        # one time, after heights.sh: the gathering nodes of the world (without them each gather is refused); 40 MB, 1 minute; needs an Oodle library
+tools/gamedata/crafting.sh         # one time: the recipes, the station rows, the ingredient categories (without it each craft is refused); 9 MB, 5 s; needs an Oodle library
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
 ```
@@ -480,6 +481,12 @@ button on "Confirm").
   current file does not name, only when no backend runs (code review of user test 2).
   Without the files the backend starts and refuses each gather ([Gathering](systems/gathering.md)). The loot tables of `loot.sh`
   from stage 3.6a have the gathering roots: with an older `loot-tables.json` each gather is refused.
+- `tools/gamedata/crafting.sh` makes the crafting data (stage 3.7a; `~/.local/share/soulwarden/gamedata/crafting-data.json`): the
+  recipes of the CraftingRecipeData tables (their stations, ingredients, outputs, fees, options, and the causes of a recipe that the
+  backend does not craft yet), the rows of the crafting station database, the ingredient categories of the items, the events of the
+  recipes, and the resource items. `--recipe ID` prints recipes and writes no file. Without the file the backend starts and refuses each
+  craft with no change ([Crafting](systems/crafting.md)). The interaction data of stage 3.7a (`interactions.sh`) gives the stations of a
+  tier with no row of the game data (decision D1) the next tier.
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -723,7 +730,7 @@ button on "Confirm").
   database; after a restart the prompt shows "Already Read"). A talk with a person and the
   animations of a chair, a bed, or a pet are accepted (a chair takes one character). The
   crafting stations of the settlements (stage 2.5b) are at their places: E (Craft) at a station
-  opens the crafting screen of the game (a craft does not work yet: stage 3.7). Each other
+  opens the crafting screen of the game (the fixed recipes of stage 3.7a: Crafting, below). Each other
   option (storage, a shop, an inn, a teleport door, a camp) is refused: its system is
   not there yet (the chests: stage 3.5b.1, the gathering: stage 3.6a, below). In a development run, `tools/world interactions NAME` lists the objects near a
   character with their state (also the stations and the facts of a station use),
@@ -768,6 +775,16 @@ button on "Confirm").
   run `tools/world gathering NAME [METERS]` lists the work, the speed and the luck of each trade skill, and the depleted nodes near a
   character, and `tools/world gathering respawn NAME NODE SECONDS` makes a depleted node respawn sooner
   ([Gathering](systems/gathering.md)).
+- Crafting (stage 3.7a, [Crafting](systems/crafting.md)). At a crafting station (E: the crafting screen of the game) the CRAFT button of a
+  recipe sends the craft request: the server checks the station of the use (its tier row), the recipe, the trade skill rank, the count,
+  the selected items, the materials of the recipe in the unlocked bag and quick slots, the place of the whole output in the bag, and the
+  fee of the station (0.01 coin for a fixed recipe; a camp has no fee). The first item comes 1 s after the request, the next ones of a
+  count in the next ticks; each one is one change of the store with its materials and its part of the fee. A stop (the end of the station
+  use, the death, the leave, a command) keeps the completed items; a change of the bag during a count stops it before the next cost. Only
+  the recipes with no rule of a later part of stage 3.7 are crafted: the flint tools, the fishing pole, and the wood sword. The storage
+  search of the crafting screen gets an empty result (no storage yet). In a development run `tools/world crafting NAME` shows the station
+  of the use and the batch, `tools/world craft preview NAME RECIPE [COUNT]` the plan of a recipe (no change), and `tools/world craft stop
+  NAME` stops a batch; the admin interface has `craft_preview` and `stop_craft`.
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
   abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar
   of the HUD goes away at full mana ([Combat and health](systems/combat-and-health.md)).

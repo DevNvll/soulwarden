@@ -321,6 +321,12 @@ ProgressResult Progress::finish(Plan& plan, const char* what) {
         }
         entity->progression = sheet.progression;
         entity->attributes = sheet.attributes;
+        // Code review of stage B4, finding B4-R1: the threshold abilities of the attributes are values of the gear (Con_Bonus_100_1:
+        // MaxHealth 0.03): after the stored change the gear and the vitals come again from the new attributes (the vitals above have the
+        // health part of the old attributes).
+        if (sheet.attributes.spent != before.attributes.spent || sheet.progression.level != before.progression.level) {
+            m_world.gear().refresh(*entity);
+        }
     }
     log::write("progress: %s of character %s: level %u, experience %u, %u spent and %u free attribute point(s) (%s)",
                what,

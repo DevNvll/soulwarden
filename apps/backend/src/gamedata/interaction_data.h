@@ -239,6 +239,15 @@ struct SpawnedPlacement {
     std::string region;
     state::WorldPosition position;
     Rotation rotation{kNoRotation};
+    /**
+     * Decision D1 of stage 3.7a (a decision of the orchestrator; tools/gamedata/interactions.py): a station whose authored key ends in 2 and
+     * has no row of the station database gets the _t2 variant of its family (key ending in 3) as `templateIndex`. The authored template, the
+     * two keys, and the slice of the variant. No value: no override (also each file of before stage 3.7a).
+     */
+    std::optional<std::uint32_t> authoredTemplate;
+    std::string overrideFrom;
+    std::string overrideTo;
+    std::string overrideSlice;
 };
 
 /** A bound of the catalog: an object and the place of the bound in it. */

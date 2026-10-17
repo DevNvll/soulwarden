@@ -101,7 +101,10 @@ protocol notes (section 6).
   Stage 2.2: the command `set_world_time` (argument `time`, "HH:MM" or "HH:MM:SS") sets the time of the day of the whole world (the character of the command names who gives it; the reply has `"scope":"world"`), and the state of a character
   has the member `worldTime` (the time, the phase, the next phase, the cycle); the tab "World" of the tool window uses them. The
   perk roll of an item (`tools/world perkroll`) is a development
-  route only. The command that
+  route only. Stage 3.7a: the commands `craft_preview` (arguments `recipe`, the RecipeID text, and `quantity`, 1 to 10000: the plan of a
+  recipe with the station of the use of the character, no change) and `stop_craft` (no argument: the craft batch stops), and the member
+  `crafting` of the state of a character (the station of its use, its batch, the counts; [Crafting](crafting.md)); the tool window has no
+  button for them yet. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn
   point, and an effect on a creature are development routes only (`tools/world hurt`, `roll`,
   `creature respawn`, `creature effect`). A

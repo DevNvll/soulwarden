@@ -549,8 +549,12 @@ private:
     }
     /** The checks of the weapon, the attack, the rule, the ammunition, and the slice. */
     ShotVerdict rule_of(const Entity& character, std::uint32_t attackId, std::uint32_t row, float charge, std::uint32_t ammo, Launch& launch) const;
-    /** The common end of a launch: the limit, the cost, the ledger, and the hit near the muzzle or the flight. */
-    ShotResult fire(Entity& character, const Launch& launch);
+    /**
+     * The common end of a launch: the limit, the cost, the ledger, and the hit near the muzzle or the flight.
+     * @param accepted Called after the last refusal check of the shot and before its hit near the muzzle (code review of stage B4, finding
+     *        B4-R2: the end of a dodge comes before the first hit of the shot). Not called for a refused shot.
+     */
+    ShotResult fire(Entity& character, const Launch& launch, const std::function<void()>& accepted = {});
     /** Flies one projectile to `now`. @return The end, or no value while it is in the air. */
     std::optional<ProjectileEnd> advance(Projectile& projectile, WorldClock::time_point now);
     /** One hit of a projectile on a creature through Combat::strike. @return The values of the hit. */

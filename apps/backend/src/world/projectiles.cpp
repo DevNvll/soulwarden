@@ -523,14 +523,18 @@ ShotResult Projectiles::launch(SessionId session, const ShotClaim& claim, Attack
         }
     }
     const std::uint32_t pressNumber = press->number;
-    result = fire(*character, launch);
-    if (result.verdict == ShotVerdict::accepted) {
-        track.mark_shot(pressNumber);
-        // Code review of stage B3, finding B3-R1: a basic shot from the mark CanAttackCancel of a dodge on replaces the dodge action (rule 96
-        // of player.grid: Dodge to Shoot).
-        if (Entity* own = m_world.entity_of(session); own != nullptr && (launch.rule == nullptr || !launch.rule->ability)) {
+    // Code review of stage B3, finding B3-R1: a basic shot from the mark CanAttackCancel of a dodge on replaces the dodge action (rule 96 of
+    // player.grid: Dodge to Shoot). Code review of stage B4, finding B4-R2: the dodge ends after the last refusal check of the shot and
+    // before its hit near the muzzle, so that the hit has the exit effects (Speedy, the empower of Evasive Tactics); a refused shot ends no
+    // dodge.
+    const bool basic = launch.rule == nullptr || !launch.rule->ability;
+    result = fire(*character, launch, [&] {
+        if (Entity* own = m_world.entity_of(session); own != nullptr && basic) {
             m_world.stamina().attack_started(*own, m_world.clock().now());
         }
+    });
+    if (result.verdict == ShotVerdict::accepted) {
+        track.mark_shot(pressNumber);
     }
     return result;
 }
@@ -694,7 +698,7 @@ ShotResult Projectiles::launch_spell(const SpellShot& shot) {
     return result;
 }
 
-ShotResult Projectiles::fire(Entity& character, const Launch& launch) {
+ShotResult Projectiles::fire(Entity& character, const Launch& launch, const std::function<void()>& accepted) {
     ShotResult result;
     const auto refuse = [&](ShotVerdict verdict) {
         result.verdict = counted(verdict);
@@ -750,6 +754,9 @@ ShotResult Projectiles::fire(Entity& character, const Launch& launch) {
     m_ledger[key] = now + life + projectile_rules::kLedgerTime;
     result.verdict = counted(ShotVerdict::accepted);
     result.projectile = projectile.number;
+    if (accepted) {
+        accepted();
+    }
     log::write("world: projectile %llu: %s launches %s (row %s, %s) from %.2f %.2f %.2f to %.3f %.3f %.3f at %.0f m/s",
                static_cast<unsigned long long>(projectile.number),
                character.name.c_str(),

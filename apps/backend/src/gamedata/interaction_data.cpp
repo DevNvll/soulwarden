@@ -422,6 +422,16 @@ public:
                         "position, rotation}");
         }
         value.templateIndex = static_cast<std::uint32_t>(number);
+        // Decision D1 of stage 3.7a: the override of a station with a key with no row (an optional member).
+        if (entry.contains("override")) {
+            const json& change = entry["override"];
+            std::uint64_t authored = 0;
+            if (!change.is_object() || !text(change, "from", value.overrideFrom) || !text(change, "to", value.overrideTo)
+                || !text(change, "slice", value.overrideSlice) || !unsigned_number(entry, "authoredTemplate", 0xFFFFFFFFULL, authored)) {
+                return fail("the override of the server child " + value.key + " is not {from, to, slice} with an authoredTemplate");
+            }
+            value.authoredTemplate = static_cast<std::uint32_t>(authored);
+        }
         return true;
     }
 };
@@ -776,7 +786,8 @@ bool InteractionData::set(std::vector<InteractionOption> options,
     for (std::uint32_t index = 0; index < spawned.size(); ++index) {
         const SpawnedPlacement& entry = spawned[index];
         if (entry.templateIndex >= templates.size() || !world::valid_position(entry.position) || entry.key.empty()
-            || !spawnedKeys.insert(lower_ascii(entry.key)).second) {
+            || !spawnedKeys.insert(lower_ascii(entry.key)).second
+            || (entry.authoredTemplate && *entry.authoredTemplate >= templates.size())) {
             m_error = "server child " + std::to_string(index) + " has no template, a place that is not of the world, or the key of a "
                       "different child";
             return false;

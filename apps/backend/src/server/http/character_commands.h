@@ -461,6 +461,23 @@ inline constexpr float kAdminGatheringRange = 30.0F;
  */
 [[nodiscard]] WorldCommand set_node_respawn(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
+// The crafting commands (stage 3.7a, world/crafting.h, server/http/crafting_commands.cpp).
+
+/**
+ * @return The crafting of a character (world thread): the crafting data (the recipes, the recipes of this stage), the station of its use
+ *         (the Assembly key, the row, the camp mark, the fee flag), its craft batch (the recipe, the completed jobs, the fee paid), and
+ *         the counts of the system (the verdicts, the jobs, the ends, the visits of the load case).
+ */
+[[nodiscard]] nlohmann::json crafting_view(world::World& world, const std::string& character);
+/**
+ * craft_preview (a diagnostic; the development routes and the tool window): `recipe` (the RecipeID text) and `quantity` (1 to 10000, default
+ * 1). The plan of the recipe for the character: the checks of a request with the station of its use (no station: the plan, and the verdict
+ * noStation), the costs of one job, the output, the fee, the gear score, the slots that the plan changes. No change.
+ */
+[[nodiscard]] WorldCommand craft_preview(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/** stop_craft: the craft batch of the character stops (the completed jobs stay; its client gets the final progress). */
+[[nodiscard]] WorldCommand stop_craft(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+
 // The loot bag commands (stage 3.5b.2, world/loot_bags.h, server/http/loot_bag_commands.cpp).
 
 /**

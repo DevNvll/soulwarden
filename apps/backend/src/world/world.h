@@ -35,6 +35,7 @@
 #include "world/health.h"
 #include "world/ids.h"
 #include "world/chests.h"
+#include "world/crafting.h"
 #include "world/gathering.h"
 #include "world/loot_bags.h"
 #include "world/interactions.h"
@@ -282,6 +283,8 @@ struct WorldOptions {
     const gamedata::ChestData* chestData{nullptr};
     /** The gathering data (game data, stage 3.6a). Null or not loaded: each gather is refused. */
     const gamedata::GatheringData* gatheringData{nullptr};
+    /** The crafting data (game data, stage 3.7a). Null or not loaded: each craft request is refused with no change. */
+    const gamedata::CraftingData* craftingData{nullptr};
     /** The perk data (game data, stage 1.3b). Null: an item has no perk, and no perk has an effect. */
     const gamedata::PerkData* perkData{nullptr};
     /** The spell entity data (game data, stage 3.3b-S2a). Null or not loaded: a spell entity has its hits and no record. */
@@ -818,6 +821,13 @@ public:
     [[nodiscard]] const Gathering& gathering() const {
         return m_gathering;
     }
+    /** @return The crafting (stage 3.7a): the craft requests, the batches, the progress. */
+    [[nodiscard]] Crafting& crafting() {
+        return m_crafting;
+    }
+    [[nodiscard]] const Crafting& crafting() const {
+        return m_crafting;
+    }
     /** @return The personal loot bags (stage 3.5b.2): the bag of a kill and of a discard, its parts, the pickups. */
     [[nodiscard]] LootBags& loot_bags() {
         return m_lootBags;
@@ -966,6 +976,8 @@ private:
      * time (the run clock of the respawns).
      */
     Gathering m_gathering;
+    /** The crafting (stage 3.7a): after the interactions (its handler of the station options wraps the handler of the base). */
+    Crafting m_crafting;
     /** The build presets (stage B0): they use the inventory, the progress, the skill, and the ownership systems. */
     BuildPresets m_presets;
 };

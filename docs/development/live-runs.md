@@ -316,6 +316,9 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   other node (a bush next to a tree takes the focus), and press W for about 0.1 s (`tools/hx 'key 0x57 120'`) so that the
   character turns to the camera. A travel does not turn the character. `tools/gamedata/gathering.sh --region REGION --near X Y
   METERS` lists the nodes near a place with their kind and their G.
+- A test of a craft (stage 3.7a): read the traps of [Crafting](../systems/crafting.md) first (the positions of the crafting screen, the
+  counts that the screen reads only at its open, the 10 s of a refused craft). The Workshop of Oxboro (Engineering5) has its bound at
+  `8832.55 4248.92 136.76`: `tools/world travel NAME 8833.2 4248.6 137.2` puts the character at its prompt.
 - An encumbered character plays no ability (user test 2: three presses of Wrecking Ball at rest gave no action of layer 0). From stage
   U3 the server refuses such a press too (`encumbered`), and an overencumbered character starts no attack from rest. Take the materials
   out of the bag before a test of an ability (`tools/world take Soulwarden SLOT`); the HUD shows "Encumbered - movement slowed" in the

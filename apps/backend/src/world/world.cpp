@@ -81,6 +81,7 @@ World::World(const WorldClock& clock,
       m_lootBags(*this),
       m_worldTime(*this),
       m_gathering(*this, options.gatheringData),
+      m_crafting(*this, options.craftingData),
       m_presets(*this, project_presets()) {
     m_random = options.randomSeed;
 }
@@ -296,6 +297,8 @@ void World::remove_entity(EntityId id) {
         m_lootBags.left(entity);
         // The work of a gather ends (stage 3.6a: a work is not kept over a leave).
         m_gathering.left(entity);
+        // The craft batch ends (stage 3.7a: the completed jobs are in the store; the base ended the station use before).
+        m_crafting.left(entity);
     }
     // The auras that follow the entity end with it (stage 3.3b-S2b: no aura stays with no attachment).
     if (entity.kind == EntityKind::creature || entity.kind == EntityKind::player) {

@@ -40,7 +40,10 @@ record of the server. The file has these children of a placement:
     a settlement, Public_Blacksmith and the others; the camp of a permanent camp). Its key is the placement UUID and the entity
     id of the spawner ("UUID/ENTITY"), its place the placement matrix times the m_worldTM of the spawner entity, and its parent
     the managed actor of the placement. The tool writes each such child, also with m_spawnOnInitialize false (the stations of a
-    settlement: the server of the game made them from the state of the town, which the game files do not have).
+    settlement: the server of the game made them from the state of the town, which the game files do not have). Stage 3.7a,
+    decision D1 of the orchestrator: a station child whose authored key ends in 2 and has no row of the station database (the master
+    slices of Smelting, Carpentry, Masonry, Tanning, and Weaving) gets the slice of the _t2 variant of its family (key ending in 3) as
+    its "template"; "authoredTemplate" keeps the authored one and "override" names the change.
   - "templates": the slice of each child (and of each fixture): the asset, the root entity, the slots of the replicated
     components that the backend sends (PositionInTheWorld, BuildableController, Ownership, Vitals), m_initialState and
     m_initialPermissionRule, the Assembly (m_craftingStationEntry, m_chargeCraftingFee, its entity and component, and "resolved":
@@ -95,7 +98,9 @@ Output (one line of JSON):
                   "bounds": [{as the bounds of an object, with "entity" (the Interact entity of the slice), "position" in the
                               frame of the slice, and an option entity of the slice}, ...],
                   "children": [{"template", "position", "rotation"}, ...]}, ...],
-   "spawned": [{"key", "parent", "parentActor", "parentSlice", "spawner", "template", "region", "position", "rotation"}, ...],
+   "spawned": [{"key", "parent", "parentActor", "parentSlice", "spawner", "template", "region", "position", "rotation",
+                "authoredTemplate" and "override": {"rule": "D1", "from": KEY, "to": KEY, "slice": PATH} for a station of decision D1},
+               ...],
    "fixtures": {NAME: template index, ...},
    "lootContainers": {NAME: {"template", "kind", "lootDropSlot", "lifetime", "emptyLifetime", "hideDelay", "rarityParticles",
                              "delays": [{"name", "slot", "seconds", "onInit", "onTrigger"}, ...]}, ...},
@@ -150,6 +155,9 @@ OUTPUT_NAME = "interaction-data.json"
 FORMAT = 3
 UI_DATABASE = "sharedassets/genericassets/ui/uidatabase.uidb"
 CRAFTING_STATIONS = "sharedassets/genericassets/craftingstations.craftstationdb"
+# The station slices of the settlements (stage 3.7a, decision D1: the _t2 variant of a master slice whose key has no row).
+STATION_FOLDER = "slices/structures/settlements/stations/"
+STATION_PREFIX = "settlement_station_"
 WANTED = (REGIONS_FOLDER, TABLES_FOLDER, "coatgen/", "slices/", UI_DATABASE, CRAFTING_STATIONS, CATALOG_PATH)
 # The development fixtures (stage 2.5b, live checks L5 and L6): a command of the backend makes them near a character.
 FIXTURES = {
@@ -392,6 +400,47 @@ def read_station_keys(sources: Sources) -> set[str]:
     if not keys:
         raise Failure("the crafting station database has no row")
     return keys
+
+
+def station_overrides(spawned: list[dict], templates: list[dict], has, load) -> tuple[int, int]:
+    """Decision D1 of stage 3.7a (a decision of the orchestrator, option B; research crafting-stage.md section 12): each station child gets
+    a valid runtime variant. A child whose authored Assembly key ends in 2 and has no row of the station database (the master slices of
+    Smelting, Carpentry, Masonry, Tanning, and Weaving) gets the slice of the _t2 variant of its family, whose key ends in 3 (the smallest
+    supported replacement; the client has no alias for a missing key: lookup 0x2E804E0). The entry keeps its authored template
+    ("authoredTemplate") and names the override ("override"); the backend writes one log line with them. A key with no row of a slice that
+    is not such a master slice, or whose family has no variant in the game copy, keeps its authored template (the backend refuses each
+    craft there). A variant whose key is not the key ending in 3 with a row stops the tool (the data does not have the form of the rule).
+    @param has: a test of a source path; @param load: the index of the template of a slice path (it adds the template).
+    @return The number of overrides and the number of children with a key with no row and no variant."""
+    overrides = 0
+    missing = 0
+    for entry in spawned:
+        authored = templates[entry["template"]]
+        assembly = authored["assembly"] or {}
+        key = assembly.get("key", "")
+        if assembly.get("resolved", True) or not key.endswith("2"):
+            continue
+        name = authored["slice"].rsplit("/", 1)[-1]
+        if not authored["slice"].startswith(STATION_FOLDER) or not name.startswith(STATION_PREFIX) \
+                or not name.endswith("_master.dynamicslice"):
+            missing += 1
+            continue
+        family = name[len(STATION_PREFIX):-len("_master.dynamicslice")]
+        variant_path = f"{STATION_FOLDER}{STATION_PREFIX}{family}_t2.dynamicslice"
+        if not has(variant_path):
+            missing += 1
+            continue
+        variant_index = load(variant_path)
+        variant = templates[variant_index]["assembly"] or {}
+        wanted = key[:-1] + "3"
+        if not variant.get("resolved") or variant.get("key", "").lower() != wanted.lower():
+            raise Failure(f"the variant {variant_path} of the station key {key} has the key {variant.get('key')!r}, not {wanted} with a "
+                          f"row of the station database")
+        entry["authoredTemplate"] = entry["template"]
+        entry["template"] = variant_index
+        entry["override"] = {"rule": "D1", "from": key, "to": variant["key"], "slice": variant_path}
+        overrides += 1
+    return overrides, missing
 
 
 def actor_of(placement_id: str) -> bytes:
@@ -1105,6 +1154,9 @@ def build_document(sources: Sources, regions: list[str] | None = None, center: t
         if bit in bits:
             raise Failure(f"the achievements {bits[bit]} and {identifier} have one AchievementIndex ({bit})")
         bits[bit] = identifier
+    # Decision D1 of stage 3.7a (a decision of the orchestrator, option B): the station children of a key with no row get the _t2 variant.
+    counts["stationOverrides"], counts["stationsWithNoVariant"] = station_overrides(spawned, template_list, sources.has,
+                                                                                    lambda path: template_entry(path, None))
     counts["objects"] = len(objects)
     counts["options"] = len(option_list)
     counts["achievements"] = len(achievement_list)
@@ -1184,6 +1236,9 @@ def main() -> int:
     print(f"  server children: {counts['spawned']} stations and camps of {counts['templates']} templates; fixtures: "
           + ", ".join(document["fixtures"]))
     print("  station keys: " + ", ".join(f"{key} {count}" for key, count in counts["spawnedByKey"].items()))
+    if counts.get("stationOverrides"):
+        changes = sorted({f"{entry['override']['from']} -> {entry['override']['to']}" for entry in document["spawned"] if "override" in entry})
+        print(f"  decision D1: {counts['stationOverrides']} station children get the _t2 variant ({', '.join(changes)})")
     for cause, count in document["excluded"].items():
         print(f"  not in the file: {count} ({cause})")
     if document["unresolved"]:

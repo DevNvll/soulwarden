@@ -81,6 +81,11 @@ enum class ItemError {
      * into a loot bag does not take it from its character.
      */
     itemProtected,
+    /**
+     * The bag and the quick slots do not have the unlocked quantity of an ingredient of a craft (stage 3.7a, docs/systems/crafting.md: the
+     * cache of the client counts the unlocked bag slots and quick slots 1 to 4).
+     */
+    missingMaterials,
 };
 
 /** @return A short text for a log line and for the reply of a command. */
@@ -139,6 +144,22 @@ struct BuildItem {
     PerkIds perks{};
     /** The slot of the paperdoll, or no value: the bag. */
     std::optional<std::uint32_t> slot;
+};
+
+/**
+ * One cost of a craft job (stage 3.7a, world/crafting.h): a quantity of an item (the ItemID text of the catalog) from the unlocked stacks
+ * of the bag (in the order of the slots) and then of the quick slots 14 to 17 (the cache of the client counts them: craftinginventorycache,
+ * ResetCache).
+ */
+struct CraftCost {
+    std::string itemId;
+    std::uint32_t quantity{0};
+};
+
+/** The output of a craft job: a quantity of an item; new instances get the values of the item table and the cause ItemCreated (3). */
+struct CraftOutput {
+    std::string itemId;
+    std::uint32_t quantity{0};
 };
 
 /** One entry of a drop request: a quantity of the item instance in a slot. */
@@ -449,6 +470,19 @@ public:
      * @param detail Gets the item and the cause of an error.
      */
     [[nodiscard]] ItemError check_build(const std::vector<BuildItem>& items, std::string& detail) const;
+    /**
+     * Plans `jobs` craft jobs (stage 3.7a, world/crafting.h): the costs of each job taken from the unlocked stacks of the bag and of the
+     * quick slots (a stack that goes to 0 leaves its slot empty), then the output of all jobs into the bag (stacks of the item first,
+     * then empty slots, also a slot that a cost freed) with the cause ItemCreated. The whole output must fit (bagFull: the loot overflow
+     * of grant does not apply to a paid craft), and each cost must be there (missingMaterials). No write, no change of the entity.
+     */
+    [[nodiscard]] Plan plan_craft(const std::string& characterId, const std::vector<CraftCost>& costs, const CraftOutput& output,
+                                  std::uint32_t jobs);
+    /**
+     * Sets the coin of a character in the world after a written change of a different system (stage 3.7a: the fee of a craft, written in
+     * the transaction of its items) and marks the currency state. A character that is not in the world: nothing (the row has it).
+     */
+    void coin_written(const std::string& characterId, std::uint64_t coin);
     /** Writes the rows of a plan in one write (in a batch: a savepoint). @return False: the database did not take them. */
     [[nodiscard]] bool write(const Plan& plan, std::optional<std::uint64_t> coin = {});
     /** Changes the entity of a written plan, marks its states, and refreshes the gear. */

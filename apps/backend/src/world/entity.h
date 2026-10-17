@@ -203,6 +203,51 @@ struct GatherProgress {
 };
 
 /**
+ * A craft batch of a character (stage 3.7a, world/crafting.h; decision D5 of the orchestrator, option A): an accepted request 2997 whose
+ * jobs complete one transaction each. A value of the world: a restart ends it (each completed job is in the store). Only the crafting system
+ * changes it.
+ */
+struct CraftJob {
+    std::uint64_t serial{0};
+    /** The recipe (its id and the CRC-32 of the request). */
+    std::string recipe;
+    std::uint32_t recipeCrc{0};
+    /** The jobs of the request and the completed jobs. */
+    std::uint32_t total{0};
+    std::uint32_t done{0};
+    /** The session of the request (the progress 2993 goes to it) and the facet target of the Crafting component in its body. */
+    SessionId session{0};
+    std::uint64_t target{0};
+    /** The station of the use at the request: its object key, its generation, its Assembly key, the camp mark, the fee flag. */
+    std::string station;
+    std::uint64_t stationGeneration{0};
+    std::string stationKey;
+    bool camp{false};
+    bool chargeFee{false};
+    /** The costs of one job (the ItemID text of each item and its quantity) and the output of one job. */
+    std::vector<std::pair<std::string, std::uint32_t>> costs;
+    std::string output;
+    std::uint32_t outputQty{0};
+    /** The fee that the completed jobs paid (wire hundredths of a coin). */
+    std::uint64_t feePaid{0};
+    WorldClock::time_point accepted{};
+};
+
+/**
+ * The progress of the craft of a character for the client of its session (stage 3.7a, message 2993): the session sends it after the record
+ * of the items of the same change (live check L3: the item before the final progress), when its revision is newer than the last one that it
+ * sent and the session is the session of the request. The stop form has an empty recipe and 0 of 0.
+ */
+struct CraftProgress {
+    std::string recipe;
+    std::uint32_t completed{0};
+    std::uint32_t total{0};
+    std::uint64_t target{0};
+    SessionId session{0};
+    Revision revision{0};
+};
+
+/**
  * One entry of the LootTracker state of a character (stage 3.5b.1; type 982, slot 33, field 0, a map; research chests-ground-loot.md
  * Q2: the 58-byte entry, readers 0x3727A00 and 0x3727C60, writer 0x375AFA0).
  */
@@ -1592,6 +1637,9 @@ struct Entity {
     std::optional<ServiceGrant> serviceGrant;
     /** The progress of the open of a chest (stage 3.5b.1): the chest system changes it. */
     GatherProgress gathering;
+    /** The craft batch of the character and the progress for its client (stage 3.7a): the crafting system changes them. */
+    std::optional<CraftJob> craftJob;
+    CraftProgress craftProgress;
     /** The loot claims of the character on the chests near it (stage 3.5b.1): a copy of the values of the chest system. */
     std::vector<LootTrackerEntry> lootTracker;
     /** The LootTracker entries of the loot bags of the character (stage 3.5b.2): a copy of the values of the loot bag system. */

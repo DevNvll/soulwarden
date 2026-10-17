@@ -1,6 +1,7 @@
 #include "world/inventory.h"
 
 #include <algorithm>
+#include <cctype>
 #include <mutex>
 #include <random>
 #include <set>
@@ -250,6 +251,8 @@ const char* item_error_text(ItemError error) {
         return "the gear score of the item is above the largest gear score of an equipped item (the limit of the expansion)";
     case ItemError::itemProtected:
         return "the item table protects the item (Nonremovable or NotDroppable): it stays with the character";
+    case ItemError::missingMaterials:
+        return "the unlocked stacks of the bag and the quick slots do not have the quantity of an ingredient";
     }
     return "unknown error";
 }
@@ -454,6 +457,71 @@ Inventory::Plan Inventory::stage(const std::string& characterId, Change&& apply)
         place(plan.before.equipment.item(slot), plan.items.equipment.item(slot), state::kContainerPaperdoll, slot);
     }
     return plan;
+}
+
+Inventory::Plan Inventory::plan_craft(const std::string& characterId, const std::vector<CraftCost>& costs, const CraftOutput& output,
+                                      std::uint32_t jobs) {
+    return stage(characterId, [&](Carried& items, Touched& touched) {
+        if (m_catalog == nullptr || !m_catalog->loaded()) {
+            return ItemError::noCatalog;
+        }
+        if (jobs == 0) {
+            return ItemError::badQuantity;
+        }
+        const auto same_item = [](const ItemInstance& item, const std::string& id) {
+            return item.itemId.size() == id.size()
+                   && std::equal(item.itemId.begin(), item.itemId.end(), id.begin(), [](char one, char two) {
+                          return std::tolower(static_cast<unsigned char>(one)) == std::tolower(static_cast<unsigned char>(two));
+                      });
+        };
+        // The costs: the unlocked stacks of the bag first, then the quick slots (the sources of the cache of the client).
+        for (const CraftCost& cost : costs) {
+            std::uint64_t left = static_cast<std::uint64_t>(cost.quantity) * jobs;
+            const auto take = [&](BagSlot& slot) {
+                if (left == 0 || !slot.item || (slot.item->flags & kItemLocked) != 0 || !same_item(*slot.item, cost.itemId)) {
+                    return false;
+                }
+                const std::uint32_t taken = static_cast<std::uint32_t>(std::min<std::uint64_t>(left, slot.item->quantity));
+                slot.item->quantity -= taken;
+                if (slot.item->quantity == 0) {
+                    slot.item.reset();
+                }
+                slot.action = sync::kItemRemoved;
+                left -= taken;
+                return true;
+            };
+            for (std::uint32_t index = 0; index < items.bag.slots.size() && left > 0; ++index) {
+                if (take(items.bag.slots[index])) {
+                    touched.bag.insert(index);
+                }
+            }
+            for (std::uint32_t slot = paperdoll::kQuickFirst; slot <= paperdoll::kQuickLast && left > 0; ++slot) {
+                const auto found = items.equipment.slots.find(slot);
+                if (found != items.equipment.slots.end() && take(found->second)) {
+                    touched.equipment.insert(slot);
+                }
+            }
+            if (left > 0) {
+                return ItemError::missingMaterials;
+            }
+        }
+        // The output of all jobs, whole or not at all.
+        const std::uint64_t total = static_cast<std::uint64_t>(output.quantity) * jobs;
+        if (total == 0 || total > kGiveLimit) {
+            return ItemError::badQuantity;
+        }
+        GiveOptions options;
+        options.action = sync::kItemCreated;
+        return give_into(items.bag, touched.bag, output.itemId, static_cast<std::uint32_t>(total), options);
+    });
+}
+
+void Inventory::coin_written(const std::string& characterId, std::uint64_t coin) {
+    Entity* entity = m_world.find_character(characterId);
+    if (entity != nullptr && entity->wallet.coin != coin) {
+        entity->wallet.coin = coin;
+        m_world.touch(entity->id, ComponentKey::currency);
+    }
 }
 
 bool Inventory::write(const Plan& plan, std::optional<std::uint64_t> coin) {

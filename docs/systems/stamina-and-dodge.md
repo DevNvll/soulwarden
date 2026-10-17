@@ -81,7 +81,10 @@ decides a dodge in an attack in [Combat and health](combat-and-health.md), and t
   the mark CanTransition, ends the action one time: the exit statuses and the rules after a dodge act then (`Passives::dodge_ended`), and the
   tick does not act again at the mark CanTransition [game data: rule 96 of `player.grid` permits Dodge to Attack, Shoot, Offhand at
   CanAttackCancel; the stamina data of format 2 has the mark]. Before the correction the haste of Dodge and Weave and the empower of
-  Evasive Tactics came only at 0.5 s, after the first arrow (test case BY1). A file of format 1 has no mark: the action ends at
+  Evasive Tactics came only at 0.5 s, after the first arrow (test case BY1). The dodge of a basic shot ends after the last refusal check of
+  the shot and before its hit near the muzzle (code review of stage B4, finding B4-R2, test case BZ2: before the correction the first hit of
+  an arrow near the muzzle had no Speedy and no empower; `Projectiles::fire` calls the end at the acceptance); a refused shot ends no dodge.
+  A file of format 1 has no mark: the action ends at
   CanTransition. Log line: `world: dodge: NAME: an attack at T s replaces the dodge action (FRAGMENT, the mark CanAttackCancel at T s)`.
 - A dodge in a bow action (stage B2; code review of stage U3, finding U3-R7): an accepted dodge ends the action of a bow ability at its
   cancel mark, and its arrows after the cancel do not fly ([Abilities](abilities.md)).

@@ -50,6 +50,11 @@ The cases of stage B4 (format 4: the member trinkets, the stat lines of the jewe
   trinket-missing       an armor stats table with no column ScaleCDRPerGS: status 1, the old file stays
   trinket-invalid       a cell TrinketBonus with the text "high": status 1, the old file stays
 
+The cases of the code review of stage B4 (finding B4-R4; case BZ4 of the backend runs them):
+
+  trinket-missing-row   a jewelry item (the amulet) names an armor stats row that the source does not have: status 1, the old file stays
+  trinket-missing-table the jewelry master rows and no table of the type ArmorItemDefinitions: status 1, the old file stays
+
 Usage: check_item_catalog_tool.py FOLDER [CASE ...]
 Status 0: each case has the expected result. Each line starts with "ok" or "FAIL".
 """
@@ -73,7 +78,7 @@ OLD_FILE = "old file\n"
 SOURCE_CASES = ("missing-nonremovable", "missing-notdroppable", "invalid-flag", "store-table")
 UPGRADE_CASES = ("upgrade-invalid", "upgrade-missing", "objective-broken", "objective-bit-limit", "objective-conflict")
 WEIGHT_CASES = ("weight", "weight-missing")
-TRINKET_CASES = ("trinket", "trinket-missing", "trinket-invalid")
+TRINKET_CASES = ("trinket", "trinket-missing", "trinket-invalid", "trinket-missing-row", "trinket-missing-table")
 # The made-up jewelry of the cases of stage B4 (the ids of the backend case BR1) and their expected rows of trinkets.
 TRINKETS = [["ReviewAmulet", 0.01, 0.625, 0.0, 0.0], ["ReviewRing", 0.01, 0.0, 1.25, 0.0], ["ReviewEarring", 0.01, 0.0, 0.0, 0.625]]
 # The made-up items of the cases of stage U3 and their expected weights (tenths).
@@ -260,8 +265,13 @@ def trinket_case(folder: Path, case: str) -> tuple[bool, str]:
             del row["ScaleCDRPerGS"]
     if case == "trinket-invalid":
         armor[0]["TrinketBonus"] = "high"
+    if case == "trinket-missing-row":
+        rows[0]["ItemStatsRef"] = "MissingAmuletStats"
     sheets = {"ReviewItems": FakeSheet("ReviewItems", rows), "ReviewArmor": FakeSheet("ReviewArmor", armor)}
     kinds = {"ReviewItems": tool.MASTER_TYPE, "ReviewArmor": "ArmorItemDefinitions"}
+    if case == "trinket-missing-table":
+        del sheets["ReviewArmor"]
+        del kinds["ReviewArmor"]
     for name in tool.HOUSE_TABLES:
         sheets[name] = FakeSheet(name, [{"HouseItemID": "DEFAULTS"}])
         kinds[name] = tool.HOUSE_TYPE

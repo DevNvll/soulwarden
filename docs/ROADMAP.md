@@ -195,7 +195,7 @@ below is the layout after the port.
 | 3.4 | Creatures: spawn, behavior, navigation | 2.4, 3.2 | XL | verified (`creatures.md`, `enemies-start-area.md`) | 3.4a done, 3.4c done, 3.4b done, 3.4d done, 3.4e done, 3.4f-A done, 3.4f-B done, 3.4f-C done, 3.4f-D done | |
 | 3.5 | Loot and rewards | 1.3, 3.4 | M | verified | 3.5a done, 3.5b.1 done, 3.5b.2 done | |
 | 3.6 | Gathering and fishing | 1.3, 1.6, 2.5 | M | verified | 3.6a done | |
-| 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | | |
+| 3.7 | Crafting, refining, repair, salvage | 1.3, 1.6, 2.5 | M | verified | 3.7a done | |
 | 4.1 | Objective progress, completion, rewards | 1.8, 2.5 | L | verified | | |
 | 4.2 | Conversations, lore pages, cutscenes | 2.5 | M | verified | | |
 | 4.3 | Introduction path of a new character | 4.1, 4.2, 3.4 | L | none | | |
@@ -254,7 +254,7 @@ stage with a letter is a part of the system with that number.
 | 17 | 2.2 | World time and weather (research file `world-time-stage.md`) | 3.5b | done (one day and night cycle of the world with the cycle of the client: the request 4248 and the record 7036 with the ids of each own entity, the phase 4247, the clock correction 335 each 3 s; the store of the position with the stop of the cycle while the backend is stopped; the command of the tool window, of the admin interface, and of the development routes; the 405 creature points with a time constraint of the data; the local weather volumes with the shared clock; the mana prediction message 4289 of the client; the corrections of the review of 3.5b.2) |
 | 18 | 3.6 | Gathering and fishing (research file `gathering-stage.md`). Two parts (decision of the user through the orchestrator, 2026-10-16): 3.6a the gathering of the resources of the world (mining, logging, harvesting, skinning); 3.6b fishing | 2.5 | 3.6a done (the natural nodes by their offline id and the capital nodes, the tool of the paperdoll and the rank gate, the work with the speed of the tool, the rank, and the effects, the roll of the loot root with the luck, the trade skill experience, the depletion for each observer and the respawn on the run clock of the world, the skinning of a body; the corrections of the review of 2.2); 3.6b waits (order 27: after 3.3c, decision of the user 2026-10-17) |
 | 19 | B | The bow build of the user (build sheet `~/Games/soulwarden/work/research/bow-build.md`; decision of the orchestrator: after user test 2). It brings the bow parts of 3.3c forward, only the parts of this build: B0 the build preset and the gear score limit of the artifacts; B1 the three bow abilities (Penetrating Shot, Explosive Arrow, Rapid Shot); B2 the rules of the Boltcaster and the stacks of a status on a target; B3 the haste chain; B4 the other rules of the build (the list in section 3.3, stage B); B5 later (the rapier abilities, the Bile Bomb heart rune, Rain of Arrows) | 3.6a | B0 done (the preset `bow-boltcaster` with the variants PvE and PvP in one task of the world and one transaction, the tool window group "Build presets", the upgrade limit of an artifact to 800, the achievements of the artifact objectives; the corrections of the review of user test 2); B1 done (Penetrating Shot with its aim, the shot item as its confirm, and the pierce; Explosive Arrow with its explosion entity, Contained Detonation, and the burn of Flame Arrow; Rapid Shot with its volley, Rapid Accuracy, and Final Blow; the windows of a bow fragment; the projectile data of format 2; the corrections of the review of stage B0); U3 done between B1 and B2 (the corrections of the creature combat feel, and the corrections of the review of stage B1); B2 done (the stacks of a status on a creature with the count at the name plate, the ApplicationCooldown of a row on each target, the conditions and the effects of the statuses in the evaluator, the Boltcaster with its charges and its bolt, Electrified, Shirking Shock II, Surprise Attack; the corrections of the review of stage U3); B3 done (the haste chain: Dodge and Weave from the dodge status action of the data, Archer's Speed with OnWeaponSwap and its timer, the time factor of a status with Speedy and Alacrity II, Speedy +0.1 while hasted, Closing In, Evasive Tactics, the end of the haste when the bow leaves the hand; the ability data of format 7; the corrections of the review of stage B2); B4 done (the jewelry stat lines with the key CooldownReduction of the stat multipliers, the threshold abilities of the attributes as rules, Long Range, Finishing Shot, the outgoing time factor of Battle Precision, Enchanted Ward with the attack type of a creature hit, Refreshing, Vital Synergy, the potion perks, the cap of the sources of a row; the item catalog of format 4, the stamina data of format 2, the attack type in the creature data; the corrections of the review of stage B3); B5 waits |
-| 20 | 3.7 | Crafting, refining, repair, salvage (research file `crafting-stage.md`) | 3.6 | research |
+| 20 | 3.7 | Crafting, refining, repair, salvage (research file `crafting-stage.md`). Five runs, each with a result that a player can see (the split of the research): 3.7a the fixed crafts at a station and at a camp; 3.7b refining and the reward progress; 3.7c procedural items, charms, and bonuses; 3.7d salvage; 3.7e repair | 3.6 | 3.7a done (the craft request 2997 with the quantities of the recipe, the batch of decision D5 with one transaction for each job, the result with the cause ItemCreated before the progress 2993, the stop 2999, the empty storage search 7046, the fee of the client path, the station variants of decision D1, the crafting data tool; the corrections of the review of stage B4); 3.7b to 3.7e wait |
 | 21 | 5.1 | Shops (research file `shops-stage.md`) | 2.5 | research |
 | 22 | 5.6 | Cosmetics and transmog (research file `cosmetics-stage.md`) | 5.1 | research |
 | 23 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" (research files `quest-engine.md`, `quest-engine-3.md`: 1.8a, 1.8c, and 1.8d ready with live checks; 1.8b needs the person base of 5.1) | 5.6 | research |
@@ -1938,10 +1938,33 @@ items. This is the largest milestone. System 3.4 has the highest risk of the roa
 ### 3.7 Crafting, refining, repair, salvage
 
 - Client evidence: `Crafting`, `ItemRepair`, `Camping`. Salvage messages 1733 and 6188.
-- Research (`crafting.md`, verified): the recipe tables; the craft request and its result; stations and their
-  tiers; the gear score roll; repair parts.
+- Research (`crafting.md`, verified; `crafting-stage.md`, ready with live checks): the recipe tables; the craft request and its result;
+  stations and their tiers; the gear score roll; repair parts. The research splits the stage into five runs (3.7a to 3.7e).
 - Test: an item crafted at a station is in the bag; the materials are gone; a repair sets
   the durability to its maximum.
+- 3.7a done (2026-10-17, [Crafting](systems/crafting.md), protocol notes 4.50): the fixed crafts. Live checks L1 (the empty state 205 is
+  applied and changes nothing; the station prompt opens the recipe screen), L2 (the screen sends 7044; the empty 7046 with its UUID reaches
+  the result handler), L3 (the request 2997 of the knife: the recipe CRC, the count, the fee 1, the gear score 100, two Item entries of
+  quantity 1; the item with the cause ItemCreated and 2993 1 of 1 show the result screen; the stop form ends the crafting of the client, and
+  its screen shows "Crafting attempt failed." after its own 10 s), L10 (the craft animation and the result screen), L10b (the count 3 in one
+  request; the summary "3 ITEMS CRAFTED"; 2999 after each final progress; the server cancel closes the screen); L9 (the craft option of a camp)
+  stays open: the client hides it. The tool `tools/gamedata/crafting.sh` writes `crafting-data.json` (8,294 recipes, 63 station rows, 617
+  ingredient categories; 6 recipes with no cause of this run: the flint tools, the fishing pole, the wood sword). The server checks the
+  station of the use (the Assembly key and its row), the recipe and its causes, the rank, the count, the entries (the item or a category
+  member for each ingredient), the plan of the whole batch (the unlocked bag and quick slots, one cost for two ingredients of one item, the
+  whole output in the bag), and the fee of the client path; the batch (decision D5, option A) completes its first job 1.0 s after the request
+  and the next jobs in the next ticks, each job one transaction; a stop keeps the completed jobs; a late change of the bag stops the batch
+  before the next cost. Decision D1 (option B): the 9 station children of a key with no row (Smelting2, Carpentry2, Masonry2, Tanning2,
+  Weaving2) use the `_t2` variant of their family (key ending in 3), with one log line. Test cases CRAFT1, CRAFT2, CRAFT-MP, CRAFT-LOAD
+  (20,000 placements and 100 more characters: the same visits, 10,000 validations and 200 crafts in less than 2 s), CRAFT-D1, CRAFT-CMD,
+  CRAFT-TOOL, and BZ1 to BZ5 (the findings B4-R1 to B4-R5 of the review of stage B4, each one failing on the tree of stage B4). Live: the
+  flint skinning knife (gear score 100) from Flint and Green Wood at the Workshop of Oxboro, in the bag after a restart; the summary of a
+  batch of 3; the refusal of a job whose Flint went away; the Woodshop Tier 3 of D1.
+- 3.7b to 3.7e wait. The plan after 3.7a: 3.7b refining and the reward progress (the event experience, the first-craft bonus and its
+  achievement fact, the cooldowns of state 205 after the proof of its time unit, the extra output of decision D2 option A: the expected extra
+  units with a Bernoulli remainder); 3.7c procedural items, charms, and bonuses (the craft gear score, the perk generator with the resource
+  vector after the live check L5b, the Azoth cost); 3.7d salvage (1733, 6188, the loot of RepairRecipe, the parts of decision D3 option A: a
+  uniform fraction from 0.1 to 0.45 for each salvaged unit); 3.7e repair (3003, 3007, 2079, the kits, the coin and the parts).
 
 ## 7. Milestone 4: quests and story
 

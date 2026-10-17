@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <thread>
 
@@ -30,6 +31,7 @@
 #include "gamedata/progression_tables.h"
 #include "gamedata/slice_ids.h"
 #include "gamedata/chest_data.h"
+#include "gamedata/crafting_data.h"
 #include "gamedata/gathering_data.h"
 #include "gamedata/interaction_data.h"
 #include "gamedata/travel_places.h"
@@ -606,6 +608,40 @@ int main(int argc, char** argv) {
         log::write("backend: no gathering data at %s (%s): each gather is refused. Make the files with tools/gamedata/gathering.sh",
                    (gameDataDirectory / gamedata::kGatheringDataFile).string().c_str(), gatheringData.error().c_str());
     }
+    // The crafting data (stage 3.7a): the recipes, the station rows, the ingredient categories. With no file each craft request is refused
+    // with no change.
+    gamedata::CraftingData craftingData;
+    if (craftingData.load(gameDataDirectory.string())) {
+        log::write("backend: crafting data loaded from %s (%zu recipes, %zu of them crafted in this stage, %zu station rows, %zu ingredient "
+                   "categories; %zu authored station keys with no row)",
+                   (gameDataDirectory / gamedata::kCraftingDataFile).string().c_str(), craftingData.recipes().size(),
+                   craftingData.supported_count(), craftingData.stations().size(), craftingData.category_count(),
+                   craftingData.missing_stations().size());
+    } else {
+        log::write("backend: no crafting data at %s (%s): each craft request is refused with no change. Make the file with "
+                   "tools/gamedata/crafting.sh",
+                   (gameDataDirectory / gamedata::kCraftingDataFile).string().c_str(), craftingData.error().c_str());
+    }
+    // Decision D1 of stage 3.7a (a decision of the orchestrator): the stations whose authored key has no row of the station database use the
+    // _t2 variant of their family. One log line names each override.
+    if (interactionData.loaded()) {
+        std::map<std::string, std::size_t> overrides;
+        for (const gamedata::SpawnedPlacement& entry : interactionData.spawned()) {
+            if (entry.authoredTemplate) {
+                ++overrides[entry.overrideFrom + " -> " + entry.overrideTo + " (" + entry.overrideSlice.substr(entry.overrideSlice.rfind('/') + 1)
+                            + ")"];
+            }
+        }
+        std::string text;
+        std::size_t count = 0;
+        for (const auto& [change, number] : overrides) {
+            text += (text.empty() ? "" : ", ") + change + " x" + std::to_string(number);
+            count += number;
+        }
+        log::write("backend: decision D1 (the stations with an authored key with no row of the station database): %zu override(s)%s%s", count,
+                   text.empty() ? " (an interaction data file of before stage 3.7a has none: such a station refuses each craft)" : ": ",
+                   text.c_str());
+    }
     // The readers of the game data files are done: the memory of the parsed documents (the
     // creature data of the whole world is a file of some megabytes) goes back to the system.
     release_free_memory();
@@ -655,6 +691,7 @@ int main(int argc, char** argv) {
     worldOptions.combatTables = &combatTables;
     worldOptions.travelPlaces = &travelPlaces;
     worldOptions.interactionData = &interactionData;
+    worldOptions.craftingData = &craftingData;
     worldOptions.chestData = &chestData;
     worldOptions.gatheringData = &gatheringData;
     worldOptions.lootTables = &lootTables;

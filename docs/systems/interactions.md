@@ -16,7 +16,7 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
 | A handler of a later stage | `world/interactions.h` (`InteractionHandler`, `Interactions::register_handler`; stage 3.5b.1: `owns_sight`, `ends_at_damage`, `Interactions::use_valid`, `end_use`); the chests: [Chests](chests.md) |
 | The commands: the list, the enable of an object, the cancel | `server/http/interaction_commands.cpp`, `tools/world interactions`, `tools/world object`, `tools/world interaction cancel`, test case IT9 |
 | The server children (stage 2.5b): the stations of a settlement, the template of a slice, the spawn rule, the record of a child | `gamedata/interaction_data.h` (`InteractionTemplate`, `SpawnedPlacement`), `world/interactions.h` (`Interactions::spawn`, `scan`), `World::spawn_object`, `server/rep/states/object_states.cpp`, protocol notes 4.36, test cases SC1, SC2 |
-| A crafting station or a camp: the facts of a use for stage 3.7 | `world/interactions.h` (`StationContext`, `Interactions::station`), test case SC2 |
+| A crafting station or a camp: the facts of a use for stage 3.7 | `world/interactions.h` (`StationContext`, `Interactions::station`), test case SC2; the crafts: [Crafting](crafting.md) |
 | A timed use (Trigger of the powder keg), the ends of a use (the removal, the range, damage) | `world/interactions.h` (`timed_due`, `still_valid`, `damaged`, `moved`), test cases SC3, SC4 |
 | The service handoff for the shops (5.1) and the transmog (5.6) | `world/interactions.h` (`grant_service`, `require_service`, `close_service`), `world/entity.h` (`ServiceGrant`), test case SC5 |
 | The fixtures of a development run (the keg, the camps) | `tools/world fixture`, `server/http/interaction_commands.cpp` (`make_fixture`, `remove_object`), test case SC9 |
@@ -135,7 +135,11 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   placement and its managed actor, the bound, and the generation. Live check L4: the client has the same key, fee flag, and
   Assembly reference (client 0x2E61E00, 0x2E6A440). A key with no row of the crafting station database (Carpentry2) is accepted and
   marked (`keyResolved` false; a decision of an agent: the client opens its crafting screen at such a key too, live check of stage
-  2.5b). The recipes and the crafts are stage 3.7.
+  2.5b). Stage 3.7a ([Crafting](crafting.md)): the crafting system registers the handler of the station options of both kinds; it keeps the
+  rule of the base for the use (an Assembly) and ends the craft batch of the character at the end of the use. A craft at a key with no row
+  is refused. Decision D1 of the orchestrator: the station children of the master slices whose key has no row (Smelting2, Carpentry2,
+  Masonry2, Tanning2, Weaving2) use the `_t2` variant of their family (key ending in 3) from the interaction tool (`station_overrides`,
+  the members `authoredTemplate` and `override` of a server child); the backend writes one log line with the overrides.
 - A timed use (an option with a Delay Time: Trigger of the powder keg, 5 s; live check L6): the client counts the Delay Time from
   its request and executes the object at zero (0x49106F0, 0x49146F0, 0x4910750). The server counts the full Delay Time of the option
   row on the world clock from the accepted request (a decision of an agent from the research: the client timer has no factor 0.6,

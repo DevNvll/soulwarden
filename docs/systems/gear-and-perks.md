@@ -147,7 +147,9 @@ damage over time, a chain, a gem conversion). The wire contracts are in the prot
 - The threshold abilities of the attributes (stage B4): a fixed row of a threshold (`Con_Bonus_100_1`: MaxHealth 0.03, `Dex_Bonus_25_1`,
   `Str_Bonus_25_1`) is a passive value of the gear values with no mana part (the progress system has the MaxMana and ManaRate of the
   thresholds since stage 3.5b.2). A change of the attribute bonus (a food, a perk) that adds or takes a threshold makes the values again
-  in the same refresh. The other threshold rows are rules of the evaluator ([Passive rules](passive-rules.md)).
+  in the same refresh. A change of the spent points or of the level (the attribute command, a spend, a reset, a level) refreshes the gear and
+  the vitals after the stored change (`Progress::finish`; code review of stage B4, finding B4-R1, test case BZ1: before the correction the
+  health part of the old attributes stayed until the next refresh). The other threshold rows are rules of the evaluator ([Passive rules](passive-rules.md)).
 - The received heal parts of a fixed perk row (stage B4): HealMod, ConsumableHealMod, NonConsumableHealMod, and DmgPctToHealthHealMod of
   an ability row with no event, x potency (Alchemist Reprieve `Global_Amulet_PotionHeal`: 0.02 x 4.0; The Thirst
   `GlobalPerk_Artifact_Set1_Earring1`: 0.33). They join the parts of the statuses in the gear summary (one pool,

@@ -28,6 +28,11 @@ namespace sync {
 inline constexpr std::uint8_t kItemAdded = 0;
 inline constexpr std::uint8_t kItemGathered = 1;
 inline constexpr std::uint8_t kItemRemoved = 2;
+/**
+ * The item is the result of a craft (stage 3.7a, ItemCreated; live check L3: the crafting screen of the client shows the item of a bag
+ * slot with this cause in its roll state, craftingscreenv4.luac OnSlotUpdate).
+ */
+inline constexpr std::uint8_t kItemCreated = 3;
 /** The item came into a slot of the paperdoll: the client shows its equip notice. */
 inline constexpr std::uint8_t kItemEquipped = 4;
 /** The item left a slot of the paperdoll. The client does the entries with this cause first. */

@@ -66,6 +66,12 @@ Usage:
   tools/world gathering respawn CHARACTER NODE SECONDS
                                                 DEVELOPMENT AID: the depleted node NODE (a placement UUID, a key
                                                 REGION#RECORD, or a G) respawns after SECONDS (not the rule of the data)
+  tools/world crafting CHARACTER                the crafting of a character (stage 3.7a): the station of its use (the Assembly
+                                                key, its row, the fee flag), its craft batch, and the counts
+  tools/world craft preview CHARACTER RECIPE [COUNT]
+                                                the plan of a recipe (a RecipeID) for the character with the station of its use:
+                                                the checks of a request, the costs, the output, the fee, the bag slots (no change)
+  tools/world craft stop CHARACTER              the craft batch of a character stops (the completed jobs stay)
   tools/world interaction cancel CHARACTER      end the committed interaction of a character: its client
                                                 gets the message 3746
   tools/world fixture CHARACTER NAME [DX DY DZ] [--yaw DEGREES] [--permission N]
@@ -442,6 +448,10 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         show_chests(document)
     elif isinstance(document, dict) and "nodes" in document and "skills" in document and "work" in document:
         show_gathering(document)
+    elif isinstance(document, dict) and "batch" in document and "counts" in document and "station" in document:
+        show_crafting(document)
+    elif isinstance(document, dict) and "verdict" in document and "costs" in document and "output" in document:
+        show_craft_preview(document)
     elif isinstance(document, dict) and "lootContainer" in document and "bags" in document:
         show_bags(document)
     elif isinstance(document, dict) and "weapons" in document:
@@ -871,6 +881,47 @@ def show_gathering(document: dict) -> None:
           f"completions {counts.get('completions', 0)}, cancels {counts.get('cancels', 0)}, contested {counts.get('contested', 0)}, "
           f"full bags {counts.get('fullBags', 0)}, depleted {counts.get('depleted', 0)}, respawns {counts.get('respawns', 0)}, refusals "
           f"{counts.get('refusals', {})}")
+
+
+def station_text(station: dict | None) -> str:
+    if not station:
+        return "no station use"
+    return (f"{'camp' if station['camp'] else 'station'} {station['assemblyKey']} (row {station['row'] or 'NONE'}, fee "
+            f"{'yes' if station['chargeFee'] else 'no'}, object {station['object']} generation {station['generation']})")
+
+
+def show_crafting(document: dict) -> None:
+    """Prints the crafting of a character (stage 3.7a): the station of its use, its batch, and the counts."""
+    if not document.get("inWorld"):
+        print("the character is not in the world")
+        return
+    if not document.get("data"):
+        print("the backend has no crafting data: make the file with tools/gamedata/crafting.sh (each craft request is refused)")
+    else:
+        print(f"crafting data: {document['recipes']} recipes, {document['supportedRecipes']} crafted in this stage, {document['stationRows']} "
+              f"station rows")
+    print("use: " + station_text(document.get("station")))
+    batch = document.get("batch")
+    if batch:
+        print(f"batch: {batch['recipe']} {batch['done']} of {batch['total']} job(s) at {batch['station']}{' (camp)' if batch['camp'] else ''}, "
+              f"each gives {batch['outputQty']} {batch['output']}, fee paid {batch['feePaid'] / 100:.2f}, {batch['seconds']:.1f} s")
+    else:
+        print("batch: none")
+    counts = document["counts"]
+    print(f"requests {counts['requests']} {counts['verdicts']}, batches {counts['batches']}, jobs {counts['jobs']}, ends {counts['ends']}, "
+          f"items {counts['itemsCreated']}, fees {counts['feesPaid'] / 100:.2f}, client stops {counts['clientStops']} (no batch "
+          f"{counts['idleStops']}), active {counts['activeBatches']}; visits: jobs {counts['jobVisits']}, bag slots {counts['slotVisits']}")
+
+
+def show_craft_preview(document: dict) -> None:
+    """Prints the plan of a recipe for a character (stage 3.7a): the checks of a request with no change."""
+    costs = ", ".join(f"{cost['quantity']} {cost['item']}" for cost in document["costs"]) or "-"
+    output = document["output"]
+    print(f"{document['recipe']} x{document['quantity']}: {document['verdict']}" + (f" ({document['detail']})" if document["detail"] else ""))
+    print(f"  each job takes {costs} and gives {output['quantity']} {output['item'] or '-'} (gear score {document['gearScore']}); fee of the "
+          f"batch {document['fee'] / 100:.2f}; bag slots of the plan {document['slots']}")
+    print("  " + station_text(document.get("station")) + "; recipe station keys " + ", ".join(document.get("stations", []))
+          + ("; causes: " + "; ".join(document["causes"]) if document.get("causes") else ""))
 
 
 def fetch(data_dir: Path, path: str) -> dict:
@@ -1493,6 +1544,15 @@ def main() -> None:
     elif command == "gathering" and len(arguments) in (2, 3):
         radius = f"&radius={arguments[2]}" if len(arguments) == 3 else ""
         request(data_dir, "GET", f"/v1/dev/gathering?character={character_id(data_dir, arguments[1])}{radius}")
+    elif command == "crafting" and len(arguments) == 2:
+        request(data_dir, "GET", f"/v1/dev/crafting?character={character_id(data_dir, arguments[1])}")
+    elif command == "craft" and len(arguments) in (4, 5) and arguments[1] == "preview":
+        if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[3]):
+            fail("RECIPE is a RecipeID of the crafting data (letters, digits, _)")
+        quantity = f"&quantity={whole(arguments[4], 'the count')}" if len(arguments) == 5 else ""
+        request(data_dir, "POST", f"/v1/dev/crafting/preview?character={character_id(data_dir, arguments[2])}&recipe={arguments[3]}{quantity}")
+    elif command == "craft" and len(arguments) == 3 and arguments[1] == "stop":
+        request(data_dir, "POST", f"/v1/dev/crafting/stop?character={character_id(data_dir, arguments[2])}")
     elif command == "interaction" and len(arguments) == 3 and arguments[1] == "cancel":
         request(data_dir, "POST", f"/v1/dev/interactions/cancel?character={character_id(data_dir, arguments[2])}")
     elif command == "time" and len(arguments) == 1:

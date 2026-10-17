@@ -350,10 +350,12 @@ def weight_overrides(sheets: list[Sheet]) -> dict[str, int]:
     return overrides
 
 
-def trinket_rows(sheets: list[Sheet]) -> dict[str, list[float]]:
+def trinket_rows(sheets: list[Sheet], ids: set[str] | None = None) -> dict[str, list[float]]:
     """@return The trinket values of each armor stats row (its id in lower case) with a TrinketBonus above 0 and a scale above 0:
     [TrinketBonus, ScaleHealthPerGS, ScaleDamagePerGS, ScaleCDRPerGS]. `sheets`: the tables of the type ArmorItemDefinitions. A table with
-    no such column stops the tool (format 4, stage B4). The first row of an id wins (the tables in the byte order of their names)."""
+    no such column stops the tool (format 4, stage B4). The first row of an id wins (the tables in the byte order of their names).
+    @param ids Gets the id (lower case) of each armor stats row, also a row with no line (code review of stage B4, finding B4-R4: the join
+    of the jewelry tells a row with no line from a row that is not there)."""
     trinkets: dict[str, list[float]] = {}
     for sheet in sorted(sheets, key=lambda table: table.name.encode("utf-8")):
         for column in TRINKET_COLUMNS:
@@ -369,9 +371,16 @@ def trinket_rows(sheets: list[Sheet]) -> dict[str, list[float]]:
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
                     raise Failure(f"the cell {column} of {identifier} in {sheet.name} is not a number of 0 or more")
                 values.append(float(value))
+            if isinstance(identifier, str) and identifier and ids is not None:
+                ids.add(identifier.lower())
             if isinstance(identifier, str) and identifier and values[0] > 0 and any(value > 0 for value in values[1:]):
                 trinkets.setdefault(identifier.lower(), [round(value, 6) for value in values])
     return trinkets
+
+
+def is_jewelry(item_class) -> bool:
+    """@return True for a master row of a jewelry item (the tag Jewelry of its ItemClass: an amulet, a ring, an earring)."""
+    return isinstance(item_class, str) and any(tag.strip().lower() == "jewelry" for tag in item_class.split("+"))
 
 
 def item_weight(sheet: Sheet, row: int, overrides: dict[str, int]) -> int:
@@ -559,7 +568,8 @@ def build_catalog(contents: list[bytes]) -> dict:
     # The client keeps the tables in a map with the table name as the key: bytes, then length.
     masters.sort(key=lambda sheet: sheet.name.encode("utf-8"))
     overrides = weight_overrides(stats)
-    trinket_stats = trinket_rows(armor_stats)
+    armor_ids: set[str] = set()
+    trinket_stats = trinket_rows(armor_stats, armor_ids)
     trinkets: list[list] = []
     items: list[list] = []
     tables: list[dict] = []
@@ -576,6 +586,14 @@ def build_catalog(contents: list[bytes]) -> dict:
             item_id = sheet.cell(row, "ItemID")
             seen.add(item_id_crc(item_id))
             reference = sheet.cell(row, "ItemStatsRef")
+            # Code review of stage B4, finding B4-R4: the stats row of a jewelry item must be in the source (a row with no line is a row
+            # of the source too); a jewelry item whose stats row is not there, or no armor stats table, stops the tool: the old catalog
+            # stays (a file with no line of the jewelry would give no health, damage, or cooldown part).
+            if is_jewelry(sheet.cell(row, "ItemClass")) and isinstance(reference, str) and reference.strip() \
+                    and reference.lower() not in armor_ids:
+                raise Failure(f"the jewelry item {item_id} names the armor stats row {reference}, which "
+                              + ("no armor stats table has" if armor_stats else "is not in the source: no table of the type "
+                                 + ARMOR_STATS_TYPE))
             if isinstance(reference, str) and reference.lower() in trinket_stats:
                 trinkets.append([item_id, *trinket_stats[reference.lower()]])
             items.append([item_id, sheet.cell(row, "Name"), item_type, sheet.cell(row, "ItemClass"),

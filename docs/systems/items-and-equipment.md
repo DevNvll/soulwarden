@@ -15,6 +15,7 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 | A whole build in one step (the build preset), the gear score limit of a give | [Build presets](build-presets.md), `Inventory::plan_build`, `Inventory::give_limit`, test cases BP1 to BP9 |
 | The weight of the bag and its limits (encumbered, overencumbered) | `Inventory::encumbrance` (`world/inventory.h`), `tools/gamedata/item_catalog.py` (`item_weight`), `EquipLoadData::encumbranceMax` (`gamedata/perk_data.h`), test cases CF6, CF13 |
 | The perks of an item instance: the places, the swap, the give with perks, the perk command, the loot roll | Protocol notes 4.23, `world/item.h` (`ItemInstance::perks`), `world/inventory.h` (`checked_perks`, `set_perks`, `resolve_perks`), `gamedata/perk_data.h`, `world/perk_roll.h`, test cases IZ1 to IZ3 |
+| The plan of a craft (stage 3.7a): the costs from the unlocked bag and the quick slots, the whole output with the cause ItemCreated | `Inventory::plan_craft`, `coin_written`, [Crafting](crafting.md), test case CRAFT2 |
 
 ## Rules
 
@@ -77,6 +78,13 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 - A loot item gets the perks of the roll of the client (`world/perk_roll.h`, protocol notes
   4.23): each instance of a drop has its own roll, with the level of the character.
 - The rarity of an item is a value of the client: it computes it from the perk count.
+- The plan of a craft (stage 3.7a, `Inventory::plan_craft`, [Crafting](crafting.md)): the costs of a job (the quantities of the recipe)
+  come from the unlocked stacks of the bag in the order of the slots, then from the quick slots 14 to 17 [client: the cache of the crafting
+  screen counts the unlocked bag slots and quick slots 1 to 4; the order is a decision of an agent]; a stack that goes to 0 leaves an empty
+  slot (the cause ItemRemoved). The output of the whole plan goes into the bag (stacks of the item first, then empty slots, also a slot
+  that a cost freed) with the cause ItemCreated (3: the result screen of the client takes it); a plan whose output does not fit is refused
+  (`bagFull`), and the loot overflow of `grant` does not apply. A missing quantity is `missingMaterials`. The crafting system writes the
+  rows of a plan and the coin of the fee in one transaction (`write`, `coin_written`, `finish`).
 - The gear score of an equipped item (stage 1.1b): an equip of an item above the MaxEquipGS of the owned expansion (800;
   game data, the rule of the client in `equipmentcommon.lua`) is refused (`gearScoreAboveLimit`, the message "equip item
   fail" for a request of a client). With no expansion data there is no such limit. The item level of a gear score (the first

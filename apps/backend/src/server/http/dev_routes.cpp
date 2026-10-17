@@ -138,6 +138,10 @@
 //                                                        the nodes with a state of the server near it, the counts
 //   POST /v1/dev/gathering/respawn?character=ID&node=KEY&seconds=N
 //                                                        DEVELOPMENT AID: a depleted node respawns after N seconds
+//   GET  /v1/dev/crafting?character=ID                  the crafting of a character (stage 3.7a): the station of its use, its batch,
+//                                                        the counts
+//   POST /v1/dev/crafting/preview?character=ID&recipe=ID[&quantity=N]   the plan of a recipe for the character (no change)
+//   POST /v1/dev/crafting/stop?character=ID             the craft batch of the character stops (the completed jobs stay)
 //   POST /v1/dev/chests/clear?character=ID&chest=KEY     remove the claim of a character on a chest
 //   POST /v1/dev/chests/reset?character=ID&chest=KEY&seconds=N
 //                                                        DEVELOPMENT AID (live check L8): the looted claim resets after N s
@@ -1033,6 +1037,19 @@ void register_dev_routes(Router& router, const Services& services) {
         });
     });
     router.add("POST", "", "/v1/dev/gathering/respawn", "dev.gathering_respawn", command_route(services, commands::set_node_respawn));
+    // The crafting (stage 3.7a): the crafting of a character, the plan of a recipe (a diagnostic with no change), the stop of a batch.
+    router.add("GET", "", "/v1/dev/crafting", "dev.crafting", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        return in_world(services, [character = *character](world::World& target) {
+            return json_reply(200, commands::crafting_view(target, character).dump());
+        });
+    });
+    router.add("POST", "", "/v1/dev/crafting/preview", "dev.crafting_preview", command_route(services, commands::craft_preview));
+    router.add("POST", "", "/v1/dev/crafting/stop", "dev.crafting_stop", command_route(services, commands::stop_craft));
     router.add("POST", "", "/v1/dev/chests/clear", "dev.chests_clear", command_route(services, commands::clear_chest_claim));
     router.add("POST", "", "/v1/dev/chests/reset", "dev.chests_reset", command_route(services, commands::set_chest_reset));
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));

@@ -90,14 +90,18 @@ struct ServerHost {
     gamedata::ChestData chests;
     /** The gathering data (stage 3.6a). It is empty until a case sets it: each gather is then refused. */
     gamedata::GatheringData gathering;
+    /** The crafting data (stage 3.7a). It is empty until a case sets it: each craft request is then refused. */
+    gamedata::CraftingData crafting;
     world::World world{clock, store, tables,
-                       with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures, combat, places,
-                                                                                                terrain, navigation, loot, abilities, perks,
-                                                                                                spells, projectiles, weaponActions),
-                                                                                 interactions),
-                                                               stamina),
-                                                  chests),
-                                      gathering)};
+                       with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
+                                                                                                              combat, places, terrain, navigation,
+                                                                                                              loot, abilities, perks, spells,
+                                                                                                              projectiles, weaponActions),
+                                                                                               interactions),
+                                                                             stamina),
+                                                                chests),
+                                                    gathering),
+                                     crafting)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -267,6 +271,10 @@ struct ServerHost {
     }
     static world::WorldOptions with_gathering(world::WorldOptions options, const gamedata::GatheringData& gathering) {
         options.gatheringData = &gathering;
+        return options;
+    }
+    static world::WorldOptions with_crafting(world::WorldOptions options, const gamedata::CraftingData& crafting) {
+        options.craftingData = &crafting;
         return options;
     }
 

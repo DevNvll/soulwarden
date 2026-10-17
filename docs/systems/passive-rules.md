@@ -183,7 +183,12 @@ the protocol notes (section 4.30; the status state in 4.24, the status of a crea
   applied, with the cause. The outgoing part (TargetStatusEffectDurationCats, TargetStatusEffectDurationMult: "haste you apply" of Alacrity II,
   Battle Precision) is a different factor (stage B4, below): it acts only for a status that the character gives a different entity
   [agent decision: the outgoing part of Alacrity II on a haste that the character gives itself is open, research K1; applying both would give
-  two times the text].
+  two times the text]. The outgoing part has a consumer only for a row with no event (`Passives::outgoing_factor`): a row with an event and
+  these columns (`Global_Weapon_HercyneRaid_1`: OnHit, the DoT time of the target) is not applied for that part; with no other effect the
+  list names the whole row as not applied, else its note names the part (code review of stage B4, finding B4-R5, test case BZ5).
+- The giver of a status of a spell area (code review of stage B4, finding B4-R3, test case BZ3): the source of the status is the spell entity
+  (its exit and its end need it), and the outgoing time factor is the factor of its caster (`SpellBody::caster`): Clear Out with Power Cleaner
+  gives a friend 4.4 s of fortify with Foc_Bonus_200_1 (1.1); the caster gets no outgoing factor on itself.
 - The sources of one row (code review of stage B3, finding B3-R2; stage B4, `Passives::merged`): the perks of each item with the same ability, a
   node and a status that equips the row, give one rule. The potency of the rule is the sum of the potencies of its sources, the largest
   first, to IsStackableMax sources (0: no limit); with IsStackableDiminishingModifier each next source counts that part less, and the count

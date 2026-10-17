@@ -522,7 +522,44 @@ def main() -> int:
               + (f" ({message[:120]})" if not writes and message else ""))
         failures += 0 if correct else 1
         target.unlink(missing_ok=True)
+    if not review and not stations:
+        failures += 0 if check_station_overrides() else 1
     return 0 if failures == 0 else 1
+
+
+def check_station_overrides() -> bool:
+    """Decision D1 of stage 3.7a (tool.station_overrides): a master station slice with a key with no row gets its _t2 variant (key ending
+    in 3), a different slice with a key with no row keeps its template, and a variant with a different key stops the tool."""
+    def templates() -> list[dict]:
+        return [{"slice": f"{tool.STATION_FOLDER}{tool.STATION_PREFIX}carpentry_master.dynamicslice",
+                 "assembly": {"key": "Carpentry2", "resolved": False}},
+                {"slice": STATION_SLICE, "assembly": {"key": "Carpentry2", "resolved": False}},
+                {"slice": f"{tool.STATION_FOLDER}{tool.STATION_PREFIX}engineering_master.dynamicslice",
+                 "assembly": {"key": "Engineering2", "resolved": True}}]
+    variant = f"{tool.STATION_FOLDER}{tool.STATION_PREFIX}carpentry_t2.dynamicslice"
+
+    def run(variant_key: str):
+        listed = templates()
+        spawned = [{"key": "a", "template": 0}, {"key": "b", "template": 1}, {"key": "c", "template": 2}]
+
+        def load(path: str) -> int:
+            listed.append({"slice": path, "assembly": {"key": variant_key, "resolved": True}})
+            return len(listed) - 1
+        counts = tool.station_overrides(spawned, listed, lambda path: path == variant, load)
+        return counts, spawned
+    (overrides, missing), spawned = run("Carpentry3")
+    correct = (overrides == 1 and missing == 1 and spawned[0]["template"] == 3 and spawned[0]["authoredTemplate"] == 0
+               and spawned[0]["override"] == {"rule": "D1", "from": "Carpentry2", "to": "Carpentry3", "slice": variant}
+               and spawned[1] == {"key": "b", "template": 1} and spawned[2] == {"key": "c", "template": 2})
+    try:
+        run("Carpentry4")
+        stopped = False
+    except tool.Failure:
+        stopped = True
+    ok = correct and stopped
+    print(f"{'ok  ' if ok else 'FAIL'} decision D1 (stage 3.7a): the master Carpentry2 gets its _t2 variant Carpentry3 (authoredTemplate, "
+          f"override), a different slice with a key with no row keeps its template, a resolved key stays; a variant Carpentry4 stops the tool")
+    return ok
 
 
 if __name__ == "__main__":

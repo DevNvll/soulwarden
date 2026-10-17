@@ -174,6 +174,9 @@ constexpr NamedCommand kCommands[] = {
     {"set_world_time", commands::set_world_time},
     // The build presets (stage B0): the whole build of a preset in one task of the world and one transaction.
     {"apply_preset", commands::apply_preset},
+    // The crafting (stage 3.7a): the plan of a recipe (no change) and the stop of a craft batch.
+    {"craft_preview", commands::craft_preview},
+    {"stop_craft", commands::stop_craft},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
@@ -288,6 +291,7 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 // The chests of the character (stage 3.5b.1): its claims and the chests near it.
                 reply["chests"] = commands::chests_view(target, selected, commands::kAdminChestRange);
                 reply["gathering"] = commands::gathering_view(target, selected, commands::kAdminGatheringRange);
+                reply["crafting"] = commands::crafting_view(target, selected);
                 // The loot bags of the character (stage 3.5b.2): its own parts only.
                 reply["lootBags"] = commands::loot_bags_view(target, selected);
                 // The world time (stage 2.2): one value for the whole world.

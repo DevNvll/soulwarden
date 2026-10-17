@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -12,6 +13,7 @@
 #include "middleware/steam/local_ticket.h"
 #include "server/hub/wire.h"
 #include "server/rep/combat_messages.h"
+#include "server/rep/crafting_messages.h"
 #include "server/rep/item_requests.h"
 #include "server/rep/lock_messages.h"
 #include "server/rep/mana_messages.h"
@@ -418,6 +420,19 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_time_request(route, body);
         break;
+    case kTypeCraftRequest:
+        check_route(route, type, body, firstOfType);
+        handle_craft_request(body);
+        break;
+    case kTypeCraftCancel:
+        check_route(route, type, body, firstOfType);
+        handle_craft_cancel(body);
+        break;
+    case kTypeStorageSearch:
+    case kTypeStorageSearchReplicate:
+        check_route(route, type, body, firstOfType);
+        handle_storage_search(type, body);
+        break;
     default:
         check_route(route, type, body, firstOfType);
         if (firstOfType) {
@@ -699,6 +714,8 @@ void RepSession::replicate(carrier::Clock::time_point now) {
         }
     }
     send_batch(batch);
+    // The progress of a craft after the record of its items (stage 3.7a, live check L3).
+    send_craft_progress(*own);
 }
 
 void RepSession::add_creature_record(const world::Entity& entity, Known& known, RecordBatch& batch) {
@@ -2407,6 +2424,106 @@ void RepSession::handle_use_item(std::span<const std::uint8_t> body) {
     }
     const world::UseVerdict verdict = m_world.consumables().use_bag(m_id, slot);
     log::write("rep: use item request (type %u, bag slot %u): %s", kTypeUseItem, slot, world::use_verdict_text(verdict));
+}
+
+bool RepSession::own_facet(const world::Entity& own, std::uint64_t target, std::uint64_t entity, const char* component, std::uint32_t type,
+                           const char* name) {
+    bool valid = entity == own.id;
+    if (valid && m_options.playerSlice != nullptr && m_options.playerSlice->loaded()) {
+        const gamedata::SliceIds::Component* facet = m_options.playerSlice->find_named(component);
+        valid = facet != nullptr && m_options.playerSlice->target(own.id, *facet) == target;
+    }
+    if (!valid) {
+        log::write("rep: %s (type %u) names the facet %016llx of the entity %016llx, which is not the %s component of the character of the "
+                   "session: no change",
+                   name, type, static_cast<unsigned long long>(target), static_cast<unsigned long long>(entity), component);
+    }
+    return valid;
+}
+
+void RepSession::handle_craft_request(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    std::uint64_t entity = 0;
+    const std::optional<world::CraftRequest> request = read_craft_request(body, entity);
+    if (!request) {
+        log::write("rep: craft request (type %u, %zu bytes) does not have the form of the request or is above a limit of its reader: no "
+                   "change",
+                   kTypeCraftRequest, body.size());
+        return;
+    }
+    if (!own_facet(*own, request->target, entity, kCraftingComponentName, kTypeCraftRequest, "craft request")) {
+        return;
+    }
+    std::string entries;
+    for (const world::CraftIngredientClaim& claim : request->ingredients) {
+        char text[40];
+        std::snprintf(text, sizeof(text), "%s%u:%u:%08x", entries.empty() ? "" : " ", claim.type, claim.quantity, claim.item);
+        entries += text;
+    }
+    log::write("rep: craft request (type %u): recipe %08x, count %u, fee %u, gear score %u, %zu perk item(s), upgrade %u, entries [%s]",
+               kTypeCraftRequest, request->recipe, request->quantity, request->coinFee, request->gearScore, request->perkItems.size(),
+               request->upgrade, entries.c_str());
+    const world::CraftVerdict verdict = m_world.crafting().request(m_id, *request);
+    log::write("rep: craft request (type %u): %s", kTypeCraftRequest, world::craft_verdict_text(verdict));
+}
+
+void RepSession::handle_craft_cancel(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    const std::optional<FacetCall> call = read_facet_call(body);
+    if (own == nullptr || !call) {
+        log::write("rep: craft stop (type %u, %zu bytes) does not have the form of the message: no change", kTypeCraftCancel, body.size());
+        return;
+    }
+    if (!own_facet(*own, call->target, call->entity, kCraftingComponentName, kTypeCraftCancel, "craft stop")) {
+        return;
+    }
+    const bool stopped = m_world.crafting().client_stop(m_id);
+    log::write("rep: craft stop (type %u): %s", kTypeCraftCancel, stopped ? "the craft batch stopped" : "no craft batch (no change)");
+}
+
+void RepSession::handle_storage_search(std::uint32_t type, std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    if (type == kTypeStorageSearch) {
+        const std::optional<StorageSearch> search = read_storage_search(body);
+        if (!search) {
+            log::write("rep: storage search (type %u, %zu bytes) does not have the form of the request: no reply", type, body.size());
+            return;
+        }
+        if (!own_facet(*own, search->call.target, search->call.entity, kStorageSearchComponentName, type, "storage search")) {
+            return;
+        }
+        m_storageSearch = search->uuid;
+        m_storageSearchTarget = search->call.target;
+    } else {
+        const std::optional<FacetCall> call = read_facet_call(body);
+        if (!call || !own_facet(*own, call->target, call->entity, kStorageSearchComponentName, type, "storage search results")) {
+            return;
+        }
+        if (!m_storageSearch) {
+            log::write("rep: storage search results (type %u) with no search of the client: no reply", type);
+            return;
+        }
+    }
+    // The empty result: the crafting takes the bag and the quick slots only (no storage of stage 5.2; live check L2).
+    send_message(kTypeStorageSearchResults, storage_search_result_body(m_storageSearchTarget, own->id, *m_storageSearch));
+    log::write("rep: storage search (type %u): the empty result sent (type %u)", type, kTypeStorageSearchResults);
+}
+
+void RepSession::send_craft_progress(const world::Entity& own) {
+    const world::CraftProgress& progress = own.craftProgress;
+    if (progress.revision <= m_craftProgressSent || progress.session != m_id) {
+        return;
+    }
+    m_craftProgressSent = progress.revision;
+    send_message(kTypeCraftProgress, craft_progress_body(progress.target, own.id, progress.recipe, progress.completed, progress.total));
+    log::write("rep: craft progress sent (type %u): %s%s %u of %u", kTypeCraftProgress, progress.recipe.empty() ? "the stop form" : "recipe ",
+               progress.recipe.c_str(), progress.completed, progress.total);
 }
 
 void RepSession::handle_equip_item(std::span<const std::uint8_t> body) {

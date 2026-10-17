@@ -352,6 +352,22 @@ private:
      */
     void handle_equip_item(std::span<const std::uint8_t> body);
     void handle_use_item(std::span<const std::uint8_t> body);
+    /**
+     * The crafting (stage 3.7a, world/crafting.h, server/rep/crafting_messages.h): request 2997 and stop 2999 of the client go to the
+     * crafting system with the session (the character comes from the session); 7044 and 7039 of the crafting screen get the empty search
+     * result 7046 with the search UUID of the request (no storage of stage 5.2: the craft takes the bag and the quick slots only).
+     */
+    void handle_craft_request(std::span<const std::uint8_t> body);
+    void handle_craft_cancel(std::span<const std::uint8_t> body);
+    void handle_storage_search(std::uint32_t type, std::span<const std::uint8_t> body);
+    /**
+     * @return True when a facet call names a component of the character of the session: its entity, and with the ids of the player slice
+     *         the facet target of the named component.
+     */
+    [[nodiscard]] bool own_facet(const world::Entity& own, std::uint64_t target, std::uint64_t entity, const char* component,
+                                 std::uint32_t type, const char* name);
+    /** Sends the progress of the craft of the own character (2993) after its record: the items of a job before its progress. */
+    void send_craft_progress(const world::Entity& own);
     void handle_unequip_item(std::span<const std::uint8_t> body);
     void handle_swap_items(std::span<const std::uint8_t> body);
     /**
@@ -499,6 +515,11 @@ private:
     bool m_registered{false};
     std::set<std::uint32_t> m_seenTypes;
     MessageCounts m_counts;
+    /** The number of the last craft progress that the session sent (stage 3.7a, world::CraftProgress::revision). */
+    std::uint64_t m_craftProgressSent{0};
+    /** The UUID of the last storage search of the client (7044) and the target of its facet: a 7039 gets the empty result again. */
+    std::optional<std::array<std::uint8_t, 16>> m_storageSearch;
+    std::uint64_t m_storageSearchTarget{0};
 
     Observer m_observer;
     /** Interest numbers whose stop did not go out. */
