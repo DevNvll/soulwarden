@@ -31,7 +31,8 @@ protocol notes (section 6).
   window thread when the window closes and when the tool window stops. A command of the
   window keeps the character id of the snapshot that the window drew
   (`model::command(character, ...)`): do not read the selected character at send time. The
-  tabs: "Items", "Character" (with the health of the character, the button "Heal", which
+  tabs: "Items", "Character" (with the health of the character, the row "Azoth" of stage 3.7c (the balance of Azoth_Currency and
+  its cap, a field, and "Set": the command `set_currency`; [Crafting](crafting.md)), the button "Heal", which
   has the text "Revive" for a dead character, the mark "Creatures ignore this
   character", the mark "Each kill drops loot and coin", the attributes, and at its end the group "Build presets" of stage B0:
   [Build presets](build-presets.md)), "Skills", "Creatures", "Travel" (the position of the
@@ -104,7 +105,11 @@ protocol notes (section 6).
   route only. Stage 3.7a: the commands `craft_preview` (arguments `recipe`, the RecipeID text, and `quantity`, 1 to 10000: the plan of a
   recipe with the station of the use of the character, no change) and `stop_craft` (no argument: the craft batch stops), and the member
   `crafting` of the state of a character (the station of its use, its batch, the counts; [Crafting](crafting.md)); the tool window has no
-  button for them yet. The command that
+  button for them yet. Stage 3.7b: the commands `set_craft_seed` and `set_craft_cooldown` are diagnostics: they need
+  `SOULWARDEN_HARNESS=1` of the backend process, else the reply is 403 (code review of stage 3.7b, finding CR7B-R2; test case CR7B2), and the
+  tool window has no button for them. Stage 3.7c: the command `set_currency` (`amount`, 0 to the cap; `currency`, default Azoth_Currency),
+  the arguments `perks`, `upgrade`, and `materials` of `craft_preview`, and the members `azoth` and `azothCap` of `items` in the state of a
+  character. The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn
   point, and an effect on a creature are development routes only (`tools/world hurt`, `roll`,
   `creature respawn`, `creature effect`). A
@@ -129,8 +134,8 @@ tools/hx 'toolwindow 1'              # show the tool window with no key ('toolwi
   "Confirm" at `59 583` (stage B1, the window of 1256x660 at its first place). A value in a field: a click on the field, then
   `'keydown 0x11' 'key 0x41' 'keyup 0x11' 'text 40'`, then a click on its "Set". Take a screenshot before you use a position.
 - The mark "Each kill drops loot and coin" of the tab "Character" is one row below the mark
-  "Creatures ignore this character" (`35 314` in the window of 1256x660): each row below it
-  is 29 pixels lower than in stage 3.4e. Take a screenshot before you use a position.
+  "Creatures ignore this character" (`35 343` in the window of 1256x660 from stage 3.7c): each row below it
+  is 29 pixels lower than in stage 3.4e, and from stage 3.7c 29 more (the row Azoth). Take a screenshot before you use a position.
 - The tool window (F8), positions in the window of 1256x660 at its first place (the window is
   at the left side; a user can move it, and it has no saved place): tabs "Items" `50 113`,
   "Character" `125 113`, "Skills" `204 113`, "Creatures" `283 113`, "Travel" `362 113`, "World" `425 113` (stage 2.2: the hour
@@ -141,7 +146,10 @@ tools/hx 'toolwindow 1'              # show the tool window with no key ('toolwi
   "Selected: NAME, TERRITORY" at y `461` (x `358` for "Shadowmine Shrine, Everfall": take a
   screenshot), the button "Travel" of the position form `363 517`, "Here" `425 517`. Items
   tab: search field `203 169`, first row of the result `138 218`, "+" of the quantity `203 382`, "Give" `246 382`, "Remove" of the
-  first bag row `514 462` (each next row is 29 pixels lower). Character tab: "+" of the level
+  first bag row `514 462` (each next row is 29 pixels lower). Character tab from stage 3.7c (live pictures of stage 3.7c): the row
+  Azoth: its field `380 253`, "-" `431 253`, "+" `459 253` (a step of 100), "Set" `501 253`; "Heal" `506 282`, the mark "Creatures
+  ignore this character" `35 314`, the mark "Each kill drops loot and coin" `35 343`, the dexterity field `380 473` and its "Set"
+  `501 473` (a start with the behavior of the creatures off). Character tab before stage 3.7c: "+" of the level
   `469 166`, "Set" of the level `512 166`, experience field `388 195`, "Give" `516 195`,
   the button "Heal" (or "Revive") `516 253`, the mark "Creatures ignore this character"
   `35 285`, the mark "Each kill drops loot and coin" `35 314`, dexterity field `388 423` and

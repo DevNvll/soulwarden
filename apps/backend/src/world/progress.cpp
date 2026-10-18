@@ -57,6 +57,8 @@ const char* progress_error_text(ProgressError error) {
         return "the character does not have the node of the ability";
     case ProgressError::costNotPaid:
         return "the reset has a cost in a currency that the backend does not have";
+    case ProgressError::notEnoughBalance:
+        return "the balance of the currency is below the cost";
     case ProgressError::storeFailed:
         return "the database did not accept the change";
     }

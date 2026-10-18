@@ -376,6 +376,11 @@ std::uint32_t ProgressionTables::max_equip_gear_score() const {
     return row != nullptr ? row->maxEquipGearScore : 0;
 }
 
+std::uint32_t ProgressionTables::max_craft_gear_score() const {
+    const ExpansionRow* row = owned_expansion() != nullptr ? owned_expansion() : base_expansion();
+    return row != nullptr ? row->maxCraftGearScore : 0;
+}
+
 const EntitlementRow* ProgressionTables::entitlement(std::string_view alias) const {
     for (const EntitlementRow& row : m_data.entitlements) {
         if (row.alias == alias) {

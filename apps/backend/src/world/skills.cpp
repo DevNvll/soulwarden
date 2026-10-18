@@ -67,6 +67,9 @@ state::SkillRows Skills::rows_of(const SkillSet& skills) const {
     state::SkillRows rows;
     const auto progression_name = [&](std::uint32_t id) {
         const gamedata::ProgressionRow* row = tables() != nullptr ? tables()->progression(id) : nullptr;
+        if (row == nullptr && id == gamedata::progression_id(kAzothCurrency)) {
+            return std::string(kAzothCurrency); // Stage 3.7c: the balance of Azoth has no row of the progression tables.
+        }
         return row != nullptr ? row->id : std::string{};
     };
     const auto node_name = [&](std::uint32_t id) {
@@ -317,6 +320,53 @@ Skills::Plan Skills::plan_experience(const std::string& characterId, std::string
     return stage(characterId, [&](SkillSet& skills, Touched& touched, SkillResult& result) {
         return experience_into(skills, touched, result, id, amount);
     });
+}
+
+Skills::Plan Skills::plan_none(const std::string& characterId) {
+    return stage(characterId, [](SkillSet&, Touched&, SkillResult&) { return ProgressError::none; });
+}
+
+ProgressError Skills::add_balance(Plan& plan, std::string_view id, std::int64_t delta, std::uint64_t cap) const {
+    if (!plan.ok()) {
+        return plan.error;
+    }
+    const std::uint32_t wire = gamedata::progression_id(id);
+    const auto found = plan.skills.progressions.find(wire);
+    const std::uint64_t points = found != plan.skills.progressions.end() ? found->second.points : 0;
+    if (delta < 0 && points < static_cast<std::uint64_t>(-delta)) {
+        return ProgressError::notEnoughBalance;
+    }
+    const std::uint64_t next = delta < 0 ? points - static_cast<std::uint64_t>(-delta)
+                                         : std::min<std::uint64_t>(points + static_cast<std::uint64_t>(delta), std::max(cap, points));
+    if (next == 0) {
+        plan.skills.progressions.erase(wire);
+    } else {
+        plan.skills.progressions[wire] = ProgressionRank{0, next};
+    }
+    plan.touched.ranks = true;
+    return ProgressError::none;
+}
+
+SkillResult Skills::set_balance(const std::string& characterId, std::string_view id, std::uint64_t amount, std::uint64_t cap) {
+    return change(characterId, "a balance command", [&](SkillSet& skills, Touched& touched, SkillResult& result) {
+        if (amount > cap) {
+            return ProgressError::badAmount;
+        }
+        const std::uint32_t wire = gamedata::progression_id(id);
+        if (amount == 0) {
+            skills.progressions.erase(wire);
+        } else {
+            skills.progressions[wire] = ProgressionRank{0, amount};
+        }
+        result.points = amount;
+        touched.ranks = true;
+        return ProgressError::none;
+    });
+}
+
+std::uint64_t Skills::balance(const SkillSet& skills, std::string_view id) {
+    const auto found = skills.progressions.find(gamedata::progression_id(id));
+    return found != skills.progressions.end() ? found->second.points : 0;
 }
 
 ProgressError Skills::experience_into(SkillSet& skills, Touched& touched, SkillResult& result, std::string_view id,

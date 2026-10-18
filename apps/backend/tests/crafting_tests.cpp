@@ -270,11 +270,12 @@ void plan_and_refusals(const Options&) {
         const auto& verdicts = shop.crafting().counts().verdicts;
         const auto of = [&](world::CraftVerdict verdict) { return verdicts[static_cast<std::size_t>(verdict)]; };
         check(of(world::CraftVerdict::noStation) == 1 && of(world::CraftVerdict::unsupported) == 1 && of(world::CraftVerdict::wrongStation) == 1
-                  && of(world::CraftVerdict::rank) == 1 && of(world::CraftVerdict::badQuantity) == 1 && of(world::CraftVerdict::perkItems) == 2
+                  && of(world::CraftVerdict::rank) == 1 && of(world::CraftVerdict::badQuantity) == 1 && of(world::CraftVerdict::perkItems) == 1
+                  && of(world::CraftVerdict::upgrade) == 1
                   && of(world::CraftVerdict::unknownRecipe) == 1 && of(world::CraftVerdict::notEnoughCoin) == 1
                   && shop.count(kCharacterA, "TestFlintT1") == 5 && shop.count(kCharacterA, "TestBar") == 0 && shop.crafting().counts().jobs == 0,
               "no station use, a cause of the data, a station key that the row does not permit, the rank, the count 0, a perk item, an "
-              "upgrade, an unknown recipe, no coin for the fee: each refused, no change");
+              "upgrade (stage 3.7c: its own verdict), an unknown recipe, no coin for the fee: each refused, no change");
         // A full bag: the knife needs a free slot (the bag has 500 slots at most).
         shop.host.world.inventory().set_coin(kCharacterA, 1000);
         world::Entity* a = shop.entity(kCharacterA);

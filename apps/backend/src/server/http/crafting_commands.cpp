@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "core/logging/log.h"
@@ -11,7 +13,8 @@
 // of the admin routes (character_commands.h): the crafting of a character, the plan of a recipe for it (a diagnostic with no change), and
 // the stop of its craft batch. Stage 3.7b: the bonus items, the experience, and the cooldown in the plan (a seeded plan gives the extra
 // units of each job of a batch), the cooldowns of the character, and two harness commands: the cooldown of a recipe and the seed of the
-// generator of the world.
+// generator of the world (code review of stage 3.7b, finding CR7B-R2: they need the harness gate of the process also through the admin
+// routes). Stage 3.7c: the craft gear score, the perk options, and the perks of each job in the plan; the balance of a currency (Azoth).
 
 namespace soulwarden::backend::server::http::commands {
 namespace {
@@ -29,7 +32,36 @@ json station_json(const world::StationContext& station, const gamedata::Crafting
     return reply;
 }
 
+json perks_json(const world::PerkIds& perks) {
+    json list = json::array();
+    for (const std::string& perk : perks) {
+        list.push_back(perk);
+    }
+    return list;
+}
+
+std::vector<std::string> split_list(const std::string& text) {
+    std::vector<std::string> parts;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        std::size_t end = text.find(',', start);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        if (end > start) {
+            parts.push_back(text.substr(start, end - start));
+        }
+        start = end + 1;
+    }
+    return parts;
+}
+
 } // namespace
+
+bool harness_gate() {
+    const char* value = std::getenv("SOULWARDEN_HARNESS");
+    return value != nullptr && std::strcmp(value, "1") == 0;
+}
 
 json crafting_view(world::World& target, const std::string& character) {
     world::Crafting& crafting = target.crafting();
@@ -94,13 +126,26 @@ WorldCommand craft_preview(const std::string& character, const Arguments& argume
     const auto recipe = arguments.text("recipe");
     const auto quantity = arguments.integer("quantity", 1, world::crafting_rules::kMaxQuantity);
     const auto seed = arguments.integer("seed", 0, 0x7FFFFFFFFFFFFFFFULL);
-    if (!recipe || recipe->empty() || (arguments.has("quantity") && !quantity) || (arguments.has("seed") && !seed)) {
-        refusal = message(400, "give recipe (a RecipeID of the crafting data) and, if you want, quantity (1 to 10000) and seed (a whole number: "
-                               "the extra units of each job with the generator of the world at that seed)");
+    const auto perkItems = arguments.text("perks");
+    const auto upgrade = arguments.integer("upgrade", 0, world::crafting_rules::kMaxUpgrade);
+    const auto materialList = arguments.text("materials");
+    if (!recipe || recipe->empty() || (arguments.has("quantity") && !quantity) || (arguments.has("seed") && !seed)
+        || (arguments.has("upgrade") && !upgrade)) {
+        refusal = message(400, "give recipe (a RecipeID of the crafting data) and, if you want, quantity (1 to 10000), seed (a whole number: "
+                               "the extra units and the perks of each job with the generator of the world at that seed), perks (resource "
+                               "item ids with \",\" between them), upgrade (0 to 5), and materials (an item id for each ingredient with "
+                               "\",\" between them; \"-\": the first member)");
         return {};
     }
-    return [character, recipe = *recipe, quantity = static_cast<std::uint32_t>(quantity.value_or(1)), seed](world::World& target) {
-        const world::CraftPreview preview = target.crafting().preview(character, recipe, quantity, seed);
+    std::vector<std::string> items = perkItems ? split_list(*perkItems) : std::vector<std::string>{};
+    if (items.size() > world::crafting_rules::kMaxPerkItems) {
+        refusal = message(400, "give 4 perk items at most");
+        return {};
+    }
+    std::vector<std::string> materials = materialList ? split_list(*materialList) : std::vector<std::string>{};
+    return [character, recipe = *recipe, quantity = static_cast<std::uint32_t>(quantity.value_or(1)), seed, items = std::move(items),
+            upgrade = static_cast<std::uint32_t>(upgrade.value_or(0)), materials = std::move(materials)](world::World& target) {
+        const world::CraftPreview preview = target.crafting().preview(character, recipe, quantity, seed, items, upgrade, materials);
         if (preview.verdict == world::CraftVerdict::notInWorld) {
             return message(404, "the character is not in the world");
         }
@@ -141,8 +186,29 @@ WorldCommand craft_preview(const std::string& character, const Arguments& argume
                                {"perJob", experience.perJob},
                                {"firstCraft", experience.firstCraft},
                                {"firstCraftExtra", experience.firstCraftExtra},
-                               {"batch", experience.perJob * quantity + experience.firstCraftExtra}};
+                               {"raw", experience.raw},
+                               {"batch", experience.total(quantity)}};
         reply["cooldown"] = preview.cooldownLeft ? json{{"left", *preview.cooldownLeft}, {"secondsLeft", preview.cooldownSeconds}} : json(nullptr);
+        // Stage 3.7c: the craft gear score with its parts, the perk plan, the Azoth and the currencies of one job.
+        const world::CraftGearScore& score = preview.craftGearScore;
+        reply["craftGearScore"] = {{"rule", score.rule},           {"value", score.value},     {"base", score.base},
+                                   {"rank", score.rank},           {"materials", score.materials}, {"status", score.status},
+                                   {"statusSum", score.statusSum}, {"override", score.override}, {"cap", score.cap}};
+        const world::CraftPerkPlan& plan = preview.perks;
+        json currencies = json::object();
+        for (const auto& [currency, amount] : plan.currencies) {
+            currencies[currency] = amount;
+        }
+        reply["perkPlan"] = {{"roll", plan.roll},
+                             {"perkItems", plan.resources},
+                             {"upgrade", plan.upgrade},
+                             {"fixedPerks", plan.fixedPerks},
+                             {"buckets", plan.buckets},
+                             {"maxPerks", plan.maxPerks},
+                             {"maximumPerks", plan.maximumPerks},
+                             {"push", preview.recipe != nullptr && preview.recipe->push},
+                             {"azothPerJob", plan.azothPerJob},
+                             {"currenciesPerJob", currencies}};
         if (seed) {
             std::uint64_t extra = 0;
             for (const std::uint32_t units : preview.draws) {
@@ -150,6 +216,21 @@ WorldCommand craft_preview(const std::string& character, const Arguments& argume
             }
             reply["seeded"] = {{"seed", *seed}, {"draws", preview.draws}, {"bonus", extra},
                                {"total", static_cast<std::uint64_t>(preview.output.quantity) * quantity + extra}};
+            json jobs = json::array();
+            for (std::size_t index = 0; index < preview.rolls.size(); ++index) {
+                const world::CraftPerkRoll& roll = preview.rolls[index];
+                json chances = json::array();
+                for (const auto& [bucket, chance] : roll.chances) {
+                    chances.push_back({{"bucket", bucket}, {"chance", chance}});
+                }
+                jobs.push_back({{"job", index + 1},
+                                {"resourcePerks", roll.resourcePerks},
+                                {"target", roll.target},
+                                {"chances", chances},
+                                {"perks", perks_json(roll.perks)},
+                                {"afterSwap", perks_json(preview.swapped[index])}});
+            }
+            reply["seeded"]["perks"] = jobs;
         }
         return json_reply(200, reply.dump());
     };
@@ -167,6 +248,10 @@ WorldCommand stop_craft(const std::string& character, const Arguments& arguments
 }
 
 WorldCommand set_craft_cooldown(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    if (!harness_gate()) {
+        refusal = message(403, "set_craft_cooldown is a harness command: the backend needs SOULWARDEN_HARNESS=1");
+        return {};
+    }
     const auto recipe = arguments.text("recipe");
     const auto used = arguments.integer("used", 0, 255);
     const auto seconds = arguments.number("seconds", 0.0F, 1.0e8F);
@@ -187,6 +272,10 @@ WorldCommand set_craft_cooldown(const std::string& character, const Arguments& a
 }
 
 WorldCommand set_craft_seed(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    if (!harness_gate()) {
+        refusal = message(403, "set_craft_seed is a harness command: the backend needs SOULWARDEN_HARNESS=1");
+        return {};
+    }
     const auto seed = arguments.integer("seed", 0, 0x7FFFFFFFFFFFFFFFULL);
     if (!seed) {
         refusal = message(400, "give seed (a whole number: the next state of the generator of the world)");
@@ -198,6 +287,33 @@ WorldCommand set_craft_seed(const std::string& character, const Arguments& argum
         log::write("world: the generator of the world has the seed %llu (a command of character %s)", static_cast<unsigned long long>(seed),
                    character.c_str());
         return json_reply(200, json{{"message", "the generator of the world has the seed"}, {"seed", seed}}.dump());
+    };
+}
+
+WorldCommand set_currency(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    const auto amount = arguments.integer("amount", 0, 1000000000ULL);
+    const std::string currency = arguments.text("currency").value_or(world::kAzothCurrency);
+    if (!amount) {
+        refusal = message(400, "give amount (0 to the cap of the currency) and, if you want, currency (default Azoth_Currency)");
+        return {};
+    }
+    return [character, currency, amount = *amount](world::World& target) {
+        const gamedata::CraftingData* data = target.crafting().data();
+        const gamedata::CraftCurrency* row = data != nullptr ? data->currency(currency) : nullptr;
+        if (row == nullptr) {
+            return message(400, "the crafting data has no such currency (no cap of its balance)");
+        }
+        if (amount > row->cap) {
+            return message(400, "the amount is above the cap " + std::to_string(row->cap) + " of " + row->id);
+        }
+        const world::SkillResult result = target.skills().set_balance(character, row->id, amount, row->cap);
+        if (!result.ok()) {
+            return message(result.error == world::ProgressError::unknownCharacter ? 404 : result.error == world::ProgressError::storeFailed ? 500 : 400,
+                           world::progress_error_text(result.error));
+        }
+        log::write("world: the balance of %s of character %s is %llu (a command)", row->id.c_str(), character.c_str(),
+                   static_cast<unsigned long long>(amount));
+        return json_reply(200, json{{"message", "the balance is set"}, {"currency", row->id}, {"amount", amount}, {"inWorld", result.inWorld}}.dump());
     };
 }
 

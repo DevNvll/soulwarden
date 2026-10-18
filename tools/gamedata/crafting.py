@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the crafting data of the backend (stages 3.7a and 3.7b, docs/systems/crafting.md): one JSON file, crafting-data.json.
+"""Write the crafting data of the backend (stages 3.7a to 3.7c, docs/systems/crafting.md): one JSON file, crafting-data.json.
 
 The backend reads GAMEDATA_DIR/crafting-data.json at its start. Without the file the backend starts and works, and each craft request is
 refused with no change (docs/systems/crafting.md). The file is game data: it stays outside the repository.
@@ -30,10 +30,18 @@ The sources (all in the pak files of the game copy; research crafting-stage.md s
      each first-craft achievement of a recipe (FirstCraftAchievementId; the crafting screen reads the bit of the character); the
      bonus item values of the master items (ExtraBonusItemChance, IngredientBonusPrimary, IngredientBonusSecondary; client 0x5C52A40,
      0x2E57A70) and the tier lists of a recipe (BonusItemChanceIncrease, BonusItemChanceDecrease).
+  8. Stage 3.7c (format 3): the craft gear score (client 0x2E57A70): the MaxGearScoreBonus and MaxGearScoreBonusT2 to T5 of each rank of a
+     trade skill, the IngredientGearScoreBaseBonus and IngredientGearScoreMaxBonus of the items, the MaxCraftGS of an output; the
+     currencies of the recipes (CategoricalProgressionData: the RankTableId of the currency, and the MaximumInfluence of its rank 0 in that
+     table of the type CategoricalProgressionRankData: the cap of the balance; Azoth_Currency 2,500); the crafting part of the perk
+     generation data of sharedassets/genericassets/playerbaseattributes.pbadb (the gear score ranges of each perk count of each tier: the
+     second list of a tier, "Crafting"; and the Perk, Attribute, and Gem Slot Chance Modifier: the chance that an upgrade level of Azoth adds
+     to a bucket, client 0x5C345F0).
 
 The support (the field "unsupported" of a recipe: each cause that the backend has no rule for yet; an empty list is a recipe that the
 backend crafts): stage 3.7a crafts the fixed recipes with item ingredients or category ingredients; stage 3.7b adds refining, craft-all,
-the trade skill experience of the event, the first-craft bonus, and the cooldown. A reward event with no row, with character experience,
+the trade skill experience of the event, the first-craft bonus, and the cooldown; stage 3.7c adds the procedural results (the craft gear
+score and the perks), the perk items and the Azoth upgrade, and the currency ingredients of a currency with a cap. A reward event with no row, with character experience,
 or with a progression that has no rank table; a first-craft achievement with no row; a cooldown with only a time or only a count; and a
 refining recipe whose trade skill has no rank table stay causes. The territory standing of an event is not given (the backend has no
 territory standing: docs/systems/crafting.md). The causes name the later run that adds the rule (crafting.md, the plan for 3.7c to 3.7e).
@@ -49,12 +57,12 @@ with no item, a station key that no row permits, an event with no row, a perk bu
 diagnostic, not a stop: the retail data has some of them. tools/gamedata/check_crafting_tool.py is the check of these rules.
 
 Output (one line of JSON):
-  {"format": 2,
+  {"format": 3,
    "stations": [{"name", "types": [KEY, ...], "discount", "mannequin"}, ...],
    "missingStations": {KEY: [SLICE, ...], ...},
    "recipes": [{"id", "crc", "table", "category", "group", "known", "listed", "skill", "level", "stations": [KEY, ...],
                 "ingredients": [[TYPE, ID, QUANTITY], ...], "item", "outputQty", "procedural", "refining", "craftAll", "temporary",
-                "fee", "tax", "baseGearScore", "baseTier", "disallowBonuses", "perkItems", "attributeSlots", "push", "perkCost",
+                "fee", "tax", "baseGearScore", "baseTier", "maxCraftGS", "disallowBonuses", "perkItems", "attributeSlots", "push", "perkCost",
                 "event", "requiredAchievement", "hiddenByAchievement", "unlockedAchievement", "firstCraftAchievement", "expansion",
                 "worldTags", "cooldownSeconds", "cooldownQuantity", "skipGrant", "bonusChance", "bonusIncrease": [NUMBER, ...],
                 "bonusDecrease": [NUMBER, ...], "unsupported": [CAUSE, ...]}, ...],
@@ -63,7 +71,10 @@ Output (one line of JSON):
    "resources": {ITEM: {"bucket", "gemPerk", "socket"}, ...},
    "ranks": {TRADESKILL: [ROLL_BONUS, ...], ...},          (the RollBonus of the ranks 0 to N of each rank table)
    "achievements": {ACHIEVEMENT: INDEX, ...},               (the bit of each first-craft achievement of a recipe)
-   "materials": {ITEM: [EXTRA_CHANCE, PRIMARY, SECONDARY], ...},   (the items with a bonus item value that is not 0)
+   "materials": {ITEM: [EXTRA_CHANCE, PRIMARY, SECONDARY, GS_BASE, GS_MAX], ...},   (the items with a bonus value that is not 0)
+   "rankGearScore": {TRADESKILL: [[MAX, MAX_T2, MAX_T3, MAX_T4, MAX_T5], ...], ...},   (the max gear score bonus of the ranks 0 to N)
+   "currencies": {CURRENCY: {"cap": N}, ...},               (the currencies of the recipes with a rank 0 cap)
+   "perkGeneration": {"tiers": [[[COUNT, [[GS_MIN, GS_MAX], ...]], ...], ...], "chanceModifiers": [PERK, ATTRIBUTE, GEM]},
    "counts": {...}}
   KEY is a station key in lower case. TYPE is "Item", "Category_Only", or "Currency". "crc" is the CRC-32 of the lower-case recipe id
   (the recipe id of request 2997; client 0x4485AF0). "outputQty" is null for a blank cell.
@@ -94,15 +105,18 @@ from interactions import ASSEMBLY_CLASS, CRAFTING_STATIONS, STATION_ENTRY, child
 from item_catalog import HOUSE_TABLES, HOUSE_TYPE, MASTER_TYPE, Sheet, sheet_type  # noqa: E402
 
 OUTPUT_NAME = "crafting-data.json"
-FORMAT = 2
+FORMAT = 3
 STATION_SLICES = "slices/structures/settlements/stations/"
-WANTED = (TABLES_FOLDER, CRAFTING_STATIONS, STATION_SLICES)
+BASE_ATTRIBUTES = "sharedassets/genericassets/playerbaseattributes.pbadb"
+WANTED = (TABLES_FOLDER, CRAFTING_STATIONS, STATION_SLICES, BASE_ATTRIBUTES)
 RECIPE_TYPE = "CraftingRecipeData"
 EVENT_TYPE = "GameEventData"
 RESOURCE_TYPE = "ResourceItemDefinitions"
 BUCKET_TYPE = "PerkBucketData"
 RANK_TYPE = "TradeskillRankData"
 ACHIEVEMENT_TYPE = "AchievementData"
+CURRENCY_TYPE = "CategoricalProgressionData"
+CURRENCY_RANK_TYPE = "CategoricalProgressionRankData"
 INGREDIENTS = 7
 STATION_COLUMNS = 4
 # The ingredient types of the data and of the request (client enum 0x4F43EE7: Invalid 0, Item 1, Currency 2, CategoryAny 3, CategoryOnly
@@ -123,8 +137,15 @@ RECIPE_COLUMNS = ("RecipeID", "CraftingCategory", "CraftingGroup", "bKnownByDefa
     + tuple(f"StationType{index}" for index in range(1, STATION_COLUMNS + 1)) \
     + tuple(f"{prefix}{index}" for index in range(1, INGREDIENTS + 1) for prefix in ("Ingredient", "Type", "Qty"))
 ITEM_COLUMNS = ("ItemID", "IngredientCategories", "Tier", "GearScoreOverride", "MinGearScore", "MaxGearScore")
-# The bonus item columns of an item (client 0x5C52A40, 0x2E57A70). Some master tables (the store tables) do not have them: 0.
-BONUS_COLUMNS = ("ExtraBonusItemChance", "IngredientBonusPrimary", "IngredientBonusSecondary")
+# The bonus item columns of an item (client 0x5C52A40, 0x2E57A70), and from stage 3.7c its gear score values as an ingredient (client 0x2E57A70:
+# +0x48 and +0x4C of the item). Some master tables (the store tables) do not have them: 0.
+BONUS_COLUMNS = ("ExtraBonusItemChance", "IngredientBonusPrimary", "IngredientBonusSecondary", "IngredientGearScoreBaseBonus",
+                 "IngredientGearScoreMaxBonus")
+# The largest gear score bonus of a rank of a trade skill for an output of the tier 1 (and 0) and of the tiers 2 to 5 (client 0x3CB2AA0: a
+# map of the tier; a tier that the map does not have gets the first pair).
+RANK_GEAR_SCORE_COLUMNS = ("MaxGearScoreBonus", "MaxGearScoreBonusT2", "MaxGearScoreBonusT3", "MaxGearScoreBonusT4", "MaxGearScoreBonusT5")
+# The client setting javelin.crafting-max-num-perk-items (registered with 4 at 0x6171372): the perk item controls of the crafting screen.
+PERK_ITEM_LIMIT = 4
 # The limit of a bonus item value of an item and of the RollBonus of a rank (the client adds them as integers; the tables have 0 to 2,500).
 BONUS_LIMIT = 1000000
 EVENT_COLUMNS = ("EventID", "CategoricalProgressionId", "CategoricalProgressionReward", "UniversalExpAmount", "TerritoryStanding")
@@ -134,17 +155,16 @@ MANNEQUIN_FIELD = field_id("MannequinTag")
 DISCOUNT_FIELD = field_id("AzothDiscountPercent")
 
 # The causes of a recipe that the backend does not craft, with the run that adds the rule (crafting.md, the plan). Stage 3.7b applies
-# refining, craft-all, the reward event, the first-craft achievement, and the cooldown: these stay causes only for data with no rule.
-CAUSE_PROCEDURAL = "procedural result (stage 3.7c)"
+# refining, craft-all, the reward event, the first-craft achievement, and the cooldown; stage 3.7c the procedural result, the perk items, the
+# Azoth upgrade, the craft gear score, and the currency ingredients: these stay causes only for data with no rule.
 CAUSE_EVENT_ROW = "reward event with no row of the event tables"
 CAUSE_EVENT_XP = "reward event with character experience (no rule)"
 CAUSE_EVENT_SKILL = "reward event of a progression with no rank table"
 CAUSE_FIRST_CRAFT_ROW = "first-craft achievement with no row of the achievement tables"
 CAUSE_COOLDOWN_PART = "a cooldown with only a time or only a count (no rule)"
 CAUSE_NO_RANKS = "refining with no rank table of its trade skill"
-CAUSE_CURRENCY = "currency ingredient (stage 3.7c: the Azoth balance)"
-CAUSE_PERKS = "perk items or Azoth upgrade (stage 3.7c)"
-CAUSE_GEAR_SCORE = "craft gear score rule (stage 3.7c)"
+CAUSE_CURRENCY = "currency ingredient with no cap of its balance (no rule)"
+CAUSE_PERKS = "more perk items than the perk item controls of the client (4)"
 CAUSE_UNLOCK = "recipe unlock or achievement rule (a later stage)"
 CAUSE_SKIP_GRANT = "no granted item (SkipGrantItems: a later stage)"
 CAUSE_WORLD_TAGS = "world tags of a seasonal server (no such server)"
@@ -152,7 +172,7 @@ CAUSE_TEMPORARY = "temporary recipe (no rule)"
 CAUSE_NO_OUTPUT = "no output item"
 CAUSE_NO_QUANTITY = "no output quantity"
 CAUSE_NOT_ITEM = "output is not an item of the item tables"
-CAUSE_RANGE = "output has a gear score range and no override (stage 3.7c)"
+CAUSE_RANGE = "output has a gear score range, no override, and no BaseGearScore (no rule)"
 CAUSE_INGREDIENT = "an ingredient is not an item of the item tables"
 CAUSE_CATEGORY = "a category ingredient has no item"
 CAUSE_NO_INGREDIENT = "no ingredient"
@@ -261,14 +281,19 @@ class Tables:
         self.resources: dict[str, dict] = {}
         self.buckets: set[str] = set()
         self.ranks: dict[str, list[float]] = {}
+        self.rank_gear_score: dict[str, list[list[int]]] = {}
         self.achievements: dict[str, int] = {}
+        self.currency_rows: dict[str, str] = {}
+        self.currency_ranks: dict[str, int] = {}
+        self.text_cells = 0
         found = set()
         for path in sources.paths(TABLES_FOLDER, ".datasheet"):
             data = sources.read(path)
             if data is None:
                 continue
             kind = sheet_type(data)
-            if kind not in (RECIPE_TYPE, MASTER_TYPE, HOUSE_TYPE, EVENT_TYPE, RESOURCE_TYPE, BUCKET_TYPE, RANK_TYPE, ACHIEVEMENT_TYPE):
+            if kind not in (RECIPE_TYPE, MASTER_TYPE, HOUSE_TYPE, EVENT_TYPE, RESOURCE_TYPE, BUCKET_TYPE, RANK_TYPE, ACHIEVEMENT_TYPE,
+                            CURRENCY_TYPE, CURRENCY_RANK_TYPE):
                 continue
             sheet = Sheet(data)
             if kind == HOUSE_TYPE:
@@ -290,8 +315,13 @@ class Tables:
                 self._ranks(sheet, path)
             elif kind == ACHIEVEMENT_TYPE:
                 self._achievements(sheet, path)
+            elif kind == CURRENCY_TYPE:
+                self._currency_rows(sheet, path)
+            elif kind == CURRENCY_RANK_TYPE:
+                self._currency_ranks(sheet, path)
         sources.check_complete()
-        for kind in (RECIPE_TYPE, MASTER_TYPE, EVENT_TYPE, RESOURCE_TYPE, BUCKET_TYPE, RANK_TYPE, ACHIEVEMENT_TYPE):
+        for kind in (RECIPE_TYPE, MASTER_TYPE, EVENT_TYPE, RESOURCE_TYPE, BUCKET_TYPE, RANK_TYPE, ACHIEVEMENT_TYPE, CURRENCY_TYPE,
+                     CURRENCY_RANK_TYPE):
             if kind not in found:
                 raise Failure(f"the game copy has no table of the type {kind}")
 
@@ -319,8 +349,23 @@ class Tables:
                 "override": whole(sheet.source(row, "GearScoreOverride"), f"{what}: GearScoreOverride", GEAR_SCORE_LIMIT),
                 "min": whole(sheet.source(row, "MinGearScore"), f"{what}: MinGearScore", GEAR_SCORE_LIMIT),
                 "max": whole(sheet.source(row, "MaxGearScore"), f"{what}: MaxGearScore", GEAR_SCORE_LIMIT),
-                "bonus": [whole(sheet.source(row, column), f"{what}: {column}", BONUS_LIMIT) if column in sheet.columns else 0
-                          for column in BONUS_COLUMNS]}
+                "maxCraft": whole(sheet.source(row, "MaxCraftGS"), f"{what}: MaxCraftGS", GEAR_SCORE_LIMIT) if "MaxCraftGS" in sheet.columns else 0,
+                "bonus": [self._bonus(sheet, row, column, what) for column in BONUS_COLUMNS]}
+
+    def _bonus(self, sheet: Sheet, row: int, column: str, what: str) -> int:
+        """@return A bonus value of an item (0 for a table with no such column). Stage 3.7c: a gear score column with a text that is not a
+        number is 0 and a counted diagnostic (the supported build has one: a mount consumable with the text "Expansion2023"); the other
+        columns stop the tool, as in stage 3.7b."""
+        if column not in sheet.columns:
+            return 0
+        text = sheet.source(row, column)
+        if column.startswith("IngredientGearScore"):
+            try:
+                float(text.strip() or "0")
+            except ValueError:
+                self.text_cells += 1
+                return 0
+        return whole(text, f"{what}: {column}", BONUS_LIMIT)
 
     def _house(self, sheet: Sheet, path: str) -> None:
         need(sheet, path, ("HouseItemID",))
@@ -359,7 +404,9 @@ class Tables:
         column RollBonus (AzothStaff, Riding) has the bonus 0 for each rank (the default of the client reader)."""
         need(sheet, path, ("Level",))
         has_bonus = "RollBonus" in sheet.columns
+        has_gear_score = all(column in sheet.columns for column in RANK_GEAR_SCORE_COLUMNS)
         values: dict[int, float] = {}
+        gear_scores: dict[int, list[int]] = {}
         for row in range(sheet.row_count):
             text = sheet.source(row, "Level").strip()
             if not text:
@@ -370,11 +417,15 @@ class Tables:
             values[level] = number(sheet.source(row, "RollBonus"), f"{path}: the rank {level}: RollBonus") if has_bonus else 0.0
             if not 0 <= values[level] <= BONUS_LIMIT:
                 raise Failure(f"{path}: the rank {level}: RollBonus is outside 0 to {BONUS_LIMIT}")
+            # Stage 3.7c: the largest gear score bonus of the rank for an output of each tier (a table with no such column: 0).
+            gear_scores[level] = [whole(sheet.source(row, column), f"{path}: the rank {level}: {column}", GEAR_SCORE_LIMIT) if has_gear_score else 0
+                                  for column in RANK_GEAR_SCORE_COLUMNS]
         if sorted(values) != list(range(len(values))):
             raise Failure(f"{path}: the ranks are not 0 to {len(values) - 1} with no gap")
         if sheet.name.lower() in (name.lower() for name in self.ranks):
             raise Failure(f"{path}: two rank tables of the trade skill {sheet.name}")
         self.ranks[sheet.name] = [values[level] for level in range(len(values))]
+        self.rank_gear_score[sheet.name] = [gear_scores[level] for level in range(len(values))]
 
     def _achievements(self, sheet: Sheet, path: str) -> None:
         need(sheet, path, ("AchievementID", "AchievementIndex"))
@@ -383,6 +434,29 @@ class Tables:
             if identifier and identifier.lower() not in self.achievements:
                 self.achievements[identifier.lower()] = whole(sheet.source(row, "AchievementIndex"), f"{path}: the achievement {identifier}",
                                                               0x2000000 * 8 - 1)
+
+    def _currency_rows(self, sheet: Sheet, path: str) -> None:
+        """Stage 3.7c: the rank table of each categorical progression (a currency such as Azoth_Currency is one: MaxLevel 0)."""
+        need(sheet, path, ("CategoricalProgressionId", "RankTableId"))
+        for row in range(sheet.row_count):
+            identifier = sheet.source(row, "CategoricalProgressionId").strip()
+            if identifier and identifier.lower() not in self.currency_rows:
+                self.currency_rows[identifier.lower()] = sheet.source(row, "RankTableId").strip()
+
+    def _currency_ranks(self, sheet: Sheet, path: str) -> None:
+        """Stage 3.7c: the MaximumInfluence of the rank 0 of a rank table of a categorical progression (the cap of a balance; the table name
+        is the RankTableId)."""
+        if "Rank" not in sheet.columns or "MaximumInfluence" not in sheet.columns:
+            return
+        for row in range(sheet.row_count):
+            if sheet.source(row, "Rank").strip() == "0":
+                self.currency_ranks[sheet.name.lower()] = whole(sheet.source(row, "MaximumInfluence"), f"{path}: MaximumInfluence", 10**12)
+
+    def currency(self, identifier: str) -> dict | None:
+        """@return The cap of the balance of a currency (the MaximumInfluence of the rank 0 of its rank table), or None."""
+        table = self.currency_rows.get(identifier.lower())
+        cap = self.currency_ranks.get(table.lower()) if table else None
+        return {"cap": cap} if cap else None
 
     def event(self, identifier: str) -> dict | None:
         """@return The values of an event of a recipe (the trade skill, its reward, the character experience, the standing), or None."""
@@ -396,13 +470,71 @@ class Tables:
                 "standing": number(sheet.source(row, "TerritoryStanding"), f"{what}: TerritoryStanding")}
 
 
+def read_craft_generation(sources: Sources) -> dict:
+    """@return The crafting part of the perk generation data of the base attributes file (stage 3.7c): for each tier the gear score ranges of
+    each perk count of the list "Crafting" (the second list of a tier with "value1" elements; the first one is "General", which
+    tools/gamedata/perks.py exports: the crafting flag of the roll selects this list, client 0x5C4D730), and the Perk, Attribute, and Gem Slot
+    Chance Modifier (the chance that an upgrade level adds to a bucket of the type Generated, Inherent, and Gem: client 0x5C345F0)."""
+    roots = sources.stream(BASE_ATTRIBUTES)
+    if roots is None:
+        sources.check_complete()
+        raise Failure(f"{BASE_ATTRIBUTES} has no source")
+
+    def find(name: str):
+        wanted = field_id(name)
+        for root in roots:
+            for element in walk(root):
+                if element.name == wanted:
+                    return element
+        raise Failure(f"{BASE_ATTRIBUTES} has no field \"{name}\"")
+
+    def whole_of(element, name: str) -> int:
+        child = child_of(element, field_id(name)) if element is not None else None
+        if child is None or not child.value or len(child.value) > 8:
+            raise Failure(f"a field \"{name}\" of the perk generation data is not a whole number")
+        return int.from_bytes(child.value, "big")
+
+    def value_list(member) -> bool:
+        return bool(member.children) and all(child_of(entry, field_id("value1")) is not None for entry in member.children)
+
+    generation = find("Perk Generation Data")
+    tier_list = next((member for member in generation.children
+                      if member.children and all(child_of(entry, field_id("Max Perk Channel")) is not None for entry in member.children)), None)
+    if tier_list is None:
+        raise Failure("the perk generation data has no tier")
+    tiers = []
+    for tier in tier_list.children:
+        # The members of a tier with no value: the lists General and Crafting (empty for the tiers 0 and 1), then a structure.
+        lists = [member for member in tier.children if member.value is None]
+        if len(lists) < 2 or not all(value_list(member) or not member.children for member in lists[:2]):
+            raise Failure("a tier of the perk generation data has no list Crafting (the second list of the perk counts)")
+        counts = []
+        for entry in lists[1].children:
+            ranges = child_of(entry, field_id("value2"))
+            pairs = [[whole_of(pair, "value1"), whole_of(pair, "value2")] for pair in ([] if ranges is None else ranges.children)]
+            if any(high < low for low, high in pairs):
+                raise Failure("a gear score range of the perk generation data ends below its start")
+            counts.append([whole_of(entry, "value1"), pairs])
+        tiers.append(counts)
+    modifiers = []
+    for name in ("Perk Chance Modifier", "Attribute Chance Modifier", "Gem Slot Chance Modifier"):
+        element = find(name)
+        if element.value is None or len(element.value) != 4:
+            raise Failure(f"{BASE_ATTRIBUTES}: \"{name}\" is not a number of 4 bytes")
+        value = struct.unpack(">f", element.value)[0]
+        if not math.isfinite(value) or not 0 <= value <= 100:
+            raise Failure(f"{BASE_ATTRIBUTES}: \"{name}\" is not a number of 0 to 100")
+        modifiers.append(round(value, 6))
+    return {"tiers": tiers, "chanceModifiers": modifiers}
+
+
 def number_list(text: str, what: str) -> list[float]:
     """@return The numbers of a list cell ("0.25,0.5,0.75,1"); a blank cell is an empty list."""
     return [round(number(part, what), 6) for part in text.split(",") if part.strip()]
 
 
 def recipe_entry(identifier: str, sheet: Sheet, row: int, tables: Tables, categories: dict[str, list[str]],
-                 station_types: set[str]) -> dict:
+                 station_types: set[str], currencies: dict[str, dict]) -> dict:
     """@return The entry of one recipe row with its causes (an empty list: the backend of stage 3.7a crafts it)."""
     what = f"the recipe {identifier} ({sheet.name})"
 
@@ -430,7 +562,7 @@ def recipe_entry(identifier: str, sheet: Sheet, row: int, tables: Tables, catego
         "fee": whole(cell("CraftingFee"), f"{what}: CraftingFee", 100000000),
         "tax": flag(cell("UseCraftingTax"), f"{what}: UseCraftingTax"),
         "baseGearScore": whole(cell("BaseGearScore"), f"{what}: BaseGearScore", GEAR_SCORE_LIMIT),
-        "baseTier": whole(cell("BaseTier"), f"{what}: BaseTier", 100),
+        "baseTier": whole(cell("BaseTier"), f"{what}: BaseTier", 100), "maxCraftGS": 0,
         "disallowBonuses": flag(cell("DisallowBonusesToGS"), f"{what}: DisallowBonusesToGS"), "perkItems": perk_items,
         "attributeSlots": whole(cell("AttributeOnlyPerkItemSlotCount"), f"{what}: AttributeOnlyPerkItemSlotCount", 100), "push": push,
         "perkCost": whole(cell("PerkCost"), f"{what}: PerkCost", 1000000), "event": cell("GameEventID"),
@@ -466,22 +598,21 @@ def recipe_entry(identifier: str, sheet: Sheet, row: int, tables: Tables, catego
             causes.append(CAUSE_INGREDIENT)
         elif kind == "Category_Only" and not categories.get(name.lower()):
             causes.append(CAUSE_CATEGORY)
-        elif kind == "Currency":
+        elif kind == "Currency" and name.lower() not in currencies:
             causes.append(CAUSE_CURRENCY)
     if not entry["ingredients"]:
         causes.append(CAUSE_NO_INGREDIENT)
     # Stage 3.7b: the event, the first-craft achievement, the cooldown, and refining have a rule; only data with no rule is a cause.
     event = tables.event(entry["event"]) if entry["event"] else None
     ranks = {name.lower() for name in tables.ranks}
-    for test, cause in ((procedural, CAUSE_PROCEDURAL), (bool(entry["event"]) and event is None, CAUSE_EVENT_ROW),
+    for test, cause in ((bool(entry["event"]) and event is None, CAUSE_EVENT_ROW),
                         (event is not None and event["xp"] != 0, CAUSE_EVENT_XP),
                         (event is not None and bool(event["progression"]) and event["progression"].lower() not in ranks, CAUSE_EVENT_SKILL),
                         (bool(entry["firstCraftAchievement"]) and entry["firstCraftAchievement"].lower() not in tables.achievements,
                          CAUSE_FIRST_CRAFT_ROW),
                         ((entry["cooldownSeconds"] > 0) != (entry["cooldownQuantity"] > 0), CAUSE_COOLDOWN_PART),
                         (entry["refining"] and entry["skill"].lower() not in ranks, CAUSE_NO_RANKS),
-                        (perk_items > 0 or entry["attributeSlots"] > 0 or entry["perkCost"] > 0, CAUSE_PERKS),
-                        (entry["baseGearScore"] > 0, CAUSE_GEAR_SCORE),
+                        (perk_items + entry["attributeSlots"] > PERK_ITEM_LIMIT, CAUSE_PERKS),
                         (not entry["known"] or bool(entry["requiredAchievement"]) or bool(entry["hiddenByAchievement"])
                          or bool(entry["unlockedAchievement"]), CAUSE_UNLOCK),
                         (entry["skipGrant"], CAUSE_SKIP_GRANT), (bool(entry["worldTags"]), CAUSE_WORLD_TAGS),
@@ -495,7 +626,10 @@ def recipe_entry(identifier: str, sheet: Sheet, row: int, tables: Tables, catego
         causes.append(CAUSE_NOT_ITEM)
     elif output in tables.items:
         item = tables.items[output]
-        if item["max"] != 0 and item["override"] == 0:
+        entry["maxCraftGS"] = item["maxCraft"]
+        # Stage 3.7c: an output with a gear score range gets the craft gear score of a recipe with a BaseGearScore (client 0x2E41E10 computes
+        # it only then); with no BaseGearScore the data has no rule for its gear score.
+        if item["max"] != 0 and item["override"] == 0 and entry["baseGearScore"] == 0:
             causes.append(CAUSE_RANGE)
     if entry["outputQty"] is None or entry["outputQty"] == 0:
         causes.append(CAUSE_NO_QUANTITY)
@@ -509,7 +643,17 @@ def build(sources: Sources) -> dict:
     stations = read_stations(sources)
     slice_keys = read_station_slices(sources)
     tables = Tables(sources)
+    generation = read_craft_generation(sources)
     station_types = {key for row in stations for key in row["types"]}
+    # Stage 3.7c: the currencies of the recipes with the cap of their balance (a currency with no such data stays a cause of its recipes).
+    currencies: dict[str, dict] = {}
+    for identifier, sheet, row in tables.recipes.values():
+        for index in range(1, INGREDIENTS + 1):
+            if sheet.source(row, f"Type{index}").strip() == "Currency":
+                name = sheet.source(row, f"Ingredient{index}").strip()
+                currency = tables.currency(name) if name else None
+                if currency is not None:
+                    currencies[name.lower()] = {"id": name, **currency}
     station_names = {row["name"].lower() for row in stations}
     missing = {key: sorted(paths) for key, paths in sorted(slice_keys.items()) if key.lower() not in station_names}
     # The members of each category (IngredientCategories of the master items), in the byte order of their ids.
@@ -524,7 +668,7 @@ def build(sources: Sources) -> dict:
     crcs: dict[int, str] = {}
     for key in sorted(tables.recipes, key=lambda value: value.encode()):
         identifier, sheet, row = tables.recipes[key]
-        entry = recipe_entry(identifier, sheet, row, tables, categories, station_types)
+        entry = recipe_entry(identifier, sheet, row, tables, categories, station_types, currencies)
         if entry["crc"] in crcs:
             raise Failure(f"the recipes {crcs[entry['crc']]} and {identifier} have one CRC-32 ({entry['crc']:08x})")
         crcs[entry["crc"]] = identifier
@@ -566,9 +710,13 @@ def build(sources: Sources) -> dict:
               "houseItems": len(tables.house_items), "events": len(events), "missingEvents": missing_events,
               "resources": len(resources), "missingBuckets": missing_buckets, "rankTables": len(tables.ranks),
               "achievements": len(achievements), "materials": len(materials), "byCause": dict(sorted(by_cause.items()))}
+    counts["currencies"] = len(currencies)
+    counts["gearScoreTextCells"] = tables.text_cells
     return {"format": FORMAT, "stations": stations, "missingStations": missing, "recipes": recipes, "categories": categories,
             "events": events, "resources": resources, "ranks": dict(sorted(tables.ranks.items())), "achievements": dict(sorted(achievements.items())),
-            "materials": materials, "counts": counts}
+            "materials": materials, "rankGearScore": dict(sorted(tables.rank_gear_score.items())),
+            "currencies": {value["id"]: {"cap": value["cap"]} for value in sorted(currencies.values(), key=lambda value: value["id"].encode())},
+            "perkGeneration": generation, "counts": counts}
 
 
 def write(target: Path, document: dict) -> None:
@@ -611,7 +759,7 @@ def main() -> int:
         print(f"crafting: {target}: {error}. No file was written.", file=sys.stderr)
         return 1
     counts = document["counts"]
-    print(f"{target}: {counts['recipes']} recipes ({counts['supported']} that the backend crafts in stage 3.7b; {counts['campRecipes']} "
+    print(f"{target}: {counts['recipes']} recipes ({counts['supported']} that the backend crafts in stage 3.7c; {counts['campRecipes']} "
           f"with a camp key, {counts['campSupported']} of them supported), {counts['stations']} station rows, {counts['categories']} "
           f"ingredient categories, {counts['events']} events, {counts['resources']} resource items, {counts['rankTables']} rank tables, "
           f"{counts['achievements']} first-craft achievements, {counts['materials']} items with a bonus item value")

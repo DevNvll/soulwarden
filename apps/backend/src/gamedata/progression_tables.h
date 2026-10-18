@@ -244,6 +244,11 @@ public:
     [[nodiscard]] const ExpansionRow* base_expansion() const;
     /** @return The largest gear score of an equipped item of a player: MaxEquipGS of the owned expansion, or of no expansion. 0: no limit (no rows). */
     [[nodiscard]] std::uint32_t max_equip_gear_score() const;
+    /**
+     * @return The largest gear score of a craft of a player (stage 3.7c; client 0x2E57A70 with the setting
+     *         javelin.max-craft-gear-score-override 0): MaxCraftGS of the owned expansion, or of no expansion. 0: no limit (no rows).
+     */
+    [[nodiscard]] std::uint32_t max_craft_gear_score() const;
     /** @return The entitlements that each account gets, the expansion first. */
     [[nodiscard]] std::span<const EntitlementRow> entitlements() const {
         return m_data.entitlements;

@@ -728,10 +728,17 @@ std::optional<json> items_view(world::World& target, const std::string& characte
             equipment.push_back(item_json(*content.item, slot));
         }
     }
+    // Stage 3.7c: the Azoth balance (the categorical progression Azoth_Currency; the inventory screen of the client shows it with the coin) and
+    // its cap (the crafting data; 0: no data).
+    const std::optional<world::SkillView> skills = target.skills().view(character);
+    const gamedata::CraftingData* crafting = target.crafting().data();
+    const gamedata::CraftCurrency* azoth = crafting != nullptr ? crafting->currency(world::kAzothCurrency) : nullptr;
     return json{{"character", character},
                 {"inWorld", holdings->inWorld},
                 {"slots", holdings->bag.slots.size()},
                 {"coin", holdings->wallet.coin},
+                {"azoth", skills ? world::Skills::balance(skills->skills, world::kAzothCurrency) : 0},
+                {"azothCap", azoth != nullptr ? azoth->cap : 0},
                 {"items", items},
                 {"equipment", equipment}};
 }

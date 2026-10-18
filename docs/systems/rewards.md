@@ -70,7 +70,9 @@ the respawn of a creature of a spawn point. The wire contracts are in the protoc
   data gets the perk roll of the client (`world/perk_roll.h`) for each instance, with the level
   of the character that gets it and the gear score of the drop; the swap of the game follows
   at the grant. A character below level 7 gets only the fixed perks. `tools/world perkroll`
-  rolls with no item (test case IZ3; live check I12: a rapier of a drop with one perk).
+  rolls with no item (test case IZ3; live check I12: a rapier of a drop with one perk). A craft uses the same generator
+  (`perk_roll.cpp`, `generate`) with the inputs of the craft and no level gate (stage 3.7c, [Crafting](crafting.md)); a roll with no input
+  is the loot roll (test case CRAFTC2: the same perks and draws).
 - The loot tool writes no file with a value that the backend refuses (code review of stage
   3.3a, finding F13, case RA13): the KillExpModifier of a level difference from -1 to 100, its
   MaxRewardLevelDelta from 0 to 1,000, and the odds of a bucket candidate not below 0.

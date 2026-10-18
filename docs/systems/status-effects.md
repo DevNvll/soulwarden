@@ -215,7 +215,11 @@ status. The wire contract is in the protocol notes (section 4.24). The status ef
   SV2).
 - The statuses are not in the database: a restart of the backend ends them (a rule of this project from stage 1.3b,
   also for the cooldowns). The research lists the options for a later decision of the user (persist long statuses with
-  wall ends, or not).
+  wall ends, or not). Stage 3.7c: thus a food with a crafting bonus (FoodWeaponsmithT5, 40 minutes) also ends at a restart.
+- The craft bonus of the statuses (stage 3.7c, [Crafting](crafting.md)): the columns MaxGS<skill> of the active statuses (a food, the
+  status of a perk of an equipped item, a trophy status with its stacks) are the craft bonus of each trade skill. `Gear::refresh` calls
+  `Crafting::refresh_bonus` at its end; a change of the sums marks the Crafting state 205 (field 1) of the owner. The column MGS<skill> has
+  no effect. A row with no duration (a trophy, the status of a gear perk) stays only with a time of the command or with its source.
 - The cost: the expiry and the ticks look only at the due list (one entry for each end and each tick that is due); an
   old entry (a renewed status) is taken and dropped. No rule looks at each character, creature, or spawn point (test
   case ST11 has a time limit).

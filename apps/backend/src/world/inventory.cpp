@@ -512,6 +512,9 @@ Inventory::Plan Inventory::plan_craft(const std::string& characterId, const std:
         std::vector<std::uint32_t> from(costs.size(), 0);
         GiveOptions options;
         options.action = output.action;
+        options.gearScore = output.gearScore;
+        options.exactGearScore = output.gearScore.has_value();
+        options.perks = output.perks;
         std::set<std::uint32_t> outputSlots;
         for (std::uint32_t job = 0; job < jobs; ++job) {
             // The costs of one job: the unlocked stacks of the bag first, then the quick slots (the sources of the cache of the client).
@@ -721,7 +724,9 @@ ItemError Inventory::give_into(Bag& bag,
     // The gear score of a give (stage B0): the range of the item table, to the upgrade limit of the item (give_limit). A value
     // outside the range gets the nearest value of the range, as before stage B0 (a decision of an agent: the command makes a
     // valid item, and the log line names the change).
-    const std::uint32_t limit = give_limit(*definition);
+    // Stage 3.7c: the craft gear score has its own cap (client 0x2E57A70): the new instance gets it as it is.
+    const std::uint32_t limit = options.exactGearScore && options.gearScore ? std::max(give_limit(*definition), *options.gearScore)
+                                                                            : give_limit(*definition);
     if (options.gearScore && definition->maxGearScore != 0
         && (*options.gearScore > limit || *options.gearScore < definition->minGearScore)) {
         log::write("inventory: the gear score %u of %s is outside its range %u to %u: the new item gets %u",

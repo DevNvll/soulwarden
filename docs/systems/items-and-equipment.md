@@ -78,6 +78,9 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   test case BC10).
 - A loot item gets the perks of the roll of the client (`world/perk_roll.h`, protocol notes
   4.23): each instance of a drop has its own roll, with the level of the character.
+- A crafted procedural item (stage 3.7c, [Crafting](crafting.md)) gets the craft gear score as its gear score (also above the give limit
+  of its item table, `GiveOptions::exactGearScore`) and the perks of the craft roll of the same generator (`roll_craft_perks`) in the
+  transaction of its job, with the cause ItemCreated. Its rarity comes from its perk count (the client).
 - The rarity of an item is a value of the client: it computes it from the perk count.
 - The plan of a craft (stage 3.7a, `Inventory::plan_craft`, [Crafting](crafting.md)): the costs of a job (the quantities of the recipe)
   come from the unlocked stacks of the bag in the order of the slots, then from the quick slots 14 to 17 [client: the cache of the crafting

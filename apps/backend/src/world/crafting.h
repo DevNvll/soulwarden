@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <functional>
+#include <string_view>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -14,6 +15,7 @@
 #include "world/entity.h"
 #include "world/interactions.h"
 #include "world/inventory.h"
+#include "world/perk_roll.h"
 
 // The crafting of fixed recipes at a station and at a camp (stage 3.7a, docs/systems/crafting.md, protocol notes 4.50), and from stage 3.7b
 // refining and the reward progress (protocol notes 4.51): the bonus items of decision D2, the trade skill experience of the event, the
@@ -56,6 +58,16 @@
 // character does not have adds (3 - 1) times that and writes the achievement), and the cooldown row of the recipe. The request checks the
 // crafts that are left in the cooldown window. The output of a job before the last job of a craft-all batch has the cause ItemAdded.
 //
+// Stage 3.7c, a procedural result (protocol notes 4.52): the craft gear score of the request (client 0x2E57A70: BaseGearScore, the gear
+// score bonus of the rank for the tier of the output, the gear score of the selected category members of a procedural recipe, the craft
+// bonus of the trade skill of the statuses (state 205 field 1, to the cap 50), then the override of the item and the cap: the MaxCraftGS of
+// the item, else of the expansion); a claim of the client that is not 0 and not this value is refused (client 0x2E41E10). The perk items
+// of the request (resource items: their PerkBucket) and the upgrade level G (Azoth) go to the perk generator of the loot (world/perk_roll.h)
+// with the crafting inputs; each job rolls its own perks with the one random source of the world; the instance gets the swap of the game.
+// The Azoth of a job (PerkCost x G, then the Azoth discount of the station: client 0x2E56070, 0x2E40EE0) and of its currency ingredients
+// leaves the balance of the character (the categorical progression Azoth_Currency) in the transaction of the job; each perk item costs one
+// unit for each job.
+//
 // The cost depends on the requests and the active batches, not on the size of the world (MP-8): a request finds its recipe, its station
 // row, and a category member in hash maps, the station of the use through the active interaction of the character, and the plan looks only
 // at the bag and the quick slots of that character; a batch is one timer of the world. World thread only.
@@ -89,7 +101,64 @@ inline constexpr std::uint32_t kMaxIngredientQuantity = 50000;
 inline constexpr std::uint64_t kFirstCraftMultiplier = 3;
 /** The scale of the roll bonus points in the bonus item chance (client 0x2E4FF50: chance + points x 0.0001). */
 inline constexpr double kRollBonusScale = 0.0001;
+/**
+ * Stage 3.7c: the cap of the craft gear score bonus of the statuses (client setting javelin.crafting-status-max-gs-cap, registered with 50 at
+ * 0x61712EA; live check L5: the bonus 60 of field 1 of state 205 gave the knife 255, not 265).
+ */
+inline constexpr std::uint32_t kStatusGearScoreCap = 50;
+/** The trade skills of the client in the order of their TradeskillType code (Weaponsmithing 0 to Riding 20; None is 0xFF: 0x2E57A70). */
+inline constexpr std::array<const char*, 21> kTradeskills{
+    "Weaponsmithing", "Armoring", "Jewelcrafting", "Arcana",   "Cooking", "Furnishing",         "Engineering",
+    "Smelting",       "Woodworking", "Leatherworking", "Weaving", "Stonecutting", "Skinning",  "Mining",
+    "Logging",        "Harvesting", "WildernessSurvival", "Fishing", "AzothStaff", "Musician", "Riding"};
+/** The client setting javelin.enable-azoth-station-discounts (registered with true at 0x616EBD4): the Azoth discount of the station applies. */
+inline constexpr bool kAzothStationDiscounts = true;
 } // namespace crafting_rules
+
+/** @return The TradeskillType code of a trade skill (any case), or no value. */
+[[nodiscard]] std::optional<std::uint8_t> tradeskill_code(std::string_view skill);
+
+/**
+ * The craft gear score of a request (stage 3.7c; client 0x2E57A70, called by the server facet 0x2E41E10 only for a recipe with a
+ * BaseGearScore): the high value of the pair. The client ends with the low and the high value equal to the capped high value, thus the low
+ * parts (MinGearScoreBonus, IngredientGearScoreBaseBonus, the tier lists GearScoreBonus and GearScoreReduction of the recipe, the status
+ * minimum with its cap 0) change nothing (live check L5: a tier 3 Lumber in the knife of tier 2 kept 210).
+ */
+struct CraftGearScore {
+    /** True: the recipe has a BaseGearScore (the rule applies); false: the instance gets the value of the item table. */
+    bool rule{false};
+    std::uint32_t base{0};
+    /** The MaxGearScoreBonus of the rank of the trade skill for the tier of the output (not with DisallowBonusesToGS or IsRefining). */
+    std::uint32_t rank{0};
+    /** The IngredientGearScoreMaxBonus of the selected member of each category ingredient (IsProcedural only). */
+    std::int32_t materials{0};
+    /** The craft bonus of the trade skill of the statuses (state 205 field 1) and the part that counts (to the cap 50). */
+    std::uint32_t statusSum{0};
+    std::uint32_t status{0};
+    /** GearScoreOverride of the output (0: none) and the cap (the MaxCraftGS of the item, else of the expansion; 0: no cap). */
+    std::uint32_t override{0};
+    std::uint32_t cap{0};
+    /** The gear score of the output instance. */
+    std::uint32_t value{0};
+};
+
+/** The perk options of a request (stage 3.7c): the perk items, the upgrade level, the Azoth of one job. */
+struct CraftPerkPlan {
+    /** True: the output gets a roll of its perks (a procedural recipe whose output has perk places). */
+    bool roll{false};
+    /** The resource item ids of the perk items, in the order of the request, and the upgrade level G. */
+    std::vector<std::string> resources;
+    std::uint32_t upgrade{0};
+    /** The fixed perks of the output, its valid ordinary buckets, and the largest count of the crafted tier at the gear score. */
+    std::uint32_t fixedPerks{0};
+    std::uint32_t buckets{0};
+    std::uint32_t maxPerks{0};
+    /** The UI rule: min(maxPerks, buckets + fixed perks); fixed + perk items + G must not exceed it with G above 0. */
+    std::uint32_t maximumPerks{0};
+    /** The Azoth of the upgrade of one job and the currency of each currency ingredient of one job. */
+    std::uint64_t azothPerJob{0};
+    std::vector<std::pair<std::string, std::uint64_t>> currencies;
+};
 
 /**
  * The bonus item chance of a craft (stage 3.7b; client 0x2E4FF50 with 0x5C52A40 and 0x2E57A70; live check L4) and the extra output of
@@ -112,7 +181,10 @@ struct CraftYield {
     std::int32_t effectPoints{0};
     /** max(0, materialChance + points x 0.0001), to 6 decimals: the client shows it x 100 ("%.0f%%"). */
     double chance{0.0};
-    /** Decision D2: the expected extra units of one job (OutputQty x chance) and the largest extra of one job (its ceiling). */
+    /**
+     * Decision D2: the expected extra units of one job (OutputQty x chance) and the largest extra of one job (its ceiling). Stage 3.7c: 0 for
+     * a recipe that is not craft-all and not refining (the screen of the client shows no bonus chance for it).
+     */
     double extraUnits{0.0};
     std::uint32_t maxExtra{0};
 };
@@ -127,6 +199,15 @@ struct CraftExperience {
     std::string firstCraft;
     std::uint32_t firstCraftBit{0};
     std::uint64_t firstCraftExtra{0};
+    /**
+     * Code review of stage 3.7b, finding CR7B-R1: the raw values (no rounding): the reward x the units of one job, and (3 - 1) x that for
+     * the first craft. The experience of n jobs is floor(raw x n + firstCraftRaw) (craftingstatspanel.luac UpdateSkillAmount floors the
+     * total of the batch with its first-craft part: instructions 160 to 162 and 204 to 208).
+     */
+    double raw{0.0};
+    double firstCraftRaw{0.0};
+    /** @return The experience of the first `jobs` jobs of a batch (with the first craft when the batch has it). */
+    [[nodiscard]] std::uint64_t total(std::uint64_t jobs) const;
 };
 
 /** One ingredient entry of request 2997 (a claim of the client). */
@@ -172,7 +253,10 @@ enum class CraftVerdict : std::uint8_t {
     expansion,
     /** The count is 0 or above 10,000. */
     badQuantity,
-    /** Perk items or an upgrade level (stage 3.7c). */
+    /**
+     * Stage 3.7c: a perk item that is not a resource item of the data with a perk bucket, that can give the output no perk, above the
+     * perk items of the recipe, or on a recipe that is not procedural.
+     */
     perkItems,
     /** The entries do not name the ingredients of the recipe (count, type, item). */
     badIngredients,
@@ -185,8 +269,14 @@ enum class CraftVerdict : std::uint8_t {
     planFailed,
     /** Stage 3.7b: the count is above the crafts that are left in the cooldown window of the recipe. */
     cooldown,
+    /** Stage 3.7c: the gear score claim is not 0 and not the craft gear score of the server (client 0x2E41E10). */
+    gearScore,
+    /** Stage 3.7c: an upgrade level above the perks that the output can have, or on a recipe that is not procedural. */
+    upgrade,
+    /** Stage 3.7c: the balance of a currency (Azoth) is below the cost of the batch. */
+    notEnoughCurrency,
 };
-inline constexpr std::size_t kCraftVerdictCount = 20;
+inline constexpr std::size_t kCraftVerdictCount = 23;
 
 [[nodiscard]] const char* craft_verdict_text(CraftVerdict verdict);
 
@@ -234,6 +324,11 @@ struct CraftPreview {
     double cooldownSeconds{0.0};
     /** A seeded preview: the extra units of each job of the batch with the generator of the world at that seed (no change of the world). */
     std::vector<std::uint32_t> draws;
+    /** Stage 3.7c: the craft gear score, the perk options, and with a seed the perks of each job (before and after the swap of the game). */
+    CraftGearScore craftGearScore;
+    CraftPerkPlan perks;
+    std::vector<CraftPerkRoll> rolls;
+    std::vector<PerkIds> swapped;
 };
 
 struct CraftingCounts {
@@ -259,6 +354,12 @@ struct CraftingCounts {
     std::uint64_t cooldownWrites{0};
     /** The cooldown rows that the world entries read (each one of an active window), and the jobs that the timers ran. */
     std::uint64_t cooldownLoads{0};
+    /** Stage 3.7c: the perk rolls of the jobs, the Azoth that the jobs took, the changes of the craft bonus map of a character. */
+    std::uint64_t perkRolls{0};
+    std::uint64_t azothPaid{0};
+    std::uint64_t bonusRefreshes{0};
+    /** The buckets that the perk rolls looked at (case CRAFTC-LOAD: the reachable buckets of the recipe only). */
+    std::uint64_t bucketVisits{0};
 };
 
 /** The crafting of a character for a reader (a command). */
@@ -308,6 +409,27 @@ public:
     [[nodiscard]] CraftExperience experience_of(const Entity& character, const gamedata::Recipe& recipe) const;
     /** @return The crafts that are left in the cooldown window of a recipe for a character (CooldownQuantity with no active window). */
     [[nodiscard]] std::uint32_t cooldown_left(const Entity& character, const gamedata::Recipe& recipe) const;
+    /** @return The craft gear score of a recipe for a character with these selected items (CraftGearScore). */
+    [[nodiscard]] CraftGearScore gear_score_of(const Entity& character, const gamedata::Recipe& recipe, const gamedata::ItemDefinition& output,
+                                               const std::vector<std::string>& selected) const;
+    /**
+     * The checks of the perk options of a request (stage 3.7c) and their plan: the perk items (resource items with a perk bucket that can
+     * give the output a perk, the attribute-only slots), the upgrade level (the UI rule of the crafting screen), the Azoth of one job, the
+     * currency ingredients. @return accepted, perkItems, or upgrade.
+     */
+    [[nodiscard]] CraftVerdict perk_plan(const gamedata::Recipe& recipe, const gamedata::ItemDefinition& output, std::uint32_t gearScore,
+                                         const std::vector<std::string>& perkItems, std::uint32_t upgrade,
+                                         const gamedata::CraftingStation* station, CraftPerkPlan& plan, std::string& detail) const;
+    /**
+     * @return The Azoth of one job of an upgrade level (client 0x2E56070 and 0x2E40EE0): trunc(PerkCost x G x (1 - the reduction of the
+     *         territory: 0)), then with the discount of the station floor(that x (1 - discount)) (0 for a discount of 1).
+     */
+    [[nodiscard]] static std::uint64_t azoth_of(std::uint32_t perkCost, std::uint32_t upgrade, float discount);
+    /**
+     * Stage 3.7c: makes the craft bonus map of a character again (the MaxGS<skill> values of its statuses; Entity::craftGearBonus) and marks
+     * the Crafting state at a change. The gear system calls it after each refresh (a change of the statuses or of the equipment).
+     */
+    void refresh_bonus(Entity& character);
     /**
      * @return The extra units of one job (decision D2): floor(e), and one more unit when one draw of the generator is below the rest (no
      *         draw for a whole e).
@@ -317,10 +439,12 @@ public:
     /**
      * @return The plan of a recipe for a character (a command, the development routes and the tool window): the checks of a request with
      *         the station of its use (no station: the verdict noStation, and the plan with no station check), the first member of each
-     *         category, and the plan of the batch on a copy. No change.
+     *         category (or the item of `materials` at the index of the ingredient: the selection of the client), and the plan of the
+     *         batch on a copy. No change.
      */
     [[nodiscard]] CraftPreview preview(const std::string& characterId, const std::string& recipeId, std::uint32_t quantity,
-                                       std::optional<std::uint64_t> seed = std::nullopt);
+                                       std::optional<std::uint64_t> seed = std::nullopt, const std::vector<std::string>& perkItems = {},
+                                       std::uint32_t upgrade = 0, const std::vector<std::string>& materials = {});
     [[nodiscard]] CraftingView view(const std::string& characterId) const;
 
     [[nodiscard]] const CraftingCounts& counts() const {
@@ -338,6 +462,16 @@ private:
     CraftVerdict check(Entity& character, const gamedata::Recipe*& recipe, const CraftRequest* request, std::uint32_t quantity,
                        std::optional<StationContext>& station, const gamedata::CraftingStation*& row, std::vector<CraftCost>& costs,
                        CraftOutput& output, std::vector<std::string>& selected, std::string& detail, bool needStation) const;
+
+    /**
+     * Stage 3.7c: the checks of a procedural result, of the perk options, and of the currency of a request (or of a command): the craft gear
+     * score and the claim of the client (no claim for a command), the perk plan, the perk item costs (one unit of each for each job: added to
+     * `costs`), and the balance of each currency for the whole batch.
+     */
+    CraftVerdict extras(const Entity& character, const gamedata::Recipe& recipe, const std::string& outputId,
+                        const std::vector<std::string>& selected, const std::vector<std::string>& perkItems, std::uint32_t upgrade,
+                        std::optional<std::uint16_t> claim, const gamedata::CraftingStation* row, std::uint32_t quantity,
+                        CraftGearScore& score, CraftPerkPlan& perks, std::vector<CraftCost>& costs, std::string& detail) const;
 
     CraftVerdict refuse(CraftVerdict verdict, Entity* character, SessionId session, const CraftRequest& request, const std::string& detail);
     /** The timer of a batch: its next jobs. */

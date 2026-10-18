@@ -15,12 +15,15 @@
 // pair). Live check L6 of stage 3.7b: IngotT51 with used 1 and the end in one hour showed "Crafting Cooldown: 59m 57s per 9 items";
 // used 10 of 10 showed "per 0 items" and a disabled CRAFT; at the end the client itself showed "per 10 items" again. The skill code is the
 // TradeskillType of the client with Weaponsmithing 0 (Engineering 6: the bonus 50 of code 6 changed the knife of the Workshop from gear
-// score 205 to 255); the backend has no source of a gear score bonus of a skill yet (stage 3.7c): field 1 is empty.
+// score 205 to 255). Stage 3.7c: field 1 is the craft gear score bonus of the statuses of the character (Entity::craftGearBonus: the
+// MaxGS<skill> values of a food, of the status of a perk of an equipped item, of a trophy). Live check L5: the client does not add the
+// statuses itself (the food FoodEngineerT1 on the HUD left the knife at 205; the entry 6 = 5 gave 210, also with the food: no double), and it
+// caps the value at 50 (the entry 6 = 60 gave 255).
 //
 // View     Fragments
-// owner    group 0, both maps: each cooldown with an active window (its end after now), at each change (also an empty map after a
-//          change). No fragment in the first record of a character with no active cooldown (the client works with no state 205: live
-//          check L1 of stage 3.7a).
+// owner    group 0, both maps: each cooldown with an active window (its end after now) and each skill with a bonus, at each change (also
+//          empty maps after a change). No fragment in the first record of a character with no active cooldown and no bonus (the client
+//          works with no state 205: live check L1 of stage 3.7a).
 // observer no fragment: the remote player slice has no Crafting component.
 
 namespace soulwarden::backend::server::rep {
@@ -29,6 +32,7 @@ namespace {
 constexpr unsigned kGroups = 1;
 /** The limits of the readers of the client: 100 cooldown entries (0x2E897C0: count < 0x65), 21 bonus entries (0x2E89910). */
 constexpr std::size_t kMaxCooldowns = 100;
+constexpr std::size_t kMaxBonuses = 21;
 
 } // namespace
 
@@ -44,7 +48,7 @@ std::vector<hub::Bytes> encode_crafting_state(const world::Entity& entity, View 
             active.emplace_back(crc, &cooldown);
         }
     }
-    if (request.since == 0 && active.empty()) {
+    if (request.since == 0 && active.empty() && entity.craftGearBonus.empty()) {
         return {};
     }
     // More than 100 windows (no player has them: 61 recipes of the supported build have a cooldown, 45 of them with no cause): the 100
@@ -70,7 +74,17 @@ std::vector<hub::Bytes> encode_crafting_state(const world::Entity& entity, View 
     bonuses.size(0);
     bonuses.u8(1);
     bonuses.size64(sequence);
-    bonuses.size(0);
+    // The codes are the 21 TradeskillType values (0 to 20): the map has 21 entries at most.
+    const std::size_t count = std::min(entity.craftGearBonus.size(), kMaxBonuses);
+    bonuses.size(static_cast<std::uint32_t>(count));
+    std::size_t written = 0;
+    for (const auto& [code, bonus] : entity.craftGearBonus) {
+        if (written++ == count) {
+            break;
+        }
+        bonuses.u8(code);
+        bonuses.u16(bonus);
+    }
     std::vector<hub::Bytes> parts;
     parts.push_back(state.finish());
     return parts;

@@ -68,12 +68,18 @@ Usage:
                                                 REGION#RECORD, or a G) respawns after SECONDS (not the rule of the data)
   tools/world crafting CHARACTER                the crafting of a character (stage 3.7a): the station of its use (the Assembly
                                                 key, its row, the fee flag), its craft batch, and the counts
-  tools/world craft preview CHARACTER RECIPE [COUNT] [--seed N]
+  tools/world craft preview CHARACTER RECIPE [COUNT] [--seed N] [--perks ITEM,ITEM] [--upgrade G] [--materials ITEM,ITEM]
                                                 the plan of a recipe (a RecipeID) for the character with the station of its use:
                                                 the checks of a request, the costs, the output, the fee, the bag slots; stage 3.7b:
                                                 the bonus item chance, the extra units of each job (decision D2), the trade skill
                                                 experience with the first-craft bonus, the cooldown; --seed: the extra units of
-                                                each job of the batch with the generator of the world at that seed (no change)
+                                                each job of the batch with the generator of the world at that seed (no change);
+                                                stage 3.7c: the craft gear score with its parts, the perk plan (--perks: the perk
+                                                items, resource item ids; --upgrade: the Azoth level 0 to 5), the Azoth of a job,
+                                                and with --seed the perks of each job before and after the swap of the game;
+                                                --materials: the item of each ingredient in the order of the recipe (the
+                                                selection of the client; "-": the first member of a category)
+  tools/world azoth CHARACTER AMOUNT            the Azoth balance of a character (stage 3.7c; 0 to 2500, the cap of the data)
   tools/world craft stop CHARACTER              the craft batch of a character stops (the completed jobs stay)
   tools/world craft cooldown CHARACTER RECIPE USED SECONDS
                                                 DEVELOPMENT AID (stage 3.7b): the cooldown window of a recipe: USED crafts, SECONDS
@@ -654,8 +660,9 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         if show_bag:
             for item in document["items"]:
                 print(f"slot {item['slot']:>3}  {item_text(item)}")
+            azoth = f", Azoth {document['azoth']} of {document['azothCap']}" if document.get("azothCap") else ""
             print(f"{len(document['items'])} items in {document['slots']} slots, coin {document['coin'] // 100}."
-                  f"{document['coin'] % 100:02d} (the character is {place})")
+                  f"{document['coin'] % 100:02d}{azoth} (the character is {place})")
         for item in equipment:
             name = SLOT_NAMES.get(item["slot"], "")
             print(f"paperdoll slot {item['slot']:>2} {name:<14} {item_text(item)}")
@@ -950,9 +957,24 @@ def show_craft_preview(document: dict) -> None:
               + f": {experience['batch']} for the batch")
     if document.get("cooldown"):
         print(f"  cooldown: {document['cooldown']['left']} left in the window, {document['cooldown']['secondsLeft']:.0f} s to its end")
+    score = document.get("craftGearScore")
+    if score and score["rule"]:
+        print(f"  craft gear score {score['value']}: base {score['base']} + rank {score['rank']} + materials {score['materials']} + statuses "
+              f"{score['status']} (of {score['statusSum']}, cap 50)" + (f", override {score['override']}" if score["override"] else "")
+              + (f", cap {score['cap']}" if score["cap"] else ", no cap"))
+    plan = document.get("perkPlan")
+    if plan and (plan["roll"] or plan["currenciesPerJob"]):
+        currencies = ", ".join(f"{amount} {currency}" for currency, amount in plan["currenciesPerJob"].items()) or "none"
+        print(f"  perks: {'a roll' if plan['roll'] else 'no roll'}; perk items {plan['perkItems'] or '-'}, upgrade {plan['upgrade']}; largest "
+              f"count {plan['maxPerks']} (the screen: {plan['maximumPerks']}), {plan['buckets']} bucket(s), {plan['fixedPerks']} fixed perk(s), "
+              f"push {'on' if plan['push'] else 'off'}; currency of each job: {currencies}")
     seeded = document.get("seeded")
     if seeded:
         print(f"  seed {seeded['seed']}: extra units of each job {seeded['draws']}: {seeded['bonus']} bonus, {seeded['total']} in all")
+        for job in seeded.get("perks", []):
+            chances = ", ".join(f"{entry['bucket']} {entry['chance']:.2f}" for entry in job["chances"])
+            print(f"    job {job['job']}: resources {job['resourcePerks']}; target {job['target']}; chances [{chances}]")
+            print(f"      perks {[perk for perk in job['perks'] if perk]}; after the swap {[perk for perk in job['afterSwap'] if perk]}")
 
 
 def fetch(data_dir: Path, path: str) -> dict:
@@ -1586,12 +1608,29 @@ def main() -> None:
                 fail("--seed needs a number")
             seed = f"&seed={whole(words[at + 1], 'the seed')}"
             del words[at:at + 2]
+        extra = ""
+        for option, name in (("--perks", "perks"), ("--upgrade", "upgrade"), ("--materials", "materials")):
+            if option in words:
+                at = words.index(option)
+                if at + 1 >= len(words):
+                    fail(f"{option} needs a value")
+                value = words[at + 1]
+                if name == "perks" and not re.fullmatch(r"[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*", value):
+                    fail("--perks is a list of resource item ids with \",\" between them")
+                if name == "materials" and not re.fullmatch(r"([A-Za-z0-9_]+|-)(,([A-Za-z0-9_]+|-))*", value):
+                    fail("--materials is a list of item ids (or -) with \",\" between them")
+                extra += f"&{name}={whole(value, 'the upgrade level') if name == 'upgrade' else value}"
+                del words[at:at + 2]
         if len(words) not in (4, 5):
-            fail("tools/world craft preview CHARACTER RECIPE [COUNT] [--seed N]")
+            fail("tools/world craft preview CHARACTER RECIPE [COUNT] [--seed N] [--perks ITEM,ITEM] [--upgrade G] [--materials ITEM,ITEM]")
         if not re.fullmatch(r"[A-Za-z0-9_]+", words[3]):
             fail("RECIPE is a RecipeID of the crafting data (letters, digits, _)")
         quantity = f"&quantity={whole(words[4], 'the count')}" if len(words) == 5 else ""
-        request(data_dir, "POST", f"/v1/dev/crafting/preview?character={character_id(data_dir, words[2])}&recipe={words[3]}{quantity}{seed}")
+        request(data_dir, "POST",
+                f"/v1/dev/crafting/preview?character={character_id(data_dir, words[2])}&recipe={words[3]}{quantity}{seed}{extra}")
+    elif command == "azoth" and len(arguments) == 3:
+        request(data_dir, "POST", f"/v1/dev/crafting/currency?character={character_id(data_dir, arguments[1])}"
+                                  f"&amount={whole(arguments[2], 'the amount')}")
     elif command == "craft" and len(arguments) == 6 and arguments[1] == "cooldown":
         if not re.fullmatch(r"[A-Za-z0-9_]+", arguments[3]):
             fail("RECIPE is a RecipeID of the crafting data (letters, digits, _)")

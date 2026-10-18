@@ -162,6 +162,9 @@ void read_state(const json& reply, Snapshot& snapshot) {
         snapshot.attributes[index].spent = number_of(attribute, "spent");
     }
     snapshot.coin = wide_number_of(items, "coin");
+    // A backend from before stage 3.7c has no Azoth: 0 and no cap (the row of the window is then off).
+    snapshot.azoth = wide_number_of(items, "azoth");
+    snapshot.azothCap = wide_number_of(items, "azothCap");
     snapshot.bagSlots = number_of(items, "slots");
     read_items(member_of(items, "items"), snapshot.bag);
     read_items(member_of(items, "equipment"), snapshot.equipment);

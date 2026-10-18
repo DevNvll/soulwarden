@@ -77,6 +77,8 @@ enum class ProgressError {
     notOwned,
     /** The tree reset has a cost in a currency that the backend does not have. */
     costNotPaid,
+    /** Stage 3.7c: the balance of a currency (Azoth) is below the cost. */
+    notEnoughBalance,
     /** The database did not accept the change. */
     storeFailed,
 };

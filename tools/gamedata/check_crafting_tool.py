@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check of the crafting data tool (crafting.py) with made-up sources (no file of the game). Stages 3.7a and 3.7b.
+"""Check of the crafting data tool (crafting.py) with made-up sources (no file of the game). Stages 3.7a to 3.7c.
 
 The tool stops with status 1, and writes no file, at a source that it cannot use (its docstring has the list). This check gives the
 functions of the tool made-up tables, station rows, and station slices, and compares each result. The test program of the backend runs it
@@ -7,11 +7,11 @@ functions of the tool made-up tables, station rows, and station slices, and comp
 
   recipe          a recipe row: its values, the station keys in lower case, the typed ingredients, the loader defaults of the client
                   (a blank push flag is true; a MaxPerkItemsAllowed of 0 is 1 for a procedural recipe), a blank output quantity (null)
-  causes          the causes of a recipe that the backend does not craft: a procedural recipe, a currency ingredient, an unlock, an output
-                  that is not an item, an output with a gear score range and no override, an ingredient that is not an item, a category
-                  with no item, a station key that no row permits, a 0 quantity; stage 3.7b: an event with no row, with character
-                  experience, or of a progression with no rank table, a first-craft achievement with no row, a cooldown with only a time,
-                  refining with no rank table of its trade skill
+  causes          the causes of a recipe that the backend does not craft: a currency with no cap of its balance, an unlock, an output
+                  that is not an item, an output with a gear score range, no override, and no BaseGearScore, an ingredient that is not an
+                  item, a category with no item, a station key that no row permits, a 0 quantity, more perk items than the 4 controls of the
+                  client; stage 3.7b: an event with no row, with character experience, or of a progression with no rank table, a
+                  first-craft achievement with no row, a cooldown with only a time, refining with no rank table of its trade skill
   stops           an ingredient type "Category_Any2", a quantity of 50,001, a level of 1,001, a flag "yes", a table with no column, two rows
                   of one recipe id, no station row, a station row with no type: each one stops the tool
   stations        the station rows (name, types in lower case, discount, mannequin) and the authored keys with no row ("missingStations")
@@ -21,6 +21,11 @@ functions of the tool made-up tables, station rows, and station slices, and comp
   refining        stage 3.7b: refining, craft-all, an event, a first-craft achievement, and a cooldown with their data give no cause; the
                   rank tables (the RollBonus of each rank, a table with no RollBonus column is 0), the first-craft bits, the bonus values
                   of the items (a table with no bonus column is 0), the tier lists of a recipe; a rank table with a gap stops the tool
+  procedural      stage 3.7c: a procedural recipe with a BaseGearScore, perk items, a PerkCost, and an Azoth ingredient gives no cause; the
+                  MaxCraftGS of its output, the largest gear score bonus of each rank for the tiers (a table with no such column: 0), the
+                  gear score values of an ingredient (a text that is not a number: 0 and counted), the cap of a currency (the
+                  MaximumInfluence of the rank 0 of its rank table), the list Crafting of the perk generation data and the three chance
+                  modifiers; a base attributes file with no list Crafting stops the tool
   incomplete      code review of stage 3.7a, finding CR7A-R3: an ingredient entry with the type Item, the quantity 1, and no id stops the
                   tool (also Category_Only and Currency), and a run of the tool leaves the earlier file; an entry with an id and no type is
                   not an ingredient (the client skips it), and the recipe keeps its other ingredients
@@ -48,7 +53,7 @@ from appearance_tables import Failure  # noqa: E402
 from check_ability_tool import FakeSheet  # noqa: E402
 from slice_ids import Element  # noqa: E402
 
-CASES = ("recipe", "causes", "stops", "stations", "build", "write", "incomplete", "refining")
+CASES = ("recipe", "causes", "stops", "stations", "build", "write", "incomplete", "refining", "procedural")
 MARK = "earlier file\n"
 FAILED: list[str] = []
 
@@ -107,6 +112,7 @@ class FakeSources:
         self.sheets = sheets
         self.stations = stations
         self.slices = slices
+        self.generation = made_up_generation()
 
     def paths(self, folder: str, suffix: str) -> list[str]:
         if folder == tool.STATION_SLICES:
@@ -119,10 +125,41 @@ class FakeSources:
     def stream(self, path: str):
         if path == tool.CRAFTING_STATIONS:
             return self.stations
+        if path == tool.BASE_ATTRIBUTES:
+            return self.generation
         return [assembly_element(self.slices[Path(path).stem])]
 
     def check_complete(self) -> None:
         return None
+
+
+def number(value: int) -> bytes:
+    return value.to_bytes(4, "big")
+
+
+def made_up_generation(crafting: bool = True) -> list[Element]:
+    """@return The base attributes file: the perk generation data with the tiers 0 to 5 (the lists General and Crafting; Crafting of tier 5:
+    4 perks at 470 to 599, 5 at 600 to 625) and the three chance modifiers (1.0, 0.5, 2.0)."""
+    def counts(entries):
+        return element(None, None, [element(None, None, [element(tool.field_id("value1"), number(count)),
+                                                         element(tool.field_id("value2"), None, [
+                                                             element(None, None, [element(tool.field_id("value1"), number(low)),
+                                                                                  element(tool.field_id("value2"), number(high))])
+                                                             for low, high in ranges])])
+                                    for count, ranges in entries])
+    tiers = []
+    for tier in range(6):
+        general = [] if tier < 2 else [(1, [(0, 300)]), (2, [(301, 700)])]
+        craft = [] if tier < 2 else ([(4, [(470, 599)]), (5, [(600, 625)])] if tier == 5 else [(1, [(0, 199)]), (2, [(200, 700)])])
+        members = [element(tool.field_id("Max Perk Channel"), number(min(tier, 4))), counts(general)]
+        if crafting:
+            members.append(counts(craft))
+        members.append(element(None, None, [element(None, b"x")]))
+        tiers.append(element(None, None, members))
+    generation = element(tool.field_id("Perk Generation Data"), None, [element(None, None, tiers)])
+    modifiers = [element(tool.field_id(name), struct.pack(">f", value))
+                 for name, value in (("Perk Chance Modifier", 1.0), ("Attribute Chance Modifier", 0.5), ("Gem Slot Chance Modifier", 2.0))]
+    return [element(None, None, [generation, *modifiers])]
 
 
 def made_up_sheets(**changes) -> dict[str, tuple[str, FakeSheet]]:
@@ -167,6 +204,15 @@ def made_up_sheets(**changes) -> dict[str, tuple[str, FakeSheet]]:
         "Riding": (tool.RANK_TYPE, FakeSheet("Riding", [{"Level": "0"}, {"Level": "1"}])),
         "Achievements": (tool.ACHIEVEMENT_TYPE, FakeSheet("Achievements", [{"AchievementID": "FC_TestIngot", "AchievementIndex": "5330"},
                                                                             {"AchievementID": "FC_Other", "AchievementIndex": "77"}])),
+        # Stage 3.7c: the currencies (Azoth_Currency with its rank table; Other_Currency with no rank table) and a rank table with the gear
+        # score columns.
+        "CategoricalProgression": (tool.CURRENCY_TYPE, FakeSheet("CategoricalProgression", [
+            {"CategoricalProgressionId": "Azoth_Currency", "RankTableId": "AzothCurrency"},
+            {"CategoricalProgressionId": "Other_Currency", "RankTableId": "NoSuchTable"}])),
+        "AzothCurrency": (tool.CURRENCY_RANK_TYPE, FakeSheet("AzothCurrency", [{"Rank": "0", "MaximumInfluence": "2500"}])),
+        "Armoring": (tool.RANK_TYPE, FakeSheet("Armoring", [
+            {"Level": str(level), "RollBonus": "0", "MaxGearScoreBonus": "1", "MaxGearScoreBonusT2": str(5 + level),
+             "MaxGearScoreBonusT3": "0", "MaxGearScoreBonusT4": "0", "MaxGearScoreBonusT5": str(level)} for level in range(3)])),
     }
     for name, value in changes.items():
         if value is None:
@@ -182,9 +228,10 @@ def made_up_stations() -> list[Element]:
                               station_element("Camp1", ["camp1"])])]
 
 
-def build(sheets=None, stations=None, slices=None) -> dict:
+def build(sheets=None, stations=None, slices=None, generation=None) -> dict:
     sources = FakeSources(sheets if sheets is not None else made_up_sheets(), stations if stations is not None else made_up_stations(),
                           slices if slices is not None else {"station_engineering_t2": "Engineering2", "station_carpentry_master": "Carpentry2"})
+    sources.generation = generation if generation is not None else made_up_generation()
     sheet_of = {name.encode(): sheet for name, (_, sheet) in sources.sheets.items()}
     type_of = {name.encode(): kind for name, (kind, _) in sources.sheets.items()}
     with patch.object(tool, "sheet_type", lambda data: type_of.get(data, "")), patch.object(tool, "Sheet", lambda data: sheet_of[data]):
@@ -210,16 +257,16 @@ def case_recipe() -> None:
 
 
 def case_causes() -> None:
-    cases = [({"IsProcedural": "1"}, tool.CAUSE_PROCEDURAL), ({"IsRefining": "1"}, tool.CAUSE_NO_RANKS),
+    cases = [({"IsRefining": "1"}, tool.CAUSE_NO_RANKS),
              ({"GameEventID": "NoSuchEvent"}, tool.CAUSE_EVENT_ROW), ({"GameEventID": "Xp_Event"}, tool.CAUSE_EVENT_XP),
              ({"GameEventID": "Music_Event"}, tool.CAUSE_EVENT_SKILL), ({"FirstCraftAchievementId": "FC_Missing"}, tool.CAUSE_FIRST_CRAFT_ROW),
              ({"CooldownSeconds": "86400"}, tool.CAUSE_COOLDOWN_PART), ({"CooldownQuantity": "10"}, tool.CAUSE_COOLDOWN_PART),
-             ({"Ingredient3": "Azoth_Currency", "Type3": "Currency", "Qty3": "5"}, tool.CAUSE_CURRENCY),
+             ({"Ingredient3": "Other_Currency", "Type3": "Currency", "Qty3": "5"}, tool.CAUSE_CURRENCY),
              ({"bKnownByDefault": "0"}, tool.CAUSE_UNLOCK), ({"RequiredAchievementID": "Test_Unlock"}, tool.CAUSE_UNLOCK),
              ({"ItemID": "NoSuchItem"}, tool.CAUSE_NOT_ITEM), ({"ItemID": "TestSword"}, tool.CAUSE_RANGE),
              ({"Ingredient1": "NoSuchFlint"}, tool.CAUSE_INGREDIENT), ({"Ingredient1": "NoMetal", "Type1": "Category_Only"}, tool.CAUSE_CATEGORY),
              ({"StationType1": "engineering9", "StationType2": ""}, tool.CAUSE_NO_STATION), ({"Qty2": ""}, tool.CAUSE_ZERO),
-             ({"MaxPerkItemsAllowed": "3"}, tool.CAUSE_PERKS), ({"BaseGearScore": "200"}, tool.CAUSE_GEAR_SCORE),
+             ({"MaxPerkItemsAllowed": "4", "AttributeOnlyPerkItemSlotCount": "1"}, tool.CAUSE_PERKS),
              ({"SkipGrantItems": "1"}, tool.CAUSE_SKIP_GRANT)]
     for cells, cause in cases:
         sheets = made_up_sheets(Recipes=(tool.RECIPE_TYPE, FakeSheet("Recipes", [recipe_row(**cells)])))
@@ -287,7 +334,7 @@ def case_write(folder: Path) -> None:
         status = tool.main()
     written = json.loads(target.read_text())
     report(status == 0 and written["format"] == tool.FORMAT and len(written["recipes"]) == 3,
-           "write: a run that completes replaces the file (format 2, 3 recipes)")
+           "write: a run that completes replaces the file (format 3, 3 recipes)")
 
 
 def case_incomplete(folder: Path) -> None:
@@ -320,8 +367,8 @@ def case_refining() -> None:
            and ingot["firstCraftAchievement"] == "FC_TestIngot" and ingot["cooldownSeconds"] == 86400 and ingot["cooldownQuantity"] == 10
            and ingot["bonusIncrease"] == [0.25, 0.5, 0.75, 1.0] and ingot["bonusDecrease"] == [-0.05, -0.1],
            f"refining: refining, craft-all, the event, the first craft, and the cooldown with their data give no cause ({ingot['unsupported']})")
-    report(document["ranks"] == {"Riding": [0.0, 0.0], "Smelting": [0.0, 510.0, 520.0, 530.0]}
-           and document["achievements"] == {"FC_TestIngot": 5330} and document["materials"] == {"TestFlintT1": [0, 10, 5]}
+    report(document["ranks"] == {"Armoring": [0.0, 0.0, 0.0], "Riding": [0.0, 0.0], "Smelting": [0.0, 510.0, 520.0, 530.0]}
+           and document["achievements"] == {"FC_TestIngot": 5330} and document["materials"] == {"TestFlintT1": [0, 10, 5, 0, 0]}
            and recipe_of(document, "TestKnifeT1")["bonusIncrease"] == [],
            "refining: the RollBonus of each rank (a table with no RollBonus column: 0), the bit of the first-craft achievement of a recipe, "
            "the bonus values of an item (only the items with a value), an empty tier list")
@@ -331,8 +378,48 @@ def case_refining() -> None:
     gap = made_up_sheets(Smelting=(tool.RANK_TYPE, FakeSheet("Smelting", [{"Level": "0", "RollBonus": "0"}, {"Level": "2", "RollBonus": "520"}])))
     message = stops(lambda: build(gap))
     report(message is not None and "no gap" in message, f"refining: a rank table with a gap stops the tool ({message})")
-    no_ranks = stops(lambda: build(made_up_sheets(Smelting=None, Riding=None)))
+    no_ranks = stops(lambda: build(made_up_sheets(Smelting=None, Riding=None, Armoring=None)))
     report(no_ranks is not None and tool.RANK_TYPE in no_ranks, f"refining: no rank table stops the tool ({no_ranks})")
+
+
+def case_procedural() -> None:
+    procedural = recipe_row(RecipeID="TestSwordRecipe", ItemID="TestSword", IsProcedural="1", BaseGearScore="200", BaseTier="2",
+                            MaxPerkItemsAllowed="", PerkItemsBucketPush="0", PerkCost="15", Ingredient1="TestMetal", Type1="Category_Only",
+                            Qty1="7", Ingredient3="Azoth_Currency", Type3="Currency", Qty3="25")
+    rows = [dict(row) for row in made_up_sheets()["Items"][1]._rows]
+    sheets = made_up_sheets(Recipes=(tool.RECIPE_TYPE, FakeSheet("Recipes", [procedural, recipe_row(RecipeID="TestRange", ItemID="TestSword")])))
+    for row in rows:
+        if row["ItemID"] == "TestSword":
+            row["MaxCraftGS"] = "650"
+        if row["ItemID"] == "TestIngotB":
+            row["IngredientGearScoreBaseBonus"] = "5"
+            row["IngredientGearScoreMaxBonus"] = "10"
+        if row["ItemID"] == "TestIngotA":
+            row["IngredientGearScoreMaxBonus"] = "Expansion2023"
+    sheets["Items"] = (tool.MASTER_TYPE, FakeSheet("Items", rows))
+    document = build(sheets)
+    sword = recipe_of(document, "TestSwordRecipe")
+    report(sword["unsupported"] == [] and sword["procedural"] is True and sword["perkItems"] == 1 and sword["push"] is False
+           and sword["perkCost"] == 15 and sword["baseGearScore"] == 200 and sword["maxCraftGS"] == 650
+           and ["Currency", "Azoth_Currency", 25] in sword["ingredients"],
+           f"procedural: a procedural recipe with a BaseGearScore, a perk item, a PerkCost, and Azoth gives no cause ({sword['unsupported']}), "
+           f"the MaxCraftGS of its output ({sword['maxCraftGS']})")
+    report(tool.CAUSE_RANGE in recipe_of(document, "TestRange")["unsupported"],
+           "procedural: an output with a gear score range and no BaseGearScore stays a cause")
+    report(document["rankGearScore"]["Armoring"] == [[1, 5, 0, 0, 0], [1, 6, 0, 0, 1], [1, 7, 0, 0, 2]]
+           and document["rankGearScore"]["Smelting"] == [[0, 0, 0, 0, 0]] * 4,
+           "procedural: the largest gear score bonus of each rank (MaxGearScoreBonus, T2 to T5; a table with no such column: 0)")
+    report(document["materials"].get("TestIngotB") == [0, 0, 0, 5, 10] and "TestIngotA" not in document["materials"]
+           and document["counts"]["gearScoreTextCells"] == 1,
+           "procedural: the gear score values of an ingredient; a text that is not a number is 0 and counted")
+    report(document["currencies"] == {"Azoth_Currency": {"cap": 2500}},
+           "procedural: the cap of a currency of a recipe (the MaximumInfluence of the rank 0 of its rank table)")
+    generation = document["perkGeneration"]
+    report(generation["chanceModifiers"] == [1.0, 0.5, 2.0] and generation["tiers"][5] == [[4, [[470, 599]]], [5, [[600, 625]]]]
+           and generation["tiers"][0] == [] and generation["tiers"][2] == [[1, [[0, 199]]], [2, [[200, 700]]]],
+           "procedural: the list Crafting of the perk generation data (not General) and the chance modifiers")
+    message = stops(lambda: build(generation=made_up_generation(crafting=False)))
+    report(message is not None and "Crafting" in message, f"procedural: a base attributes file with no list Crafting stops the tool ({message})")
 
 
 def main() -> int:
@@ -359,6 +446,8 @@ def main() -> int:
             case_incomplete(folder)
         elif name == "refining":
             case_refining()
+        elif name == "procedural":
+            case_procedural()
         else:
             report(False, f"unknown case {name}")
     print(f"{len(FAILED)} failed")

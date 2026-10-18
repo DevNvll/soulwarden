@@ -74,6 +74,8 @@ std::string g_formCharacter;
 int g_level = 1;
 int g_experience = 1000;
 double g_coin = 0.0;
+/** Stage 3.7c: the Azoth balance of the field (the perk upgrades and the Azoth ingredients of a craft). */
+int g_azoth = 0;
 int g_attributes[model::kAttributeCount]{};
 std::map<std::string, int> g_weaponLevels;
 std::map<std::string, int> g_skillLevels;
@@ -97,6 +99,7 @@ void fill_form() {
     g_formCharacter = g_data.selected;
     g_level = static_cast<int>(g_data.level);
     g_coin = static_cast<double>(g_data.coin) / 100.0;
+    g_azoth = static_cast<int>(std::min<std::uint64_t>(g_data.azoth, 1000000000));
     for (unsigned index = 0; index < model::kAttributeCount; ++index) {
         g_attributes[index] = static_cast<int>(g_data.attributes[index].value);
     }
@@ -742,6 +745,18 @@ void draw_character() {
             char text[48];
             snprintf(text, sizeof(text), "Set the coin %.2f", g_coin);
             send("set_coin", {{"amount", static_cast<std::uint64_t>(std::llround(g_coin * 100.0))}}, text);
+        }
+
+        // Stage 3.7c: the Azoth balance (the set_currency command; its cap is the cap of the crafting data: 2,500).
+        if (g_data.azothCap != 0) {
+            snprintf(now, sizeof(now), "%llu / %llu", static_cast<unsigned long long>(g_data.azoth), static_cast<unsigned long long>(g_data.azothCap));
+            begin_value_row("Azoth", now);
+            ImGui::InputInt("##azoth", &g_azoth, 100, 500);
+            g_azoth = std::clamp(g_azoth, 0, static_cast<int>(std::min<std::uint64_t>(g_data.azothCap, 1000000000)));
+            ImGui::TableNextColumn();
+            if (ImGui::Button("Set##azoth")) {
+                send("set_currency", {{"amount", g_azoth}}, "Set the Azoth " + std::to_string(g_azoth));
+            }
         }
 
         snprintf(now, sizeof(now), "%u / %u%s", g_data.health, g_data.healthMax, g_data.dead ? " (dead)" : "");

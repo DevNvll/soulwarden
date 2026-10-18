@@ -17,9 +17,14 @@ namespace {
 
 using nlohmann::json;
 
-/** The forms of the file that this code reads (tools/gamedata/crafting.py): 1 (stage 3.7a) and 2 (stage 3.7b). */
+/** The forms of the file that this code reads (tools/gamedata/crafting.py): 1 (stage 3.7a), 2 (stage 3.7b), and 3 (stage 3.7c). */
 constexpr std::uint64_t kFirstFormat = 1;
-constexpr std::uint64_t kFormat = 2;
+constexpr std::uint64_t kRefiningFormat = 2;
+constexpr std::uint64_t kFormat = 3;
+/** The perk item controls of the crafting screen (client setting javelin.crafting-max-num-perk-items, registered with 4 at 0x6171372). */
+constexpr std::uint32_t kPerkItemControls = 4;
+/** The largest cap of a currency balance that the loader takes (Azoth_Currency: 2,500). */
+constexpr std::uint64_t kLargestCap = 1000000000ULL;
 /** The limit of a RollBonus and of a bonus item value of an item (the tables have 0 to 2,500; the tool refuses more than 1,000,000). */
 constexpr double kLargestBonus = 1000000.0;
 /** The client reads an achievement vector of 0x2000000 bytes at most (gamedata/progression_tables.h, kAchievementBitLimit). */
@@ -81,10 +86,21 @@ bool number_in(const json& object, const char* member, std::uint64_t high, std::
  *         the rules of stage 3.7a: refining, craft-all, an event, a first-craft achievement, and a cooldown are not applied in it.
  */
 const char* unapplied_rule(const Recipe& recipe, std::uint64_t format) {
-    if (recipe.procedural) {
-        return "IsProcedural";
-    }
+    // Stage 3.7c (format 3) applies the procedural result, the perk items, the Azoth upgrade, and the craft gear score.
     if (format < kFormat) {
+        if (recipe.procedural) {
+            return "IsProcedural";
+        }
+        if (recipe.perkItems > 0 || recipe.attributeSlots > 0 || recipe.perkCost > 0) {
+            return "MaxPerkItemsAllowed, AttributeOnlyPerkItemSlotCount, or PerkCost";
+        }
+        if (recipe.baseGearScore > 0) {
+            return "BaseGearScore";
+        }
+    } else if (recipe.perkItems + recipe.attributeSlots > kPerkItemControls) {
+        return "more perk items than the perk item controls of the client (4)";
+    }
+    if (format < kRefiningFormat) {
         if (recipe.refining) {
             return "IsRefining";
         }
@@ -100,12 +116,6 @@ const char* unapplied_rule(const Recipe& recipe, std::uint64_t format) {
         if (recipe.cooldownSeconds > 0 || recipe.cooldownQuantity > 0) {
             return "CooldownSeconds or CooldownQuantity";
         }
-    }
-    if (recipe.perkItems > 0 || recipe.attributeSlots > 0 || recipe.perkCost > 0) {
-        return "MaxPerkItemsAllowed, AttributeOnlyPerkItemSlotCount, or PerkCost";
-    }
-    if (recipe.baseGearScore > 0) {
-        return "BaseGearScore";
     }
     if (!recipe.known || !recipe.requiredAchievement.empty() || !recipe.hiddenByAchievement.empty() || !recipe.unlockedAchievement.empty()) {
         return "an unlock (bKnownByDefault false or an achievement)";
@@ -174,8 +184,8 @@ bool CraftingData::parse(const std::string& text) {
         return fail("the file is not a JSON object");
     }
     std::uint64_t format = 0;
-    if (!document.contains("format") || !whole_in(document["format"], 1000, format) || (format != kFirstFormat && format != kFormat)) {
-        return fail("the file does not have the format 1 or 2");
+    if (!document.contains("format") || !whole_in(document["format"], 1000, format) || format < kFirstFormat || format > kFormat) {
+        return fail("the file does not have the format 1, 2, or 3");
     }
     m_format = format;
     for (const char* member : {"stations", "missingStations", "recipes", "categories"}) {
@@ -183,10 +193,10 @@ bool CraftingData::parse(const std::string& text) {
             return fail(std::string("the file has no member ") + member);
         }
     }
-    if (format == kFormat) {
+    if (format >= kRefiningFormat) {
         for (const char* member : {"events", "ranks", "achievements", "materials"}) {
             if (!document.contains(member) || !document[member].is_object()) {
-                return fail(std::string("the file of format 2 has no object ") + member);
+                return fail(std::string("the file of format 2 or 3 has no object ") + member);
             }
         }
         // The events of the recipes: the trade skill and the reward of one unit, the character experience, the standing.
@@ -225,18 +235,102 @@ bool CraftingData::parse(const std::string& text) {
             }
             m_achievements[lower_ascii(id)] = static_cast<std::uint32_t>(index);
         }
+        // The bonus values of the items: 3 in format 2, 5 in format 3 (the gear score values of an ingredient).
+        const std::size_t width = format >= kFormat ? 5 : 3;
         for (const auto& [item, values] : document["materials"].items()) {
-            std::array<std::uint64_t, 3> parts{};
-            if (!values.is_array() || values.size() != 3) {
-                return fail("the material " + item + " is not [EXTRA, PRIMARY, SECONDARY]");
+            std::array<std::uint64_t, 5> parts{};
+            if (!values.is_array() || values.size() != width) {
+                return fail("the material " + item + (width == 5 ? " is not [EXTRA, PRIMARY, SECONDARY, GS_BASE, GS_MAX]" : " is not [EXTRA, PRIMARY, SECONDARY]"));
             }
-            for (std::size_t index = 0; index < 3; ++index) {
+            for (std::size_t index = 0; index < width; ++index) {
                 if (!whole_in(values[index], static_cast<std::uint64_t>(kLargestBonus), parts[index])) {
                     return fail("the material " + item + " has a value that is not a whole number of 0 to 1000000");
                 }
             }
             m_materials[lower_ascii(item)] = MaterialBonus{static_cast<std::int32_t>(parts[0]), static_cast<std::int32_t>(parts[1]),
-                                                           static_cast<std::int32_t>(parts[2])};
+                                                           static_cast<std::int32_t>(parts[2]), static_cast<std::int32_t>(parts[3]),
+                                                           static_cast<std::int32_t>(parts[4])};
+        }
+    }
+    if (format >= kFormat) {
+        for (const char* member : {"rankGearScore", "currencies", "perkGeneration", "resources"}) {
+            if (!document.contains(member) || !document[member].is_object()) {
+                return fail(std::string("the file of format 3 has no object ") + member);
+            }
+        }
+        // The largest gear score bonus of each rank of each trade skill: [MAX, MAX_T2, MAX_T3, MAX_T4, MAX_T5] for the ranks 0 to N.
+        for (const auto& [skill, values] : document["rankGearScore"].items()) {
+            if (!values.is_array() || values.empty()) {
+                return fail("the rank gear score table " + skill + " is not a list of ranks");
+            }
+            std::vector<std::array<std::uint32_t, 5>>& ranks = m_rankGearScore[lower_ascii(skill)];
+            for (const json& value : values) {
+                std::array<std::uint32_t, 5> row{};
+                if (!value.is_array() || value.size() != row.size()) {
+                    return fail("the rank gear score table " + skill + " has a rank that is not [MAX, MAX_T2, MAX_T3, MAX_T4, MAX_T5]");
+                }
+                for (std::size_t index = 0; index < row.size(); ++index) {
+                    std::uint64_t number = 0;
+                    if (!whole_in(value[index], kLargestGearScore, number)) {
+                        return fail("the rank gear score table " + skill + " has a value that is not a whole number of 0 to 10000");
+                    }
+                    row[index] = static_cast<std::uint32_t>(number);
+                }
+                ranks.push_back(row);
+            }
+        }
+        for (const auto& [id, value] : document["currencies"].items()) {
+            CraftCurrency currency{id, 0};
+            if (!value.is_object() || !value.contains("cap") || !whole_in(value["cap"], kLargestCap, currency.cap) || currency.cap == 0) {
+                return fail("the currency " + id + " has no cap of 1 to 1000000000");
+            }
+            m_currencies[lower_ascii(id)] = currency;
+        }
+        for (const auto& [id, value] : document["resources"].items()) {
+            CraftResource resource{id, "", "", ""};
+            if (!value.is_object() || !text_in(value, "bucket", resource.bucket) || !text_in(value, "gemPerk", resource.gemPerk)
+                || !text_in(value, "socket", resource.socket) || id.empty()) {
+                return fail("the resource " + id + " is not {bucket, gemPerk, socket}");
+            }
+            if (!m_resourceByCrc.emplace(item_id_crc(id), m_resources.size()).second) {
+                return fail("two resources have one CRC-32: " + id);
+            }
+            m_resources.push_back(std::move(resource));
+        }
+        // The crafting part of the perk generation data: for each tier the gear score ranges of each perk count, and the chance modifiers.
+        const json& generation = document["perkGeneration"];
+        if (!generation.contains("tiers") || !generation["tiers"].is_array() || !generation.contains("chanceModifiers")
+            || !generation["chanceModifiers"].is_array() || generation["chanceModifiers"].size() != 3) {
+            return fail("the perk generation data is not {tiers, chanceModifiers: [PERK, ATTRIBUTE, GEM]}");
+        }
+        for (std::size_t index = 0; index < 3; ++index) {
+            const json& value = generation["chanceModifiers"][index];
+            if (!value.is_number() || !std::isfinite(value.get<double>()) || value.get<double>() < 0.0 || value.get<double>() > 100.0) {
+                return fail("a chance modifier of the perk generation data is not a number of 0 to 100");
+            }
+            m_chanceModifiers[index] = static_cast<float>(value.get<double>());
+        }
+        for (const json& tier : generation["tiers"]) {
+            auto& counts = m_perkTiers.emplace_back();
+            if (!tier.is_array()) {
+                return fail("a tier of the perk generation data is not a list");
+            }
+            for (const json& entry : tier) {
+                std::uint64_t count = 0;
+                if (!entry.is_array() || entry.size() != 2 || !whole_in(entry[0], 5, count) || !entry[1].is_array()) {
+                    return fail("a perk count of the perk generation data is not [COUNT, [[GS_MIN, GS_MAX], ...]]");
+                }
+                auto& ranges = counts.emplace_back(static_cast<std::uint32_t>(count), std::vector<std::pair<std::uint32_t, std::uint32_t>>{}).second;
+                for (const json& range : entry[1]) {
+                    std::uint64_t low = 0;
+                    std::uint64_t high = 0;
+                    if (!range.is_array() || range.size() != 2 || !whole_in(range[0], kLargestGearScore, low)
+                        || !whole_in(range[1], kLargestGearScore, high) || high < low) {
+                        return fail("a gear score range of the perk generation data is not [GS_MIN, GS_MAX] with GS_MIN <= GS_MAX");
+                    }
+                    ranges.emplace_back(static_cast<std::uint32_t>(low), static_cast<std::uint32_t>(high));
+                }
+            }
         }
     }
     // The station rows.
@@ -343,6 +437,9 @@ bool CraftingData::parse(const std::string& text) {
             || !number_in(row, "cooldownQuantity", 255, recipe.cooldownQuantity) || !flag_in(row, "skipGrant", recipe.skipGrant)) {
             return fail(what + ": a member is not there or has a wrong form");
         }
+        if (format >= kFormat && !number_in(row, "maxCraftGS", kLargestGearScore, recipe.maxCraftGS)) {
+            return fail(what + ": maxCraftGS is not a whole number of 0 to 10000");
+        }
         if (row.contains("disallowBonuses") && !flag_in(row, "disallowBonuses", recipe.disallowBonuses)) {
             return fail(what + ": disallowBonuses is not a flag");
         }
@@ -357,7 +454,7 @@ bool CraftingData::parse(const std::string& text) {
         for (const auto& [member, target] : {std::pair<const char*, std::vector<float>*>{"bonusIncrease", &recipe.bonusIncrease},
                                              {"bonusDecrease", &recipe.bonusDecrease}}) {
             if (!row.contains(member)) {
-                if (format == kFormat) {
+                if (format >= kRefiningFormat) {
                     return fail(what + ": the member " + member + " is not there");
                 }
                 continue;
@@ -425,7 +522,7 @@ bool CraftingData::parse(const std::string& text) {
             // Stage 3.7b (format 2): the rules of the event, the first craft, the cooldown, and refining need their data (the tool gives a
             // recipe with incomplete data a cause): an event of the file with no character experience and a trade skill with a rank table,
             // the bit of the first-craft achievement, a cooldown with a time and a count, the rank table of the trade skill of refining.
-            if (format == kFormat) {
+            if (format >= kRefiningFormat) {
                 if (!recipe.event.empty()) {
                     const CraftEvent* reward = event(recipe.event);
                     if (reward == nullptr || reward->experience != 0.0F || (!reward->progression.empty() && !has_ranks(reward->progression))) {
@@ -447,8 +544,9 @@ bool CraftingData::parse(const std::string& text) {
                 return fail(what + ": a recipe with no cause has no output, no output quantity, no ingredient, or no station key");
             }
             for (const RecipeIngredient& ingredient : recipe.ingredients) {
-                if (ingredient.quantity == 0 || ingredient.type == IngredientType::currency) {
-                    return fail(what + ": a recipe with no cause has an ingredient with the quantity 0 or a currency ingredient");
+                // Stage 3.7c (format 3): a currency ingredient of a currency with a cap (the Azoth balance); before, no currency.
+                if (ingredient.quantity == 0 || (ingredient.type == IngredientType::currency && (format < kFormat || currency(ingredient.id) == nullptr))) {
+                    return fail(what + ": a recipe with no cause has an ingredient with the quantity 0 or a currency ingredient with no cap");
                 }
                 if ((ingredient.type == IngredientType::categoryOnly || ingredient.type == IngredientType::categoryAny)
                     && member_count(ingredient.id) == 0) {
@@ -546,15 +644,107 @@ bool CraftingData::match_catalog(const ItemCatalog& catalog) {
             continue;
         }
         const ItemDefinition* output = catalog.find(recipe.item);
-        if (output != nullptr && output->maxGearScore != 0 && output->gearScoreOverride == 0) {
+        // Stage 3.7c (format 3): a recipe with a BaseGearScore has the craft gear score rule (client 0x2E41E10 computes it only then).
+        if (output != nullptr && output->maxGearScore != 0 && output->gearScoreOverride == 0 && (m_format < kFormat || recipe.baseGearScore == 0)) {
             const std::string cause = "the recipe " + recipe.id + " has no cause, and its output " + output->id
-                                      + " has a gear score range and no override in the item catalog (the rule of stage 3.7c)";
+                                      + " has a gear score range and no override in the item catalog (no craft gear score rule)";
             *this = CraftingData{};
             m_error = cause;
             return false;
         }
     }
     return true;
+}
+
+bool CraftingData::match_achievements(const std::function<std::optional<std::uint32_t>(std::string_view)>& other) {
+    // Code review of stage 3.7b, finding CR7B-R3: one fact has one bit. A first-craft achievement whose bit in the other source is different
+    // would give the check of the first craft one bit and the achievement state an other one.
+    if (!m_loaded || !other) {
+        return true;
+    }
+    for (const auto& [id, bit] : m_achievements) {
+        const std::optional<std::uint32_t> found = other(id);
+        if (found && *found != bit) {
+            const std::string cause = "the first-craft achievement " + id + " has the bit " + std::to_string(bit) + " in the crafting data and "
+                                      + std::to_string(*found) + " in the progression tables";
+            *this = CraftingData{};
+            m_error = cause;
+            return false;
+        }
+    }
+    return true;
+}
+
+const CraftResource* CraftingData::resource(std::uint32_t crc) const {
+    const auto found = m_resourceByCrc.find(crc);
+    return found != m_resourceByCrc.end() ? &m_resources[found->second] : nullptr;
+}
+
+const CraftResource* CraftingData::resource_of(std::string_view id) const {
+    const CraftResource* found = resource(item_id_crc(id));
+    return found != nullptr && lower_ascii(found->id) == lower_ascii(id) ? found : nullptr;
+}
+
+std::uint32_t CraftingData::rank_gear_score(std::string_view tradeskill, std::uint32_t rank, std::uint32_t tier) const {
+    const auto found = m_rankGearScore.find(lower_ascii(tradeskill));
+    if (found == m_rankGearScore.end() || found->second.empty()) {
+        return 0;
+    }
+    const std::array<std::uint32_t, 5>& row = found->second[std::min<std::size_t>(rank, found->second.size() - 1)];
+    // Client 0x3CB2AA0: the map of the tiers 2 to 5; a different tier gets the first pair (MinGearScoreBonus, MaxGearScoreBonus).
+    return tier >= 2 && tier <= 5 ? row[tier - 1] : row[0];
+}
+
+const CraftCurrency* CraftingData::currency(std::string_view id) const {
+    const auto found = m_currencies.find(lower_ascii(id));
+    return found != m_currencies.end() ? &found->second : nullptr;
+}
+
+std::optional<std::uint32_t> CraftingData::craft_max_perks(std::uint32_t tier, std::uint32_t gearScore) const {
+    if (m_perkTiers.empty()) {
+        return std::nullopt;
+    }
+    if (gearScore == 0 || tier >= m_perkTiers.size()) {
+        return 0;
+    }
+    std::uint32_t best = 0;
+    bool found = false;
+    for (const auto& [count, ranges] : m_perkTiers[tier]) {
+        for (const auto& [low, high] : ranges) {
+            if (gearScore >= low && gearScore <= high && (!found || count > best)) {
+                best = count;
+                found = true;
+            }
+        }
+    }
+    if (found) {
+        return best;
+    }
+    // No range has the gear score: the count of the nearest range (the client setting javelin.choose-next-valid-range-for-perk-count, on).
+    std::uint32_t nearest = 0xFFFFFFFFU;
+    for (const auto& [count, ranges] : m_perkTiers[tier]) {
+        for (const auto& [low, high] : ranges) {
+            const std::uint32_t away = gearScore < low ? low - gearScore : gearScore - high;
+            if (away < nearest || (away == nearest && count > best)) {
+                nearest = away;
+                best = count;
+            }
+        }
+    }
+    return best;
+}
+
+float CraftingData::chance_modifier(std::string_view bucketType) const {
+    if (bucketType == "Generated") {
+        return m_chanceModifiers[0];
+    }
+    if (bucketType == "Inherent") {
+        return m_chanceModifiers[1];
+    }
+    if (bucketType == "Gem") {
+        return m_chanceModifiers[2];
+    }
+    return 0.0F;
 }
 
 } // namespace soulwarden::backend::gamedata

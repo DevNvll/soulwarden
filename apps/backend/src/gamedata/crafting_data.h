@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -8,9 +10,12 @@
 #include <unordered_map>
 #include <vector>
 
-// The crafting data (stages 3.7a and 3.7b, docs/systems/crafting.md): the recipes of the CraftingRecipeData tables, the rows of the crafting
+// The crafting data (stages 3.7a to 3.7c, docs/systems/crafting.md): the recipes of the CraftingRecipeData tables, the rows of the crafting
 // station database, the ingredient categories of the items, the events of the recipes, and the resource items; from format 2 (stage 3.7b)
-// also the RollBonus of each rank of each trade skill, the bit of each first-craft achievement, and the bonus item values of the items. The
+// also the RollBonus of each rank of each trade skill, the bit of each first-craft achievement, and the bonus item values of the items; from
+// format 3 (stage 3.7c) the craft gear score values (the gear score bonus of each rank for each tier, the gear score values of an
+// ingredient, the MaxCraftGS of an output), the currencies with the cap of their balance, the resource items with their perk bucket (the
+// perk items of a request), and the crafting part of the perk generation data (the perk counts and the chance modifiers). The
 // tool tools/gamedata/crafting.sh makes the file from the game copy of the user; the file is game data and stays outside the repository.
 // Without the file each craft request is refused with no change, and the rest of the backend works.
 //
@@ -75,6 +80,8 @@ struct Recipe {
     bool tax{false};
     std::uint32_t baseGearScore{0};
     std::uint32_t baseTier{0};
+    /** Stage 3.7c (format 3): the MaxCraftGS of the output item (0: none): it replaces the cap of the expansion (client 0x2E57A70). */
+    std::uint32_t maxCraftGS{0};
     /** DisallowBonusesToGS (client recipe +0xD): no rank bonus and no status bonus of the trade skill (the bonus items: client 0x2E57A70). */
     bool disallowBonuses{false};
     /** The perk options with the loader defaults of the client (client 0x4481730, research K4). */
@@ -125,6 +132,27 @@ struct MaterialBonus {
     /** IngredientBonusPrimary (the first ingredient of a craft) and IngredientBonusSecondary (each other one): roll bonus points. */
     std::int32_t primary{0};
     std::int32_t secondary{0};
+    /**
+     * Stage 3.7c (format 3): IngredientGearScoreBaseBonus and IngredientGearScoreMaxBonus (client 0x2E57A70, the item +0x48 and +0x4C): a
+     * selected member of a category ingredient of a procedural recipe adds them to the low and the high gear score of the craft.
+     */
+    std::int32_t gearScoreBase{0};
+    std::int32_t gearScoreMax{0};
+};
+
+/** A resource item (ResourceItemDefinitions; stage 3.7c): the perk item of a craft request names it by the CRC-32 of its id. */
+struct CraftResource {
+    std::string id;
+    /** PerkBucket: the bucket that the craft rolls for the resource (client 0x5C345F0: chance bonus 0, before the ordinary buckets). */
+    std::string bucket;
+    std::string gemPerk;
+    std::string socket;
+};
+
+/** A currency of the recipes (stage 3.7c; a categorical progression of rank 0: Azoth_Currency) and the cap of its balance. */
+struct CraftCurrency {
+    std::string id;
+    std::uint64_t cap{0};
 };
 
 /** One row of the crafting station database (sharedassets/genericassets/craftingstations.craftstationdb). */
@@ -180,7 +208,7 @@ public:
     [[nodiscard]] std::size_t category_count() const {
         return m_categories.size();
     }
-    /** @return The format of the file (1: stage 3.7a; 2: stage 3.7b). */
+    /** @return The format of the file (1: stage 3.7a; 2: stage 3.7b; 3: stage 3.7c). */
     [[nodiscard]] std::uint64_t format() const {
         return m_format;
     }
@@ -202,6 +230,34 @@ public:
      * @return True when the outputs agree with the catalog (also for a file that is not loaded).
      */
     bool match_catalog(const ItemCatalog& catalog);
+    /**
+     * Code review of stage 3.7b, finding CR7B-R3: the first-craft achievements of the file against an other source of achievement bits (the
+     * progression tables): an id with a different bit in the other source would give two bits of one fact. The file is then refused as a
+     * whole (error() has the cause). @param other The bit of an achievement id in the other source, or no value.
+     * @return True when the sources agree (also for a file that is not loaded).
+     */
+    bool match_achievements(const std::function<std::optional<std::uint32_t>(std::string_view)>& other);
+
+    // Stage 3.7c (format 3).
+    /** @return The resource item of a perk item of a request (the CRC-32 of its lower-case id), or null. */
+    [[nodiscard]] const CraftResource* resource(std::uint32_t crc) const;
+    /** @return The resource item of an id text (any case), or null. */
+    [[nodiscard]] const CraftResource* resource_of(std::string_view id) const;
+    /**
+     * @return The largest gear score bonus of a rank of a trade skill for an output of a tier (MaxGearScoreBonusT2 to T5, else
+     *         MaxGearScoreBonus: client 0x3CB2AA0); a rank above the table has the last row; no table: 0.
+     */
+    [[nodiscard]] std::uint32_t rank_gear_score(std::string_view tradeskill, std::uint32_t rank, std::uint32_t tier) const;
+    /** @return The currency of an id (any case), or null. */
+    [[nodiscard]] const CraftCurrency* currency(std::string_view id) const;
+    /**
+     * @return The largest perk count of a crafted item of a tier at a gear score (the list Crafting of the perk generation data; client
+     *         0x5C4D730 with the crafting flag): the largest count with a range that has the gear score, else the count of the nearest
+     *         range; the gear score 0 gives 0. No value: the file has no such data (format 2).
+     */
+    [[nodiscard]] std::optional<std::uint32_t> craft_max_perks(std::uint32_t tier, std::uint32_t gearScore) const;
+    /** @return The chance that an upgrade level adds to an ordinary bucket of a type (Generated, Inherent, Gem; else 0: client 0x5C345F0). */
+    [[nodiscard]] float chance_modifier(std::string_view bucketType) const;
 
 private:
     bool parse(const std::string& text);
@@ -224,6 +280,14 @@ private:
     std::unordered_map<std::string, std::vector<float>> m_ranks;
     std::unordered_map<std::string, std::uint32_t> m_achievements;
     std::unordered_map<std::string, MaterialBonus> m_materials;
+    /** Format 3: the resources by the CRC-32 of their lower-case id, the rank gear score of each trade skill, the currencies, the perk counts. */
+    std::vector<CraftResource> m_resources;
+    std::unordered_map<std::uint32_t, std::size_t> m_resourceByCrc;
+    std::unordered_map<std::string, std::vector<std::array<std::uint32_t, 5>>> m_rankGearScore;
+    std::unordered_map<std::string, CraftCurrency> m_currencies;
+    /** For each tier: the gear score ranges of each perk count (empty: no data). */
+    std::vector<std::vector<std::pair<std::uint32_t, std::vector<std::pair<std::uint32_t, std::uint32_t>>>>> m_perkTiers;
+    std::array<float, 3> m_chanceModifiers{1.0F, 1.0F, 1.0F};
 };
 
 } // namespace soulwarden::backend::gamedata

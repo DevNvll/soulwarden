@@ -255,6 +255,28 @@ struct CraftJob {
     std::string firstCraft;
     std::uint64_t firstCraftExtra{0};
     std::uint64_t experienceGiven{0};
+    /**
+     * Code review of stage 3.7b, finding CR7B-R1: the raw experience of one job and of the first craft (reward x units, with no rounding).
+     * A job gives floor(raw x completed jobs + the first craft) - the experience of the earlier jobs (the client floors the total of the
+     * batch: craftingstatspanel.luac UpdateSkillAmount).
+     */
+    double experienceRaw{0.0};
+    double firstCraftRaw{0.0};
+    /** True after the job that wrote the first-craft achievement: no later job of the batch gives the bonus (finding CR7B-R3). */
+    bool firstCraftDone{false};
+    /**
+     * Stage 3.7c: the gear score of the output instance (no value: the value of the item table), the perks of each job (the generator with
+     * the resources of the request, G, and the push flag of the recipe; procedural recipes only), and the Azoth of one job (the upgrade and
+     * the currency ingredients; the currency of each currency ingredient).
+     */
+    std::optional<std::uint32_t> gearScore;
+    bool rollPerks{false};
+    std::vector<std::string> perkItems;
+    std::uint32_t upgrade{0};
+    bool keepBuckets{true};
+    std::uint32_t maxPerks{0};
+    std::vector<std::pair<std::string, std::uint64_t>> currencies;
+    std::uint64_t currencyPaid{0};
     /** The cooldown of the recipe (CooldownSeconds and CooldownQuantity; 0: none). */
     std::uint32_t cooldownSeconds{0};
     std::uint32_t cooldownQuantity{0};
@@ -1683,6 +1705,13 @@ struct Entity {
     CraftProgress craftProgress;
     /** The cooldowns of the recipes of the character by the CRC-32 of the recipe (stage 3.7b): the crafting system changes them. */
     std::map<std::uint32_t, CraftCooldown> craftCooldowns;
+    /**
+     * Stage 3.7c: the craft gear score bonus of each trade skill (the TradeskillType code of the client, Weaponsmithing 0 to Riding 20: the sum
+     * of the MaxGS<skill> values of the statuses of the character: a food, the status of a perk of an equipped item, a trophy; field 1 of
+     * the Crafting state 205; live check L5: the client takes the craft status bonus only from this map, to its cap 50). The crafting system
+     * makes it again after each change of the statuses (Crafting::refresh_bonus).
+     */
+    std::map<std::uint8_t, std::uint16_t> craftGearBonus;
     /** The loot claims of the character on the chests near it (stage 3.5b.1): a copy of the values of the chest system. */
     std::vector<LootTrackerEntry> lootTracker;
     /** The LootTracker entries of the loot bags of the character (stage 3.5b.2): a copy of the values of the loot bag system. */

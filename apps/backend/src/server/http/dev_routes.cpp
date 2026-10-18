@@ -140,10 +140,14 @@
 //                                                        DEVELOPMENT AID: a depleted node respawns after N seconds
 //   GET  /v1/dev/crafting?character=ID                  the crafting of a character (stage 3.7a): the station of its use, its batch,
 //                                                        the counts
-//   POST /v1/dev/crafting/preview?character=ID&recipe=ID[&quantity=N]   the plan of a recipe for the character (no change)
+//   POST /v1/dev/crafting/preview?character=ID&recipe=ID[&quantity=N][&seed=N][&perks=A,B][&upgrade=G][&materials=A,B]   the plan of
+//                                                       a recipe for the character (no change; stage 3.7c: the craft gear score, the perk
+//                                                       plan, the perks of each job of a seeded plan; materials: the item of each
+//                                                       ingredient, "-" the first member)
 //   POST /v1/dev/crafting/stop?character=ID             the craft batch of the character stops (the completed jobs stay)
 //   POST /v1/dev/crafting/cooldown?character=ID&recipe=ID&used=N&seconds=S   the cooldown of a recipe (stage 3.7b; a test of the window)
 //   POST /v1/dev/crafting/seed?character=ID&seed=N      the seed of the generator of the world (stage 3.7b; a seeded craft batch)
+//   POST /v1/dev/crafting/currency?character=ID&amount=N[&currency=ID]   the balance of a currency (stage 3.7c; Azoth_Currency by default)
 //   POST /v1/dev/chests/clear?character=ID&chest=KEY     remove the claim of a character on a chest
 //   POST /v1/dev/chests/reset?character=ID&chest=KEY&seconds=N
 //                                                        DEVELOPMENT AID (live check L8): the looted claim resets after N s
@@ -1054,6 +1058,7 @@ void register_dev_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/crafting/stop", "dev.crafting_stop", command_route(services, commands::stop_craft));
     router.add("POST", "", "/v1/dev/crafting/cooldown", "dev.crafting_cooldown", command_route(services, commands::set_craft_cooldown));
     router.add("POST", "", "/v1/dev/crafting/seed", "dev.crafting_seed", command_route(services, commands::set_craft_seed));
+    router.add("POST", "", "/v1/dev/crafting/currency", "dev.crafting_currency", command_route(services, commands::set_currency));
     router.add("POST", "", "/v1/dev/chests/clear", "dev.chests_clear", command_route(services, commands::clear_chest_claim));
     router.add("POST", "", "/v1/dev/chests/reset", "dev.chests_reset", command_route(services, commands::set_chest_reset));
     router.add("POST", "", "/v1/dev/abilities/reset", "dev.abilities_reset", command_route(services, commands::reset_cooldowns));

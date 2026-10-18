@@ -488,6 +488,8 @@ void load(const Options&) {
 /** CRAFTB-CMD: the commands. */
 void commands(const Options&) {
     using nlohmann::json;
+    // The cooldown and seed commands are harness commands (code review of stage 3.7b, finding CR7B-R2): a development run has the gate.
+    const HarnessGate gate(true);
     Refiner shop(false);
     shop.enter(false);
     server::http::Router router;

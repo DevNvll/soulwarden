@@ -155,6 +155,9 @@ struct Snapshot {
     Attribute attributes[kAttributeCount]{};
     /** Hundredths of a coin. */
     std::uint64_t coin{0};
+    /** Stage 3.7c: the Azoth balance and its cap (0: the backend has no crafting data, or is from before stage 3.7c). */
+    std::uint64_t azoth{0};
+    std::uint64_t azothCap{0};
     unsigned bagSlots{0};
     std::vector<BagItem> bag;
     std::vector<BagItem> equipment;

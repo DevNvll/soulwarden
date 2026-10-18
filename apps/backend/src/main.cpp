@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -616,8 +617,23 @@ int main(int argc, char** argv) {
     // with no change.
     gamedata::CraftingData craftingData;
     // Code review of stage U4, finding U4-R1: a file whose recipes with no cause have an output with a gear score range and no override in
-    // the item catalog (the rule of stage 3.7c) is refused as a whole.
-    if (craftingData.load(gameDataDirectory.string()) && craftingData.match_catalog(itemCatalog)) {
+    // the item catalog (and from stage 3.7c no BaseGearScore) is refused as a whole. Code review of stage 3.7b, finding CR7B-R3: a file whose
+    // first-craft achievements have a different bit in the progression tables is refused as a whole (one fact, one bit).
+    const auto progression_bit = [&progressionTables](std::string_view id) -> std::optional<std::uint32_t> {
+        if (!progressionTables.loaded()) {
+            return std::nullopt;
+        }
+        // The crafting data names its achievements in lower case: the compare ignores the case of the letters A to Z.
+        for (const gamedata::AchievementRow& row : progressionTables.data().achievements) {
+            if (row.id.size() == id.size() && std::equal(row.id.begin(), row.id.end(), id.begin(), [](char one, char two) {
+                    return std::tolower(static_cast<unsigned char>(one)) == std::tolower(static_cast<unsigned char>(two));
+                })) {
+                return row.index;
+            }
+        }
+        return std::nullopt;
+    };
+    if (craftingData.load(gameDataDirectory.string()) && craftingData.match_catalog(itemCatalog) && craftingData.match_achievements(progression_bit)) {
         log::write("backend: crafting data loaded from %s (format %llu: %zu recipes, %zu of them crafted in this stage, %zu station rows, %zu "
                    "ingredient categories; %zu authored station keys with no row)",
                    (gameDataDirectory / gamedata::kCraftingDataFile).string().c_str(), static_cast<unsigned long long>(craftingData.format()),
@@ -626,6 +642,9 @@ int main(int argc, char** argv) {
         if (craftingData.format() < 2) {
             log::write("backend: the crafting data has the format 1 (stage 3.7a): no refining, no reward progress, and no cooldown. Make the "
                        "file again with tools/gamedata/crafting.sh");
+        } else if (craftingData.format() < 3) {
+            log::write("backend: the crafting data has the format 2 (stage 3.7b): no procedural result, no perk item, no Azoth, and no "
+                       "currency ingredient. Make the file again with tools/gamedata/crafting.sh");
         }
     } else {
         log::write("backend: no crafting data at %s (%s): each craft request is refused with no change. Make the file with "

@@ -84,7 +84,15 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
 - The trade skill experience of a craft (stage 3.7b, [Crafting](crafting.md)): each job of a craft batch gives the experience of the event of
   its recipe through `Skills::plan_experience` (the rules of `add_experience` on a copy): the crafting system writes the rows in the
   transaction of the job and finishes the plan after the commit. The first job of a recipe that the character never crafted gives three
-  times the base (the first-craft bonus of the client). Test case CRAFTB2.
+  times the base (the first-craft bonus of the client). Test case CRAFTB2. From stage 3.7c the experience of a job is the floor of the
+  raw total of the batch up to that job minus the experience of the jobs before it (code review of stage 3.7b, finding CR7B-R1; test case
+  CR7B1).
+- The Azoth balance (stage 3.7c, [Crafting](crafting.md)) [game data: Azoth_Currency of CategoricalProgressionData, CRC `37504247`, rank
+  0, the cap 2,500 of the AzothCurrency table]: the balance is the points of the row Azoth_Currency of the categorical progression of the
+  character (the table of the skills), and an entry of the state 911 with the trade skills (protocol notes 4.52). The rank-up rule of a
+  trade skill does not apply: `Skills::add_balance` (a plan of a transaction with a cap) and `Skills::set_balance` change only the points,
+  and `Skills::balance` reads them. A craft takes the Azoth of its perk upgrade and of its currency ingredients in the transaction of each
+  job. The command `set_currency` (the tool window, `tools/world azoth`) sets it; the world has no other source yet.
 - The effect of a learned node (stage 3.3b-S5): the evaluator of the passive rules applies the row of each learned node of
   the tree of the weapon of a hit, and the fixed stats of the nodes of the weapon in the hand go into the gear values
   ([Passive rules](passive-rules.md)). A change of the learned nodes of a character in the world (an assignment, a reset of a

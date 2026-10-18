@@ -334,6 +334,15 @@ backend. The tool of each system is also in the document of that system.
   a cooldown with only a time or a count; refining with no rank table): 948 recipes with no cause. A rank table with a gap or two rows of
   one rank stops the tool (`check_crafting_tool.py`, case refining). A backend of stage 3.7b reads format 1 too, with the rules of stage
   3.7a (no refining, no reward progress).
+  Stage 3.7c writes format 3: the gear score bonus of each rank of each trade skill (MaxGearScoreBonus and its columns T2 to T5; a table
+  with no such column has 0), five values for each material (the three bonus values and IngredientGearScoreBaseBonus,
+  IngredientGearScoreMaxBonus: 50 items with a value; a gear score cell with a text is 0, counted in `gearScoreTextCells`: 1 cell), the
+  MaxCraftGS of the output of each recipe, the currencies of the CategoricalProgressionData tables with their cap (Azoth_Currency: 2,500),
+  and the perk counts of crafting with the three chance modifiers of `sharedassets/genericassets/playerbaseattributes.pbadb`. A procedural
+  result, a BaseGearScore, perk items, and a currency ingredient are no causes now; their data with no rule is (an output with a gear
+  score range, no override, and no BaseGearScore: 27 recipes; a currency with no cap; more than 4 perk items): 1,917 recipes with no cause.
+  The tool stops for a perk generation list that it cannot read (`check_crafting_tool.py`, case procedural). A backend of stage 3.7c reads
+  format 1 and 2 too, with the rules of their stages.
 
 ## Commands
 
@@ -354,7 +363,7 @@ tools/gamedata/weapon-actions.sh     # one time: the attack graphs and the abili
 tools/gamedata/places.sh             # one time: travel places for the backend (the spirit shrines and the inns of each territory)
 tools/gamedata/chests.sh             # one time: the chests of the world for the backend (placements, gatherable rows, loot roots, territories; 3.6 MB); needs an Oodle source
 tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, the stations, ...; 25 MB, 2 to 4 minutes); needs an Oodle source
-tools/gamedata/crafting.sh           # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits for the backend (format 2 of stage 3.7b; 9 MB, 5 s); needs an Oodle source
+tools/gamedata/crafting.sh           # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits, the gear score and perk data for the backend (format 3 of stage 3.7c; 9 MB, 5 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
 tools/gamedata/gathering.sh --region r_+04_+02 --near 8817 4281 30   # the gathering nodes near a place, with their G (no file)

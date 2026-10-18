@@ -472,7 +472,9 @@ inline constexpr float kAdminGatheringRange = 30.0F;
 /**
  * craft_preview (a diagnostic; the development routes and the tool window): `recipe` (the RecipeID text) and `quantity` (1 to 10000, default
  * 1). The plan of the recipe for the character: the checks of a request with the station of its use (no station: the plan, and the verdict
- * noStation), the costs of one job, the output, the fee, the gear score, the slots that the plan changes. No change.
+ * noStation), the costs of one job, the output, the fee, the gear score, the slots that the plan changes. No change. Stage 3.7c: `perks` (the
+ * resource item ids of the perk items, with "," between them) and `upgrade` (0 to 5): the craft gear score with its parts, the perk plan,
+ * the Azoth; with `seed` also the perks of each job (before and after the swap of the game).
  */
 [[nodiscard]] WorldCommand craft_preview(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /** stop_craft: the craft batch of the character stops (the completed jobs stay; its client gets the final progress). */
@@ -484,6 +486,17 @@ inline constexpr float kAdminGatheringRange = 30.0F;
 [[nodiscard]] WorldCommand set_craft_cooldown(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 /** set_craft_seed (stage 3.7b, a harness command): `seed`, the next state of the generator of the world (a seeded craft batch). */
 [[nodiscard]] WorldCommand set_craft_seed(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/**
+ * Code review of stage 3.7b, finding CR7B-R2: @return True when the process has the harness gate (SOULWARDEN_HARNESS=1 in its environment).
+ * The harness commands (set_craft_cooldown, set_craft_seed) refuse to run without it (403), also through the admin routes: the admin
+ * interface of a start of the user has no harness gate.
+ */
+[[nodiscard]] bool harness_gate();
+/**
+ * set_currency (stage 3.7c): `amount` (0 to the cap of the currency) and `currency` (default Azoth_Currency, a currency of the crafting data):
+ * the balance of the character (its categorical progression of rank 0). As set_coin: the rows, then the entity and its categorical state.
+ */
+[[nodiscard]] WorldCommand set_currency(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
 // The loot bag commands (stage 3.5b.2, world/loot_bags.h, server/http/loot_bag_commands.cpp).
 
@@ -493,7 +506,7 @@ inline constexpr float kAdminGatheringRange = 30.0F;
  */
 [[nodiscard]] nlohmann::json loot_bags_view(world::World& world, const std::string& character);
 
-/** @return The bag, the equipment, and the coin of a character (world thread), or no value when the store does not have it. */
+/** @return The bag, the equipment, the coin, and (stage 3.7c) the Azoth balance and its cap of a character (world thread), or no value. */
 [[nodiscard]] std::optional<nlohmann::json> items_view(world::World& world, const std::string& character);
 
 /** @return The level, the attributes, the weapon masteries, and the trade skills of a character (world thread), or no value. */

@@ -96,16 +96,18 @@ public:
     /** @return The ownership of a character, or no value when the store does not have the character. */
     [[nodiscard]] std::optional<OwnershipView> view(const std::string& characterId);
 
-private:
-    /** @return The entitlement aliases of the policy (each one of the game data), or none with no tables. */
-    [[nodiscard]] std::vector<std::string> policy_aliases() const;
     /**
      * @return The bit of an achievement id: the progression tables (the achievements of the entitlements), then the interaction
      *         data (the lore pages, stage 2.5a), then the item catalog (the objectives of the artifacts, stage B0), then the crafting
      *         data (the first-craft achievements of the recipes, stage 3.7b). No value: the game data has no row of it (the row stays,
-     *         with no bit).
+     *         with no bit). Code review of stage 3.7b, finding CR7B-R3: the crafting system checks a first craft with this resolver too
+     *         (one bit for one fact: the check and the bit that the commit sets).
      */
     [[nodiscard]] std::optional<std::uint32_t> achievement_bit(const std::string& id) const;
+
+private:
+    /** @return The entitlement aliases of the policy (each one of the game data), or none with no tables. */
+    [[nodiscard]] std::vector<std::string> policy_aliases() const;
     /** @return The achievements that these entitlements give. */
     [[nodiscard]] std::vector<std::string> achievements_of(const std::vector<std::string>& aliases) const;
     /** Sets the bits of an entity from the aliases and the achievement ids; marks a state that changed. */

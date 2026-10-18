@@ -117,6 +117,11 @@ struct GiveOptions {
     std::optional<PerkIds> perks;
     /** The cause that the client gets for the changed slots (namespace sync). */
     std::uint8_t action{sync::kItemAdded};
+    /**
+     * Stage 3.7c: the gear score is the craft gear score of a recipe (client 0x2E57A70: the cap of the craft, not the range of the item
+     * table): a new instance gets it as it is, also above the largest gear score of the item table.
+     */
+    bool exactGearScore{false};
 };
 
 /** One item of a grant (Inventory::grant): the loot of a kill. */
@@ -167,6 +172,12 @@ struct CraftOutput {
      * base count of the batch; an update with the cause 0 does not start it).
      */
     std::uint8_t action{sync::kItemCreated};
+    /**
+     * Stage 3.7c: the gear score of a new instance (the craft gear score: no clamp to the range of the item table; no value: the value of the
+     * item table) and its perks (the craft roll, before the swap of the game: the plan applies it as a give does; no value: no perk).
+     */
+    std::optional<std::uint32_t> gearScore{};
+    std::optional<PerkIds> perks{};
 };
 
 /** One entry of a drop request: a quantity of the item instance in a slot. */

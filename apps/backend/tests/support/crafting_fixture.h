@@ -5,6 +5,7 @@
 // player slice, and the helpers of request 2997, stop 2999, the storage search 7044, and progress 2993. All ids, keys, and items are made up.
 
 #include <cstdint>
+#include <cstdlib>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -284,6 +285,33 @@ struct Crafter : Shop {
             throw std::runtime_error(std::string("crafting test: the give of ") + item + " failed");
         }
     }
+};
+
+/**
+ * The harness gate of the process for a case (code review of stage 3.7b, finding CR7B-R2: the harness commands need SOULWARDEN_HARNESS=1):
+ * sets or removes the variable, and gives the old value back at the end of the case. The test program runs one case at a time.
+ */
+struct HarnessGate {
+    std::optional<std::string> old;
+    explicit HarnessGate(bool on) {
+        if (const char* value = std::getenv("SOULWARDEN_HARNESS")) {
+            old = value;
+        }
+        if (on) {
+            setenv("SOULWARDEN_HARNESS", "1", 1);
+        } else {
+            unsetenv("SOULWARDEN_HARNESS");
+        }
+    }
+    ~HarnessGate() {
+        if (old) {
+            setenv("SOULWARDEN_HARNESS", old->c_str(), 1);
+        } else {
+            unsetenv("SOULWARDEN_HARNESS");
+        }
+    }
+    HarnessGate(const HarnessGate&) = delete;
+    HarnessGate& operator=(const HarnessGate&) = delete;
 };
 
 // Stage 3.7b (tests/refining_tests.cpp): the made-up data of refining and of the reward progress. All ids and values are made up.

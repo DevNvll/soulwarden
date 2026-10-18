@@ -417,6 +417,9 @@ void Gear::refresh(Entity& character) {
         m_world.touch(character.id, ComponentKey::attribute);
     }
     m_world.progress().refresh_vitals(character);
+    // Stage 3.7c: the craft gear score bonus of the statuses (the MaxGS values of a food, of the status of a perk of an item, of a trophy)
+    // follows each change of the statuses and of the equipment (field 1 of the Crafting state 205).
+    m_world.crafting().refresh_bonus(character);
 }
 
 std::optional<Conversion> Gear::conversion(const ItemInstance& weapon, std::uint32_t slot) const {

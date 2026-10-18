@@ -177,9 +177,12 @@ constexpr NamedCommand kCommands[] = {
     // The crafting (stage 3.7a): the plan of a recipe (no change) and the stop of a craft batch.
     {"craft_preview", commands::craft_preview},
     {"stop_craft", commands::stop_craft},
-    // Stage 3.7b: the cooldown of a recipe of a character, and the seed of the generator of the world (a seeded craft batch).
+    // Stage 3.7b: the cooldown of a recipe of a character, and the seed of the generator of the world (a seeded craft batch). Harness
+    // commands: they refuse with no harness gate of the process (code review of stage 3.7b, finding CR7B-R2).
     {"set_craft_cooldown", commands::set_craft_cooldown},
     {"set_craft_seed", commands::set_craft_seed},
+    // Stage 3.7c: the balance of a currency of a character (Azoth: the perk upgrade and the currency ingredients of a craft).
+    {"set_currency", commands::set_currency},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */

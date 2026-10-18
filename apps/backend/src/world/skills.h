@@ -54,6 +54,8 @@ inline constexpr std::uint32_t kRowPoints = 1;
 inline constexpr std::uint32_t kLastRowWithRequirement = 3;
 /** Places of the ability bar of a weapon. */
 inline constexpr std::uint32_t kBarSlots = 3;
+/** The categorical progression of the Azoth balance (stage 3.7c; game data: CategoricalProgressionId Azoth_Currency, MaxLevel 0). */
+inline constexpr const char* kAzothCurrency = "Azoth_Currency";
 /** Largest amount of one mastery or trade skill experience command. */
 inline constexpr std::uint64_t kSkillExperienceLimit = 10000000;
 
@@ -179,6 +181,20 @@ public:
      * rules of add_experience, and no write: the craft job writes the rows in its transaction (write) and finishes the plan after the commit.
      */
     [[nodiscard]] Plan plan_experience(const std::string& characterId, std::string_view id, std::uint64_t amount);
+    /** @return A plan of a character with no change (stage 3.7c: a craft job with a cost of Azoth and no experience adds its balance). */
+    [[nodiscard]] Plan plan_none(const std::string& characterId);
+    /**
+     * Stage 3.7c: adds a change of a balance to a plan of the character (a categorical progression of rank 0 with no rank-up, such as
+     * Azoth_Currency: the points of the progression on the wire, research crafting-stage.md section 4): the points plus `delta`; a cost above
+     * the points is refused (notEnoughBalance), and a gain stops at `cap` (the MaximumInfluence of the rank 0; AllowOverflow is 0). One plan
+     * has the experience and the balance of a craft job: the rows of the skills are one write.
+     * @param id The id text of the progression (the id on the wire is its CRC-32).
+     */
+    [[nodiscard]] ProgressError add_balance(Plan& plan, std::string_view id, std::int64_t delta, std::uint64_t cap) const;
+    /** A command (stage 3.7c): sets a balance to `amount` (0 to `cap`). */
+    SkillResult set_balance(const std::string& characterId, std::string_view id, std::uint64_t amount, std::uint64_t cap);
+    /** @return The balance of a progression of rank 0 of a skill set (the points; 0 with no entry). */
+    [[nodiscard]] static std::uint64_t balance(const SkillSet& skills, std::string_view id);
     /**
      * Plans weapon trees (the build preset): for each tree the rank of set_rank, the reset of the tree (its nodes and its bar go,
      * with no cost: a rank change that frees the points), each node with the checks of assign (one point, the node that it needs,

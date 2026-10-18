@@ -2,13 +2,15 @@
 
 Read this document before a change of the crafting: the craft request of a client at a station or a camp, the recipes and the station
 rows, the plan of the materials and of the output, the craft batch and its jobs, the progress message, the empty storage search of the
-crafting screen, the station variants of decision D1, and from stage 3.7b refining, the bonus items of decision D2, the trade skill
-experience of a craft, the first-craft bonus, and the cooldown of a recipe (the Crafting state 205). The wire contracts are in the protocol
-notes (sections 4.50 and 4.51). The station use (the prompt, the request of action 20, the Assembly, the StationContext) is in
-[Interactions](interactions.md); the bag and the item instances are in [Items and equipment](items-and-equipment.md); the trade skills are in
-[Level, attributes, and skills](progression-and-skills.md). Stage 3.7a is the first part of stage 3.7: the fixed recipes; stage 3.7b the
-second part: refining and the reward progress. The procedural items, salvage, and repair are the runs 3.7c to 3.7e ([Roadmap](../ROADMAP.md),
-section 3.7).
+crafting screen, the station variants of decision D1, from stage 3.7b refining, the bonus items of decision D2, the trade skill
+experience of a craft, the first-craft bonus, and the cooldown of a recipe (the Crafting state 205), and from stage 3.7c the procedural
+items (the craft gear score, the perks, the gem slot, the rarity), the perk items (the charms) and the Azoth of a craft, the craft bonus of
+the food, the gear, and the trophies, and the currency ingredients. The wire contracts are in the protocol notes (sections 4.50 to 4.52).
+The station use (the prompt, the request of action 20, the Assembly, the StationContext) is in [Interactions](interactions.md); the bag and
+the item instances are in [Items and equipment](items-and-equipment.md); the trade skills and the Azoth balance are in [Level, attributes,
+and skills](progression-and-skills.md); the loot perk generator is in [Gear and perks](gear-and-perks.md). Stage 3.7a is the first part of
+stage 3.7: the fixed recipes; stage 3.7b the second part: refining and the reward progress; stage 3.7c the third part: the procedural
+items. Salvage and repair are the runs 3.7d and 3.7e ([Roadmap](../ROADMAP.md), section 3.7).
 
 ## Start here
 
@@ -28,7 +30,15 @@ section 3.7).
 | The crafting data of format 2 (the rank tables, the first-craft bits, the bonus values of the items, the tier lists) | `gamedata/crafting_data.h`, `tools/gamedata/crafting.py` (case refining of `check_crafting_tool.py`), test cases CRAFTB-DATA, CRAFT-TOOL |
 | Two characters, the load of stage 3.7b; the commands | Test cases CRAFTB-MP, CRAFTB-LOAD, CRAFTB-CMD |
 | The correction of the code review of stage U4 (U4-R1: an output with a gear score range) | `CraftingData::match_catalog`, the check of `Crafting::check`, `tests/review_u4_tests.cpp` (CRU1, CRU2); `~/Games/soulwarden/work/evidence/menu-equipment/u4/code-review/FINDINGS.md` |
-| The research and the result | `~/Games/soulwarden/work/research/crafting-stage.md` (sections 1 to 5, 8 to 12), `crafting.md`; `~/Games/soulwarden/work/evidence/crafting/37a/implement/RESULT.md`, `~/Games/soulwarden/work/evidence/crafting/37b/implement/RESULT.md` |
+| Stage 3.7c, the craft gear score (the rank, the materials, the statuses, the caps) and the claim of a request | Protocol notes 4.52, `world/crafting.h` (`CraftGearScore`, `Crafting::gear_score_of`), `gamedata/crafting_data.h` (`rank_gear_score`, `material`), `gamedata/progression_tables.h` (`max_craft_gear_score`), test case CRAFTC1 |
+| The perks of a craft (the generator with the perk items and G, the push flag, one gem, the swap, the rarity) | `world/perk_roll.h` (`CraftPerkInputs`, `roll_craft_perks`; one `generate` for the loot and the crafts), `Crafting::perk_plan`, test cases CRAFTC2, CRAFTC6 |
+| The perk items and the Azoth upgrade of a request | `Crafting::extras`, `Crafting::azoth_of`, `world/entity.h` (`CraftJob`), test case CRAFTC3 |
+| The craft bonus of the food, the gear, and the trophies (state 205, field 1) | `Crafting::refresh_bonus`, `Entity::craftGearBonus`, `world/gear.cpp` (the call at the end of `Gear::refresh`), `server/rep/states/crafting_state.cpp`, test case CRAFTC4 |
+| The Azoth balance and the currency ingredients | `world/skills.h` (`kAzothCurrency`, `add_balance`, `set_balance`, `balance`), `gamedata/crafting_data.h` (`currency`), the command `set_currency`, test case CRAFTC5 |
+| The crafting data of format 3 (the rank gear score, the material gear score, the resources, the currencies, the perk generation data) | `gamedata/crafting_data.h`, `tools/gamedata/crafting.py` (case procedural of `check_crafting_tool.py`), test case CRAFTC-DATA |
+| Two characters, the load of stage 3.7c; the commands | Test cases CRAFTC-MP, CRAFTC-LOAD, CRAFTC-CMD |
+| The corrections of the code review of stage 3.7b (CR7B-R1 to CR7B-R4) | `tests/review_37b_tests.cpp`, test cases CR7B1 to CR7B3; `~/Games/soulwarden/work/evidence/crafting/37b/code-review/FINDINGS.md` |
+| The research and the result | `~/Games/soulwarden/work/research/crafting-stage.md` (sections 1 to 5, 8 to 12), `crafting.md`; `~/Games/soulwarden/work/evidence/crafting/37a/implement/RESULT.md`, `~/Games/soulwarden/work/evidence/crafting/37b/implement/RESULT.md`, `~/Games/soulwarden/work/evidence/crafting/37c/implement/RESULT.md` |
 
 ## Rules
 
@@ -41,15 +51,18 @@ decision of the user, decision of the orchestrator, decision of an agent.
   client apply to the perk options: a blank PerkItemsBucketPush is true; a MaxPerkItemsAllowed of 0 is 1 for a procedural recipe [client code
   0x4481730, research K4].
 - The recipes that the backend crafts [decision of an agent from the briefs: 3.7a the fixed crafts, 3.7b refining and the reward
-  progress]: a recipe with no cause of the tool. The causes: a procedural result (3.7c), a currency ingredient (3.7c: the Azoth balance; no
-  recipe of the criteria of 3.7b needs one), perk items or an Azoth upgrade (3.7c), a BaseGearScore or an output with a gear score range and
-  no override (3.7c), an unlock or an achievement rule, SkipGrantItems, world tags, a temporary recipe, an output or an ingredient that is not
-  an item, a category with no item, a quantity of 0, no station row for its keys; from stage 3.7b only data with no rule: a reward event
-  with no row, with character experience (UniversalExpAmount), or of a progression with no rank table, a first-craft achievement with no row,
-  a cooldown with only a time or only a count, refining whose trade skill has no rank table. In the supported build 948 recipes have no cause
-  (stage 3.7a: 6): 610 refining recipes, 699 craft-all recipes, 942 with a reward event, 870 with a first-craft achievement, 45 with a
-  cooldown. The backend also refuses a recipe that needs an expansion (RequiredExpansion) [decision of an agent: no check of the expansion
-  in this stage].
+  progress, 3.7c the procedural items and the currency ingredients]: a recipe with no cause of the tool. The causes: an unlock or an
+  achievement rule, SkipGrantItems, world tags, a temporary recipe, an output or an ingredient that is not an item, a category with no item, a
+  quantity of 0, no station row for its keys; from stage 3.7b only data with no rule: a reward event with no row, with character experience
+  (UniversalExpAmount), or of a progression with no rank table, a first-craft achievement with no row, a cooldown with only a time or only a
+  count, refining whose trade skill has no rank table; from stage 3.7c only data with no rule: an output with a gear score range, no
+  override, and no BaseGearScore, a currency ingredient with no cap of its balance in the data, more perk items than the four perk item
+  controls of the client (MaxPerkItemsAllowed + AttributeOnlyPerkItemSlotCount above 4; the client setting
+  javelin.crafting-max-num-perk-items, registered with 4 at 0x6171372). In the supported build 1,917 recipes have no cause (stage 3.7b:
+  948; stage 3.7a: 6): 837 procedural recipes (9 of them with PerkItemsBucketPush false), 894 with a BaseGearScore, 20 with a currency
+  ingredient (Azoth_Currency), 685 refining recipes, 778 craft-all recipes, 1,911 with a reward event, 1,815 with a first-craft achievement,
+  49 with a cooldown. The backend also refuses a recipe that needs an expansion (RequiredExpansion) [decision of an agent: no check of the
+  expansion in this stage].
 - The request [client code 0x2DF48A0, 0x2E173D0; live check L3]. Message 2997 has the recipe CRC, the count, the fee and the gear score
   of the client, the perk items, the upgrade level, and one entry for each ingredient of the recipe in its order: the type Item, the
   quantity 1, and the CRC of the selected item (the client converts each selection to such an entry, 0x5BA9FB0). The server takes the
@@ -63,10 +76,13 @@ decision of the user, decision of the orchestrator, decision of an agent.
     Assembly key of the use is a row of the station database [client code: lookup 0x2E804E0 has no alias];
   - no batch of the character runs [decision of an agent: one batch for each character; a repeated request gives no second item];
   - the recipe has no cause; a station key of the recipe is a type of the row; the trade skill rank is RecipeLevel or more [client code
-    IsRecipeKnown 0x2E5E720]; the count is 1 to 10,000; no perk item and no upgrade;
+    IsRecipeKnown 0x2E5E720]; the count is 1 to 10,000;
   - the entries: their count is the count of the ingredients, each one has the type Item, an item ingredient names its item, a category
     ingredient names a member of the category (the IngredientCategories of the master items; the UI table craftingcategories does not
-    define membership) [game data; client code 0x5BA9FB0];
+    define membership), a currency ingredient has the entry of type Item with the item 0 (stage 3.7c) [game data; client code 0x5BA9FB0;
+    live check L5c];
+  - stage 3.7c: the craft gear score and its claim, the perk items, the upgrade level, and the Azoth and the currency of the batch (the
+    rules of stage 3.7c below);
   - the plan of the whole batch on a copy (`Inventory::plan_craft`): the costs from the unlocked stacks of the bag, then of the quick slots
     1 to 4 (the cache of the client counts these: craftinginventorycache.luac, ResetCache), two ingredients of one item are one cost (one
     stack pays a unit once), and the output of each job must fit in the bag (500 slots) [client code; decision of an agent for the
@@ -82,9 +98,10 @@ decision of the user, decision of the orchestrator, decision of an agent.
   no tax: the factor is 1 and the taxes are 0 [decision of an agent]. Thus a fixed recipe with CraftingFee 0 costs 1 (0.01 coin) for each
   batch: the live client sent the fee 1 for the counts 1 and 3. The server takes its own fee; a different fee claim is counted, not refused.
   The job k of a batch pays fee(k) - fee(k - 1): a stop after k jobs paid fee(k).
-- The gear score claim [client code 0x2E41E10]: the server facet of the client compares the claim only for a recipe with a BaseGearScore;
-  the recipes of this stage have none, and the backend does not compare it. The output instance gets the values of its item table
-  (GearScoreOverride, the durability, the bind flag) as a give.
+- The gear score claim [client code 0x2E41E10]: the server facet of the client compares the claim only for a recipe with a BaseGearScore.
+  The backend does the same from stage 3.7c: a claim that is not 0 and not the craft gear score of the server is refused (`gearScore`) with
+  no change (test case CRAFTC1). The output of a recipe with no BaseGearScore gets the values of its item table (GearScoreOverride, the
+  durability, the bind flag) as a give; the output of a recipe with a BaseGearScore gets the craft gear score (the rules of stage 3.7c).
 - The batch [decision D5 of the orchestrator, option A; client code 0x2E41E10, 0x617139E]. The client sends the whole count in one 2997
   (the setting javelin.crafting-enable-craft-all-override is true; live check L10b: count 3). The server checks the whole batch and keeps it
   as a value of the entity (`Entity::craftJob`); it reserves nothing in the store. The first job completes one craft time after the request
@@ -128,13 +145,19 @@ decision of the user, decision of the orchestrator, decision of an agent.
     not change it) [decision of an agent]. To 6 decimals: the float sums of the data give no tiny chance [decision of an agent].
 - Decision D2 of the orchestrator (option A): the expected extra units of one job are e = OutputQty x chance (the chance is a share of the
   output of the job: a recipe with OutputQty 3 and the chance 0.5 has e = 1.5). Each job gives floor(e) extra units, and one more unit when
-  one draw of the generator of the world (`World::random_unit`: the one random source) is below e - floor(e); a whole e takes no draw. A
-  chance above 1 (100 percent) gives floor(e) units each job with no draw. The mean of the extra units is e, the value that the client shows
-  (test case CRAFTB1: 200,000 jobs). The plan of a request reserves the largest output of each job (OutputQty + ceil(e)): no paid output is
-  lost [decision of an agent]. A seeded batch: `tools/world craft seed NAME N` sets the generator, `tools/world craft preview NAME RECIPE
-  COUNT --seed N` gives the extra units of each job (live: seed 37, 10 iron ingots at Smelting 200: the preview 4 bonus, the screen "TOTAL
-  14, BASE AMOUNT 10, BONUS 4"). With the creature behavior on, the creatures take draws too: a seeded batch is exact only with no other
-  user of the generator.
+  one draw of the generator of the world (`World::random_unit`: the one random source) is below e - floor(e); a whole e takes no draw. The
+  mean of the extra units is e, the value that the client shows (test case CRAFTB1: 200,000 jobs). The plan of a request reserves the
+  largest output of each job (OutputQty + ceil(e)): no paid output is lost [decision of an agent]. A seeded batch: `tools/world craft seed
+  NAME N` sets the generator, `tools/world craft preview NAME RECIPE COUNT --seed N` gives the extra units of each job (live: seed 37, 10
+  iron ingots at Smelting 200: the preview 4 bonus, the screen "TOTAL 14, BASE AMOUNT 10, BONUS 4"). With the creature behavior on, the
+  creatures take draws too: a seeded batch is exact only with no other user of the generator. Code review of stage 3.7b, finding CR7B-R4:
+  a sentence of this rule said that a chance above 100 percent takes no draw; the code takes a draw for each e that is not whole (e = 1.5:
+  1 unit and a draw for the second one). The sentence is deleted.
+- Stage 3.7c, the extra units only for a craft-all or a refining recipe [decision of an agent; craftingstatspanel.luac: the panel
+  RefiningInfo and GetChanceForBonusItems only for IsRecipeCraftAll or IsRecipeRefining; live stage run of 3.7c]: a different recipe (a
+  procedural weapon, a tool) has e = 0. Its screen has no bonus row, but the materials can give it a chance (live: the procedural knife
+  with Fae Iron, IngredientBonusPrimary 10, had the server chance 0.15 percent: an extra knife with no row of the screen). The Tempered
+  Cast (craft-all and refining) shows "Chance to craft additional items 0%" (test case CRAFTC1).
 - The result of a craft-all recipe (CraftAll; each refining recipe has it) [live check L4; craftingscreenv4.luac OnSlotUpdate]: the screen
   shows TOTAL, BASE AMOUNT, and BONUS at the first slot update with the cause ItemCreated (3) or ItemAddedWithoutLimit (32) whose count
   reaches the count of the batch times OutputQty. A later update with the cause 3 shows the right total but the row of the base and the bonus
@@ -142,8 +165,12 @@ decision of the user, decision of the orchestrator, decision of an agent.
   before the last job of a craft-all batch has the cause ItemAdded, and the last job the cause ItemCreated (`CraftOutput::action`). A recipe
   that is not craft-all keeps ItemCreated for each job (the summary "N ITEMS CRAFTED" of stage 3.7a).
 - Stage 3.7b, the trade skill experience [game data; client code 0x5C47AC0; craftingscreenv4.luac and craftingstatspanel.luac; live check
-  L4]: each job gives floor(the CategoricalProgressionReward of the event of the recipe x the units of its ingredients that are not a
-  currency) experience of the progression of the event (IngotT2: 11 x 4 = 44). The screen shows the gain from the categorical state 911
+  L4]: the raw base of one job is the CategoricalProgressionReward of the event of the recipe x the units of its ingredients that are not
+  a currency (IngotT2: 11 x 4 = 44). A batch of n jobs gives floor(raw x n + raw x (3 - 1)) with the first-craft bonus and floor(raw x n)
+  without it, as the screen computes it (craftingstatspanel.luac UpdateSkillAmount); job k gives the floor of the raw total of the jobs 1 to
+  k minus the experience of the jobs before it (`CraftExperience::total`). Code review of stage 3.7b, finding CR7B-R1 (test case CR7B1):
+  before the correction each job took floor(raw) and the bonus floor(raw) x 2: the reward 11.125 gave 220 for a first batch of 3 and 440 for
+  10 jobs, the screen 222 and 445. The screen shows the gain from the categorical state 911
   ("+44 Smelting"). The faction buff and the progression boost of the screen have no source in the backend (1). The territory standing of
   an event (487 recipes with no cause) is not given: the backend has no territory standing [decision of an agent]. With no progression row of
   the progression the request is refused (noData).
@@ -154,6 +181,12 @@ decision of the user, decision of the orchestrator, decision of an agent.
   achievement state follow the commit (`Ownership::write_achievements`, `achievements_written`). The next jobs and batches have no bonus.
   Live: the batch of 3 iron ingots at Smelting 0: "+220 Smelting" (44 x 3 + 88), the server 220 (rank 1, 112 of 114); then "+44"; the
   tooltip of the client: "Base 132 XP, First Craft 88 XP (x2), Total 220".
+- One bit for one first-craft fact (code review of stage 3.7b, finding CR7B-R3; test case CR7B3) [decision of an agent]: the check of a job
+  and the committed bit use one resolver (`Ownership::achievement_bit`), and the batch keeps a flag after the job of the bonus
+  (`CraftJob::firstCraftDone`). At its start the backend refuses a crafting file whose bit of a first-craft achievement differs from the bit
+  of the progression tables (`CraftingData::match_achievements`; the backend log has the achievement and the two bits). Before the
+  correction the check read the bit of the crafting file and the commit the bit of the progression tables: with two different bits each job
+  of a batch gave the bonus.
 - Stage 3.7b, the cooldown of a recipe [game data: CooldownSeconds, CooldownQuantity; client code 0x2E897C0; live check L6]: the window starts
   at the first craft after the end of the last window, with `used` 1 and the end CooldownSeconds later; each next craft in the window adds
   1. A request whose count is above CooldownQuantity - used is refused (`cooldown`; the client limits its count too). The client ends a
@@ -165,10 +198,10 @@ decision of the user, decision of the orchestrator, decision of an agent.
 - The Crafting state 205 (slot 63) [live checks L1 of stage 3.7a and L6; client code 0x2E897C0, 0x2E89910]: owner only; field 0, the full
   cooldown map (`{recipeCrc:u32 used:u8 end:u64}`, 100 entries at most) with the end on the synced wall clock of the client in nanoseconds
   (the clock of the end of a status effect; L6: the end in one hour showed "59m 57s per 9 items"); field 1, the gear score bonus map
-  (`{skillCode:u8 bonus:u16}`, 21 at most; the code is the TradeskillType of the client with Weaponsmithing 0: Engineering 6, L6), empty in
-  this stage (its sources are stage 3.7c). No fragment in the first record of a character with no active window; at each change the full
-  maps (also empty). With no entry the client shows a time that counts down from the start of the session ("23h 55m per 10 items": a client
-  default; L6).
+  (`{skillCode:u8 bonus:u16}`, 21 at most; the code is the TradeskillType of the client with Weaponsmithing 0: Engineering 6, L6); from
+  stage 3.7c it has the craft bonus of the statuses (the rule of stage 3.7c below). No fragment in the first record of a character with no
+  active window and no bonus; at each change the full maps (also empty). With no entry the client shows a time that counts down from the
+  start of the session ("23h 55m per 10 items": a client default; L6).
 - The empty storage search [live check L2; client code 0x2D13950]: the crafting screen of a station sends 7044 (a search UUID and its
   parameters); the session answers 7046 with that UUID and no result, and answers a 7039 with the same empty result. The craft takes the bag
   and the quick slots only: there is no storage before stage 5.2. A camp sends no search (craftingtreeview.luac).
@@ -198,14 +231,16 @@ decision of the user, decision of the orchestrator, decision of an agent.
   GearScoreOverride in the item catalog is refused at the request (`unsupported`, before any cost), and the backend refuses a crafting file
   with such a recipe as a whole at its start (`CraftingData::match_catalog`: the file and the catalog do not agree). Before the correction
   the check of CR7A-R2 tested only the BaseGearScore of the recipe: a craft gave a plain item of gear score 100. The supported build has no
-  such recipe (0 of 948).
+  such recipe (0 of 948). From stage 3.7c (format 3) a recipe with a BaseGearScore has the craft gear score rule, and the rule of U4-R1
+  applies only to a recipe with no BaseGearScore (the tool gives 27 such recipes a cause).
 - No data: with no `crafting-data.json` the backend starts, and each request is refused with no change (the stop form). The loader refuses a
   file as a whole when a part is not complete or not consistent (two recipes with one CRC-32, a CRC that is not the CRC of the id, an
   ingredient type that is not a type of the client, a station row with no type, a recipe with no cause and no output, no quantity, no station
   key, or a category with no item). It also refuses a recipe with no cause and a rule that the backend does not apply (code review of stage
   3.7a, finding CR7A-R2; test case CRV2): an unlock (`known` false, `requiredAchievement`, `hiddenByAchievement`, `unlockedAchievement`), a
-  procedural result, a temporary recipe, perk items, a BaseGearScore, SkipGrantItems, or world tags; in a file of format 1 also a first-craft
-  achievement, refining, craft-all, an event, or a cooldown (format 2: their data, the rule of the format above). The output of a recipe with
+  temporary recipe, SkipGrantItems, or world tags; in a file of format 1 or 2 also a procedural result, perk items, or a BaseGearScore
+  (format 3: their data, the rule of the format below); in a file of format 1 also a first-craft achievement, refining, craft-all, an event,
+  or a cooldown (format 2: their data, the rule of the format above). The output of a recipe with
   no cause and a gear score range in the item catalog is the rule of U4-R1 above (the request and the start). The request checks do not test
   the other rules: the cause list of the file is the gate, and an empty list must agree with the rules of the recipe.
 - The format of the file: format 2 (stage 3.7b) has the members `events`, `ranks` (the RollBonus of the ranks 0 to N of each trade skill;
@@ -214,10 +249,96 @@ decision of the user, decision of the orchestrator, decision of an agent.
   cause and an event that the file does not have, with character experience, or of a progression with no rank table; a first-craft
   achievement with no bit; a cooldown with only a time or a count; refining with no rank table (test case CRAFTB-DATA). A file of format 1
   (stage 3.7a) is read with the rules of stage 3.7a (no refining, no event, no first craft, no cooldown), and the backend log says so.
+- Format 3 (stage 3.7c) adds `rankGearScore` (for each trade skill and rank the MaxGearScoreBonus and its columns T2 to T5),
+  `currencies` (Azoth_Currency with its cap 2500), `resources` (each resource item with its PerkBucket, GemPerk, and SocketType),
+  `perkGeneration` (the crafting list of the largest perk counts of each tier with its gear score ranges, and the three chance modifiers of
+  the player base attributes: Perk, Attribute, and Gem Slot Chance Modifier), five values for each material (ExtraBonusItemChance,
+  IngredientBonusPrimary, IngredientBonusSecondary, IngredientGearScoreBaseBonus, IngredientGearScoreMaxBonus; a gear score cell with a
+  text is 0: the tool counts it in `gearScoreTextCells`), and for each recipe `maxCraftGS` (the MaxCraftGS of its output item). The loader
+  refuses a file of format 3 with no member `currencies`, a currency ingredient with no cap, a gear score range whose end is below its
+  start, a rank row or a material that does not have 5 values, or a recipe with no cause and more than 4 perk items (test case
+  CRAFTC-DATA). A file of format 2 is read with the rules of stage 3.7b: a procedural recipe or a recipe with a BaseGearScore or perk items
+  has a rule that the backend does not apply (the cause of such a recipe of the file of stage 3.7b), and the backend log says so.
 - The data tool skips an ingredient entry with no type (the type Invalid: the client skips it; 88 entries of the supported build have an
   id and no type). An entry with a type and no id stops the tool, and the earlier file stays (code review of stage 3.7a, finding CR7A-R3;
   `check_crafting_tool.py`, case incomplete; test case CRV3) [decision of an agent: the supported build has no such entry]. Before the
   correction the tool skipped it, and the recipe took one material less.
+- Stage 3.7c, the craft gear score [client code 0x2E52870, 0x2E57A70 (the stores 0x2E58218 to 0x2E58222), 0x3CB2AA0; game data; live
+  checks L5 and L5b; the stage run]: only a recipe with a BaseGearScore has it. The value is BaseGearScore, plus the MaxGearScoreBonus of
+  the rank of the trade skill of the recipe for the tier of the output (the columns T2 to T5 for the tiers 2 to 5, else the first column;
+  nothing with DisallowBonusesToGS or for a refining recipe), plus the IngredientGearScoreMaxBonus of each selected member of a category
+  ingredient (only a procedural recipe), plus the craft bonus of the statuses for the trade skill to the cap 50 (the client setting, 0 and
+  50 at 0x61712C1 and 0x61712EA). The GearScoreOverride of the output replaces the sum. The cap is the MaxCraftGS of the output item, else
+  the MaxCraftGS of the expansion of the character (the row None 625, Expansion2023 700: `ProgressionTables::max_craft_gear_score`). The
+  output instance gets the value. The faction control bonus of a territory is 0 (no territory). The tier lists of a recipe change only the
+  low value of the client, which a result does not use. Live L5: the Iron Skinning Knife 205 at Engineering 0 (200 + 5), 255 at Engineering
+  50, 210 with Fae Iron (5), 210 also with a timber of tier 3; L5b: the Orichalcum Great Axe 600 (500 + 25 + 60 + 15 of the food). The stage
+  run: the knife crafted with 205 and with 210, the axe with 600 (result screens and tooltips). Test case CRAFTC1.
+- Stage 3.7c, the perks of a craft [client code GeneratePerks 0x5C345F0, the slot 0x5CD1A20, CanAddPerk 0x5C03E20, the type gate
+  0x5C03DA0, the parameter object 0x5BAAEB0 and 0x5C616F0; research K8; live check L5b; the mapping of the request to the parameters is a
+  decision of an agent from the research]: a procedural recipe whose output can have perks rolls its perks with the one generator of the
+  loot (`world/perk_roll.cpp`, `generate`; no second generator) and the inputs of a craft (`CraftPerkInputs`):
+  - the largest count: the crafting list of the perk generation data for the tier and the craft gear score (tier 5: 4 perks at 470 to 599
+    and 626 to 674, 5 at 600 to 625 and 675 to 1000);
+  - the perk items of the request in their order: each one rolls the PerkBucket of its resource row with the chance bonus 0, before the
+    count roll;
+  - G, the upgrade level: the first G eligible ordinary buckets get the chance modifier of their type (1.0 for Perk, Attribute, and Gem in
+    the player base attributes: a guarantee);
+  - PerkItemsBucketPush (parameter +0x2B): true keeps the ordinary buckets; false removes the first ordinary bucket of the type of a resource
+    after its success (live L5b: with the gem pins on the axe, push true, the screen keeps the row "Gem Charm Slot" of the ordinary
+    bucket; with the Adderstone on the bag, push false, the charm takes the place of one row: 4 rows before and after, but the largest
+    count at 565 is 4, thus this picture does not separate the two rules);
+  - the count target is min(the largest count, the fixed perks and the ordinary buckets before the resources); the count roll goes from the
+    last bucket to the first; a slot roll uses CanAddPerk and the type gate (one Inherent perk). No level gate of the loot (player level 7)
+    for a craft [research].
+  - One gem for each item [decision of an agent; a decision for the user]: with the gem pins and push true the screen keeps the row of the
+    ordinary gem bucket (L5b: two rows "Gem Charm Slot", the pins "Empty" and the bucket "High Chance"), but an item has one gem socket
+    in its tooltip; the backend gives no second gem perk. The original server rule is not known.
+  - The swap of stage 1.3b follows (the Soldier attribute perk of a weapon becomes Acutely Empowered). The rarity is the perk count: the
+    client derives it (no wire field).
+  - Live stage run: the Orichalcum Great Axe with the Reinforced Starmetal Great Axe Charm and G 4 (33 Azoth): 600, LEGENDARY, Acutely
+    Empowered, Empty Gem Slot, Enfeebling Maelstrom (the charm), Shirking Flames, Rogue; the same five perks as `tools/world craft preview
+    ... --seed 41` before the craft, and the same tooltip after a restart. Test cases CRAFTC2, CRAFTC6.
+- Stage 3.7c, the perk items and the upgrade level of a request [craftingrecipepanel.luac, craftingstatspanel.luac; client code 0x2E41E10;
+  live checks L5 and L5b]:
+  - only a procedural recipe whose output can have perks takes perk items or an upgrade (`upgrade`);
+  - each perk item is a resource item of the data with a perk bucket of the perk data and a perk for the output after the perks before it
+    (else `perkItems`: the client lists only such charms, L5: the 7 craft mods of the knife), at most MaxPerkItemsAllowed +
+    AttributeOnlyPerkItemSlotCount and at most 4 of them (an item after MaxPerkItemsAllowed must have an Inherent bucket); each job takes
+    one unit of each perk item (a cost of the plan);
+  - maximumPerks = min(the largest count for the tier and the gear score, the valid ordinary buckets + the fixed perks); the fixed perks, the
+    perk items, and the upgrade level together must be maximumPerks or less (`upgrade`). The client has the same limit: the Azoth level above
+    it is red (live L5b: 41 for the axe with a charm);
+  - the Azoth of one job: trunc(PerkCost x G) (client 0x2E56070; the faction control reduction is 0: no territory), then x (1 - the
+    AzothDiscountPercent of the station row), with floor (client 0x2E40EE0; the setting javelin.enable-azoth-station-discounts, true at
+    0x616EBD4). A tier-5 station (0.45), PerkCost 15: 8, 16, 24, 33, 41 (live L5 and L5b: the screen shows 0, 8, 16, 24, 33, 41);
+  - a batch of n jobs needs n x that Azoth (`notEnoughCurrency`); each job takes its Azoth in its transaction. Live stage run: the axe with
+    G 4 took 33 Azoth (692 to 659), the knife with G 1 8 Azoth. Test case CRAFTC3 (also the live bytes of 2997 for both push values).
+- Stage 3.7c, the currency ingredients [game data: the ingredient type Currency, Azoth_Currency; client code 0x5BA9FB0; live check L5c]: the
+  cost is the quantity of the recipe x the count, from the balance of the currency (not from the bag). The entry of the client is the type
+  Item, the quantity 1, and the item 0 (L5c: the Prismatic Setting `01 00000001 00000000`). A balance below the cost refuses the request
+  (`notEnoughCurrency`) with no change. The experience does not count a currency ingredient (stage 3.7b). Live stage run: the Tempered Cast
+  took 250 Azoth (659 to 409); the screen showed "659/250 Azoth" before and "409/250 Azoth" after. Test case CRAFTC5.
+- Stage 3.7c, the Azoth balance [game data: the progression Azoth_Currency (CategoricalProgressionData, CRC 0x37504247), rank 0, the cap
+  2500 (AzothCurrency, MaximumInfluence); live checks L5 and L5b]: the balance is the points of the progression Azoth_Currency of the
+  character, a row of its categorical progression (the table of the skills) and an entry of the state 911 with the trade skills. The
+  client shows it in the top bar of the crafting screen, in the Azoth slot, in the bag ("659 / 2,500"), and as a notice at a gain ("+200
+  Azoth"). The rank-up rule of a trade skill does not apply (`Skills::add_balance`, `set_balance`). The only source is the command
+  `set_currency` (the row Azoth of the tab Character of the tool window, `tools/world azoth`) [decision of an agent: the backend has no
+  Azoth source of the world yet; a decision for the user].
+- Stage 3.7c, the craft bonus of the food, the gear, and the trophies [game data: the columns MaxGS<skill> of the status effect tables;
+  client code 0x2E57A70, 0x2E89910; live check L5]: the client does not add the statuses of the character itself (L5: the food status on
+  the HUD with no field 1 changed nothing); it adds the value of field 1 of state 205 for the trade skill of the recipe, to the cap 50. The
+  backend sends for each trade skill the sum of the MaxGS<skill> effect of the active statuses of the character (a food, the status of a
+  perk of an equipped item, a trophy status with its stacks), rounded; one entry for each skill above 0. `Crafting::refresh_bonus` runs at
+  the end of each `Gear::refresh` (a status starts, ends, or changes its stacks; the equipment changes) and marks the state at a change. The
+  column MGS<skill> (the low value) has no effect on a result. The backend has no house: a trophy status comes only from a command. Live
+  stage run: the axe 600 with the food (15), 617 with the trophy of 3 stacks (15) and the gear perk status (2), 602 after the end of the
+  trophy status. Test case CRAFTC4.
+- More than one player in stage 3.7c (MP-1 to MP-10): the perk items, the Azoth, the bonus map, and the rolls are values of the entity of
+  the character; state 205 goes only to its owner; the generator of the world is the one source of the rolls. The cost (MP-8): a roll
+  visits only the buckets of the output and of its perk items (test case CRAFTC-LOAD: 20,000 more buckets and 100 more characters give
+  the same visits; 200 jobs in 17 ms; 1,000 rolls in 3 ms). Test case CRAFTC-MP.
 
 ## Commands
 
@@ -230,13 +351,25 @@ tools/world craft stop NAME                   # the batch stops (the completed j
 tools/world craft preview NAME IngotT2 10 --seed 37   # stage 3.7b: the bonus chance, the experience, the cooldown, the extra units of each job
 tools/world craft seed NAME 37                # stage 3.7b: the next state of the generator of the world (a seeded batch)
 tools/world craft cooldown NAME IngotT51 9 20 # stage 3.7b: 9 of 10 used, 20 s to the end of the window (0: no window)
+tools/world craft preview NAME Procedural_2hGreatAxeT5 1 --perks 2HAxeCharmT5 --upgrade 4 --materials IngotT53,TimberT53,LeatherT53 --seed 41
+                                              # stage 3.7c: the craft gear score with its parts, the perk plan, the Azoth, the perks of each job
+tools/world azoth NAME 500                    # stage 3.7c: the Azoth balance (0 to 2500)
 ```
 
-- The routes: `GET /v1/dev/crafting?character=ID`, `POST /v1/dev/crafting/preview?character=ID&recipe=ID[&quantity=N][&seed=N]`, `POST
-  /v1/dev/crafting/stop?character=ID`, and from stage 3.7b `POST /v1/dev/crafting/cooldown?character=ID&recipe=ID&used=N&seconds=S` and
-  `POST /v1/dev/crafting/seed?character=ID&seed=N` (the development routes, with `SOULWARDEN_HARNESS=1`). The admin interface has the
-  commands `craft_preview` (`recipe`, `quantity`, `seed`), `stop_craft`, `set_craft_cooldown`, and `set_craft_seed`, and the state of a
-  character has the member `crafting` (the same view, with its cooldowns). The tool window has no tab for them yet.
+- The routes: `GET /v1/dev/crafting?character=ID`, `POST /v1/dev/crafting/preview?character=ID&recipe=ID[&quantity=N][&seed=N]` (from stage
+  3.7c also `&perks=A,B&upgrade=G&materials=A,B`), `POST /v1/dev/crafting/stop?character=ID`, from stage 3.7b `POST
+  /v1/dev/crafting/cooldown?character=ID&recipe=ID&used=N&seconds=S` and `POST /v1/dev/crafting/seed?character=ID&seed=N`, and from stage
+  3.7c `POST /v1/dev/crafting/currency?character=ID&amount=N[&currency=ID]` (the development routes, with `SOULWARDEN_HARNESS=1`). The
+  admin interface has the commands `craft_preview` (`recipe`, `quantity`, `seed`, `perks`, `upgrade`, `materials`), `stop_craft`,
+  `set_currency` (`amount`, `currency`; stage 3.7c), `set_craft_cooldown`, and `set_craft_seed`, and the state of a character has the member
+  `crafting` (the same view, with its cooldowns) and in `items` the members `azoth` and `azothCap`. The tool window has the row Azoth in
+  the tab Character (stage 3.7c: the balance and "Set"); it has no tab for the other commands.
+- The harness commands (code review of stage 3.7b, finding CR7B-R2; test case CR7B2) [rule of AGENTS.md]: `set_craft_seed` and
+  `set_craft_cooldown` are diagnostics. The admin route refuses them (403) when the backend process does not have `SOULWARDEN_HARNESS=1`;
+  the tool window does not show them. Before the correction the admin route of a start of the user ran them.
+- The preview takes the first member of each category, or with `--materials` the item of each ingredient (the selection of the client: the
+  screen takes the best member that the bag has, for example the Prismatic Ingot). Compare the craft gear score of the preview with the
+  screen only with the same materials.
 - The preview with no station use gives the verdict "the character uses no crafting station and no camp" and the plan (the costs, the output,
   the slots): a check of the materials away from a station.
 
@@ -267,4 +400,18 @@ tools/world craft cooldown NAME IngotT51 9 20 # stage 3.7b: 9 of 10 used, 20 s t
   The materials of the screen still change only at its open.
 - The positions of the stations of Oxboro (live run of stage 3.7b; `scratch/tool/bounds.py` of the evidence gives the bounds of each
   station): the smelter `8850.4 4258.7 138.8`, the woodshop `8839.4 4254.0 138.6`, the tannery `8897.0 4188.3 139.2`, the loom `8885.6
-  4185.9 138.6` (its first bound faces a wall), the stonecutter `8820.4 4241.5 137.2`.
+  4185.9 138.6` (its first bound faces a wall), the stonecutter `8820.4 4241.5 137.2`; stage 3.7c: the forge (Forge Tier 5) `8858.6 4258.8
+  138.6`, the outfitting station `8870.2 4188.0 138.6`.
+- Stage 3.7c: the screen reads the craft bonus (state 205, field 1) and the materials only at its open. After a change of a status, close
+  the station (Escape) and open it again.
+- A status row with no duration (a trophy, the status of a gear perk) is one application with `tools/world status NAME ROW`: no status
+  stays. Give it a time: `tools/world status NAME HousingMinGearBonus_AllCraftingT3 600 3`.
+- The statuses are not in the database (status effects, rule of stage 1.3b): a restart of the run ends the food. Apply it again after a
+  restart.
+- The screen positions of stage 3.7c (window of 1256x660): the Craft Mod slot `760 302`, the Azoth slot `760 346`, the Azoth levels in
+  their window `491 252` to `780 252` (each next level 58 pixels to the right), "Accept" `634 336`; in the list of the craft mods the first
+  row is `y 194` (columns `x 265, 508, 750, 995`).
+- A fragment of state 911 of `tools/world fragment` with a high sequence blocks the later 911 changes of the backend in that session (the
+  client keeps the higher sequence): send the next fragment with a higher sequence, or leave and enter the world again. The captures of a
+  session stop when the capture folder is full (live checks of stage 3.7c: after about 6 minutes): leave and enter the world again for a
+  new capture.
