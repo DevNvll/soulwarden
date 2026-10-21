@@ -51,6 +51,7 @@
 #include "world/runes.h"
 #include "world/skills.h"
 #include "world/projectiles.h"
+#include "world/quests.h"
 #include "world/spells.h"
 #include "world/stamina.h"
 #include "world/statuses.h"
@@ -192,6 +193,15 @@ public:
     virtual void interaction_cancelled() {}
 
     /**
+     * Stage 1.8a: the auto-pin option of the client of this session for an objective type (message 2709: one flag for each type of the
+     * client enum EObjectiveType). No value: no flag (no 2709 yet, a type above the list, or a sink with no client).
+     */
+    [[nodiscard]] virtual std::optional<bool> auto_pin(std::uint8_t type) const {
+        (void)type;
+        return std::nullopt;
+    }
+
+    /**
      * Development aid (tools/world message): the session sends its client one message with a
      * type and a body of the caller. It is for a live check of a message that has no code yet.
      * A sink with no client does nothing.
@@ -285,6 +295,8 @@ struct WorldOptions {
     const gamedata::GatheringData* gatheringData{nullptr};
     /** The crafting data (game data, stage 3.7a). Null or not loaded: each craft request is refused with no change. */
     const gamedata::CraftingData* craftingData{nullptr};
+    /** The quest data (game data, stage 1.8a). Null or not loaded: no quest, and the states of a character do not change (rule A5a). */
+    const gamedata::QuestData* questData{nullptr};
     /** The perk data (game data, stage 1.3b). Null: an item has no perk, and no perk has an effect. */
     const gamedata::PerkData* perkData{nullptr};
     /** The spell entity data (game data, stage 3.3b-S2a). Null or not loaded: a spell entity has its hits and no record. */
@@ -835,6 +847,18 @@ public:
     [[nodiscard]] const Crafting& crafting() const {
         return m_crafting;
     }
+    /** @return The quests (stage 1.8a): the quests of each character, the task rules, the one-time grants, the pins. */
+    [[nodiscard]] Quests& quests() {
+        return m_quests;
+    }
+    [[nodiscard]] const Quests& quests() const {
+        return m_quests;
+    }
+    /**
+     * @return The auto-pin flag of an objective type in the last message 2709 of the client of a character (SessionSink::auto_pin). No
+     *         value: the character has no session, or its client sent no flag for the type.
+     */
+    [[nodiscard]] std::optional<bool> auto_pin(const Entity& entity, std::uint8_t type) const;
     /** @return The personal loot bags (stage 3.5b.2): the bag of a kill and of a discard, its parts, the pickups. */
     [[nodiscard]] LootBags& loot_bags() {
         return m_lootBags;
@@ -985,6 +1009,7 @@ private:
     Gathering m_gathering;
     /** The crafting (stage 3.7a): after the interactions (its handler of the station options wraps the handler of the base). */
     Crafting m_crafting;
+    Quests m_quests;
     /** The build presets (stage B0): they use the inventory, the progress, the skill, and the ownership systems. */
     BuildPresets m_presets;
 };

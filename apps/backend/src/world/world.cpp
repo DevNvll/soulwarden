@@ -82,6 +82,7 @@ World::World(const WorldClock& clock,
       m_worldTime(*this),
       m_gathering(*this, options.gatheringData),
       m_crafting(*this, options.craftingData),
+      m_quests(*this, store, options.questData),
       m_presets(*this, project_presets()) {
     m_random = options.randomSeed;
 }
@@ -273,6 +274,9 @@ Entity& World::make_entity(const state::Character& character) {
     m_lootBags.entered(entity);
     // The cooldowns of the recipes of the character (stage 3.7b): its rows with an active window, and its Crafting state.
     m_crafting.entered(entity);
+    // The quests of the character (stage 1.8a), after its achievement bits: its saved quests, its timers, its pending one-time grants
+    // (the start objective of a new character). Their states go to the client after the first 2709 of its session.
+    m_quests.entered(entity);
     log::write("world: entity %016llx (actor %s) of character %s (%s) at %.2f %.2f %.2f",
                static_cast<unsigned long long>(entity.id),
                actor_text(entity.actor).c_str(),
@@ -389,6 +393,11 @@ void World::died(SessionId session, float respawnSeconds) {
     if (sink != m_sinks.end() && sink->second != nullptr) {
         sink->second->died(respawnSeconds);
     }
+}
+
+std::optional<bool> World::auto_pin(const Entity& entity, std::uint8_t type) const {
+    const auto sink = entity.owner != 0 ? m_sinks.find(entity.owner) : m_sinks.end();
+    return sink != m_sinks.end() && sink->second != nullptr ? sink->second->auto_pin(type) : std::nullopt;
 }
 
 bool World::development_message(const std::string& characterId, std::uint32_t type, const std::vector<std::uint8_t>& body) {

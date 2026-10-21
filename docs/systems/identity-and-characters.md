@@ -22,6 +22,11 @@ protocol notes (sections 2.1, 2.2, and 3.4).
   row; the persona id of the account is the owner key of all player data.
 - The DLC (stage 1.1b): the token route gives each account the entitlements of the DLC, and a world entry gives each
   character the achievement of the expansion, with no purchase and no setting ([DLC and entitlements](dlc-and-entitlements.md)).
+- A new character (stage 1.8a, [Quests](quests.md)): with the quest data, the create route writes in the transaction of the character
+  its start position on the Windsward beach (9622.62, 2306.48, ground 40.24; decision D1 of the user), a pending one-time grant of the
+  start objective of territory 6 (`06_getoffbeach`, TerritoryDefinition.ObjectiveID), and the achievement of its archetype
+  (AchievementUnlockOverride of its backstory row). Its first world entry gives it the quest, pinned. With no quest data the character
+  starts as before (the street of Everfall, no quest).
 - The menu document (stage U4). The main menu makes the body of a character from the member `PublishedData` of the
   character list (`GET /prod/game/getlogininfo`). At each request of the list the backend makes this text for each
   character with one writer (`state::make_menu_document`), from the values of the character: the name, the 12 appearance

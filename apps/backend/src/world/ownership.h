@@ -31,6 +31,9 @@
 // Stage 2.5a: the system also keeps the achievements that a character earns in play (the read of a lore page,
 // unlock_achievement): their rows are in the same table, and the next world entry gives the entity their bits again.
 //
+// Stage 1.8a: each change of the bits of a character that the quest system did not make is a change event for the quest system
+// (Quests::achievements_changed: a TaskAchievement of the character can complete), and the lock of a quest task removes a bit.
+//
 // Each function names an account or a character by its id (roadmap, rule MP-9). World thread only: a route gives the
 // world a task (World::call).
 
@@ -79,6 +82,12 @@ public:
      * @return False when the database did not take the row.
      */
     [[nodiscard]] bool unlock_achievement(Entity& entity, const std::string& id, std::uint32_t index);
+    /**
+     * Stage 1.8a (a development command; the quest tasks use quest_achievements): removes an achievement of a character. The row first,
+     * then the bit and the mark of the state; a lock of the last bit marks the empty list. Then the change event of the quest system.
+     * @return False when the database did not take the change.
+     */
+    [[nodiscard]] bool lock_achievement(Entity& entity, const std::string& id);
 
     /**
      * Writes the rows of achievements that a character gets with a change of more than one system (stage B0: the objective of each
@@ -90,6 +99,14 @@ public:
     /** Gives the entity of a character the bits of written achievements (each id with a bit of the game data) and marks its state. */
     void achievements_written(Entity& entity, const std::vector<std::string>& ids);
 
+    /**
+     * Stage 1.8a: the achievement actions of a quest plan after its commit (world/quests.h: the rows are in the database). Sets the bit of
+     * each unlocked id and clears the bit of each locked id (the lock and the temporary unlock of a task), and marks the state. A lock that
+     * removes the last bit marks the empty list (Entity::achievementsEmptied): the owner then gets an empty list fragment. No change event:
+     * the quest system ran its rules on the same change.
+     */
+    void quest_achievements(Entity& entity, const std::vector<std::string>& unlocked, const std::vector<std::string>& locked);
+
     /** @return The entitlement aliases of an account: its rows and the entitlements of the policy. */
     [[nodiscard]] std::vector<std::string> account_entitlements(const std::string& personaId);
 
@@ -99,7 +116,8 @@ public:
     /**
      * @return The bit of an achievement id: the progression tables (the achievements of the entitlements), then the interaction
      *         data (the lore pages, stage 2.5a), then the item catalog (the objectives of the artifacts, stage B0), then the crafting
-     *         data (the first-craft achievements of the recipes, stage 3.7b). No value: the game data has no row of it (the row stays,
+     *         data (the first-craft achievements of the recipes, stage 3.7b), then the quest data (the whole achievement table of the
+     *         game, stage 1.8a). No value: the game data has no row of it (the row stays,
      *         with no bit). Code review of stage 3.7b, finding CR7B-R3: the crafting system checks a first craft with this resolver too
      *         (one bit for one fact: the check and the bit that the commit sets).
      */

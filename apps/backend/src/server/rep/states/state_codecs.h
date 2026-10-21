@@ -67,6 +67,8 @@ inline constexpr std::uint32_t kTypeGlobalStorageState = 2938;  // MB::GlobalSto
 inline constexpr std::uint32_t kTypeCraftingState = 205;         // MB::CraftingComponentReplicatedState (stage 3.7b)
 inline constexpr std::uint32_t kTypeLootDropState = 2027;       // MB::LootDropReplicatedState (stage 3.5b.2)
 inline constexpr std::uint32_t kTypeGatherableState = 12;       // MB::GatherableControllerReplicatedState (stage 3.6a)
+inline constexpr std::uint32_t kTypeObjectivesState = 3857;     // MB::ObjectivesComponentReplicatedState (stage 1.8a)
+inline constexpr std::uint32_t kTypeSeasonsTrackedStatState = 5606; // MB::SeasonsRewardsTrackedStatComponentReplicatedState (stage 1.8a)
 
 /** Slot of the metadata state in each slice. */
 inline constexpr std::uint32_t kMetadataSlot = 0;
@@ -119,6 +121,12 @@ inline constexpr std::uint32_t kSelectedContainerSlot = 76;
 inline constexpr std::uint32_t kGlobalStorageSlot = 77;
 /** The Crafting component of the player slice (stage 3.7b; live check L1 of stage 3.7a: slot 63, type 205). */
 inline constexpr std::uint32_t kCraftingSlot = 63;
+/**
+ * The components Objectives (entity RootPlayer) and SeasonsRewardsTrackedStat (entity SeasonsRewards) of the player slice (stage 1.8a;
+ * research quests.md 1.1; live check L1 of stage 1.8a). The remote player slice has neither component.
+ */
+inline constexpr std::uint32_t kObjectivesSlot = 22;
+inline constexpr std::uint32_t kSeasonsSlot = 73;
 
 enum class View {
     owner,
@@ -186,6 +194,12 @@ struct StateCodec {
     std::uint32_t (*slotOf)(const world::Entity& entity){nullptr};
     /** Encoder of a state with a fragment for each of some slots (the slot of each fragment is its own). Null: not such a state. */
     SlotPartsEncoder slotParts{nullptr};
+    /**
+     * Stage 1.8a: true for a state of the owner that goes out only after the first message 2709 of the session (the enable of the
+     * objectives facet of the client, OnEnable 0x3A52510; live check L1: a tracked objective of an earlier fragment is not pinned). The
+     * session keeps its own mark for these states (Known::gatedSent).
+     */
+    bool afterObjectivesEnable{false};
 };
 
 /** @return The codecs of a player entity, in the sequence of the fragments of its record. */
@@ -351,6 +365,14 @@ void write_place_rotation(hub::Writer& writer, std::array<float, 4> rotation);
 [[nodiscard]] hub::Bytes encode_entitlement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The achievements of a character for the owner (stage 1.1b): the bit vector. No fragment for an observer or with none. */
 [[nodiscard]] hub::Bytes encode_achievement_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/**
+ * @return The Objectives state of a character for the owner (states/objectives_state.cpp, stage 1.8a, slot 22, type 3857): group 1, the
+ *         full map of the timer starts (field 0), the full tracked list (field 1), the full active list (field 3), and the full task list
+ *         (field 4) with the tasks of each quest in index order. No fragment for an observer or for a character with no loaded quests.
+ */
+[[nodiscard]] hub::Bytes encode_objectives_state(const world::Entity& entity, View view, const world::WorldClock& clock);
+/** @return The seasons readiness state (stage 1.8a, slot 73, type 5606): `initialized` 1 (`01 01 01`). Owner only. */
+[[nodiscard]] hub::Bytes encode_seasons_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /** @return The coin of the character for the owner. No byte for the observer view. */
 [[nodiscard]] hub::Bytes encode_currency_state(const world::Entity& entity, View view, const world::WorldClock& clock);
 /**

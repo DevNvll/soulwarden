@@ -345,7 +345,18 @@ service::HttpResponse create_character(const Services& services, const RouteCont
     if (creationKnown) {
         startItems = world::start_items(*catalog, character.archetype);
     }
-    switch (services.store.insert_character(character, startItems)) {
+    // Stage 1.8a (docs/systems/quests.md): the start of the quests of a new character, in the transaction of the character. The quest data
+    // is a read-only object that the backend loads at its start, thus this thread can read it. The start objective of the start territory
+    // (TerritoryDefinition.ObjectiveID of Windsward, decision D1 of the user) as a pending one-time grant for the first world entry, the
+    // start position on its beach, and the achievement of the archetype (AchievementUnlockOverride of the backstory row). No quest data:
+    // nothing (the character starts as before).
+    std::optional<state::WorldPosition> startPosition;
+    const state::NewCharacterRows questRows =
+        world::Quests::new_character_rows(services.world.options().questData, character.archetype, startPosition);
+    if (startPosition) {
+        character.position = startPosition;
+    }
+    switch (services.store.insert_character(character, startItems, questRows)) {
     case state::InsertResult::inserted:
         break;
     case state::InsertResult::nameInUse:
@@ -358,6 +369,12 @@ service::HttpResponse create_character(const Services& services, const RouteCont
                    character.name.c_str(),
                    account->personaId.c_str());
         return gateway_error(400, kErrorCreateFailed, "Character was not created");
+    }
+    if (!questRows.grants.empty() || !questRows.achievements.empty()) {
+        log::write("gateway: character %s starts on the beach of territory %u with the pending start objective %s and %zu archetype "
+                   "achievement(s)",
+                   character.characterId.c_str(), static_cast<unsigned>(world::kStartTerritory),
+                   questRows.grants.empty() ? "(none)" : questRows.grants.front().objective.c_str(), questRows.achievements.size());
     }
     log::write("gateway: created character %s (%s) for account %s, archetype %s, creation data %zu bytes, %zu start "
                "item(s)%s",

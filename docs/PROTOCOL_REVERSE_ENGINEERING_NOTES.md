@@ -6885,6 +6885,87 @@ after; the largest count at 565 is 4, thus this picture does not separate the tw
 | The craft bonus of the statuses: the columns MaxGS<skill> (FoodWeaponsmithT5 15, 2,400 s; FoodEngineerT1 5; Status_Perk_Armor_Weaponsmith 2; HousingMinGearBonus_AllCraftingT3 5 for Arcana, Weaponsmithing, Jewelcrafting, Engineering, Armoring, StackMax 3). | The status effect tables |
 | 694 resource items (ResourceID to PerkBucket, GemPerk, SocketType), 20 of them with a bucket that the perk data does not have. 1,917 recipes with no cause: 837 procedural (9 with PerkItemsBucketPush false), 894 with a BaseGearScore. | `javelindata_itemdefinitions_resources.datasheet`, `crafting-data.json` |
 
+### 4.53 The quests: the Objectives state, the readiness of the pin, the auto-pin and the pin messages, the task order, the achievement actions (live proof of stage 1.8a; static proof for the client code and the game data; the grant rules are project rules with the values of the game data)
+
+Research: `~/Games/soulwarden/work/research/quest-engine.md` (Q2), `quest-engine-3.md`, `quests.md`, and the static read
+`quest-display-18a.md` of stage 1.8a. The system: `world/quests.h`, [Quests](systems/quests.md). Live checks L1, L2, L4 of stage 1.8a:
+`~/Games/soulwarden/work/evidence/quests/18a/implement/live/` (`LIVE-CHECKS.md`) and `RESULT.md`. Client build 1.400.6031.6004151; all
+addresses are image-relative.
+
+**The Objectives state** (owner only; slot 22 of the player slice, type 3857 `MB::ObjectivesComponentReplicatedState`, constructor
+0x3A1DF90, apply 0x3A43530; the remote player slice has no slot 22) [static, research Q2; live L1]. Two groups; the backend writes group 1
+(mask `02`), fields 0, 1, 3, 4 (field mask `1B`). A full container is `00 01 sequence:size64 count:size element*` (reader 0x279DC70); the
+sequence is the world revision of the last change of the state:
+
+```text
+field 0 taskStartTimes    map: instance:u64 index:u8 -> start:u64       (reader 0x3A68CB0; the synced wall clock, Unix nanoseconds)
+field 1 trackedObjectives instance:u64 each, 8 at most                  (reader 0x3A68340)
+field 3 activeObjectives  56-byte elements                              (reader 0x3A688F0, element 0x5B52F60)
+    objectiveId:u32 instance:u64 missionId:u32 (0) destinationOverride:16 bytes (0) acceptTime:u64 (0) originTerritory:u16
+    available:u8 (1) isCommunityGoal:u8 isPoiObjective:u8 isDynamicPoiObjective:u8 parentObjectiveId:u64 isResetObjective:u8
+    selectedIngredients:size (0)
+field 4 taskStates        18-byte elements: instance:u64 index:u8 taskCRC:u32 progress:u32 state:u8   (reader 0x3ADDB50)
+```
+
+`objectiveId` and `taskCRC` are the CRC-32 of the lower-case ObjectiveID and TaskID (`06_getoffbeach` = `E4D66020`, its task 9 =
+`1B73198B`) [static; live L1]. States: 0 New, 1 Active, 2 Complete, 3 CompleteActive, 4 Inactive, 5 Failed (table 0x3AA46F0).
+`acceptTime` is 0 [live L1 with 0; decision of an agent: the native TaskTimer can take its start from the creation time, research
+quest-display-18a.md Q4]. `originTerritory` is the territory of the grant (6 for the start quest) [live: the start quest shows with 6].
+Fields 2 (completed: a notice list), 5, and 6 are not written in stage 1.8a.
+
+**The order and the values of the task elements** [live L1; static 0x3A43530, 0x3ADDE50, 0x3AD6C60, 0x3AD6D20, 0x3AC0990]: the elements of a
+quest are in index order (a child before its container). The client applies the elements in the received order and runs its container
+callbacks between them; with the parent-first order of the research fixture the objective shows with no task line (live L1, picture
+`L1-5-hud.png`); with the index order the task line "Talk to Aelstrom on the beach", the world pin, and the compass marker show
+(`L1-hud.png`, `L1-journal.png`). A task is satisfied when its progress reaches its target; a container counts its satisfied children (a
+simple or consecutive container has the number of its children as target, a partial container 1); a completed leaf has its full target as
+progress (a TargetQty of 2: progress 2). A satisfied task with an effective StayActive (a container inherits it from any child) is 3. The
+setter skips state 0 and state 4: they do not reset or deactivate a task of the client (static 0x3ADDE50). The start states of
+`06_getoffbeach` (live, the new character of stage 1.8a):
+
+| Index | State / progress |
+| --- | --- |
+| 0, 2, 3, 5, 6 (unlocks) | 2 / 1 |
+| 1 (the lock of CaveCorruption, StayActive) | 3 / 1 |
+| 4 (simple container) | 3 / 4 |
+| 7, 8 (TaskAchievement), 9 (trigger), 14 (consecutive), 15 (partial) | 1 / 0 |
+| 10 to 13 | 0 / 0 |
+| 16 (root) | 1 / 3 |
+
+**The readiness of the pin** (owner only; slot 73, type 5606 `SeasonsRewardsTrackedStatComponentReplicatedState`; state `01 01 01`:
+group 0 field 0 `initialized` 1) [static 0x3DDABF0 -> 0x3A57CC0; live L1]. With slot 22 alone the client shows the banner of the quest and no
+pin; when slot 73 comes, the client pins the tracked objective on the HUD and sends 1458 (`L1-1-slot22-only.png`, `L1-3-slot73.png`).
+
+**The gate of 2709** (`ObjectivesComponentServerFacet_SetObjectiveAutoPinning`, sender 0x3A632C0, reader 0x39EF030: `target:u64 entity:u64
+count:size` (36 at most) and one flag byte (0 or 1) for each objective type of EObjectiveType) [static; live: 53 bytes, flags
+`111111011111111111111111111111111111`, CommunityGoal 0]. The client sends it in OnEnable of its objectives facet (0x3A52510), 0.7 s to 1 s
+after the first record, and more than one time. The backend sends slot 73 and slot 22 only after the first one [live L1; the facet copies
+the tracked list only when it is local]. The flags are the auto-pin options: the backend pins a new objective when the flag of its type is
+1; with no flag yet (the start grant comes before the first record), the default of the client options.
+
+**The pins of the client** (1458 `ObjectivesComponentServerFacet_UpdateTrackedObjectives`, sender 0x3A05DA0, reader 0x39F1590:
+`target:u64 entity:u64 count:size` (8 at most) `instance:u64` each) [static; live]. The client sends it after each change of its pinned
+list: at the entry first two empty lists, then the list with the pin (live, the new character of stage 1.8a). The backend stores a list
+with only active instances of the character and sends no state back.
+
+**The achievement actions and slot 66** [live L2]. The quest tasks change bits of the achievement state (4.29). In one record the client
+applies slot 22 before slot 66 (it sorts by slot); in one tick the backend can also send slot 66 in a bundle before slot 22 (a large
+achievement state). Both orders work: the task change shows, and the bit has its effect (live L2 variant 1: the change, then the bit
+`Start_IGC_Aelstrom_WW`; the implementation: the bit `Watched_IGC_Aelstrom_MB`, then the change that completes the partial container: the
+quest turns to "Talk to Aelstrom", `L2-impl-questbeach-after.png`). A lock of the last bit sends an empty list (`00 01 sequence 00`).
+
+**6703** (`PlayerCutsceneComponentServerFacet_OnClientRequestStartCutscene`, sender 0x2EDA740: `target:u64 entity:u64 cutscene:u32`)
+[live L2]: 2 s after the bit `Start_IGC_Aelstrom_WW` the client sends `4817DD08` (the CRC-32 of `06_getoffbeach_msq_revivalshoreknight_ww_igc`)
+and moves its camera while it waits for the answer. Stage 1.8a writes it to the log; the answer is stage 1.8b.
+
+**The timer** [static; live]: the start of a TaskTimer is field 0 (Unix nanoseconds of the synced wall clock, the clock of 4.24). The server
+ends the timer at the start plus Duration with its fraction (live: `06_skinningknife` task 14, Duration 25.4, ended after 25.416 s, and its
+next task unlocked `SwapActive_01_AelstromWW_03`). The client shows a time row `00:00:00` (red) under this quest from the first second; the
+source of that row (the `TimeLimit` data of a task row, 0x3AD7BE0) is open (U-L4).
+
+**A removed objective** [live]: a full active list that drops an objective with no completed entry shows the banner "Objective Failed"
+(apply 0x3A43530, 0x3A559B0).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

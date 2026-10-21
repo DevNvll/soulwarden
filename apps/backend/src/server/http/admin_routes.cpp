@@ -76,6 +76,8 @@
 //                              (stage 3.5b.1): the character can open the chest again
 //          set_world_time      time ("HH:MM" or "HH:MM:SS"): the time of the day of the whole world (stage 2.2): each
 //                              player gets it; the character of the command names who gives it
+//          apply_backstory     template (a backstory template of the quest data, Level60_PTR): its achievements and its start
+//                              objectives (stage 1.8a, decision D2 option C), not its level, items, or faction
 //          apply_preset        preset (the name of a build preset, bow-boltcaster), variant (pve or pvp; no value: the
 //                              first variant): the whole build of the preset (stage B0): the equipment (the old items go
 //                              into the bag), the level, the attributes, the masteries, the trees, the bars, and the
@@ -95,6 +97,9 @@
 //   GET  /admin/v1/catalog/presets
 //        The build presets (stage B0): the name, the title, "enabled" (with the cause of a disabled
 //        preset), the variants, and the content of each one.
+//   GET  /admin/v1/catalog/backstories
+//        The backstory templates of the quest data (stage 1.8a): the id, the name, the purpose, the level of the
+//        template (not applied), and its start objectives with the mark "inData".
 // The state of a character that is in the world also has the creatures near it (the member
 // "creatures": each creature that is 150 m or less from the character, the nearest one first),
 // and its interactions (the member "interactions", stage 2.5a: its committed interaction and the
@@ -183,6 +188,9 @@ constexpr NamedCommand kCommands[] = {
     {"set_craft_seed", commands::set_craft_seed},
     // Stage 3.7c: the balance of a currency of a character (Azoth: the perk upgrade and the currency ingredients of a craft).
     {"set_currency", commands::set_currency},
+    // Stage 1.8a: a backstory template of the game data for the character (decision D2 option C): its achievements and its start
+    // objectives. The user selects the template (GET /admin/v1/catalog/backstories).
+    {"apply_backstory", commands::apply_backstory},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
@@ -298,6 +306,10 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 reply["chests"] = commands::chests_view(target, selected, commands::kAdminChestRange);
                 reply["gathering"] = commands::gathering_view(target, selected, commands::kAdminGatheringRange);
                 reply["crafting"] = commands::crafting_view(target, selected);
+                // The quests of the character (stage 1.8a): each quest with its tasks, its pin, and the one-time grants.
+                if (const auto quests = commands::quests_view(target, selected)) {
+                    reply["quests"] = *quests;
+                }
                 // The loot bags of the character (stage 3.5b.2): its own parts only.
                 reply["lootBags"] = commands::loot_bags_view(target, selected);
                 // The world time (stage 2.2): one value for the whole world.
@@ -450,6 +462,15 @@ service::HttpResponse list_presets(const Services& services, const AdminAccess& 
     return in_world(services, [](world::World& target) { return json_reply(200, commands::presets_json(target).dump()); });
 }
 
+service::HttpResponse list_backstories(const Services& services, const AdminAccess& access, const RouteContext& context) {
+    service::HttpResponse refusal;
+    if (!caller(access, context, refusal)) {
+        return refusal;
+    }
+    // Stage 1.8a: the backstory templates of the quest data (decision D2 option C: the user selects one).
+    return in_world(services, [](world::World& target) { return json_reply(200, commands::backstories_json(target).dump()); });
+}
+
 } // namespace
 
 void register_admin_routes(Router& router, const Services& services, const AdminAccess& access) {
@@ -462,6 +483,7 @@ void register_admin_routes(Router& router, const Services& services, const Admin
     router.add("GET", "", "/admin/v1/catalog/creatures", kAdminCreatureCatalogRoute, bind(search_creatures));
     router.add("GET", "", "/admin/v1/catalog/places", kAdminPlaceCatalogRoute, bind(list_places));
     router.add("GET", "", "/admin/v1/catalog/presets", kAdminPresetCatalogRoute, bind(list_presets));
+    router.add("GET", "", "/admin/v1/catalog/backstories", "admin.catalog_backstories", bind(list_backstories));
 }
 
 } // namespace soulwarden::backend::server::http

@@ -109,7 +109,12 @@ protocol notes (section 6).
   `SOULWARDEN_HARNESS=1` of the backend process, else the reply is 403 (code review of stage 3.7b, finding CR7B-R2; test case CR7B2), and the
   tool window has no button for them. Stage 3.7c: the command `set_currency` (`amount`, 0 to the cap; `currency`, default Azoth_Currency),
   the arguments `perks`, `upgrade`, and `materials` of `craft_preview`, and the members `azoth` and `azothCap` of `items` in the state of a
-  character. The command that
+  character. Stage 1.8a ([Quests](quests.md)): the command `apply_backstory` (argument `template`: a backstory template of the quest data;
+  decision D2 option C: its achievements and its start objectives, not its level, items, or faction), the route
+  `GET /admin/v1/catalog/backstories` (the templates with their start objectives and the mark `inData`), and the member `quests` of the
+  state of a character (its quests with their tasks and pins, its one-time grants); the tool window has no control for them yet. The
+  grant of an objective and the switch of an achievement are development routes only (`tools/world quest grant`, `tools/world
+  achievement`). The command that
   lowers the health of a character, the roll of a loot table, the respawn time of a spawn
   point, and an effect on a creature are development routes only (`tools/world hurt`, `roll`,
   `creature respawn`, `creature effect`). A

@@ -46,6 +46,16 @@
 //   POST /v1/dev/presets/apply?character=ID&preset=NAME[&variant=NAME]
 //                                                         the whole build of a preset (the command apply_preset of the
 //                                                         admin interface)
+//   GET  /v1/dev/quests?character=ID                     the quests of a character (stage 1.8a): each quest with its tasks, its pin,
+//                                                         the one-time grants, and the counts of the quest system
+//   GET  /v1/dev/quests/templates                         the backstory templates of the quest data (decision D2 option C)
+//   POST /v1/dev/quests/template?character=ID&template=ID the achievements and the start objectives of a template (the command
+//                                                         apply_backstory of the admin interface)
+//   POST /v1/dev/quests/grant?character=ID&objective=ID   a new instance of an objective for a character in the world (development
+//                                                         only: a live check)
+//   POST /v1/dev/quests/achievement?character=ID&id=ID&on=1|0
+//                                                         unlock or lock an achievement of a character in the world (development
+//                                                         only: the change event of the quest system, the empty list fragment)
 // tools/world sends these requests to the backend of a development run.
 
 namespace soulwarden::backend::server::http {
@@ -74,6 +84,19 @@ service::HttpResponse show_ownership(const Services& services, const RouteContex
     }
     return in_world(services, [character = *character](world::World& target) {
         const auto view = commands::ownership_view(target, character);
+        return view ? json_reply(200, view->dump()) : message(404, "the store has no character with this id");
+    });
+}
+
+/** GET /v1/dev/quests?character=ID: the quests of a character (stage 1.8a). */
+service::HttpResponse show_quests(const Services& services, const RouteContext& context) {
+    service::HttpResponse refusal;
+    const auto character = character_of(context, refusal);
+    if (!character) {
+        return refusal;
+    }
+    return in_world(services, [character = *character](world::World& target) {
+        const auto view = commands::quests_view(target, character);
         return view ? json_reply(200, view->dump()) : message(404, "the store has no character with this id");
     });
 }
@@ -107,6 +130,18 @@ void register_dev_progress_routes(Router& router, const Services& services) {
         return in_world(services, [](world::World& target) { return json_reply(200, commands::presets_json(target).dump()); });
     });
     router.add("POST", "", "/v1/dev/presets/apply", "dev.presets_apply", command_route(services, commands::apply_preset));
+    router.add("GET", "", "/v1/dev/quests", "dev.quests", [&services](const RouteContext& context) {
+        return show_quests(services, context);
+    });
+    router.add("GET", "", "/v1/dev/quests/templates", "dev.quest_templates", [&services](const RouteContext& context) {
+        if (!context.request.host.empty()) {
+            return message(403, "forbidden");
+        }
+        return in_world(services, [](world::World& target) { return json_reply(200, commands::backstories_json(target).dump()); });
+    });
+    router.add("POST", "", "/v1/dev/quests/template", "dev.quest_template", command_route(services, commands::apply_backstory));
+    router.add("POST", "", "/v1/dev/quests/grant", "dev.quest_grant", command_route(services, commands::grant_objective));
+    router.add("POST", "", "/v1/dev/quests/achievement", "dev.quest_achievement", command_route(services, commands::set_achievement));
 }
 
 } // namespace soulwarden::backend::server::http

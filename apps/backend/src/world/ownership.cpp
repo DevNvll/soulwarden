@@ -77,7 +77,44 @@ std::optional<std::uint32_t> Ownership::achievement_bit(const std::string& id) c
     }
     // Stage 3.7b: the first-craft achievement of a recipe (the crafting data: FirstCraftAchievementId and its AchievementIndex).
     const gamedata::CraftingData* crafting = m_world.crafting().data();
-    return crafting != nullptr ? crafting->achievement_index(id) : std::nullopt;
+    if (crafting != nullptr) {
+        if (const std::optional<std::uint32_t> bit = crafting->achievement_index(id)) {
+            return bit;
+        }
+    }
+    // Stage 1.8a: the whole achievement table of the game (the quest data): the actions of the quest tasks.
+    const gamedata::QuestData* quests = m_world.quests().data();
+    return quests != nullptr ? quests->achievement_index(id) : std::nullopt;
+}
+
+void Ownership::quest_achievements(Entity& entity, const std::vector<std::string>& unlocked, const std::vector<std::string>& locked) {
+    std::set<std::uint32_t> bits(entity.achievements.begin(), entity.achievements.end());
+    for (const std::string& id : unlocked) {
+        if (const std::optional<std::uint32_t> bit = achievement_bit(id)) {
+            bits.insert(*bit);
+        }
+    }
+    for (const std::string& id : locked) {
+        if (const std::optional<std::uint32_t> bit = achievement_bit(id)) {
+            bits.erase(*bit);
+        }
+    }
+    const std::vector<std::uint32_t> list(bits.begin(), bits.end());
+    if (list == entity.achievements) {
+        return;
+    }
+    const bool hadBits = !entity.achievements.empty();
+    entity.achievements = list;
+    const Revision revision = m_world.touch(entity.id, ComponentKey::achievements);
+    if (hadBits && entity.achievements.empty()) {
+        entity.achievementsEmptied = revision;
+    }
+    for (const std::string& id : unlocked) {
+        log::write("ownership: quest action: character %s gets the achievement %s", entity.characterId.c_str(), id.c_str());
+    }
+    for (const std::string& id : locked) {
+        log::write("ownership: quest action: character %s loses the achievement %s", entity.characterId.c_str(), id.c_str());
+    }
 }
 
 bool Ownership::write_achievements(const std::string& characterId, const std::vector<std::string>& ids) {
@@ -107,6 +144,8 @@ void Ownership::achievements_written(Entity& entity, const std::vector<std::stri
     }
     if (changed) {
         m_world.touch(entity.id, ComponentKey::achievements);
+        // Stage 1.8a: the change event (a build preset, a first craft).
+        m_world.quests().achievements_changed(entity);
     }
 }
 
@@ -135,6 +174,8 @@ void Ownership::set_bits(Entity& entity, const std::vector<std::string>& aliases
     if (achievementList != entity.achievements) {
         entity.achievements = achievementList;
         m_world.touch(entity.id, ComponentKey::achievements);
+        // Stage 1.8a: the change event (the DLC of an account; at the world entry the quests of the character are not loaded yet).
+        m_world.quests().achievements_changed(entity);
     }
 }
 
@@ -253,9 +294,25 @@ bool Ownership::unlock_achievement(Entity& entity, const std::string& id, std::u
     if (place == entity.achievements.end() || *place != index) {
         entity.achievements.insert(place, index);
         m_world.touch(entity.id, ComponentKey::achievements);
+        // Stage 1.8a: the change event (the read of a lore page: a TaskAchievement of a lore achievement).
+        m_world.quests().achievements_changed(entity);
     }
     if (!added.empty()) {
         log::write("ownership: character %s got the achievement %s (bit %u)", entity.characterId.c_str(), id.c_str(), index);
+    }
+    return true;
+}
+
+bool Ownership::lock_achievement(Entity& entity, const std::string& id) {
+    if (!m_store.remove_achievements(entity.characterId, {id})) {
+        log::write("ownership: the database did not take the lock of the achievement %s of character %s: no change", id.c_str(),
+                   entity.characterId.c_str());
+        return false;
+    }
+    const std::vector<std::uint32_t> before = entity.achievements;
+    quest_achievements(entity, {}, {id});
+    if (entity.achievements != before) {
+        m_world.quests().achievements_changed(entity);
     }
     return true;
 }

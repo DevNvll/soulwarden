@@ -8,7 +8,7 @@ std::span<const StateCodec> player_codecs() {
     // The client sorts the fragments of a record by their slot before it applies them (client
     // code at image RVA 0x15CE270). This sequence is the sequence of the stored bytes of the
     // tests.
-    static constexpr std::array<StateCodec, 28> codecs{{
+    static constexpr std::array<StateCodec, 30> codecs{{
         {world::ComponentKey::metadata, kMetadataSlot, kTypeGdeMetadataState, encode_metadata_state},
         {world::ComponentKey::player, kPlayerComponentSlot, kTypePlayerComponentState, encode_player_state},
         {world::ComponentKey::movement, kMovementSlot, kTypeMovementState, encode_movement_state},
@@ -65,6 +65,11 @@ std::span<const StateCodec> player_codecs() {
         {world::ComponentKey::globalStorage, kGlobalStorageSlot, kTypeGlobalStorageState, nullptr, encode_global_storage_state, true},
         // The cooldowns of the recipes (stage 3.7b): owner only (the remote player slice has no Crafting component).
         {world::ComponentKey::crafting, kCraftingSlot, kTypeCraftingState, nullptr, encode_crafting_state, true},
+        // The quests (stage 1.8a): owner only, and only after the first 2709 of the session (live check L1: the readiness of slot 73
+        // and the tracked list of slot 22 pin the objective on the HUD). In one record the client applies slot 22 before slot 66 (it
+        // sorts by slot): live check L2 shows that the task change and a bit of the same change work in that order.
+        {world::ComponentKey::seasons, kSeasonsSlot, kTypeSeasonsTrackedStatState, encode_seasons_state, nullptr, true, nullptr, nullptr, true},
+        {world::ComponentKey::objectives, kObjectivesSlot, kTypeObjectivesState, encode_objectives_state, nullptr, true, nullptr, nullptr, true},
     }};
     return codecs;
 }

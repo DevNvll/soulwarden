@@ -14,6 +14,10 @@
 #include "gamedata/ability_data.h"
 #include "gamedata/creature_data.h"
 #include "gamedata/spell_data.h"
+
+namespace soulwarden::backend::gamedata {
+class QuestData;
+} // namespace soulwarden::backend::gamedata
 #include "state/creation_data.h"
 #include "state/store.h"
 #include "world/ids.h"
@@ -184,6 +188,17 @@ enum class ComponentKey {
      * has no fragment in its first record.
      */
     crafting,
+    /**
+     * The Objectives state of a character (stage 1.8a, slot 22, type 3857; docs/systems/quests.md): the timer starts, the tracked list, the
+     * active objectives, and the task states of its quests. Only the owner gets it, and only after the first message 2709 of its session
+     * (live check L1 of stage 1.8a: the client pins only after the enable of its facet).
+     */
+    objectives,
+    /**
+     * The seasons readiness state of a character (stage 1.8a, slot 73, type 5606): `initialized` 1. The client pins a tracked objective
+     * on the HUD only after it (live check L1 of stage 1.8a). Only the owner gets it, after the first message 2709 of its session.
+     */
+    seasons,
 };
 
 /**
@@ -1589,6 +1604,57 @@ struct ProjectileBody {
     bool ended{false};
 };
 
+/**
+ * The state of one task of a quest of a character (stage 1.8a): the values of a task element of the Objectives state (state: 0 New,
+ * 1 Active, 2 Complete, 3 CompleteActive, 4 Inactive, 5 Failed; client table 0x3AA46F0).
+ */
+struct QuestTaskState {
+    std::uint8_t state{0};
+    std::uint32_t progress{0};
+    /** The start of a TaskTimer on the synced wall clock (Unix nanoseconds; field 0 of the state). 0: none. */
+    std::uint64_t startNs{0};
+};
+
+/** The task states of a task element of the wire. */
+namespace quest_state {
+inline constexpr std::uint8_t kNew = 0;
+inline constexpr std::uint8_t kActive = 1;
+inline constexpr std::uint8_t kComplete = 2;
+inline constexpr std::uint8_t kCompleteActive = 3;
+inline constexpr std::uint8_t kInactive = 4;
+inline constexpr std::uint8_t kFailed = 5;
+} // namespace quest_state
+
+/** One active quest of a character (an active-objective element of the Objectives state; research quest-engine.md Q2). */
+struct QuestInstance {
+    /** The instance id: the key of the quest and of its task states (made by the quest system; never 0). */
+    std::uint64_t instance{0};
+    /** The objective id of the game data (ObjectiveID) and its CRC-32 (the objective on the wire). */
+    std::string objective;
+    std::uint32_t objectiveCrc{0};
+    /** The time of the grant on the synced wall clock (Unix nanoseconds). */
+    std::uint64_t acceptNs{0};
+    /** The territory of the grant (the start territory for the start quest). 0: none. */
+    std::uint16_t originTerritory{0};
+    /** The instance of the parent objective (a TaskObjective child). 0: none. */
+    std::uint64_t parent{0};
+    /** The source of the grant ("territory", "backstory", "command"): a text for the rows and the log. */
+    std::string source;
+    /** The task states by task index of the tree (a hole of the tree has a New state and no element on the wire). */
+    std::vector<QuestTaskState> tasks;
+};
+
+/** The quests of a character (stage 1.8a): a copy of the values of the quest system for the Objectives state of the owner. */
+struct QuestLog {
+    std::vector<QuestInstance> active;
+    /** The pinned instances, in the order of the client (8 at most; message 1458 sets it). */
+    std::vector<std::uint64_t> tracked;
+    /** True when the quest system loaded the rows of the character (it has quest data). */
+    bool loaded{false};
+    /** The quest data of the world (the trees and the task CRCs of the encoder). Null when not loaded. */
+    const gamedata::QuestData* data{nullptr};
+};
+
 struct Entity {
     /** Entity group id: the first 8 bytes of the actor id. Key of the entity table. */
     EntityId id{0};
@@ -1689,6 +1755,13 @@ struct Entity {
      */
     std::vector<std::uint32_t> entitlements;
     std::vector<std::uint32_t> achievements;
+    /**
+     * Stage 1.8a: the world revision of the last lock that removed the last bit of `achievements`. Not 0: the achievement state of the
+     * owner has an empty list fragment (the client keeps the last list that it got: an empty list must come to remove the last bit).
+     */
+    Revision achievementsEmptied{0};
+    /** The quests of the character (stage 1.8a): the quest system changes them (world/quests.h). */
+    QuestLog quests;
     /**
      * The committed interaction of the character (stage 2.5a): a copy of the value of the interaction system. No value: none.
      * `interactionEnded` is the world revision of the last end of one (the Interactor state of a session that got the begin

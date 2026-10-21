@@ -344,6 +344,19 @@ backend. The tool of each system is also in the document of that system.
   The tool stops for a perk generation list that it cannot read (`check_crafting_tool.py`, case procedural). A backend of stage 3.7c reads
   format 1 and 2 too, with the rules of their stages.
 
+- `quest-data.json` (stage 1.8a, `tools/gamedata/quests.sh`, [Quests](../systems/quests.md)): format 1. The 2,147 objectives of the 139
+  tables of the type Objectives, each with its tree compiled with the index rule of the client (builder 0x4466350: a child before its
+  container; a container that comes again is a hole; 20,111 nodes, 1 hole, largest index 223), the 15,563 task rows of a tree with the
+  source text of each cell that is not blank (a blank cell is absent, an explicit 0 is 0) and the value of the client enum of its type, the
+  17,005 rows of the achievement table (id, bit, category, event, deprecated), the 428 non-persisted achievements, the start objectives of
+  the territories (TerritoryDefinition.ObjectiveID: 04 and 12 `12_getoffbeach`, 06 `06_getoffbeach`), the 305 backstory rows with an
+  override (the start objectives of ObjectiveUnlockOverride, a note after ":" removed, and the achievements of AchievementUnlockOverride),
+  the 1,082 game events that an objective, a task, or a whisper names, the 229 whispers, and the 34 schedules. The tool stops for a missing
+  task link, a cycle, two ids with one CRC-32 (objectives, tasks, achievements, whispers), an unknown task type, an index above 255, two
+  achievements with one bit, or a bit above 65535 (`check_quests_tool.py`, case QG-TOOL); the loader of the backend refuses the same
+  faults (case QG11). The counted diagnostics: 7 achievements of a task action with no row (research U10), 2 TaskObjective children with no
+  objective, 8 start objectives of the backstory templates with no objective row. With no file the backend has no quest.
+
 ## Commands
 
 ```sh
@@ -364,6 +377,7 @@ tools/gamedata/places.sh             # one time: travel places for the backend (
 tools/gamedata/chests.sh             # one time: the chests of the world for the backend (placements, gatherable rows, loot roots, territories; 3.6 MB); needs an Oodle source
 tools/gamedata/interactions.sh       # one time: the objects of the world that a player can use (lore pages, persons, the stations, ...; 25 MB, 2 to 4 minutes); needs an Oodle source
 tools/gamedata/crafting.sh           # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits, the gear score and perk data for the backend (format 3 of stage 3.7c; 9 MB, 5 s); needs an Oodle source
+tools/gamedata/quests.sh             # one time: the quest data for the backend (objectives, compiled task trees, achievement table, territory starts, backstories; 9 MB, 10 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
 tools/gamedata/gathering.sh --region r_+04_+02 --near 8817 4281 30   # the gathering nodes near a place, with their G (no file)

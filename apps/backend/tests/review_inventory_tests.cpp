@@ -382,6 +382,19 @@ void older_schemas(const Options& options) {
         const bool cooled = store.write_craft_cooldown(kCharacterA, state::CraftCooldownRow{"TestRecipe", 3, 9000})
                             && store.list_craft_cooldowns(kCharacterA).size() == 1 && store.list_craft_cooldowns(kCharacterA)[0].used == 3
                             && store.list_craft_cooldowns(kCharacterA)[0].endRunNs == 9000;
+        // Schema version 15 (stage 1.8a): the quests of a character (a full u64 instance id), its pins, its grants, its undo rows.
+        state::QuestRow quest;
+        quest.instance = 0xF000000000000001ULL;
+        quest.objective = "Test_Quest";
+        quest.objectiveCrc = 7;
+        quest.acceptNs = 1792619000000000000ULL;
+        quest.tasks = {{0, "Test_Task", 9, 1, 2, 0}};
+        const bool quested = store.write_quest(kCharacterA, quest) && store.list_quests(kCharacterA).size() == 1
+                             && store.list_quests(kCharacterA)[0].instance == quest.instance
+                             && store.list_quests(kCharacterA)[0].tasks.size() == 1 && store.write_quest_pins(kCharacterA, {quest.instance})
+                             && store.write_quest_grant(kCharacterA, state::QuestGrantRow{"territory", "6", "Test_Quest", "granted", quest.instance})
+                             && store.write_quest_undo(kCharacterA, state::QuestUndoRow{quest.instance, 0, "lock", "Test_A"})
+                             && store.largest_quest_instance() == quest.instance;
         const bool deleted = store.delete_character(kCharacterA) == state::DeleteResult::deleted && store.list_items(kCharacterA).empty()
                              && store.list_loot_claims(kCharacterA).empty() && store.list_loot_bags().empty()
                              && store.currency(kCharacterA, state::kCurrencyCoin) == 0 && store.progress(kCharacterA).level == 1
@@ -389,15 +402,18 @@ void older_schemas(const Options& options) {
                              && store.list_skills(kCharacterA).bars.empty() && store.list_achievements(kCharacterA).empty()
                              && store.list_entitlement_rewards(kCharacterA).empty()
                              && store.list_entitlements(player.account.personaId).size() == 1
-                             && store.list_craft_cooldowns(kCharacterA).empty();
-        check(made && opened && schema_version(path) == 14 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
-                  && timed && gathered && cooled && deleted,
+                             && store.list_craft_cooldowns(kCharacterA).empty() && store.list_quests(kCharacterA).empty()
+                             && store.list_quest_pins(kCharacterA).empty() && store.list_quest_grants(kCharacterA).empty()
+                             && store.list_quest_undo(kCharacterA).empty();
+        check(made && opened && schema_version(path) == 15 && kept && owned && written && oldItem && progressed && owns && claimed && bagged
+                  && timed && gathered && cooled && quested && deleted,
               "a database of schema version " + std::to_string(version)
-                  + " opens and gets version 14: its character row and its item stay (the item with no perk), its persona has an account, "
+                  + " opens and gets version 15: its character row and its item stay (the item with no perk), its persona has an account, "
                     "the tables take an item of the bag, an item of the paperdoll with its five perk places, the coin, the level with the "
                     "attribute points, the skills, an entitlement of the account, an achievement and a reward of the character, a loot "
                     "claim with a kept item (stage 3.5b.1), the part of a loot bag with a stored instance (stage 3.5b.2) and its fast end, the world time (stage 2.2), "
-                    "the run clock and a depleted gathering node (stage 3.6a), the cooldown of a recipe (stage 3.7b), and the delete of a "
+                    "the run clock and a depleted gathering node (stage 3.6a), the cooldown of a recipe (stage 3.7b), a quest with a full u64 "
+                    "instance, its pin, its grant, and its undo row (stage 1.8a), and the delete of a "
                     "character removes the rows of the character (the entitlement of the account stays)");
     }
 }

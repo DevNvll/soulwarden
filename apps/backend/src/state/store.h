@@ -203,6 +203,69 @@ struct CraftCooldownRow {
     std::uint64_t endRunNs{0};
 };
 
+/**
+ * One task of a saved quest (stage 1.8a, table `character_quest_tasks`; docs/systems/quests.md): the index of the task in the tree of the
+ * objective, its id and CRC-32 (a check against the game data at the load), its progress, its state, and the start of a timer (Unix
+ * nanoseconds; 0: none).
+ */
+struct QuestTaskRow {
+    std::uint32_t index{0};
+    std::string task;
+    std::uint32_t crc{0};
+    std::uint32_t progress{0};
+    std::uint32_t state{0};
+    std::uint64_t startNs{0};
+};
+
+/**
+ * One saved quest of a character (stage 1.8a, table `character_quests`): the instance id (a full u64: an 8-byte blob), the objective id
+ * and its CRC-32, the time of the grant (Unix nanoseconds), the territory of the grant, the parent instance, the source of the grant (a
+ * text: "territory", "backstory", "command"), and its tasks. The character id is the owner key: the rows go with the character.
+ */
+struct QuestRow {
+    std::uint64_t instance{0};
+    std::string objective;
+    std::uint32_t objectiveCrc{0};
+    std::uint64_t acceptNs{0};
+    std::uint32_t originTerritory{0};
+    std::uint64_t parent{0};
+    std::string source;
+    std::vector<QuestTaskRow> tasks;
+};
+
+/**
+ * One grant of a quest of a source that comes one time (stage 1.8a, table `character_quest_grants`): the start objective of a territory
+ * (source "territory", key the territory id) or of a backstory template (source "backstory", key the template id). `state` is "pending"
+ * (the next world entry gives it) or "granted" (with the instance).
+ */
+struct QuestGrantRow {
+    std::string source;
+    std::string key;
+    std::string objective;
+    std::string state;
+    std::uint64_t instance{0};
+};
+
+/**
+ * The undo of an achievement action of a quest task (stage 1.8a, table `character_quest_undo`): the action of a reset, an abandon, or the
+ * end of the quest ("lock": a temporary unlock and an unlock with no StayActive; "unlock": a lock with no StayActive; research
+ * quest-engine.md Q1). Stage 1.8a only writes the rows: the abandon and the reset are stage 1.8c.
+ */
+struct QuestUndoRow {
+    std::uint64_t instance{0};
+    std::uint32_t index{0};
+    std::string action;
+    std::string achievement;
+};
+
+/** The rows of a new character that the create route writes in the transaction of the character (stage 1.8a: the start of the quests). */
+struct NewCharacterRows {
+    /** The achievements of the character (the archetype achievement of its backstory row). */
+    std::vector<std::string> achievements;
+    /** The pending grants (the start objective of the start territory). */
+    std::vector<QuestGrantRow> grants;
+};
+
 struct LootClaimRow {
     std::string objectKey;
     /** 1 Rolled (the roll is kept: `items`), 2 Looted (the InstancedLootState of the client). */
@@ -319,7 +382,12 @@ public:
      * database failure goes to the log.
      * @param items The items of the new character (world/inventory.h, start_items).
      */
-    [[nodiscard]] InsertResult insert_character(const Character& character, const std::vector<ItemRow>& items = {});
+    /**
+     * Inserts a new character with its start items and, from stage 1.8a, its position (when the value has one) and the rows of `extra`
+     * (its archetype achievement, its pending start grant), in one transaction.
+     */
+    [[nodiscard]] InsertResult insert_character(const Character& character, const std::vector<ItemRow>& items = {},
+                                                const NewCharacterRows& extra = {});
 
     /**
      * Removes the row of a character, and its items and currencies, in one transaction. The
@@ -450,6 +518,29 @@ public:
      */
     [[nodiscard]] std::optional<std::uint64_t> world_run_time(const std::string& worldKey);
     /** @return The recipe cooldowns of a character (stage 3.7b, table `craft_cooldowns`), in the sequence of the recipe ids. */
+    // The quests of a character (stage 1.8a; docs/systems/quests.md). Each write is a savepoint in a batch.
+    /** @return The saved quests of a character with their tasks, in the order of their instances. */
+    [[nodiscard]] std::vector<QuestRow> list_quests(const std::string& characterId);
+    /** Writes a quest of a character: the row and each task row (the task rows of the instance are replaced). */
+    [[nodiscard]] bool write_quest(const std::string& characterId, const QuestRow& quest);
+    /** @return The pinned instances of a character, in their order. */
+    [[nodiscard]] std::vector<std::uint64_t> list_quest_pins(const std::string& characterId);
+    /** Replaces the pinned instances of a character. */
+    [[nodiscard]] bool write_quest_pins(const std::string& characterId, const std::vector<std::uint64_t>& pins);
+    /** @return The one-time grants of a character, in the order of their source and key. */
+    [[nodiscard]] std::vector<QuestGrantRow> list_quest_grants(const std::string& characterId);
+    /** Writes (inserts or replaces) a one-time grant of a character. */
+    [[nodiscard]] bool write_quest_grant(const std::string& characterId, const QuestGrantRow& grant);
+    /** @return The undo rows of a character. */
+    [[nodiscard]] std::vector<QuestUndoRow> list_quest_undo(const std::string& characterId);
+    /** Writes the undo row of an achievement action. */
+    [[nodiscard]] bool write_quest_undo(const std::string& characterId, const QuestUndoRow& row);
+    /** @return The largest instance id of the saved quests of all characters (0: none). */
+    [[nodiscard]] std::uint64_t largest_quest_instance();
+    /** Removes achievements of a character (stage 1.8a: the lock of a quest task). A row that is not there changes nothing. */
+    [[nodiscard]] bool remove_achievements(const std::string& characterId, const std::vector<std::string>& ids,
+                                           std::vector<std::string>* removed = nullptr);
+
     [[nodiscard]] std::vector<CraftCooldownRow> list_craft_cooldowns(const std::string& characterId);
     /** Writes (inserts or replaces) the cooldown of a recipe of a character. In a batch: a savepoint of its transaction. */
     [[nodiscard]] bool write_craft_cooldown(const std::string& characterId, const CraftCooldownRow& row);
@@ -470,6 +561,8 @@ private:
                                     const std::string& source,
                                     std::vector<std::string>* added);
     /** Starts a write: a transaction, or a savepoint in a batch. */
+    /** Inserts or replaces a grant row (no transaction of its own: the caller has one). */
+    [[nodiscard]] bool insert_quest_grant(const std::string& characterId, const QuestGrantRow& grant);
     bool begin_write();
     /** Ends a write: commits it when `ok`, if not rolls it back. @return True when it is written (in a batch: in the batch). */
     bool end_write(bool ok);

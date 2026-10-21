@@ -157,6 +157,20 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand assign_node(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand set_ability_bar(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 
+// The quests (stage 1.8a, world/quests.h, server/http/quest_commands.cpp).
+// apply_backstory: `template` (a backstory template of the quest data, "Level60_PTR"): decision D2 option C (decision of the orchestrator,
+// 2026-10-18): the achievements and the start objectives of the template, not its level, items, or faction. The reply 200 has the
+// achievements, the objectives, and the ids that the data does not have; an unknown template gives 404, a database failure 500.
+// grant_objective (development only): `objective` (an ObjectiveID): a new instance of the objective for a character in the world.
+// set_achievement (development only): `id` (an achievement id) and `on` (1: unlock, 0: lock): the change event of the quest system.
+[[nodiscard]] WorldCommand apply_backstory(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand grant_objective(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+[[nodiscard]] WorldCommand set_achievement(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+/** @return The quests of a character (world thread): each quest with its tasks and its pin, the one-time grants, and the counts. */
+[[nodiscard]] std::optional<nlohmann::json> quests_view(world::World& world, const std::string& character);
+/** @return The backstory templates of the quest data (world thread): each one with its start objectives (and if the data has each one). */
+[[nodiscard]] nlohmann::json backstories_json(world::World& world);
+
 // The build presets (stage B0, world/build_presets.h, server/http/preset_commands.cpp).
 // apply_preset: `preset` (the name of a preset, "bow-boltcaster") and, when necessary, `variant` (the name of a variant, "pve" or
 // "pvp"; no value: the first variant): the whole build of the preset for the character, in one task of the world and one transaction

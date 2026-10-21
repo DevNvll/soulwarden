@@ -170,6 +170,7 @@ public:
 
     /** Development aid: the client gets one message with a type and a body of a command (tools/world message). */
     void development_message(std::uint32_t type, const std::vector<std::uint8_t>& body) override;
+    [[nodiscard]] std::optional<bool> auto_pin(std::uint8_t type) const override;
 
     [[nodiscard]] std::uint32_t id() const {
         return m_id;
@@ -359,6 +360,10 @@ private:
      */
     void handle_craft_request(std::span<const std::uint8_t> body);
     void handle_craft_cancel(std::span<const std::uint8_t> body);
+    /** Stage 1.8a: 2709 (the auto-pin flags; the first one opens the gate of the quest states), 1458 (the pins), 6703 (log only). */
+    void handle_auto_pinning(std::span<const std::uint8_t> body);
+    void handle_tracked_objectives(std::span<const std::uint8_t> body);
+    void handle_cutscene_request(std::span<const std::uint8_t> body);
     void handle_storage_search(std::uint32_t type, std::span<const std::uint8_t> body);
     /**
      * @return True when a facet call names a component of the character of the session: its entity, and with the ids of the player slice
@@ -504,6 +509,13 @@ private:
     /** Time of the last movement state of the own character. */
     carrier::Clock::time_point m_lastAnchor{};
     bool m_inWorld{false};
+    /**
+     * Stage 1.8a: true from the first message 2709 of the client (the objectives facet is enabled and local): the quest states
+     * (StateCodec::afterObjectivesEnable) go out only from then (live check L1).
+     */
+    bool m_objectivesEnabled{false};
+    /** The auto-pin flags of the last 2709 (one for each objective type). Empty: none. */
+    std::vector<bool> m_autoPin;
     std::optional<Closing> m_closing;
 
     Send m_send;

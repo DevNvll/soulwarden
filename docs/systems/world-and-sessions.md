@@ -128,6 +128,11 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   1.3b, [Items and equipment](items-and-equipment.md)), also a group that is larger than one
   carrier message (code review of stage 1.3b, finding F12: its bundle goes in chunks of the
   carrier).
+- The quests (stage 1.8a, [Quests](quests.md)): the Objectives state (slot 22, type 3857) and the seasons readiness state (slot 73, type
+  5606) are for the owner only, and a session sends them only after the first message 2709 of its client (`StateCodec::afterObjectivesEnable`;
+  the session keeps its own mark `Known::gatedSent` for them; live check L1: a tracked objective of an earlier state is not pinned on the
+  HUD). The quests of a character are in its entity (`Entity::quests`); only the quest system changes them. The session keeps only the
+  auto-pin flags of its client (the last 2709, `SessionSink::auto_pin`).
 - The world time (stage 2.2, [World time and weather](world-time-and-weather.md)) is one value of the world (`World::world_time`),
   not of a session or of a character. A session keeps only its delivery marks: the request mark of its client (a valid 4248), the
   revision, the phase, and the time of the last record that it sent (7036), and the time of its next clock correction (335, each 3 s

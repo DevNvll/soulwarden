@@ -171,6 +171,16 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
 
 ## Traps
 
+- More than one gamescope can run on this computer (stage 1.8a: an other project had `gamescope-0`, and the development run got
+  `gamescope-1`; a later run got `gamescope-0`). `gamescopectl screenshot` with no variable can take the picture of the other display.
+  Read the socket of the run from the environment of its backend and give it to each call:
+  `GAMESCOPE_WAYLAND_DISPLAY=$(tr '\0' '\n' < /proc/PID_OF_THE_BACKEND/environ | grep '^GAMESCOPE_WAYLAND_DISPLAY=' | cut -d= -f2)`.
+  Delete a picture of a different display at once.
+- A `tools/world fragment` of a container state (the full form with a sequence) with a sequence above the world revision blocks the real
+  states of that slot until the next session: the client takes no full container with a lower sequence (stage 1.8a: a fragment of slot 22
+  with the sequence 900,000; the Objectives state of the backend then had no effect). Use a sequence near the world revision, or enter
+  the world again before a check of the encoder.
+
 - With `-sys_audio_disable 1` the game process still keeps one output stream of Wine open (`pactl list sink-inputs`: one
   stream "New World" in place of two; live check of 2026-10-15). It is not the audio system of the game. Do not change or
   record it: `pw-record --target` with the id of a playback stream records the default source (the microphone of the user),

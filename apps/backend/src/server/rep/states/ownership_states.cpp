@@ -22,7 +22,8 @@
 // tree, the trade skill limit 250).
 //
 // View     Fragments
-// owner    the state, when the entity has an entitlement (an achievement); none with no expansion data
+// owner    the state, when the entity has an entitlement (an achievement); none with no expansion data; stage 1.8a: an empty
+//          achievement list after a lock of the last bit (Entity::achievementsEmptied)
 // observer no fragment
 
 namespace soulwarden::backend::server::rep {
@@ -72,7 +73,9 @@ hub::Bytes encode_entitlement_state(const world::Entity& entity, View view, cons
 }
 
 hub::Bytes encode_achievement_state(const world::Entity& entity, View view, const world::WorldClock&) {
-    if (view != View::owner || entity.achievements.empty()) {
+    // Stage 1.8a: a lock of the last bit (a quest task) gives an empty list: the client keeps the list that it got, and only an empty
+    // full vector removes its last bit. A character that never had a bit gets no fragment (the first record of stage 1.1b).
+    if (view != View::owner || (entity.achievements.empty() && entity.achievementsEmptied == 0)) {
         return {};
     }
     StateWriter state(kGroups);

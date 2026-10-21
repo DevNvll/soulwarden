@@ -257,7 +257,7 @@ stage with a letter is a part of the system with that number.
 | 20 | 3.7 | Crafting, refining, repair, salvage (research file `crafting-stage.md`). Five runs, each with a result that a player can see (the split of the research): 3.7a the fixed crafts at a station and at a camp; 3.7b refining and the reward progress; 3.7c procedural items, charms, and bonuses; 3.7d salvage; 3.7e repair | 3.6 | 3.7a done (the craft request 2997 with the quantities of the recipe, the batch of decision D5 with one transaction for each job, the result with the cause ItemCreated before the progress 2993, the stop 2999, the empty storage search 7046, the fee of the client path, the station variants of decision D1, the crafting data tool; the corrections of the review of stage B4); 3.7b done (refining of each family, the bonus items of the client chance with decision D2, the trade skill experience of the event, the first-craft bonus with its achievement, the cooldown of a recipe on the run clock with the Crafting state 205, the result of a craft-all batch, the crafting data of format 2: 948 recipes; the correction U4-R1 of the review of stage U4); 3.7c done (the craft gear score of the client with the rank, the materials, the craft bonus of the food, gear, and trophy statuses in state 205 field 1 and the caps; the perks of a craft with the one perk generator and the perk items, G, and the push flag; one gem; the swap and the rarity; the perk items and the Azoth upgrade with the station discount; the Azoth balance in state 911 with its cap and the tool window row; the currency ingredients; the crafting data of format 3: 1,917 recipes; the corrections CR7B-R1 to CR7B-R4 of the review of stage 3.7b); 3.7d and 3.7e wait |
 | 21 | 5.1 | Shops (research file `shops-stage.md`) | 2.5 | research |
 | 22 | 5.6 | Cosmetics and transmog (research file `cosmetics-stage.md`) | 5.1 | research |
-| 23 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" (research files `quest-engine.md`, `quest-engine-3.md`: 1.8a, 1.8c, and 1.8d ready with live checks; 1.8b needs the person base of 5.1) | 5.6 | research |
+| 23 | 1.8 | The generic quest engine: each quest from the quest data of the game, by the type of its tasks (not one quest at a time); it replaces "the original quest state of a new character" (research files `quest-engine.md`, `quest-engine-3.md`: 1.8a, 1.8c, and 1.8d ready with live checks; 1.8b needs the person base of 5.1). Decision of the user (2026-10-21): "start the quest implementation on the backend": 1.8a now, before 5.1 and 5.6. Five parts: 1.8a saved quests, achievements, the start grant, the HUD pin; 1.8b persons, offers, hand-in, topics, cutscenes, whispers, trigger areas; 1.8c counters, items, quest drops, gathering, crafting, POI and kill predicates; 1.8d rewards, availability, timers, recurrence; 1.8e content closure and acceptance | 5.6 | 1.8a done (the quest data tool with the compiled trees of the client index rule; the quest system with the rules of the containers, the achievement actions, TaskAchievement with the non-persisted achievements, and TaskTimer on the world clock; the quests, the pins, the grants, and the undo rows in the store, schema 15; the start quest of a new character on the Windsward beach, one time, with its archetype bit; the Objectives state and the readiness state after the first 2709 with the task elements in index order; the pins of the client; the lock of a bit with the empty list; decision D2 option C, the backstory templates by command); 1.8b waits for the person base of 5.1; 1.8c to 1.8e wait |
 | 24 | BT | Creature behavior from data: behavior trees in JSON files with a default tree for each creature, and custom trees for bosses and mini bosses (plan `behavior-tree-plan.md`): BT0 research of the AI data of the client, BT1 the engine and the default tree with the behavior of now, BT2 the binding of a tree to a creature, BT3 the boss nodes and the first mini boss (decision of the user 2026-10-17: after the quests) | 1.8 | plan |
 | 25 | 3.3c | Abilities of the other weapons: the sword and shield, the rapier, the hatchet, the spear, the greatsword, the flail (melee parts M4 to M9b), the bow, the musket, the blunderbuss (ranged parts R1 to R7), the fire staff, the life staff, the ice gauntlet, the void gauntlet (magic runs M1 to M9); the dagger is not in it: the client cannot use its abilities (research files `abilities-melee.md`, `abilities-ranged.md`, `abilities-magic.md`) | BT | research |
 | 26 | 3.6b | Fishing (research file `gathering-stage.md`; decision of the user 2026-10-17: "lets deprioritize fishing") | 3.6a | research |
@@ -763,15 +763,15 @@ tool window, and a new character starts with the original first quest.
 
 ### 1.8 Original quest state of a new character
 
+The generic quest engine of row 23 replaces this system. Its part 1.8a (2026-10-21) does what this section asked: a new character
+enters the world on the Windsward beach (the position of the start quest), with `06_getoffbeach` active, tracked, and pinned on the HUD
+with its task line ("Talk to Aelstrom on the beach"); its quest state is in SQLite. The progress of the beach quest (the trigger, the
+cutscene, the hand-in at Aelstrom) is part 1.8b ([Quests](systems/quests.md)).
+
 - Client evidence: `Objectives` (slot 22, type 3857), `ObjectiveInteractor`.
-- Research: `quests.md` (batch B, verified). The HUD pins a quest only when the seasons code
-  of the client is ready: the state of slot 73 (type 5606) must come after the first record
-  (`seasons.md`, first pass, verification in work). Decision of the user: the beach quest
-  (`06_getoffbeach`) first, not the introduction (`ftue_v2`).
-- Implementation: the objective state of a character in SQLite; the first quest active and
-  tracked for a new character; the original start position.
-- Test: a new character enters the world at the original position, and the HUD shows the
-  first quest with its tasks. This system does not include progress (system 4.1).
+- Research: `quests.md` (batch B, verified), `quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`. The HUD pins a quest only
+  when the seasons code of the client is ready: the state of slot 73 (type 5606) after the first 2709 (live check L1 of stage 1.8a).
+  Decision of the user: the beach quest (`06_getoffbeach`) first, not the introduction (`ftue_v2`).
 
 ### 1.9 Acceptance test from an empty database
 

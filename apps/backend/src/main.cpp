@@ -30,6 +30,7 @@
 #include "gamedata/perk_data.h"
 #include "gamedata/navigation_data.h"
 #include "gamedata/progression_tables.h"
+#include "gamedata/quest_data.h"
 #include "gamedata/slice_ids.h"
 #include "gamedata/chest_data.h"
 #include "gamedata/crafting_data.h"
@@ -651,6 +652,20 @@ int main(int argc, char** argv) {
                    "tools/gamedata/crafting.sh",
                    (gameDataDirectory / gamedata::kCraftingDataFile).string().c_str(), craftingData.error().c_str());
     }
+    // The quest data (stage 1.8a, docs/systems/quests.md): the objectives and their task trees, the achievement table, the start objectives
+    // of the territories, the backstory templates. Without the file the backend has no quest, and the states of a character do not change.
+    const std::string questDataPath = (gameDataDirectory / gamedata::kQuestDataFile).string();
+    gamedata::QuestData questData;
+    if (questData.load(questDataPath)) {
+        log::write("backend: quest data %s: %zu objectives, %zu task rows, %zu achievements, %zu backstory rows, start objective %s",
+                   questDataPath.c_str(), questData.objectives().size(), questData.tasks().size(), questData.achievement_count(),
+                   questData.backstories().size(),
+                   questData.territory_objective(world::kStartTerritory) != nullptr ? questData.territory_objective(world::kStartTerritory)->id.c_str()
+                                                                                    : "(none)");
+    } else {
+        log::write("backend: no quest data at %s (%s): no quest. Make the file with tools/gamedata/quests.sh", questDataPath.c_str(),
+                   questData.error().c_str());
+    }
     // Decision D1 of stage 3.7a (a decision of the orchestrator): the stations whose authored key has no row of the station database use the
     // _t2 variant of their family. One log line names each override.
     if (interactionData.loaded()) {
@@ -721,6 +736,7 @@ int main(int argc, char** argv) {
     worldOptions.travelPlaces = &travelPlaces;
     worldOptions.interactionData = &interactionData;
     worldOptions.craftingData = &craftingData;
+    worldOptions.questData = &questData;
     worldOptions.chestData = &chestData;
     worldOptions.gatheringData = &gatheringData;
     worldOptions.lootTables = &lootTables;

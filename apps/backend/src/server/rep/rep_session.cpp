@@ -17,6 +17,7 @@
 #include "server/rep/item_requests.h"
 #include "server/rep/lock_messages.h"
 #include "server/rep/mana_messages.h"
+#include "server/rep/quest_messages.h"
 #include "server/rep/replication.h"
 #include "server/rep/time_messages.h"
 #include "server/rep/travel_messages.h"
@@ -432,6 +433,18 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
     case kTypeStorageSearchReplicate:
         check_route(route, type, body, firstOfType);
         handle_storage_search(type, body);
+        break;
+    case kTypeObjectiveAutoPinning:
+        check_route(route, type, body, firstOfType);
+        handle_auto_pinning(body);
+        break;
+    case kTypeUpdateTrackedObjectives:
+        check_route(route, type, body, firstOfType);
+        handle_tracked_objectives(body);
+        break;
+    case kTypeRequestStartCutscene:
+        check_route(route, type, body, firstOfType);
+        handle_cutscene_request(body);
         break;
     default:
         check_route(route, type, body, firstOfType);
@@ -1164,8 +1177,12 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
             // client close its connection (protocol notes 4.2).
             continue;
         }
+        if (codec.afterObjectivesEnable && (!owner || !m_objectivesEnabled)) {
+            continue; // Stage 1.8a: a quest state waits for the first 2709 of the session (live check L1).
+        }
         const auto changed = entity.changed.find(codec.key);
-        if (changed == entity.changed.end() || changed->second <= known.sent) {
+        const world::Revision since = codec.afterObjectivesEnable ? known.gatedSent : known.sent;
+        if (changed == entity.changed.end() || changed->second <= since) {
             continue;
         }
         const std::uint32_t slot = slot_of(codec, entity);
@@ -1270,6 +1287,9 @@ void RepSession::send_record(const world::Entity& entity, Known& known, carrier:
     send();
     // The session has the entity at this revision only now: each bundle of the record is out.
     known.sent = m_world.revision();
+    if (owner && m_objectivesEnabled) {
+        known.gatedSent = known.sent;
+    }
     if (owner && std::any_of(fragments.begin(), fragments.end(),
                              [](const PendingFragment& fragment) { return fragment.slot == kStatMultiplierSlot && fragment.type == kTypeStatMultiplierState; })) {
         // The client has this speed table now: the check of its position reports takes its multiplier (code review of
@@ -2468,6 +2488,72 @@ void RepSession::handle_craft_request(std::span<const std::uint8_t> body) {
                request->upgrade, entries.c_str());
     const world::CraftVerdict verdict = m_world.crafting().request(m_id, *request);
     log::write("rep: craft request (type %u): %s", kTypeCraftRequest, world::craft_verdict_text(verdict));
+}
+
+void RepSession::handle_auto_pinning(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const std::optional<AutoPinning> message = read_auto_pinning(body);
+    if (!message) {
+        log::write("rep: auto-pin message (type %u, %zu bytes) does not have the form of the message: no change", kTypeObjectiveAutoPinning,
+                   body.size());
+        return;
+    }
+    if (!own_facet(*own, message->target, message->entity, kObjectivesComponentName, kTypeObjectiveAutoPinning, "auto-pin message")) {
+        return;
+    }
+    m_autoPin = message->flags;
+    if (!m_objectivesEnabled) {
+        // The first 2709 of the session: the objectives facet of the client is enabled and local. The quest states go out from the next
+        // record (live check L1 of stage 1.8a).
+        m_objectivesEnabled = true;
+        std::string flags;
+        for (const bool flag : m_autoPin) {
+            flags += flag ? '1' : '0';
+        }
+        log::write("rep: the objectives facet of the client is enabled (message %u, auto-pin flags %s): the quest states can go out",
+                   kTypeObjectiveAutoPinning, flags.c_str());
+    }
+}
+
+void RepSession::handle_tracked_objectives(std::span<const std::uint8_t> body) {
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const std::optional<TrackedObjectives> message = read_tracked_objectives(body);
+    if (!message) {
+        log::write("rep: pin message (type %u, %zu bytes) does not have the form of the message: no change", kTypeUpdateTrackedObjectives,
+                   body.size());
+        return;
+    }
+    if (!own_facet(*own, message->target, message->entity, kObjectivesComponentName, kTypeUpdateTrackedObjectives, "pin message")) {
+        return;
+    }
+    const bool stored = m_world.quests().client_tracked(*own, message->instances);
+    log::write("rep: the client pins %zu objective(s) (message %u): %s", message->instances.size(), kTypeUpdateTrackedObjectives,
+               stored ? "stored" : "no change");
+}
+
+void RepSession::handle_cutscene_request(std::span<const std::uint8_t> body) {
+    const world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const std::optional<CutsceneRequest> message = read_cutscene_request(body);
+    if (!message
+        || !own_facet(*own, message->target, message->entity, kPlayerCutsceneComponentName, kTypeRequestStartCutscene, "cutscene request")) {
+        return;
+    }
+    // The answer (6707) is stage 1.8b: the client waits for it (live check L2 of stage 1.8a).
+    log::write("rep: the client asks for the cutscene %08x (message %u): no answer before stage 1.8b", message->cutscene,
+               kTypeRequestStartCutscene);
+}
+
+std::optional<bool> RepSession::auto_pin(std::uint8_t type) const {
+    return type < m_autoPin.size() ? std::optional<bool>(m_autoPin[type]) : std::nullopt;
 }
 
 void RepSession::handle_craft_cancel(std::span<const std::uint8_t> body) {

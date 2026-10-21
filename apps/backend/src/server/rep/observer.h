@@ -38,6 +38,11 @@ struct Known {
     std::optional<world::WorldClock::time_point> scopeDue;
     /** For the own entity: the health of the last vitals state that the session sent (finding S6-R7). Below 0: none. */
     float ownerHealth{-1.0F};
+    /**
+     * For the own entity (stage 1.8a): the world revision of the last record with the states that wait for the first message 2709
+     * (StateCodec::afterObjectivesEnable). 0: none of them went out.
+     */
+    world::Revision gatedSent{0};
 };
 
 class Observer {

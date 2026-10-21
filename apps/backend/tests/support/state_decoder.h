@@ -304,6 +304,26 @@ inline int value_size(std::uint32_t type, unsigned group, unsigned field, std::s
         static constexpr int kWidths[] = {1, 4, 4, 1, 4, 4, 1, 8, 4};
         return group == 1 && field < 9 ? kWidths[field] : -1;
     }
+    case 3857: { // Objectives (stage 1.8a): group 1, field 0 the timer map (17-byte entries), 1 tracked (8), 3 active (56), 4 tasks (18).
+        if (group != 1 || (field != 0 && field != 1 && field != 3 && field != 4)) {
+            return -1;
+        }
+        server::hub::Reader reader(rest);
+        if (reader.size() != 0) {
+            return -1;
+        }
+        if (reader.u8() == 1) {
+            reader.size64();
+        }
+        const std::uint32_t count = reader.size();
+        if (!reader.ok()) {
+            return -1;
+        }
+        const std::uint32_t element = field == 0 ? 17U : field == 1 ? 8U : field == 3 ? 56U : 18U;
+        return static_cast<int>(reader.position() + element * count);
+    }
+    case 5606: // SeasonsRewardsTrackedStat (stage 1.8a): group 0 field 0, initialized (one byte).
+        return group == 0 && field == 0 ? 1 : -1;
     case 205: { // Crafting (stage 3.7b): field 0, the cooldown map (13-byte entries); field 1, the gear score bonus map (3-byte entries).
         if (group != 0 || field > 1) {
             return -1;
@@ -444,9 +464,11 @@ inline unsigned group_count(std::uint32_t type) {
     case 2938:
     case 2027:
     case 205:
+    case 5606:
         return 1;
     case 3752:
     case 81:
+    case 3857:
         return 2;
     case 4236:
         return 4;

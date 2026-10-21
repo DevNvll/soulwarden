@@ -76,6 +76,14 @@ before a live test of the expansion. The wire contracts are in the protocol note
   recipe writes the row (`FC_IngotT2`) in its transaction (`Ownership::write_achievements`), and the bit (AchievementIndex: 5330) comes from
   the crafting data (the fourth source of `Ownership::achievement_bit`). The crafting screen of the client reads the bit: with it the
   screen shows no first-craft bonus (live check L4 of stage 3.7b).
+- The achievements of the quest tasks (stage 1.8a, [Quests](quests.md)): the unlock, the lock, and the temporary unlock of a task change
+  the rows (`grant_achievements`, `remove_achievements`) in the transaction of the quest plan, then `Ownership::quest_achievements` sets and
+  clears the bits. The bit of an id comes last from the quest data (the whole achievement table of the game, 17,005 rows: the fifth source
+  of `Ownership::achievement_bit`). Each other change of the bits of a character (a lore page, a first craft, a build preset, the DLC) is a
+  change event of the quest system (`Quests::achievements_changed`).
+- The lock of the last bit (stage 1.8a, rule A4a; case QG5): the client keeps the last list that it got, so the owner gets an empty full
+  list (`Entity::achievementsEmptied`). A character that never had a bit still gets no achievement fragment (the first record of stage
+  1.1b and the stored bytes of case T2 do not change).
 - The entitlement state (slot 19) and the achievement state (slot 66) are for the owner only; an observer gets neither. The
   first record of a character has both, before the level (the codec sequence). The sequence of a container is the world
   revision of the last change of the state.

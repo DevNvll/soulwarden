@@ -138,6 +138,7 @@ tools/gamedata/interactions.sh     # one time: the interaction objects of the wo
 tools/gamedata/chests.sh           # one time: the chests of the world (without them no chest opens); 3.6 MB; needs an Oodle library
 tools/gamedata/heights.sh          # one time: terrain heights (without them and with no navigation data no creature leaves its place); 136 MB, 2 minutes
 tools/gamedata/gathering.sh        # one time, after heights.sh: the gathering nodes of the world (without them each gather is refused); 40 MB, 1 minute; needs an Oodle library
+tools/gamedata/quests.sh           # one time: the quests, the achievement table, the backstory templates (without it no quest); 9 MB, 10 s; needs an Oodle library
 tools/gamedata/crafting.sh         # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits (without it each craft is refused; format 2 of stage 3.7b for refining, format 3 of stage 3.7c for procedural gear and Azoth); 9 MB, 5 s; needs an Oodle library
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
@@ -502,6 +503,10 @@ button on "Confirm").
   Without the file the backend starts and refuses each craft with no change ([Crafting](systems/crafting.md)); with a file of format 1
   there is no refining and no reward progress, with a file of format 2 no procedural gear and no Azoth. The interaction data of stage 3.7a (`interactions.sh`) gives the stations of a tier with no row of the
   game data (decision D1) the next tier.
+- `tools/gamedata/quests.sh` makes the quest data (stage 1.8a; `~/.local/share/soulwarden/gamedata/quest-data.json`, format 1, 9 MB):
+  the objectives with their compiled task trees (the index rule of the client), the task cells, the achievement table, the non-persisted
+  achievements, the start objectives of the territories, the backstory templates, the game events, the whispers, and the schedules.
+  `--objective ID` prints a tree and writes no file. Without the file the backend has no quest ([Quests](systems/quests.md)).
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -826,6 +831,18 @@ button on "Confirm").
   recipe that is not craft-all and not refining gives no extra units. In a development run `tools/world craft preview NAME RECIPE [COUNT]
   [--seed N] [--perks ITEM,ITEM] [--upgrade G] [--materials ITEM,ITEM]` shows the craft gear score with its parts, the perk plan, the Azoth
   of a job, and the perks of each job of a seeded batch; `tools/world azoth NAME AMOUNT` sets the balance.
+- Quests (stage 1.8a, [Quests](systems/quests.md)). The quest data (`tools/gamedata/quests.sh`) gives the backend the objectives with
+  their task trees, the achievement table, the start objectives of the territories, and the backstory templates. A new character starts
+  on the Windsward beach with `06_getoffbeach` ("Soul Survivor") active and pinned (one time, at its first entry); its first tasks run
+  their achievement actions, and the HUD shows "Talk to Aelstrom on the beach". The quests, the tasks, the pins, and the timer starts of a
+  character are in the database (schema 15) and stay after a reconnect and a restart. The client gets the Objectives state (slot 22) and
+  the readiness state of the pin (slot 73) after its message 2709; its pins (1458) are stored. A TaskAchievement task completes when the
+  bits of the character make its conditional true (any change of the bits: a lore page, a first craft, a quest action); a TaskTimer ends
+  on the world clock. An existing character gets no quest; the admin command `apply_backstory` (argument `template`) and `tools/world
+  quest template NAME TEMPLATE` give it the achievements and the start objective of one backstory template of the game data (decision D2
+  option C; `GET /admin/v1/catalog/backstories`, `tools/world quest templates` list them). In a development run `tools/world quests NAME`
+  shows the quests and their tasks, `tools/world quest grant NAME OBJECTIVE` gives an objective, and `tools/world achievement NAME ID
+  on|off` changes a bit. The persons, the hand-in, the rewards, and the counters of the tasks are later parts (1.8b to 1.8d).
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
   abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar
   of the HUD goes away at full mana ([Combat and health](systems/combat-and-health.md)).

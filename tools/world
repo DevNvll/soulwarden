@@ -191,6 +191,15 @@ The level, the attributes, and the skills of a character (the character can be i
 not, as for the items):
   tools/world progress CHARACTER                the level, the experience, the attributes, the
                                                 weapon masteries, and the trade skills
+  tools/world quests CHARACTER                  the quests of a character (stage 1.8a): each quest with its
+                                                tasks (index, state, progress), its pin, and the one-time
+                                                grants (the start objective of a new character)
+  tools/world quest templates                   the backstory templates of the quest data (decision D2
+                                                option C), with their start objectives
+  tools/world quest template CHARACTER ID       the achievements and the start objectives of a template
+  tools/world quest grant CHARACTER OBJECTIVE   a new instance of an objective (development only)
+  tools/world achievement CHARACTER ID on|off   unlock or lock an achievement (development only: the
+                                                change event of the quests, the empty list fragment)
   tools/world ownership CHARACTER               the DLC of a character (stage 1.1b): the expansion
                                                 with its limits, the entitlements of its account,
                                                 its achievements, and the rewards that it got
@@ -636,6 +645,24 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         print(f"world: build preset {document['preset']} ({document['variant'] or 'the first variant'}) done ({where}):")
         for change in document["changes"]:
             print(f"  {change}")
+    elif isinstance(document, dict) and "quests" in document and "grants" in document:
+        where = "in the world" if document["inWorld"] else "the rows"
+        print(f"quests of {document['character']} ({where}; quest data {'loaded' if document['data'] else 'not loaded'}):")
+        names = {0: "new", 1: "active", 2: "complete", 3: "complete-active", 4: "inactive", 5: "failed"}
+        for quest in document["quests"]:
+            print(f"  {quest['objective']} {quest['title']} instance {quest['instance']} ({quest['source']}, territory {quest['territory']})"
+                  f"{' pinned' if quest['pinned'] else ''}")
+            for task in quest["tasks"]:
+                start = f" timer start {task['startNs']}" if "startNs" in task else ""
+                print(f"    {task['index']:>3} {names.get(task['state'], task['state']):<15} {task['progress']:>3} {task['task']}{start}")
+        for grant in document["grants"]:
+            print(f"  one-time grant {grant['source']} {grant['key']}: {grant['objective']} ({grant['state']})")
+        print("  counts: " + ", ".join(f"{name} {value}" for name, value in document["counts"].items()))
+    elif isinstance(document, dict) and "templates" in document:
+        for entry in document["templates"]:
+            starts = ", ".join(f"{objective['id']}{'' if objective['inData'] else ' (no row in this build)'}" for objective in entry["objectives"])
+            print(f"{entry['id']}: level {entry['level'] or '-'}, {entry['playtest'] or '-'}; start {starts or '-'}; "
+                  f"{len(entry['achievements'])} achievement(s)")
     elif isinstance(document, dict) and "presets" in document:
         for preset in document["presets"]:
             state = "enabled" if preset["enabled"] else f"DISABLED: {preset['cause']}"
@@ -1443,6 +1470,20 @@ def main() -> None:
             fail("the weapon and the ability must be ids of the game tables")
         request(data_dir, "POST", f"/v1/dev/progress/bar?character={character_id(data_dir, arguments[1])}"
                                   f"&weapon={arguments[2]}&slot={whole(arguments[3], 'the place')}&ability={arguments[4]}")
+    elif command == "quests" and len(arguments) == 2:
+        request(data_dir, "GET", f"/v1/dev/quests?character={character_id(data_dir, arguments[1])}")
+    elif command == "quest" and len(arguments) == 2 and arguments[1] == "templates":
+        request(data_dir, "GET", "/v1/dev/quests/templates")
+    elif command == "quest" and len(arguments) == 4 and arguments[1] in ("template", "grant"):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[3]):
+            fail("the template or the objective must be an id of the quest data")
+        name = "template" if arguments[1] == "template" else "objective"
+        request(data_dir, "POST", f"/v1/dev/quests/{arguments[1]}?character={character_id(data_dir, arguments[2])}&{name}={arguments[3]}")
+    elif command == "achievement" and len(arguments) == 4 and arguments[3] in ("on", "off"):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[2]):
+            fail("the achievement must be an id of the achievement table")
+        request(data_dir, "POST", f"/v1/dev/quests/achievement?character={character_id(data_dir, arguments[1])}"
+                                  f"&id={arguments[2]}&on={1 if arguments[3] == 'on' else 0}")
     elif command == "presets" and len(arguments) == 1:
         request(data_dir, "GET", "/v1/dev/presets")
     elif command == "preset" and len(arguments) in (3, 4):

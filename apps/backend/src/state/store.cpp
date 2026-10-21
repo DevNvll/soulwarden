@@ -1,6 +1,7 @@
 #include "state/store.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -14,7 +15,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 14;
+constexpr int kSchemaVersion = 15;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -317,11 +318,68 @@ CREATE TABLE IF NOT EXISTS craft_cooldowns(
 );
 )sql";
 
+/**
+ * Version 15 (stage 1.8a: the quests, docs/systems/quests.md; research quest-engine.md Q2). The quests of a character
+ * (`character_quests`: the instance id as an 8-byte blob, big-endian: a full u64 with no sign; the objective, the time of the grant on the
+ * wall clock in Unix nanoseconds, the territory, the parent, the source), their tasks (`character_quest_tasks`: the index, the task id and
+ * CRC-32, the progress, the state, the start of a timer), the pins (`character_quest_pins`), the one-time grants
+ * (`character_quest_grants`: the start objective of a territory or of a backstory template), and the undo of the achievement actions
+ * (`character_quest_undo`). The achievement state of a character stays in `achievements` (stage 1.1b).
+ */
+constexpr const char* kMigration15Quests = R"sql(
+CREATE TABLE IF NOT EXISTS character_quests(
+    character_id TEXT NOT NULL,
+    instance_id BLOB NOT NULL,
+    objective TEXT NOT NULL,
+    objective_crc INTEGER NOT NULL,
+    accept_ns INTEGER NOT NULL,
+    origin_territory INTEGER NOT NULL DEFAULT 0,
+    parent_instance BLOB,
+    source TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(character_id, instance_id)
+);
+CREATE TABLE IF NOT EXISTS character_quest_tasks(
+    character_id TEXT NOT NULL,
+    instance_id BLOB NOT NULL,
+    task_index INTEGER NOT NULL,
+    task TEXT NOT NULL,
+    task_crc INTEGER NOT NULL,
+    progress INTEGER NOT NULL,
+    state INTEGER NOT NULL,
+    start_ns INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(character_id, instance_id, task_index)
+);
+CREATE TABLE IF NOT EXISTS character_quest_pins(
+    character_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    instance_id BLOB NOT NULL,
+    PRIMARY KEY(character_id, ordinal)
+);
+CREATE TABLE IF NOT EXISTS character_quest_grants(
+    character_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    grant_key TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    state TEXT NOT NULL,
+    instance_id BLOB,
+    PRIMARY KEY(character_id, source, grant_key)
+);
+CREATE TABLE IF NOT EXISTS character_quest_undo(
+    character_id TEXT NOT NULL,
+    instance_id BLOB NOT NULL,
+    task_index INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    achievement TEXT NOT NULL,
+    PRIMARY KEY(character_id, instance_id, task_index)
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
                                             "loot_claims",   "loot_claim_items",    "loot_bags",          "loot_bag_items",
-                                            "craft_cooldowns"};
+                                            "craft_cooldowns", "character_quests",  "character_quest_tasks", "character_quest_pins",
+                                            "character_quest_grants", "character_quest_undo"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -358,6 +416,34 @@ Character read_character(sqlite3_stmt* statement) {
     }
     character.archetype = column_text(statement, 11);
     return character;
+}
+
+/** The 8-byte big-endian blob of a quest instance id (a full u64: SQLite integers have a sign). */
+std::array<std::uint8_t, 8> instance_blob(std::uint64_t value) {
+    std::array<std::uint8_t, 8> bytes{};
+    for (int index = 7; index >= 0; --index) {
+        bytes[static_cast<std::size_t>(index)] = static_cast<std::uint8_t>(value & 0xFF);
+        value >>= 8;
+    }
+    return bytes;
+}
+
+void bind_instance(sqlite3_stmt* statement, int index, std::uint64_t value) {
+    const std::array<std::uint8_t, 8> bytes = instance_blob(value);
+    sqlite3_bind_blob(statement, index, bytes.data(), static_cast<int>(bytes.size()), SQLITE_TRANSIENT);
+}
+
+/** @return The instance id of an 8-byte blob column, or 0 for another value. */
+std::uint64_t column_instance(sqlite3_stmt* statement, int index) {
+    if (sqlite3_column_type(statement, index) != SQLITE_BLOB || sqlite3_column_bytes(statement, index) != 8) {
+        return 0;
+    }
+    const auto* bytes = static_cast<const std::uint8_t*>(sqlite3_column_blob(statement, index));
+    std::uint64_t value = 0;
+    for (int part = 0; part < 8; ++part) {
+        value = (value << 8) | bytes[part];
+    }
+    return value;
 }
 
 constexpr const char* kCharacterColumns =
@@ -567,6 +653,13 @@ bool Store::migrate() {
             return false;
         }
     }
+    if (version < 15) {
+        // Stage 1.8a: the quests of the characters.
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration15Quests) || !execute("PRAGMA user_version=15") || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
     if (version < kSchemaVersion) {
         log::write("store: database schema changed from version %d to version %d", version, kSchemaVersion);
     }
@@ -704,7 +797,7 @@ bool Store::character_name_exists(const std::string& name) {
     return name_in_use(name);
 }
 
-InsertResult Store::insert_character(const Character& character, const std::vector<ItemRow>& items) {
+InsertResult Store::insert_character(const Character& character, const std::vector<ItemRow>& items, const NewCharacterRows& extra) {
     std::lock_guard lock(m_mutex);
     if (!execute("BEGIN IMMEDIATE")) {
         return InsertResult::failed;
@@ -740,6 +833,38 @@ InsertResult Store::insert_character(const Character& character, const std::vect
             break;
         }
         if (!insert_item(character.characterId, row)) {
+            result = InsertResult::failed;
+        }
+    }
+    // Stage 1.8a: the start position (the beach of the start quest), the archetype achievement, and the pending start grant.
+    if (result == InsertResult::inserted && character.position) {
+        Statement statement(m_database, "UPDATE characters SET position_x=?1, position_y=?2, position_z=?3 WHERE character_id=?4");
+        sqlite3_bind_double(statement.handle, 1, character.position->x);
+        sqlite3_bind_double(statement.handle, 2, character.position->y);
+        sqlite3_bind_double(statement.handle, 3, character.position->z);
+        statement.bind(4, character.characterId);
+        if (sqlite3_step(statement.handle) != SQLITE_DONE) {
+            result = InsertResult::failed;
+        }
+    }
+    const std::string date = now_iso8601();
+    for (const std::string& achievement : extra.achievements) {
+        if (result != InsertResult::inserted) {
+            break;
+        }
+        Statement statement(m_database, "INSERT OR IGNORE INTO achievements(character_id, achievement, granted_date) VALUES(?1,?2,?3)");
+        statement.bind(1, character.characterId);
+        statement.bind(2, achievement);
+        statement.bind(3, date);
+        if (sqlite3_step(statement.handle) != SQLITE_DONE) {
+            result = InsertResult::failed;
+        }
+    }
+    for (const QuestGrantRow& grant : extra.grants) {
+        if (result != InsertResult::inserted) {
+            break;
+        }
+        if (!insert_quest_grant(character.characterId, grant)) {
             result = InsertResult::failed;
         }
     }
@@ -1443,6 +1568,265 @@ bool Store::set_world_time(const std::string& worldKey, std::uint64_t position, 
         log::write("store: no write of the world time of %s: %s", worldKey.c_str(), sqlite3_errmsg(m_database));
     }
     return end_write(ok);
+}
+
+std::vector<QuestRow> Store::list_quests(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<QuestRow> quests;
+    {
+        Statement statement(m_database,
+                            "SELECT instance_id, objective, objective_crc, accept_ns, origin_territory, parent_instance, source FROM "
+                            "character_quests WHERE character_id=?1 ORDER BY instance_id");
+        statement.bind(1, characterId);
+        while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+            QuestRow quest;
+            quest.instance = column_instance(statement.handle, 0);
+            quest.objective = column_text(statement.handle, 1);
+            quest.objectiveCrc = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 2));
+            quest.acceptNs = static_cast<std::uint64_t>(std::max<sqlite3_int64>(0, sqlite3_column_int64(statement.handle, 3)));
+            quest.originTerritory = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 4), 0, 65535));
+            quest.parent = column_instance(statement.handle, 5);
+            quest.source = column_text(statement.handle, 6);
+            if (quest.instance != 0) {
+                quests.push_back(std::move(quest));
+            }
+        }
+    }
+    Statement statement(m_database,
+                        "SELECT instance_id, task_index, task, task_crc, progress, state, start_ns FROM character_quest_tasks WHERE "
+                        "character_id=?1 ORDER BY instance_id, task_index");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        const std::uint64_t instance = column_instance(statement.handle, 0);
+        const auto quest = std::find_if(quests.begin(), quests.end(), [&](const QuestRow& row) { return row.instance == instance; });
+        if (quest == quests.end()) {
+            continue; // A task row with no quest row: not a part of a quest.
+        }
+        QuestTaskRow task;
+        task.index = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 1), 0, 255));
+        task.task = column_text(statement.handle, 2);
+        task.crc = static_cast<std::uint32_t>(sqlite3_column_int64(statement.handle, 3));
+        task.progress = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 4), 0, 0x7FFFFFFF));
+        task.state = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 5), 0, 255));
+        task.startNs = static_cast<std::uint64_t>(std::max<sqlite3_int64>(0, sqlite3_column_int64(statement.handle, 6)));
+        quest->tasks.push_back(std::move(task));
+    }
+    return quests;
+}
+
+bool Store::write_quest(const std::string& characterId, const QuestRow& quest) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    bool ok = true;
+    {
+        Statement statement(m_database,
+                            "INSERT INTO character_quests(character_id, instance_id, objective, objective_crc, accept_ns, origin_territory, "
+                            "parent_instance, source) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(character_id, instance_id) DO UPDATE SET "
+                            "objective=excluded.objective, objective_crc=excluded.objective_crc, accept_ns=excluded.accept_ns, "
+                            "origin_territory=excluded.origin_territory, parent_instance=excluded.parent_instance, source=excluded.source");
+        statement.bind(1, characterId);
+        bind_instance(statement.handle, 2, quest.instance);
+        statement.bind(3, quest.objective);
+        sqlite3_bind_int64(statement.handle, 4, static_cast<sqlite3_int64>(quest.objectiveCrc));
+        sqlite3_bind_int64(statement.handle, 5, static_cast<sqlite3_int64>(quest.acceptNs));
+        sqlite3_bind_int64(statement.handle, 6, static_cast<sqlite3_int64>(quest.originTerritory));
+        if (quest.parent != 0) {
+            bind_instance(statement.handle, 7, quest.parent);
+        } else {
+            sqlite3_bind_null(statement.handle, 7);
+        }
+        statement.bind(8, quest.source);
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    if (ok) {
+        Statement statement(m_database, "DELETE FROM character_quest_tasks WHERE character_id=?1 AND instance_id=?2");
+        statement.bind(1, characterId);
+        bind_instance(statement.handle, 2, quest.instance);
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    for (const QuestTaskRow& task : quest.tasks) {
+        if (!ok) {
+            break;
+        }
+        Statement statement(m_database,
+                            "INSERT INTO character_quest_tasks(character_id, instance_id, task_index, task, task_crc, progress, state, "
+                            "start_ns) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)");
+        statement.bind(1, characterId);
+        bind_instance(statement.handle, 2, quest.instance);
+        sqlite3_bind_int64(statement.handle, 3, task.index);
+        statement.bind(4, task.task);
+        sqlite3_bind_int64(statement.handle, 5, static_cast<sqlite3_int64>(task.crc));
+        sqlite3_bind_int64(statement.handle, 6, static_cast<sqlite3_int64>(task.progress));
+        sqlite3_bind_int64(statement.handle, 7, static_cast<sqlite3_int64>(task.state));
+        sqlite3_bind_int64(statement.handle, 8, static_cast<sqlite3_int64>(task.startNs));
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    if (!ok) {
+        log::write("store: no write of the quest %s of character %s: %s", quest.objective.c_str(), characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::vector<std::uint64_t> Store::list_quest_pins(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<std::uint64_t> pins;
+    Statement statement(m_database, "SELECT instance_id FROM character_quest_pins WHERE character_id=?1 ORDER BY ordinal");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        const std::uint64_t instance = column_instance(statement.handle, 0);
+        if (instance != 0) {
+            pins.push_back(instance);
+        }
+    }
+    return pins;
+}
+
+bool Store::write_quest_pins(const std::string& characterId, const std::vector<std::uint64_t>& pins) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    bool ok = true;
+    {
+        Statement statement(m_database, "DELETE FROM character_quest_pins WHERE character_id=?1");
+        statement.bind(1, characterId);
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    for (std::size_t ordinal = 0; ok && ordinal < pins.size(); ++ordinal) {
+        Statement statement(m_database, "INSERT INTO character_quest_pins(character_id, ordinal, instance_id) VALUES(?1,?2,?3)");
+        statement.bind(1, characterId);
+        sqlite3_bind_int64(statement.handle, 2, static_cast<sqlite3_int64>(ordinal));
+        bind_instance(statement.handle, 3, pins[ordinal]);
+        ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    }
+    if (!ok) {
+        log::write("store: no write of the pins of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::vector<QuestGrantRow> Store::list_quest_grants(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<QuestGrantRow> grants;
+    Statement statement(m_database,
+                        "SELECT source, grant_key, objective, state, instance_id FROM character_quest_grants WHERE character_id=?1 ORDER BY "
+                        "source, grant_key");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        QuestGrantRow grant;
+        grant.source = column_text(statement.handle, 0);
+        grant.key = column_text(statement.handle, 1);
+        grant.objective = column_text(statement.handle, 2);
+        grant.state = column_text(statement.handle, 3);
+        grant.instance = column_instance(statement.handle, 4);
+        grants.push_back(std::move(grant));
+    }
+    return grants;
+}
+
+bool Store::insert_quest_grant(const std::string& characterId, const QuestGrantRow& grant) {
+    Statement statement(m_database,
+                        "INSERT INTO character_quest_grants(character_id, source, grant_key, objective, state, instance_id) VALUES(?1,?2,?3,?4,?5,?6) "
+                        "ON CONFLICT(character_id, source, grant_key) DO UPDATE SET objective=excluded.objective, state=excluded.state, "
+                        "instance_id=excluded.instance_id");
+    statement.bind(1, characterId);
+    statement.bind(2, grant.source);
+    statement.bind(3, grant.key);
+    statement.bind(4, grant.objective);
+    statement.bind(5, grant.state);
+    if (grant.instance != 0) {
+        bind_instance(statement.handle, 6, grant.instance);
+    } else {
+        sqlite3_bind_null(statement.handle, 6);
+    }
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of the grant %s %s of character %s: %s", grant.source.c_str(), grant.key.c_str(), characterId.c_str(),
+                   sqlite3_errmsg(m_database));
+    }
+    return ok;
+}
+
+bool Store::write_quest_grant(const std::string& characterId, const QuestGrantRow& grant) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    return end_write(insert_quest_grant(characterId, grant));
+}
+
+std::vector<QuestUndoRow> Store::list_quest_undo(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<QuestUndoRow> rows;
+    Statement statement(m_database,
+                        "SELECT instance_id, task_index, action, achievement FROM character_quest_undo WHERE character_id=?1 ORDER BY "
+                        "instance_id, task_index");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        QuestUndoRow row;
+        row.instance = column_instance(statement.handle, 0);
+        row.index = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 1), 0, 255));
+        row.action = column_text(statement.handle, 2);
+        row.achievement = column_text(statement.handle, 3);
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+bool Store::write_quest_undo(const std::string& characterId, const QuestUndoRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database,
+                        "INSERT INTO character_quest_undo(character_id, instance_id, task_index, action, achievement) VALUES(?1,?2,?3,?4,?5) "
+                        "ON CONFLICT(character_id, instance_id, task_index) DO UPDATE SET action=excluded.action, achievement=excluded.achievement");
+    statement.bind(1, characterId);
+    bind_instance(statement.handle, 2, row.instance);
+    sqlite3_bind_int64(statement.handle, 3, row.index);
+    statement.bind(4, row.action);
+    statement.bind(5, row.achievement);
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of an undo row of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+std::uint64_t Store::largest_quest_instance() {
+    std::lock_guard lock(m_mutex);
+    Statement statement(m_database, "SELECT max(instance_id) FROM character_quests");
+    return sqlite3_step(statement.handle) == SQLITE_ROW ? column_instance(statement.handle, 0) : 0;
+}
+
+bool Store::remove_achievements(const std::string& characterId, const std::vector<std::string>& ids, std::vector<std::string>* removed) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    bool ok = true;
+    std::vector<std::string> gone;
+    for (const std::string& id : ids) {
+        Statement statement(m_database, "DELETE FROM achievements WHERE character_id=?1 AND achievement=?2");
+        statement.bind(1, characterId);
+        statement.bind(2, id);
+        ok = ok && sqlite3_step(statement.handle) == SQLITE_DONE;
+        if (ok && sqlite3_changes(m_database) == 1) {
+            gone.push_back(id);
+        }
+    }
+    if (!ok) {
+        log::write("store: no remove of achievements of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    if (!end_write(ok)) {
+        return false;
+    }
+    if (removed != nullptr) {
+        *removed = std::move(gone);
+    }
+    return true;
 }
 
 std::vector<CraftCooldownRow> Store::list_craft_cooldowns(const std::string& characterId) {
