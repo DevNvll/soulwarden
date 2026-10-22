@@ -19,6 +19,8 @@ constexpr std::uint64_t kFormatLevel = 1;
 constexpr std::uint64_t kFormat = 2;
 /** Format 3 (stage 3.5b.2): format 2 and the member lootContainers. */
 constexpr std::uint64_t kFormatContainers = 3;
+/** Format 4 (stage 2.5c): format 3 and the persons (the person children that the client makes, the member person of an object). */
+constexpr std::uint64_t kFormatPersons = 4;
 
 constexpr std::pair<const char*, InteractionKind> kKindTexts[] = {
     {"lorePage", InteractionKind::lorePage},
@@ -348,7 +350,51 @@ public:
                 return fail("a bound of the object " + object.key + " is not correct");
             }
         }
-        return assembly(entry, object.assembly);
+        return assembly(entry, object.assembly) && person(entry, object);
+    }
+
+    /** The member person of an object (stage 2.5c): the NPC row and the presence rule. */
+    bool person(const json& entry, InteractionObject& object) {
+        if (!entry.contains("person")) {
+            return true;
+        }
+        const json& value = entry["person"];
+        PersonBinding binding;
+        if (!value.is_object() || !text(value, "npc", binding.npc) || !text(value, "variant", binding.variant, false)
+            || !text(value, "table", binding.table, false) || !text(value, "spawner", binding.spawner, false)
+            || !text(value, "unresolved", binding.unresolved, false) || !flag(value, "clientChild", binding.clientChild, false)) {
+            return fail("the person of the object " + object.key + " is not correct");
+        }
+        if (value.contains("row")) {
+            std::int64_t row = 0;
+            if (!signed_number(value, "row", 0, 0xFFFF, row)) {
+                return false;
+            }
+            binding.row = static_cast<std::int32_t>(row);
+        }
+        if (value.contains("presence")) {
+            const json& presence = value["presence"];
+            std::string mode;
+            if (!presence.is_object() || !text(presence, "mode", mode) || !text(presence, "condition", binding.condition)) {
+                return fail("the presence of the person " + object.key + " is not correct");
+            }
+            if (mode == "showWhen") {
+                binding.presence = PersonPresence::showWhen;
+            } else if (mode == "hideWhen") {
+                binding.presence = PersonPresence::hideWhen;
+            } else {
+                return fail("the presence of the person " + object.key + " has the mode " + mode + ", which is not a mode of the file");
+            }
+            if (binding.condition.empty()) {
+                return fail("the presence of the person " + object.key + " has no condition");
+            }
+        }
+        if (binding.npc.empty() && binding.unresolved.empty()) {
+            return fail("the person " + object.key + " has no NPC id and no cause");
+        }
+        binding.npcCrc = interaction_option_id(binding.npc);
+        object.person = std::move(binding);
+        return true;
     }
 
     bool slot(const json& slots, const char* key, std::uint32_t& value) {
@@ -483,8 +529,8 @@ bool InteractionData::load(const std::string& path) {
         return false;
     }
     const std::uint64_t format = document.contains("format") && document["format"].is_number_unsigned() ? document["format"].get<std::uint64_t>() : 0;
-    if (format != kFormatLevel && format != kFormat && format != kFormatContainers) {
-        m_error = "the file does not have the format 1, 2, or 3";
+    if (format != kFormatLevel && format != kFormat && format != kFormatContainers && format != kFormatPersons) {
+        m_error = "the file does not have the format 1, 2, 3, or 4";
         return false;
     }
     for (const char* list : {"options", "achievements", "objects"}) {
@@ -555,7 +601,7 @@ bool InteractionData::load(const std::string& path) {
         }
     }
     // Format 3 (stage 3.5b.2): the loot containers.
-    if (format == kFormatContainers) {
+    if (format >= kFormatContainers) {
         if (!document.contains("lootContainers") || !document["lootContainers"].is_object()) {
             m_error = "the file does not have the member lootContainers";
             return false;
@@ -603,7 +649,7 @@ bool InteractionData::load(const std::string& path) {
         if (format >= kFormat) {
             expected.insert(expected.end(), {{"templates", templates.size()}, {"spawned", spawned.size()}, {"fixtures", fixtures.size()}});
         }
-        if (format == kFormatContainers) {
+        if (format >= kFormatContainers) {
             expected.push_back({"lootContainers", containers.size()});
         }
         for (const auto& [key, size] : expected) {

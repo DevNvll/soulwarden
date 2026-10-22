@@ -143,8 +143,10 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
 - The item actions [client 0x825EEA8, 0x825F020, 0x8260370]: TaskGiveItem and TaskGiveAndTakeItem give their item at the activation
   (the cause ItemGathered: the loot notice) and complete; AwardOnlyOnce: only when the award row of the objective and task is below the
   target (a reset keeps the row: no second item; an abandon removes it) [client 0x825EEF0]. A give with no place in the bag waits (the task
-  stays Active and tries again at the next change of the items) [agent]. TaskRemoveItem takes its count from the bag and the quick slots (a
-  character with fewer items loses what it has) and completes [agent: research Q1 "insufficient-items result needs a rule"].
+  stays Active and tries again at the next change of the items) [agent]. TaskRemoveItem takes its count from the bag, the quick slots, and
+  then the other slots of the paperdoll (a character with fewer items loses what it has) and completes [agent: research Q1
+  "insufficient-items result needs a rule"; the paperdoll: finding QR8C-R4]. The item actions of one plan apply in the order of the tasks
+  (finding QR8C-R2).
 - The quest drops [client 0x825F400 to 0x825F630, 0x825FA20]: an Active possession task with ItemDropVC and ItemDropProbability above 0 and
   MinGearScore 0 drops one item of its ItemName for each credited kill of a victim of an ItemDropVC category (TaskHaveItems,
   TaskHaveAndReturnItems) or each gather of an ItemDropVC gatherable row (TaskGatherItems, TaskGatherAndReturnItems), with the probability
@@ -161,10 +163,14 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
   depletion: InstancedLootType 4 of the layer metadata). Live G1: with no task the client shows no prompt and no beam; with the task the
   prompt "E ASTROLABE", the beam, and the world pin.
 - A bound of the interaction data with InteractOnlyOnQuest is open only while an Active task of the character has its tag (before stage 1.8c:
-  refused as unsupported). The start of a use of a bound with a tag, and its completion (a use with no time completes at its start), count
-  for TaskInteract with OnInteractStart 1 and 0 [client 0x825E470].
+  refused as unsupported). The start of a use of a bound with a tag, and its completion, count for TaskInteract with OnInteractStart 1 and
+  0 [client 0x825E470]. The time of a use is the time of its handler or the Delay Time of its option: only a use with no time completes at
+  its start (finding QR8C-R8). Only a completion that the handler accepts counts (`InteractionHandler::complete` gives true; finding
+  QR8C-R12). A gather gives its completion itself after its commit, one event with the tag of its quest object and the tag of its bound,
+  each tag one time (`owns_interact_event`; finding QR8C-R13).
 - A craft or a refine [client 0x825DDE0, 0x825E080, 0x825E1B0]: each committed job of a batch is one event with the recipe, the units of
-  its output (with the bonus units), and the gear score of the output. TaskCraftRecipe (CraftingRecipeId, or CraftAnyRecipe; MinGearScore),
+  its output (with the bonus units), and the gear score of the output (the craft gear score of the job, else the rule of a new instance of
+  the item table: GearScoreOverride, else the smallest gear score; finding QR8C-R10). TaskCraftRecipe (CraftingRecipeId, or CraftAnyRecipe; MinGearScore),
   TaskCraftMultipleRecipes (the recipes of ItemDropVC), TaskRefineRecipe (a refining recipe only).
 - The places [live POI1; data TerritoryDefinition, the shape files; client 0x825EB30, 0x825EBF0]: TaskGoToPOITag and
   TaskGoToPOITagOnTerritory are satisfied while the accepted position of the character is in the shape of a point of interest of a POITag
@@ -193,6 +199,39 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
   main story objective; each asks for a confirmation, then sends 3836 or 5600 (protocol notes 4.54).
 - A disconnect ends nothing: the quests stay in their rows; the entry evaluates the predicates again (the items, the place, the bits can
   have changed while the character was away).
+
+### The corrections of the code review of stage 1.8c
+
+The findings QR8C-R1 to QR8C-R14 of the code review of stage 1.8c (`~/Games/soulwarden/work/evidence/quests/18c/code-review/FINDINGS.md`)
+are corrected in stage 2.5c. Each has a case of `tests/review_quests_18c_tests.cpp` that fails on the tree of stage 1.8c and passes after
+the correction. The source of each rule is the finding and the client rule that it names [agent through the review].
+
+- QR8C-R1 (case QRW1): a result id counts as handled only after the commit of its plan (or when the event changes no task). An event whose
+  plan the store refused is tried again by the world after 2 s, 5 times at most (`kEventRetry`, `kEventRetries`; the time of the retry of
+  a timer, finding QR8A-R5) [agent: the source action committed; a store that refuses for 10 s has a fault that the log shows]. A second
+  delivery of the same result before the retry counts one time.
+- QR8C-R2 (case QRW2): the item actions of one plan (a give, a remove, a return) apply in the order of the tasks
+  (`Inventory::plan_quest_items` with a list of `QuestItemAction`): a remove after a give of the same plan takes the given item.
+- QR8C-R3 (case QRW3): a reset of a child objective keeps the link to its parent; a reset of a parent gives the active child to the new
+  parent instance (`Plan::grant_child`), so the completion of the child completes the task of the new parent.
+- QR8C-R4 (case QRW4): a return takes the counted items from the bag, the quick slots, and the other paperdoll slots: an equipped item
+  that a possession task counted goes at the return.
+- QR8C-R5 (case QRW5): an abandon settles the achievement waits of the other quests of the character after its undo rows (a StayActive
+  TaskAchievement whose bit the undo removed is Active again).
+- QR8C-R6 (case QRW6): EnforceLocationRequirement applies to the possession and equip predicates too (the index has the key "place" for
+  them, and a move evaluates them again).
+- QR8C-R7 (case QRW7): an exit task is satisfied only when the POI data has a shape of its tag and the character is outside each shape
+  (`PoiData::knows`): a tag with no shape is no proof of an exit, and the task waits.
+- QR8C-R8, R12, R13 (cases QRW8, QRW12, QRW13): see the rule of TaskInteract above.
+- QR8C-R9 (case QRW9): a kill drop that the bag lost (a full bag with no loot bag data) writes no award row and keeps its misses: the next
+  kill can drop it again (`delivered_drops` of the rewards).
+- QR8C-R10 (case QRW10): see the rule of a craft above (`Inventory::craft_gear_score`).
+- QR8C-R11 (case QRW11): the instance of a subscriber is found by its key (`Quests::instance_of` with the positions of the index), a commit
+  that adds and removes no instance replaces its copies at their places, and the index is built again only for the changed instances. One
+  event with 31 active quests: 1 subscriber, 0 visits of the quest list, 3 lookups by key (the counts `questVisits` and
+  `instanceLookups`).
+- QR8C-R14 (case QRW14): the index of the new instances is built before the inventory marks its change of the items: a give of a new
+  quest reaches its new possession task in the same tick.
 
 ## Commands
 

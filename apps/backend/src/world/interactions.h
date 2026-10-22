@@ -144,8 +144,13 @@ enum class InteractionVerdict : std::uint8_t {
      * is enabled only while such a task is active).
      */
     notOnQuest,
+    /**
+     * Stage 2.5c: a person whose presence rule (the achievements of the character) says that it is not there for this character (the client
+     * of the character shows no such person: live check A2).
+     */
+    notPresent,
 };
-inline constexpr std::size_t kInteractionVerdictCount = 17;
+inline constexpr std::size_t kInteractionVerdictCount = 18;
 
 [[nodiscard]] const char* interaction_verdict_text(InteractionVerdict verdict);
 
@@ -274,10 +279,24 @@ public:
         (void)context;
         return 0.0F;
     }
-    /** A timed use reached its end, and the checks again passed (stage 2.5b): one call for each use. */
-    virtual void complete(Entity& character, const InteractionContext& context) {
+    /**
+     * A timed use reached its end, and the checks again passed (stage 2.5b): one call for each use.
+     * @return True when the use completed (code review of stage 1.8c, finding QR8C-R12: a refused gather, a full bag, a store that did not
+     *         take the result is no completion). Only then the base gives the quests the completed interaction of a tagged bound.
+     */
+    virtual bool complete(Entity& character, const InteractionContext& context) {
         (void)character;
         (void)context;
+        return true;
+    }
+    /**
+     * True: the handler gives the quests the completed interaction of its uses itself, after its own success (code review of stage 1.8c,
+     * findings QR8C-R8 and QR8C-R13: the gathering knows when a gather succeeded and the tag of its quest object). The base then gives only
+     * the start of the interaction.
+     */
+    [[nodiscard]] virtual bool owns_interact_event(const InteractionContext& context) const {
+        (void)context;
+        return false;
     }
     /** A committed use ends. */
     virtual void end(Entity& character, const InteractionContext& context, InteractionEnd cause) {
@@ -345,6 +364,8 @@ struct InteractionCounts {
     std::uint64_t spawned{0};
     std::uint64_t removed{0};
     std::uint64_t scans{0};
+    /** Stage 2.5c (case NC7): the lookups of a reference in the reference map of the data (one for each request). */
+    std::uint64_t referenceLookups{0};
     /** The work of the last scan of the spawn rule (case IT-LOAD). */
     gamedata::LookupWork scanWork;
 };

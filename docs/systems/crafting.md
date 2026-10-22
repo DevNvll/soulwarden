@@ -342,7 +342,9 @@ decision of the user, decision of the orchestrator, decision of an agent.
 
 - Stage 1.8c (the quests, [Quests](quests.md)): after the commit of each job the quest system gets the craft (or the refine, for a refining
   recipe) with the recipe, the units of the output of the job (with its bonus units), and the gear score of the output (TaskCraftRecipe,
-  TaskCraftMultipleRecipes, TaskRefineRecipe). A refused or a stopped job is no event.
+  TaskCraftMultipleRecipes, TaskRefineRecipe). A refused or a stopped job is no event. The gear score of the event is the gear score of the
+  new instance (`Inventory::craft_gear_score`: the craft gear score of the job, else GearScoreOverride, else the smallest gear score of the
+  item table; 0 for an item with no gear score), not 0 for a fixed output (code review of stage 1.8c, finding QR8C-R10; case QRW10).
 
 ## Commands
 

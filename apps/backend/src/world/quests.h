@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -138,6 +139,14 @@ struct QuestCounts {
     /** Characters whose items or places the tick looked at (one look for each character and tick at most). */
     std::uint64_t itemLooks{0};
     std::uint64_t placeLooks{0};
+    /**
+     * Code review of stage 1.8c, finding QR8C-R11 (the cost of an event): the lookups of a quest instance by its id (the index of the
+     * character), and the quests that a walk over the list of a character visited (a structural change of the list, an index of all).
+     */
+    std::uint64_t instanceLookups{0};
+    std::uint64_t questVisits{0};
+    /** Finding QR8C-R1: events whose plan the store refused (a retry follows on the world clock), and the retries. */
+    std::uint64_t eventRetries{0};
 };
 
 /** The quests of a character for a reader (a command). */
@@ -179,6 +188,8 @@ struct QuestEvent {
     std::string weapon;
     /** The result id of the source (a kill: the creature and its death; 0: none): an event with a result id counts one time. */
     std::uint64_t result{0};
+    /** The number of the retry of an event whose plan the store refused (code review of stage 1.8c, finding QR8C-R1). 0: the first. */
+    std::uint32_t attempt{0};
 };
 
 /** One quest drop of a kill or of a gather (stage 1.8c): an item of a possession or gather task of the character. */
@@ -231,6 +242,23 @@ public:
      * regression of finding QR8A-R3) get the new value.
      */
     void achievements_changed(Entity& entity);
+    /**
+     * Stage 2.5c (the persons): @return The value of an achievement conditional for a character now: the rule of TaskAchievement (ids with
+     * !, &&, ||, parentheses; a non-persisted achievement is its own conditional; an id that the data does not know is false). An empty
+     * text is false.
+     */
+    [[nodiscard]] bool conditional(const Entity& entity, const std::string& text) const;
+    /**
+     * Stage 2.5c: @return The state of the task `task` (TaskID, any case) of an active instance of `objective` (ObjectiveID, any case; empty:
+     * any) of a character, or no value (no such instance or task, or no quest data). An empty `task`: the Active state when the character
+     * has an active instance of the objective.
+     */
+    [[nodiscard]] std::optional<std::uint8_t> task_state(const Entity& entity, std::string_view objective, std::string_view task) const;
+    /**
+     * Stage 2.5c: @return True when the character has the completion achievement of an objective (AchievementId of its row; client
+     * IsObjectiveComplete 0x3A48A30). An objective with no row or with no achievement is false.
+     */
+    [[nodiscard]] bool objective_completed(const Entity& entity, std::string_view objective) const;
 
     /**
      * The client sent its pinned list (message 1458). Only active instances of the character, 8 at most, no instance two times; the rows
@@ -340,8 +368,12 @@ private:
     void refresh(Entity& entity, bool items, bool places, bool achievements, const char* cause);
     /** Ends an instance (abandon, reset, failure) in a plan: the undo, the returns, the pin. */
     void end_instance(Plan& plan, std::uint64_t instance, bool keepAwards, const char* cause);
-    /** @return True for a result id that came before (it is kept now): the event changes nothing. */
-    bool repeated(std::uint64_t result);
+    /** @return True for a result id that an earlier event handled: the event changes nothing. */
+    [[nodiscard]] bool repeated(std::uint64_t result) const;
+    /** Keeps a result id as handled (code review of stage 1.8c, finding QR8C-R1: only after the commit of its plan). */
+    void remember(std::uint64_t result);
+    /** @return The active quest of an instance id of a character (the index of the character; finding QR8C-R11), or null. */
+    [[nodiscard]] const QuestInstance* instance_of(const Entity& entity, std::uint64_t instance);
 
     World& m_world;
     state::Store& m_store;

@@ -308,6 +308,8 @@ service::HttpResponse show_state(const Services& services, const AdminAccess& ac
                 }
                 // The interactions of the character (stage 2.5a): its committed interaction and the objects near it.
                 reply["interactions"] = commands::interactions_view(target, selected, commands::kAdminInteractionRange);
+                // The persons near the character (stage 2.5c): their presence and the conversation state of the character.
+                reply["persons"] = commands::persons_view(target, selected, commands::kAdminPersonRange);
                 // The chests of the character (stage 3.5b.1): its claims and the chests near it.
                 reply["chests"] = commands::chests_view(target, selected, commands::kAdminChestRange);
                 reply["gathering"] = commands::gathering_view(target, selected, commands::kAdminGatheringRange);

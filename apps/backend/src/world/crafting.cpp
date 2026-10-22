@@ -1032,7 +1032,10 @@ void Crafting::run(const std::string& characterId, std::uint64_t serial) {
             crafted.kind = job.refining ? QuestEventKind::refine : QuestEventKind::craft;
             crafted.keys = {job.recipe};
             crafted.amounts = {job.outputQty + extra};
-            crafted.gearScore = job.gearScore.value_or(0);
+            // The gear score of the item that the job made: the craft gear score, else the rule of the item table (code review of stage
+            // 1.8c, finding QR8C-R10: a fixed output with GearScoreOverride is not 0).
+            const gamedata::ItemDefinition* made = m_world.options().itemCatalog->find(job.output);
+            crafted.gearScore = made != nullptr ? m_world.inventory().craft_gear_score(*made, job.gearScore) : job.gearScore.value_or(0);
             m_world.quests().event(*character, crafted);
             character = m_world.find_character(characterId);
             if (character == nullptr || !character->craftJob) {

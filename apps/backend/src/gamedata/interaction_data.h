@@ -28,6 +28,11 @@
 // slices, and the development fixtures (the powder keg of the timed option Trigger, the camps). The client shows a server child
 // only after a record of the server (live check L4 of stage 2.5b). The ids of a child come from its actor of the id allocator:
 // a template has the ids of its slice. A third grid of 64 m has the server children (the spawn rule of world/interactions.h).
+//
+// Stage 2.5c (format 4, docs/systems/persons.md): the persons. A person child of a PrefabSpawner of a level placement is an object of the
+// file: the client makes it at the load of the level with an id from its place, its yaw, and its slice asset (live check L1; client
+// 0x6160B60), and the tool writes that id, so that the reference of a request names its authored slot (no alias). Each person object has
+// its binding (PersonBinding): the NPC row and the rule of its presence for one character.
 
 namespace soulwarden::backend::gamedata {
 
@@ -147,6 +152,40 @@ struct InteractionBound {
     std::uint64_t entity{0};
 };
 
+/** When a person is there for one character (stage 2.5c): the client shows it by the achievements of its own player. */
+enum class PersonPresence : std::uint8_t {
+    /** No swap rule: the person is there for each character. */
+    always,
+    /** The person is there while the condition is true (a swap slice that is hidden by default, the walkaway slice). */
+    showWhen,
+    /** The person is there while the condition is false (a swap slice that is shown by default). */
+    hideWhen,
+};
+
+/**
+ * The binding of a person (stage 2.5c, docs/systems/persons.md): its NPC row and the rule of its presence. A person child of a PrefabSpawner
+ * gets its NPC id from the row of its variant in the variation table of its slice; a direct person from its NPC component.
+ */
+struct PersonBinding {
+    /** NPCId of the game data, and its CRC-32 (the lower-case id: the NPC on the wire, client 0x3765600; live check L1). */
+    std::string npc;
+    std::uint32_t npcCrc{0};
+    std::string variant;
+    std::string table;
+    /** The row of the variant in its variation table. -1: none (a direct person). */
+    std::int32_t row{-1};
+    PersonPresence presence{PersonPresence::always};
+    /** The achievement conditional of the presence (ids with !, &&, ||, parentheses). */
+    std::string condition;
+    /** True: the client makes the body at the load of the level (live check L1): the server sends no record of it. */
+    bool clientChild{false};
+    /** The placement UUID of the PrefabSpawner of a person child. */
+    std::string spawner;
+    /** Not empty: the binding is not complete (no variant row, no NPC id, a presence rule that the tool does not know); each use is
+     *  refused. */
+    std::string unresolved;
+};
+
 /** One object: a placement of a layer whose slice has Interact components. */
 struct InteractionObject {
     /** The placement UUID: the durable key of the object. */
@@ -164,6 +203,8 @@ struct InteractionObject {
     std::vector<InteractionBound> bounds;
     /** The Assembly of the slice (a station or a camp; stage 2.5b). No value: none. */
     std::optional<InteractionAssembly> assembly;
+    /** A person (stage 2.5c, a file of format 4): its NPC row and its presence. No value: not a person, or a file of an older format. */
+    std::optional<PersonBinding> person;
 };
 
 /** A unit quaternion (x, y, z, w): the rotation of a server child. */

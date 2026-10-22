@@ -9,6 +9,7 @@ client (a conversation, a cutscene). The wire contracts are in the protocol note
 | Task | Start here |
 | --- | --- |
 | A conversation with a person, a cutscene of the client, a character that the client keeps in place | Protocol notes 4.20, `apps/backend/src/server/rep/lock_messages.h`, `server/rep/rep_session.cpp` (`handle_cutscene_ended`, `end_input_lock`), `tools/world message`, test case UT1 |
+| The persons: the conversation state of a character, the topics 3158 and 5397, the services | [Persons](persons.md), protocol notes 4.55 |
 | Travel: the server moves a character to a different place, the travel places, the tab "Travel" | Protocol notes 4.16, `apps/backend/src/world/world.h` (`World::travel`), `server/rep/travel_messages.h`, `gamedata/travel_places.h`, `server/http/travel_commands.cpp`, `tools/world travel`, `tools/world places`, `tools/gamedata/places.sh` |
 
 ## Rules
@@ -52,8 +53,12 @@ client (a conversation, a cutscene). The wire contracts are in the protocol note
   2473 (the end of its committed interaction): from stage 2.5a it ends the interaction of the
   character in the interaction system ([Interactions](interactions.md); the request of the
   conversation gets 3743 result 1, and a refusal would close the conversation). A call that
-  names a different entity gets nothing. Only the session of the owner gets 6709 and 3746. The
-  backend has no conversation content: a new message of the conversation keeps this answer.
+  names a different entity gets nothing. Only the session of the owner gets 6709 and 3746. From
+  stage 2.5c the backend has the conversation data of the persons ([Persons](persons.md)): it
+  selects the conversation state of each character, checks the topics of the client (3158 during
+  the conversation, 5397 at its close, after the 2473), and gives the services of the state to the
+  grant API. The answer of the lock does not change (live checks L3 and L5 of stage 2.5c: after
+  the close the character walks).
   A travel and a respawn also end the interaction of the character in the world. When the
   server ends a conversation with 3746 (a command; stage 2.5b), the client closes it, sends 2473
   and 6705, and the answer 6709 frees the input and the camera (live check L7 of stage 2.5b: a

@@ -414,6 +414,18 @@ using CreatureCommand = WorldCommand (*)(const std::string& character, const Arg
 /** @return The JSON form of one kind of the creature data, with its health at its level. */
 [[nodiscard]] nlohmann::json creature_kind_json(const gamedata::CreatureData& data, const gamedata::CreatureKind& kind);
 
+// The person commands (stage 2.5c, world/persons.h, server/http/person_commands.cpp).
+
+/** The persons of the admin state of a character: each person this near to it (meters, horizontal). */
+inline constexpr float kAdminPersonRange = 30.0F;
+
+/**
+ * @return The person conversation of a character (world thread): the NPC, the selected state, the topics, the services, the finished
+ *         topics, and the open flag; each person of the interaction data that is `radius` or less from it with its NPC row, its presence
+ *         rule and its value for the character, and the selection that the character gets now; and the counts of the person system.
+ */
+[[nodiscard]] nlohmann::json persons_view(world::World& world, const std::string& character, float radius);
+
 // The interaction commands (stage 2.5a, world/interactions.h, server/http/interaction_commands.cpp).
 
 /** The objects of the admin state of a character: each object of the interaction data this near to it (meters, horizontal). */

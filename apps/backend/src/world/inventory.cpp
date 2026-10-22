@@ -85,6 +85,18 @@ std::string slot_list(const std::set<std::uint32_t>& slots) {
 }
 
 /**
+ * @return The gear score of a new instance of an item with a gear score (the parameters of new_item; code review of stage 1.8c, finding
+ *         QR8C-R10: the craft event of the quests uses this rule too).
+ */
+std::uint32_t instance_gear_score(const gamedata::ItemDefinition& definition, std::optional<std::uint32_t> gearScore, bool loot,
+                                  std::uint32_t limit) {
+    const std::uint32_t low = loot ? 1U : definition.minGearScore;
+    const std::uint32_t high = std::max(std::max(definition.maxGearScore, limit), low);
+    const std::uint32_t standard = definition.gearScoreOverride != 0 ? definition.gearScoreOverride : definition.minGearScore;
+    return std::clamp(gearScore.value_or(standard), low, high);
+}
+
+/**
  * @return A new item instance of an item of the catalog, with the start values of the item table.
  * @param loot True: a gear score of a loot roll (world/rewards.h). It is not below 1 and not above
  *        the largest gear score of the item; the smallest gear score of the item table is not a
@@ -105,10 +117,7 @@ ItemInstance new_item(const gamedata::ItemDefinition& definition,
     item.index = definition.index;
     item.quantity = quantity;
     if (definition.maxGearScore != 0) {
-        const std::uint32_t low = loot ? 1U : definition.minGearScore;
-        const std::uint32_t high = std::max(std::max(definition.maxGearScore, limit), low);
-        const std::uint32_t standard = definition.gearScoreOverride != 0 ? definition.gearScoreOverride : definition.minGearScore;
-        item.gearScore = std::clamp(gearScore.value_or(standard), low, high);
+        item.gearScore = instance_gear_score(definition, gearScore, loot, limit);
     }
     item.durability = std::min(definition.durability, kMaxItemDurability);
     item.maxDurability = item.durability;
@@ -260,6 +269,15 @@ const char* item_error_text(ItemError error) {
 
 Inventory::Inventory(World& world, state::Store& store, const gamedata::ItemCatalog* catalog)
     : m_world(world), m_store(store), m_catalog(catalog) {}
+
+std::uint32_t Inventory::craft_gear_score(const gamedata::ItemDefinition& definition, std::optional<std::uint32_t> gearScore) const {
+    if (definition.maxGearScore == 0) {
+        return 0;
+    }
+    // The rule of a give with the options of a craft output (plan_craft: an exact gear score when the craft has one).
+    const std::uint32_t limit = gearScore ? std::max(give_limit(definition), *gearScore) : give_limit(definition);
+    return instance_gear_score(definition, gearScore, false, limit);
+}
 
 std::uint32_t Inventory::give_limit(const gamedata::ItemDefinition& definition) const {
     // The upgrade limit of the item table (MaxCraftUpgradeGS: 800 for an artifact) counts up to the largest gear score of an equipped
@@ -1356,16 +1374,27 @@ bool same_id(std::string_view one, std::string_view two) {
 
 } // namespace
 
-Inventory::Plan Inventory::plan_quest_items(const std::string& characterId, const std::vector<GrantItem>& gives,
-                                            const std::vector<std::pair<std::string, std::uint32_t>>& takes, std::vector<std::uint32_t>* taken) {
+Inventory::Plan Inventory::plan_quest_items(const std::string& characterId, const std::vector<QuestItemAction>& actions,
+                                            std::vector<std::uint32_t>* taken) {
     if (taken != nullptr) {
-        taken->assign(takes.size(), 0);
+        taken->assign(actions.size(), 0);
     }
     return stage(characterId, [&](Carried& items, Touched& touched) {
-        for (std::size_t position = 0; position < takes.size(); ++position) {
-            std::uint32_t left = takes[position].second;
+        for (std::size_t position = 0; position < actions.size(); ++position) {
+            const QuestItemAction& action = actions[position];
+            if (action.give) {
+                GiveOptions options;
+                options.action = sync::kItemGathered;
+                options.gearScore = action.item.gearScore;
+                const ItemError error = give_into(items.bag, touched.bag, action.item.itemId, action.item.quantity, options);
+                if (error != ItemError::none) {
+                    return error;
+                }
+                continue;
+            }
+            std::uint32_t left = action.item.quantity;
             const auto take_from = [&](BagSlot& slot) {
-                if (left == 0 || !slot.item || !same_id(slot.item->itemId, takes[position].first)) {
+                if (left == 0 || !slot.item || !same_id(slot.item->itemId, action.item.itemId)) {
                     return false;
                 }
                 const std::uint32_t part = std::min(left, slot.item->quantity);
@@ -1388,17 +1417,14 @@ Inventory::Plan Inventory::plan_quest_items(const std::string& characterId, cons
                     touched.equipment.insert(slot);
                 }
             }
-            if (taken != nullptr) {
-                (*taken)[position] = takes[position].second - left;
+            // The other slots of the paperdoll last (finding QR8C-R4: an equipped tool that a return counted).
+            for (auto& [slot, value] : items.equipment.slots) {
+                if ((slot < paperdoll::kQuickFirst || slot > paperdoll::kQuickLast) && take_from(value)) {
+                    touched.equipment.insert(slot);
+                }
             }
-        }
-        for (const GrantItem& give : gives) {
-            GiveOptions options;
-            options.action = sync::kItemGathered;
-            options.gearScore = give.gearScore;
-            const ItemError error = give_into(items.bag, touched.bag, give.itemId, give.quantity, options);
-            if (error != ItemError::none) {
-                return error;
+            if (taken != nullptr) {
+                (*taken)[position] = action.item.quantity - left;
             }
         }
         return ItemError::none;

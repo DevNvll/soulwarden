@@ -31,6 +31,7 @@
 #include "gamedata/navigation_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/poi_data.h"
+#include "gamedata/conversation_data.h"
 #include "gamedata/quest_data.h"
 #include "gamedata/slice_ids.h"
 #include "gamedata/chest_data.h"
@@ -677,6 +678,18 @@ int main(int argc, char** argv) {
                    "tools/gamedata/pois.sh",
                    poiDataPath.c_str(), poiData.error().c_str());
     }
+    // The conversation data of the persons (stage 2.5c, docs/systems/persons.md): the NPC rows, the conversation states, the topics. Without
+    // the file a person keeps its conversation, with no state selection, no topic, and no service.
+    const std::string conversationDataPath = (gameDataDirectory / gamedata::kConversationDataFile).string();
+    gamedata::ConversationData conversationData;
+    if (conversationData.load(conversationDataPath)) {
+        log::write("backend: conversation data %s: %zu NPC rows, %zu conversation states, %zu topics", conversationDataPath.c_str(),
+                   conversationData.npc_count(), conversationData.state_count(), conversationData.topic_count());
+    } else {
+        log::write("backend: no conversation data at %s (%s): a person keeps its conversation, with no state selection, no topic, and no "
+                   "service. Make the file with tools/gamedata/conversations.sh",
+                   conversationDataPath.c_str(), conversationData.error().c_str());
+    }
     // Decision D1 of stage 3.7a (a decision of the orchestrator): the stations whose authored key has no row of the station database use the
     // _t2 variant of their family. One log line names each override.
     if (interactionData.loaded()) {
@@ -749,6 +762,7 @@ int main(int argc, char** argv) {
     worldOptions.craftingData = &craftingData;
     worldOptions.questData = &questData;
     worldOptions.poiData = &poiData;
+    worldOptions.conversationData = &conversationData;
     worldOptions.chestData = &chestData;
     worldOptions.gatheringData = &gatheringData;
     worldOptions.lootTables = &lootTables;

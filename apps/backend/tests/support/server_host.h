@@ -24,6 +24,7 @@
 #include "gamedata/weapon_actions.h"
 #include "gamedata/spell_data.h"
 #include "gamedata/loot_tables.h"
+#include "gamedata/conversation_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/quest_data.h"
 #include "gamedata/travel_places.h"
@@ -97,8 +98,10 @@ struct ServerHost {
     gamedata::QuestData quests;
     /** The points of interest (stage 1.8c). They are empty until a case loads them: no quest task of a place progresses. */
     gamedata::PoiData pois;
+    /** The conversation data of the persons (stage 2.5c). It is empty until a case sets it: no state selection, no topic, no service. */
+    gamedata::ConversationData conversations;
     world::World world{clock, store, tables,
-                       with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
+                       with_conversations(with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
                                                                                                               combat, places, terrain, navigation,
                                                                                                               loot, abilities, perks, spells,
                                                                                                               projectiles, weaponActions),
@@ -108,7 +111,8 @@ struct ServerHost {
                                                     gathering),
                                      crafting),
                                      quests),
-                                     pois)};
+                                     pois),
+                                     conversations)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -290,6 +294,10 @@ struct ServerHost {
     }
     static world::WorldOptions with_pois(world::WorldOptions options, const gamedata::PoiData& pois) {
         options.poiData = &pois;
+        return options;
+    }
+    static world::WorldOptions with_conversations(world::WorldOptions options, const gamedata::ConversationData& conversations) {
+        options.conversationData = &conversations;
         return options;
     }
 

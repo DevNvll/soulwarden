@@ -29,6 +29,13 @@ constexpr int kNpaDepth = 8;
 constexpr std::uint8_t kCommunityGoalType = 6;
 /** The number of result ids that the quest system keeps (a repeated delivery of a result counts one time; the store has a bound). */
 constexpr std::size_t kResultWindow = 4096;
+/**
+ * The retry of an event whose plan the store refused (code review of stage 1.8c, finding QR8C-R1): after 2 s on the world clock (the time of
+ * the retry of a timer, finding QR8A-R5), 5 times at most (a decision of an agent: a store that refuses for 10 s has a fault that the log
+ * shows; the event does not loop).
+ */
+constexpr std::chrono::milliseconds kEventRetry{2000};
+constexpr std::uint32_t kEventRetries = 5;
 /** A timer whose completion write the store refused tries again after this time (code review of stage 1.8a, finding QR8A-R5). */
 constexpr std::chrono::milliseconds kTimerRetry{2000};
 
@@ -96,6 +103,73 @@ const char* quest_error_text(QuestError error) {
 }
 
 /** One indexed task: the instance and the task index. */
+namespace {
+
+/**
+ * The value of an achievement conditional (client 0x31898D0, 0x3A8C640): ids with !, &&, ||, and parentheses. `value(id)` gives the value of
+ * one id. One reader for the quest plans and for the persons (stage 2.5c).
+ */
+template <class IdValue>
+bool evaluate_conditional(const std::string& text, IdValue&& value) {
+    struct Reader {
+        const std::string& text;
+        std::size_t position{0};
+        IdValue& value;
+
+        void blank() {
+            while (position < text.size() && (text[position] == ' ' || text[position] == '\t')) {
+                ++position;
+            }
+        }
+        bool take(const char* token) {
+            blank();
+            const std::size_t length = std::char_traits<char>::length(token);
+            if (text.compare(position, length, token) == 0) {
+                position += length;
+                return true;
+            }
+            return false;
+        }
+        bool any() {
+            bool result = all();
+            while (take("||")) {
+                const bool right = all();
+                result = result || right;
+            }
+            return result;
+        }
+        bool all() {
+            bool result = unary();
+            while (take("&&")) {
+                const bool right = unary();
+                result = result && right;
+            }
+            return result;
+        }
+        bool unary() {
+            if (take("!")) {
+                return !unary();
+            }
+            if (take("(")) {
+                const bool result = any();
+                (void)take(")");
+                return result;
+            }
+            blank();
+            const std::size_t start = position;
+            while (position < text.size() && text[position] != ' ' && text[position] != '\t' && text[position] != '&'
+                   && text[position] != '|' && text[position] != '(' && text[position] != ')' && text[position] != '!') {
+                ++position;
+            }
+            return value(text.substr(start, position - start));
+        }
+    };
+    Reader reader{text, 0, value};
+    return reader.any();
+}
+
+} // namespace
+
 struct Subscriber {
     std::uint64_t instance{0};
     std::uint8_t index{0};
@@ -114,6 +188,8 @@ struct Quests::Subscriptions {
     std::unordered_map<std::string, std::vector<Subscriber>> byKey;
     std::unordered_map<std::uint64_t, std::vector<std::string>> keysOf;
     std::size_t total{0};
+    /** The place of each active instance in the list of the entity (code review of stage 1.8c, finding QR8C-R11: no walk to find it). */
+    std::unordered_map<std::uint64_t, std::size_t> positions;
 
     void remove(std::uint64_t instance) {
         const auto found = keysOf.find(instance);
@@ -183,9 +259,11 @@ struct Quests::Plan {
         double seconds;
     };
     std::vector<TimerStart> timers;
-    /** The item actions of the plan (TaskGiveItem, TaskGiveAndTakeItem, TaskRemoveItem, the returns of an end), and their sum by item. */
-    std::vector<GrantItem> gives;
-    std::vector<std::pair<std::string, std::uint32_t>> takes;
+    /**
+     * The item actions of the plan (TaskGiveItem, TaskGiveAndTakeItem, TaskRemoveItem, the returns of an end) in the order of the tasks (code
+     * review of stage 1.8c, finding QR8C-R2: a remove after a give of the same plan takes the given item), and their sum by item.
+     */
+    std::vector<QuestItemAction> itemActions;
     std::map<std::string, std::int64_t> itemDelta;
     /** The award rows that the plan writes (the key: objective CRC and task index) and the objectives whose rows go. */
     std::map<std::pair<std::uint32_t, std::uint8_t>, std::uint32_t> awards;
@@ -209,12 +287,7 @@ struct Quests::Plan {
         if (copy != copies.end()) {
             return &copy->second;
         }
-        for (const QuestInstance& quest : entity.quests.active) {
-            if (quest.instance == instance) {
-                return &quest;
-            }
-        }
-        return nullptr;
+        return owner.instance_of(entity, instance);
     }
     /** @return The copy of a quest that the plan changes (made at the first change), or null. */
     QuestInstance* edit(std::uint64_t instance) {
@@ -225,17 +298,14 @@ struct Quests::Plan {
         if (copy != copies.end()) {
             return &copy->second;
         }
-        for (const QuestInstance& quest : entity.quests.active) {
-            if (quest.instance == instance) {
-                return &copies.emplace(instance, quest).first->second;
-            }
-        }
-        return nullptr;
+        const QuestInstance* quest = owner.instance_of(entity, instance);
+        return quest != nullptr ? &copies.emplace(instance, *quest).first->second : nullptr;
     }
     /** @return The quests of the plan in the order of the entity, then the new ones (for a reader of all quests). */
     std::vector<const QuestInstance*> all() const {
         std::vector<const QuestInstance*> list;
         for (const QuestInstance& quest : entity.quests.active) {
+            ++counts.questVisits;
             if (const QuestInstance* seen = peek(quest.instance)) {
                 list.push_back(seen);
             }
@@ -277,61 +347,6 @@ struct Quests::Plan {
     // The conditional of TaskAchievement and of a non-persisted achievement (client 0x31898D0, 0x3A8C640): ids with !, &&, ||, and
     // parentheses. An id is true when the character has its bit; a non-persisted achievement is its own conditional; an id that the data
     // does not know is false (research U7: it must not become a stored bit).
-    struct Reader {
-        const std::string& text;
-        std::size_t position{0};
-        Plan& plan;
-        int depth;
-
-        void blank() {
-            while (position < text.size() && (text[position] == ' ' || text[position] == '\t')) {
-                ++position;
-            }
-        }
-        bool take(const char* token) {
-            blank();
-            const std::size_t length = std::char_traits<char>::length(token);
-            if (text.compare(position, length, token) == 0) {
-                position += length;
-                return true;
-            }
-            return false;
-        }
-        bool any() {
-            bool value = all();
-            while (take("||")) {
-                const bool right = all();
-                value = value || right;
-            }
-            return value;
-        }
-        bool all() {
-            bool value = unary();
-            while (take("&&")) {
-                const bool right = unary();
-                value = value && right;
-            }
-            return value;
-        }
-        bool unary() {
-            if (take("!")) {
-                return !unary();
-            }
-            if (take("(")) {
-                const bool value = any();
-                (void)take(")");
-                return value;
-            }
-            blank();
-            const std::size_t start = position;
-            while (position < text.size() && text[position] != ' ' && text[position] != '\t' && text[position] != '&'
-                   && text[position] != '|' && text[position] != '(' && text[position] != ')' && text[position] != '!') {
-                ++position;
-            }
-            return plan.id_value(text.substr(start, position - start), depth);
-        }
-    };
-
     bool id_value(const std::string& id, int depth) {
         if (id.empty()) {
             return false;
@@ -352,8 +367,7 @@ struct Quests::Plan {
         if (conditional.empty()) {
             return false;
         }
-        Reader reader{conditional, 0, *this, depth};
-        return reader.any();
+        return evaluate_conditional(conditional, [this, depth](const std::string& id) { return id_value(id, depth); });
     }
 
     bool step() {
@@ -387,18 +401,22 @@ struct Quests::Plan {
     }
     /** @return The value of a predicate task now (its progress), or no value for a task that is not a predicate. */
     std::optional<std::uint32_t> predicate(const QuestTask& task, const gamedata::QuestNode& node) const {
+        // EnforceLocationRequirement (0x825DAD0, 0x825E860): a possession or an equip task counts only in its place (code review of stage
+        // 1.8c, finding QR8C-R6; the index has these tasks under "place" too).
         if (gamedata::is_possession(task.type)) {
-            return static_cast<std::uint32_t>(std::min<std::uint64_t>(item_count(task.itemName), node.target));
+            return location_ok(task) ? static_cast<std::uint32_t>(std::min<std::uint64_t>(item_count(task.itemName), node.target)) : 0U;
         }
         if (task.type == task_type::kEquipItem) {
-            return Inventory::equipped(entity, task.itemName, task.minGearScore) ? node.target : 0U;
+            return location_ok(task) && Inventory::equipped(entity, task.itemName, task.minGearScore) ? node.target : 0U;
         }
         if (task.type == task_type::kGoToPoi || task.type == task_type::kGoToPoiOnTerritory) {
             return in_place(task) ? node.target : 0U;
         }
         if (task.type == task_type::kExitPoi) {
-            // Outside each point of interest of the tags, also at the activation (0x825EBF0). No data: no knowledge of the place.
-            return owner.pois() != nullptr && !entity.positionEstimated && !in_place(task) ? node.target : 0U;
+            // Outside each point of interest of the tags, also at the activation (0x825EBF0). No data, or no shape of a tag of the task:
+            // no knowledge of the place (code review of stage 1.8c, finding QR8C-R7: an unknown shape is not an exit).
+            return owner.pois() != nullptr && owner.pois()->knows(task.poiTags) && !entity.positionEstimated && !in_place(task) ? node.target
+                                                                                                                                 : 0U;
         }
         if (task.type == task_type::kAchievement) {
             return const_cast<Plan*>(this)->evaluate(task.itemName) ? node.target : 0U;
@@ -505,7 +523,7 @@ struct Quests::Plan {
                                 ": the task waits");
                 return;
             }
-            gives.push_back(GrantItem{task.itemName, quantity, std::nullopt, {}});
+            itemActions.push_back(QuestItemAction{true, GrantItem{task.itemName, quantity, std::nullopt, {}}});
             itemDelta[lower_text(task.itemName)] += quantity;
             if (task.awardOnce) {
                 awards[key] = paid + quantity;
@@ -518,7 +536,7 @@ struct Quests::Plan {
             // it has (a decision of an agent: research quest-engine.md Q1 "insufficient-items result needs a rule").
             const auto have = static_cast<std::uint32_t>(std::min<std::uint64_t>(item_count(task.itemName), node.target));
             if (have > 0) {
-                takes.emplace_back(task.itemName, have);
+                itemActions.push_back(QuestItemAction{false, GrantItem{task.itemName, have, std::nullopt, {}}});
                 itemDelta[lower_text(task.itemName)] -= have;
             }
             complete(quest, index);
@@ -551,11 +569,11 @@ struct Quests::Plan {
         return stored != entity.quests.awards.end() ? stored->second : 0U;
     }
 
-    /** @return True when the bag has a place for the gives of the plan and one more. */
+    /** @return True when the bag has a place for the item actions of the plan and one more give. */
     bool fits(const GrantItem& more) {
-        std::vector<GrantItem> all = gives;
-        all.push_back(more);
-        const Inventory::Plan trial = owner.m_world.inventory().plan_quest_items(entity.characterId, all, takes, nullptr);
+        std::vector<QuestItemAction> all = itemActions;
+        all.push_back(QuestItemAction{true, more});
+        const Inventory::Plan trial = owner.m_world.inventory().plan_quest_items(entity.characterId, all, nullptr);
         return trial.ok();
     }
 
@@ -567,10 +585,19 @@ struct Quests::Plan {
             return;
         }
         for (const QuestInstance* other : all()) {
-            if (other->objectiveCrc == child->crc) {
-                notes.push_back("the child objective " + child->id + " of the task " + task.id + " is active: no second instance");
+            if (other->objectiveCrc != child->crc) {
+                continue;
+            }
+            if (other->parent != 0 && peek(other->parent) == nullptr) {
+                // The child of a parent that ended in this plan (a reset of the parent): it is the child of the new parent now (code review
+                // of stage 1.8c, finding QR8C-R3), so that its completion completes the task of the new parent.
+                edit(other->instance)->parent = quest.instance;
+                notes.push_back("the child objective " + child->id + " of the task " + task.id + " is the child of the new instance " +
+                                hex(quest.instance) + " now");
                 return;
             }
+            notes.push_back("the child objective " + child->id + " of the task " + task.id + " is active: no second instance");
+            return;
         }
         const std::uint64_t parent = quest.instance;
         const std::uint64_t instance = owner.next_instance();
@@ -857,16 +884,42 @@ void Quests::schedule(const std::string& characterId, std::uint64_t instance, st
     m_world.after(delay, [characterId, instance, index, startNs](World& world) { world.quests().timer_due(characterId, instance, index, startNs); });
 }
 
-bool Quests::repeated(std::uint64_t result) {
+bool Quests::repeated(std::uint64_t result) const {
+    return m_results.count(result) != 0;
+}
+
+void Quests::remember(std::uint64_t result) {
     if (!m_results.insert(result).second) {
-        return true;
+        return;
     }
     m_resultOrder.push_back(result);
     if (m_resultOrder.size() > kResultWindow) {
         m_results.erase(m_resultOrder.front());
         m_resultOrder.pop_front();
     }
-    return false;
+}
+
+const QuestInstance* Quests::instance_of(const Entity& entity, std::uint64_t instance) {
+    ++m_counts.instanceLookups;
+    const auto found = m_subscriptions.find(entity.id);
+    if (found != m_subscriptions.end() && found->second) {
+        const auto position = found->second->positions.find(instance);
+        if (position != found->second->positions.end() && position->second < entity.quests.active.size()
+            && entity.quests.active[position->second].instance == instance) {
+            return &entity.quests.active[position->second];
+        }
+        if (position == found->second->positions.end() && found->second->positions.size() == entity.quests.active.size()) {
+            return nullptr; // The index has each active instance: no such instance.
+        }
+    }
+    // No index yet (a character that is not in the world, a plan before the first index): one walk, counted.
+    for (const QuestInstance& quest : entity.quests.active) {
+        ++m_counts.questVisits;
+        if (quest.instance == instance) {
+            return &quest;
+        }
+    }
+    return nullptr;
 }
 
 void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instances, bool all) {
@@ -881,10 +934,24 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
     for (const std::uint64_t instance : instances) {
         subscriptions.remove(instance);
     }
-    for (const QuestInstance& quest : entity.quests.active) {
-        if (!all && instances.count(quest.instance) == 0) {
-            continue;
+    // The instances to index: all (a new index: one walk, counted), or only the changed ones by their place (finding QR8C-R11).
+    std::vector<const QuestInstance*> list;
+    if (all) {
+        subscriptions.positions.clear();
+        for (std::size_t position = 0; position < entity.quests.active.size(); ++position) {
+            ++m_counts.questVisits;
+            subscriptions.positions[entity.quests.active[position].instance] = position;
+            list.push_back(&entity.quests.active[position]);
         }
+    } else {
+        for (const std::uint64_t instance : instances) {
+            if (const QuestInstance* quest = instance_of(entity, instance)) {
+                list.push_back(quest);
+            }
+        }
+    }
+    for (const QuestInstance* entry : list) {
+        const QuestInstance& quest = *entry;
         const QuestObjective* objective = m_data->objective_by_crc(quest.objectiveCrc);
         for (std::size_t index = 0; objective != nullptr && index < quest.tasks.size(); ++index) {
             const gamedata::QuestNode& node = objective->nodes[index];
@@ -902,8 +969,9 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
                 || (open && (task.type == task_type::kGiveItem || task.type == task_type::kGiveAndTakeItem))) {
                 subscriptions.add("items", entry);
             }
-            if (is_place(task.type)) {
-                subscriptions.add("place", entry);
+            if (is_place(task.type)
+                || ((gamedata::is_possession(task.type) || task.type == task_type::kEquipItem) && task.enforceLocation && !task.poiTags.empty())) {
+                subscriptions.add("place", entry); // Finding QR8C-R6: a possession or an equip with the location rule looks at each move too.
             }
             if (task.type == task_type::kAchievement) {
                 subscriptions.add("ach", entry);
@@ -994,8 +1062,8 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     }
     // The item actions (stage 1.8c): one plan of the inventory, written in this transaction, finished after it.
     std::optional<Inventory::Plan> items;
-    if (!plan.gives.empty() || !plan.takes.empty()) {
-        items = m_world.inventory().plan_quest_items(entity.characterId, plan.gives, plan.takes, nullptr);
+    if (!plan.itemActions.empty()) {
+        items = m_world.inventory().plan_quest_items(entity.characterId, plan.itemActions, nullptr);
         if (!items->ok()) {
             log::write("quests: the items of the quest change of character %s do not fit (%s): no change", entity.characterId.c_str(),
                        item_error_text(items->error));
@@ -1063,21 +1131,44 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
         log::write("quests: the database did not take the quest change of character %s: no change", entity.characterId.c_str());
         return QuestError::storeFailed;
     }
-    // The rows are in the database: now the entity, the bits, the items, the marks, the timers, and the index.
-    std::vector<QuestInstance> active;
-    for (QuestInstance& quest : entity.quests.active) {
-        if (plan.removed.count(quest.instance) != 0) {
-            continue;
-        }
-        const auto copy = plan.copies.find(quest.instance);
-        active.push_back(copy != plan.copies.end() ? std::move(copy->second) : std::move(quest));
+    // The rows are in the database: now the entity, the bits, the items, the marks, the timers, and the index. A plan that adds or removes
+    // no instance replaces its copies at their places (code review of stage 1.8c, finding QR8C-R11: no walk over the other quests).
+    const auto slot = m_subscriptions.find(entity.id);
+    Subscriptions* subscriptions = slot != m_subscriptions.end() ? slot->second.get() : nullptr;
+    bool replaced = plan.added.empty() && plan.removed.empty() && subscriptions != nullptr
+                    && subscriptions->positions.size() == entity.quests.active.size();
+    for (auto copy = plan.copies.begin(); replaced && copy != plan.copies.end(); ++copy) {
+        const auto position = subscriptions->positions.find(copy->first);
+        replaced = position != subscriptions->positions.end() && position->second < entity.quests.active.size()
+                   && entity.quests.active[position->second].instance == copy->first;
     }
-    for (const std::uint64_t instance : plan.added) {
-        if (plan.removed.count(instance) == 0) {
-            active.push_back(std::move(plan.copies[instance]));
+    if (replaced) {
+        for (auto& [instance, quest] : plan.copies) {
+            entity.quests.active[subscriptions->positions.at(instance)] = std::move(quest);
+        }
+    } else {
+        std::vector<QuestInstance> active;
+        for (QuestInstance& quest : entity.quests.active) {
+            ++m_counts.questVisits;
+            if (plan.removed.count(quest.instance) != 0) {
+                continue;
+            }
+            const auto copy = plan.copies.find(quest.instance);
+            active.push_back(copy != plan.copies.end() ? std::move(copy->second) : std::move(quest));
+        }
+        for (const std::uint64_t instance : plan.added) {
+            if (plan.removed.count(instance) == 0) {
+                active.push_back(std::move(plan.copies[instance]));
+            }
+        }
+        entity.quests.active = std::move(active);
+        if (subscriptions != nullptr) {
+            subscriptions->positions.clear();
+            for (std::size_t position = 0; position < entity.quests.active.size(); ++position) {
+                subscriptions->positions[entity.quests.active[position].instance] = position;
+            }
         }
     }
-    entity.quests.active = std::move(active);
     entity.quests.tracked = plan.tracked;
     for (const std::string& objective : plan.awardDeletes) {
         const QuestObjective* row = m_data->objective(objective);
@@ -1092,15 +1183,17 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     entity.quests.data = m_data;
     m_world.ownership().quest_achievements(entity, unlocks, locks);
     m_world.touch(entity.id, ComponentKey::objectives);
+    // The index before the items (code review of stage 1.8c, finding QR8C-R14): the item change of this plan marks the possession tasks
+    // that the plan activated (a give of the same plan for a new HaveItems task).
+    std::set<std::uint64_t> touched = plan.changed;
+    touched.insert(plan.removed.begin(), plan.removed.end());
+    index(entity, touched, false);
     if (items) {
         (void)m_world.inventory().finish(*items, "the item actions of a quest");
     }
     for (const Plan::TimerStart& timer : plan.timers) {
         schedule(entity.characterId, timer.instance, timer.index, timer.startNs, timer.seconds);
     }
-    std::set<std::uint64_t> touched = plan.changed;
-    touched.insert(plan.removed.begin(), plan.removed.end());
-    index(entity, touched, false);
     for (const std::string& note : plan.notes) {
         log::write("quests: character %s: %s", entity.characterId.c_str(), note.c_str());
     }
@@ -1283,6 +1376,63 @@ void Quests::run_pending(Entity& entity) {
         log::write("quests: character %s got the objective %s (instance %016llx) of the one-time grant %s %s", entity.characterId.c_str(),
                    objective->id.c_str(), static_cast<unsigned long long>(instance), grant.source.c_str(), grant.key.c_str());
     }
+}
+
+bool Quests::conditional(const Entity& entity, const std::string& text) const {
+    if (text.empty()) {
+        return false;
+    }
+    const Ownership& ownership = m_world.ownership();
+    std::function<bool(const std::string&, int)> value = [&](const std::string& id, int depth) -> bool {
+        if (id.empty()) {
+            return false;
+        }
+        if (const std::optional<std::uint32_t> bit = ownership.achievement_bit(id)) {
+            return std::binary_search(entity.achievements.begin(), entity.achievements.end(), *bit);
+        }
+        if (m_data != nullptr && m_data->loaded()) {
+            if (const gamedata::QuestNpa* npa = m_data->npa(id)) {
+                if (depth >= kNpaDepth || !npa->status.empty() || npa->conditional.empty()) {
+                    return false;
+                }
+                return evaluate_conditional(npa->conditional, [&](const std::string& inner) { return value(inner, depth + 1); });
+            }
+        }
+        return false;
+    };
+    return evaluate_conditional(text, [&](const std::string& id) { return value(id, 0); });
+}
+
+std::optional<std::uint8_t> Quests::task_state(const Entity& entity, std::string_view objective, std::string_view task) const {
+    if (m_data == nullptr || !m_data->loaded()) {
+        return std::nullopt;
+    }
+    const std::string wantedObjective = lower_text(objective);
+    const std::string wantedTask = lower_text(task);
+    // The quests of the character (MP-8: the active instances of one character, each tree 255 nodes at most).
+    for (const QuestInstance& quest : entity.quests.active) {
+        if (!wantedObjective.empty() && lower_text(quest.objective) != wantedObjective) {
+            continue;
+        }
+        if (wantedTask.empty()) {
+            return quest_state::kActive;
+        }
+        const QuestObjective* row = m_data->objective(quest.objective);
+        if (row == nullptr) {
+            continue;
+        }
+        for (std::size_t index = 0; index < row->nodes.size() && index < quest.tasks.size(); ++index) {
+            if (row->nodes[index].task != gamedata::kNoTask && lower_text(m_data->task(row->nodes[index].task).id) == wantedTask) {
+                return quest.tasks[index].state;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+bool Quests::objective_completed(const Entity& entity, std::string_view objective) const {
+    const QuestObjective* row = m_data != nullptr && m_data->loaded() ? m_data->objective(objective) : nullptr;
+    return row != nullptr && !row->achievement.empty() && conditional(entity, row->achievement);
 }
 
 void Quests::achievements_changed(Entity& entity) {
@@ -1564,7 +1714,8 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
         return;
     }
     ++m_counts.worldEvents;
-    if (event.result != 0 && repeated(result_key(event.result, entity.id, event.kind))) {
+    const std::uint64_t result = event.result != 0 ? result_key(event.result, entity.id, event.kind) : 0;
+    if (result != 0 && repeated(result)) {
         ++m_counts.repeatedResults;
         return;
     }
@@ -1616,12 +1767,7 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
             if (std::any_of(matched.begin(), matched.end(), [&](const auto& seen) { return seen.first == entry; })) {
                 continue;
             }
-            const QuestInstance* quest = nullptr;
-            for (const QuestInstance& candidate : entity.quests.active) {
-                if (candidate.instance == entry.instance) {
-                    quest = &candidate;
-                }
-            }
+            const QuestInstance* quest = instance_of(entity, entry.instance);
             const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
             if (objective == nullptr || entry.index >= quest->tasks.size() || quest->tasks[entry.index].state != quest_state::kActive) {
                 continue;
@@ -1647,6 +1793,9 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
         }
     }
     if (matched.empty()) {
+        if (result != 0) {
+            remember(result);
+        }
         return;
     }
     Plan plan(*this, entity, now_ns());
@@ -1657,8 +1806,24 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
     }
     plan.settle(subscriptions);
     const QuestError error = commit(entity, plan, {});
-    if (error != QuestError::none) {
-        log::write("quests: an event of character %s did not change its quests: %s", entity.characterId.c_str(), quest_error_text(error));
+    if (error == QuestError::none) {
+        if (result != 0) {
+            remember(result); // Code review of stage 1.8c, finding QR8C-R1: a result counts as handled only after its commit.
+        }
+        return;
+    }
+    log::write("quests: an event of character %s did not change its quests: %s", entity.characterId.c_str(), quest_error_text(error));
+    if (error == QuestError::storeFailed && event.attempt < kEventRetries) {
+        // The source action committed: its quest event tries again after 2 s on the world clock (the rule of a refused timer write,
+        // finding QR8A-R5). A delivery of the same result before the retry counts one time.
+        ++m_counts.eventRetries;
+        QuestEvent again = event;
+        ++again.attempt;
+        m_world.after(kEventRetry, [characterId = entity.characterId, again](World& world) {
+            if (Entity* character = world.find_character(characterId)) {
+                world.quests().event(*character, again);
+            }
+        });
     }
 }
 
@@ -1704,12 +1869,7 @@ std::vector<QuestDrop> Quests::plan_drops(Entity& entity, bool gather, const std
                 continue;
             }
             seen.push_back(entry);
-            const QuestInstance* quest = nullptr;
-            for (const QuestInstance& candidate : entity.quests.active) {
-                if (candidate.instance == entry.instance) {
-                    quest = &candidate;
-                }
-            }
+            const QuestInstance* quest = instance_of(entity, entry.instance);
             const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
             if (objective == nullptr || quest->tasks[entry.index].state != quest_state::kActive) {
                 continue;
@@ -1841,11 +2001,12 @@ void Quests::died(Entity& entity) {
             continue;
         }
         const std::uint16_t territory = quest->originTerritory;
+        const std::uint64_t parent = quest->parent;
         const auto position = std::find(plan.tracked.begin(), plan.tracked.end(), instance);
         const bool pinned = position != plan.tracked.end();
         end_instance(plan, instance, true, "its character died (TaskDie with ResetOnCondition)");
         const std::uint64_t next = next_instance();
-        plan.add(*objective, next, "reset", territory);
+        plan.add(*objective, next, "reset", territory, parent);
         if (pinned && plan.tracked.size() < kMaxTracked) {
             plan.tracked.push_back(next);
             plan.trackedChanged = true;
@@ -1926,7 +2087,7 @@ void Quests::end_instance(Plan& plan, std::uint64_t instance, bool keepAwards, c
             take = static_cast<std::uint32_t>(std::min<std::uint64_t>(plan.item_count(task->itemName), target));
         }
         if (take > 0) {
-            plan.takes.emplace_back(task->itemName, take);
+            plan.itemActions.push_back(QuestItemAction{false, GrantItem{task->itemName, take, std::nullopt, {}}});
             plan.itemDelta[lower_text(task->itemName)] -= take;
         }
     }
@@ -1961,6 +2122,10 @@ QuestResult Quests::abandon(Entity& entity, std::uint64_t instance) {
         return result;
     }
     end_instance(plan, instance, false, "abandoned");
+    // The undo can lock a bit that a wait of a different quest has (code review of stage 1.8c, finding QR8C-R5): the indexed waits get the
+    // value of now in this plan (the bit change of a plan sends no second change event).
+    const auto found = m_subscriptions.find(entity.id);
+    plan.settle(found != m_subscriptions.end() ? found->second.get() : nullptr);
     result.error = commit(entity, plan, {});
     if (result.ok()) {
         ++m_counts.abandons;
@@ -1984,13 +2149,15 @@ QuestResult Quests::reset(Entity& entity, std::uint64_t instance) {
     }
     const std::uint16_t territory = quest->originTerritory;
     const std::string source = quest->source;
+    const std::uint64_t parent = quest->parent;
     const auto pin = std::find(plan.tracked.begin(), plan.tracked.end(), instance);
     const std::ptrdiff_t position = pin != plan.tracked.end() ? pin - plan.tracked.begin() : -1;
     end_instance(plan, instance, true, "reset");
     // A new instance (state 0 and state 4 do not reset a task of the client: live finding of stage 1.8a), with the pin at the place of the
-    // old one. The award rows stay (AwardOnlyOnce: no item again after a reset, 0x825EEF0).
+    // old one and the parent of the old one (code review of stage 1.8c, finding QR8C-R3: the completion of a reset child completes the task
+    // of its parent). The award rows stay (AwardOnlyOnce: no item again after a reset, 0x825EEF0).
     const std::uint64_t next = next_instance();
-    plan.add(*objective, next, source.empty() ? "reset" : source, territory);
+    plan.add(*objective, next, source.empty() ? "reset" : source, territory, parent);
     if (position >= 0 && plan.tracked.size() < kMaxTracked) {
         plan.tracked.insert(plan.tracked.begin() + std::min<std::ptrdiff_t>(position, static_cast<std::ptrdiff_t>(plan.tracked.size())), next);
         plan.trackedChanged = true;

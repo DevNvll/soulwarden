@@ -41,6 +41,11 @@ Usage:
                                                 for each new place, 5 to 10 looks in a second): the
                                                 way of a creature in a live fight. --tsv: the places
                                                 as a file for tools/research/nav_draw.py
+  tools/world persons CHARACTER [METERS]        the persons of a character (stage 2.5c): its person conversation (the
+                                                NPC, the state, the topics, the services, the finished topics) and each
+                                                person near it (default 30 m) with its NPC row, its presence rule and its
+                                                value for the character, and the state, the topics, and the services that
+                                                the character gets now
   tools/world interactions CHARACTER [METERS]   the interactions of a character (stage 2.5a): its committed
                                                 interaction and each object of the interaction data near
                                                 it (default 30 m) with the state of each Interact
@@ -471,6 +476,8 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
         print(f"world: {document['message']}; " + world_time_text(document["worldTime"]))
     elif isinstance(document, dict) and "objectEntities" in document and "objects" in document:
         show_interactions(document)
+    elif isinstance(document, dict) and "persons" in document and "conversationData" in document:
+        show_persons(document)
     elif isinstance(document, dict) and "trackerEntries" in document and "claims" in document:
         show_chests(document)
     elif isinstance(document, dict) and "nodes" in document and "skills" in document and "work" in document:
@@ -807,6 +814,34 @@ def abilities_text(abilities: dict) -> str:
                f"movements started ({abilities['forced']['replaced']} replaced, {abilities['forced']['refused']} not taken), "
                f"{abilities['forced']['steps']} steps, {abilities['forced']['blocked']} stopped by a wall or a drop, the largest "
                f"number at one time {abilities['forced']['largest']}" if "forced" in abilities else ""))
+
+
+def show_persons(document: dict) -> None:
+    """Prints the persons of a character (stage 2.5c): its person conversation and the persons near it."""
+    if not document.get("inWorld"):
+        print("the character is not in the world (or the backend has no interaction data)")
+        return
+    if not document.get("conversationData"):
+        print("the backend has no conversation data: make the file with tools/gamedata/conversations.sh")
+    talk = document.get("conversation")
+    if talk:
+        print(f"conversation: {talk['npc']} ({talk['npcCrc']}) {'open' if talk['open'] else 'closed'}, state {talk['state']}, topics "
+              f"{talk['topics']}, services {talk['services']}, finished {talk['finished']}")
+    else:
+        print("conversation: none")
+    for person in document.get("persons", []):
+        rule = person["presence"] + (f" {person['condition']}" if person.get("condition") else "")
+        line = (f"  {person['distance']:6.2f} m  {person['npc']} ({person['npcCrc']})  {'there' if person['present'] else 'not there'} "
+                f"[{rule}]  {person['slice']}{' (client child)' if person['clientChild'] else ''}  {person['key']}")
+        if person.get("unresolved"):
+            line += f"  NO BINDING: {person['unresolved']}"
+        print(line)
+        selection = person.get("selection")
+        if selection:
+            topics = ", ".join(f"{topic['id']} ({topic['crc']})" for topic in selection["topics"])
+            print(f"           state {selection['state']}; topics [{topics}]; services {selection['services']}")
+    counts = document.get("counts", {})
+    print(f"counts: {json.dumps(counts)}")
 
 
 def show_interactions(document: dict) -> None:
@@ -1598,6 +1633,9 @@ def main() -> None:
     elif command == "interactions" and len(arguments) in (2, 3):
         radius = f"&radius={numbers(arguments[2:], 1)[0]}" if len(arguments) == 3 else ""
         request(data_dir, "GET", f"/v1/dev/interactions?character={character_id(data_dir, arguments[1])}{radius}")
+    elif command == "persons" and len(arguments) in (2, 3):
+        radius = f"&radius={numbers(arguments[2:], 1)[0]}" if len(arguments) == 3 else ""
+        request(data_dir, "GET", f"/v1/dev/persons?character={character_id(data_dir, arguments[1])}{radius}")
     elif command == "object" and len(arguments) == 4 and arguments[3] in ("on", "off"):
         if not re.fullmatch(r"[0-9a-fA-F-]{36}", arguments[2]):
             fail("give the key of the object: its placement UUID (tools/world interactions CHARACTER)")

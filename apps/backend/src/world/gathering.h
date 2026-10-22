@@ -262,7 +262,8 @@ public:
     /** @return The time of the work of a character (the timed use of the base), or 0. */
     [[nodiscard]] float work_seconds(const Entity& character) const;
     /** The handler: the timed use reached its end, and the checks of the base passed. */
-    void complete(Entity& character, const InteractionContext& context);
+    /** @return True when the gather completed (code review of stage 1.8c, finding QR8C-R12). */
+    bool complete(Entity& character, const InteractionContext& context);
     /** The handler: the use ends (before its completion: a cancel). */
     void ended(Entity& character, const InteractionContext& context, InteractionEnd cause);
 
@@ -354,7 +355,8 @@ private:
     void set_gather(Entity& character, std::uint8_t status, float remaining, float speed, bool active, std::uint64_t target);
     void fail_work(Entity& character);
     /** Stage 1.8c: the events of the quests after a gather (the items of the roll, the game event of the row, the tag of a quest object). */
-    void quest_events(Entity& character, const gamedata::GatherableRow& row, const std::vector<GrantItem>& items, const std::string& interactTag);
+    void quest_events(Entity& character, const gamedata::GatherableRow& row, const std::vector<GrantItem>& items, const std::string& interactTag,
+                      const std::string& boundTag);
     [[nodiscard]] bool is_depleted(const std::string& key) const;
     /** Gives a node its state on its entity (the node state of its GatherableController): each observer gets it. */
     void publish(GatherNode& node);

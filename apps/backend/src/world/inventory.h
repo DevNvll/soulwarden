@@ -136,6 +136,16 @@ struct GrantItem {
 };
 
 /**
+ * One item action of a quest plan (stage 1.8c; code review of stage 1.8c, finding QR8C-R2): a give or a take, in the order of the tasks of
+ * the plan, so that a later take can take an item that an earlier give of the same plan gave.
+ */
+struct QuestItemAction {
+    /** True: a give of `item`; false: a take of `item.quantity` of `item.itemId`. */
+    bool give{true};
+    GrantItem item;
+};
+
+/**
  * One item of a build (the build preset, stage B0; world/build_presets.h): a new instance in a slot of the paperdoll, or a stack for
  * the bag. The checks of a give (the catalog, the gear score, the perks) and of an equip (the slot, the gear score limit of the
  * expansion) apply to it.
@@ -272,6 +282,13 @@ public:
      *         outside the range of the item gets the nearest value of the range (a decision of an agent, the rule of stage 1.3b).
      */
     [[nodiscard]] std::uint32_t give_limit(const gamedata::ItemDefinition& definition) const;
+
+    /**
+     * @return The gear score of the new instance of a craft output (plan_craft): the craft gear score of the job, or with no craft gear
+     *         score the standard value of the item table (GearScoreOverride, else the smallest gear score); 0 for an item with no gear
+     *         score (code review of stage 1.8c, finding QR8C-R10: the craft event of the quests has the score of the item that it made).
+     */
+    [[nodiscard]] std::uint32_t craft_gear_score(const gamedata::ItemDefinition& definition, std::optional<std::uint32_t> gearScore) const;
 
     /**
      * Sets the index on the wire of each perk of an instance from the perk data (0 for a perk that the
@@ -518,14 +535,16 @@ public:
     [[nodiscard]] Plan plan_craft(const std::string& characterId, const std::vector<CraftCost>& costs, const CraftOutput& output,
                                   std::uint32_t jobs);
     /**
-     * Plans the item actions of a quest (stage 1.8c, world/quests.h; docs/systems/quests.md): each take leaves the stacks of its item id
-     * in the bag, then in the quick slots (also a locked or a protected item: the quest takes its own items; client 0x8260370: "only from
-     * the inventory, not the global storage"); a take of more than the character has takes what it has. Each give goes into the bag with
-     * the cause ItemGathered (the loot notice), whole or not at all (bagFull). No write, no change of the entity.
-     * @param taken Gets the quantity that each take took.
+     * Plans the item actions of a quest (stage 1.8c, world/quests.h; docs/systems/quests.md) in their order (code review of stage 1.8c,
+     * finding QR8C-R2: a take after a give of the same plan takes the given item). Each take leaves the stacks of its item id in the bag,
+     * then in the quick slots, then in the other slots of the paperdoll (also a locked or a protected item: the quest takes its own items;
+     * client 0x8260370: "only from the inventory, not the global storage"; finding QR8C-R4: the take removes from each place that
+     * Inventory::count counts); a take of more than the character has takes what it has. Each give goes into the bag with the cause
+     * ItemGathered (the loot notice), whole or not at all (bagFull). No write, no change of the entity.
+     * @param taken Gets the quantity that each action took (a give: 0).
      */
-    [[nodiscard]] Plan plan_quest_items(const std::string& characterId, const std::vector<GrantItem>& gives,
-                                        const std::vector<std::pair<std::string, std::uint32_t>>& takes, std::vector<std::uint32_t>* taken);
+    [[nodiscard]] Plan plan_quest_items(const std::string& characterId, const std::vector<QuestItemAction>& actions,
+                                        std::vector<std::uint32_t>* taken);
     /** @return The quantity of an item id (any case) in the bag and in the paperdoll of a character (stage 1.8c: a possession task). */
     [[nodiscard]] static std::uint64_t count(const Entity& entity, std::string_view itemId);
     /** @return True when an item of the paperdoll has this id (any case) and a gear score of `minGearScore` or more (TaskEquipItem). */

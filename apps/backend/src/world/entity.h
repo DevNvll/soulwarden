@@ -1471,6 +1471,36 @@ struct ActiveInteraction {
 };
 
 /**
+ * The conversation of a character with a person (stage 2.5c, docs/systems/persons.md): the source of the accepted use, the selected
+ * conversation state of the character, the topics and the services that it offers, and the topics that the character finished. Only the
+ * person system (world/persons.h) changes it. It is a value of the world: a restart or a new world entry has none. It stays after the
+ * close (the message 5397 of the close comes after it) until a new person use, a travel, the death, the leave, or the loss of the presence
+ * of the person.
+ */
+struct PersonConversation {
+    /** The object of the interaction data and the bound, and the reference of the request. */
+    std::uint32_t object{0};
+    std::uint32_t bound{0};
+    InteractionReference source;
+    /** The NPC row (NPCId) and its CRC-32. */
+    std::string npc;
+    std::uint32_t npcCrc{0};
+    /** The selected state (an index into the conversation data; -1: no state passes, or no data) and its offer. */
+    std::int32_t state{-1};
+    std::vector<std::uint32_t> topics;
+    /** The services of the state (the numbers of the client enum, research npc-conversations.md Q3). */
+    std::vector<std::uint32_t> services;
+    /** The revision of the state of the character at the selection (the achievements, the quests, the level). */
+    Revision revision{0};
+    /** The topics (CRC-32) that the character finished in this conversation: a second finish changes nothing. */
+    std::vector<std::uint32_t> finished;
+    /** True while the use of the person is the committed interaction of the character. */
+    bool open{false};
+    /** The number of the conversation (a new use has a new number). */
+    std::uint64_t serial{0};
+};
+
+/**
  * A service that a source gave a character (stage 2.5b, the base of the shops 5.1 and the transmog 5.6; research Q4,
  * "NPC services"): a later operation with no source in its message (a purchase 3741 has no NPC id) checks it. Only the interaction
  * system changes it. It is a value of the world: a restart or a new world entry has none.
@@ -1778,6 +1808,8 @@ struct Entity {
     Revision interactionEnded{0};
     /** The service that a source gave the character (stage 2.5b): a copy of the value of the interaction system. No value: none. */
     std::optional<ServiceGrant> serviceGrant;
+    /** The conversation of the character with a person (stage 2.5c): the person system changes it. No value: none. */
+    std::optional<PersonConversation> conversation;
     /** The progress of the open of a chest (stage 3.5b.1): the chest system changes it. */
     GatherProgress gathering;
     /** The craft batch of the character and the progress for its client (stage 3.7a): the crafting system changes them. */

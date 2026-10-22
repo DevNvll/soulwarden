@@ -7029,6 +7029,86 @@ task element of `06_crewmates` task 8 (progress 1 of 5); the HUD shows "1 / 5 - 
 the character leaves the place of the StayActive task 6 (TaskGoToPOITag), task 6 returns to Active, task 8 becomes Inactive with its
 progress, and the HUD shows the text of task 6; in the place again, task 8 is Active with progress 1 (`K1-back-1of5.png`).
 
+### 4.55 The persons: the person children that the client makes, the presence, the conversation state, the topics, the services (live proof of stage 2.5c; static proof for the client code and the game data; the selection rules are the rules of the client, the faction values of a character are project rules)
+
+Research: `~/Games/soulwarden/work/research/npc-conversations.md` (Q1 to Q3), `quest-engine-3.md` (Q2), `shops-stage.md` (Q5); the
+static read of stage 2.5c: `~/Games/soulwarden/work/research/scratch/persons-25c-static/ANSWERS.md`. The system: `world/persons.h`,
+[Persons](systems/persons.md). Live checks of stage 2.5c: `~/Games/soulwarden/work/evidence/persons/25c/implement/live/` and `RESULT.md`.
+Client build 1.400.6031.6004151; all addresses are image-relative. No new message or state goes from the server to the client: a use of a
+person gets the reply 3743 and the object records of 4.35.
+
+**The person child of a PrefabSpawner** [static 0x17898F0, 0x69EE550, 0x6160B60; live L1]: the client makes the child of a PrefabSpawner
+of a level placement with m_isClientAuthoratative false and m_spawnOnInitialize true at the load of the level (a person of a mission swap
+slice, of the walkaway slice, of `npc_variantmaster`), with a client id of tag 7:
+
+```text
+G = ((((round(z*4) & 0xFFF) | ((bucket | (asset << 4)) << 12)) << 18 | (round(y*8) & 0x3FFFF)) << 18 | (round(x*8) & 0x3FFFF)) << 3 | 7
+actor = G (u64 LE) + 8 zero bytes;  K = root XOR G;  instance = entity XOR K;  target = instance + component id
+```
+
+x, y, z: the translation of the composed transform of the child spawner (the placement matrix times its m_worldTM; 0x69EEEAE to
+0x69EEEE1). bucket: (int)(the yaw in degrees, 0 to 360) / 23, 4 bits. The yaw is the Euler Z of the composed matrix in float (0x63344A0
+with atan2f, cosf, sinf, fmodf; the degrees factor 57.29582595825195 at 0x85725F0; the wrap to 0 to 2 pi with tau at 0x7F400F0). asset:
+the first 8 bytes of the asset UUID of the child slice, little-endian; only the low 9 bits stay. round: roundf (import 0x7ECAC28; a half
+goes away from 0). Live L1: 19 of 19 ids of a trace of the client have this value (a yaw of -107.43 degrees counts as 252: bucket 10).
+The request of the client names this actor and the targets of the XOR rule, as for a level object (4.35). A person child that the client
+does not make (m_spawnOnInitialize false: 2 in the build) has no known source.
+
+**The NPC of a person child** [data; research npc-conversations.md Q1]: the column NPCId of the row of the variant (m_sliceVariant of the
+spawner) in the variation table of the child slice (m_variationTableUniqueName), not the defaults of the generic slice.
+
+**The presence for one player** [static 0x3369430; data; live A2]: the GatherableController of a swap slice shows its child by an
+achievement of the local player (m_enableUseAchievementForClientState, m_achievementName; the variation action "Change Gatherable
+Achievement" sets it from the column SwapAchievementId). `masternpc_swap_defaultshown`: the person goes while the achievement is true;
+`masternpc_swap_defaulthidden`: it comes while it is true; `masternpc_walkaway`: it comes while AE.3_RequiredAchievementConditional is
+true (its AchievementEvents script). Live A2: a bit of the achievement state (4.29) that the server sets makes the person go, and the bit
+that the server clears makes it come back, with no new load (`A2-02-bit-off-return.mp4`).
+
+**The conversation state** [static 0x37AC710, 0x37AB440, 0x37AB7A0; data; live L2, L3]: the client scans the states of the NPC row
+(ConversationStateId1 to N) in reverse and takes the first whose requirements pass; the topics of the state whose requirements pass are
+its options, and a selected topic offers its ProvidedTopics (0x3779D87). The requirements (static read): RequiredLevel (0x37AB467:
+level or more), RequiredAchievement (a conditional), RequiredFaction (converter 0x37AF200: Syndicate 1, Marauder 2, Covenant 3, Any 4, each
+other text 0, also a name with `!`; a state: 0 and 4 pass, 0x37AB5B4; a topic: 0 passes, 4 needs a faction, 0x37AB898; else equal to the
+faction of the player), RequiredFactionCooldown (a state only: NotInCooldown 0 passes; InCooldownMultipleDays more than 24 hours,
+InCooldownSingleDay 1 to 24 hours of the cooldown of a faction change; 0x37AB5F9 to 0x37AB6B5), RequiredActiveObjectiveId with
+RequiredActiveTaskId (a state only; a rule only with both; an objective of the list with the task in state 1 or 3: IsTaskActiveById
+0x3A49520), RequiredCompletedObjective (a state only: the completion achievement of the objective, IsObjectiveComplete 0x3A48A30),
+RequiredProgression ("ID RANK POINTS", parser 0x37AF340: rank or more, and the points or more when above 0; 0x3CB82D0). Live L3: a person
+shows its default state, and with the active task of a topic state the state with the topic (`L3-01-default-comparison.png`,
+`L3-03-topic-options.png`).
+
+**3158** (`ConversationComponentServerFacet_RequestConversationTopicFromClient`; caller 0x376E530, sender 0x3722AE0, reader 0x26FEC60
+through 0x3707E90; the Conversation facet of the player, `RootPlayer/7447fb63-fa77-44eb-8605-6dbab2ba7a00`) [static; live L3]:
+
+```text
+target:u64 entity:u64 topic:u32
+```
+
+`topic` is the CRC-32 of the lower-case ConversationTopicId (live L3: `e532485a`, the task topic of a person). The client sends it when its
+player selects a topic. No answer is known; the client shows the NPCResponse of the topic from its own data (`L3-04-topic-response.png`).
+
+**5397** (`ConversationComponentServerFacet_OnFinishedConversationTopicsFromClient`; close 0x37622D0, sender 0x3722540, writer
+0x3701DF0, reader 0x3701E90 through 0x37080A0) [static; live L3]:
+
+```text
+target:u64 entity:u64 count:size (10 at most) topic:u32 * count
+```
+
+The client sends it at the close of the conversation, after 6705 and 2473 (live L3: 6705, then 2473, then 5397 with `e532485a`). No
+answer is known.
+
+**The services of a state** [static: registrar 0x37B3DA0, builder 0x37ACF10, switch table 0x37AE038; data; live L4]: the names of
+ConversationService1 to N have the numbers Inn 1, Faction_Board 2, Community_Board 3, Faction_Selection 4, Join_Outpost_Rush 5, Event_Store
+6, Horse_Store 7, Wolf_Store 8, Lion_Store 9, Expansion_Modal 10, Fast_Travel_Guide 11, PvP_Guide 12, Join_3v3_Arena 13, Transmog 14,
+Barbershop 15, Open_Shop 16, Open_Mission_Board 17 (Invalid 0: no option); the builder adds an option for each (Inn: option type 10,
+Open_Shop 24). Faction_Board needs the faction of the state and its level (0x37A7940), Faction_Selection also passes for Any (0x37AD46C).
+Live L4: an innkeeper (`0222a_Innkeep`) shows the Inn option; its selection sends 2473 for the conversation and a new interaction request
+of the action 70 OpenInnScreen (option `6cb6b4f9`) to the same object.
+
+**The close** [live L5]: after the close of a person conversation (the key, or 3746 of the server), the session answers 6705 with 6709 as
+before (4.20), and the character walks at once (`L5-walk-after-close.mp4`, `L5-walk-after-server-cancel.mp4`). A new world entry shows the
+prompt of the person again, and E opens it (live L6).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

@@ -7,6 +7,7 @@
 #include "core/logging/log.h"
 #include "gamedata/progression_tables.h"
 #include "world/chests.h"
+#include "world/data_rules.h"
 #include "world/gear.h"
 #include "world/interactions.h"
 #include "world/rewards.h"
@@ -73,12 +74,12 @@ public:
     [[nodiscard]] float use_time(const Entity& character, const InteractionContext& context) const override {
         return chest(context) ? m_chest->use_time(character, context) : m_gathering.work_seconds(character);
     }
-    void complete(Entity& character, const InteractionContext& context) override {
-        if (chest(context)) {
-            m_chest->complete(character, context);
-        } else {
-            m_gathering.complete(character, context);
-        }
+    bool complete(Entity& character, const InteractionContext& context) override {
+        return chest(context) ? m_chest->complete(character, context) : m_gathering.complete(character, context);
+    }
+    /** A gather gives the quests its completed interaction itself, after its commit (code review of stage 1.8c, findings QR8C-R8, R13). */
+    [[nodiscard]] bool owns_interact_event(const InteractionContext& context) const override {
+        return !chest(context);
     }
     void end(Entity& character, const InteractionContext& context, InteractionEnd cause) override {
         if (chest(context)) {
@@ -720,12 +721,12 @@ void Gathering::ended(Entity& character, const InteractionContext& context, Inte
     fail_work(character);
 }
 
-void Gathering::complete(Entity& character, const InteractionContext& context) {
+bool Gathering::complete(Entity& character, const InteractionContext& context) {
     const std::string characterId = character.characterId;
     const auto found = m_work.find(characterId);
     const std::optional<Target> target = target_of(context);
     if (found == m_work.end() || !target || target->key != found->second.node) {
-        return; // No work on this node (a different use).
+        return false; // No work on this node (a different use).
     }
     const GatherWork work = found->second;
     const gamedata::GatherableRow& row = m_data->rows()[work.row];
@@ -743,7 +744,7 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
                    characterId.c_str());
         fail_work(character);
         m_world.interactions().end_use(character, InteractionEnd::policyFailed);
-        return;
+        return false;
     }
     std::string detail;
     if (const std::optional<GatherRefusal> refusal = check_tool_and_rank(character, row, detail)) {
@@ -752,7 +753,7 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
                    gather_refusal_text(*refusal), detail.c_str());
         fail_work(character);
         m_world.interactions().end_use(character, InteractionEnd::policyFailed);
-        return;
+        return false;
     }
     // The roll: a kept roll of an earlier completion that found no place (no new roll), else the root of the row with the roller of
     // the rewards (client 0x368B070) and the luck of the rank and the ROL parts (a bonus of each table of the path).
@@ -867,7 +868,7 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
         }
         fail_work(character);
         m_world.interactions().end_use(character, InteractionEnd::policyFailed);
-        return;
+        return false;
     }
     // Only the kept roll of this node goes (finding GA-R7: the rolls of the other nodes stay).
     kept.erase(std::remove_if(kept.begin(), kept.end(), [&](const KeptRoll& entry) { return entry.node == work.node; }), kept.end());
@@ -884,8 +885,8 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
         set_gather(character, gathering_rules::kStatusDone, 0.0F, work.parts.speed, false, kNoTarget);
         log::write("world: gathering: character %s gathered the quest object %s (%s): %s; the object stays for the other characters",
                    characterId.c_str(), target->key.c_str(), row.id.c_str(), item_list(given).c_str());
-        quest_events(character, row, items, target->interactTag);
-        return;
+        quest_events(character, row, items, target->interactTag, context.bound->tag);
+        return true;
     }
     GatherNode& stored = m_nodes[next.key];
     stored = next;
@@ -911,11 +912,12 @@ void Gathering::complete(Entity& character, const InteractionContext& context) {
     log::write("world: gathering: character %s gathered the %s node %s (%s): %s, %s; %s (generation %llu)", characterId.c_str(),
                node_kind_text(stored.kind), stored.key.c_str(), row.id.c_str(), item_list(given).c_str(), experience.c_str(), after.c_str(),
                static_cast<unsigned long long>(stored.generation));
-    quest_events(character, row, items, target->interactTag);
+    quest_events(character, row, items, target->interactTag, context.bound->tag);
+    return true;
 }
 
 void Gathering::quest_events(Entity& character, const gamedata::GatherableRow& row, const std::vector<GrantItem>& items,
-                             const std::string& interactTag) {
+                             const std::string& interactTag, const std::string& boundTag) {
     // Stage 1.8c (finding G12 and G14 of research quest-engine-3.md): the gather of the quests after the commit. TaskRequireGatherItems counts
     // the items of the roll (not the quest drops: 0x825FED0); the game event of the row (GameEventID: MSQ_Treasure_A_interact) applies
     // (TaskGameEvent); the tag of a quest object is an interaction that completed (TaskInteract).
@@ -934,10 +936,17 @@ void Gathering::quest_events(Entity& character, const gamedata::GatherableRow& r
         applied.keys = {row.event};
         m_world.quests().event(character, applied);
     }
-    if (!interactTag.empty()) {
-        QuestEvent interacted;
-        interacted.kind = QuestEventKind::interact;
-        interacted.keys = {interactTag};
+    // The completed interaction of the gather: one event with the tag of the quest object and the tag of the bound, each tag one time (code
+    // review of stage 1.8c, finding QR8C-R13: the base gives no second completion of a gather; finding QR8C-R8: only after the success).
+    QuestEvent interacted;
+    interacted.kind = QuestEventKind::interact;
+    for (const std::string& tag : {interactTag, boundTag}) {
+        if (!tag.empty() && std::none_of(interacted.keys.begin(), interacted.keys.end(),
+                                         [&](const std::string& other) { return data_rules::same_text(other, tag); })) {
+            interacted.keys.push_back(tag);
+        }
+    }
+    if (!interacted.keys.empty()) {
         m_world.quests().event(character, interacted);
     }
 }

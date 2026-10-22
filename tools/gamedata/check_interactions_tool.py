@@ -26,9 +26,16 @@ compares the status and the output file of each case:
   - the cases of the code review of stage 2.5b (--review-stations, cases RY6 to RY8): a named placement with no position, with a
     list as its position, or with no z (finding ST-R6), a station or a forge child whose concrete slice asset the catalog does not
     have (ST-R7), and one placement id in two spellings of its UUID at two places (ST-R8) stop the tool and keep the old file.
-The test program of the backend runs it (cases IT10, IR5, RY6 to RY8).
+  - stage 2.5c (--persons, case NC1): the person child of a PrefabSpawner of a placement (m_isClientAuthoratative false,
+    m_spawnOnInitialize true) is an object with the client id of its slot (client 0x6160B60: the place, the yaw bucket of 23 degrees of
+    a yaw of 0 to 360 degrees, the low bits of the slice asset, the low three bits 7; an independent bit builder of this check), the
+    targets of the XOR rule with that id, and its binding (the NPC id of the row of its variant, the presence rule of its slice); a
+    yaw at a border of a bucket gives two ids; a negative yaw counts from 360; a variant with no row, a row with no NPC id, and a swap
+    slice with no presence rule are bindings with a cause; a client-authoritative spawner and a spawner with m_spawnOnInitialize false
+    give no person; a second slot with a taken id is not in the file; a direct person has the NPC id of its NPC component.
+The test program of the backend runs it (cases IT10, IR5, RY6 to RY8, NC1).
 
-Usage: check_interactions_tool.py [WORK_FOLDER] [--review | --review-stations]
+Usage: check_interactions_tool.py [WORK_FOLDER] [--review | --review-stations | --persons]
 Status 0: each case has the expected result.
 """
 
@@ -422,7 +429,7 @@ def check_valid(document: dict) -> bool:
 def check_bag(document: dict) -> bool:
     """@return True when the personal loot container has its template and the values of its slice (stage 3.5b.2, format 3)."""
     container = document.get("lootContainers", {}).get("personal")
-    if document.get("format") != 3 or container is None or document["counts"].get("lootContainers") != 1:
+    if document.get("format") != tool.FORMAT or container is None or document["counts"].get("lootContainers") != 1:
         return False
     template = document["templates"][container["template"]]
     names = [document["options"][index]["name"] for index, _ in template["bounds"][0]["options"]] if template["bounds"] else []
@@ -436,7 +443,7 @@ def check_bag(document: dict) -> bool:
 
 def check_station(document: dict, resolved: bool = True) -> bool:
     """@return True when the station of the settlement, its template, the forge child, and the keg fixture are correct (stage 2.5b)."""
-    if document.get("format") not in (2, 3) or len(document.get("spawned", [])) != 1:
+    if document.get("format") != tool.FORMAT or len(document.get("spawned", [])) != 1:
         return False
     child = document["spawned"][0]
     station = document["templates"][child["template"]]
@@ -466,12 +473,186 @@ def check_station(document: dict, resolved: bool = True) -> bool:
             and trigger.get("delay") == 5.0 and trigger.get("committed") is True and trigger.get("action") == 33)
 
 
+# Stage 2.5c (--persons, case NC1): the persons. The child slice of a person spawner has the path of the swap slice that is shown by
+# default (its presence rule is in tool.PERSON_PRESENCE); a second child slice with a swap controller has no rule.
+PERSON_CHILD_SLICE = "slices/characters/mission/sliceswaps/masternpc_swap_defaultshown.dynamicslice"
+PERSON_UNKNOWN_SLICE = "slices/test/unknown_swap.dynamicslice"
+PERSON_SPAWNER_SLICE = "slices/test/person_spawner.dynamicslice"
+PERSON_DIRECT_SLICE = "slices/test/direct_person.dynamicslice"
+PERSON_CHILD_ASSET = (uuid.UUID("2b0c0d0e-0000-4000-8000-0000000000f1").bytes, 2)
+PERSON_UNKNOWN_ASSET = (uuid.UUID("2b0c0d0e-0000-4000-8000-0000000000f2").bytes, 2)
+PERSON_ROOT = 0x0000071100000AB0
+PERSON_INTERACT_ENTITY = 0x0000071300000AB0
+PERSON_INTERACT = 0x3518710D72990001
+PERSON_SPAWNER_ENTITY = 0x5000000000000A01
+PERSON_PLACE = (2000.3, 3000.6, 40.27)
+
+
+def independent_group(x: float, y: float, z: float, yaw: float, asset: bytes) -> int:
+    """The client id of a person child, from its fields at their bit places (low to high): 3 bits 7, 18 bits x * 8, 18 bits y * 8, 12
+    bits z * 4, 4 bits of the yaw bucket, 9 bits of the slice asset."""
+    def nearest(value: float) -> int:
+        return int(math.copysign(math.floor(abs(value) + 0.5), value))
+    turn = yaw + 360.0 if yaw < 0 else yaw
+    fields = [(7, 3), (nearest(x * 8) % (1 << 18), 18), (nearest(y * 8) % (1 << 18), 18), (nearest(z * 4) % (1 << 12), 12),
+              ((int(turn) % 360) // 23, 4), (int.from_bytes(asset[:8], "little") % (1 << 9), 9)]
+    value = 0
+    offset = 0
+    for field, width in fields:
+        value |= field << offset
+        offset += width
+    return value
+
+
+def person_child_slice(swap: bool = True, npc_key: str = "0317_Generic") -> list[Element]:
+    """A person child (stage 2.5c): the root with the NPC component (a generic key), the variation component of the table NPC with the
+    columns NPCId and SwapAchievementId, the GatherableController with the achievement swap, and the Interact entity (slot 5)."""
+    variation = element(None, children=[text("m_variationTableUniqueName", "NPC"),
+                                        element("m_variantData", children=[element(None, children=[text("m_colName", "NPCId")]),
+                                                                           element(None, children=[text("m_colName", "SwapAchievementId")])])])
+    controller = element(None, children=[element("m_enableUseAchievementForClientState", b"\x01" if swap else b"\x00"),
+                                         text("m_achievementName", "DevWorld_Default_Swap")])
+    return [element(None, children=[
+        entity(PERSON_ROOT, "MasterNpc", [transform(NO_ENTITY, (0.0, 0.0, 0.0)), variation, controller]),
+        entity(PERSON_INTERACT_ENTITY, "Interact", [transform(PERSON_ROOT, (0.0, 0.0, 1.0)),
+                                                    element(None, type_id=tool.NPC_CLASS, children=[text("m_npcKey", npc_key)]),
+                                                    interact(["OpenConversation"], slot=5, identifier=PERSON_INTERACT,
+                                                             option_entity=PERSON_INTERACT_ENTITY)]),
+    ])]
+
+
+def person_spawner_slice(asset: tuple[bytes, int], variant: str, client: bool, on_init: bool) -> list[Element]:
+    component = spawner(asset, client, on_init)
+    component.children.append(text("m_sliceVariant", variant))
+    return [element(None, children=[entity(PERSON_SPAWNER_ENTITY, "NPC_Test_Person", [transform(NO_ENTITY, (0.0, 0.0, 0.0)), component])])]
+
+
+class PersonSources(MadeUpSources):
+    """The made-up sources of the person cases: the sources of the valid case with the person placements, slices, and variation table."""
+
+    person_mode = "person-valid"
+
+    def __init__(self, assets, wanted=None) -> None:
+        MadeUpSources.mode = "valid"
+        super().__init__(assets, wanted)
+        mode = self.person_mode
+        yaw = {"person-yaw-negative": -107.43, "person-yaw-border": 0.0}.get(mode, 140.0)
+        half = math.radians(yaw) / 2
+        rotation = {"x": 0.0, "y": 0.0, "z": math.sin(half), "w": math.cos(half)}
+        place = dict(zip("xyz", PERSON_PLACE))
+        placements = [{"id": "2b0c0d0e-0000-4000-8000-000000000001", "worldPosition": place, "rotation": rotation,
+                       "sliceName": "Slices/Test/Person_Spawner.slice", "sliceAssetId": "{2B0C0D0E-0000-4000-8000-0000000000A1}:2"},
+                      {"id": "2b0c0d0e-0000-4000-8000-000000000002", "worldPosition": {"x": 2010.0, "y": 3000.0, "z": 40.0},
+                       "rotation": {"w": 1.0}, "sliceName": "Slices/Test/Direct_Person.slice",
+                       "sliceAssetId": "{2B0C0D0E-0000-4000-8000-0000000000A2}:2"}]
+        if mode == "person-taken-id":
+            placements.append(dict(placements[0], id="2b0c0d0e-0000-4000-8000-000000000003"))
+        variant = {"person-no-row": "Test_No_Row", "person-no-npc": "Test_No_Npc"}.get(mode, "Test_Person")
+        child = PERSON_UNKNOWN_ASSET if mode == "person-swap-unknown" else PERSON_CHILD_ASSET
+        self.slices[PERSON_SPAWNER_SLICE] = person_spawner_slice(child, variant, mode == "person-client", mode != "person-not-init")
+        self.slices[PERSON_CHILD_SLICE] = person_child_slice()
+        self.slices[PERSON_UNKNOWN_SLICE] = person_child_slice()
+        self.slices[PERSON_DIRECT_SLICE] = person_child_slice(swap=False, npc_key="Test_Direct_Npc")
+        for path in (PERSON_SPAWNER_SLICE, PERSON_CHILD_SLICE, PERSON_UNKNOWN_SLICE, PERSON_DIRECT_SLICE):
+            self.files[path] = tool.INTERACT_BYTES + tool.SPAWNER_CLASS.bytes + b"made-up"
+        self.files[LAYER] = json.dumps({"Capitals": placements}).encode()
+        self.files[tool.TABLES_FOLDER + "javelindata_variations_npcs.datasheet"] = sheet("NPC", tool.VARIATION_TABLE_TYPE, [
+            {"VariantID": "Test_Person", "NPCId": "Test_Person_Npc", "SwapAchievementId": "Test_Swap"},
+            {"VariantID": "Test_No_Npc", "NPCId": "", "SwapAchievementId": "Test_Swap"}])
+
+
+# Each case: the mode, and the text of the line. Each case writes a file.
+PERSON_CASES = [
+    ("person-valid", "a person child: the client id of its slot, the XOR targets, the NPC id of its variant row, hideWhen Test_Swap"),
+    ("person-yaw-negative", "a yaw of -107.43 degrees counts from 360 (252: bucket 10; live check L1)"),
+    ("person-yaw-border", "a yaw of 0 degrees (a border of a bucket): the slot has two ids (two objects)"),
+    ("person-no-row", "a variant with no row: a binding with a cause (the backend refuses its use)"),
+    ("person-no-npc", "a row with no NPCId: a binding with a cause"),
+    ("person-swap-unknown", "a child slice with an achievement swap and no presence rule: a binding with a cause"),
+    ("person-client", "a client-authoritative spawner: no person"),
+    ("person-not-init", "a spawner with m_spawnOnInitialize false: no person (the client does not make it)"),
+    ("person-taken-id", "two slots with one client id: the second slot is not in the file"),
+]
+
+
+def check_person(mode: str, document: dict) -> bool:
+    objects = [entry for entry in document["objects"] if entry.get("person", {}).get("clientChild")]
+    direct = [entry for entry in document["objects"] if entry.get("person", {}).get("direct")]
+    if len(direct) != 1 or direct[0]["person"].get("npc") != "Test_Direct_Npc" or document.get("format") != tool.FORMAT:
+        return False
+    if mode in ("person-client", "person-not-init"):
+        cause = tool.CAUSE_PERSON_NO_INIT if mode == "person-not-init" else tool.CAUSE_SPAWNER
+        return not objects and document["excluded"].get(cause, 0) >= 1
+    if mode == "person-taken-id":
+        return len(objects) == 1 and document["excluded"].get(tool.CAUSE_PERSON_ID_TAKEN) == 1 and document["counts"]["persons"] == 2
+    asset = (PERSON_UNKNOWN_ASSET if mode == "person-swap-unknown" else PERSON_CHILD_ASSET)[0]
+    yaw = {"person-yaw-negative": -107.43, "person-yaw-border": 0.0}.get(mode, 140.0)
+    expected = independent_group(*PERSON_PLACE, yaw, asset)
+    if mode == "person-yaw-border":
+        other = independent_group(*PERSON_PLACE, -0.01, asset)
+        return (len(objects) == 2 and {entry["actor"][:16] for entry in objects} == {expected.to_bytes(8, "little").hex(),
+                                                                                     other.to_bytes(8, "little").hex()}
+                and objects[1]["key"].endswith("~1") and document["counts"]["personSlotsWithTwoIds"] == 1)
+    if len(objects) != 1:
+        return False
+    person = objects[0]
+    binding = person["person"]
+    if mode == "person-yaw-negative":
+        return person["actor"] == expected.to_bytes(8, "little").hex() + "00" * 8 and (expected >> 51) & 0xF == 10
+    if mode in ("person-no-row", "person-no-npc", "person-swap-unknown"):
+        return bool(binding.get("unresolved")) and document["counts"]["personsUnresolved"] == 1
+    bound = person["bounds"][0]
+    k = PERSON_ROOT ^ expected
+    target = ((PERSON_INTERACT_ENTITY ^ k) + PERSON_INTERACT) & 0xFFFFFFFFFFFFFFFF
+    return (person["key"] == f"2b0c0d0e-0000-4000-8000-000000000001/{PERSON_SPAWNER_ENTITY:016x}" and person["kind"] == "npc"
+            and person["slice"] == PERSON_CHILD_SLICE and person["asset"] == PERSON_CHILD_ASSET[0].hex() and person["sub"] == 2
+            and person["actor"] == expected.to_bytes(8, "little").hex() + "00" * 8 and bound["target"] == f"{target:016x}"
+            and bound["slot"] == 5 and bound["options"][0][1] == f"{PERSON_INTERACT_ENTITY ^ k:016x}"
+            and binding == {"npc": "Test_Person_Npc", "variant": "Test_Person", "table": "NPC", "row": 0,
+                            "presence": {"mode": "hideWhen", "condition": "Test_Swap"}, "clientChild": True,
+                            "spawner": "2b0c0d0e-0000-4000-8000-000000000001"}
+            and document["counts"]["persons"] == 1 and document["counts"]["personsDirect"] == 1)
+
+
+def run_person_cases(work: Path) -> int:
+    tool.Sources = PersonSources
+    assets = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE, BAG_ASSET: BAG_SLICE,
+              PERSON_CHILD_ASSET: PERSON_CHILD_SLICE, PERSON_UNKNOWN_ASSET: PERSON_UNKNOWN_SLICE}
+    tool.Catalog = lambda data: SimpleNamespace(path=lambda asset: assets.get(asset), paths=assets)
+    failures = 0
+    # The rule itself: the tool function against the independent bit builder.
+    vectors = [(2000.3, 3000.6, 40.27, 140.0), (100.06, 7.94, 0.13, -107.43), (16383.9, 16383.9, 999.9, 359.9), (0.0, 0.0, 0.0, 0.0)]
+    rule = all(tool.child_group(*vector, PERSON_CHILD_ASSET[0]) == independent_group(*vector, PERSON_CHILD_ASSET[0]) for vector in vectors)
+    print(f"{'ok  ' if rule else 'FAIL'} the client id rule of the tool (child_group) equals the independent bit builder ({len(vectors)} "
+          f"vectors: a positive and a negative yaw, the upper ends, 0)")
+    failures += 0 if rule else 1
+    for mode, what in PERSON_CASES:
+        PersonSources.person_mode = mode
+        target = work / f"interactions-tool-check-{mode}.json"
+        target.unlink(missing_ok=True)
+        sys.argv = ["interactions.py", str(target)]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            status = tool.main()
+        document = json.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
+        correct = status == 0 and bool(document) and check_person(mode, document)
+        message = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""
+        print(f"{'ok  ' if correct else 'FAIL'} {what}: status {status}, " + ("a file" if document else f"no file ({message[:120]})"))
+        failures += 0 if correct else 1
+        target.unlink(missing_ok=True)
+    return failures
+
 def main() -> int:
     review = "--review" in sys.argv[1:]
     stations = "--review-stations" in sys.argv[1:]
+    persons = "--persons" in sys.argv[1:]
     folders = [argument for argument in sys.argv[1:] if not argument.startswith("--")]
     work = Path(folders[0]) if folders else Path(tempfile.mkdtemp(prefix="soulwarden-interactions-tool-"))
     work.mkdir(parents=True, exist_ok=True)
+    if persons:
+        tool.FIXTURES = {"powderKeg": KEG_SLICE}
+        tool.LOOT_CONTAINERS = {"personal": BAG_SLICE}
+        return 0 if run_person_cases(work) == 0 else 1
     tool.Sources = MadeUpSources
     every = {STATION_ASSET: STATION_SLICE, VISUAL_ASSET: VISUAL_SLICE, KEG_ASSET: KEG_SLICE, BAG_ASSET: BAG_SLICE}
     assets = dict(every)

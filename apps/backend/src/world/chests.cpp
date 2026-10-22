@@ -56,8 +56,8 @@ public:
         (void)context;
         return m_chests.open_seconds(character);
     }
-    void complete(Entity& character, const InteractionContext& context) override {
-        m_chests.complete(character, context);
+    bool complete(Entity& character, const InteractionContext& context) override {
+        return m_chests.complete(character, context);
     }
     void end(Entity& character, const InteractionContext& context, InteractionEnd cause) override {
         m_chests.ended(character, context, cause);
@@ -381,13 +381,13 @@ float Chests::open_seconds(const Entity& character) const {
     return found != m_own.end() && found->second.open ? found->second.open->seconds : 0.0F;
 }
 
-void Chests::complete(Entity& entity, const InteractionContext& context) {
+bool Chests::complete(Entity& entity, const InteractionContext& context) {
     Entity* character = &entity;
     const std::string& characterId = entity.characterId;
     const auto found = m_own.find(characterId);
     const std::optional<std::uint32_t> openChest = chest_of(context);
     if (found == m_own.end() || !found->second.open || !openChest || *openChest != found->second.open->chest) {
-        return; // No open of this chest (a different use).
+        return false; // No open of this chest (a different use).
     }
     // The base checked the use again before this call (the source, the life, the exact position, the range: still_valid).
     Own& own = found->second;
@@ -401,7 +401,7 @@ void Chests::complete(Entity& entity, const InteractionContext& context) {
         ++m_counts.cancels;
         fail_open(*character, own);
         m_world.interactions().end_use(*character, InteractionEnd::policyFailed);
-        return;
+        return false;
     }
     // The roll: the kept roll of the claim, or a new roll of the root with the context of the chest.
     const WorldClock::time_point now = m_world.clock().now();
@@ -465,7 +465,7 @@ void Chests::complete(Entity& entity, const InteractionContext& context) {
                    characterId.c_str());
         fail_open(*character, own);
         m_world.interactions().end_use(*character, InteractionEnd::policyFailed);
-        return;
+        return false;
     }
     own.open.reset();
     own.claims[claimKey] = next;
@@ -477,7 +477,7 @@ void Chests::complete(Entity& entity, const InteractionContext& context) {
         set_gather(*character, kGatherFailure, 0.0F, false, kNoTarget);
         refresh_tracker(*character, own);
         m_world.interactions().end_use(*character, InteractionEnd::policyFailed);
-        return;
+        return false;
     }
     m_due.emplace(next.reset, DueReset{characterId, chest.key, next.generation});
     ++m_counts.completions;
@@ -487,6 +487,7 @@ void Chests::complete(Entity& entity, const InteractionContext& context) {
     log::write("world: chests: character %s opened the %s chest %s: %s; the reset in %.0f s (claim %llu)", characterId.c_str(),
                gamedata::chest_kind_text(chest.kind), chest.key.c_str(), item_list(items).c_str(),
                std::chrono::duration<double>(next.reset - now).count(), static_cast<unsigned long long>(next.generation));
+    return true;
 }
 
 void Chests::refresh_tracker(Entity& character, Own& own) {

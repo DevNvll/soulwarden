@@ -158,6 +158,8 @@ const char* interaction_verdict_text(InteractionVerdict verdict) {
         return "the handler refused";
     case InteractionVerdict::notOnQuest:
         return "the bound is open only during a quest task with its tag, and the character has none";
+    case InteractionVerdict::notPresent:
+        return "the person is not there for the character (its presence rule)";
     }
     return "?";
 }
@@ -309,6 +311,7 @@ InteractionVerdict Interactions::check(Entity& character, const InteractionReque
     Site site;
     std::uint32_t boundIndex = 0;
     const BoundState* boundState = nullptr;
+    ++m_counts.referenceLookups;
     if (const std::optional<gamedata::BoundRef> ref = catalog->find(request.object.group, request.object.target)) {
         site.object = &catalog->objects()[ref->object];
         site.index = ref->object;
@@ -523,14 +526,18 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
     // The handler after the base registered the use (stage 3.5b.2: the Take All of a loot bag).
     handler->started(*character, context);
     // Stage 1.8c: the start of an interaction with a tag (TaskInteract with OnInteractStart; 0x825E470). A use with no time completes at
-    // its start too (the open of a storage or of a station screen: the authoring text names the storage screen as a success).
+    // its start too (the open of a storage or of a station screen: the authoring text names the storage screen as a success). The time is
+    // the time of the use (the time of the handler or the Delay Time: code review of stage 1.8c, finding QR8C-R8), and a handler that gives
+    // the completion itself (the gathering, finding QR8C-R13) gets no completion from the base.
     if (!context.bound->tag.empty()) {
         QuestEvent interacted;
         interacted.kind = QuestEventKind::interact;
         interacted.keys = {context.bound->tag};
         interacted.started = true;
         m_world.quests().event(*character, interacted);
-        if (context.option->delay <= 0.0F) {
+        const float handlerTime = handler->use_time(*character, context);
+        const float useTime = handlerTime > 0.0F ? handlerTime : context.option->delay;
+        if (useTime <= 0.0F && !handler->owns_interact_event(context)) {
             interacted.started = false;
             m_world.quests().event(*character, interacted);
         }
@@ -716,11 +723,11 @@ void Interactions::timed_due(const std::string& characterId, std::uint64_t seria
     const double seconds = std::chrono::duration<double>(m_world.clock().now() - active.started).count();
     log::write("world: timed interaction of character %s: %s at the object %s completed after %.1f s (completion %u of the object)",
                character->characterId.c_str(), option.name.c_str(), site.object->key.c_str(), seconds, completions);
-    if (InteractionHandler* handler = handler_of(site.object->kind, option.id)) {
-        handler->complete(*character, context);
-    }
-    // Stage 1.8c: the completion of a timed interaction with a tag (TaskInteract with OnInteractStart false).
-    if (!context.bound->tag.empty()) {
+    InteractionHandler* handler = handler_of(site.object->kind, option.id);
+    const bool completed = handler == nullptr || handler->complete(*character, context);
+    // Stage 1.8c: the completion of a timed interaction with a tag (TaskInteract with OnInteractStart false): only a use that completed
+    // (code review of stage 1.8c, finding QR8C-R12), and only when the handler does not give it itself (finding QR8C-R13).
+    if (completed && !context.bound->tag.empty() && (handler == nullptr || !handler->owns_interact_event(context))) {
         if (Entity* own = m_world.find_character(character->characterId)) {
             QuestEvent interacted;
             interacted.kind = QuestEventKind::interact;

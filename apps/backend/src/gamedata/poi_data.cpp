@@ -1,5 +1,6 @@
 #include "gamedata/poi_data.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -142,6 +143,16 @@ bool PoiData::inside(const std::vector<std::string>& tags, std::uint16_t territo
         }
     }
     return false;
+}
+
+bool PoiData::knows(const std::vector<std::string>& tags) const {
+    if (tags.empty()) {
+        return false;
+    }
+    return std::all_of(tags.begin(), tags.end(), [this](const std::string& tag) {
+        const std::vector<std::uint32_t>* list = with_tag(tag);
+        return list != nullptr && !list->empty();
+    });
 }
 
 } // namespace soulwarden::backend::gamedata

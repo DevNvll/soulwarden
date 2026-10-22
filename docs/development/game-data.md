@@ -377,6 +377,25 @@ backend. The tool of each system is also in the document of that system.
   loot table Empty is not a refusal for it), and its game event with no row of the event tables (the event of the quests). The format stays
   1: a file of before has no quest object (each one is refused, as before). The build: 1,634 quest capitals, 707 quest rows (341 with a
   different refusal).
+- `interaction-data.json` format 4 (stage 2.5c, [Persons](../systems/persons.md)): the persons. A person child (the child of a
+  PrefabSpawner of a level placement with m_isClientAuthoratative false and m_spawnOnInitialize true whose slice has an NPC component)
+  is an object with the client id of its place, yaw, and slice asset (`child_group`: client 0x6160B60), the actor G and 8 zero bytes, the
+  bounds of its slice with the XOR rule, and the member `person`: the NPC id of the row of its variant in the variation table of its slice,
+  the variant, the table, the row, the presence rule (`PERSON_PRESENCE`: `showWhen` or `hideWhen` with an achievement conditional; no rule:
+  always there), `clientChild`, the spawner, and `unresolved` with a cause when the tool cannot bind it. A direct person has `npc` and
+  `direct`. A slot within 0.001 of a border of the id rule has two objects (`KEY`, `KEY~1`); the second slot of one id and a child with
+  m_spawnOnInitialize false are left out with their causes. The build: 1,221 person children (89 slots with two ids), 145 direct persons,
+  50 with no binding; 44,534 objects in all. `check_interactions_tool.py --persons` (case NC1) checks the id rule against an independent
+  bit builder and the bindings with made-up slices. A file of format 3 loads: it has no person child.
+- `conversation-data.json` (stage 2.5c, `tools/gamedata/conversations.sh`, `check_conversations_tool.py` (case NC2),
+  [Persons](../systems/persons.md)): format 1. The NPC rows (the tables of the type NPCData: their states ConversationStateId1 to N in
+  the order of the numbers of the columns, the name, the title, the shop, and the mission board), the conversation states
+  (ConversationStateData: the type, the dialogue, IsInitialState, the topics, the services, the linear objectives, and the requirements as
+  source text), and the topics (ConversationTopicData: the prompt, the response, the requirements, AchievementUnlock, ProvidedTopics), each
+  with the CRC-32 of its lower-case id. The first row of an id wins; a later row, a state or a topic with no row, and an NPC row with no
+  state are counted diagnostics. An empty table with no id column (the build has one) is not read. The tool stops for a type with no
+  table, a table with rows and no id column, and two NPC or topic ids with one CRC-32. The build: 1,478 NPC rows, 3,429 states, 556
+  topics; 1.5 MB, 10 s. Without the file the backend starts, and a person has no conversation state.
 
 ## Commands
 
@@ -400,6 +419,7 @@ tools/gamedata/interactions.sh       # one time: the objects of the world that a
 tools/gamedata/crafting.sh           # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits, the gear score and perk data for the backend (format 3 of stage 3.7c; 9 MB, 5 s); needs an Oodle source
 tools/gamedata/quests.sh             # one time: the quest data for the backend (objectives, compiled task trees, achievement table, territory starts, backstories; 9 MB, 10 s); needs an Oodle source
 tools/gamedata/pois.sh               # one time: the shapes of the points of interest (the quest tasks of a place; 15 s); needs an Oodle source
+tools/gamedata/conversations.sh      # one time: the conversation data of the persons (NPC rows, states, topics; 1.5 MB, 10 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
 tools/gamedata/gathering.sh --region r_+04_+02 --near 8817 4281 30   # the gathering nodes near a place, with their G (no file)

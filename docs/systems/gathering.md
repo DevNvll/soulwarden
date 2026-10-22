@@ -168,7 +168,11 @@ The source of each rule is in brackets: game data, client code, live check (the 
   quest task of the character with the tag (else the refusal `notOnQuest`; live check G1: the client shows no prompt then); it needs no tool
   and no loot table; its result is the quest drops of the tasks of the character (no roll of the loot root Empty); it writes no node row and
   sends no node state (each character gathers its own object: InstancedLootType 4). After the commit of each gather the quest system gets
-  the items of the roll (TaskRequireGatherItems), the game event of the row (TaskGameEvent), and the tag of a quest object (TaskInteract).
+  the items of the roll (TaskRequireGatherItems), the game event of the row (TaskGameEvent), and one completed interaction with the tag of a
+  quest object and the tag of the bound, each tag one time (TaskInteract). The gathering owns this event (`owns_interact_event`): the base
+  gives no completed interaction for a gather, also not at the start of a gather with no Delay Time, and a gather that the handler refuses
+  (a full bag, a contested node, a store fault) gives none (`Gathering::complete` gives false; code review of stage 1.8c, findings
+  QR8C-R8, R12, R13; cases QRW8, QRW12, QRW13).
 - Stage 1.8c (the quest drops): `Quests::plan_drops` gives the quest drops of the tasks of the character whose ItemDropVC names the gatherable
   row (a skinning of a Boar: the row Boar); they are a part of the result (one transaction with the award rows of AwardOnlyOnce; a full bag
   refuses the whole gather) and not a part of a kept roll.

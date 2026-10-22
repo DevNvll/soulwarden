@@ -219,7 +219,8 @@ public:
      * The handler: the timed use of the base reached the end of the open, and the checks of the base again passed (code review of
      * stage 3.5b.1, finding CH-R2: the timer of the base, thus a release at or after the time completes first). The roll and the grant.
      */
-    void complete(Entity& character, const InteractionContext& context);
+    /** @return True when the open completed (code review of stage 1.8c, finding QR8C-R12). */
+    bool complete(Entity& character, const InteractionContext& context);
     /** The handler: the use of a chest ends (before its completion: a cancel). */
     void ended(Entity& character, const InteractionContext& context, InteractionEnd cause);
     /** @return True when a use is the use of a chest of the chest data (stage 3.6a: the gathering handler gives it to this system). */

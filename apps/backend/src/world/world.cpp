@@ -83,6 +83,7 @@ World::World(const WorldClock& clock,
       m_gathering(*this, options.gatheringData),
       m_crafting(*this, options.craftingData),
       m_quests(*this, store, options.questData),
+      m_persons(*this, options.conversationData),
       m_presets(*this, project_presets()) {
     m_random = options.randomSeed;
     m_quests.set_pois(options.poiData);
@@ -156,6 +157,8 @@ void World::tick() {
         m_gathering.tick();
         // The characters whose items or place changed: their possession, equip, and place tasks (stage 1.8c; one look each).
         m_quests.tick();
+        // The characters with a person conversation whose bits changed: the presence of the person (stage 2.5c; one look each).
+        m_persons.tick();
     } catch (const std::exception& error) {
         log::write("world: the creature system stopped with an exception: %s", error.what());
     }
@@ -301,6 +304,7 @@ void World::remove_entity(EntityId id) {
     // The committed interaction of a character ends with its entity (stage 2.5a: the users of the object).
     if (entity.kind == EntityKind::player) {
         m_interactions.left(entity);
+        m_persons.left(entity);
         // The open of a chest ends, and the claims leave the memory (stage 3.5b.1; the rows stay).
         m_chests.left(entity);
         m_lootBags.left(entity);
@@ -951,6 +955,7 @@ TravelResult World::travel(const std::string& characterId, const state::WorldPos
     m_stamina.interrupted(entity->characterId, "a travel");
     // The committed interaction of the character ends (stage 2.5a): the session sends 3746 and 6709 (RepSession::traveled).
     m_interactions.traveled(*entity);
+    m_persons.traveled(*entity);
     // The creatures of the new place: the spawn point rule runs in this tick, not at its interval.
     m_creatures.scan_soon();
     // No creature of the new place takes the character at once, and the creatures of the old place lose it.
@@ -1055,6 +1060,10 @@ Revision World::touch(EntityId id, ComponentKey key) {
     // event of its possession and equip tasks: they look at the next tick (O(1) for a character with no such task).
     if (entity->kind == EntityKind::player && (key == ComponentKey::container || key == ComponentKey::paperdoll)) {
         m_quests.items_touched(*entity);
+    }
+    // Stage 2.5c: a change of the bits of a character with a person conversation: the presence of the person at the next tick.
+    if (entity->kind == EntityKind::player && key == ComponentKey::achievements) {
+        m_persons.achievements_touched(*entity);
     }
     return m_revision;
 }

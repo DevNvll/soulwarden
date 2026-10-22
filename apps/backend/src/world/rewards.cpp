@@ -40,6 +40,32 @@ std::string drop_list(const std::vector<LootDrop>& drops) {
     return text.empty() ? "no item" : text;
 }
 
+/**
+ * @return The quest drops that the character got. The quest drops are the last items of the grant, and the bag loses the items that do not
+ *         fit: a lost unit of the item of a quest drop is a lost drop first. A lost drop writes no award row and keeps its misses (code
+ *         review of stage 1.8c, finding QR8C-R9: a lost drop must not stop AwardOnlyOnce).
+ */
+std::vector<QuestDrop> delivered_drops(const std::vector<QuestDrop>& drops, const std::vector<GrantItem>& lost) {
+    std::vector<std::uint32_t> missing(drops.size(), 0);
+    for (const GrantItem& item : lost) {
+        std::uint32_t left = item.quantity;
+        for (std::size_t position = drops.size(); position-- > 0 && left != 0;) {
+            if (same_text(drops[position].itemId, item.itemId) && missing[position] < drops[position].quantity) {
+                const std::uint32_t taken = std::min(left, drops[position].quantity - missing[position]);
+                missing[position] += taken;
+                left -= taken;
+            }
+        }
+    }
+    std::vector<QuestDrop> delivered;
+    for (std::size_t position = 0; position < drops.size(); ++position) {
+        if (missing[position] == 0) {
+            delivered.push_back(drops[position]);
+        }
+    }
+    return delivered;
+}
+
 } // namespace
 
 std::chrono::milliseconds respawn_time(const gamedata::SpawnPoint& point, float unit) {
@@ -515,9 +541,10 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
         // The items and the coin. Stage 3.5b.2: the items into the part of the character of the loot bag (a row of the batch), the coin
         // into its wallet.
         std::size_t itemsBagged = 0;
+        std::vector<GrantItem> lost;
+        bool itemsDelivered = false;
         if (written && (!reward.items.empty() || reward.coin != 0)) {
             std::vector<GrantItem> grants = grant_items(reward.items, character.progression.level);
-            std::vector<GrantItem> lost;
             if (bagged && !grants.empty()) {
                 // An item that the catalog does not have stays in the part as a kept roll (stage 2.2, the open point of 3.5b.2): not lost.
                 std::vector<GrantItem> kept;
@@ -525,6 +552,7 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
                 const auto part = bag.parts.find(character.characterId);
                 itemsBagged = part != bag.parts.end() ? part->second.items.size() : 0;
                 granted = written;
+                itemsDelivered = written;
                 if (written && reward.coin != 0) {
                     const ItemResult given = m_world.inventory().grant(character.characterId, {}, reward.coin);
                     written = given.error != ItemError::storeFailed;
@@ -534,13 +562,19 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
                 const ItemResult given = m_world.inventory().grant(character.characterId, grants, reward.coin, &lost);
                 written = given.error != ItemError::storeFailed;
                 granted = given.ok();
+                itemsDelivered = granted;
                 itemsGiven = grants.size() - std::min(grants.size(), lost.size());
             }
             for (const GrantItem& item : lost) {
                 itemsLost += item.quantity;
             }
         }
-        written = written && m_world.quests().write_drops(character, drops);
+        const std::vector<QuestDrop> delivered = itemsDelivered ? delivered_drops(drops, lost) : std::vector<QuestDrop>{};
+        if (delivered.size() != drops.size()) {
+            log::write("world: reward: %zu quest drop(s) of %s did not fit: no award row, the next kill can drop them again",
+                       drops.size() - delivered.size(), character.name.c_str());
+        }
+        written = written && m_world.quests().write_drops(character, delivered);
         written = written && batch.commit();
         if (!written) {
             m_world.loot_bags().forget_part(bag, character.characterId);
@@ -562,7 +596,7 @@ std::vector<KillReward> Rewards::killed(Entity& creature) {
                        id_number(creature.id));
             continue;
         }
-        m_world.quests().drops_done(character, drops);
+        m_world.quests().drops_done(character, delivered);
         m_counts.experience += gained ? reward.experience : 0;
         m_counts.masteryExperience += reward.mastery.empty() ? 0 : reward.experience;
         if (!reward.items.empty() || reward.coin != 0) {

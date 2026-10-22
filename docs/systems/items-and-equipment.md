@@ -143,8 +143,9 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 
 - Stage 1.8c (the quests, [Quests](quests.md)): `Inventory::count` (the quantity of an item id in the bag and the paperdoll),
   `Inventory::equipped` (an item of the paperdoll with a gear score at a minimum), and `Inventory::plan_quest_items` (the plan of the item
-  actions of a quest: the takes from the stacks of the bag and the quick slots, also a locked or a protected item, and the gives with the
-  cause ItemGathered; the quest system writes it in its own transaction). Each change of the bag or the paperdoll state of a character
+  actions of a quest in the order of the tasks: the takes from the stacks of the bag, the quick slots, and the other slots of the
+  paperdoll, also a locked or a protected item, and the gives with the cause ItemGathered; the quest system writes it in its own
+  transaction; code review of stage 1.8c, findings QR8C-R2 and R4). Each change of the bag or the paperdoll state of a character
   (`World::touch`) is the item event of its quests (one look at the next tick).
 
 ## Commands

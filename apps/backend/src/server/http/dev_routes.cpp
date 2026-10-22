@@ -994,6 +994,21 @@ void register_dev_routes(Router& router, const Services& services) {
             return json_reply(200, commands::interactions_view(target, character, radius).dump());
         });
     });
+    // Stage 2.5c: the persons near a character with their presence and their conversation state for it, and its person conversation.
+    router.add("GET", "", "/v1/dev/persons", "dev.persons", [&services](const RouteContext& context) {
+        service::HttpResponse refusal;
+        const auto character = character_of(context, refusal);
+        if (!character) {
+            return refusal;
+        }
+        const auto radius = commands::QueryArguments(context.request).number("radius", 0.0F, 2000.0F);
+        if (commands::QueryArguments(context.request).has("radius") && !radius) {
+            return message(400, "radius must be 0 to 2000 m");
+        }
+        return in_world(services, [character = *character, radius = radius.value_or(30.0F)](world::World& target) {
+            return json_reply(200, commands::persons_view(target, character, radius).dump());
+        });
+    });
     router.add("POST", "", "/v1/dev/interactions/object", "dev.interactions_object",
                creature_route(services, commands::set_object_enabled));
     router.add("POST", "", "/v1/dev/interactions/cancel", "dev.interactions_cancel", command_route(services, commands::cancel_interaction));

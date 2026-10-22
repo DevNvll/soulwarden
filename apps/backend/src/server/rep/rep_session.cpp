@@ -17,6 +17,7 @@
 #include "server/rep/item_requests.h"
 #include "server/rep/lock_messages.h"
 #include "server/rep/mana_messages.h"
+#include "server/rep/conversation_messages.h"
 #include "server/rep/quest_messages.h"
 #include "server/rep/replication.h"
 #include "server/rep/time_messages.h"
@@ -456,6 +457,11 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
     case kTypeResetObjective:
         check_route(route, type, body, firstOfType);
         handle_objective_call(body, type);
+        break;
+    case kTypeConversationTopic:
+    case kTypeConversationTopicsFinished:
+        check_route(route, type, body, firstOfType);
+        handle_conversation_topics(body, type);
         break;
     default:
         check_route(route, type, body, firstOfType);
@@ -2618,6 +2624,32 @@ void RepSession::handle_objective_call(std::span<const std::uint8_t> body, std::
     log::write("rep: the client asks for the %s of the quest %016llx (message %u): %s%s", type == kTypeAbandonObjective ? "abandon" : "reset",
                static_cast<unsigned long long>(message->value), type, world::quest_error_text(result.error),
                result.ok() && type == kTypeResetObjective ? (", new instance " + std::to_string(result.instance)).c_str() : "");
+}
+
+void RepSession::handle_conversation_topics(std::span<const std::uint8_t> body, std::uint32_t type) {
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const bool closing = type == kTypeConversationTopicsFinished;
+    const char* name = closing ? "finished topics" : "topic request";
+    const std::optional<ConversationTopics> message = closing ? read_finished_topics(body) : read_conversation_topic(body);
+    if (!message) {
+        log::write("rep: %s (type %u, %zu bytes) does not have the form of the message: no change", name, type, body.size());
+        return;
+    }
+    if (!own_facet(*own, message->target, message->entity, kConversationComponentName, type, name)) {
+        return;
+    }
+    // Stage 2.5c: each topic against the conversation of the character (its source, its selection now); no answer to the client.
+    for (const std::uint32_t topic : message->topics) {
+        const world::TopicResult result = m_world.persons().topic(*own, topic, closing);
+        log::write("rep: the client sent the %s %08x (message %u): %s", closing ? "finished topic" : "topic", static_cast<unsigned>(topic),
+                   type, world::topic_result_text(result));
+    }
+    if (closing && message->topics.empty()) {
+        log::write("rep: the client closed its conversation with no finished topic (message %u)", type);
+    }
 }
 
 std::optional<bool> RepSession::auto_pin(std::uint8_t type) const {

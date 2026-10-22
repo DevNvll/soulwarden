@@ -18,6 +18,7 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
 | The server children (stage 2.5b): the stations of a settlement, the template of a slice, the spawn rule, the record of a child | `gamedata/interaction_data.h` (`InteractionTemplate`, `SpawnedPlacement`), `world/interactions.h` (`Interactions::spawn`, `scan`), `World::spawn_object`, `server/rep/states/object_states.cpp`, protocol notes 4.36, test cases SC1, SC2 |
 | A crafting station or a camp: the facts of a use for stage 3.7 | `world/interactions.h` (`StationContext`, `Interactions::station`), test case SC2; the crafts: [Crafting](crafting.md) |
 | A timed use (Trigger of the powder keg), the ends of a use (the removal, the range, damage) | `world/interactions.h` (`timed_due`, `still_valid`, `damaged`, `moved`), test cases SC3, SC4 |
+| The persons (stage 2.5c): the person children that the client makes, the presence for one character, the conversation state, the topics | [Persons](persons.md), `world/persons.h`, cases NC1 to NC8 |
 | The service handoff for the shops (5.1) and the transmog (5.6) | `world/interactions.h` (`grant_service`, `require_service`, `close_service`), `world/entity.h` (`ServiceGrant`), test case SC5 |
 | The fixtures of a development run (the keg, the camps) | `tools/world fixture`, `server/http/interaction_commands.cpp` (`make_fixture`, `remove_object`), test case SC9 |
 | The research | `~/Games/soulwarden/work/research/interaction-stage.md`, `interaction.md`; the results of the stages: `~/Games/soulwarden/work/evidence/interaction/implement/RESULT.md` (2.5a), `~/Games/soulwarden/work/evidence/stations/implement/RESULT.md` (2.5b) |
@@ -224,8 +225,15 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
 - Stage 1.8c (the quests, [Quests](quests.md)): a bound with InteractOnlyOnQuest and a tag is open only while an Active quest task of the
   character has the tag (the verdict `notOnQuest` else; before stage 1.8c such a bound was refused as unsupported). A bound with
   InteractOnlyOnQuest and no tag stays unsupported. After the start of a use of a bound with a tag the quest system gets the interaction
-  (TaskInteract with OnInteractStart 1); after its completion, or at its start for a use with no Delay Time, it gets the completed
-  interaction (TaskInteract with OnInteractStart 0).
+  (TaskInteract with OnInteractStart 1); after its completion, or at its start for a use with no time, it gets the completed interaction
+  (TaskInteract with OnInteractStart 0). The code review of stage 1.8c (corrected in stage 2.5c): the time of a use is the time of its
+  handler (`use_time`) or the Delay Time of its option (finding QR8C-R8); `InteractionHandler::complete` gives true only for a completion
+  that the handler accepted, and only such a completion counts (finding QR8C-R12: a gather that a full bag refused); a handler that gives
+  the completed interaction itself after its commit (`owns_interact_event`: the gathering) gets none from the base (finding QR8C-R13).
+- Stage 2.5c (the persons, [Persons](persons.md)): the person handler of `OpenConversation` checks the presence of a person for the
+  character (its bits); a person that is not there for the character gives the verdict `notPresent` (3743 result 2). An object with a
+  person binding that the tool could not make (`unresolved`) is refused as unsupported. A person of a file of format 3 or before keeps the
+  conversation of stage 2.5a. The count `referenceLookups` counts the lookups of the reference map (case NC7).
 
 ## Commands
 
@@ -255,6 +263,9 @@ tools/gamedata/interactions.py --list spawned   # the server children of the pla
   `--radius METERS [--center X Y]` write a smaller file, `--list KIND` prints the objects of a kind (`--list spawned`: the server
   children). The tool stops for a layer with no list Capitals, a named slice with an asset id of a wrong form, one placement id with
   two different placements, and two referenced achievements of one bit (findings INT-R4 to INT-R6, case IR5).
+  Format 4 (stage 2.5c): the persons too (44,534 objects, 1,455 of the kind `npc`: 1,221 person children that the client makes, 89 of
+  them with two ids, 145 direct persons, 50 with no binding; about 2 minutes). `check_interactions_tool.py --persons` is the check of the
+  person rules ([Persons](persons.md)).
 
 ## Traps
 
@@ -275,8 +286,9 @@ tools/gamedata/interactions.py --list spawned   # the server children of the pla
   prompt in the air and no station (live check L4).
 - The prompt of a station shows only in the trigger area of its bound (a cylinder of radius 2 m and height 4 m at the InteractBound
   entity; the bounds of the forge are in the cabin). A person near a station (the artificer at the forge) takes the focus outside it.
-- A person that a client spawner makes (the artificer at the forge of Oxboro) is not in the interaction data: its conversation is
-  refused (3743 result 2) and closes at once. The commander near the lore pages is a level object and works.
+- A person that a client spawner makes (the artificer at the forge of Oxboro) is in the interaction data from format 4 (stage 2.5c,
+  [Persons](persons.md)): with a file of format 3 or before its conversation is refused (3743 result 2) and closes at once. The commander
+  near the lore pages is a level object and works.
 - A camp (permanentcamp_master, CampT5) shows no option with no Ownership state, "Camping not unlocked yet." for a character with no
   rank of the categorical progression Camping (client 0x42AB230), and with a rank only "Set Camp Recall Point". Its option
   OpenCraftingOption stays hidden (live check L5: not found; the bound has m_hidePermissionDeniedElement). CampT5 has the authored

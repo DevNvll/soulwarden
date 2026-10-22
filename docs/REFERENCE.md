@@ -71,7 +71,8 @@ creatures near it, and for a travel, and the interaction commands (`set_object_e
 character, `cancel_interaction`; stage 2.5a), `clear_chest_claim` (stage 3.5b.1), `set_world_time` (stage 2.2: the time of the
 day of the whole world), and `apply_preset` (stage B0: a build preset with a variant; the list of the presets with their check is
 `GET /admin/v1/catalog/presets`). The state of a character has its DLC (member
-`ownership`, stage 1.1b), its interactions (member `interactions`: its committed interaction and the objects near it, stage 2.5a), and
+`ownership`, stage 1.1b), its interactions (member `interactions`: its committed interaction and the objects near it, stage 2.5a), its
+persons (member `persons`: its person conversation and the persons 30 m or less from it with their state for the character, stage 2.5c), and
 its chests (member `chests`: its open, its loot claims, and the chests near it, stage 3.5b.1), and its loot bags (member `lootBags`:
 its open bag and its bags, stage 3.5b.2), and the world time (member `worldTime`, stage 2.2). The backend
 also answers the entitlement service of the client (the sync and the list of the entitlements of the account, protocol
@@ -512,6 +513,13 @@ button on "Confirm").
   territory tables with its origin (the POI placement that the entries of the region metadata confirm), its tags, and its territory: 476
   points of interest in the supported build. Without the file the quest tasks of a place wait. Stage 1.8c also adds the vitals categories
   to `loot.sh` (the kill tasks of the quests) and the quest objects to `gathering.sh` (run the two tools again).
+- `tools/gamedata/conversations.sh` makes the conversation data of the persons (stage 2.5c; `conversation-data.json`, format 1, 1.5 MB): the
+  NPC rows with their conversation states in authored order, the states with their requirements, topics, and services, and the topics with
+  their requirements and ProvidedTopics (1,478 NPC rows, 3,429 states, 556 topics in the supported build). `--npc ID` prints an NPC row
+  with its states and topics and writes no file. Without the file a talk with a person works as before, and the backend selects no state,
+  accepts no topic, and gives no service ([Persons](systems/persons.md)). From stage 2.5c `interactions.sh` writes format 4: the persons
+  that the client makes for the PrefabSpawners of the level (1,221) with their client id, their NPC row, and their presence rule (run the
+  tool again).
 - `tools/gamedata/combat.sh` makes the combat tables
   (`~/.local/share/soulwarden/gamedata/combat-tables.json`): the weapon of each item (base damage,
   attribute factors, the damage rows of its light and of its heavy attack), the damage rows,
@@ -671,9 +679,9 @@ button on "Confirm").
   start of each way), an attack replaces it, and at its place the creature plays its idle
   action. Before, the creatures slid in their pose.
 - People and lore pages (protocol notes 4.20): you can talk to a person (E) and read a lore
-  page. A person says only the first line of its default text, and nothing in the game
-  changes. When the talk ends, your character can move at once; a travel and a respawn also
-  end each lock of your input.
+  page. From stage 2.5c a person shows the conversation state of your character and the topics
+  of your active quest tasks (below). When the talk ends, your character can move at once; a
+  travel and a respawn also end each lock of your input.
 - The blue bar below the crosshair is the mana meter of the game: it shows only when your
   mana is not full, as in the game (the backend sends the mana state from user test 1).
 - Fights that you can play (stage 3.4d): no creature attacks you for 10 s after you came
@@ -858,6 +866,16 @@ button on "Confirm").
   (reset) end an instance (the undo of its achievement actions, the return of its items, its pin; a reset makes a new instance and keeps the
   award rows of AwardOnlyOnce), and a failure timer or a TaskDie fails or resets its objective. The award rows are in schema 16. The
   admin commands `abandon_quest` and `reset_quest` (argument `instance`) and `tools/world quest abandon|reset NAME INSTANCE` do the same.
+- Persons (stage 2.5c, [Persons](systems/persons.md), protocol notes 4.55). Each person of the game data is in the interaction data: the
+  persons that the client makes for the PrefabSpawners of the level (Aelstrom, Urda, and Grace on the beach, the persons of the quests and of
+  the settlements) with the client id of their place, yaw, and slice, and the direct persons. A person of a quest is there for a character
+  by the achievement bits of that character (the rule of its slice); E at a person that is not there for the character is refused. The
+  server selects the conversation state of each character from the conversation data (the states in reverse, the first whose
+  requirements pass: the level, the achievements, the faction, the active quest task, the completed objective, the progression) and
+  checks the topics of the client (3158 during the talk, 5397 at its close): a topic of the state counts one time in a talk and gives no
+  reward and no quest change yet (stage 1.8b). The services of the state (the inn, a shop, the faction board) go to the service grant of
+  the character; no service opens yet. In a development run `tools/world persons NAME [METERS]` (route `GET /v1/dev/persons`) lists the
+  conversation of a character and the persons near it with their presence and their state for the character.
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold
   abilities of the attributes (Focus 100: 110), of the perks, and of the effects; the regeneration has the ManaRate parts. The mana bar
   of the HUD goes away at full mana ([Combat and health](systems/combat-and-health.md)).

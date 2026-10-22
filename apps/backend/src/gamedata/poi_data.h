@@ -76,6 +76,11 @@ public:
      *         points of interest of that territory (TerritoryID of the task, 0x8262460). `visited` counts the shapes that the call tested.
      */
     [[nodiscard]] bool inside(const std::vector<std::string>& tags, std::uint16_t territory, float x, float y, std::uint64_t* visited = nullptr) const;
+    /**
+     * @return True when each tag has a shape of the data (code review of stage 1.8c, finding QR8C-R7: the membership of a tag with no shape is
+     *         not known, and an exit task waits). No tag: false.
+     */
+    [[nodiscard]] bool knows(const std::vector<std::string>& tags) const;
 
 private:
     bool fail(std::string cause);

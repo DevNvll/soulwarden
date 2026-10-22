@@ -51,6 +51,7 @@
 #include "world/runes.h"
 #include "world/skills.h"
 #include "world/projectiles.h"
+#include "world/persons.h"
 #include "world/quests.h"
 #include "world/spells.h"
 #include "world/stamina.h"
@@ -299,6 +300,11 @@ struct WorldOptions {
     const gamedata::QuestData* questData{nullptr};
     /** Stage 1.8c: the points of interest of the world (game data poi-data.json), or null: no task of a place progresses. */
     const gamedata::PoiData* poiData{nullptr};
+    /**
+     * Stage 2.5c: the conversation data of the persons (game data conversation-data.json), or null: a person keeps its conversation (3743
+     * result 1), with no state selection, no topic, and no service.
+     */
+    const gamedata::ConversationData* conversationData{nullptr};
     /** The perk data (game data, stage 1.3b). Null: an item has no perk, and no perk has an effect. */
     const gamedata::PerkData* perkData{nullptr};
     /** The spell entity data (game data, stage 3.3b-S2a). Null or not loaded: a spell entity has its hits and no record. */
@@ -769,6 +775,9 @@ public:
     [[nodiscard]] Ownership& ownership() {
         return m_ownership;
     }
+    [[nodiscard]] const Ownership& ownership() const {
+        return m_ownership;
+    }
     /** @return The build presets (stage B0): one command gives a character a whole build. */
     [[nodiscard]] BuildPresets& presets() {
         return m_presets;
@@ -852,6 +861,10 @@ public:
     /** @return The quests (stage 1.8a): the quests of each character, the task rules, the one-time grants, the pins. */
     [[nodiscard]] Quests& quests() {
         return m_quests;
+    }
+    /** @return The person system (stage 2.5c): the use of a person, its conversation state for each character, its topics. */
+    [[nodiscard]] Persons& persons() {
+        return m_persons;
     }
     [[nodiscard]] const Quests& quests() const {
         return m_quests;
@@ -1012,6 +1025,8 @@ private:
     /** The crafting (stage 3.7a): after the interactions (its handler of the station options wraps the handler of the base). */
     Crafting m_crafting;
     Quests m_quests;
+    /** The persons (stage 2.5c): after the interactions (its handler of OpenConversation) and the quests (the conditionals, the tasks). */
+    Persons m_persons;
     /** The build presets (stage B0): they use the inventory, the progress, the skill, and the ownership systems. */
     BuildPresets m_presets;
 };
