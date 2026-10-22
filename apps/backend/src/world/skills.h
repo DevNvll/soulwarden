@@ -191,6 +191,16 @@ public:
      * @param id The id text of the progression (the id on the wire is its CRC-32).
      */
     [[nodiscard]] ProgressError add_balance(Plan& plan, std::string_view id, std::int64_t delta, std::uint64_t cap) const;
+    /**
+     * Stage 1.8d (decision D3 option B of the orchestrator): adds territory standing to a plan of the character (the categorical progression
+     * of the territory: its id text is the decimal territory id, on the wire its CRC-32; points in the rank, client 0x3CAACF0). The gain is
+     * the amount of the data (the preview of the client shows it with no modifier: objectivedatahelper GetRewardDataFromGameEventData). A gain
+     * that reaches MaximumInfluence of the rank (a rank-up: a token of the territory pool, 0x3CB7500) is refused (standingRankUp), and a
+     * territory with no standing row too (unknownProgression; noTables with no tables).
+     */
+    [[nodiscard]] ProgressError add_standing(Plan& plan, std::uint16_t territory, std::uint64_t amount) const;
+    /** Stage 1.8d: @return The standing of a territory of a skill set: its rank and its points in the rank. */
+    [[nodiscard]] static ProgressionRank standing(const SkillSet& skills, std::uint16_t territory);
     /** A command (stage 3.7c): sets a balance to `amount` (0 to `cap`). */
     SkillResult set_balance(const std::string& characterId, std::string_view id, std::uint64_t amount, std::uint64_t cap);
     /** @return The balance of a progression of rank 0 of a skill set (the points; 0 with no entry). */

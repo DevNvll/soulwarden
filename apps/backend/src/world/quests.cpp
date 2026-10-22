@@ -83,6 +83,57 @@ std::string hex(std::uint64_t value) {
     return text;
 }
 
+/** The faction of a character with no faction (the client enum: 0 unaligned, 1 Syndicate, 2 Marauder, 3 Covenant; roadmap 4.5 adds it). */
+constexpr std::uint8_t kNoFaction = 0;
+
+/** @return The faction test of the eligibility (0x3A4C166): bit 0 of the mask bypasses it, else the bit of the faction. */
+bool faction_allowed(std::uint8_t mask, std::uint8_t faction) {
+    return (mask & 0x1U) != 0 || ((mask >> faction) & 0x1U) != 0;
+}
+
+constexpr std::uint64_t kNsPerSecond = 1000000000ULL;
+constexpr std::uint64_t kHourSeconds = 3600;
+constexpr std::uint64_t kDaySeconds = 86400;
+/**
+ * The shipped reset defaults of the client (registration 0x616C670, instructions 0x6181D4B to 0x6181F87; research quest-engine.md Q5): the
+ * daily reset at 05:00 UTC, the weekly reset on the weekday 2 (Tuesday, the gmtime index of 0x5C45A50) at 05:00 UTC. The backend has no
+ * region offset (zero offset: a decision of an agent, the research names no service override).
+ */
+constexpr std::uint64_t kResetSecondOfDay = 5 * kHourSeconds;
+constexpr std::uint64_t kResetWeekday = 2;
+
+/**
+ * @return The start of the next cycle of a schedule after a completion (Unix nanoseconds), or 0 for a kind with no cycle. A completion at the
+ *         start of a cycle belongs to that cycle (research quests-18d rules Q4: "completionTime >= currentCycleStart blocks").
+ */
+std::uint64_t next_cycle(gamedata::ScheduleKind kind, std::uint64_t completedNs) {
+    const std::uint64_t seconds = completedNs / kNsPerSecond;
+    switch (kind) {
+    case gamedata::ScheduleKind::hourly:
+        return (seconds / kHourSeconds + 1) * kHourSeconds * kNsPerSecond;
+    case gamedata::ScheduleKind::daily: {
+        if (seconds < kResetSecondOfDay) {
+            return kResetSecondOfDay * kNsPerSecond;
+        }
+        const std::uint64_t start = (seconds - kResetSecondOfDay) / kDaySeconds * kDaySeconds + kResetSecondOfDay;
+        return (start + kDaySeconds) * kNsPerSecond;
+    }
+    case gamedata::ScheduleKind::weekly: {
+        if (seconds < kResetSecondOfDay) {
+            return 0; // Before the first reset of the Unix time: no real completion.
+        }
+        const std::uint64_t day = (seconds - kResetSecondOfDay) / kDaySeconds;
+        const std::uint64_t weekday = (day + 4) % 7; // 1970-01-01 is a Thursday (gmtime weekday 4).
+        const std::uint64_t sinceReset = (weekday + 7 - kResetWeekday) % 7;
+        const std::uint64_t start = (day - std::min(day, sinceReset)) * kDaySeconds + kResetSecondOfDay;
+        return (start + 7 * kDaySeconds) * kNsPerSecond;
+    }
+    case gamedata::ScheduleKind::none:
+        break;
+    }
+    return 0;
+}
+
 } // namespace
 
 const char* quest_error_text(QuestError error) {
@@ -119,6 +170,16 @@ const char* quest_error_text(QuestError error) {
         return "the RequiredAchievementId of the objective is false for the character";
     case QuestError::completedBefore:
         return "the character completed this objective before";
+    case QuestError::levelTooLow:
+        return "the level of the character is below the RequiredLevel of the objective";
+    case QuestError::wrongFaction:
+        return "the RequiredFaction of the objective does not permit the faction of the character";
+    case QuestError::unsupportedGate:
+        return "the objective has a gate whose rule the backend does not have (QuestArcTag, RequiredWorldTags, a game mode, a progression)";
+    case QuestError::onCooldown:
+        return "the character completed this repeatable objective in the current cycle of its schedule";
+    case QuestError::missingReturnItems:
+        return "a return task of the objective does not have its items in the bag now";
     }
     return "?";
 }
@@ -321,6 +382,11 @@ struct Quests::Plan {
     /** Stage 1.8b: the experience and the coin (the units of the wallet) of the plan (a hand-in, the game event of a task). */
     std::uint64_t experience{0};
     std::uint64_t coin{0};
+    /** Stage 1.8d: the territory standing of the plan (the territory and the points; decision D3 option B). */
+    std::vector<std::pair<std::uint16_t, std::uint64_t>> standing;
+    /** Stage 1.8d: the repeat rows that the plan writes (a completion of a repeatable objective with a schedule) and removes (a reset). */
+    std::vector<state::QuestRepeatRow> repeatWrites;
+    std::vector<std::string> repeatDeletes;
     std::uint64_t nowNs;
     std::uint64_t steps{0};
     bool overflow{false};
@@ -495,13 +561,16 @@ struct Quests::Plan {
         }
         const gamedata::QuestGameEvent* event = data.game_event(eventId);
         if (event != nullptr && !event->item.empty() && event->itemQty > 0) {
-            if (!fits(GrantItem{event->item, event->itemQty, std::nullopt, {}})) {
+            const auto quantity = static_cast<std::uint32_t>(event->itemQty);
+            if (!fits(GrantItem{event->item, quantity, std::nullopt, {}})) {
+                // The task waits: it is in the index of the items (code review of stage 1.8b, finding QR8B-R11), and a change of the items
+                // tries the event again (Quests::refresh).
                 notes.push_back("the bag has no place for the item " + event->item + " of the game event " + eventId + ": the task " + task.id
                                 + " waits");
                 return false;
             }
-            itemActions.push_back(QuestItemAction{true, GrantItem{event->item, event->itemQty, std::nullopt, {}}});
-            itemDelta[lower_text(event->item)] += event->itemQty;
+            itemActions.push_back(QuestItemAction{true, GrantItem{event->item, quantity, std::nullopt, {}}});
+            itemDelta[lower_text(event->item)] += quantity;
         }
         std::string whisperText = "no whisper";
         if (const gamedata::QuestWhisper* whisper = data.whisper_of_event(eventId)) {
@@ -716,6 +785,17 @@ struct Quests::Plan {
         (void)index;
     }
 
+    /**
+     * @return True when the root of a quest is satisfied: the quest waits for its hand-in, and its StayActive tasks do not regress (stage 1.8d,
+     *         live F of the beach chain). The data puts the hand-in of 06_crewmates at Aelstrom in the watchtower camp, outside the shipwreck
+     *         place of its StayActive task 6: with a regression no character could hand it in. The client function (0x3ADDEC0) has no check
+     *         of the objective; a decision of an agent from the data (case QD11).
+     */
+    bool holds(const QuestInstance& quest) const {
+        const QuestObjective* objective = objective_of(quest);
+        return objective != nullptr && objective->root < quest.tasks.size() && done(quest.tasks[objective->root].state);
+    }
+
     /** Sets the value of a predicate task: its progress, its completion, or its regression (a CompleteActive task below its target). */
     void set_progress(QuestInstance& quest, std::uint8_t index, std::uint32_t value) {
         const QuestObjective* objective = objective_of(quest);
@@ -737,6 +817,9 @@ struct Quests::Plan {
             return;
         }
         if (state.state == quest_state::kCompleteActive && value < node.target) {
+            if (holds(quest)) {
+                return;
+            }
             // The regression of a StayActive task (client 0x3ADDEC0: a CompleteActive task whose progress falls below its target returns
             // to Active and notifies its parent; code review of stage 1.8a, finding QR8A-R3).
             state.state = quest_state::kActive;
@@ -936,6 +1019,9 @@ struct Quests::Plan {
                 if (value == satisfied && !(value && seen->tasks[wait.index].state == quest_state::kActive)) {
                     continue;
                 }
+                if (!value && holds(*seen)) {
+                    continue; // A ready quest holds its satisfied wait (stage 1.8d): no regression, and no round for it.
+                }
                 QuestInstance* quest = edit(wait.instance);
                 const QuestObjective* objective = objective_of(*quest);
                 set_progress(*quest, wait.index, value ? objective->nodes[wait.index].target : 0U);
@@ -997,6 +1083,51 @@ void Quests::schedule(const std::string& characterId, std::uint64_t instance, st
     const std::int64_t left = static_cast<std::int64_t>(startNs) + durationNs - static_cast<std::int64_t>(now_ns());
     const auto delay = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::nanoseconds(std::max<std::int64_t>(0, left)));
     m_world.after(delay, [characterId, instance, index, startNs](World& world) { world.quests().timer_due(characterId, instance, index, startNs); });
+}
+
+void Quests::schedule_repeat(const std::string& characterId, std::uint32_t objectiveCrc, std::uint64_t resetNs) {
+    // One deadline of the world clock for each repeat (MP-8: the work follows the due entries, not each quest of each player in each tick).
+    const std::int64_t left = static_cast<std::int64_t>(resetNs) - static_cast<std::int64_t>(now_ns());
+    const auto delay = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::nanoseconds(std::max<std::int64_t>(0, left)));
+    ++m_counts.repeatsScheduled;
+    m_world.after(delay, [characterId, objectiveCrc, resetNs](World& world) { world.quests().repeat_due(characterId, objectiveCrc, resetNs); });
+}
+
+void Quests::repeat_due(const std::string& characterId, std::uint32_t objectiveCrc, std::uint64_t resetNs) {
+    Entity* entity = m_world.find_character(characterId);
+    if (entity == nullptr || data() == nullptr || !entity->quests.loaded) {
+        return; // The character left: its next entry schedules the reset again from its row.
+    }
+    const auto found = entity->quests.repeats.find(objectiveCrc);
+    const QuestObjective* objective = m_data->objective_by_crc(objectiveCrc);
+    if (found == entity->quests.repeats.end() || found->second.resetNs != resetNs || objective == nullptr) {
+        return; // An old deadline: a later completion has its own.
+    }
+    if (now_ns() < resetNs) {
+        schedule_repeat(characterId, objectiveCrc, resetNs); // The world clock moved back (a development command): wait again.
+        return;
+    }
+    ++m_counts.repeatsDue;
+    // The reset generation: one plan removes the completion achievement of the objective and the repeat row; the person offers it again.
+    Plan plan(*this, *entity, now_ns());
+    if (!objective->achievement.empty()) {
+        plan.action(objective->achievement, false);
+    }
+    // The row keeps the generation (the number of completions) with no deadline.
+    state::QuestRepeatRow row = found->second;
+    row.resetNs = 0;
+    plan.repeatWrites.push_back(row);
+    const auto subscriptions = m_subscriptions.find(entity->id);
+    plan.settle(subscriptions != m_subscriptions.end() ? subscriptions->second.get() : nullptr);
+    const QuestError error = commit(*entity, plan, {});
+    if (error == QuestError::storeFailed) {
+        m_world.after(kTimerRetry, [characterId, objectiveCrc, resetNs](World& world) { world.quests().repeat_due(characterId, objectiveCrc, resetNs); });
+    } else if (error == QuestError::none) {
+        ++m_counts.repeatResets;
+        // The offer of the person of an open conversation follows the bits (Persons::refresh_offer at the next request).
+    }
+    log::write("quests: the repeat of %s of character %s (completion %u) reset at its cycle: %s", objective->id.c_str(), characterId.c_str(),
+               static_cast<unsigned>(found == entity->quests.repeats.end() ? 0 : found->second.completions), quest_error_text(error));
 }
 
 bool Quests::repeated(std::uint64_t result) const {
@@ -1080,8 +1211,10 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
             if (!task.interactTag.empty() && open) {
                 subscriptions.add("t:" + task.interactTag, entry);
             }
+            // An Active give and an Active TaskTriggerGameEvent wait for a place in the bag (code review of stage 1.8b, finding QR8B-R11).
             if (gamedata::is_possession(task.type) || task.type == task_type::kEquipItem
-                || (open && (task.type == task_type::kGiveItem || task.type == task_type::kGiveAndTakeItem))) {
+                || (open && (task.type == task_type::kGiveItem || task.type == task_type::kGiveAndTakeItem
+                             || task.type == task_type::kTriggerGameEvent))) {
                 subscriptions.add("items", entry);
             }
             if (is_place(task.type)
@@ -1215,6 +1348,19 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
             return QuestError::cannotPay;
         }
     }
+    // The territory standing (stage 1.8d): one plan of the skill system (the owner of the categorical progressions).
+    std::optional<Skills::Plan> standing;
+    if (!plan.standing.empty()) {
+        standing = m_world.skills().plan_none(entity.characterId);
+        for (const auto& [territory, amount] : plan.standing) {
+            if (const ProgressError error = m_world.skills().add_standing(*standing, territory, amount); error != ProgressError::none) {
+                log::write("quests: the standing %llu of the territory %u for character %s cannot be given (%s): no change",
+                           static_cast<unsigned long long>(amount), static_cast<unsigned>(territory), entity.characterId.c_str(),
+                           progress_error_text(error));
+                return QuestError::cannotPay;
+            }
+        }
+    }
     state::Store::Batch batch(m_store);
     bool ok = batch.open();
     for (const std::uint64_t instance : plan.changed) {
@@ -1272,6 +1418,15 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     }
     if (ok && sheet) {
         ok = m_world.progress().write(*sheet);
+    }
+    if (ok && standing) {
+        ok = m_world.skills().write(*standing);
+    }
+    for (const state::QuestRepeatRow& row : plan.repeatWrites) {
+        ok = ok && m_store.write_quest_repeat(entity.characterId, row);
+    }
+    for (const std::string& objective : plan.repeatDeletes) {
+        ok = ok && m_store.delete_quest_repeat(entity.characterId, objective);
     }
     ok = ok && batch.commit();
     if (!ok) {
@@ -1340,6 +1495,23 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     // The level and the experience first (the finish of the items refreshes the gear with them; the order of the build presets).
     if (sheet) {
         (void)m_world.progress().finish(*sheet, "the experience of a quest");
+    }
+    if (standing) {
+        (void)m_world.skills().finish(*standing, "the territory standing of a quest");
+    }
+    // The repeats (stage 1.8d): the rows of the entity, and a deadline of the world clock for each new one.
+    for (const std::string& objective : plan.repeatDeletes) {
+        if (const QuestObjective* row = m_data->objective(objective)) {
+            entity.quests.repeats.erase(row->crc);
+        }
+    }
+    for (const state::QuestRepeatRow& row : plan.repeatWrites) {
+        if (const QuestObjective* objective = m_data->objective(row.objective)) {
+            entity.quests.repeats[objective->crc] = row;
+            if (row.resetNs != 0) {
+                schedule_repeat(entity.characterId, objective->crc, row.resetNs);
+            }
+        }
     }
     m_world.ownership().quest_achievements(entity, unlocks, locks);
     m_world.touch(entity.id, ComponentKey::objectives);
@@ -1425,6 +1597,11 @@ void Quests::entered(Entity& entity) {
     if (data() == nullptr) {
         return; // No quest data: no quest, and no change of the states (rule A5a).
     }
+    // The first instance id of this run, before any change of a character can remove a row (stage 1.8d, a finding of the live run: a lazy
+    // start after a hand-in gave a new instance the id of the instance of the completed notice of the same world entry).
+    if (m_nextInstance == 0) {
+        m_nextInstance = std::max(kFirstInstance, m_store.largest_quest_instance() + 1);
+    }
     QuestLog log;
     std::size_t skipped = 0;
     for (const state::QuestRow& row : m_store.list_quests(entity.characterId)) {
@@ -1463,6 +1640,12 @@ void Quests::entered(Entity& entity) {
             log.awards[{objective->crc, static_cast<std::uint8_t>(row.index)}] = row.amount;
         }
     }
+    // Stage 1.8d: the repeats of the completed repeatable objectives (their reset on the world clock).
+    for (const state::QuestRepeatRow& row : m_store.list_quest_repeats(entity.characterId)) {
+        if (const QuestObjective* objective = m_data->objective(row.objective)) {
+            log.repeats[objective->crc] = row;
+        }
+    }
     log.loaded = true;
     log.data = m_data;
     entity.quests = std::move(log);
@@ -1484,6 +1667,12 @@ void Quests::entered(Entity& entity) {
         }
     }
     index(entity, {}, true);
+    // Stage 1.8d: the deadline of each repeat (a reset that is past runs at once: the time while the character was away counts).
+    for (const auto& [crc, row] : entity.quests.repeats) {
+        if (row.resetNs != 0) {
+            schedule_repeat(entity.characterId, crc, row.resetNs);
+        }
+    }
     // The seasons readiness state: the HUD pin needs it (live check L1 of stage 1.8a).
     m_world.touch(entity.id, ComponentKey::seasons);
     if (!entity.quests.active.empty()) {
@@ -1639,6 +1828,18 @@ void Quests::refresh(Entity& entity, bool items, bool places, bool achievements,
                 // A give that waited for a place in the bag tries again when the bag has the place now.
                 if (seen->tasks[entry.index].state == quest_state::kActive
                     && plan.fits(GrantItem{task->itemName, plan.objective_of(*seen)->nodes[entry.index].target, std::nullopt, {}})) {
+                    QuestInstance* quest = plan.edit(entry.instance);
+                    quest->tasks[entry.index].state = quest_state::kNew;
+                    plan.activate(*quest, entry.index);
+                }
+                continue;
+            }
+            if (task->type == task_type::kTriggerGameEvent) {
+                // A game event whose item waited for a place in the bag (code review of stage 1.8b, finding QR8B-R11): the activation
+                // again, with all its effects in this plan, when the item fits now.
+                const gamedata::QuestGameEvent* event = task->targets.empty() ? nullptr : m_data->game_event(task->targets.front());
+                if (seen->tasks[entry.index].state == quest_state::kActive && event != nullptr && event->itemQty > 0
+                    && plan.fits(GrantItem{event->item, static_cast<std::uint32_t>(event->itemQty), std::nullopt, {}})) {
                     QuestInstance* quest = plan.edit(entry.instance);
                     quest->tasks[entry.index].state = quest_state::kNew;
                     plan.activate(*quest, entry.index);
@@ -1913,7 +2114,13 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
             keys.emplace_back("c:*", amount);
             break;
         case QuestEventKind::refine:
+            // Stage 1.8d (live check of the beach chain): a recipe with IsRefining is a craft of its recipe too. TaskCraftRecipe of
+            // 06_boarfeast names Procedural_HealthRecoveryT1 (IsRefining 1, the Light Ration of the camp): the main story counts it (the
+            // game data; a decision of an agent: the server rule of the original game is not in the client). TaskRefineRecipe counts only
+            // a refining recipe.
             keys.emplace_back("r:" + key, amount);
+            keys.emplace_back("c:" + key, amount);
+            keys.emplace_back("c:*", amount);
             break;
         case QuestEventKind::interact:
             keys.emplace_back("i:" + key, 1U);
@@ -1953,7 +2160,7 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
         return amount;
     };
     std::vector<std::pair<std::string, std::uint32_t>> lookups = keys;
-    if (event.attempt > 0) {
+    if (event.attempt > 0 || event.restricted) {
         lookups.clear();
         for (const auto& [instance, index] : event.matched) {
             const Subscriber entry{instance, index};
@@ -2026,7 +2233,7 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
         ++m_counts.eventRetries;
         QuestEvent again = event;
         ++again.attempt;
-        if (event.attempt == 0) {
+        if (event.attempt == 0 && !event.restricted) {
             for (const auto& [entry, amount] : matched) {
                 again.matched.emplace_back(entry.instance, entry.index);
             }
@@ -2405,15 +2612,44 @@ QuestError Quests::available(const Entity& entity, const QuestObjective& objecti
     if (active_of(entity, objective.crc) != nullptr) {
         return QuestError::alreadyActive;
     }
-    // A quest that the character completed: its completion achievement (the client IsObjectiveComplete 0x3A48A30; the repeats of a quest
-    // are stage 1.8d).
-    if (!objective.achievement.empty() && conditional(entity, objective.achievement)) {
-        return QuestError::completedBefore;
+    // The checks of the client at a person (0x37AE910) and its eligibility (0x3A4BFE0), in their order; the client hides an offer that fails
+    // one of them (no locked offer: research quests-18d rules Q2). The active list of one character (MP-8).
+    if (!objective.achievement.empty()) {
+        // Another active objective with the same completion achievement (HasObjectiveWithCompletionAchievement 0x3A47310: the variants).
+        const std::string achievement = lower_text(objective.achievement);
+        for (const QuestInstance& quest : entity.quests.active) {
+            const QuestObjective* other = m_data->objective_by_crc(quest.objectiveCrc);
+            if (other != nullptr && !other->achievement.empty() && lower_text(other->achievement) == achievement) {
+                return QuestError::alreadyActive;
+            }
+        }
+        // The completion achievement (IsObjectiveComplete 0x3A48A30). A repeatable objective with a schedule of the data is on its cooldown
+        // until the reset of its cycle takes the achievement away (stage 1.8d); a repeat with no schedule stays completed (decision D4 of
+        // the user is open: the interval of such a repeat).
+        if (conditional(entity, objective.achievement)) {
+            const auto repeat = entity.quests.repeats.find(objective.crc);
+            return repeat != entity.quests.repeats.end() && repeat->second.resetNs != 0 ? QuestError::onCooldown : QuestError::completedBefore;
+        }
+    }
+    // The gates whose service rule the backend does not have: a game mode (no row has it), a quest arc (the query 0x2CE2150), the world tags
+    // (the release status of the service, 0x3A48F40 and 0x3A8DB90), a categorical progression (no row has it). A decision of an agent: an
+    // unknown rule is false, as an unknown achievement is (research U7).
+    if (!objective.gameMode.empty() || !objective.questArc.empty() || !objective.worldTags.empty() || !objective.requiredProgression.empty()) {
+        return QuestError::unsupportedGate;
+    }
+    // RequiredLevel: the level index plus 1 (the level of the screen) is not below it (0x3A4C13E).
+    if (objective.requiredLevel != 0 && entity.progression.level < objective.requiredLevel) {
+        return QuestError::levelTooLow;
     }
     // RequiredAchievementId: the client offers only the variant whose conditional is true (the eight variants of 06_boarfeast name one
     // archetype achievement each; research quest-engine-3.md Q5). An empty cell has no rule.
     if (!objective.required.empty() && !conditional(entity, objective.required)) {
         return QuestError::notAvailable;
+    }
+    // RequiredFaction: bit 0 of the mask bypasses the test, else the bit of the faction of the character (0x3A4C166). The backend has no
+    // faction of a character yet (roadmap 4.5): each character is unaligned (faction 0).
+    if (!faction_allowed(objective.factionMask, kNoFaction)) {
+        return QuestError::wrongFaction;
     }
     return QuestError::none;
 }
@@ -2446,6 +2682,92 @@ bool Quests::ready(const QuestInstance& quest) const {
     return objective != nullptr && objective->root < quest.tasks.size() && done(quest.tasks[objective->root].state);
 }
 
+QuestError Quests::reward_join(const Entity& entity, const QuestObjective& objective, std::uint16_t originTerritory, RewardJoin& join,
+                               std::string& detail) const {
+    join = RewardJoin{};
+    // The rewards (research quest-engine.md Q6): the success event (UniversalExpAmount, CurrencyReward with CoinRewardChance, ItemReward with
+    // ItemRewardQty and GearScoreRange, AchievementId, TerritoryStanding), the row (ExperienceReward, ItemRewardName with ItemRewardQty,
+    // AchievementId, ObjectiveReward). A reward with no owner in the backend refuses the hand-in: a completed quest must not lose a reward (the
+    // brief of stage 1.8b; stage 1.8d: the faction rewards (roadmap 4.5), the other currencies and tracks, an entitlement, a status effect, and
+    // ProgressionReward stay refused).
+    const auto refuse = [&](QuestError error, std::string text) {
+        detail = std::move(text);
+        return error;
+    };
+    const gamedata::QuestGameEvent* event = objective.successEvent.empty() ? nullptr : m_data->game_event(objective.successEvent);
+    if (!objective.successEvent.empty() && event == nullptr) {
+        return refuse(QuestError::cannotPay, "the quest data has no game event " + objective.successEvent);
+    }
+    if (event != nullptr && !event->unpaid.empty()) {
+        return refuse(QuestError::cannotPay, "the reward " + event->unpaid.front() + " of " + event->id + " has no owner in the backend");
+    }
+    if (!objective.progressionReward.empty()) {
+        return refuse(QuestError::cannotPay, "the reward ProgressionReward " + objective.progressionReward + " has no owner in the backend");
+    }
+    // Code review of stage 1.8b, finding QR8B-R9: a next objective (ObjectiveReward) that the quest data does not have refuses the hand-in.
+    join.next = objective.objectiveReward.empty() ? nullptr : m_data->objective(objective.objectiveReward);
+    if (!objective.objectiveReward.empty() && join.next == nullptr) {
+        return refuse(QuestError::cannotPay, "the quest data has no next objective " + objective.objectiveReward + " (ObjectiveReward)");
+    }
+    const auto add_item = [&](const std::string& itemId, std::int64_t quantity,
+                              std::optional<std::pair<std::uint16_t, std::uint16_t>> range) -> std::optional<QuestError> {
+        if (itemId.empty() || quantity == 0) {
+            return std::nullopt;
+        }
+        if (quantity < 0) {
+            return refuse(QuestError::cannotPay, "a negative reward quantity of " + itemId + " (a removal: no rule)");
+        }
+        const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
+        const gamedata::ItemDefinition* definition = catalog != nullptr ? catalog->find(itemId) : nullptr;
+        if (definition == nullptr) {
+            return refuse(QuestError::cannotPay, "the item catalog has no reward item " + itemId);
+        }
+        // Stage 1.8d: a loot container (Resource+LootContainer: the Meat Pouch of 06_skinningknife) is a reward item of the bag; its open (1733)
+        // rolls its loot table (ItemContainers). With no loot table of the container in the loot data the item would stay closed: refused.
+        if (lower_text(definition->itemClass).find("lootcontainer") != std::string::npos && !m_world.item_containers().openable(definition->id)) {
+            return refuse(QuestError::cannotPay, "the reward item " + itemId + " is a loot container whose loot table the loot data does not have");
+        }
+        join.items.push_back(RewardItem{definition->id, static_cast<std::uint32_t>(std::min<std::int64_t>(quantity, 0xFFFFFFFF)), range});
+        return std::nullopt;
+    };
+    if (event != nullptr) {
+        if (const std::optional<QuestError> error = add_item(event->item, event->itemQty, event->gearScoreRange)) {
+            return *error;
+        }
+        join.eventExperience = event->experience;
+        join.coin = event->coin;
+        join.coinChance = event->coinChance;
+        if (!event->achievement.empty()) {
+            join.eventAchievements.push_back(event->achievement);
+        }
+        // Stage 1.8d: TerritoryStanding goes to the origin territory of the instance (decision D3 option B of the orchestrator, 2026-10-18: a
+        // rule of this project; the recipient territory of the data is not recovered, research U3). An instance with no origin territory
+        // refuses it (no owner); a gain that gives a new rank too (its token of the territory pool has no owner yet).
+        if (event->standing > 0) {
+            if (originTerritory == 0) {
+                return refuse(QuestError::cannotPay, "the standing " + std::to_string(event->standing) + " of " + event->id
+                                                         + " has no territory (the instance has no origin territory)");
+            }
+            Skills::Plan trial = m_world.skills().plan_none(entity.characterId);
+            if (const ProgressError error = m_world.skills().add_standing(trial, originTerritory, event->standing); error != ProgressError::none) {
+                return refuse(QuestError::cannotPay, "the standing " + std::to_string(event->standing) + " of the territory "
+                                                         + std::to_string(originTerritory) + ": " + progress_error_text(error));
+            }
+            join.standing = event->standing;
+            join.standingTerritory = originTerritory;
+        }
+    }
+    if (const std::optional<QuestError> error = add_item(objective.itemReward, objective.itemRewardQty, std::nullopt)) {
+        return *error;
+    }
+    join.rowExperience = objective.experienceReward;
+    join.achievement = objective.achievement;
+    if (objective.repeatable && !objective.achievement.empty()) {
+        join.schedule = m_data->schedule_kind(objective.schedule);
+    }
+    return QuestError::none;
+}
+
 HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
     HandInResult result;
     result.instance = instance;
@@ -2469,65 +2791,56 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
     if (!ready(*quest)) {
         return refuse(QuestError::notReady, "the root task of " + objective->id + " is not complete");
     }
-    // The rewards (research quest-engine.md Q6): the success event (UniversalExpAmount, CurrencyReward with CoinRewardChance, ItemReward with
-    // ItemRewardQty, AchievementId), the row (ExperienceReward, ItemRewardName with ItemRewardQty, AchievementId, ObjectiveReward). A reward
-    // with no owner in the backend refuses the hand-in: a completed quest must not lose a reward (the brief of stage 1.8b).
-    const gamedata::QuestGameEvent* event = objective->successEvent.empty() ? nullptr : m_data->game_event(objective->successEvent);
-    if (!objective->successEvent.empty() && event == nullptr) {
-        return refuse(QuestError::cannotPay, "the quest data has no game event " + objective->successEvent);
+    // Code review of stage 1.8b, finding QR8B-R2 (research quest-engine.md Q3: the required items at the turn-in): each satisfied return task
+    // (HaveAndReturnItems, GatherAndReturnItems) needs its target count in the bag now; the completion takes it. A shortage refuses the hand-in.
+    for (std::size_t index = 0; index < quest->tasks.size(); ++index) {
+        const QuestTask* task = plan.task_of(*quest, static_cast<std::uint8_t>(index));
+        if (task != nullptr && gamedata::is_return(task->type) && done(quest->tasks[index].state)
+            && plan.item_count(task->itemName) < objective->nodes[index].target) {
+            return refuse(QuestError::missingReturnItems, "the task " + task->id + " needs " + std::to_string(objective->nodes[index].target) + " "
+                                                              + task->itemName + ", and the bag has " + std::to_string(plan.item_count(task->itemName)));
+        }
     }
-    if (event != nullptr && !event->unpaid.empty()) {
-        return refuse(QuestError::cannotPay, "the reward " + event->unpaid.front() + " of " + event->id + " has no owner in the backend (stage 1.8d)");
+    // The rewards: the one reward join of the data (Quests::reward_join), then the rolls of this hand-in (the coin chance, the gear score of
+    // a range, the perks of the items) in its plan.
+    RewardJoin join;
+    std::string detail;
+    if (const QuestError error = reward_join(entity, *objective, quest->originTerritory, join, detail); error != QuestError::none) {
+        return refuse(error, detail);
     }
-    if (!objective->progressionReward.empty()) {
-        return refuse(QuestError::cannotPay, "the reward ProgressionReward " + objective->progressionReward + " has no owner in the backend");
-    }
+    const QuestObjective* next = join.next;
     std::vector<LootDrop> drops;
-    const auto add_item = [&](const std::string& itemId, std::int64_t quantity) -> bool {
-        if (itemId.empty() || quantity == 0) {
-            return true;
+    for (const RewardItem& item : join.items) {
+        // GearScoreRange of the event (client 0x31E43A0): the gear score of the item, one value or a range of the world generator (a
+        // decision of an agent: the three rows of the data have one value).
+        std::optional<std::uint32_t> gearScore;
+        if (item.gearScoreRange) {
+            const auto [low, high] = *item.gearScoreRange;
+            const float unit = m_world.random_unit();
+            gearScore = low + std::min<std::uint32_t>(static_cast<std::uint32_t>(unit * static_cast<float>(high - low + 1)), high - low);
         }
-        if (quantity < 0) {
-            refuse(QuestError::cannotPay, "a negative reward quantity of " + itemId + " (a removal: no rule)");
-            return false;
-        }
-        const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
-        const gamedata::ItemDefinition* definition = catalog != nullptr ? catalog->find(itemId) : nullptr;
-        if (definition == nullptr) {
-            refuse(QuestError::cannotPay, "the item catalog has no reward item " + itemId);
-            return false;
-        }
-        // A loot container (Resource+LootContainer: the Meat Pouch of 06_skinningknife) is opened by a later stage (1.8d, research U9): its
-        // reward cannot be paid yet.
-        if (lower_text(definition->itemClass).find("lootcontainer") != std::string::npos) {
-            refuse(QuestError::cannotPay, "the reward item " + itemId + " is a loot container with no open path (stage 1.8d)");
-            return false;
-        }
-        drops.push_back(LootDrop{definition->id, static_cast<std::uint32_t>(quantity), std::nullopt});
-        result.items.push_back(definition->id + " x" + std::to_string(quantity));
-        return true;
-    };
-    if (event != nullptr && !add_item(event->item, event->itemQty)) {
-        return result;
-    }
-    if (!add_item(objective->itemReward, objective->itemRewardQty)) {
-        return result;
+        drops.push_back(LootDrop{item.itemId, item.quantity, gearScore});
+        result.items.push_back(item.itemId + " x" + std::to_string(item.quantity));
     }
     // The items with the rules of a new instance of stage 1.3b: the gear score of the item table (GearScoreOverride), its fixed perks and
-    // its perk places with the level of the character (Rewards::grant_items: the roll of world/perk_roll.h).
+    // its perk places with the level of the character (Rewards::grant_items: the roll of world/perk_roll.h, with ForceRarity of the layout).
+    // The perks go into the instance (finding QR8B-R1).
     for (const GrantItem& item : m_world.rewards().grant_items(drops, entity.progression.level)) {
         plan.itemActions.push_back(QuestItemAction{true, item});
         plan.itemDelta[lower_text(item.itemId)] += item.quantity;
     }
-    if (event != nullptr) {
-        plan.experience += event->experience;
-        if (event->coin > 0 && (event->coinChance >= 1.0 || static_cast<double>(m_world.random_unit()) < event->coinChance)) {
-            plan.coin += event->coin;
-        }
-        if (!event->achievement.empty()) {
-            plan.action(event->achievement, true);
-            result.achievements.push_back(event->achievement);
-        }
+    plan.experience += join.eventExperience;
+    if (join.coin > 0 && (join.coinChance >= 1.0 || static_cast<double>(m_world.random_unit()) < join.coinChance)) {
+        plan.coin += join.coin;
+    }
+    for (const std::string& achievement : join.eventAchievements) {
+        plan.action(achievement, true);
+        result.achievements.push_back(achievement);
+    }
+    if (join.standing > 0) {
+        plan.standing.emplace_back(join.standingTerritory, join.standing);
+        result.standing = join.standing;
+        result.standingTerritory = join.standingTerritory;
     }
     plan.experience += objective->experienceReward;
     result.experience = plan.experience;
@@ -2539,12 +2852,26 @@ HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
         plan.action(objective->achievement, true);
         result.achievements.push_back(objective->achievement);
     }
-    if (!objective->objectiveReward.empty()) {
-        // ObjectiveReward: the next objective (research quest-engine.md Q6). No row of the beach chain has it.
-        if (const QuestObjective* next = m_data->objective(objective->objectiveReward); next != nullptr && active_of(entity, next->crc) == nullptr) {
-            plan.add(*next, next_instance(), "reward", quest->originTerritory);
-            result.next = next->id;
+    // Stage 1.8d: the repeat (research quests-18d rules Q4): a repeatable objective with a schedule of the data keeps its completion achievement
+    // to the start of the next cycle of the schedule (the OnCooldown answer of the person, 0x37AE910); then the reset removes it. A repeat with
+    // no schedule, or with a seasonal window, is not repeated (decision D4 of the user is open).
+    if (objective->repeatable && !objective->achievement.empty()) {
+        const std::uint64_t reset = next_cycle(m_data->schedule_kind(objective->schedule), plan.nowNs);
+        if (reset != 0) {
+            state::QuestRepeatRow row;
+            row.objective = objective->id;
+            const auto before = entity.quests.repeats.find(objective->crc);
+            row.completions = (before != entity.quests.repeats.end() ? before->second.completions : 0) + 1;
+            row.completedNs = plan.nowNs;
+            row.resetNs = reset;
+            plan.repeatWrites.push_back(row);
+            result.resetNs = reset;
         }
+    }
+    if (next != nullptr && active_of(entity, next->crc) == nullptr) {
+        // ObjectiveReward: the next objective (research quest-engine.md Q6). No row of the beach chain has it.
+        plan.add(*next, next_instance(), "reward", quest->originTerritory);
+        result.next = next->id;
     }
     // Decision D5 option A (orchestrator, 2026-10-18): a full bag refuses the hand-in; nothing changes, and the quest stays ready.
     if (!plan.itemActions.empty()) {
@@ -2576,13 +2903,27 @@ bool Quests::cutscene_requested(Entity& entity, std::uint32_t cutsceneCrc) {
     const auto found = m_subscriptions.find(entity.id);
     const std::vector<Subscriber>* list =
         found != m_subscriptions.end() && found->second ? found->second->find("cut:" + std::to_string(cutsceneCrc)) : nullptr;
-    bool waits = false;
-    for (std::size_t position = 0; list != nullptr && !waits && position < list->size(); ++position) {
+    std::vector<std::pair<std::uint64_t, std::uint8_t>> tasks;
+    for (std::size_t position = 0; list != nullptr && position < list->size(); ++position) {
         ++m_counts.subscribersVisited;
-        const QuestInstance* quest = instance_of(entity, (*list)[position].instance);
-        waits = quest != nullptr && quest->tasks[(*list)[position].index].state == quest_state::kActive;
+        const Subscriber entry = (*list)[position];
+        const QuestInstance* quest = instance_of(entity, entry.instance);
+        if (quest != nullptr && quest->tasks[entry.index].state == quest_state::kActive) {
+            tasks.emplace_back(entry.instance, entry.index);
+        }
     }
-    if (!waits) {
+    // A second 6703 of the pending cutscene (code review of stage 1.8b, finding QR8B-R8): the grant again, with its tasks and its start.
+    // A pending grant whose tasks all ended (a reset) is not kept: the new request gets a new grant for the tasks of now.
+    const bool pendingLives = std::any_of(entity.quests.cutsceneTasks.begin(), entity.quests.cutsceneTasks.end(), [&](const auto& task) {
+        return std::find(tasks.begin(), tasks.end(), task) != tasks.end();
+    });
+    if (cutsceneCrc != 0 && entity.quests.pendingCutscene == cutsceneCrc && pendingLives) {
+        ++m_counts.cutsceneGrants;
+        log::write("quests: character %s asks again for its pending cutscene %08x: the same grant (6707)%s", entity.characterId.c_str(),
+                   static_cast<unsigned>(cutsceneCrc), entity.quests.cutsceneStarted ? ", it started" : "");
+        return true;
+    }
+    if (tasks.empty()) {
         ++m_counts.cutsceneRefusals;
         log::write("quests: the client of character %s asks for the cutscene %08x, which no active task of the character waits for: no grant",
                    entity.characterId.c_str(), static_cast<unsigned>(cutsceneCrc));
@@ -2591,6 +2932,7 @@ bool Quests::cutscene_requested(Entity& entity, std::uint32_t cutsceneCrc) {
     // The pending cutscene of the character (research quest-engine-3.md Q2: the server grants 6707 when a task waits for it; live check C1).
     entity.quests.pendingCutscene = cutsceneCrc;
     entity.quests.cutsceneStarted = false;
+    entity.quests.cutsceneTasks = std::move(tasks);
     ++m_counts.cutsceneGrants;
     log::write("quests: character %s gets the cutscene %08x (grant 6707)", entity.characterId.c_str(), static_cast<unsigned>(cutsceneCrc));
     return true;
@@ -2617,6 +2959,10 @@ bool Quests::cutscene_ended(Entity& entity) {
     QuestEvent ended;
     ended.kind = QuestEventKind::cutscene;
     ended.screenCrc = pending;
+    // Only the tasks of the grant (finding QR8B-R7): a task of a replacement instance (a reset) did not get the grant.
+    ended.matched = std::move(entity.quests.cutsceneTasks);
+    ended.restricted = true;
+    entity.quests.cutsceneTasks.clear();
     const std::uint64_t before = m_counts.progressChanges;
     event(entity, ended);
     const bool changed = m_counts.progressChanges != before;
@@ -2645,35 +2991,46 @@ bool Quests::cinematic(Entity& entity, std::uint32_t cinematicCrc, bool ended) {
 }
 
 void Quests::topic_finished(Entity& entity, const std::string& npc, const std::string& topic, const std::string& achievementUnlock) {
+    (void)topics_finished(entity, npc, {QuestTopic{topic, achievementUnlock}});
+}
+
+QuestError Quests::topics_finished(Entity& entity, const std::string& npc, const std::vector<QuestTopic>& topics) {
     if (data() == nullptr || !entity.quests.loaded) {
-        return;
+        return QuestError::none;
     }
     const auto found = m_subscriptions.find(entity.id);
     const Subscriptions* subscriptions = found != m_subscriptions.end() ? found->second.get() : nullptr;
     Plan plan(*this, entity, now_ns());
-    // AchievementUnlock of the topic (data ConversationTopicData; one time: a bit). Live check of stage 1.8b: the client sends 3158 at the
-    // selection and 5397 at the close; the bit changes nothing in the open conversation, and the topic of 06_demonstorm is at a walkaway
-    // person: the effects come at the finish.
-    if (!achievementUnlock.empty()) {
-        plan.action(achievementUnlock, true);
-    }
-    if (const std::vector<Subscriber>* list = subscriptions != nullptr ? subscriptions->find("ct:" + person_key(npc, topic)) : nullptr) {
-        const std::vector<Subscriber> copy = *list;
-        for (const Subscriber& entry : copy) {
-            ++m_counts.subscribersVisited;
-            if (QuestInstance* quest = plan.edit(entry.instance)) {
-                plan.add_progress(*quest, entry.index, 1);
+    std::string names;
+    for (const QuestTopic& topic : topics) {
+        names += (names.empty() ? "" : ", ") + topic.topic;
+        // AchievementUnlock of the topic (data ConversationTopicData; one time: a bit). Live check of stage 1.8b: the client sends 3158 at the
+        // selection and 5397 at the close; the bit changes nothing in the open conversation, and the topic of 06_demonstorm is at a walkaway
+        // person: the effects come at the finish.
+        if (!topic.achievementUnlock.empty()) {
+            plan.action(topic.achievementUnlock, true);
+        }
+        if (const std::vector<Subscriber>* list = subscriptions != nullptr ? subscriptions->find("ct:" + person_key(npc, topic.topic)) : nullptr) {
+            const std::vector<Subscriber> copy = *list;
+            for (const Subscriber& entry : copy) {
+                ++m_counts.subscribersVisited;
+                if (QuestInstance* quest = plan.edit(entry.instance)) {
+                    plan.add_progress(*quest, entry.index, 1);
+                }
             }
         }
     }
     if (plan.actions.empty() && plan.changed.empty()) {
-        return;
+        return QuestError::none;
     }
-    ++m_counts.topicEffects;
     plan.settle(subscriptions);
     const QuestError error = commit(entity, plan, {});
-    log::write("quests: character %s finished the topic %s of %s%s%s: %s", entity.characterId.c_str(), topic.c_str(), npc.c_str(),
-               achievementUnlock.empty() ? "" : ", AchievementUnlock ", achievementUnlock.c_str(), quest_error_text(error));
+    if (error == QuestError::none) {
+        m_counts.topicEffects += topics.size();
+    }
+    log::write("quests: character %s finished the topic(s) %s of %s: %s", entity.characterId.c_str(), names.c_str(), npc.c_str(),
+               quest_error_text(error));
+    return error;
 }
 
 void Quests::state_selected(Entity& entity, const std::string& npc, const std::string& state) {

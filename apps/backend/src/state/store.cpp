@@ -15,7 +15,7 @@
 namespace soulwarden::backend::state {
 namespace {
 
-constexpr int kSchemaVersion = 16;
+constexpr int kSchemaVersion = 17;
 
 constexpr const char* kMigration1 = R"sql(
 CREATE TABLE IF NOT EXISTS backend_metadata(
@@ -388,12 +388,29 @@ CREATE TABLE IF NOT EXISTS character_quest_awards(
 );
 )sql";
 
+/**
+ * Version 17 (stage 1.8d: docs/systems/quests.md). The repeat of a completed repeatable objective with a schedule
+ * (`character_quest_repeats`): the objective id, the number of its completions, the time of the last completion, and the time of the
+ * reset of its completion achievement (the start of the next cycle of its schedule; world clock, Unix nanoseconds).
+ */
+constexpr const char* kMigration17QuestRepeats = R"sql(
+CREATE TABLE IF NOT EXISTS character_quest_repeats(
+    character_id TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    completions INTEGER NOT NULL,
+    completed_ns INTEGER NOT NULL,
+    reset_ns INTEGER NOT NULL,
+    PRIMARY KEY(character_id, objective)
+);
+)sql";
+
 /** The tables whose rows have a character id as the owner key: the rows go with the character. */
 constexpr const char* kCharacterTables[] = {"items",        "currencies",          "character_progress", "progressions",
                                             "ability_nodes", "ability_bars",        "achievements",       "entitlement_rewards",
                                             "loot_claims",   "loot_claim_items",    "loot_bags",          "loot_bag_items",
                                             "craft_cooldowns", "character_quests",  "character_quest_tasks", "character_quest_pins",
-                                            "character_quest_grants", "character_quest_undo", "character_quest_awards"};
+                                            "character_quest_grants", "character_quest_undo", "character_quest_awards",
+                                            "character_quest_repeats"};
 
 struct Statement {
     sqlite3_stmt* handle{nullptr};
@@ -677,6 +694,13 @@ bool Store::migrate() {
     if (version < 16) {
         // Stage 1.8c: the award rows of the quests.
         if (!execute("BEGIN IMMEDIATE") || !execute(kMigration16QuestAwards) || !execute("PRAGMA user_version=16") || !execute("COMMIT")) {
+            (void)execute("ROLLBACK");
+            return false;
+        }
+    }
+    if (version < 17) {
+        // Stage 1.8d: the repeats of the quests.
+        if (!execute("BEGIN IMMEDIATE") || !execute(kMigration17QuestRepeats) || !execute("PRAGMA user_version=17") || !execute("COMMIT")) {
             (void)execute("ROLLBACK");
             return false;
         }
@@ -1879,6 +1903,55 @@ bool Store::delete_quest_awards(const std::string& characterId, const std::strin
         return false;
     }
     Statement statement(m_database, "DELETE FROM character_quest_awards WHERE character_id=?1 AND objective=?2");
+    statement.bind(1, characterId);
+    statement.bind(2, objective);
+    return end_write(sqlite3_step(statement.handle) == SQLITE_DONE);
+}
+
+std::vector<QuestRepeatRow> Store::list_quest_repeats(const std::string& characterId) {
+    std::lock_guard lock(m_mutex);
+    std::vector<QuestRepeatRow> rows;
+    Statement statement(m_database, "SELECT objective, completions, completed_ns, reset_ns FROM character_quest_repeats WHERE character_id=?1 "
+                                    "ORDER BY objective");
+    statement.bind(1, characterId);
+    while (sqlite3_step(statement.handle) == SQLITE_ROW) {
+        QuestRepeatRow row;
+        row.objective = column_text(statement.handle, 0);
+        row.completions = static_cast<std::uint32_t>(std::clamp<sqlite3_int64>(sqlite3_column_int64(statement.handle, 1), 0, 0x7FFFFFFF));
+        row.completedNs = static_cast<std::uint64_t>(std::max<sqlite3_int64>(sqlite3_column_int64(statement.handle, 2), 0));
+        row.resetNs = static_cast<std::uint64_t>(std::max<sqlite3_int64>(sqlite3_column_int64(statement.handle, 3), 0));
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+bool Store::write_quest_repeat(const std::string& characterId, const QuestRepeatRow& row) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database,
+                        "INSERT INTO character_quest_repeats(character_id, objective, completions, completed_ns, reset_ns) VALUES(?1,?2,?3,?4,?5) "
+                        "ON CONFLICT(character_id, objective) DO UPDATE SET completions=excluded.completions, "
+                        "completed_ns=excluded.completed_ns, reset_ns=excluded.reset_ns");
+    statement.bind(1, characterId);
+    statement.bind(2, row.objective);
+    sqlite3_bind_int64(statement.handle, 3, row.completions);
+    sqlite3_bind_int64(statement.handle, 4, static_cast<sqlite3_int64>(row.completedNs));
+    sqlite3_bind_int64(statement.handle, 5, static_cast<sqlite3_int64>(row.resetNs));
+    const bool ok = sqlite3_step(statement.handle) == SQLITE_DONE;
+    if (!ok) {
+        log::write("store: no write of a repeat row of character %s: %s", characterId.c_str(), sqlite3_errmsg(m_database));
+    }
+    return end_write(ok);
+}
+
+bool Store::delete_quest_repeat(const std::string& characterId, const std::string& objective) {
+    std::lock_guard lock(m_mutex);
+    if (!begin_write()) {
+        return false;
+    }
+    Statement statement(m_database, "DELETE FROM character_quest_repeats WHERE character_id=?1 AND objective=?2");
     statement.bind(1, characterId);
     statement.bind(2, objective);
     return end_write(sqlite3_step(statement.handle) == SQLITE_DONE);

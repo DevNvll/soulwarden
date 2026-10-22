@@ -386,6 +386,16 @@ backend. The tool of each system is also in the document of that system.
 - `loot-tables.json`, stage 1.8c: each base vitals row has a tenth member, its VitalsCategories (the categories of a kill task of the
   quests, client 0x825E7C0); the format stays 2, and the loader takes a row of 9 members (a kill then has the vitals row and the category
   row of its kind as its categories). `check_loot_tool.py` has the case.
+- `loot-tables.json`, stage 1.8d ([Items and equipment](../systems/items-and-equipment.md)): the member `containerRoots` (an object: the
+  item id of each item of the class LootContainer of the master item tables, MasterItemDefinitions, to the loot table of its RepairRecipe
+  `[LTID]NAME`). The tool leaves out a row with a SalvageGameEventID (a different open rule) and a RepairRecipe with no table of the loot
+  data, and counts them (`containerRoots`, `containersWithNoTable`, `containersWithSalvageEvent`). The format stays 2: the member is
+  optional, and a file of before opens no container (the hand-in of a quest with a container reward is refused). The loader refuses a root
+  whose table is not in the file. With made-up tables the item tables are optional (`check_loot_tool.py`).
+- `progression-tables.json` format 3 (stage 1.8d, [Progression and skills](../systems/progression-and-skills.md)): the member `standings`:
+  `[TERRITORY, LARGEST_RANK, RANK_TABLE, POOL, AUTO_RANK_UP]` for each row of CategoricalProgressionData whose name is a territory number,
+  with the rank table `Territory_Standing` and its XpReward (a rank table can have the member `xpReward`). The loader takes the formats 1
+  to 3; with a file of format 1 or 2 the backend has no standing, and the hand-in of a quest with a TerritoryStanding is refused.
 - `gathering-data.json`, stage 1.8c: the quest objects of the variation table Gatherable_Quest (the slice Master_Quest_Instanced of the
   layers): a capital entry `[TEMPLATE, ROW, INTERACT_TAG, ONLY_ON_QUEST]`, its row with the member `"quest": true` (a loot container with the
   loot table Empty is not a refusal for it), and its game event with no row of the event tables (the event of the quests). The format stays

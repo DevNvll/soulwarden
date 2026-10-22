@@ -228,7 +228,9 @@ void abandon_waits(const Options&) {
     quests.task("Never", "taskgameevent", 14, {{"KillEnemyType", "Never"}});
     quests.objective("SourceQuest", {"Unlock", "Never"}, true);
     quests.task("Wait", "taskachievement", 18, {{"ItemName", "Flag"}, {"StayActive", "1"}});
-    quests.objective("WaitQuest", {"Wait"});
+    // Stage 1.8d: a second child that never completes: the wait quest is not ready (a ready quest holds its StayActive tasks, case QD11).
+    quests.task("WaitNever", "taskgameevent", 14, {{"KillEnemyType", "Never"}});
+    quests.objective("WaitQuest", {"Wait", "WaitNever"});
     quests.load(shop);
     shop.enter();
     check(grant(shop, "WaitQuest").ok(), "setup: a wait for the flag");

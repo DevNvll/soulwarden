@@ -81,6 +81,11 @@ enum class ProgressError {
     notEnoughBalance,
     /** The database did not accept the change. */
     storeFailed,
+    /**
+     * Stage 1.8d: a gain of territory standing that gives a new rank. A rank-up gives one token of the point pool of the territory
+     * (TerritoryRankBonus_N, client 0x3CB7500: slot 67) and maybe the XpReward of the rank: rewards with no owner in the backend yet.
+     */
+    standingRankUp,
 };
 
 /** @return A short text for a log line and for the reply of a command. */

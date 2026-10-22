@@ -16,6 +16,7 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
 | The weight of the bag and its limits (encumbered, overencumbered) | `Inventory::encumbrance` (`world/inventory.h`), `tools/gamedata/item_catalog.py` (`item_weight`), `EquipLoadData::encumbranceMax` (`gamedata/perk_data.h`), test cases CF6, CF13 |
 | The perks of an item instance: the places, the swap, the give with perks, the perk command, the loot roll | Protocol notes 4.23, `world/item.h` (`ItemInstance::perks`), `world/inventory.h` (`checked_perks`, `set_perks`, `resolve_perks`), `gamedata/perk_data.h`, `world/perk_roll.h`, test cases IZ1 to IZ3 |
 | The plan of a craft (stage 3.7a): the costs from the unlocked bag and the quick slots, the output of each job with the cause ItemCreated | `Inventory::plan_craft`, `coin_written`, [Crafting](crafting.md), test cases CRAFT2, CRV1 |
+| The open of a loot container item, message 1733 (stage 1.8d) | `world/item_containers.h`, `Inventory::plan_open`, `RepSession::handle_salvage`, `LootTables::container_table`, protocol notes 4.57, test cases QD2, QD6 |
 | The look of the armor in the main menu (stage U4) | `world::menu_appearance`, `world::menu_equipment` (`world/inventory.h`), the columns `armorAppearanceM` and `armorAppearanceF` of the item catalog (format 5), [Identity and characters](identity-and-characters.md), test cases ME1 to ME8 |
 
 ## Rules
@@ -154,6 +155,19 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   orchestrator). A loot container item (the class LootContainer: `QuestReward_MB_Meat_Pouch`) has no open path yet and refuses the hand-in
   (stage 1.8d). The coin of a hand-in goes into the wallet in the same transaction (the units of the wallet: CurrencyReward 150 is 1.50
   coin), up to the wallet limit.
+- Stage 1.8d: the rolled perks of a reward item go into the instance (code review of stage 1.8b, finding QR8B-R1; case QRB1).
+- Stage 1.8d, the open of a loot container (`ItemContainers`, `world/item_containers.h`) [client; data; live D1 and F of stage 1.8d]:
+  the entry "Open" of the action menu of the bag (and a double click) sends 1733 (CraftingComponentServerFacet_InitiateSalvage) on the
+  Crafting facet of the player with the bag slot, the instance, and the quantity 1 [research quests-18d rules Q7; live]. The checks: the
+  facet is the facet of the character of the session, the container is the bag, the slot has the instance of the request, the item is
+  not locked, the quantity is 1 to the stack (100 at most), the item class has `LootContainer`, and the loot data has its table (the
+  member `containerRoots` of `loot-tables.json`: the RepairRecipe `[LTID]NAME` of the item row) [data]. Each unit is one roll of the
+  table (`Rewards::roll_root`) with the level of the character [agent: the item row of a quest container has no ContainerLevel]; the
+  items have the rules of a new instance of stage 1.3b. The take of the container (the cause ItemRemoved) and the items (the cause
+  OpenRewardChest, 26) are one transaction (`Inventory::plan_open`). A full bag, a roll with no item, or a refused write changes
+  nothing [agent: the rule of a gather]. The client shows its reward popup for the cause 26. Live F: the Meat Pouch ("Essential
+  Supplies Cache") gives 10 FoodHealthRecoveryT2 and 5 PotionHealthT1 (the table `QuestReward_MB_Meat_Pouch` is an AND of the two rows)
+  [data; live]. Cases QD2 and QD6.
 
 ## Commands
 

@@ -24,6 +24,7 @@ namespace soulwarden::backend::server::rep {
 inline constexpr std::uint32_t kTypeDropInventoryItems = 1838; // ItemDropComponentServerFacet_DropInventoryItems
 inline constexpr std::uint32_t kTypeSetLockState = 2549;       // ItemRepairComponentServerFacet_RequestSetLockState
 inline constexpr std::uint32_t kTypeUseItem = 2917;            // ContainerComponentServerFacet_ServerUseItem (stage 1.3b)
+inline constexpr std::uint32_t kTypeInitiateSalvage = 1733;    // CraftingComponentServerFacet_InitiateSalvage (stage 1.8d: the open)
 inline constexpr std::uint32_t kTypeEquipItem = 3895;          // PaperdollComponentServerFacet_ServerEquipItem
 inline constexpr std::uint32_t kTypeUnequipItem = 3896;        // PaperdollComponentServerFacet_ServerUnequipItem
 inline constexpr std::uint32_t kTypeSwapItems = 3900;          // PaperdollComponentServerFacet_ServerSwapItems
@@ -69,6 +70,20 @@ struct LockRequest {
     world::InstanceId instance{};
     std::uint32_t quantity{0};
     bool locked{false};
+};
+
+/**
+ * CraftingComponentServerFacet_InitiateSalvage (stage 1.8d; client writer 0x2DF3000, sender 0x2E220D0, caller 0x2E69D20; live check I0 of
+ * stage 1.8d: the entry "Open" of a loot container of the bag sends 48 bytes, the bag, the slot, the instance, 0, 1):
+ *   target:u64 entity:u64 containerType:u32 slot:u32 instance:16 bytes locationQuantity:u32 salvageQuantity:u32
+ */
+struct SalvageRequest {
+    ComponentCall call;
+    std::uint32_t containerType{0};
+    std::uint32_t slot{0};
+    world::InstanceId instance{};
+    std::uint32_t locationQuantity{0};
+    std::uint32_t quantity{0};
 };
 
 /**
@@ -142,6 +157,8 @@ struct PaperdollDropRequest {
 [[nodiscard]] std::optional<BagRequest> read_bag_request(std::span<const std::uint8_t> body, bool item);
 [[nodiscard]] std::optional<PaperdollDropRequest> read_paperdoll_drop_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<LockRequest> read_lock_request(std::span<const std::uint8_t> body);
+/** Stage 1.8d: @return The salvage request (1733), or no value for a body of a different form. */
+[[nodiscard]] std::optional<SalvageRequest> read_salvage_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<EquipRequest> read_equip_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<UnequipRequest> read_unequip_request(std::span<const std::uint8_t> body);
 [[nodiscard]] std::optional<SwapRequest> read_swap_request(std::span<const std::uint8_t> body);

@@ -76,6 +76,16 @@ void stay_active_regression(const Options&) {
     ServerHost host;
     json document = quest_document();
     document["tasks"]["test_wait_flag"]["cells"]["StayActive"] = "1";
+    // Stage 1.8d: the root waits for a third child (an achievement that the data does not know): a quest whose root is satisfied holds its
+    // StayActive tasks (case QD11), and this case tests the regression of a quest that is not ready.
+    document["tasks"]["test_wait_more"] = task("Test_Wait_More", "taskachievement", 18, {{"ItemName", "Test_Never_Known"}});
+    for (json& objective : document["objectives"]) {
+        if (objective["id"] == "Test_WaitQuest") {
+            objective["tree"] = json::array({json::array({0, "test_wait_flag", json::array()}), json::array({1, "test_wait_done", json::array()}),
+                                             json::array({2, "test_wait_more", json::array()}),
+                                             json::array({3, "test_wait_root", json::array({0, 1, 2})})});
+        }
+    }
     check(host.quests.load_text(document.dump()), "setup: a StayActive TaskAchievement");
     const Player player = add_player(host.store, kSteamIdA, "Tester", kQuestA, "Reviewa", state::WorldPosition{100, 200, 30});
     FakeClient client(27100);
@@ -87,8 +97,8 @@ void stay_active_regression(const Options&) {
     check(host.world.ownership().lock_achievement(*entity, "Test_Flag"), "the lock of the bit of the conditional");
     const auto* quest = quest_of(*entity, "Test_WaitQuest");
     note("after the conditional becomes false: " + states_text(*quest));
-    check(quest->tasks[0].state == world::quest_state::kActive && quest->tasks[0].progress == 0 && quest->tasks[2].progress < 2
-              && quest->tasks[2].state == world::quest_state::kActive,
+    check(quest->tasks[0].state == world::quest_state::kActive && quest->tasks[0].progress == 0 && quest->tasks[3].progress < 2
+              && quest->tasks[3].state == world::quest_state::kActive,
           "the task returns to Active with progress 0, and its container counts it no more and is Active again");
     const auto rows = host.store.list_quests(kQuestA);
     check(rows.size() == 1 && rows[0].tasks[0].state == world::quest_state::kActive, "the rows have the regression");

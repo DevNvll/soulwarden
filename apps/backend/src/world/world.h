@@ -37,6 +37,7 @@
 #include "world/chests.h"
 #include "world/crafting.h"
 #include "world/gathering.h"
+#include "world/item_containers.h"
 #include "world/loot_bags.h"
 #include "world/interactions.h"
 #include "world/inventory.h"
@@ -892,6 +893,13 @@ public:
     [[nodiscard]] const LootBags& loot_bags() const {
         return m_lootBags;
     }
+    /** @return The loot container items (stage 1.8d): the open of a container item of the bag (1733). */
+    [[nodiscard]] ItemContainers& item_containers() {
+        return m_itemContainers;
+    }
+    [[nodiscard]] const ItemContainers& item_containers() const {
+        return m_itemContainers;
+    }
     /** @return The spell entities of the world (stage 3.3b-S2a): the vortex of Gravity Well. */
     [[nodiscard]] Spells& spells() {
         return m_spells;
@@ -1026,6 +1034,8 @@ private:
     Chests m_chests;
     /** The personal loot bags (stage 3.5b.2): after the interaction system (its handler and its server children). */
     LootBags m_lootBags;
+    /** The loot container items (stage 1.8d). */
+    ItemContainers m_itemContainers;
     Revision m_lastSpell{0};
     Revision m_lastProjectile{0};
     /** The world time (stage 2.2): one day cycle for the whole world. */

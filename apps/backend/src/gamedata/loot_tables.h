@@ -192,6 +192,11 @@ struct LootData {
     std::unordered_map<std::uint32_t, std::uint32_t> containerFloor;
     std::vector<std::string> chestRoots;
     std::size_t limits{0};
+    /**
+     * Stage 1.8d (`containerRoots`, an optional member of format 2): the loot table of each loot container item (the item id in lower case
+     * to the table id; RepairRecipe "[LTID]NAME" of the item table, client 0x2E57210, 0x3687F10). A file of before has none.
+     */
+    std::unordered_map<std::string, std::string> containerRoots;
     std::vector<LootVitals> bases;
     /** Vitals row id in lower case (a base row, or a level variant row) to the index of its base row. */
     std::unordered_map<std::string, std::uint32_t> vitals;
@@ -249,6 +254,8 @@ public:
     [[nodiscard]] std::optional<std::uint32_t> container_floor(std::uint32_t level) const;
     /** @return The index of a table (the compare ignores the case of the letters A to Z), or no value. */
     [[nodiscard]] std::optional<std::uint32_t> table_index(std::string_view id) const;
+    /** Stage 1.8d: @return The loot table of a loot container item (any case), or no value. */
+    [[nodiscard]] std::optional<std::uint32_t> container_table(std::string_view itemId) const;
     /** @return The table with this id (the compare ignores the case of the letters A to Z), or null. */
     [[nodiscard]] const LootTable* table(std::string_view id) const;
     [[nodiscard]] const LootTable& table(std::uint32_t index) const {

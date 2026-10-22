@@ -181,6 +181,12 @@ bool LootTables::check(LootData& data, std::string& error) {
             return fail("the chest root " + root + " names a table that the file does not have");
         }
     }
+    // The table of a loot container item names a table of the file (stage 1.8d).
+    for (const auto& [item, root] : data.containerRoots) {
+        if (tableKeys.find(lower_text(root)) == tableKeys.end()) {
+            return fail("the loot container " + item + " names a table that the file does not have");
+        }
+    }
     std::unordered_map<std::string, std::uint32_t> bucketKeys;
     for (std::uint32_t index = 0; index < data.buckets.size(); ++index) {
         if (data.buckets[index].id.empty() || !bucketKeys.emplace(lower_text(data.buckets[index].id), index).second) {
@@ -425,6 +431,18 @@ bool LootTables::load(const std::string& path) {
             data.chestRoots.push_back(root.get<std::string>());
         }
         data.limits = document["limits"].size();
+        // Stage 1.8d: the tables of the loot container items (optional: a file of before has none).
+        if (document.contains("containerRoots")) {
+            if (!document["containerRoots"].is_object()) {
+                return fail("the loot container roots are not an object");
+            }
+            for (const auto& [item, root] : document["containerRoots"].items()) {
+                if (!root.is_string() || root.get<std::string>().empty() || item.empty()) {
+                    return fail("a loot container root is not a text");
+                }
+                data.containerRoots.emplace(lower_text(item), root.get<std::string>());
+            }
+        }
     }
     // The tables first: a base row names a table by its id.
     if (!document["tables"].is_object()) {
@@ -605,6 +623,11 @@ std::optional<std::uint32_t> LootTables::loot_ceiling(std::uint32_t level) const
 std::optional<std::uint32_t> LootTables::container_floor(std::uint32_t level) const {
     const auto found = m_data.containerFloor.find(level);
     return found == m_data.containerFloor.end() ? std::nullopt : std::optional<std::uint32_t>(found->second);
+}
+
+std::optional<std::uint32_t> LootTables::container_table(std::string_view itemId) const {
+    const auto found = m_data.containerRoots.find(lower_text(itemId));
+    return found != m_data.containerRoots.end() ? table_index(found->second) : std::nullopt;
 }
 
 std::optional<std::uint32_t> LootTables::table_index(std::string_view id) const {

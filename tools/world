@@ -202,6 +202,9 @@ not, as for the items):
   tools/world quest templates                   the backstory templates of the quest data (decision D2
                                                 option C), with their start objectives
   tools/world quest template CHARACTER ID       the achievements and the start objectives of a template
+  tools/world quest rewards CHARACTER OBJECTIVE [TERRITORY]
+                                                stage 1.8d: the reward join of a hand-in of the objective (what it pays, or the
+                                                reward that refuses it) and the availability of its offer (no change)
   tools/world quest grant CHARACTER OBJECTIVE   a new instance of an objective (development only)
   tools/world quest abandon CHARACTER INSTANCE  the abandon of a quest (stage 1.8c: the rule of message 3836; an
                                                 objective with CanBeAbandoned 0 refuses it)
@@ -694,6 +697,20 @@ def request(data_dir: Path, method: str, path: str, show_bag: bool = True, filte
                           + ", ".join(place or "-" for place in tree["bar"]))
     elif isinstance(document, dict) and "entity" in document:
         show(document)
+    elif isinstance(document, dict) and "payable" in document:
+        state = "payable" if document["payable"] else f"REFUSED: {document['refusal']}"
+        print(f"{document['objective']}: {state}; the offer: {document['available']}")
+        chance = f" (chance {document['coinChance']:g})" if document["coinChance"] < 1 else ""
+        print(f"  experience {document['experience']}, coin units {document['coin']}{chance}")
+        for item in document["items"]:
+            extra = " (loot container)" if item["container"] else ""
+            if "gearScoreRange" in item:
+                extra += f" gear score {item['gearScoreRange'][0]}-{item['gearScoreRange'][1]}"
+            print(f"  item {item['quantity']} x {item['item']}{extra}")
+        if document["standing"]:
+            print(f"  standing {document['standing']} of the territory {document['standingTerritory']}")
+        achievements = document["achievements"] + ([document["completionAchievement"]] if document["completionAchievement"] else [])
+        print(f"  achievements {', '.join(achievements) or '-'}; next objective {document['next'] or '-'}; repeat {document['repeat']}")
     elif isinstance(document, dict) and "items" in document:
         place = "in the world" if document["inWorld"] else "not in the world"
         equipment = document.get("equipment", [])
@@ -1524,6 +1541,11 @@ def main() -> None:
             fail("the template or the objective must be an id of the quest data")
         name = "template" if arguments[1] == "template" else "objective"
         request(data_dir, "POST", f"/v1/dev/quests/{arguments[1]}?character={character_id(data_dir, arguments[2])}&{name}={arguments[3]}")
+    elif command == "quest" and len(arguments) in (4, 5) and arguments[1] == "rewards":
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[3]):
+            fail("the objective must be an id of the quest data")
+        territory = f"&territory={whole(arguments[4], 'the territory')}" if len(arguments) == 5 else ""
+        request(data_dir, "GET", f"/v1/dev/quests/rewards?character={character_id(data_dir, arguments[2])}&objective={arguments[3]}{territory}")
     elif command == "achievement" and len(arguments) == 4 and arguments[3] in ("on", "off"):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", arguments[2]):
             fail("the achievement must be an id of the achievement table")

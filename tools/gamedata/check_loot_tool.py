@@ -37,7 +37,8 @@ an empty ProgressionCurrencyAmount is null; the flag text "TRULE" (a fact of the
 variant vitals row has the loot data of its base row; only the tables that a vitals row reaches are in
 the document. Format 2 (stage 3.5b.1): the root of each row of the chest variation table Gatherable_LootContainers is a root
 (chestRoots), but Empty and the roots of CHEST_ROOTS_NOT_IN_GAME; a variation table of a different name is not read; the container
-floor of each level; the loot limits.
+floor of each level; the loot limits. Stage 1.8d: the loot table of each loot container item (containerRoots), but a row with a
+salvage event and a row whose table the data does not have (counted).
 
 Usage: check_loot_tool.py WORK_FOLDER [CASE...]     status 0: each case (or each named case) gives its result
 """
@@ -152,6 +153,13 @@ def sheets(case: str) -> dict:
         lt.GATHERABLE_TYPE: [FakeSheet("Gatherables", ["GatherableID", "FinalLootTable", "IsLootContainer"],
                                        [["Test_OreNode", "Test_Common", ""], ["Test_QuestNode", "Test_NoGatherTable", ""],
                                         ["Test_ChestNode", "Test_NoChestTable", "TRUE"], ["Test_EmptyNode", "Empty", ""]])],
+        # Stage 1.8d: the loot container items (the class LootContainer with a RepairRecipe [LTID]NAME): a root of the data, a row with a
+        # salvage event (left out), a row whose table the data does not have (counted, not a stop), and an item that is not a container.
+        lt.ITEM_TYPE: [FakeSheet("MasterItemDefinitions_Test", ["ItemID", "ItemClass", "RepairRecipe", "SalvageGameEventID"],
+                                 [["QuestReward_Test_Pouch", "Resource+LootContainer", "[LTID]Test_Common", ""],
+                                  ["Test_EventBox", "LootContainer", "[LTID]Test_Gear", "Test_Box_Event"],
+                                  ["Test_NoTableBox", "LootContainer", "[LTID]Test_NoBoxTable", ""],
+                                  ["TestSword", "Weapon+Melee", "[LTID]Test_Gear", ""]])],
     }
 
 
@@ -206,6 +214,11 @@ def valid_values(document: dict) -> list[str]:
         wrong.append("the rewards or the level differences")
     if document["gearScore"][1] != [100, 120, 100, 130, 100, 130, 100, 130, 100, 130] or document["lootCeiling"] != [[1, 100], [2, 120]]:
         wrong.append("the gear score ranges or the loot ceilings")
+    counts = document["counts"]
+    if document.get("containerRoots") != {"questreward_test_pouch": "Test_Common"} or counts.get("containersWithNoTable") != 1 \
+            or counts.get("containersWithSalvageEvent") != 1:
+        wrong.append(f"the container roots {document.get('containerRoots')} {counts.get('containersWithNoTable')} "
+                     f"{counts.get('containersWithSalvageEvent')}")
     return wrong
 
 

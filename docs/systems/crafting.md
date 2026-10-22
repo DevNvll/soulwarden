@@ -345,6 +345,9 @@ decision of the user, decision of the orchestrator, decision of an agent.
   TaskCraftMultipleRecipes, TaskRefineRecipe). A refused or a stopped job is no event. The gear score of the event is the gear score of the
   new instance (`Inventory::craft_gear_score`: the craft gear score of the job, else GearScoreOverride, else the smallest gear score of the
   item table; 0 for an item with no gear score), not 0 for a fixed output (code review of stage 1.8c, finding QR8C-R10; case QRW10).
+- Stage 1.8d: the refine of a recipe counts for TaskCraftRecipe too (case QD9) [live F and B1 of stage 1.8d; agent]. The Light Ration of
+  06_boarfeast (`Procedural_HealthRecoveryT1`, cooking at the camp) has IsRefining 1 in the data, and its task is TaskCraftRecipe: with
+  only the refine event the cooking did not count. A craft does not count for TaskRefineRecipe.
 
 ## Commands
 

@@ -59,6 +59,7 @@
 //   POST /v1/dev/quests/abandon?character=ID&instance=HEX the abandon of a quest (stage 1.8c; the command abandon_quest of the admin
 //                                                         interface)
 //   POST /v1/dev/quests/reset?character=ID&instance=HEX   the reset of a quest (stage 1.8c; the command reset_quest)
+//   GET  /v1/dev/quests/rewards?character=ID&objective=ID[&territory=N]  the reward join and the availability of an objective (stage 1.8d)
 // tools/world sends these requests to the backend of a development run.
 
 namespace soulwarden::backend::server::http {
@@ -147,6 +148,7 @@ void register_dev_progress_routes(Router& router, const Services& services) {
     router.add("POST", "", "/v1/dev/quests/achievement", "dev.quest_achievement", command_route(services, commands::set_achievement));
     router.add("POST", "", "/v1/dev/quests/abandon", "dev.quest_abandon", command_route(services, commands::abandon_quest));
     router.add("POST", "", "/v1/dev/quests/reset", "dev.quest_reset", command_route(services, commands::reset_quest));
+    router.add("GET", "", "/v1/dev/quests/rewards", "dev.quest_rewards", command_route(services, commands::quest_rewards));
 }
 
 } // namespace soulwarden::backend::server::http

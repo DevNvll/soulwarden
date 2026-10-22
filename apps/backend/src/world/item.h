@@ -40,6 +40,11 @@ inline constexpr std::uint8_t kItemUnequipped = 5;
 inline constexpr std::uint8_t kContainerTransfer = 6;
 /** Start value of a slot in the client: the load of a container. It gives no line on the HUD. */
 inline constexpr std::uint8_t kLoad = 0x11;
+/**
+ * Stage 1.8d: the items of an opened loot container (OpenRewardChest; client notice dispatcher 0x48E2CC0 at 0x48E2E95: the reward box
+ * branch of inventory/rewardcelebrationpopup OnRewardChestOpened; research quests-18d rules Q7).
+ */
+inline constexpr std::uint8_t kOpenRewardChest = 26;
 inline constexpr std::uint8_t kLockStateChanged = 28;
 /** Largest value that the wire form can hold (6 bits). */
 inline constexpr std::uint8_t kLargest = 63;

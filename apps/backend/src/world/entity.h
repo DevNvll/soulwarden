@@ -1691,6 +1691,11 @@ struct QuestLog {
      */
     std::map<std::pair<std::uint32_t, std::uint8_t>, std::uint32_t> awards;
     /**
+     * Stage 1.8d: the repeats of the completed repeatable objectives with a schedule (the rows of `character_quest_repeats`), by the CRC-32 of
+     * the objective. Each has its reset on the world clock: the completion achievement goes, and the person offers the objective again.
+     */
+    std::map<std::uint32_t, state::QuestRepeatRow> repeats;
+    /**
      * Stage 1.8b: the instances that a hand-in completed in this world entry (field 2 of the Objectives state: a notice list; the client
      * shows the completion of a removed instance that the list names, apply 0x3A43530 to 0x3A559B0 with flag 1). 16 at most (the newest).
      * A value of the world: a new world entry has none.
@@ -1702,6 +1707,11 @@ struct QuestLog {
      */
     std::uint32_t pendingCutscene{0};
     bool cutsceneStarted{false};
+    /**
+     * The tasks (instance, index) that the grant of the pending cutscene was for (code review of stage 1.8b, finding QR8B-R7): its end
+     * completes only these tasks, while they are Active. A reset gives a new instance: its task did not get the grant.
+     */
+    std::vector<std::pair<std::uint64_t, std::uint8_t>> cutsceneTasks;
     /** Stage 1.8b: the cinematic that the client started (6606; 0: none). */
     std::uint32_t pendingCinematic{0};
     /** True when the quest system loaded the rows of the character (it has quest data). */

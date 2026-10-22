@@ -151,6 +151,12 @@ const char* topic_result_text(TopicResult result) {
         return "the data has no topic of this CRC";
     case TopicResult::notOffered:
         return "the conversation state of the character does not offer this topic";
+    case TopicResult::notSelected:
+        return "the character did not select this topic (3158) in this conversation";
+    case TopicResult::tooFar:
+        return "the character is out of the range of the person";
+    case TopicResult::storeFailed:
+        return "the database did not take the effects of the topic: not finished";
     }
     return "?";
 }
@@ -449,6 +455,9 @@ void Persons::forget(Entity& character, const char* cause) {
 }
 
 TopicResult Persons::topic(Entity& character, std::uint32_t topicCrc, bool closing) {
+    if (closing) {
+        return finish_topics(character, {topicCrc}).front(); // One topic of a 5397 (code review of stage 1.8b, findings QR8B-R3 to R6).
+    }
     const auto count = [this](TopicResult result) {
         ++m_counts.topics[static_cast<std::size_t>(result)];
         return result;
@@ -493,6 +502,105 @@ TopicResult Persons::topic(Entity& character, std::uint32_t topicCrc, bool closi
         m_world.quests().topic_finished(character, npc, topic.id, topic.achievementUnlock);
     }
     return count(TopicResult::accepted);
+}
+
+std::vector<TopicResult> Persons::finish_topics(Entity& character, const std::vector<std::uint32_t>& topics) {
+    std::vector<TopicResult> results(topics.size(), TopicResult::accepted);
+    const auto all = [&](TopicResult result) {
+        for (TopicResult& entry : results) {
+            entry = result;
+            ++m_counts.topics[static_cast<std::size_t>(result)];
+        }
+        return results;
+    };
+    const gamedata::ConversationData* catalog = data();
+    if (catalog == nullptr) {
+        return all(TopicResult::noData);
+    }
+    if (!character.conversation) {
+        return all(TopicResult::noConversation);
+    }
+    const gamedata::PersonBinding* person = binding_of(*character.conversation);
+    if (person == nullptr || !present(character, *person)) {
+        lost_presence(character, "the person is not there for the character");
+        return all(TopicResult::notPresent);
+    }
+    // The range of the bound of the person with the accepted position (finding QR8B-R6: the closed context after a walk out of the range).
+    const gamedata::InteractionData* interactions = m_world.interactions().data();
+    const PersonConversation& source = *character.conversation;
+    if (interactions == nullptr || source.object >= interactions->objects().size()
+        || source.bound >= interactions->objects()[source.object].bounds.size()) {
+        return all(TopicResult::noConversation);
+    }
+    const gamedata::InteractionBound& bound = interactions->objects()[source.object].bounds[source.bound];
+    const float dx = character.position.x - bound.position.x;
+    const float dy = character.position.y - bound.position.y;
+    const float dz = character.position.z - bound.position.z;
+    if (character.positionEstimated || dx * dx + dy * dy + dz * dz > bound.rangeSq) {
+        forget(character, "the character is out of the range of the person at the finish of its topics");
+        return all(TopicResult::tooFar);
+    }
+    // Each topic against the selections of this conversation (finding QR8B-R3), before any effect (finding QR8B-R5: an effect of the first
+    // topic can change the state of the person; the selections stay the authority of the close).
+    PersonConversation& conversation = *character.conversation;
+    std::vector<QuestTopic> effects;
+    std::vector<std::uint32_t> valid;
+    for (std::size_t position = 0; position < topics.size(); ++position) {
+        const std::uint32_t crc = topics[position];
+        const std::optional<std::uint32_t> found = catalog->topic_of_crc(crc);
+        if (!found) {
+            results[position] = TopicResult::unknownTopic;
+        } else if (std::find(conversation.finished.begin(), conversation.finished.end(), crc) != conversation.finished.end()
+                   || std::find(valid.begin(), valid.end(), crc) != valid.end()) {
+            results[position] = TopicResult::duplicate;
+        } else if (std::find(conversation.selected.begin(), conversation.selected.end(), crc) == conversation.selected.end()) {
+            results[position] = TopicResult::notSelected;
+        } else {
+            valid.push_back(crc);
+            const gamedata::ConversationTopic& topic = catalog->topic(*found);
+            effects.push_back(QuestTopic{topic.id, topic.achievementUnlock});
+            log::write("person: the character %s finished the topic %s of %s (the close, 5397)", character.characterId.c_str(), topic.id.c_str(),
+                       conversation.npc.c_str());
+        }
+    }
+    if (!effects.empty()) {
+        // Stage 1.8b: the effects of the topics at their finish (live check of stage 1.8b); one plan for the close (finding QR8B-R5). A
+        // refused write finishes nothing (finding QR8B-R4): a new 5397 can finish the topics.
+        const std::string npc = conversation.npc;
+        const QuestError error = m_world.quests().topics_finished(character, npc, effects);
+        for (std::size_t position = 0; position < topics.size(); ++position) {
+            if (results[position] == TopicResult::accepted && error == QuestError::storeFailed) {
+                results[position] = TopicResult::storeFailed;
+            }
+        }
+        if (error != QuestError::storeFailed && character.conversation) {
+            character.conversation->finished.insert(character.conversation->finished.end(), valid.begin(), valid.end());
+        }
+    }
+    for (const TopicResult result : results) {
+        ++m_counts.topics[static_cast<std::size_t>(result)];
+    }
+    return results;
+}
+
+void Persons::moved(Entity& character) {
+    if (!character.conversation || character.conversation->open || character.positionEstimated) {
+        return; // An open conversation has its use: the interaction base ends it at a loss of the range (rangeLost).
+    }
+    const gamedata::InteractionData* interactions = m_world.interactions().data();
+    const PersonConversation& conversation = *character.conversation;
+    if (interactions == nullptr || conversation.object >= interactions->objects().size()
+        || conversation.bound >= interactions->objects()[conversation.object].bounds.size()) {
+        forget(character, "the source went away");
+        return;
+    }
+    const gamedata::InteractionBound& bound = interactions->objects()[conversation.object].bounds[conversation.bound];
+    const float dx = character.position.x - bound.position.x;
+    const float dy = character.position.y - bound.position.y;
+    const float dz = character.position.z - bound.position.z;
+    if (dx * dx + dy * dy + dz * dz > bound.rangeSq) {
+        forget(character, "the character left the range of the person after the close (finding QR8B-R6)");
+    }
 }
 
 QuestRequestResult Persons::quest_source(Entity& character) {

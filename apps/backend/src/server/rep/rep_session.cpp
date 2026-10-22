@@ -418,6 +418,10 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_use_item(body);
         break;
+    case kTypeInitiateSalvage:
+        check_route(route, type, body, firstOfType);
+        handle_salvage(body);
+        break;
     case kTypeTimeRequest:
         check_route(route, type, body, firstOfType);
         handle_time_request(route, body);
@@ -2477,6 +2481,30 @@ void RepSession::handle_use_item(std::span<const std::uint8_t> body) {
     log::write("rep: use item request (type %u, bag slot %u): %s", kTypeUseItem, slot, world::use_verdict_text(verdict));
 }
 
+void RepSession::handle_salvage(std::span<const std::uint8_t> body) {
+    // CraftingComponentServerFacet_InitiateSalvage (type 1733, stage 1.8d): the open of a loot container item of the bag (the entry "Open"
+    // of its action menu, quantity 1; live check I0 of stage 1.8d). The salvage of other items is stage 3.7d: the request changes nothing.
+    world::Entity* own = m_world.find(m_observer.own());
+    const std::optional<SalvageRequest> request = read_salvage_request(body);
+    if (own == nullptr || !request) {
+        log::write("rep: salvage request (type %u, %zu bytes) does not have the form of the request: no change", kTypeInitiateSalvage, body.size());
+        return;
+    }
+    if (!own_facet(*own, request->call.target, request->call.entity, kCraftingComponentName, kTypeInitiateSalvage, "salvage request")) {
+        return;
+    }
+    if (request->containerType != kItemContainerBag) {
+        log::write("rep: salvage request (type %u) for the container type %u: only the bag (1): no change", kTypeInitiateSalvage,
+                   request->containerType);
+        return;
+    }
+    const world::OpenResult result = m_world.item_containers().open(*own, request->slot, request->instance, request->quantity);
+    log::write("rep: salvage request (type %u, bag slot %u, quantity %u, location quantity %u): %s%s%s", kTypeInitiateSalvage, request->slot,
+               request->quantity, request->locationQuantity, world::open_error_text(result.error),
+               result.itemError != world::ItemError::none ? ": " : "",
+               result.itemError != world::ItemError::none ? world::item_error_text(result.itemError) : "");
+}
+
 bool RepSession::own_facet(const world::Entity& own, std::uint64_t target, std::uint64_t entity, const char* component, std::uint32_t type,
                            const char* name) {
     bool valid = entity == own.id;
@@ -2725,11 +2753,19 @@ void RepSession::handle_conversation_topics(std::span<const std::uint8_t> body, 
     if (!own_facet(*own, message->target, message->entity, kConversationComponentName, type, name)) {
         return;
     }
-    // Stage 2.5c: each topic against the conversation of the character (its source, its selection now); no answer to the client.
-    for (const std::uint32_t topic : message->topics) {
-        const world::TopicResult result = m_world.persons().topic(*own, topic, closing);
-        log::write("rep: the client sent the %s %08x (message %u): %s", closing ? "finished topic" : "topic", static_cast<unsigned>(topic),
-                   type, world::topic_result_text(result));
+    // Stage 2.5c: each topic against the conversation of the character (its source, its selection now); no answer to the client. The topics
+    // of one 5397 are one list (code review of stage 1.8b, findings QR8B-R3 to R6): checked before any effect, then one plan.
+    std::vector<world::TopicResult> results;
+    if (closing) {
+        results = m_world.persons().finish_topics(*own, message->topics);
+    } else {
+        for (const std::uint32_t topic : message->topics) {
+            results.push_back(m_world.persons().topic(*own, topic, false));
+        }
+    }
+    for (std::size_t position = 0; position < message->topics.size() && position < results.size(); ++position) {
+        log::write("rep: the client sent the %s %08x (message %u): %s", closing ? "finished topic" : "topic",
+                   static_cast<unsigned>(message->topics[position]), type, world::topic_result_text(results[position]));
     }
     if (closing && message->topics.empty()) {
         log::write("rep: the client closed its conversation with no finished topic (message %u)", type);

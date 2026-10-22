@@ -1374,6 +1374,46 @@ bool same_id(std::string_view one, std::string_view two) {
 
 } // namespace
 
+Inventory::Plan Inventory::plan_open(const std::string& characterId, std::uint32_t slot, const InstanceId& instance, std::uint32_t quantity,
+                                     const std::vector<GrantItem>& items) {
+    return stage(characterId, [&](Carried& carried, Touched& touched) {
+        if (slot >= carried.bag.slots.size()) {
+            return ItemError::badSlot;
+        }
+        BagSlot& source = carried.bag.slots[slot];
+        if (!source.item) {
+            return ItemError::emptySlot;
+        }
+        if (source.item->instance != instance) {
+            return ItemError::wrongInstance;
+        }
+        if ((source.item->flags & kItemLocked) != 0) {
+            return ItemError::itemLocked; // The lock of the player keeps the item (the open is a salvage of the client: 1733).
+        }
+        if (quantity == 0 || quantity > source.item->quantity) {
+            return ItemError::badQuantity;
+        }
+        source.item->quantity -= quantity;
+        if (source.item->quantity == 0) {
+            source.item.reset();
+        }
+        source.action = sync::kItemRemoved;
+        touched.bag.insert(slot);
+        for (const GrantItem& item : items) {
+            GiveOptions options;
+            options.action = sync::kOpenRewardChest;
+            options.gearScore = item.gearScore;
+            if (std::any_of(item.perks.begin(), item.perks.end(), [](const std::string& perk) { return !perk.empty(); })) {
+                options.perks = item.perks;
+            }
+            if (const ItemError error = give_into(carried.bag, touched.bag, item.itemId, item.quantity, options); error != ItemError::none) {
+                return error;
+            }
+        }
+        return ItemError::none;
+    });
+}
+
 Inventory::Plan Inventory::plan_quest_items(const std::string& characterId, const std::vector<QuestItemAction>& actions,
                                             std::vector<std::uint32_t>* taken) {
     if (taken != nullptr) {
@@ -1386,6 +1426,11 @@ Inventory::Plan Inventory::plan_quest_items(const std::string& characterId, cons
                 GiveOptions options;
                 options.action = sync::kItemGathered;
                 options.gearScore = action.item.gearScore;
+                // The perks of the reward (the roll of Rewards::grant_items: the fixed perks of the item and the rolled ones) go into the new
+                // instance (code review of stage 1.8b, finding QR8B-R1: the give kept the gear score and lost the perks).
+                if (std::any_of(action.item.perks.begin(), action.item.perks.end(), [](const std::string& perk) { return !perk.empty(); })) {
+                    options.perks = action.item.perks;
+                }
                 const ItemError error = give_into(items.bag, touched.bag, action.item.itemId, action.item.quantity, options);
                 if (error != ItemError::none) {
                     return error;

@@ -61,6 +61,8 @@ const char* progress_error_text(ProgressError error) {
         return "the balance of the currency is below the cost";
     case ProgressError::storeFailed:
         return "the database did not accept the change";
+    case ProgressError::standingRankUp:
+        return "the standing gives a new rank, whose token of the territory pool has no owner in the backend yet";
     }
     return "unknown error";
 }

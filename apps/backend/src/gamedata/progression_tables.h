@@ -87,6 +87,25 @@ struct ProgressionRow {
     std::uint32_t expansionMaxRank{0};
 };
 
+/**
+ * Stage 1.8d: the standing of one territory (a categorical progression row with the rank table Territory_Standing; format 3 of the file).
+ * The points of a rank go to MaximumInfluence of the rank; AutoRankUp gives the next rank with the rest (client 0x3CAACF0, 0x3CB7500).
+ */
+struct StandingRow {
+    /** The territory id; the id text of the row is its decimal text ("6" is Windsward), the id on the wire its CRC-32. */
+    std::uint16_t territory{0};
+    std::string id;
+    std::uint32_t wireId{0};
+    /** MaxLevel. */
+    std::uint32_t maxRank{0};
+    /** Entry R: MaximumInfluence of the rank R (the experience of the RankTable) and XpReward of the rank R. */
+    RankTable ranks;
+    std::vector<std::uint32_t> xpReward;
+    /** ProgressionPointPool (TerritoryRankBonus_6): a rank-up gives one token of it (0x3CB7500). */
+    std::string pool;
+    bool autoRankUp{false};
+};
+
 /** One row of the expansion table of the game (Expansions): the limits of a player who owns the expansion (stage 1.1b). */
 struct ExpansionRow {
     /** "None" (no expansion) or "Expansion2023" (Rise of the Angry Earth). */
@@ -197,6 +216,8 @@ struct ProgressionData {
     std::vector<ExpansionRow> expansions;
     std::vector<EntitlementRow> entitlements;
     std::vector<AchievementRow> achievements;
+    /** Stage 1.8d (format 3): the territory standings. Empty in an older file: a quest reward of standing is refused. */
+    std::vector<StandingRow> standings;
 };
 
 class ProgressionTables {
@@ -285,6 +306,11 @@ public:
         return m_data.progressions;
     }
 
+    /** Stage 1.8d: @return The standing of a territory, or null. */
+    [[nodiscard]] const StandingRow* standing(std::uint16_t territory) const;
+    /** Stage 1.8d: @return The standing with this id on the wire, or null. */
+    [[nodiscard]] const StandingRow* standing_of(std::uint32_t wireId) const;
+
     /** @return The node with this id on the wire, or null. */
     [[nodiscard]] const AbilityNode* node(std::uint32_t wireId) const;
     [[nodiscard]] const AbilityNode* node(std::string_view id) const;
@@ -298,6 +324,7 @@ private:
     void build_keys();
 
     ProgressionData m_data;
+    std::unordered_map<std::uint32_t, std::size_t> m_standingKeys;
     /** The index of the owned expansion in m_data.expansions; no row: the size of the list or more. */
     std::size_t m_owned{static_cast<std::size_t>(-1)};
     std::unordered_map<std::uint32_t, std::size_t> m_progressionKeys;

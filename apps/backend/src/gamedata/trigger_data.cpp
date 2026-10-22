@@ -14,6 +14,8 @@ namespace {
 using nlohmann::json;
 
 constexpr std::uint64_t kFormat = 1;
+/** The rounding error that an axis of a volume can have (its length against 1, two axes against a right angle). */
+constexpr float kAxisTolerance = 0.001F;
 
 template <std::size_t N>
 bool read_floats(const json& value, std::array<float, N>& out) {
@@ -115,6 +117,20 @@ bool TriggerData::load_text(const std::string& text) {
         if (!sized || !entry.contains("center") || !read_floats(entry["center"], volume.center) || !entry.contains("axes")
             || !read_floats(entry["axes"], volume.axes)) {
             return fail("the volume " + volume.tag + " does not have a center, axes, and the sizes of its shape");
+        }
+        // The axes are three unit vectors at right angles (code review of stage 1.8b, finding QR8B-R12: zero axes put each position at the
+        // center). The tool writes them from the rotation of the entity: the common file has an error below 1e-6.
+        for (std::size_t first = 0; first < 3; ++first) {
+            const float* axis = &volume.axes[first * 3];
+            if (std::fabs(std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]) - 1.0F) > kAxisTolerance) {
+                return fail("the volume " + volume.tag + " has an axis that is not a unit vector");
+            }
+            for (std::size_t second = first + 1; second < 3; ++second) {
+                const float* other = &volume.axes[second * 3];
+                if (std::fabs(axis[0] * other[0] + axis[1] * other[1] + axis[2] * other[2]) > kAxisTolerance) {
+                    return fail("the volume " + volume.tag + " has two axes that are not at right angles");
+                }
+            }
         }
         volume.ignoreHeight = entry.contains("ignoreHeight") && entry["ignoreHeight"].is_boolean() && entry["ignoreHeight"].get<bool>();
         volumes.push_back(std::move(volume));

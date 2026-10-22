@@ -262,6 +262,21 @@ bool QuestData::load_text(const std::string& text) {
         }
         objective.progressionReward = trimmed(cell(cells, "ProgressionReward"));
         objective.objectiveReward = trimmed(cell(cells, "ObjectiveReward"));
+        // Stage 1.8d: the availability and the repeat (loader 0x445CA30; research quests-18d rules).
+        if (const std::optional<double> level = number(cell(cells, "RequiredLevel")); level && *level > 0.0) {
+            objective.requiredLevel = static_cast<std::uint32_t>(std::min(*level, 1e6));
+        }
+        objective.factionMask = faction_mask(trimmed(cell(cells, "RequiredFaction")));
+        objective.questArc = trimmed(cell(cells, "QuestArcTag"));
+        objective.worldTags = trimmed(cell(cells, "RequiredWorldTags"));
+        objective.gameMode = trimmed(cell(cells, "RequiredGameModeId"));
+        objective.requiredProgression = trimmed(cell(cells, "RequiredProgression"));
+        objective.skipInvalidRequirement = flag(cell(cells, "SkipReqAchievmentWhenInvalid"));
+        objective.pushOnRequirement = flag(cell(cells, "PushObjectiveOnReqMet"));
+        objective.pushRetrigger = flag(cell(cells, "PushObjectiveOnReqRetrigger"));
+        objective.repeatable = flag(cell(cells, "Repeatable"));
+        objective.schedule = trimmed(cell(cells, "ScheduleId"));
+        objective.resetOnScheduleEnd = flag(cell(cells, "ShouldResetInProgressQuestOnScheduleEnd"));
         std::size_t lastIndex = 0;
         bool first = true;
         for (const json& node : entry["tree"]) {
@@ -424,7 +439,30 @@ bool QuestData::load_text(const std::string& text) {
             }
             event.item = trimmed(cell(cells, "ItemReward"));
             if (const std::optional<double> quantity = number(cell(cells, "ItemRewardQty"))) {
-                event.itemQty = *quantity > 0.0 ? static_cast<std::uint32_t>(std::min(*quantity, 1e6)) : 0U;
+                // The sign stays (code review of stage 1.8b, finding QR8B-R10): a negative quantity refuses the hand-in.
+                event.itemQty = static_cast<std::int64_t>(std::clamp(*quantity, -1e6, 1e6));
+            }
+            // Stage 1.8d: GearScoreRange (client 0x31E43A0: split at "-"; one number is both ends). A text that is not one or two whole
+            // numbers from 0 to 65535 keeps the event with the column as a reward that the backend cannot pay.
+            if (const std::string text = trimmed(cell(cells, "GearScoreRange")); !text.empty()) {
+                const std::size_t dash = text.find('-');
+                const std::optional<double> low = number(trimmed(text.substr(0, dash)));
+                const std::optional<double> high = dash == std::string::npos ? low : number(trimmed(text.substr(dash + 1)));
+                if (low && high && *low >= 0.0 && *high >= *low && *high <= 65535.0 && std::floor(*low) == *low && std::floor(*high) == *high) {
+                    event.gearScoreRange = std::make_pair(static_cast<std::uint16_t>(*low), static_cast<std::uint16_t>(*high));
+                } else {
+                    event.unpaid.push_back("GearScoreRange " + text);
+                }
+            }
+            // Stage 1.8d: TerritoryStanding has an owner (the standing of a territory, decision D3 option B of the orchestrator). A text that
+            // is not a whole number of 0 or more (the data has one "#REF!") stays a reward that the backend cannot pay.
+            if (const std::string text = trimmed(cell(cells, "TerritoryStanding")); !text.empty()) {
+                const std::optional<double> value = number(text);
+                if (value && *value >= 0.0 && std::floor(*value) == *value && *value <= 1e9) {
+                    event.standing = static_cast<std::uint64_t>(*value);
+                } else {
+                    event.unpaid.push_back("TerritoryStanding " + text);
+                }
             }
             event.achievement = trimmed(cell(cells, "AchievementId"));
             event.whisper = trimmed(cell(cells, "WhisperId"));
@@ -432,15 +470,15 @@ bool QuestData::load_text(const std::string& text) {
                 event.whisper = trimmed(cell(cells, "WhisperID"));
             }
             // The rewards with no owner in the backend yet (research quest-engine.md Q6; stage 1.8d and later).
-            for (const char* column : {"TerritoryStanding", "FactionReputation", "FactionTokens", "CategoricalProgressionReward", "AzothReward",
-                                       "UmbralCurrency", "PvpXp", "PVPXP", "SeasonsXp", "AzothSalt", "CursedSilvers", "CursedCrowns"}) {
+            for (const char* column : {"FactionReputation", "FactionTokens", "CategoricalProgressionReward", "AzothReward", "UmbralCurrency", "PvpXp",
+                                       "PVPXP", "SeasonsXp", "AzothSalt", "CursedSilvers", "CursedCrowns"}) {
                 const std::string text = trimmed(cell(cells, column));
                 const std::optional<double> value = number(text);
                 if (!text.empty() && (!value || *value != 0.0)) {
                     event.unpaid.push_back(std::string(column) + " " + text);
                 }
             }
-            for (const char* column : {"EntitlementId", "StatusEffectId", "GearScoreRange"}) {
+            for (const char* column : {"EntitlementId", "StatusEffectId"}) {
                 if (const std::string text = trimmed(cell(cells, column)); !text.empty()) {
                     event.unpaid.push_back(std::string(column) + " " + text);
                 }
@@ -468,8 +506,64 @@ bool QuestData::load_text(const std::string& text) {
             m_whispers.push_back(std::move(whisper));
         }
     }
+    // Stage 1.8d: the schedule rows (ScheduleData; research quest-engine.md Q5): the kinds of a repeat. A row of dates (a seasonal window) is
+    // `none`: decision D4 of the user is open, and the backend has no event calendar.
+    if (document.contains("schedules") && document["schedules"].is_array()) {
+        for (const json& row : document["schedules"]) {
+            if (!row.is_object() || !row.contains("id") || !row["id"].is_string()) {
+                return fail("a schedule row has no id");
+            }
+            const json& cells = row.contains("cells") ? row["cells"] : json::object();
+            const std::string start = trimmed(cell(cells, "StartDate"));
+            const std::string weekday = trimmed(cell(cells, "StartWeekday"));
+            ScheduleKind kind = ScheduleKind::none;
+            if (start == "*-*-*T*:00:00" && trimmed(cell(cells, "EndDate")).empty()) {
+                kind = ScheduleKind::hourly;
+            } else if (start == "*-*-*TDailyCooldown") {
+                kind = ScheduleKind::daily;
+            } else if (weekday == "WeeklyCooldown" && start.empty()) {
+                kind = ScheduleKind::weekly;
+            }
+            m_schedules[lower_text(row["id"].get<std::string>())] = kind;
+        }
+    }
     m_loaded = true;
     return true;
+}
+
+ScheduleKind QuestData::schedule_kind(std::string_view id) const {
+    const auto found = m_schedules.find(lower_text(id));
+    return found != m_schedules.end() ? found->second : ScheduleKind::none;
+}
+
+std::uint8_t faction_mask(std::string_view text) {
+    // Client parser 0x445CA30 (instructions 0x445D18F to 0x445D363): one leading "!", then Syndicate 1, Marauder 2, Covenant 3, Any 4, each
+    // other text 0. A positive name gives the bit of its faction (bit N + 1); Any gives 0xE; 0 gives 0xF. A negation gives the complement in
+    // the four bits (!Any: 0x1, !None: 0xE). Bit 0 bypasses the test of the eligibility (0x3A4C166).
+    bool negated = false;
+    std::string_view name = text;
+    while (!name.empty() && name.front() == ' ') {
+        name.remove_prefix(1);
+    }
+    if (!name.empty() && name.front() == '!') {
+        negated = true;
+        name.remove_prefix(1);
+    }
+    const std::string key = lower_text(name);
+    std::uint8_t mask = 0;
+    if (key == "syndicate") {
+        mask = 0x2;
+    } else if (key == "marauder") {
+        mask = 0x4;
+    } else if (key == "covenant") {
+        mask = 0x8;
+    } else if (key == "any") {
+        mask = 0xE;
+    }
+    if (mask == 0) {
+        return negated ? 0xE : kAnyFactionMask; // No faction: each faction; "!None" (or "!"): a faction 1 to 3.
+    }
+    return negated ? static_cast<std::uint8_t>(~mask & 0x0F) : mask;
 }
 
 const QuestGameEvent* QuestData::game_event(std::string_view id) const {

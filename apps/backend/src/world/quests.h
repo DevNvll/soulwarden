@@ -98,6 +98,16 @@ enum class QuestError {
     notAvailable,
     /** Stage 1.8b: the character has the completion achievement of the objective (a second accept of a quest that it completed). */
     completedBefore,
+    /** Stage 1.8d: the level of the character is below the RequiredLevel of the objective (client 0x3A4C13E). */
+    levelTooLow,
+    /** Stage 1.8d: the RequiredFaction mask of the objective does not have the faction of the character (client 0x3A4C166). */
+    wrongFaction,
+    /** Stage 1.8d: a gate whose service rule the backend does not have (QuestArcTag, RequiredWorldTags, RequiredGameModeId, RequiredProgression). */
+    unsupportedGate,
+    /** Stage 1.8d: a repeatable objective that the character completed in the current cycle of its schedule (the OnCooldown answer, 0x37AE910). */
+    onCooldown,
+    /** Stage 1.8d (code review of stage 1.8b, finding QR8B-R2): a return task of the objective does not have its items now. */
+    missingReturnItems,
 };
 
 [[nodiscard]] const char* quest_error_text(QuestError error);
@@ -177,6 +187,10 @@ struct QuestCounts {
     std::uint64_t triggerVisits{0};
     /** Stage 1.8b: the finished topics with an effect (an AchievementUnlock or a task of the topic). */
     std::uint64_t topicEffects{0};
+    /** Stage 1.8d: the deadlines of the repeats that the world clock got, the due ones, and the resets that the store took. */
+    std::uint64_t repeatsScheduled{0};
+    std::uint64_t repeatsDue{0};
+    std::uint64_t repeatResets{0};
 };
 
 /** Stage 1.8b: the result of a hand-in (794): the rewards that the transaction paid, or the cause of the refusal. */
@@ -193,9 +207,46 @@ struct HandInResult {
     std::vector<std::string> achievements;
     /** The next objective of ObjectiveReward that the hand-in granted (empty: none). */
     std::string next;
+    /** Stage 1.8d: the territory standing that the hand-in gave, and its territory (0: none). */
+    std::uint64_t standing{0};
+    std::uint16_t standingTerritory{0};
+    /** Stage 1.8d: the reset of a repeatable objective (Unix nanoseconds of the world clock; 0: no repeat). */
+    std::uint64_t resetNs{0};
     [[nodiscard]] bool ok() const {
         return error == QuestError::none;
     }
+};
+
+/** Stage 1.8d: one reward item of the join of an objective (before the rolls of the hand-in: the gear score of a range, the perks). */
+struct RewardItem {
+    std::string itemId;
+    std::uint32_t quantity{0};
+    /** GearScoreRange of the event (client 0x31E43A0), or no value. */
+    std::optional<std::pair<std::uint16_t, std::uint16_t>> gearScoreRange;
+};
+
+/**
+ * Stage 1.8d: the reward join of an objective (Quests::reward_join; research quest-engine.md Q6): the hand-in and the command `quest rewards`
+ * read the same join, and the hand-in adds its rolls (the coin chance, the gear score of a range, the perks).
+ */
+struct RewardJoin {
+    std::vector<RewardItem> items;
+    /** UniversalExpAmount of the success event and ExperienceReward of the row. */
+    std::uint64_t eventExperience{0};
+    std::uint64_t rowExperience{0};
+    /** CurrencyReward (the units of the wallet) and CoinRewardChance (1 for a blank cell). */
+    std::uint64_t coin{0};
+    double coinChance{1.0};
+    /** The AchievementId of the event, and the completion achievement of the row. */
+    std::vector<std::string> eventAchievements;
+    std::string achievement;
+    /** TerritoryStanding and its territory (the origin territory of the instance: decision D3 option B). */
+    std::uint64_t standing{0};
+    std::uint16_t standingTerritory{0};
+    /** ObjectiveReward (null: none). */
+    const gamedata::QuestObjective* next{nullptr};
+    /** A repeatable row: the kind of its schedule (none: not repeated, decision D4 of the user is open for a row with no schedule). */
+    gamedata::ScheduleKind schedule{gamedata::ScheduleKind::none};
 };
 
 /** The quests of a character for a reader (a command). */
@@ -253,6 +304,18 @@ struct QuestEvent {
      * only these tasks, when they are still active: a quest that a reset replaced, and a task that became active later, get nothing.
      */
     std::vector<std::pair<std::uint64_t, std::uint8_t>> matched;
+    /**
+     * True: the event credits only the tasks of `matched`, also at its first delivery (code review of stage 1.8b, finding QR8B-R7: the end
+     * of a cutscene completes only the tasks that its grant was for).
+     */
+    bool restricted{false};
+};
+
+/** One finished topic of a person (stage 1.8b; code review of stage 1.8b, finding QR8B-R5: the topics of one 5397 are one plan). */
+struct QuestTopic {
+    std::string topic;
+    /** The AchievementUnlock of the topic (empty: none). */
+    std::string achievementUnlock;
 };
 
 /** One quest drop of a kill or of a gather (stage 1.8c): an item of a possession or gather task of the character. */
@@ -356,6 +419,11 @@ public:
 
     /** Timer task of the world clock: a TaskTimer of a character is due. */
     void timer_due(const std::string& characterId, std::uint64_t instance, std::uint8_t index, std::uint64_t startNs);
+    /**
+     * Stage 1.8d: the deadline of a repeat is due (the start of the next cycle of the schedule of a completed repeatable objective): one plan
+     * removes its completion achievement and its repeat row. An old deadline changes nothing.
+     */
+    void repeat_due(const std::string& characterId, std::uint32_t objectiveCrc, std::uint64_t resetNs);
 
     // Stage 1.8c: the events of the other systems. Each system stays the only writer of its own state: it calls the quest system after
     // its own successful change, and the quest system changes only the quests (and, in its own transaction, the items of an item task).
@@ -432,6 +500,12 @@ public:
      */
     [[nodiscard]] HandInResult hand_in(Entity& entity, std::uint64_t instance);
     /**
+     * Stage 1.8d: the one reward join of an objective for a character and an origin territory (the hand-in and the command `quest rewards`).
+     * @return `none`, or the cause of a refusal (a reward with no owner: `detail` names it).
+     */
+    [[nodiscard]] QuestError reward_join(const Entity& entity, const gamedata::QuestObjective& objective, std::uint16_t originTerritory,
+                                         RewardJoin& join, std::string& detail) const;
+    /**
      * A cutscene request of the client (6703): @return True (the grant 6707) when an Active TaskCutsceneComplete of the character waits for
      * this cutscene; it is the pending cutscene of the character then. Else false: no answer, nothing changes.
      */
@@ -450,6 +524,11 @@ public:
      * gives the TaskConversationTopic tasks of the person and the topic their progress.
      */
     void topic_finished(Entity& entity, const std::string& npc, const std::string& topic, const std::string& achievementUnlock);
+    /**
+     * The topics of one close of a conversation (code review of stage 1.8b, findings QR8B-R4 and R5): one plan with the AchievementUnlock and
+     * the TaskConversationTopic progress of each topic. @return The result of the commit (`none` also for topics with no effect).
+     */
+    [[nodiscard]] QuestError topics_finished(Entity& entity, const std::string& npc, const std::vector<QuestTopic>& topics);
     /** The person system selected a conversation state for the character: the TaskConversationState tasks of the person and the state. */
     void state_selected(Entity& entity, const std::string& npc, const std::string& state);
 
@@ -471,6 +550,8 @@ private:
     void run_pending(Entity& entity);
     [[nodiscard]] std::uint64_t next_instance();
     void schedule(const std::string& characterId, std::uint64_t instance, std::uint8_t index, std::uint64_t startNs, double seconds);
+    /** Stage 1.8d: the deadline of the world clock of a repeat (its reset). */
+    void schedule_repeat(const std::string& characterId, std::uint32_t objectiveCrc, std::uint64_t resetNs);
     [[nodiscard]] std::uint64_t now_ns() const;
     /** Builds the index of a character again for the instances of a plan (all instances: `all`). */
     void index(const Entity& entity, const std::set<std::uint64_t>& instances, bool all);

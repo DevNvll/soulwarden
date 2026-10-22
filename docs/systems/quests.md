@@ -17,7 +17,7 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | The quest data (objectives, compiled trees, task cells, achievement table, territory starts, backstories) | `tools/gamedata/quests.py`, `quests.sh`, `check_quests_tool.py` (case QG-TOOL), `apps/backend/src/gamedata/quest_data.h` (case QG11) |
 | The rules of the tasks, a grant, the change event, a timer, the commit | `world/quests.h`, `world/quests.cpp` (`Quests::Plan`), cases QG7, QG8 |
 | The start quest of a new character | `Quests::new_character_rows`, `server/http/gateway_routes.cpp` (`create_character`), `Quests::entered` (`run_pending`), case QG3 |
-| The rows of the quests | `state/store.h` (`QuestRow`, `QuestTaskRow`, `QuestGrantRow`, `QuestUndoRow`, `QuestAwardRow`), schema 16, cases QG4, B11 |
+| The rows of the quests | `state/store.h` (`QuestRow`, `QuestTaskRow`, `QuestGrantRow`, `QuestUndoRow`, `QuestAwardRow`, `QuestRepeatRow`), schema 17, cases QG4, B11 |
 | The events of the other systems (stage 1.8c) and the task index | `Quests::event`, `killed`, `plan_drops`, `items_touched`, `moved`, `tick`, `died`, `Quests::Subscriptions`; the callers: `Rewards::killed`, `Gathering::complete` (`quest_events`), `Crafting::run`, `Interactions` (the start and the completion of a use with a tag), `World::touch`, `World::place`, `Health::apply`; cases QE1 to QE9, QRV7 |
 | The abandon, the reset, the failure | `Quests::abandon`, `reset`, `end_instance`, `timer_due`, `died`; the messages 3836 and 5600 (`RepSession::handle_objective_call`); the commands `abandon_quest`, `reset_quest`; cases QE11, QE12 |
 | The points of interest | `tools/gamedata/pois.py`, `pois.sh`, `check_pois_tool.py`; `gamedata/poi_data.h`; the messages 2297 and 6416 (`RepSession::handle_territory_report`); case QE6 |
@@ -31,7 +31,11 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage 1.8b: the trigger areas | `tools/gamedata/triggers.py`, `triggers.sh`, `check_triggers_tool.py`; `gamedata/trigger_data.h`; the predicate of TaskTriggerArea in `Quests::Plan::predicate`; cases QB1, QB2, QB4 |
 | Stage 1.8b: the effects of a topic, TaskConversationTopic, TaskConversationState | `Quests::topic_finished`, `state_selected`; `Persons::topic` (5397), `Persons::started`; case QB4 |
 | The completed notice (field 2 of the Objectives state) | `QuestLog::completed`, `server/rep/states/objectives_state.cpp`; cases QB2, QB8 |
-| The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md` |
+| Stage 1.8d: the reward join, the standing, the loot container | `Quests::reward_join`, `Quests::hand_in`, `Skills::add_standing`, `ItemContainers` (`world/item_containers.h`), message 1733 (`RepSession::handle_salvage`); cases QD1, QD2, QD6 |
+| Stage 1.8d: the availability of an offer | `Quests::available`, `gamedata::faction_mask`; case QD3 |
+| Stage 1.8d: the repeat of a quest | `Quests::repeat_due`, `schedule_repeat`, `next_cycle`, `QuestData::schedule_kind`, the rows `character_quest_repeats`; cases QD5, QD7, QD8 |
+| Stage 1.8d: what a hand-in pays, and why it is refused | the command `quest_rewards` (`server/http/quest_commands.cpp`), `tools/world quest rewards` |
+| The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/` |
 
 ## Rules
 
@@ -275,6 +279,77 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
   hides it, and with the finish at the close Grace walks away after the conversation [agent from the live check]. TaskConversationState
   (ItemName the person, UIScreenTag the state) counts at the selection of the state at the start of a use.
 
+### The full reward join, the availability, the timer, and the repeat (stage 1.8d)
+
+These rules replace the refusals of the list of stage 1.8b for TerritoryStanding, GearScoreRange, and the loot container items. The
+research is `~/Games/soulwarden/work/research/scratch/quests-18d/` (rules Q1 to Q9, unknowns U1 to U9).
+
+- The reward join is one function, `Quests::reward_join` [agent: one reader for the hand-in and for the command `quest_rewards`]. It reads
+  the success event (UniversalExpAmount, CurrencyReward with CoinRewardChance, ItemReward with ItemRewardQty and GearScoreRange,
+  AchievementId, TerritoryStanding) and the row (ExperienceReward, ItemRewardName with ItemRewardQty, AchievementId, ObjectiveReward)
+  [data; research quest-engine.md Q6]. The hand-in pays all of it in one transaction (the plan of the quest, the inventory, the wallet, the
+  progress, the skills, the achievement rows, the repeat row), or nothing.
+- The rewards that stay refused (no owner in the backend): FactionReputation, FactionTokens, CategoricalProgressionReward, Azoth,
+  UmbralCurrency, PvpXp, SeasonsXp, AzothSalt, CursedSilvers, CursedCrowns that is not 0, an EntitlementId, a StatusEffectId, a
+  ProgressionReward of the row, a GearScoreRange or a TerritoryStanding that the reader cannot read ("#REF!"), an item that the catalog does
+  not have, a negative quantity, a next objective that the quest data does not have [brief of stage 1.8d; roadmap 4.5 for the factions].
+  The refusal names the reward (`tools/world quest rewards`).
+- The items: ItemReward and ItemRewardName have the rules of a new instance of stage 1.3b (`Rewards::grant_items`: GearScoreOverride of the
+  item table, the fixed perks, the free perk places with the level of the character and ForceRarity of the layout); the rolled perks go into
+  the instance (finding QR8B-R1) [client; agent]. The archetype variants of 06_boarfeast pay their own item (the item of the archetype of the
+  character) [data].
+- GearScoreRange of the event [client parser 0x31E43A0: the text splits at "-"; one number is both ends]: the gear score of the item of the
+  event, a uniform roll of the world generator in the range [agent: the three rows of the data have one value].
+- A loot container item (the class has `LootContainer`: the Meat Pouch `QuestReward_MB_Meat_Pouch` of 06_skinningknife) is a normal reward
+  item of the bag. The loot data must have its table (member `containerRoots` of `loot-tables.json`), else the hand-in is refused: a
+  container that cannot open would lose its reward [brief of stage 1.8d]. The open is in [Items and equipment](items-and-equipment.md).
+- TerritoryStanding goes to the origin territory of the instance (the territory of the grant: 6 for the beach chain) [decision D3 option B
+  of the orchestrator, 2026-10-18: a rule of this project; the recipient territory of the data is not known, research U3]. The standing is
+  an entry of the categorical progression of the territory (`Skills::add_standing`, [Progression and skills](progression-and-skills.md)).
+  An instance with no origin territory refuses it. A gain that reaches the next rank is refused (the token of the rank-up has no owner yet:
+  the territory pool of ProgressionPoint) [agent]. The beach chain has one standing reward (120 of `06_raisealarm`), below rank 1 at 150
+  [data].
+- The completion achievement of the row and of the event are set in the same plan [data].
+- The availability (`Quests::available`) has the checks of the client in their order [client 0x37AE910 at the person, eligibility
+  0x3A4BFE0; research quests-18d rules Q2]: no active instance; no other active objective with the same completion achievement
+  (HasObjectiveWithCompletionAchievement 0x3A47310: the variants); the completion achievement (IsObjectiveComplete 0x3A48A30): a repeat on
+  its cooldown is `onCooldown`, else `completedBefore`; a gate whose service rule the backend does not have (RequiredGameModeId,
+  QuestArcTag, RequiredWorldTags, a required categorical progression) is false [agent: an unknown rule is false, as an unknown achievement
+  is, research U7]; RequiredLevel against the level of the screen [client 0x3A4C13E]; RequiredAchievementId as a conditional (with `!`,
+  `&&`, `||`, and the NPA rows) [client]; RequiredFaction as a mask [client parser 0x445CA30: blank or None 0xF, Any 0xE, Syndicate 0x2,
+  Marauder 0x4, Covenant 0x8; a leading `!` gives the complement in the four bits; bit 0 bypasses the test at 0x3A4C166]. The backend has
+  no faction of a character yet (roadmap 4.5): each character is unaligned (faction 0) [agent].
+- The client shows no locked offer: it hides an offer that fails a check [client; live I2 of stage 1.8d: Urda shows no offer before the
+  hand-in of 06_skinningknife and the offer of 06_boarfeast after it]. The person system offers only what `available` permits.
+- PushObjectiveOnReqMet (21 rows) is not applied [agent: the push of `01_SoleSurvivor2` would grant the old start of 134 tasks, and the
+  release status of these rows is not known; decision of the user]. SkipReqAchievmentWhenInvalid and
+  ShouldResetInProgressQuestOnScheduleEnd are read and not applied (no row of the beach chain has them).
+- TaskTimer: the timer of the server, its fraction, and its end action are the rules of stage 1.8a. Stage 1.8d adds: a timer keeps its start
+  across a reconnect (the start is in the task row), and the end of a failure timer fails its objective with the authored action (case QD4)
+  [client 0x3B2BA40]. The countdown row of the HUD is open: the client publishes `MissionTimers.<instance>.TargetTime` at the bind of the
+  task (0x3B2FD90) before its activation (0x3B2D250), and shows a red 00:00:00 (live I3 of stage 1.8d). No server field that changes it is
+  known (research quests-18d U5). Decision D4 of the user (the time away from the world) stays open: the time away counts.
+- The repeat [data ScheduleData; client reset defaults 0x616C670, research quests-18d rules Q4]: an objective with Repeatable and a
+  ScheduleId of the data repeats. The schedule kinds: hourly (`*-*-*T*:00:00`, no EndDate), daily (`*-*-*TDailyCooldown`), weekly
+  (StartWeekday `WeeklyCooldown`, no StartDate). The cycles start at the shipped defaults of the client: daily 05:00 UTC, weekly Tuesday
+  05:00 UTC, hourly at the full hour [client 0x6181D4B to 0x6181F87; agent: no region offset]. A completion at the start of a cycle belongs
+  to that cycle. A schedule with a window (StartDate and EndDate, a season) or with no row has no repeat [decision D4 of the user is open].
+- The hand-in of a repeat writes a repeat row (`character_quest_repeats`: the number of completions, the time of the completion, the start
+  of the next cycle) in its transaction. The completion achievement stays set to the start of the next cycle: the person answers
+  OnCooldown (8) then [client 0x37AE910]. At the start of the cycle one deadline of the world clock (`Quests::repeat_due`) removes the
+  achievement in one plan and keeps the row with no deadline (the generation). The entry of a character schedules its deadlines from its
+  rows; a deadline in the past runs at the entry (the time away counts, as for a timer) [agent].
+- The cost: one deadline of the world clock for each repeat with a deadline; a row with no deadline has no work; the availability reads the
+  active list of one character (case QD8: 2 deadlines for 2,402 rows, one due entry, 200 steps after a day in less than 2 s) [project rule
+  MP-8].
+- A quest whose root is satisfied waits for its hand-in, and its StayActive tasks do not regress (case QD11) [data; agent; live F of
+  stage 1.8d]. The data: task 3 of `06_crewmates` (leave the watchtower) and task 6 (go to the shipwreck) are StayActive places, and the
+  hand-in person (Aelstrom 03) stands in the watchtower camp; 214 objectives with a hand-in person have a StayActive place task, and none
+  has a StayActive TaskHaveItems. The client function of the regression (0x3ADDEC0) has no check of the objective. Live F: before this
+  rule the walk back from the shipwreck took the root of `06_crewmates_soldier` back to Active, and the HUD showed the shipwreck task
+  again. A quest that is not ready regresses as before (QR8A-R3, cases QRV3 and QE2).
+- Each change has two sessions in its cases (QD7: two characters with different schedules, balances, and standings; MP-10).
+
 ### The corrections of the code review of stage 2.5c (in stage 1.8b)
 
 The findings PR5C-R1 to PR5C-R7 (`~/Games/soulwarden/work/evidence/persons/25c/code-review/FINDINGS.md`) are corrected in stage 1.8b; each has
@@ -316,6 +391,27 @@ the correction. The source of each rule is the finding and the client rule that 
 - QR8C-R14 (case QRW14): the index of the new instances is built before the inventory marks its change of the items: a give of a new
   quest reaches its new possession task in the same tick.
 
+### The corrections of the code review of stage 1.8b (in stage 1.8d)
+
+The findings QR8B-R1 to QR8B-R12 (`~/Games/soulwarden/work/evidence/quests/18b/code-review/FINDINGS.md`) are corrected in stage 1.8d.
+Each has a case of `tests/review_quests_18b_tests.cpp` (QRB1 to QRB12; QRBC is a control) that fails on the tree of stage 1.8b and passes
+after the correction [agent through the review].
+
+- QR8B-R1 (case QRB1): the perks that `Rewards::grant_items` rolls for a reward item go into the instance (`Inventory::plan_quest_items`).
+- QR8B-R2 (case QRB2): a hand-in needs the target count of each satisfied return task in the bag now (`missingReturnItems`); the
+  completion takes the items [research quest-engine.md Q3].
+- QR8B-R3, R4, R5, R6 (cases QRB3 to QRB6): the topic rules of 5397 are in [Persons](persons.md).
+- QR8B-R7 (case QRB7): a cutscene end completes only the tasks that were Active at the grant of the cutscene (`QuestLog::cutsceneTasks`):
+  an old end does not complete the tasks of a new instance.
+- QR8B-R8 (case QRB8): a second 6703 for the pending cutscene, while its tasks live, keeps the grant and its start; a pending grant whose
+  tasks ended gets a new grant.
+- QR8B-R9 (case QRB9): an ObjectiveReward that the quest data does not have refuses the hand-in.
+- QR8B-R10 (case QRB10): a negative ItemRewardQty of the event refuses the hand-in (the event and the row use one rule).
+- QR8B-R11 (case QRB11): a TaskTriggerGameEvent whose item did not fit waits under the key "items"; the next change of the bag runs it
+  when the item fits.
+- QR8B-R12 (case QRB12): the trigger loader refuses a volume whose axes are not unit length or not orthogonal (tolerance 0.001; the
+  real file has an error below 0.000001).
+
 ## Commands
 
 ```sh
@@ -324,6 +420,7 @@ tools/gamedata/quests.sh --objective 06_getoffbeach   # print a tree (no file)
 tools/world quests CHARACTER                    # the quests, their tasks, the pins, the one-time grants, the counts
 tools/world quest templates                     # the backstory templates and their start objectives
 tools/world quest template CHARACTER TEMPLATE   # decision D2 option C (the command apply_backstory)
+tools/world quest rewards CHARACTER OBJECTIVE [TERRITORY]   # stage 1.8d: what a hand-in pays (or the reward that refuses it), and the offer
 tools/world quest grant CHARACTER OBJECTIVE     # development only: a new instance of an objective
 tools/world quest abandon CHARACTER INSTANCE    # stage 1.8c: the rule of message 3836 (CanBeAbandoned 0 refuses it)
 tools/world quest reset CHARACTER INSTANCE      # stage 1.8c: the rule of message 5600 (a new instance; the award rows stay)
@@ -332,7 +429,7 @@ tools/gamedata/triggers.sh [OUTPUT.json]        # stage 1.8b: the trigger volume
 tools/world achievement CHARACTER ID on|off     # development only: the change event, the lock of a last bit
 ```
 
-The admin interface has the commands `apply_backstory` (argument `template`), `abandon_quest` and `reset_quest` (argument `instance`, 16
+The admin interface has the commands `apply_backstory` (argument `template`), `quest_rewards` (arguments `objective` and `territory`; stage 1.8d), `abandon_quest` and `reset_quest` (argument `instance`, 16
 hexadecimal digits), the route `GET /admin/v1/catalog/backstories`, and the member `quests` of the state of a character (stage 1.8c: with
 the award rows and the counts of the events; stage 1.8b: the counts of the offers, the hand-ins, the cutscenes, the whispers, the trigger
 volumes, and the topic effects). The tool window has no control for them in this stage. An offer and a hand-in have no command: they come
@@ -356,7 +453,7 @@ from the client at a person (a development run: `tools/world quest grant` gives 
 - 8 start objectives of the backstory templates have no objective row in this build, among them `Level60_MSQ6001` (`9919_0037_planb`) and
   `Level60_PTR` (`0511_0201_UmbrasReach`), the examples of the research.
 - Stage 1.8c: a consecutive container counts each satisfied direct child, also a later one (client 0x3AD6C60): after the regression of an
-  earlier child the count can stay above the number of the children before it (case QE2: 3 of 4 with the second child Active).
+  earlier child the count can stay above the number of the children before it (case QE2: 3 of 5 with the second child Active).
 - Stage 1.8c: a travel gives an estimated position (`World::travel`): the tasks of a place change only at the next accepted position report
   of the client (some hundred milliseconds later).
 - Stage 1.8c: the event of a quest gatherable has no row of the event tables (MSQ_Treasure_B_interact): the gathering tool and the loader
@@ -377,5 +474,15 @@ from the client at a person (a development run: `tools/world quest grant` gives 
   of 06_skinningknife). Escape closes it; the quest stays ready.
 - Stage 1.8b: the knife of 06_skinningknife needs the station `engineering2` or `camp1`; the camp of the watchtower is hidden for the client
   (open point of 1.8c). The live run of stage 1.8b gave the knife by command after the natural gathers of the flint and the wood.
+  Stage 1.8d: the camp is not hidden. The client shows "Urda's Campfire, E Craft" at 9606.5 2367.8 when the focus is on the campfire, and
+  its screen crafts the knife and the Light Ration (live I0 and F of stage 1.8d). The earlier report did not have the focus on it.
+- Stage 1.8d: the client names the Meat Pouch "Essential Supplies Cache" (the bag group "Rewards"). Its open shows the reward popup of the
+  client with the Weak Health Potion and 10 Travel Rations.
+- Stage 1.8d: the HUD of "Basic Needs" (06_skinningknife) shows a red 00:00:00 under the tasks: the row of the hidden timer task 14
+  (`swapDelay`, 25.4 s). The timer runs on the server and ends; the row stays at zero (the open point of the countdown, rule above).
+- Stage 1.8d: a supply cache and the campfire of the watchtower camp are near Aelstrom and Urda, and they take the focus of E. Turn the
+  camera to the person, or come from the open side, before E.
+- Stage 1.8d: after the accept of an offer, the last page of the dialogue does not close with E in a development run (no sound); Escape
+  closes it. A second Escape opens the bar of the main menu.
 - Stage 1.8b: the character of a new creation starts in Aelstrom_IGC_Trigger: the beach cutscene starts at the first accepted position, some
   seconds after the loading screen. A capture of the world entry needs the picture loop before the client leaves the loading screen.

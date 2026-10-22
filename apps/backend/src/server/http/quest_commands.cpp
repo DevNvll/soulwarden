@@ -93,6 +93,57 @@ WorldCommand grant_objective(const std::string& character, const Arguments& argu
     };
 }
 
+WorldCommand quest_rewards(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
+    const auto id = id_argument(arguments, "objective");
+    const auto territory = arguments.integer("territory", 0, 65535);
+    if (!id) {
+        refusal = message(400, "give objective=ID (an ObjectiveID of the quest data) and maybe territory=N (the origin territory; default its "
+                               "ExclusiveTerritory)");
+        return {};
+    }
+    return [character, id = *id, territory](world::World& target) {
+        world::Entity* entity = target.find_character(character);
+        if (entity == nullptr) {
+            return message(409, "the character is not in the world");
+        }
+        const gamedata::QuestData* data = target.quests().data();
+        const gamedata::QuestObjective* objective = data != nullptr ? data->objective(id) : nullptr;
+        if (objective == nullptr) {
+            return message(404, "the quest data has no such objective");
+        }
+        const std::uint16_t origin = territory ? static_cast<std::uint16_t>(*territory) : objective->exclusiveTerritory.value_or(0);
+        world::RewardJoin join;
+        std::string detail;
+        const world::QuestError error = target.quests().reward_join(*entity, *objective, origin, join, detail);
+        json items = json::array();
+        for (const world::RewardItem& item : join.items) {
+            json entry{{"item", item.itemId}, {"quantity", item.quantity}, {"container", target.item_containers().openable(item.itemId)}};
+            if (item.gearScoreRange) {
+                entry["gearScoreRange"] = {item.gearScoreRange->first, item.gearScoreRange->second};
+            }
+            items.push_back(entry);
+        }
+        const world::QuestError availability = target.quests().available(*entity, *objective);
+        return json_reply(200, json{{"objective", objective->id},
+                                    {"payable", error == world::QuestError::none},
+                                    {"refusal", error == world::QuestError::none ? "" : detail},
+                                    {"experience", join.eventExperience + join.rowExperience},
+                                    {"coin", join.coin},
+                                    {"coinChance", join.coinChance},
+                                    {"items", items},
+                                    {"achievements", join.eventAchievements},
+                                    {"completionAchievement", join.achievement},
+                                    {"standing", join.standing},
+                                    {"standingTerritory", join.standingTerritory},
+                                    {"next", join.next != nullptr ? join.next->id : ""},
+                                    {"repeat", join.schedule == gamedata::ScheduleKind::none ? "none"
+                                               : join.schedule == gamedata::ScheduleKind::hourly ? "hourly"
+                                               : join.schedule == gamedata::ScheduleKind::daily ? "daily" : "weekly"},
+                                    {"available", world::quest_error_text(availability)}}
+                                   .dump());
+    };
+}
+
 WorldCommand set_achievement(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal) {
     const auto id = id_argument(arguments, "id");
     const auto on = arguments.integer("on", 0, 1);

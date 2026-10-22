@@ -166,6 +166,10 @@ using Command = WorldCommand (*)(const std::string& character, const Arguments& 
 [[nodiscard]] WorldCommand apply_backstory(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand grant_objective(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 [[nodiscard]] WorldCommand set_achievement(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
+// Stage 1.8d: quest_rewards (a reader): `objective` and maybe `territory` (the origin territory; default the ExclusiveTerritory of the row): the
+// one reward join of the hand-in (Quests::reward_join: what a hand-in pays, or the reward that refuses it) and the availability of the offer for
+// the character (Quests::available). No change.
+[[nodiscard]] WorldCommand quest_rewards(const std::string& character, const Arguments& arguments, service::HttpResponse& refusal);
 // Stage 1.8c: abandon_quest and reset_quest: `instance` (16 hexadecimal digits: an active instance of the character in the world): the rule of
 // the client messages 3836 and 5600 (world/quests.h: the undo of the achievement actions, the return of the items, the pin; a reset makes a
 // new instance and keeps the award rows). An objective with CanBeAbandoned 0 refuses the abandon (409).

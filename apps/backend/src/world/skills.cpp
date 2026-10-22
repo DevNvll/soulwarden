@@ -70,6 +70,9 @@ state::SkillRows Skills::rows_of(const SkillSet& skills) const {
         if (row == nullptr && id == gamedata::progression_id(kAzothCurrency)) {
             return std::string(kAzothCurrency); // Stage 3.7c: the balance of Azoth has no row of the progression tables.
         }
+        if (const gamedata::StandingRow* standing = row == nullptr && tables() != nullptr ? tables()->standing_of(id) : nullptr) {
+            return standing->id; // Stage 1.8d: the standing of a territory ("6").
+        }
         return row != nullptr ? row->id : std::string{};
     };
     const auto node_name = [&](std::uint32_t id) {
@@ -345,6 +348,44 @@ ProgressError Skills::add_balance(Plan& plan, std::string_view id, std::int64_t 
     }
     plan.touched.ranks = true;
     return ProgressError::none;
+}
+
+ProgressError Skills::add_standing(Plan& plan, std::uint16_t territory, std::uint64_t amount) const {
+    if (!plan.ok()) {
+        return plan.error;
+    }
+    if (tables() == nullptr) {
+        return ProgressError::noTables;
+    }
+    const gamedata::StandingRow* row = tables()->standing(territory);
+    if (row == nullptr) {
+        return ProgressError::unknownProgression;
+    }
+    if (amount == 0) {
+        return ProgressError::none;
+    }
+    ProgressionRank& value = plan.skills.progressions[row->wireId];
+    const std::uint32_t rank = value.rank;
+    if (rank >= row->maxRank || rank >= row->ranks.experience.size()) {
+        // The largest rank (300: MaximumInfluence 0, AllowOverflow 0): no more points (0x3CAACF0 takes no gain at the cap).
+        return ProgressError::none;
+    }
+    const std::uint64_t limit = row->ranks.experience[rank];
+    if (value.points + amount >= limit) {
+        // Equality enters the rank path (0x3CAAF15): a rank-up.
+        if (value.rank == 0 && value.points == 0) {
+            plan.skills.progressions.erase(row->wireId);
+        }
+        return ProgressError::standingRankUp;
+    }
+    value.points += amount;
+    plan.touched.ranks = true;
+    return ProgressError::none;
+}
+
+ProgressionRank Skills::standing(const SkillSet& skills, std::uint16_t territory) {
+    const auto found = skills.progressions.find(gamedata::progression_id(std::to_string(territory)));
+    return found != skills.progressions.end() ? found->second : ProgressionRank{};
 }
 
 SkillResult Skills::set_balance(const std::string& characterId, std::string_view id, std::uint64_t amount, std::uint64_t cap) {

@@ -517,7 +517,9 @@ button on "Confirm").
 - `tools/gamedata/triggers.sh` makes the trigger volumes of the quests (stage 1.8b; `trigger-data.json`, format 1, 0.2 MB, 22 s): the
   detection volume of each quest trigger of the chunk slices with its tag: 849 volumes with 790 tags in the supported build. Without the
   file a quest task of a trigger area waits. Stage 1.8b also changes `quests.sh` (the columns of the game events) and `interactions.sh`
-  (the ids of the persons near a border of the id rule): run the three tools again.
+  (the ids of the persons near a border of the id rule): run the three tools again. Stage 1.8d changes `progression.sh` (format 3: the territory
+  standings) and `loot.sh` (the loot table of each loot container item): run the two tools again; with a file from before, the hand-in of
+  a quest with a standing or a container reward is refused.
 - `tools/gamedata/conversations.sh` makes the conversation data of the persons (stage 2.5c; `conversation-data.json`, format 1, 1.5 MB): the
   NPC rows with their conversation states in authored order, the states with their requirements, topics, and services, and the topics with
   their requirements and ProvidedTopics (1,478 NPC rows, 3,429 states, 556 topics in the supported build). `--npc ID` prints an NPC row
@@ -860,7 +862,7 @@ button on "Confirm").
   quest template NAME TEMPLATE` give it the achievements and the start objective of one backstory template of the game data (decision D2
   option C; `GET /admin/v1/catalog/backstories`, `tools/world quest templates` list them). In a development run `tools/world quests NAME`
   shows the quests and their tasks, `tools/world quest grant NAME OBJECTIVE` gives an objective, and `tools/world achievement NAME ID
-  on|off` changes a bit. The offers and the hand-in are stage 1.8b (below); the full rewards are 1.8d.
+  on|off` changes a bit. The offers and the hand-in are stage 1.8b (below); the full rewards are 1.8d (below).
 - Quest events (stage 1.8c, [Quests](systems/quests.md)). The tasks count the events of the other systems: a credited kill (each vitals
   category of the victim and its kill event; only the characters of the credit list), the items in the bag and the paperdoll (the
   possession tasks, also back below the target for a StayActive task), an equip, a gather (the items of the roll, the game event of the
@@ -881,6 +883,18 @@ button on "Confirm").
   volume of its tag; a cutscene that an active task waits for is granted (6707) and completes the task at its end; a game event of a task
   sends its whisper (5070) and sets its bits. The quest view of `tools/world quests NAME` and the admin state member `quests` have the
   counts of the offers, the hand-ins, the cutscenes, the whispers, and the trigger volumes.
+- Quest rewards, availability, and repeats (stage 1.8d, [Quests](systems/quests.md), protocol notes 4.57). The hand-in pays each reward
+  of the data that has an owner in one transaction: the experience, the coin (with its chance), the items (with their perks;
+  GearScoreRange sets the gear score of the event item), the loot container items, the completion achievements, and the territory standing
+  of the origin territory of the quest (decision D3 option B; a gain that gives a new standing rank is refused). A faction reward, a
+  status, an entitlement, and the other currencies are refused, and the quest stays ready. The bag action "Open" of a loot container item
+  (1733) rolls its loot table (`loot-tables.json` member `containerRoots`) and gives the items with the cause OpenRewardChest: the client
+  shows its reward popup. A person offers only the objectives that pass the checks of the client (an active variant, the completion
+  achievement, the level, the required achievements, the faction mask; a gate with no rule of the backend is false). A repeatable objective
+  with a daily or weekly schedule comes again at the reset of the client (05:00 UTC; weekly on Tuesday); its rows are in
+  `character_quest_repeats` (schema 17). A quest whose tasks are done keeps them done until its hand-in. In a development run `tools/world
+  quest rewards NAME OBJECTIVE [TERRITORY]` (route `GET /v1/dev/quests/rewards`, admin command `quest_rewards`) prints what a hand-in of
+  the objective pays, or the reward that refuses it, and the answer of an offer; it changes nothing.
 - Persons (stage 2.5c, [Persons](systems/persons.md), protocol notes 4.55). Each person of the game data is in the interaction data: the
   persons that the client makes for the PrefabSpawners of the level (Aelstrom, Urda, and Grace on the beach, the persons of the quests and of
   the settlements) with the client id of their place, yaw, and slice, and the direct persons. A person of a quest is there for a character

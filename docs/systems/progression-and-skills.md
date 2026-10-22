@@ -98,6 +98,17 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   trade skill does not apply: `Skills::add_balance` (a plan of a transaction with a cap) and `Skills::set_balance` change only the points,
   and `Skills::balance` reads them. A craft takes the Azoth of its perk upgrade and of its currency ingredients in the transaction of each
   job. The command `set_currency` (the tool window, `tools/world azoth`) sets it; the world has no other source yet.
+- The territory standing (stage 1.8d, [Quests](quests.md)) [data: the rows of the territories in CategoricalProgressionData, the rank
+  table `Territory_Standing`; live I0 of stage 1.8d]: the standing of a territory is the entry of the categorical progression whose
+  name is the territory number ("6": CRC-32 `1DB87A14`) in the state 911, with its rank and its points in the rank (MaximumInfluence
+  150, 375, 600, and more; XpReward 0, 100, 150, and more). The progression tables have the standings (format 3 of
+  `progression-tables.json`: the territory, the largest rank, the rank table, the pool, AutoRankUp). Live I0: an entry of rank 0 with
+  120 points makes the map of the client show "120 / 150" for Windsward. `Skills::add_standing` adds points in one plan of a
+  transaction and refuses a gain that reaches the next rank (`standingRankUp`: the token of the rank-up, ProgressionPoint slot 67, has
+  no owner yet) [agent]. `Skills::standing` reads it. The client preview of a quest reward shows the standing of the data (120)
+  [live]. TerritoryStandingXpModifier (1.25) scales the character experience of a standing rank-up (rank 1: XpReward 100 gives 125), and
+  the points above a rank go to the next rank [research quests-18d rules Q8]: the backend refuses a rank-up, so neither rule has a use
+  yet.
 - The effect of a learned node (stage 3.3b-S5): the evaluator of the passive rules applies the row of each learned node of
   the tree of the weapon of a hit, and the fixed stats of the nodes of the weapon in the hand go into the gear values
   ([Passive rules](passive-rules.md)). A change of the learned nodes of a character in the world (an assignment, a reset of a

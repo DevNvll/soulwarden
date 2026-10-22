@@ -26,6 +26,9 @@ packs and the entitlements that they give), and compares the result of each case
   short-attribute-table the Focus table with no row of the value 100 (its mana threshold): status 1, the old file stays (stage 2.2,
                         code review of stage 3.5b.2, finding LB-R7; case RLB7)
   attribute-gap         the Strength table with no row of the value 50: status 1, the old file stays (finding LB-R7)
+  standing              the standing row of the territory 6 and the rank table Territory_Standing with its XpReward (stage 1.8d,
+                        format 3)
+  short-standing-table  a standing MaxLevel with no row in Territory_Standing: status 1, the old file stays (stage 1.8d)
 
 The attribute tables of the entry point have one row for each value 5 to 100 (the range of Constitution).
 
@@ -112,10 +115,11 @@ def attribute_rows(table: str, thresholds: bool, missing: int | None) -> list[di
     return rows
 
 
-def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None) -> tuple[dict, dict]:
+def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None, standing_rank: int = 2) -> tuple[dict, dict]:
     """@return The made-up tables of the entry point of the tool (the reviewer's probe RDT1 of stage 1.1b). `thresholds`: the attribute
     tables have the column EquipAbilities (stage 3.5b.2: Focus 100 gives Foc_Bonus_100_1). `missing`: the table and the value of a row
-    that the source does not have (stage 2.2, finding LB-R7)."""
+    that the source does not have (stage 2.2, finding LB-R7). `standing_rank`: the MaxLevel of the standing row of the territory 6 (stage
+    1.8d; the rank table Territory_Standing has the ranks 0 to 2)."""
     tables, kinds, expansions = sheets("valid")
     tables[expansions.name] = expansions
     kinds[expansions.name] = "ExpansionData"
@@ -132,7 +136,11 @@ def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] 
                                                                  "ManaRegenDelay": 0, "ManaRegenDelayOnEmpty": 0}])),
         ("CategoricalProgressionData", FakeSheet(tool.PROGRESSION_TABLE, [
             {"CategoricalProgressionId": "SwordAbilityTable", "RankTableId": "WeaponMastery", "MaxLevel": 19, "Expansion01MaxLevel": 0},
-            {"CategoricalProgressionId": "Mining", "RankTableId": "MiningRanks", "MaxLevel": 200, "Expansion01MaxLevel": 250}])),
+            {"CategoricalProgressionId": "Mining", "RankTableId": "MiningRanks", "MaxLevel": 200, "Expansion01MaxLevel": 250},
+            {"CategoricalProgressionId": "6", "RankTableId": tool.STANDING_RANK_TABLE, "MaxLevel": standing_rank, "Expansion01MaxLevel": 0,
+             "ProgressionPointPool": "TerritoryStandingPool", "AutoRankUp": True}])),
+        ("CategoricalProgressionRankData", FakeSheet(tool.STANDING_RANK_TABLE, [
+            {"Rank": rank, "MaximumInfluence": influence, "XpReward": reward} for rank, (influence, reward) in enumerate([(150, 0), (375, 100), (600, 150)])])),
         ("CategoricalProgressionRankData", FakeSheet("WeaponMastery", [
             {"Rank": rank, "MaximumInfluence": 10, "AzothRespecCost": 0} for rank in range(20)])),
         ("TradeskillRankData", FakeSheet("MiningRanks", [
@@ -147,10 +155,10 @@ def rank_sources(short: bool, thresholds: bool = True, missing: tuple[str, int] 
     return tables, kinds
 
 
-def run_ranks(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None) -> tuple[int, bool, object]:
+def run_ranks(short: bool, thresholds: bool = True, missing: tuple[str, int] | None = None, standing_rank: int = 2) -> tuple[int, bool, object]:
     """@return The status of the entry point, True when the old file stayed, and the Mining cap with the expansion (with the document:
     run_ranks.document)."""
-    tables, kinds = rank_sources(short, thresholds, missing)
+    tables, kinds = rank_sources(short, thresholds, missing, standing_rank)
     with tempfile.TemporaryDirectory(prefix="soulwarden-progression-check-") as folder:
         target = Path(folder) / "progression-tables.json"
         target.write_text("earlier output\n")
@@ -196,6 +204,18 @@ def main() -> int:
     passed = status == 0 and thresholds.get("focus") == [[100, ["Foc_Bonus_100_1", "Foc_Bonus_100_2"]]] and thresholds.get("constitution") == []
     print(f"{'ok  ' if passed else 'FAIL'}  attribute-thresholds: the threshold abilities of each attribute (stage 3.5b.2): focus "
           f"{thresholds.get('focus')}")
+    failures += 0 if passed else 1
+    # Stage 1.8d (format 3): the standing row of a territory and the rank table Territory_Standing with its XpReward.
+    standings = run_ranks.document.get("standings")
+    standing_table = run_ranks.document.get("rankTables", {}).get(tool.STANDING_RANK_TABLE)
+    passed = status == 0 and run_ranks.document.get("format") == 3 and standings == [["6", 2, tool.STANDING_RANK_TABLE, "TerritoryStandingPool", True]] \
+        and standing_table == {"experience": [150, 375, 600], "xpReward": [0, 100, 150]}
+    print(f"{'ok  ' if passed else 'FAIL'}  standing: the standing of the territory 6 (stage 1.8d): {standings} {standing_table}")
+    failures += 0 if passed else 1
+    status, kept, mining = run_ranks(False, standing_rank=3)
+    passed = status == 1 and kept
+    print(f"{'ok  ' if passed else 'FAIL'}  short-standing-table: a standing MaxLevel 3 with the ranks 0 to 2: status {status}, old file "
+          f"{'kept' if kept else 'replaced'} (stage 1.8d)")
     failures += 0 if passed else 1
     status, kept, mining = run_ranks(True)
     passed = status == 1 and kept

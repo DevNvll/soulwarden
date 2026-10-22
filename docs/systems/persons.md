@@ -131,6 +131,13 @@ the stage (with the cause), [review] a finding of the code review of stage 2.5c 
   topic and the event of TaskConversationTopic (the NPC and the topic), one time in one conversation [agent from the live check: an effect
   at 3158 changes nothing in the open conversation, and the person of a walkaway slice must walk away after it]. The selection of a state
   at the start of a use gives the event of TaskConversationState [data].
+- The finish of the topics of a 5397 (stage 1.8d, code review of stage 1.8b, findings QR8B-R3 to R6; cases QRB3 to QRB6) [agent through
+  the review]: `Persons::finish_topics` takes the whole list of one 5397. A topic counts only when the character selected it with 3158 in
+  that conversation (`notSelected` else), the person is there, and the character is in the range of the bound with its accepted position
+  (`tooFar`). All topics of the list go to the quest system in one plan (`Quests::topics_finished`): two selected topics of one 5397 both
+  finish. A topic is `finished` only after the commit: a refused write of the store (`storeFailed`) leaves it open, and a new 5397 can
+  finish it. A character that walks out of the range after the close loses the closed conversation (`Persons::moved`, called by
+  `Interactions::moved`): a late 5397 then counts nothing.
 - The source of a conversation [review PR5C-R1, PR5C-R3; cases QRP1, QRP3]: a new use replaces the conversation of the character before
   the handler of the new use starts (`Persons::source_replaced`): the old topic context is gone, so a 5397 or a 3772 of the old person
   does not count. Only a close of the client (2473, the end of the block) keeps the closed conversation for its 5397; each other end (a new

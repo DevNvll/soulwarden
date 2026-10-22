@@ -155,6 +155,24 @@ struct QuestTask {
     std::uint32_t nameCrc{0};
 };
 
+/** The faction mask of a blank RequiredFaction (and of None): bit 0 bypasses the test (client parser 0x445CA30, eligibility 0x3A4C166). */
+inline constexpr std::uint8_t kAnyFactionMask = 0x0F;
+
+/** @return The mask of a RequiredFaction text (client parser 0x445CA30: one leading "!", the names Syndicate, Marauder, Covenant, Any). */
+[[nodiscard]] std::uint8_t faction_mask(std::string_view text);
+
+/** The kinds of the schedule rows of the data that the backend supports for a repeat (research quest-engine.md Q5). */
+enum class ScheduleKind : std::uint8_t {
+    /** No schedule row, or a row with dates (a seasonal window: decision D4 of the user is open). */
+    none,
+    /** StartDate *-*-*T*:00:00: each whole hour (UTC). */
+    hourly,
+    /** StartDate *-*-*TDailyCooldown: the daily reset (shipped default 05:00 UTC, client 0x616C670). */
+    daily,
+    /** StartWeekday WeeklyCooldown: the weekly reset (shipped default Tuesday 05:00 UTC, client 0x616C670). */
+    weekly,
+};
+
 /** One node of a tree: the task at an index, and the indexes of its children (a container). */
 struct QuestNode {
     /** Index into QuestData::tasks(). kNoTask: a hole (a container that the tree built before). */
@@ -207,6 +225,25 @@ struct QuestObjective {
     /** ProgressionReward (a categorical progression: faction tokens or reputation; a later stage) and ObjectiveReward (the next objective). */
     std::string progressionReward;
     std::string objectiveReward;
+    // Stage 1.8d: the availability of the row (the eligibility of the client 0x3A4BFE0) and its repeat. A blank cell has no rule.
+    /** RequiredLevel: the level of the screen (the level index plus 1, client 0x3A4C13E). 0: none. */
+    std::uint32_t requiredLevel{0};
+    /** RequiredFaction: the mask of the parser 0x445CA30 (bit 0 bypasses the test; bit N + 1 is the faction N). Blank: 0xF. */
+    std::uint8_t factionMask{kAnyFactionMask};
+    /** QuestArcTag, RequiredWorldTags, RequiredGameModeId, RequiredProgression: gates whose service rule the backend does not have. */
+    std::string questArc;
+    std::string worldTags;
+    std::string gameMode;
+    std::string requiredProgression;
+    /** SkipReqAchievmentWhenInvalid, PushObjectiveOnReqMet, PushObjectiveOnReqRetrigger (loader 0x445CA30 +0x36A, +0x368, +0x369). */
+    bool skipInvalidRequirement{false};
+    bool pushOnRequirement{false};
+    bool pushRetrigger{false};
+    /** Repeatable (1, true, TRUE: research Q6 census) and ScheduleId (Hourly, Daily, Weekly, a seasonal row). */
+    bool repeatable{false};
+    std::string schedule;
+    /** ShouldResetInProgressQuestOnScheduleEnd (loader 0x445CE86). */
+    bool resetOnScheduleEnd{false};
 };
 
 /**
@@ -220,9 +257,19 @@ struct QuestGameEvent {
     std::uint64_t coin{0};
     /** CoinRewardChance: the loader of the client sets 1 when the cell is blank (0x31E70B0, row +0x38). */
     double coinChance{1.0};
-    /** ItemReward and ItemRewardQty (a blank quantity: 1, the client loader 0x31E7129; an explicit 0 stays 0). */
+    /**
+     * ItemReward and ItemRewardQty (a blank quantity: 1, the client loader 0x31E7129; an explicit 0 stays 0). The quantity keeps its sign
+     * (code review of stage 1.8b, finding QR8B-R10: a negative quantity is a removal with no rule, and the hand-in refuses it).
+     */
     std::string item;
-    std::uint32_t itemQty{1};
+    std::int64_t itemQty{1};
+    /**
+     * Stage 1.8d: GearScoreRange (client parser 0x31E43A0: the text split at "-", one number is the smallest and the largest value). The
+     * gear score of the item of the event. No value: a blank cell.
+     */
+    std::optional<std::pair<std::uint16_t, std::uint16_t>> gearScoreRange;
+    /** Stage 1.8d: TerritoryStanding: the standing of the origin territory of the quest instance (decision D3 option B). */
+    std::uint64_t standing{0};
     /** AchievementId: an achievement of the event. */
     std::string achievement;
     /** WhisperId or WhisperID: the whisper of the event (166 of 170 TaskTriggerGameEvent rows name an event with one). */
@@ -325,6 +372,8 @@ public:
     [[nodiscard]] std::size_t achievement_count() const {
         return m_achievementIds.size();
     }
+    /** Stage 1.8d: @return The kind of a schedule row (ScheduleId, any case); `none` for an unknown id or a row of dates. */
+    [[nodiscard]] ScheduleKind schedule_kind(std::string_view id) const;
 
 private:
     bool fail(std::string cause);
@@ -345,6 +394,7 @@ private:
     std::vector<QuestWhisper> m_whispers;
     std::unordered_map<std::string, std::size_t> m_whisperById;
     std::unordered_map<std::string, std::size_t> m_whisperByEvent;
+    std::unordered_map<std::string, ScheduleKind> m_schedules;
 };
 
 /** @return The CRC-32 of the lower-case text: the id of an objective or of a task on the wire. */

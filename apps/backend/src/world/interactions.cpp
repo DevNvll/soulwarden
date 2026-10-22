@@ -648,6 +648,9 @@ void Interactions::moved(Entity& character) {
             end_grant(character, "the character left the range of the source");
         }
     }
+    // A closed person conversation keeps the authority of its topics for its 5397 only in the range of the person (code review of stage
+    // 1.8b, finding QR8B-R6): one lookup of the conversation of the character.
+    m_world.persons().moved(character);
     if (!character.interaction) {
         return;
     }

@@ -1,6 +1,7 @@
 #include "gamedata/progression_tables.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <fstream>
 #include <set>
@@ -154,10 +155,11 @@ bool ProgressionTables::load(const std::string& path) {
     // The format first (code review of stage 1.1b, finding F5): format 1 (or no member: a file of stage 1.6) has rows of four
     // values and no expansion; format 2 (stage 1.1b) has rows of five values and the three lists of the ownership.
     std::uint32_t format = 1;
-    if (document.contains("format") && (!read_number(document["format"], format) || (format != 1 && format != 2))) {
+    if (document.contains("format") && (!read_number(document["format"], format) || format < 1 || format > 3)) {
         return false;
     }
-    const bool format2 = format == 2;
+    // Format 3 (stage 1.8d) is format 2 with the territory standings.
+    const bool format2 = format >= 2;
     if (format2 != (document.contains("expansions") || document.contains("entitlements") || document.contains("achievements"))) {
         return false;
     }
@@ -231,13 +233,44 @@ bool ProgressionTables::load(const std::string& path) {
     if (!document["rankTables"].is_object()) {
         return false;
     }
+    std::map<std::string, std::vector<std::uint32_t>> xpRewards;
     for (const auto& [name, table] : document["rankTables"].items()) {
         RankTable ranks;
         if (!table.is_object() || !table.contains("experience") || !read_numbers(table["experience"], ranks.experience)
             || (table.contains("resetCost") && !read_numbers(table["resetCost"], ranks.resetCost))) {
             return false;
         }
+        if (table.contains("xpReward") && (!read_numbers(table["xpReward"], xpRewards[name]) || xpRewards[name].size() != ranks.experience.size())) {
+            return false;
+        }
         rankTables.emplace(name, std::move(ranks));
+    }
+    // Stage 1.8d (format 3): the standings [territory, maxRank, rankTable, pool, autoRankUp].
+    if (format == 3) {
+        if (!document.contains("standings") || !document["standings"].is_array()) {
+            return false;
+        }
+        for (const json& row : document["standings"]) {
+            StandingRow standing;
+            std::uint32_t territory = 0;
+            if (!row.is_array() || row.size() != 5 || !row[0].is_string() || !row[2].is_string() || !row[3].is_string() || !row[4].is_boolean()
+                || !read_number(row[1], standing.maxRank)) {
+                return false;
+            }
+            standing.id = row[0].get<std::string>();
+            const auto [end, error] = std::from_chars(standing.id.data(), standing.id.data() + standing.id.size(), territory);
+            const auto ranks = rankTables.find(row[2].get<std::string>());
+            if (error != std::errc() || end != standing.id.data() + standing.id.size() || territory == 0 || territory > 65535
+                || ranks == rankTables.end() || standing.maxRank >= ranks->second.experience.size()) {
+                return false;
+            }
+            standing.territory = static_cast<std::uint16_t>(territory);
+            standing.ranks = ranks->second;
+            standing.xpReward = xpRewards[row[2].get<std::string>()];
+            standing.pool = row[3].get<std::string>();
+            standing.autoRankUp = row[4].get<bool>();
+            data.standings.push_back(std::move(standing));
+        }
     }
     // The progressions: [id, kind, maxRank, rankTable].
     if (!document["progressions"].is_array()) {
@@ -353,6 +386,12 @@ void ProgressionTables::build_keys() {
         row.wireId = progression_id(row.id);
         m_progressionKeys.emplace(row.wireId, position);
     }
+    m_standingKeys.clear();
+    for (std::size_t position = 0; position < m_data.standings.size(); ++position) {
+        StandingRow& row = m_data.standings[position];
+        row.wireId = progression_id(row.id);
+        m_standingKeys.emplace(row.wireId, position);
+    }
     for (std::size_t position = 0; position < m_data.nodes.size(); ++position) {
         AbilityNode& node = m_data.nodes[position];
         node.wireId = progression_id(node.id);
@@ -428,6 +467,15 @@ std::uint32_t ProgressionTables::constitution_health(std::uint32_t value) const 
 const ProgressionRow* ProgressionTables::progression(std::uint32_t wireId) const {
     const auto found = m_progressionKeys.find(wireId);
     return found == m_progressionKeys.end() ? nullptr : &m_data.progressions[found->second];
+}
+
+const StandingRow* ProgressionTables::standing(std::uint16_t territory) const {
+    return standing_of(progression_id(std::to_string(territory)));
+}
+
+const StandingRow* ProgressionTables::standing_of(std::uint32_t wireId) const {
+    const auto found = m_standingKeys.find(wireId);
+    return found != m_standingKeys.end() ? &m_data.standings[found->second] : nullptr;
 }
 
 const ProgressionRow* ProgressionTables::progression(std::string_view id) const {

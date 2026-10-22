@@ -543,6 +543,14 @@ public:
      * ItemGathered (the loot notice), whole or not at all (bagFull). No write, no change of the entity.
      * @param taken Gets the quantity that each action took (a give: 0).
      */
+    /**
+     * Stage 1.8d: plans the open of a loot container item (world/item_containers.h): takes `quantity` of the stack of the bag slot `slot`
+     * (its instance must be `instance`; an item with the lock of the player stays: the lock protects an item from a removal of a client),
+     * and gives `items` into the bag with the cause OpenRewardChest (26), whole or not at all (bagFull; the slot that the take frees counts).
+     * No write, no change of the entity.
+     */
+    [[nodiscard]] Plan plan_open(const std::string& characterId, std::uint32_t slot, const InstanceId& instance, std::uint32_t quantity,
+                                 const std::vector<GrantItem>& items);
     [[nodiscard]] Plan plan_quest_items(const std::string& characterId, const std::vector<QuestItemAction>& actions,
                                         std::vector<std::uint32_t>* taken);
     /** @return The quantity of an item id (any case) in the bag and in the paperdoll of a character (stage 1.8c: a possession task). */

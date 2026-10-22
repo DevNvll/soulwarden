@@ -355,6 +355,8 @@ private:
      */
     void handle_equip_item(std::span<const std::uint8_t> body);
     void handle_use_item(std::span<const std::uint8_t> body);
+    /** Stage 1.8d: 1733, the open of a loot container item of the bag (world/item_containers.h). */
+    void handle_salvage(std::span<const std::uint8_t> body);
     /**
      * The crafting (stage 3.7a, world/crafting.h, server/rep/crafting_messages.h): request 2997 and stop 2999 of the client go to the
      * crafting system with the session (the character comes from the session); 7044 and 7039 of the crafting screen get the empty search

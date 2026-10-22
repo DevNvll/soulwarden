@@ -92,8 +92,14 @@ enum class TopicResult : std::uint8_t {
     unknownTopic,
     /** The selection of the character at its source does not offer the topic. */
     notOffered,
+    /** 5397 (code review of stage 1.8b, finding QR8B-R3): the character did not select the topic (3158) in this conversation. */
+    notSelected,
+    /** 5397 (finding QR8B-R6): the accepted position of the character is out of the range of the bound of the person. */
+    tooFar,
+    /** 5397 (finding QR8B-R4): the database did not take the effects: the topic is not finished, and a new 5397 can finish it. */
+    storeFailed,
 };
-inline constexpr std::size_t kTopicResultCount = 7;
+inline constexpr std::size_t kTopicResultCount = 10;
 
 /** Stage 1.8b: the result of an offer (3772) or a hand-in (794) of the client. */
 enum class QuestRequestResult : std::uint8_t {
@@ -191,6 +197,15 @@ public:
      * the close of the conversation). A valid topic counts one time; each other result changes nothing.
      */
     TopicResult topic(Entity& character, std::uint32_t topicCrc, bool closing);
+    /**
+     * The topics of one 5397 (the close of the conversation; code review of stage 1.8b, findings QR8B-R3 to R6): the whole list is checked
+     * before any effect (the source, its presence, the range of its bound with the accepted position, each topic selected with 3158 in this
+     * conversation and not finished), then the effects of all valid topics are one plan of the quest system, and the topics are finished
+     * only after its commit. @return The result of each topic, in the order of the list.
+     */
+    std::vector<TopicResult> finish_topics(Entity& character, const std::vector<std::uint32_t>& topics);
+    /** Finding QR8B-R6: an accepted position of the character (Interactions::moved): a closed conversation out of its range ends. */
+    void moved(Entity& character);
     /** Stage 1.8b: the client accepts an offer (3772, the CRC-32 of the ObjectiveID). */
     QuestRequest accept(Entity& character, std::uint32_t objectiveCrc);
     /** Stage 1.8b: the client hands in a quest (794, the CRC-32 of the ObjectiveID). */

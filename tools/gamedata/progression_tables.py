@@ -40,7 +40,7 @@ tools/research/pakx.py extracted).
   the weapon ability tables (AbilityData)        for each node: the tree, the row, the column, and
                                                  if it is an active ability
 
-Output: {"format": 2, "levelCap": N, "tradeSkillCap": N,
+Output: {"format": 3, "levelCap": N, "tradeSkillCap": N,
 "expansions": [[id, maxLevel, maxCraftGearScore, maxEquipGearScore, maxTradeSkillLevel, entitlement], ...],
 "entitlements": [[alias, index, rewardType, rewards, achievement], ...],
 "achievements": [[id, index], ...],
@@ -49,7 +49,11 @@ Output: {"format": 2, "levelCap": N, "tradeSkillCap": N,
 "vitals": {"health": N, "stamina": N, "mana": N},
 "rankTables": {"<name>": {"experience": [...], "resetCost": [...]}, ...},
 "progressions": [[id, kind, maxRank, rankTable, expansionMaxRank], ...],
-"abilities": [[table, node, tree, row, column, active, requiredNode], ...]}.
+"abilities": [[table, node, tree, row, column, active, requiredNode], ...],
+"standings": [[territory, maxRank, rankTable, pointPool, autoRankUp], ...]}.
+Stage 1.8d (format 3): `standings` has the territory standing rows of CategoricalProgression (the rank table Territory_Standing; the id
+is the decimal territory id), and `rankTables` the table Territory_Standing with MaximumInfluence as `experience` and XpReward as
+`xpReward`. A file of format 2 has no standing: the backend then refuses a quest reward of standing.
 Entry K of `levels` (from 0) is the level K + 1 of the screen. `levelCap` is a level of the
 screen. Entry K of `constitutionHealth` is the value `minimum` + K. `abilities` (stage 3.5b.2) has, for each attribute, the
 threshold abilities of the EquipAbilities column: a character with the attribute at VALUE or above has them (the backend reads
@@ -107,6 +111,9 @@ PLAYER_VITALS_ROW = "Player"
 PROGRESSION_TABLE = "CategoricalProgression"
 POINT_TABLE = "ProgressionPoints"
 WEAPON_RANK_TABLE = "WeaponMastery"
+# Stage 1.8d: the territory standing (decision D3 option B of the orchestrator): each categorical progression row with this rank table is
+# the standing of the territory whose id is the decimal text of the row id ("6" is Windsward).
+STANDING_RANK_TABLE = "Territory_Standing"
 TRADE_SKILL_RANK_TYPE = "TradeskillRankData"
 RANK_TYPES = ("CategoricalProgressionRankData", TRADE_SKILL_RANK_TYPE)
 ABILITY_TYPE = "AbilityData"
@@ -314,10 +321,18 @@ def build_tables(contents: list[bytes]) -> dict:
     # The weapon masteries and the trade skills, with the rank table of each one.
     progression_sheet = one_table(sheets, PROGRESSION_TABLE)
     progressions = []
+    standing_rows: list = []
     rank_tables: dict[str, dict] = {}
     for row in range(progression_sheet.row_count):
         identifier = str(progression_sheet.cell(row, "CategoricalProgressionId"))
         table = str(progression_sheet.cell(row, "RankTableId"))
+        if table == STANDING_RANK_TABLE:
+            if not identifier.isdigit() or not 0 < int(identifier) <= 65535:
+                raise Failure(f"the standing row {identifier} of the table {PROGRESSION_TABLE} is not a territory id")
+            standing_rows.append([identifier, whole(progression_sheet.cell(row, "MaxLevel")), table,
+                                  str(progression_sheet.cell(row, "ProgressionPointPool") or "").strip(),
+                                  flag(progression_sheet.cell(row, "AutoRankUp"))])
+            continue
         if table == WEAPON_RANK_TABLE:
             kind = "weapon"
         elif kinds.get(table) == TRADE_SKILL_RANK_TYPE:
@@ -348,6 +363,22 @@ def build_tables(contents: list[bytes]) -> dict:
             if value >= ranks:
                 raise Failure(f"the {column} {value} of {identifier} has no row in its rank table {table} (ranks 0 to {ranks - 1})")
         progressions.append([identifier, kind, largest, table, expansion_largest])
+    # Stage 1.8d: the rank table of the standing: MaximumInfluence of each rank (the points of a rank to the next one; client 0x3CAACF0) and
+    # XpReward. Each standing row must have a rank row for each rank to its MaxLevel.
+    standings = []
+    if standing_rows:
+        sheet = one_table(sheets, STANDING_RANK_TABLE)
+        influence, experience = [], []
+        for rank in range(sheet.row_count):
+            if whole(sheet.cell(rank, "Rank")) != rank:
+                raise Failure(f"row {rank} of the rank table {STANDING_RANK_TABLE} is not the rank {rank}")
+            influence.append(whole(sheet.cell(rank, "MaximumInfluence")))
+            experience.append(whole(sheet.cell(rank, "XpReward")))
+        rank_tables[STANDING_RANK_TABLE] = {"experience": influence, "xpReward": experience}
+        for identifier, largest, table, pool, auto in standing_rows:
+            if largest >= len(influence):
+                raise Failure(f"the MaxLevel {largest} of the standing {identifier} has no row in its rank table {table}")
+            standings.append([identifier, largest, table, pool, auto])
     weapons = {entry[0].lower() for entry in progressions if entry[1] == "weapon"}
     if not weapons:
         raise Failure(f"the table {PROGRESSION_TABLE} has no weapon mastery")
@@ -379,11 +410,12 @@ def build_tables(contents: list[bytes]) -> dict:
                           str(point_sheet.cell(row, "RequiredProgressionPointId"))])
     if not abilities:
         raise Failure(f"the table {POINT_TABLE} has no node of a weapon tree")
-    return {"format": 2, "levelCap": level_cap, "tradeSkillCap": trade_skill_cap, "expansions": expansion_rows,
+    return {"format": 3, "levelCap": level_cap, "tradeSkillCap": trade_skill_cap, "expansions": expansion_rows,
             "entitlements": entitlements, "achievements": achievements, "levels": levels,
             "attributes": {"minimum": minimum, "maximum": minimum + len(health) - 1, "constitutionHealth": health,
                            "abilities": attribute_abilities},
-            "vitals": vitals, "rankTables": rank_tables, "progressions": progressions, "abilities": abilities}
+            "vitals": vitals, "rankTables": rank_tables, "progressions": progressions, "abilities": abilities,
+            "standings": standings}
 
 
 def main() -> int:

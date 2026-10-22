@@ -273,9 +273,10 @@ void topics(const Options&) {
     shop.topic(kCharacterA, {crc("Test_Topic_Ask"), crc("Test_Topic_Gated")}, true);
     shop.topic(kCharacterA, {crc("Test_Topic_Ask")}, true);
     check(shop.topic_count(world::TopicResult::accepted) == 2 && shop.topic_count(world::TopicResult::duplicate) == 2
-              && shop.topic_count(world::TopicResult::notOffered) == 3 && a->conversation->finished == std::vector<std::uint32_t>{crc("Test_Topic_Ask")},
+              && shop.topic_count(world::TopicResult::notOffered) == 2 && shop.topic_count(world::TopicResult::notSelected) == 1
+              && a->conversation->finished == std::vector<std::uint32_t>{crc("Test_Topic_Ask")},
           "the 5397 of the close (after the 2473, live check L3): the topic is finished one time (a second 5397 changes nothing); the gated "
-          "topic is not offered");
+          "topic was not selected (code review of stage 1.8b, finding QR8B-R3: a 5397 finishes only a topic of a 3158 of the conversation)");
     shop.topic(kCharacterA, {crc("Test_Topic_Ask")});
     check(shop.topic_count(world::TopicResult::noConversation) == 1, "a 3158 after the close: no open conversation, no change");
     // A stale revision: the task completes after the selection; the next topic request makes the selection again (no task: no topic).
@@ -287,7 +288,7 @@ void topics(const Options&) {
     shop.topic(kCharacterA, {crc("Test_Topic_Ask")});
     note("NC4 after the task: " + (quest != nullptr ? questfix::states_text(*quest) : std::string("(no quest)")) + ", state " + state_of(a));
     check(quest != nullptr && quest->tasks[0].state == world::quest_state::kComplete && state_of(a) == "Art_Default"
-              && shop.topic_count(world::TopicResult::notOffered) == 4 && a->conversation->finished.empty(),
+              && shop.topic_count(world::TopicResult::notOffered) == 3 && a->conversation->finished.empty(),
           "a completed task and a stale revision: the selection again gives Art_Default, the topic is not offered, no change");
     // A wrong source: the topic of the artificer in a conversation with the pirate.
     shop.end_block(shop.clientA);
@@ -295,7 +296,7 @@ void topics(const Options&) {
     shop.host.steps(2, {&shop.clientA});
     shop.request(shop.clientA, shop.talk(kPirate));
     shop.topic(kCharacterA, {crc("Test_Topic_Ask")});
-    check(a->conversation && a->conversation->npc == "Test_Pirate" && shop.topic_count(world::TopicResult::notOffered) == 5,
+    check(a->conversation && a->conversation->npc == "Test_Pirate" && shop.topic_count(world::TopicResult::notOffered) == 4,
           "a topic of a different person (a wrong source): not offered, no change");
 }
 

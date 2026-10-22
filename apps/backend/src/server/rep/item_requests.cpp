@@ -92,6 +92,21 @@ std::optional<PaperdollDropRequest> read_paperdoll_drop_request(std::span<const 
     return request;
 }
 
+std::optional<SalvageRequest> read_salvage_request(std::span<const std::uint8_t> body) {
+    hub::Reader reader(body);
+    SalvageRequest request;
+    request.call = read_call(reader);
+    request.containerType = reader.u32();
+    request.slot = reader.u32();
+    request.instance = read_instance(reader);
+    request.locationQuantity = reader.u32();
+    request.quantity = reader.u32();
+    if (!reader.ok() || reader.left() != 0 || request.quantity > kHighestQuantity) {
+        return std::nullopt;
+    }
+    return request;
+}
+
 std::optional<ComponentCall> read_component_call(std::span<const std::uint8_t> body) {
     hub::Reader reader(body);
     const ComponentCall call = read_call(reader);

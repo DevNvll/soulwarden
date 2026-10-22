@@ -268,6 +268,18 @@ struct QuestAwardRow {
     std::uint32_t amount{0};
 };
 
+/**
+ * Stage 1.8d (table `character_quest_repeats`, schema 17): a completed repeatable objective with a schedule of the data. Its completion
+ * achievement goes at `resetNs` (the start of the next cycle of its schedule, on the world clock): then the person offers it again.
+ */
+struct QuestRepeatRow {
+    std::string objective;
+    /** The completions of the objective (the generation of the repeat). */
+    std::uint32_t completions{0};
+    std::uint64_t completedNs{0};
+    std::uint64_t resetNs{0};
+};
+
 /** The rows of a new character that the create route writes in the transaction of the character (stage 1.8a: the start of the quests). */
 struct NewCharacterRows {
     /** The achievements of the character (the archetype achievement of its backstory row). */
@@ -553,6 +565,12 @@ public:
     [[nodiscard]] bool write_quest_award(const std::string& characterId, const QuestAwardRow& row);
     /** Removes the award rows of an objective of a character (an abandon). */
     [[nodiscard]] bool delete_quest_awards(const std::string& characterId, const std::string& objective);
+    /** Stage 1.8d: @return The repeat rows of a character. */
+    [[nodiscard]] std::vector<QuestRepeatRow> list_quest_repeats(const std::string& characterId);
+    /** Stage 1.8d: writes (inserts or replaces) the repeat row of an objective. In a batch: a savepoint of its transaction. */
+    [[nodiscard]] bool write_quest_repeat(const std::string& characterId, const QuestRepeatRow& row);
+    /** Stage 1.8d: removes the repeat row of an objective (its reset). */
+    [[nodiscard]] bool delete_quest_repeat(const std::string& characterId, const std::string& objective);
     /** @return The largest instance id of the saved quests of all characters (0: none). */
     [[nodiscard]] std::uint64_t largest_quest_instance();
     /** Removes achievements of a character (stage 1.8a: the lock of a quest task). A row that is not there changes nothing. */

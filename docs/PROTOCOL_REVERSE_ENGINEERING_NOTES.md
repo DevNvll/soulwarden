@@ -7172,6 +7172,61 @@ backend applies the AchievementUnlock of the topic and counts TaskConversationTo
 `01_Grace_Goodbye_WW` at the close, the next task locks `SwapActive_01_GraceWW_C`, and Grace walks away after the conversation
 (`T2-topic-finish-walkaway.mp4`).
 
+### 4.57 The open of a loot container, the territory standing, the repeat of a quest, the countdown row of a timer (live proof of stage 1.8d; static proof for the client code and the game data; the reward join, the repeat cycles, and the standing territory are project rules with the values of the game data)
+
+Research: `~/Games/soulwarden/work/research/scratch/quests-18d/rules/RESULT.md` (Q1 to Q9) and `timer/RESULT.md`. The systems:
+[Items and equipment](systems/items-and-equipment.md), [Quests](systems/quests.md), [Progression and skills](systems/progression-and-skills.md).
+Live checks of stage 1.8d: `~/Games/soulwarden/work/evidence/quests/18d/implement/live/`, `live-final/`, and `RESULT.md`. Client build
+1.400.6031.6004151; all addresses are image-relative.
+
+**1733** (`CraftingComponentServerFacet_InitiateSalvage`; native call 0x2E69D20, check 0x2E4AB20, sender 0x2E220D0 at 0x2E69E89, writer
+0x2DF3000; the Crafting facet of the player) [static; live D1 and F]: 48 bytes:
+
+```text
++0x00 target:u64
++0x08 entity:u64
++0x10 containerType:u32       1: the bag
++0x14 slot:u32
++0x18 instance:16 bytes
++0x28 locationQuantity:u32    0 in the live checks (0x2E69D20 sets it to zero at 0x2E69E21)
++0x2c salvageQuantity:u32     1 for Open
+```
+
+The bag action "Open" of an item of the class LootContainer (`dynamictooltip_commands:OnOpen`, `BoxOpenHelper`) and a double click
+(`newinventory:ItemDoubleClickAction`) send it with the quantity 1; no screen has a quantity selector [UI scripts]. Live D1 and F: the
+Meat Pouch (`QuestReward_MB_Meat_Pouch`, "Essential Supplies Cache") in bag slot 1: `salvage request (type 1733, bag slot 1, quantity 1,
+location quantity 0)`. The backend answers only with the bag state.
+
+**The bag state with the cause OpenRewardChest** (slot 61, type 1755, `ActionCausingSync` 26) [static: the dispatcher 0x48E2CC0 tests the
+action 26 at 0x48E2E95 and selects the reward chest branch; live D1 and F]: one record removes one unit of the container (the cause 2,
+ItemRemoved) and adds the items of the roll with the cause 26. The client then runs `rewardcelebrationpopup:OnRewardChestOpened` and shows
+its reward popup with the items (live F: the Weak Health Potion and 10 Travel Rations, `F-37-pouch-open.mp4`). The cause 33 (SalvageReward)
+selects the salvage branch at 0x48E2EAA; it is not used. The loot table of a container is the RepairRecipe `[LTID]NAME` of its item row
+(0x2E57210 reads it, 0x3687F10 removes the prefix) [static; data].
+
+**The territory standing** (slot 65, type 911, the categorical progression) [data; live I0]: the standing of a territory is an entry
+with the id CRC-32 of the territory number (Windsward "6": `1DB87A14`), the rank (u16), and the points in the rank (u64). Live I0: the
+entry of rank 0 with 120 points makes the map of the client show "120 / 150" for Windsward (`I0-17-standing-120.png`). The first try had
+one byte too many in the u64 of the points: the client wrote "Failure during read of ReplicatedStateBundle" and dropped the record. A
+rank-up and its token (ProgressionPoint, slot 67, type 3681) are not sent: the backend refuses a gain that reaches the next rank.
+
+**The offer of a quest that does not pass** [static: eligibility 0x3A4BFE0, the person check 0x37AE910; live I2 of stage 1.8d]: the client
+hides an offer whose checks fail (no locked display). Live F: Urda offers no quest before the hand-in of `06_skinningknife`, and the offer
+of `06_boarfeast_soldier` ("Campfire Feast") at once after it; 3772 `41bb821e` accepts it (`F-31-offer-unlocked.png`).
+
+**The repeat of a quest** [static: the reset defaults 0x616C670, instructions 0x6181D4B to 0x6181F87; the person answer OnCooldown 8 at
+0x37AE910; no live check]: the daily cycle starts at 05:00 UTC, the weekly cycle on Tuesday at 05:00 UTC. The completion achievement of a
+repeatable objective stays set to the start of the next cycle; the server then removes it in the achievement state (slot 66), and the person
+offers the objective again.
+
+**The countdown row of a timer** [static: the publisher 0x3B2FD90, activation 0x3B2D250, `objectives/hud/pinnedobjective.luac`
+`SetObjectiveId`, `OnTick`; live I3 and F]: the HUD row below an objective reads `Hud.LocalPlayer.MissionTimers.<instance>.TargetTime`.
+The client publishes it at the bind of the TaskTimer (0x3B2FD90, the value of `task + 0x510`) before the activation (0x3B2D250) sets the
+deadline, and no later code publishes it again. With the elements of the Objectives state (field 0, the start; state 1, Active) the row
+shows a red 00:00:00 (live F: "Basic Needs" and "Amidst the Wreckage"; `T1-05-hud-timer-row.png`). The timer of the server runs and ends
+with its fraction (live T1: 25.415 s, then Aelstrom 03 shows). No server field that sets the published value is known: open (research
+quests-18d timer U5).
+
 ## 5. Open items
 
 - User test 1 (2026-10-14). The flicker of far creatures ("enemies from a distance are

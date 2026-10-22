@@ -105,13 +105,17 @@ QuestDoc event_quests() {
     doc.task("Test18c_HaveWood", "taskhaveitems", 25, {{"ItemName", "TestWoodT1"}, {"TargetQty", "3"}, {"StayActive", "1"}});
     doc.task("Test18c_EquipPick", "taskequipitem", 45, {{"ItemName", "TestPick"}, {"TargetQty", "1"}, {"MinGearScore", "150"}});
     doc.task("Test18c_RemoveStone", "taskremoveitem", 36, {{"ItemName", "TestStoneT1"}, {"TargetQty", "2"}});
+    // Stage 1.8d: a last child that waits (an achievement that the data does not know): the quest is not ready, so its StayActive
+    // possession regresses (a quest whose root is satisfied holds its StayActive tasks: case QD11).
+    doc.task("Test18c_WaitNever", "taskachievement", 18, {{"ItemName", "Test18c_Never_Known"}});
     doc.task("Test18c_Items_Root", "consecutivetaskcontainer", 1);
     doc.objective("Test18c_ItemQuest", json::object(),
                   {{0, "Test18c_Give", {}},
                    {1, "Test18c_HaveWood", {}},
                    {2, "Test18c_EquipPick", {}},
                    {3, "Test18c_RemoveStone", {}},
-                   {4, "Test18c_Items_Root", {0, 1, 2, 3}}});
+                   {4, "Test18c_WaitNever", {}},
+                   {5, "Test18c_Items_Root", {0, 1, 2, 3, 4}}});
     // The gathers: a quest drop of the skinning, the count of the ore of a gather.
     doc.task("Test18c_SkinDrop", "taskgatheritems", 29,
              {{"ItemName", "TestGemA"}, {"TargetQty", "2"}, {"ItemDropVC", "Test_WolfSkin"}, {"ItemDropProbability", "100"},
@@ -148,6 +152,12 @@ QuestDoc event_quests() {
     doc.task("Test18c_Place_Root", "consecutivetaskcontainer", 1);
     doc.objective("Test18c_PlaceQuest", json::object(),
                   {{0, "Test18c_LeaveA", {}}, {1, "Test18c_GoToB", {}}, {2, "Test18c_EventInB", {}}, {3, "Test18c_Place_Root", {0, 1, 2}}});
+    // Stage 1.8d: the same places with a last child that waits: the quest is not ready, so its StayActive exit task regresses (a ready
+    // quest holds it: case QD11).
+    doc.task("Test18c_PlaceNever", "taskgameevent", 14, {{"KillEnemyType", "Test18c_Never"}, {"TargetQty", "1"}});
+    doc.task("Test18c_PlaceLong_Root", "consecutivetaskcontainer", 1);
+    doc.objective("Test18c_PlaceLong", json::object(),
+                  {{0, "Test18c_LeaveA", {}}, {1, "Test18c_GoToB", {}}, {2, "Test18c_PlaceNever", {}}, {3, "Test18c_PlaceLong_Root", {0, 1, 2}}});
     // A screen, then a child objective with an interaction.
     doc.task("Test18c_OpenInventory", "taskopenuiscreen", 62, {{"UIScreenTag", "Inventory"}, {"TargetQty", "1"}});
     doc.task("Test18c_Child", "taskobjective", 52, {{"ItemName", "Test18c_ChildQuest"}});
@@ -385,22 +395,24 @@ void items(const Options&) {
     check(shop.equip(kCharacterA, "TestPick", kPickSlot, 160), "setup: a pick of gear score 160 in its slot");
     shop.settle();
     quest = shop.quest(kCharacterA, "Test18c_ItemQuest");
-    check(state_of(quest, 2) == kComplete && state_of(quest, 3) == kComplete && count_of(a, "TestStoneT1") == 3 && state_of(quest, 4) == kCompleteActive,
-          "the pick of 160 completes the equip; TaskRemoveItem takes 2 stones by item id (5 to 3); the root is CompleteActive");
+    check(state_of(quest, 2) == kComplete && state_of(quest, 3) == kComplete && count_of(a, "TestStoneT1") == 3 && state_of(quest, 4) == kActive
+              && state_of(quest, 5) == kActive,
+          "the pick of 160 completes the equip; TaskRemoveItem takes 2 stones by item id (5 to 3); the root waits for its last child");
     // The regression: the wood leaves the bag.
     check(shop.take(kCharacterA, "TestWoodT1", 3), "setup: 3 wood leave the bag (1 stays)");
     shop.settle();
     quest = shop.quest(kCharacterA, "Test18c_ItemQuest");
     note("after the wood left: " + states_text(*quest));
-    check(state_of(quest, 1) == kActive && progress_of(quest, 1) == 1 && state_of(quest, 4) == kActive && progress_of(quest, 4) == 3,
-          "the StayActive task regresses to Active (1 of 3); the consecutive root is Active again and counts its 3 satisfied children "
+    check(state_of(quest, 1) == kActive && progress_of(quest, 1) == 1 && state_of(quest, 5) == kActive && progress_of(quest, 5) == 3,
+          "the StayActive task regresses to Active (1 of 3); the consecutive root counts its 3 satisfied children "
           "(client 0x3AD6C60: the satisfied direct children, in any place)");
-    check(state_of(quest, 2) == kComplete && state_of(quest, 3) == kComplete, "the completed later tasks stay Complete (terminal)");
+    check(state_of(quest, 2) == kComplete && state_of(quest, 3) == kComplete && state_of(quest, 4) == kInactive,
+          "the completed later tasks stay Complete (terminal); the later active task is Inactive (the rewind)");
     check(shop.give(kCharacterA, "TestWoodT1", 2), "setup: the wood comes back");
     shop.settle();
     quest = shop.quest(kCharacterA, "Test18c_ItemQuest");
-    check(state_of(quest, 1) == kCompleteActive && state_of(quest, 4) == kCompleteActive && count_of(a, "TestStoneT1") == 3,
-          "satisfied again: the root is CompleteActive again; no second removal");
+    check(state_of(quest, 1) == kCompleteActive && state_of(quest, 4) == kActive && state_of(quest, 5) == kActive && count_of(a, "TestStoneT1") == 3,
+          "satisfied again: the next task that is not done is active again; no second removal");
     // The reset: a new instance; AwardOnlyOnce gives no second gem.
     const std::uint64_t instance = quest->instance;
     const world::QuestResult reset = shop.quests().reset(a, instance);
@@ -556,7 +568,18 @@ void places(const Options&) {
     check(state_of(quest, 2) == kComplete && state_of(quest, 3) == kCompleteActive, "in the place B it counts; the root is CompleteActive");
     move(100.0F, 200.0F);
     quest = shop.quest(kCharacterA, "Test18c_PlaceQuest");
-    check(state_of(quest, 0) == kActive && state_of(quest, 3) == kActive, "back into A: the StayActive exit task regresses, and its root");
+    check(state_of(quest, 0) == kCompleteActive && state_of(quest, 3) == kCompleteActive,
+          "back into A: the quest is ready, and its StayActive exit task holds (stage 1.8d, case QD11: the walk back to the person)");
+    // The regression of a quest that is not ready: the same places with a last child that waits.
+    check(shop.grant(kCharacterA, "Test18c_PlaceLong").ok(), "setup: the long place quest, A in the point of interest A");
+    move(500.0F, 200.0F);
+    move(300.0F, 200.0F);
+    quest = shop.quest(kCharacterA, "Test18c_PlaceLong");
+    check(state_of(quest, 0) == kCompleteActive && state_of(quest, 1) == kComplete && state_of(quest, 2) == kActive, "setup: out of A, into B");
+    move(100.0F, 200.0F);
+    quest = shop.quest(kCharacterA, "Test18c_PlaceLong");
+    check(state_of(quest, 0) == kActive && state_of(quest, 2) == kInactive && state_of(quest, 3) == kActive,
+          "back into A: the StayActive exit task of the quest that is not ready regresses, and its root rewinds");
     const std::uint64_t looks = shop.quests().counts().placeLooks;
     (void)shop.host.world.travel(kCharacterA, state::WorldPosition{101.0F, 200.0F, 30.0F}, world::TravelScreen::off);
     (void)shop.host.world.travel(kCharacterA, state::WorldPosition{102.0F, 200.0F, 30.0F}, world::TravelScreen::off);
@@ -573,7 +596,7 @@ void places(const Options&) {
     body.u32(0x39EEC8C7);
     shop.host.datagram(shop.clientA.peer, shop.clientA.component_message(server::rep::kTypeTerritoryEntered, a.actor.bytes, body.data()));
     shop.settle();
-    check(state_of(shop.quest(kCharacterA, "Test18c_PlaceQuest"), 0) == kActive, "a 2297 for B while A is in A changes nothing (a cue only)");
+    check(state_of(shop.quest(kCharacterA, "Test18c_PlaceLong"), 0) == kActive, "a 2297 for B while A is in A changes nothing (a cue only)");
     // No POI data: a place task waits.
     QuestShop empty;
     empty.enter();

@@ -318,10 +318,10 @@ void loaders(const Options& options) {
     const gamedata::QuestGameEvent* standing = data.game_event("Qb_Standing_Success");
     check(start != nullptr && next != nullptr && success != nullptr && success->experience == 200 && success->coin == 150
               && success->coinChance == 1.0 && success->item.empty() && success->unpaid.empty() && next->itemReward == "QbPotion"
-              && next->itemRewardQty == 5 && start->itemRewardQty == 1 && standing != nullptr
-              && standing->unpaid == std::vector<std::string>{"TerritoryStanding 120"},
+              && next->itemRewardQty == 5 && start->itemRewardQty == 1 && standing != nullptr && standing->unpaid.empty()
+              && standing->standing == 120 && success->standing == 0,
           "the rewards: experience, coin (the chance 1 of a blank cell), the item of the row with its quantity, a standing of 0 is no "
-          "reward, a standing of 120 is a reward that the backend cannot pay");
+          "reward, a standing of 120 is a reward of the territory (stage 1.8d: an owner, decision D3 option B)");
     const gamedata::QuestWhisper* byId = data.whisper_of_event("qb_whisper_event");
     const gamedata::QuestWhisper* byEvent = data.whisper_of_event("Qb_Second_Event");
     check(byId != nullptr && byId->id == "Qb_Whisper" && byId->crc == qcrc("Qb_Whisper") && byId->achievement == "Qb_Whisper_Bit"
@@ -573,6 +573,7 @@ void effects(const Options&) {
     shop.host.steps(3, {&shop.clientA, &shop.clientB});
     shop.request(shop.clientA, shop.talk(kArtificer));
     const std::uint64_t effects = shop.host.world.quests().counts().topicEffects;
+    shop.topic18(kCharacterA, crc("Qb_Topic")); // The selection (3158): code review of stage 1.8b, finding QR8B-R3.
     shop.close(kCharacterA, kArtificer);
     shop.topic18(kCharacterA, crc("Qb_Topic"), true);
     shop.topic18(kCharacterA, crc("Qb_Topic"), true);

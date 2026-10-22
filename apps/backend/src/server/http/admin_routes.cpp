@@ -81,6 +81,7 @@
 //          abandon_quest       instance (16 hexadecimal digits): the abandon of an active quest (stage 1.8c: the undo of its
 //                              achievement actions, the return of its items, its pin; CanBeAbandoned 0 gives 409)
 //          reset_quest         instance: the reset of an active quest (stage 1.8c: a new instance; the award rows stay)
+//          quest_rewards       objective, territory: the reward join and the availability of an objective (stage 1.8d; a reader)
 //          apply_preset        preset (the name of a build preset, bow-boltcaster), variant (pve or pvp; no value: the
 //                              first variant): the whole build of the preset (stage B0): the equipment (the old items go
 //                              into the bag), the level, the attributes, the masteries, the trees, the bars, and the
@@ -197,6 +198,7 @@ constexpr NamedCommand kCommands[] = {
     // Stage 1.8c: the abandon and the reset of a quest of the character (the rules of the client messages 3836 and 5600).
     {"abandon_quest", commands::abandon_quest},
     {"reset_quest", commands::reset_quest},
+    {"quest_rewards", commands::quest_rewards},
 };
 
 /** @return The text of a query value: "%XX" is one byte, and "+" is a space. */
