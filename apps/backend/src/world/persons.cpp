@@ -90,6 +90,37 @@ std::optional<bool> progression_passes(const Entity& character, const std::strin
     return have.rank >= rank && (points == 0 || have.points >= static_cast<std::uint64_t>(points));
 }
 
+/**
+ * Stage 1.8f: the validity of a state record (static read of stage 1.8f: the loader of the client 0x379E280 writes it to byte +0x190 at
+ * 0x379F2F0 to 0x379F377; the selector 0x37AC710 skips an invalid record before its player check, 0x37AC846 to 0x37AC870):
+ * IsInitialState XOR "the row has a requirement". A requirement is a loaded value that is not 0: RequiredLevel, RequiredFaction (a named
+ * value, Any too), RequiredFactionCooldown (the two cooldown values), RequiredCompletedObjective, RequiredAchievement, RequiredProgression
+ * with an id and a rank or points above 0, RequiredActiveObjectiveId (a list with an id) with RequiredActiveTaskId. Thus a state with no
+ * requirement that is not the initial state (06_01b_MarcelDupont) and an initial state with a requirement are never selected.
+ */
+bool record_valid(const gamedata::ConversationState& state) {
+    const gamedata::ConversationRequirements& needs = state.requirements;
+    bool progression = false;
+    {
+        std::istringstream input(needs.progression);
+        std::string id;
+        long long rank = 0;
+        long long points = 0;
+        if (input >> id >> rank) {
+            if (!(input >> points)) {
+                points = 0;
+            }
+            progression = rank != 0 || points != 0;
+        }
+    }
+    const bool activeObjective = needs.activeObjective.find_first_not_of(", ") != std::string::npos;
+    const bool requirement = (needs.level && *needs.level != 0) || faction_value(needs.faction) != kFactionNone
+                             || same_text(needs.factionCooldown, "InCooldownMultipleDays") || same_text(needs.factionCooldown, "InCooldownSingleDay")
+                             || !needs.completedObjective.empty() || !needs.achievement.empty() || progression
+                             || (activeObjective && !needs.activeTask.empty());
+    return state.initial != requirement;
+}
+
 const char* presence_text(gamedata::PersonPresence presence) {
     switch (presence) {
     case gamedata::PersonPresence::always:
@@ -252,12 +283,14 @@ std::int32_t Persons::selected_state(const Entity& character, const gamedata::Co
     if (catalog == nullptr) {
         return -1;
     }
-    // The states in reverse: the first state whose requirements pass (client 0x37AC710).
+    // The states in reverse: the first valid state whose requirements pass (client 0x37AC710; stage 1.8f: an invalid record is skipped,
+    // record_valid).
     for (auto state = npc.states.rbegin(); state != npc.states.rend(); ++state) {
         if (visits != nullptr) {
             ++*visits;
         }
-        if (passes(character, catalog->state(*state).requirements, false)) {
+        const gamedata::ConversationState& row = catalog->state(*state);
+        if (record_valid(row) && passes(character, row.requirements, false)) {
             return static_cast<std::int32_t>(*state);
         }
     }

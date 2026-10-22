@@ -603,6 +603,13 @@ public:
      * M2b-R1) use it.
      */
     void run_event(const std::string& characterId, SessionId session, const SequenceEvent& event);
+    /**
+     * Stage 1.8e: a strike of a character passed its time: the destructible quest objects (world/quest_objects.h). Code review of stage
+     * 1.8e, finding QR8E-R1: only a strike with a usable row for the character (row_for: the learned-node conditions of the hit path). The
+     * graph of the great axe has two strike entries at one time (Attack_Heavy: one row forbids the node of the heavy pull, the other needs
+     * it), and only one of them is a strike of the character.
+     */
+    void strike_objects(Entity& character, const SequenceEvent& event);
     /** Ends the sequence of the basic attacks of a character (an accepted ability, a death, a travel). */
     void end_sequence(const std::string& characterId, SequenceEnd why);
     /** The sequence of the attacks and of the abilities of the world (stage 3.3b-M2: an accepted press starts the fragment of its ability). */

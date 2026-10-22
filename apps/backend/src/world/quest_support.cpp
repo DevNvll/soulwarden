@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "gamedata/chest_data.h"
 #include "gamedata/conversation_data.h"
 #include "gamedata/crafting_data.h"
 #include "gamedata/creature_data.h"
@@ -22,6 +23,7 @@
 #include "gamedata/trigger_data.h"
 #include "world/ownership.h"
 #include "world/data_rules.h"
+#include "world/inventory.h"
 #include "world/persons.h"
 #include "world/progress.h"
 #include "world/quest_objects.h"
@@ -173,8 +175,19 @@ struct QuestSupport::Index {
     std::unordered_set<std::string> gatherRows;
     /** The interact tags of the quest objects and of the bounds of the interaction data (lower case). */
     std::unordered_set<std::string> objectTags;
-    /** The items that a supported source gives (a loot table, a recipe, a quest reward or give): lower case id to the first source. */
+    /**
+     * Stage 1.8f (code review of stage 1.8e, finding QR8E-R5): the items that a source of the world gives in each history (lower case id to
+     * the first source): the loot roots of the creatures of the spawn points, of the chests, and of the gatherable nodes of the world, the
+     * loot containers of these items, and the recipes whose ingredients these items give.
+     */
     std::unordered_map<std::string, std::string> items;
+    /**
+     * The items that only a quest gives (lower case id to the first source): the reward of a hand-in, a give or the game event of a task, a
+     * quest drop. The history decides: a reward after the hand-in of its objective, the other ones only in the tree of their objective.
+     */
+    std::unordered_map<std::string, std::string> questItems;
+    /** The items that the tasks of each objective give in its own tree (a give, the item of the game event of a task, a quest drop). */
+    std::vector<std::vector<std::string>> gives;
     /** The items of a gather loot root (TaskRequireGatherItems). */
     std::unordered_set<std::string> gatherItems;
     /** The achievements of the lore pages (the bits that a read gives at each time; stage 2.5a). */
@@ -189,6 +202,8 @@ struct TaskFact {
     bool supported{true};
     std::string reason;
     std::string supplier;
+    /** Stage 1.8f (finding QR8E-R5): the item (lower case) of a task that only a quest gives: the history must have it. Empty: none. */
+    std::string questItem;
 };
 
 /** The evaluation of one objective row (no history). */
@@ -214,6 +229,8 @@ struct QuestSupport::History {
     Entity scratch;
     std::set<std::uint32_t> bits;
     SkillSet skills;
+    /** Stage 1.8f (finding QR8E-R5): the items of the history (lower case): the start items, the reward items of its hand-ins. */
+    std::set<std::string> items;
     std::vector<bool> played;
     std::vector<std::uint16_t> origin;
     std::vector<std::string> order;
@@ -238,6 +255,7 @@ void QuestSupport::build() {
     const gamedata::QuestData& data = *index.quests;
     const auto& objectives = data.objectives();
     index.tables.reserve(objectives.size());
+    index.gives.assign(objectives.size(), {});
     for (std::uint32_t at = 0; at < objectives.size(); ++at) {
         const QuestObjective& objective = objectives[at];
         index.tables.push_back(lower_text(objective.table));
@@ -252,23 +270,25 @@ void QuestSupport::build() {
             if (task.type == task_type::kObjective && !task.itemName.empty()) {
                 index.childParents[lower_text(task.itemName)].push_back(at);
             }
-            // The items that a quest gives: an item action of a task, the item of the game event of a task.
+            // The items that a quest gives in its own tree: an item action of a task, the item of the game event of a task.
             if ((task.type == task_type::kGiveItem || task.type == task_type::kGiveAndTakeItem) && !task.itemName.empty()) {
-                index.items.emplace(lower_text(task.itemName), "the task " + task.id);
+                index.gives[at].push_back(lower_text(task.itemName));
+                index.questItems.emplace(lower_text(task.itemName), "the task " + task.id);
             }
             if (task.type == task_type::kTriggerGameEvent && !task.targets.empty()) {
                 if (const gamedata::QuestGameEvent* event = data.game_event(task.targets.front()); event != nullptr && !event->item.empty()) {
-                    index.items.emplace(lower_text(event->item), "the game event " + event->id);
+                    index.gives[at].push_back(lower_text(event->item));
+                    index.questItems.emplace(lower_text(event->item), "the game event " + event->id);
                 }
             }
         }
-        // The reward items of a hand-in.
+        // The reward items of a hand-in (the history has them after the hand-in).
         if (!objective.itemReward.empty()) {
-            index.items.emplace(lower_text(objective.itemReward), "the reward of " + objective.id);
+            index.questItems.emplace(lower_text(objective.itemReward), "the reward of " + objective.id);
         }
         if (const gamedata::QuestGameEvent* event = objective.successEvent.empty() ? nullptr : data.game_event(objective.successEvent);
             event != nullptr && !event->item.empty()) {
-            index.items.emplace(lower_text(event->item), "the reward of " + objective.id);
+            index.questItems.emplace(lower_text(event->item), "the reward of " + objective.id);
         }
     }
     for (const gamedata::QuestBackstory& backstory : data.backstories()) {
@@ -310,6 +330,8 @@ void QuestSupport::build() {
             }
         }
     }
+    // The loot roots of the sources of the world (finding QR8E-R5): the tables that a kill, the open of a chest, or a gather rolls.
+    std::vector<std::pair<std::string, std::string>> roots;
     // The creatures of the spawn points: their vitals categories (the loot data, as Rewards::killed reads them) and their kill events.
     if (const gamedata::CreatureData* creatures = options.creatureData; creatures != nullptr) {
         std::vector<bool> placed(creatures->kinds().size(), false);
@@ -330,6 +352,9 @@ void QuestSupport::build() {
             }
             index.killCategories.insert(categories.begin(), categories.end());
             index.killEvents.insert(vitals != nullptr && !vitals->event.empty() ? vitals->event : std::string(gamedata::kKillEvent));
+            if (vitals != nullptr && vitals->canDropLoot && vitals->table && *vitals->table < options.lootTables->data().tables.size()) {
+                roots.emplace_back(options.lootTables->data().tables[*vitals->table].id, "the loot of the creature " + kind.vitals);
+            }
         }
     }
     // The gatherable rows with a node in the world: the records of the regions (natural nodes), the capital nodes and quest objects, the
@@ -345,6 +370,7 @@ void QuestSupport::build() {
                 index.gatherEvents.emplace(lower_text(gatherable.event), kind);
             }
             if (options.lootTables != nullptr && !gatherable.loot.empty()) {
+                roots.emplace_back(gatherable.loot, std::string("the loot of ") + kind + " (" + gatherable.id + ")");
                 // The items of the loot root of the row (each table that it reaches).
                 std::vector<std::string> pending{gatherable.loot};
                 std::set<std::string> seen;
@@ -403,8 +429,10 @@ void QuestSupport::build() {
             index.gatherRows.insert(lower_text(row.id));
         }
     }
-    // The items of a quest drop of a task whose source is in the world (a kill of a spawn point, a gather of a node or of an object).
-    for (const QuestObjective& objective : objectives) {
+    // The items of a quest drop of a task whose source is in the world (a kill of a spawn point, a gather of a node or of an object): an item
+    // of the tree of its objective (finding QR8E-R5: the drop needs its task, which only that objective has).
+    for (std::uint32_t at = 0; at < objectives.size(); ++at) {
+        const QuestObjective& objective = objectives[at];
         for (const QuestNode& node : objective.nodes) {
             if (node.task == gamedata::kNoTask) {
                 continue;
@@ -416,26 +444,100 @@ void QuestSupport::build() {
             const bool gather = task.type == task_type::kGatherItems || task.type == task_type::kGatherAndReturnItems;
             for (const std::string& source : task.dropSources) {
                 if (gather ? index.gatherRows.count(source) != 0 : index.killCategories.count(source) != 0) {
-                    index.items.emplace(lower_text(task.itemName), "the quest drop of " + source);
+                    index.gives[at].push_back(lower_text(task.itemName));
+                    index.questItems.emplace(lower_text(task.itemName), "the quest drop of " + source);
                     break;
                 }
             }
         }
     }
-    // The items of a supported source: each item of a loot table (a kill, a chest, a gather), the output of a recipe that the backend crafts.
+    // The items of the world in each history (finding QR8E-R5): the items that the loot roots of the sources of the world reach (the tables,
+    // the buckets), then a fixed point of the loot containers of these items (the loot table of a container item) and of the recipes that the
+    // backend crafts whose ingredients these items give. A table, a container, or a recipe that no source reaches gives nothing, and a cycle
+    // with no first item gives nothing. Rules of this project: the loot tags and the conditions of an entry are not tested (each entry of a
+    // reached table counts), and a currency ingredient passes (the coin and the Azoth have sources in each history).
     if (options.lootTables != nullptr) {
-        for (const gamedata::LootTable& table : options.lootTables->data().tables) {
-            for (const gamedata::LootEntry& entry : table.entries) {
-                if (entry.kind == gamedata::LootEntryKind::item) {
-                    index.items.emplace(lower_text(entry.id), "the loot table " + table.id);
+        const gamedata::LootData& loot = options.lootTables->data();
+        std::vector<bool> walked(loot.tables.size(), false);
+        std::vector<bool> bucketsWalked(loot.buckets.size(), false);
+        const auto walk = [&](const std::string& rootId, const std::string& source) {
+            const gamedata::LootTable* root = options.lootTables->table(rootId);
+            if (root == nullptr) {
+                return;
+            }
+            std::vector<std::size_t> pending{static_cast<std::size_t>(root - loot.tables.data())};
+            while (!pending.empty()) {
+                const std::size_t table = pending.back();
+                pending.pop_back();
+                if (table >= loot.tables.size() || walked[table]) {
+                    continue;
+                }
+                walked[table] = true;
+                for (const gamedata::LootEntry& entry : loot.tables[table].entries) {
+                    if (entry.kind == gamedata::LootEntryKind::table) {
+                        pending.push_back(entry.index);
+                    } else if (entry.kind == gamedata::LootEntryKind::bucket) {
+                        if (entry.index < loot.buckets.size() && !bucketsWalked[entry.index]) {
+                            bucketsWalked[entry.index] = true;
+                            for (const gamedata::BucketCandidate& candidate : loot.buckets[entry.index].candidates) {
+                                index.items.emplace(lower_text(candidate.item), source);
+                            }
+                        }
+                    } else {
+                        index.items.emplace(lower_text(entry.id), source);
+                    }
+                }
+            }
+        };
+        if (const gamedata::ChestData* chests = options.chestData; chests != nullptr) {
+            for (const gamedata::ChestDefinition& chest : chests->chests()) {
+                if (chest.available && !chest.root.empty()) {
+                    roots.emplace_back(chest.root, "the loot of the chest " + chest.root);
                 }
             }
         }
-    }
-    if (const gamedata::CraftingData* crafting = options.craftingData; crafting != nullptr) {
-        for (const gamedata::Recipe& recipe : crafting->recipes()) {
-            if (recipe.unsupported.empty() && !recipe.item.empty()) {
-                index.items.emplace(lower_text(recipe.item), "the recipe " + recipe.id);
+        for (const auto& [root, source] : roots) {
+            walk(root, source);
+        }
+        const gamedata::CraftingData* crafting = options.craftingData;
+        std::vector<bool> crafted(crafting != nullptr ? crafting->recipes().size() : 0, false);
+        std::unordered_set<std::string> opened;
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (const auto& [item, root] : loot.containerRoots) {
+                if (opened.count(item) == 0 && index.items.count(item) != 0) {
+                    opened.insert(item);
+                    walk(root, "the loot container " + item);
+                    changed = true;
+                }
+            }
+            for (std::size_t at = 0; at < crafted.size(); ++at) {
+                const gamedata::Recipe& recipe = crafting->recipes()[at];
+                if (crafted[at] || !recipe.unsupported.empty() || recipe.item.empty()) {
+                    continue;
+                }
+                const bool inputs = std::all_of(recipe.ingredients.begin(), recipe.ingredients.end(), [&](const gamedata::RecipeIngredient& ingredient) {
+                    switch (ingredient.type) {
+                    case gamedata::IngredientType::item:
+                        return index.items.count(lower_text(ingredient.id)) != 0;
+                    case gamedata::IngredientType::categoryAny:
+                    case gamedata::IngredientType::categoryOnly: {
+                        const auto* members = crafting->members(ingredient.id);
+                        return members != nullptr && std::any_of(members->begin(), members->end(), [&](const auto& member) {
+                                   return index.items.count(lower_text(member.second)) != 0;
+                               });
+                    }
+                    case gamedata::IngredientType::currency:
+                        return true;
+                    case gamedata::IngredientType::invalid:
+                        return false;
+                    }
+                    return false;
+                });
+                if (inputs) {
+                    crafted[at] = true;
+                    changed = index.items.emplace(lower_text(recipe.item), "the recipe " + recipe.id).second || changed;
+                }
             }
         }
     }
@@ -541,27 +643,19 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
     json personsUsed = json::array();
     json objects = json::array();
     json creatures = json::array();
-    for (std::uint8_t node = 0; node < objective.nodes.size(); ++node) {
+    // The node counters are std::size_t (code review of stage 1.8e, finding QR8E-R8: a tree of 256 nodes, task index 255, made an 8-bit
+    // counter go round for ever); an index goes into the 8-bit fields after the range check of the loop.
+    for (std::size_t node = 0; node < objective.nodes.size(); ++node) {
         const QuestNode& entry = objective.nodes[node];
         if (entry.task == gamedata::kNoTask) {
             continue;
         }
         const QuestTask& task = data.task(entry.task);
         TaskFact fact;
-        fact.index = node;
+        fact.index = static_cast<std::uint8_t>(node);
         const auto block = [&](std::string reason) {
             fact.supported = false;
             fact.reason = std::move(reason);
-        };
-        const auto item_source = [&](const std::string& item) -> std::optional<std::string> {
-            if (options.itemCatalog == nullptr || options.itemCatalog->find(item) == nullptr) {
-                return std::nullopt;
-            }
-            const auto found = index.items.find(lower_text(item));
-            if (found != index.items.end()) {
-                return found->second;
-            }
-            return std::nullopt;
         };
         switch (task.type) {
         case task_type::kSimpleContainer:
@@ -710,14 +804,21 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
                     }
                 }
             }
+            const std::string item = lower_text(task.itemName);
             if (options.itemCatalog == nullptr || options.itemCatalog->find(task.itemName) == nullptr) {
                 block("the item catalog has no " + task.itemName);
             } else if (!dropSource.empty()) {
                 fact.supplier = "the quest drop of " + dropSource;
-            } else if (const std::optional<std::string> source = item_source(task.itemName)) {
-                fact.supplier = *source;
+            } else if (const auto world = index.items.find(item); world != index.items.end()) {
+                fact.supplier = world->second;
+            } else if (const auto quest = index.questItems.find(item); quest != index.questItems.end()) {
+                // Only a quest gives the item (finding QR8E-R5): the history has it after the hand-in of a reward, or in the tree of the
+                // objective of a give, of a game event, or of a quest drop.
+                fact.supplier = quest->second + " (the history decides)";
+                fact.questItem = item;
             } else {
-                block("no supported source gives the item " + task.itemName + " (no quest drop, loot table, recipe, or quest reward)");
+                block("no supported source gives the item " + task.itemName
+                      + " (no quest drop, no loot of a creature, a chest, or a node of the world, no recipe of such items, no quest reward)");
             }
             break;
         }
@@ -790,7 +891,7 @@ QuestSupport::Row QuestSupport::evaluate(std::uint32_t at) const {
     for (const TaskFact& fact : row.tasks) {
         leafOk[fact.index] = fact.supported;
     }
-    for (std::uint8_t node = 0; node < objective.nodes.size(); ++node) {
+    for (std::size_t node = 0; node < objective.nodes.size(); ++node) {
         const QuestNode& entry = objective.nodes[node];
         if (entry.task == gamedata::kNoTask) {
             ok[node] = false;
@@ -875,6 +976,12 @@ std::vector<SupportProfile> QuestSupport::default_profiles() const {
         }
         profile.startTerritory = kNewStartTerritory;
         profile.level = cap;
+        // The items of the creation (Inventory::start_items of the archetype, the rule of the character creation).
+        if (const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog; catalog != nullptr) {
+            for (const state::ItemRow& item : start_items(*catalog, backstory.id)) {
+                profile.items.push_back(lower_text(item.itemId));
+            }
+        }
         profiles.push_back(std::move(profile));
     }
     SupportProfile none;
@@ -919,6 +1026,8 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
             history.bits.insert(*bit);
         }
     }
+    history.items.clear();
+    history.items.insert(profile.items.begin(), profile.items.end());
     const auto sync = [&]() { history.scratch.achievements.assign(history.bits.begin(), history.bits.end()); };
     std::set<std::string> starts;
     for (const std::string& start : profile.starts) {
@@ -933,11 +1042,33 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
             }
         }
     };
-    // Plays the tree of one objective on a copy of the bits: the achievement actions in index order, the achievement waits (with a lore page
-    // that the player reads then), the child objectives, and the completion. @return The cause of a stop, or an empty text.
-    std::function<std::string(std::uint32_t, std::uint16_t, std::set<std::uint32_t>&, SkillSet&, std::vector<std::uint32_t>&, int)> run;
-    run = [&](std::uint32_t at, std::uint16_t origin, std::set<std::uint32_t>& bits, SkillSet& skills, std::vector<std::uint32_t>& done,
-              int depth) -> std::string {
+    // The hand-in of a completed tree (code review of stage 1.8e, finding QR8E-R6; Persons::hand_in): the NpcDestinationId of the objective
+    // is the person of the conversation, and the person must be there for the character with the bits after the tasks (Persons::present).
+    // @return The cause when the history cannot hand it in, or an empty text.
+    const auto hand_in_cause = [&](const QuestObjective& objective, const std::set<std::uint32_t>& bits) -> std::string {
+        if (objective.destination.empty()) {
+            return "the hand-in: the objective has no NpcDestinationId (the hand-in needs the person of the conversation)";
+        }
+        const auto slots = index.persons.find(lower_text(objective.destination));
+        if (slots == index.persons.end()) {
+            return "the hand-in: the NPC " + objective.destination + " has no person slot in the interaction data";
+        }
+        history.scratch.achievements.assign(bits.begin(), bits.end());
+        for (const gamedata::InteractionObject* object : slots->second) {
+            if (object->person->unresolved.empty() && persons.present(history.scratch, *object->person)) {
+                return std::string{};
+            }
+        }
+        return "the hand-in: the person " + objective.destination + " is not there for the character (no resolved slot, or its presence rule)";
+    };
+    // The objectives whose tree runs now (a parent and its child objectives): their gives are items of the history while they run.
+    std::vector<std::uint32_t> running;
+    // Plays the tree of one objective on a copy of the bits and of the items: the achievement actions in index order, the achievement waits
+    // (with a lore page that the player reads then), the child objectives, and the completion. @return The cause of a stop, or an empty text.
+    std::function<std::string(std::uint32_t, std::uint16_t, std::set<std::uint32_t>&, SkillSet&, std::set<std::string>&, std::vector<std::uint32_t>&, int)>
+        run;
+    run = [&](std::uint32_t at, std::uint16_t origin, std::set<std::uint32_t>& bits, SkillSet& skills, std::set<std::string>& items,
+              std::vector<std::uint32_t>& done, int depth) -> std::string {
         const QuestObjective& objective = objectives[at];
         const Row& fact = facts[at];
         if (depth > 8) {
@@ -946,6 +1077,20 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         if (fact.kind != "objective" || !fact.tree || !fact.rewards || !fact.gates.empty()) {
             return fact.blocked.empty() ? "not supported" : fact.blocked.front();
         }
+        running.push_back(at);
+        struct Leave {
+            std::vector<std::uint32_t>& running;
+            ~Leave() {
+                running.pop_back();
+            }
+        } leave{running};
+        // An item that only a quest gives (finding QR8E-R5): the items of the history, or a give of an objective whose tree runs now.
+        const auto has_item = [&](const std::string& item) {
+            return items.count(item) != 0 || std::any_of(running.begin(), running.end(), [&](std::uint32_t objectiveAt) {
+                       const std::vector<std::string>& given = index.gives[objectiveAt];
+                       return std::find(given.begin(), given.end(), item) != given.end();
+                   });
+        };
         std::vector<std::string> temporary;
         // The rules of the engine (Quests::Plan::activate): a consecutive container activates its first child that is not done, a simple
         // or a partial container each child; an achievement action runs at its activation and completes; a partial container completes
@@ -954,8 +1099,10 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         enum class Node : std::uint8_t { inactive, active, done };
         std::vector<Node> state(objective.nodes.size(), Node::inactive);
         std::vector<bool> supported(objective.nodes.size(), true);
+        std::vector<std::string> needs(objective.nodes.size());
         for (const TaskFact& item : fact.tasks) {
             supported[item.index] = item.supported;
+            needs[item.index] = item.questItem;
         }
         std::string stop;
         std::function<void(std::uint8_t)> activate;
@@ -1069,7 +1216,7 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                 if (history.played[childAt] || std::find(done.begin(), done.end(), childAt) != done.end()) {
                     return; // A child that the history completed: no second instance; the task waits (Quests::Plan::grant_child).
                 }
-                if (const std::string cause = run(childAt, origin, bits, skills, done, depth + 1); !cause.empty()) {
+                if (const std::string cause = run(childAt, origin, bits, skills, items, done, depth + 1); !cause.empty()) {
                     stop = "the child objective " + child->id + ": " + cause;
                     return;
                 }
@@ -1084,7 +1231,8 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         // The steps of the player: each Active wait in index order, until the root is done or a step changes nothing.
         for (std::size_t step = 0; step < objective.nodes.size() * 4 + 8 && state[objective.root] != Node::done && stop.empty(); ++step) {
             bool progress = false;
-            for (std::uint8_t node = 0; node < objective.nodes.size() && state[objective.root] != Node::done; ++node) {
+            for (std::size_t at = 0; at < objective.nodes.size() && state[objective.root] != Node::done; ++at) {
+                const auto node = static_cast<std::uint8_t>(at);
                 const QuestNode& entry = objective.nodes[node];
                 if (state[node] != Node::active || entry.task == gamedata::kNoTask) {
                     continue;
@@ -1118,6 +1266,9 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                     continue;
                 }
                 if (supported[node] && task.type != task_type::kObjective) {
+                    if (!needs[node].empty() && !has_item(needs[node])) {
+                        continue; // Only a quest gives the item, and the history does not have it (finding QR8E-R5).
+                    }
                     if (task.type == task_type::kConversationTopic && conversations != nullptr) {
                         if (const std::optional<std::uint32_t> topic = conversations->topic_of_crc(gamedata::quest_crc(task.screen));
                             topic && !conversations->topic(*topic).achievementUnlock.empty()) {
@@ -1137,7 +1288,8 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         }
         if (state[objective.root] != Node::done) {
             // The first Active task that waits: the cause of the stop.
-            for (std::uint8_t node = 0; node < objective.nodes.size(); ++node) {
+            for (std::size_t at = 0; at < objective.nodes.size(); ++at) {
+                const auto node = static_cast<std::uint8_t>(at);
                 const QuestNode& entry = objective.nodes[node];
                 if (state[node] == Node::active && entry.task != gamedata::kNoTask && !gamedata::is_container(data.task(entry.task).type)) {
                     const QuestTask& task = data.task(entry.task);
@@ -1145,10 +1297,16 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
                     return "task " + std::to_string(node) + " " + task.id + " waits: "
                            + (task.type == task_type::kAchievement ? "the achievement condition " + task.itemName + " is false in this history"
                               : reason != fact.tasks.end() && !reason->reason.empty() ? reason->reason
-                                                                                      : std::string("no step completes it"));
+                              : !needs[node].empty() ? "the history has no " + needs[node] + " (only a quest gives it: " + reason->supplier + ")"
+                                                     : std::string("no step completes it"));
                 }
             }
             return "the root task does not complete";
+        }
+        // The hand-in at the destination (finding QR8E-R6). A child objective with no hand-in still completes its task of the parent (the root
+        // of the child is its completion for the parent: TaskObjective), but the history does not count it and gets none of its rewards.
+        if (std::string cause = hand_in_cause(objective, bits); !cause.empty()) {
+            return depth == 0 ? cause : std::string{};
         }
         // The hand-in: the reward join with the standing of the history, then the completion achievements; the temporary unlocks revert.
         RewardJoin join;
@@ -1171,6 +1329,9 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
         }
         if (!join.achievement.empty()) {
             set_bit(bits, join.achievement, true);
+        }
+        for (const RewardItem& item : join.items) {
+            items.insert(lower_text(item.itemId));
         }
         done.push_back(at);
         return std::string{};
@@ -1241,13 +1402,15 @@ void QuestSupport::play(const SupportProfile& profile, const std::vector<Row>& f
             }
             std::set<std::uint32_t> bits = history.bits;
             SkillSet skills = history.skills;
+            std::set<std::string> items = history.items;
             std::vector<std::uint32_t> done;
-            if (const std::string cause = run(at, *origin, bits, skills, done, 0); !cause.empty()) {
+            if (const std::string cause = run(at, *origin, bits, skills, items, done, 0); !cause.empty()) {
                 history.cause[at] = cause;
                 continue;
             }
             history.bits = std::move(bits);
             history.skills = std::move(skills);
+            history.items = std::move(items);
             startGiven[at] = true;
             for (const std::uint32_t item : done) {
                 history.played[item] = true;
@@ -1328,6 +1491,7 @@ json QuestSupport::manifest(const std::vector<SupportProfile>& profiles) {
                                  {"type", task.typeName},
                                  {"supported", fact.supported},
                                  {"supplier", fact.supplier},
+                                 {"questItem", fact.questItem},
                                  {"reason", fact.reason}});
         }
         json entry{{"id", objective.id},

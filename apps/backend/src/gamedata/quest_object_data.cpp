@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <fstream>
+#include <map>
+#include <set>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -110,6 +112,10 @@ bool QuestObjectData::load_text(const std::string& text) {
         }
         m_rows.push_back(std::move(row));
     }
+    // One object for each placement key and for each actor (code review of stage 1.8e, finding QR8E-R7): the actor is the key of the
+    // LootTracker entry of the client (the rule of the chest loader, finding CH-R4), and the strike keeps its work by the object.
+    std::set<std::string> keys;
+    std::map<std::array<std::uint8_t, 16>, std::string> actors;
     for (const json& entry : document["objects"]) {
         QuestObjectPlacement object;
         if (!entry.is_object() || !hex_bytes(entry.value("actor", json()), object.actor) || !hex_bytes(entry.value("asset", json()), object.asset)
@@ -132,6 +138,12 @@ bool QuestObjectData::load_text(const std::string& text) {
         object.position = state::WorldPosition{entry["position"][0].get<float>(), entry["position"][1].get<float>(), entry["position"][2].get<float>()};
         if (object.key.empty() || object.row >= m_rows.size()) {
             return fail("the object " + object.key + " has no key or names a row that the file does not have");
+        }
+        if (!keys.insert(object.key).second) {
+            return fail("two objects have the key " + object.key + ": one object for each placement key");
+        }
+        if (const auto [other, added] = actors.emplace(object.actor, object.key); !added) {
+            return fail("the object " + object.key + " has the actor of the object " + other->second + ": one object for each actor");
         }
         m_cells[cell_of(object.position.x, object.position.y)].push_back(static_cast<std::uint32_t>(m_objects.size()));
         m_objects.push_back(std::move(object));

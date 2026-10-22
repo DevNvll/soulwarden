@@ -134,8 +134,13 @@ tools/hx 'key 0x77'                        # input for the game (F8: the tool wi
 gamescopectl screenshot FILE.png           # a picture of the game, and of nothing else
 tools/world list                           # the entities, the load, the behavior, the rewards
 tools/dev-stop.sh                          # stop the development runs
+tools/dev-stop.sh --data-dir DIR           # stop only the development runs of one data directory
 tools/dev-stop.sh --check                  # status 0: no process of a development run is alive
 ```
+
+- One development run at a time: `tools/dev-run.sh` stops only the earlier runs of its own data
+  directory. While a run of a different data directory is alive (also a run of a different
+  project), it starts nothing, stops nothing, and prints that run and the command that stops it.
 
 - Show each result that a person can see with a picture. Show a movement or an animation with a
   video (a loop of `gamescopectl screenshot`, then `ffmpeg`). A still picture does not show if a

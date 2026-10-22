@@ -43,6 +43,8 @@ struct SupportProfile {
     std::uint16_t startTerritory{0};
     /** The level of the character for RequiredLevel (a new character: the level cap that kills give; a template history: 60). */
     std::uint32_t level{1};
+    /** Stage 1.8f (finding QR8E-R5): the items at the start (lower case): the start items of the creation of a new character. */
+    std::vector<std::string> items;
 };
 
 class QuestSupport {

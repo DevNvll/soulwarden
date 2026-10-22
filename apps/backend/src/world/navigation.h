@@ -266,6 +266,12 @@ public:
      *         value: nothing stops it (also with no tile of the navigation data on the line, and with no data).
      */
     [[nodiscard]] std::optional<float> line_stop(const state::WorldPosition& from, const state::WorldPosition& to) const;
+    /**
+     * Stage 1.8f (code review of stage 1.8e, finding QR8E-R2): @return True when the world has each tile of the navigation data that a
+     * segment needs for `line_stop`. A tile that it does not have, or that is on its way, gets a request, and the result is false (the
+     * caller tries again later). No navigation data: true.
+     */
+    [[nodiscard]] bool line_ready(const state::WorldPosition& from, const state::WorldPosition& to);
 
     /** The world calls it in each tick: the tiles that are ready, the tiles that the world needs, and the path searches. */
     void tick();

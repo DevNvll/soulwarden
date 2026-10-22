@@ -197,6 +197,8 @@ public:
     [[nodiscard]] std::string first_member(std::string_view category) const;
     /** @return The number of members of a category (0: no such category). */
     [[nodiscard]] std::size_t member_count(std::string_view category) const;
+    /** Stage 1.8f: @return The members of a category (the CRC-32 of each item id to the id), or null: no such category. */
+    [[nodiscard]] const std::unordered_map<std::uint32_t, std::string>* members(std::string_view category) const;
     /** @return The authored Assembly keys of the station slices with no row (KEY -> slices): the diagnostic of the tool. */
     [[nodiscard]] const std::map<std::string, std::vector<std::string>>& missing_stations() const {
         return m_missing;

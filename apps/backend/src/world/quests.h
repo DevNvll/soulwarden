@@ -460,6 +460,15 @@ public:
     /** The drops are in the database: the award counts of the entity, the counters of the guaranteed drops, the log. */
     void drops_done(Entity& entity, const std::vector<QuestDrop>& drops);
     /**
+     * Stage 1.8f (code review of stage 1.8e, finding QR8E-R4): the destruction of a destructible quest object for a character
+     * (world/quest_objects.h) in one plan and one transaction of the quest system: the quest drops of its row (`plan_drops`: the items with
+     * the cause ItemGathered, whole or not at all, and the award rows), then the events of the destruction (the game event of the row and
+     * the InteractTag of the object). The caller destroys the object only after QuestError::none; a different error (a full bag, a refused
+     * write of the store) changes nothing, and no retry follows (the object keeps its last unit of work: the next strike tries again).
+     * No quest data or no row to write: QuestError::none.
+     */
+    [[nodiscard]] QuestError object_destroyed(Entity& entity, const std::vector<QuestDrop>& drops, const std::vector<QuestEvent>& events);
+    /**
      * @return True when an active task of the character has this InteractTag (a quest object that InteractOnlyOnQuest shows only during
      *         the task: client 0x8261FC0). An empty tag: false.
      */
@@ -584,6 +593,13 @@ private:
                                             std::uint16_t originTerritory, RewardJoin& join, std::string& detail) const;
     /** @return The active quest of an instance id of a character (the index of the character; finding QR8C-R11), or null. */
     [[nodiscard]] const QuestInstance* instance_of(const Entity& entity, std::uint64_t instance);
+    /**
+     * @return The active tasks of a character that an event credits (the rules of `event`: the keys, the weapon of a kill, the gear score
+     *         of a craft, OnInteractStart, EnforceLocationRequirement; a retry only the tasks of its first delivery): the instance, the
+     *         index, and the amount of each. No change.
+     */
+    [[nodiscard]] std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> matched_tasks(const Entity& entity, const QuestEvent& event,
+                                                                                                    const Subscriptions& subscriptions);
 
     World& m_world;
     state::Store& m_store;

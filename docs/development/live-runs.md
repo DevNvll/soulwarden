@@ -28,6 +28,18 @@ of that system.
   `SOULWARDEN_DEV_RUN=1` in its environment, and `tools/dev-stop.sh` stops only these processes.
   `tools/dev-run.sh` starts no game when a game that is not a development run uses the data
   directory (the lock file `run.lock`): give the run a different `SOULWARDEN_DATA_DIR`.
+- One development run at a time (stage 1.8f; the incident of 2026-10-22: a new run of a different
+  project stopped a live check). Each process of a run also has its data directory
+  (`SOULWARDEN_DEV_RUN_DIR`, the absolute path with no link). At its start `tools/dev-run.sh`
+  stops only the earlier runs of its own data directory (`tools/dev-stop.sh --data-dir`). When a
+  run of a different data directory is alive, it stops nothing and starts nothing (status 1): it
+  prints that run (its data directory and its process ids) and the command that stops it
+  (`tools/dev-stop.sh --data-dir DIR`). Wait for that run, or stop it only when it is your own.
+  Two starts at one time take turns on a lock (`$XDG_RUNTIME_DIR/soulwarden-dev-run.lock`): the
+  second one stops with a message. A process of a run of an earlier script has only
+  `SOULWARDEN_DATA_DIR` (the game has the Windows form of the client folder): the scripts read
+  its data directory from it. `tools/dev-stop.sh` with no option still stops each development
+  run, and `--check` keeps its status rule (it now prints the data directory of each process).
 - A development run and each development tool (`tools/hx`, `tools/shot`, `tools/world`, the
   scenario scripts, `tools/research/player_position.py`, `check_identity.py`,
   `gde_components.py`) use the development data directory `~/Games/soulwarden/work/dev-data` with
@@ -94,7 +106,9 @@ tools/scenarios/create.sh RUN_LABEL NAME   # menu, then create a character and e
 tools/scenarios/leave.sh             # a game that is in the world: leave it to the main menu
 tools/shot NAME                      # screenshot of the game desktop
 tools/dev-stop.sh                    # stop the development runs (not a game of the user)
+tools/dev-stop.sh --data-dir DIR     # stop only the development runs of the data directory DIR
 tools/dev-stop.sh --check            # status 0: no process of a development run is alive
+tools/dev-stop.sh --check --data-dir DIR   # the same for one data directory
 ```
 
 - Identity variables (`docs/REFERENCE.md`, "Player identity"): with `SOULWARDEN_STEAM_ID` not set, a run uses
@@ -236,6 +250,16 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   `tools/dev-stop.sh` and `tools/world` do).
 - Wine makes sockets in the wineserver process. A wineserver from an earlier run is in the
   earlier network namespace. The launcher stops all processes of the prefix before a start.
+- Two development runs at one time (the check of stage 1.8f; the scripts permit one run): the
+  ports do not collide (each launcher runs its backend and its game in its own network namespace
+  with its own loopback, and `tools/world` enters the namespace of the backend of its data
+  directory with `nsenter`), and each run has its own gamescope and Xwayland, its own harness
+  files, and its own lock of the data directory. But two runs need two prefixes (the launcher
+  stops each process of its prefix), they share the agent desktop `soulwarden-game` unless
+  `SOULWARDEN_DESKTOP_ID` differs (`tools/shot` captures the whole desktop: both windows), a
+  `gamescopectl screenshot` with no `GAMESCOPE_WAYLAND_DISPLAY` takes the first gamescope
+  (`gamescope-0`), not the gamescope of the run, and each client takes some GB of memory. Thus
+  the scripts keep one run at a time.
 - The game window has no keyboard focus of the compositor on the agent desktop. Wine takes the
   foreground state away from it at random times, and the keys of the harness then have no
   effect (`tools/hx 'state'` shows `foreground=0`). `SetForegroundWindow` does not give the

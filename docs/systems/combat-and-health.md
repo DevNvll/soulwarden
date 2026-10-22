@@ -257,6 +257,8 @@ contracts are in the protocol notes (sections 2.3, 4.5, 4.7, 4.15, 4.18, 4.31, a
   spells of the action wait for the due time of the visit). The block press (bit 484) is a bit of the step (`AttackBits::block`).
   Stage 1.8e: the strike items come for the visits of a basic attack too (before: only for an ability); `Combat::run_event` gives each
   strike to the destructible quest objects (`QuestObjects::strike`, [Quests](quests.md)): the client reports no contact on such an object.
+  Stage 1.8f (`Combat::strike_objects`; code review of stage 1.8e, finding QR8E-R1): only a strike entry with a usable row for the
+  character (`row_for`: the learned-node conditions of the hit path) goes to the objects, at its due time too.
   A strike of a basic attack does nothing else (the hit of a creature stays the claim of the client).
 - The damage of an attack is computed in one function (`Combat::damage`), from the combat
   tables (game data) and the entity of the attacker: the weapon of the item, its gear score,

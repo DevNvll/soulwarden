@@ -7069,7 +7069,14 @@ true (its AchievementEvents script). Live A2: a bit of the achievement state (4.
 that the server clears makes it come back, with no new load (`A2-02-bit-off-return.mp4`).
 
 **The conversation state** [static 0x37AC710, 0x37AB440, 0x37AB7A0; data; live L2, L3]: the client scans the states of the NPC row
-(ConversationStateId1 to N) in reverse and takes the first whose requirements pass; the topics of the state whose requirements pass are
+(ConversationStateId1 to N) in reverse and takes the first valid record whose requirements pass (stage 1.8f, static read
+`~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`, proved by code; live Q1 of stage 1.8f: the offer of
+`06A_MSQ_01_Quartermaster` at Marcel Dupont is accepted with the server rule): the state loader 0x379E280 writes byte +0x190 of the record
+as IsInitialState XOR hasRequirements (0x379F2F0 to 0x379F377: RequiredLevel +0xD9, RequiredFaction +0xDA, RequiredFactionCooldown +0xDB,
+RequiredCompletedObjective hash +0xDC, RequiredAchievement length +0xF0, RequiredProgression id +0x110 with rank +0x114 or points +0x118,
+the RequiredActiveObjectiveId list +0x120 with RequiredActiveTaskId +0x150; each a loaded value that is not 0), and the selector skips a
+record with byte +0x190 0 before the player check (0x37AC846 to 0x37AC870; a fallback lookup 0x37AC3F0 of the same id in the other groups
+of the manager is checked again); the topics of the state whose requirements pass are
 its options, and a selected topic offers its ProvidedTopics (0x3779D87). The requirements (static read): RequiredLevel (0x37AB467:
 level or more), RequiredAchievement (a conditional), RequiredFaction (converter 0x37AF200: Syndicate 1, Marauder 2, Covenant 3, Any 4, each
 other text 0, also a name with `!`; a state: 0 and 4 pass, 0x37AB5B4; a topic: 0 passes, 4 needs a faction, 0x37AB898; else equal to the

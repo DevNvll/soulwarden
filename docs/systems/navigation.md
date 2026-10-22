@@ -29,7 +29,10 @@ players, or the terrain heights. The wire contracts and the evidence are in the 
   [Projectiles](projectiles.md)): the segment between two points in the air, cell by cell with the exact heights of the
   segment (no eye height), each cell with the free interval of its floor (as `sees`; a part below the lowest floor is in
   the ground); it gives the part of the segment at the first cell that stops it. With no tile on the line nothing stops
-  it. It is not a place of a creature. With navigation data the path is
+  it. It is not a place of a creature. Stage 1.8f: the strike of a destructible quest object uses it too (the line from the
+  eyes of the character to the near side of the object, [Quests](quests.md)), with `line_ready(from, to)` before it: a
+  tile of the segment that the world does not have yet gets a request, and the caller waits (no data: ready). A point
+  segment (`line_stop(p, p)`) tells if a solid holds the point. With navigation data the path is
   a path of the data; with no data of a place (no folder, a folder that is not correct, a
   region with no file, a tile that is not correct) the two functions have the rule of stage
   3.4b for that place (the straight line on the terrain of the folder `heights`, and

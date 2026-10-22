@@ -37,9 +37,10 @@ wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 | Stage 1.8d: what a hand-in pays, and why it is refused | the command `quest_rewards` (`server/http/quest_commands.cpp`), `tools/world quest rewards` |
 | Stage 1.8e: the destructible quest objects (the nodules, the monolith) | `tools/gamedata/quest_objects.py`, `quest-objects.sh`; `gamedata/quest_object_data.h`; `world/quest_objects.h` (`QuestObjects::strike`, `destroy`, `respawn_due`); the strike events of `world/attack_sequence.cpp` and `Combat::run_event`; the LootTracker merge of `server/rep/states/chest_states.cpp`; cases QF1, QF2 |
 | Stage 1.8e: the latch of an Enter area, the Azoth reward | `Quests::set_progress` (TaskTriggerArea with `AreaRule::enter`); `Quests::reward_join` (`RewardJoin::azoth`), the skills plan of `Quests::commit`; cases QF3, QF7 |
-| Stage 1.8e: the support manifest | `world/quest_support.h` (`QuestSupport::manifest`, `default_profiles`), the command `quest_support_json`; the second computation `~/Games/soulwarden/work/evidence/quests/18e/implement/scripts/support_check.py`; case QF4 |
+| Stage 1.8e: the support manifest | `world/quest_support.h` (`QuestSupport::manifest`, `default_profiles`), the command `quest_support_json`; the second computation `~/Games/soulwarden/work/evidence/quests/18f/implement/scripts/support_check.py` (stage 1.8f); cases QF4, QRE5, QRE6, QRE8 |
 | Stage 1.8e: a cinematic in a development run | the command `quest_cinematic` (`server/http/quest_commands.cpp`), `Quests::cinematic` |
-| The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/` |
+| Stage 1.8f: the corrections of the review of 1.8e | `Combat::strike_objects`, `QuestObjects::strike` (the cutscene, the wall line: `Navigation::line_ready`, `line_stop`), `Quests::object_destroyed` (one plan), `QuestObjectData::load_text` (one actor, one key), `QuestSupport` (the items, the hand-in, `std::size_t` counters); `tests/review_quests_18e_tests.cpp`, cases QRE1 to QRE8, QF1 |
+| The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md`, `18d/implement/RESULT.md`, `18e/implement/RESULT.md`, `18f/implement/RESULT.md`; stage 1.8d: `research/scratch/quests-18d/`; stage 1.8e: `research/scratch/quests-18e/`; stage 1.8f: `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md` |
 
 ## Rules
 
@@ -372,14 +373,26 @@ client), the live checks are in `~/Games/soulwarden/work/evidence/quests/18e/imp
   its exact position (3D: the reach of a melee weapon and its tolerance) and 90 degrees or less from its look [agent: the rule of a
   creature hit]. An object with InteractOnlyOnQuest takes a hit only while an active task of the character has its InteractTag [client
   0x8261FC0: the client shows the object only then].
+- Stage 1.8f (the code review of stage 1.8e): only a strike entry with a usable row for the character is a strike (`Combat::strike_objects`:
+  the learned-node conditions of `Combat::row_for`, the rule of the hit path) [data: `GreatAxe/Attack_Heavy` has two strike entries at one
+  time, one forbids and one needs `Passive_Greataxe_Mauler_HeavyAddPull`]. A strike while a cutscene that the server granted plays (6706) or
+  a cinematic plays (6606) hits nothing [agent: the client takes no attack input then; a late step of an attack from before arrives]. No
+  solid of the navigation data may be on the line from the eyes of the character (1.5 m, the eye height of the sight) to the near side of
+  the object (`Navigation::line_stop`, the line of a projectile): the near side is the first point from the place of the object toward the
+  character, in steps of 0.25 m, that no solid holds, at most 2.0 m [agent; probe of stage 1.8f: the solid of a beach nodule of the data
+  reaches about 1.1 m from its place]. A tile of the line that the world does not have yet: no hit now (the tile comes; the next strike
+  tries again).
 - The work of an object is BaseGatherTime of its row, rounded up, at least 1: one strike is one unit (the nodule 4 strikes, the monolith 1)
   [agent: the data has no health of the object]. One strike hits an object one time (the visit and the strike index).
-- At the last unit the object is destroyed for the character, in this order: the quest drops of the row (one transaction, as for a gather;
-  a full bag keeps the last unit), the LootTracker entry of the object (InstancedLootType 0, state Looted 2, the managed actor of the
-  placement, its position) [live I0: the client removes the object, its marker, and its corruption; the GatherableController state of type
-  12 has no effect for an instanced object, apply 0x3371590], then the game event of the row (TaskGameEvent) and its InteractTag
-  (TaskInteract). After a uniform draw of the respawn bounds of the row (the nodule 33 s, the monolith 200 to 300 s) the entry goes, and the
-  object is back for the character [data; live I0: a map with no entry restores it].
+- At the last unit the quest system writes the quest drops of the row, the game event of the row (TaskGameEvent), and its InteractTag
+  (TaskInteract) in one plan and one transaction (`Quests::object_destroyed`; stage 1.8f). Only after the commit is the object destroyed for
+  the character: the LootTracker entry of the object (InstancedLootType 0, state Looted 2, the managed actor of the placement, its
+  position) [live I0: the client removes the object, its marker, and its corruption; the GatherableController state of type 12 has no
+  effect for an instanced object, apply 0x3371590]. A refusal (a full bag, a refused write) keeps the object with its last unit of work, no
+  LootTracker entry, and no retry: the next strike tries again. After a uniform draw of the respawn bounds of the row (the nodule 33 s, the
+  monolith 200 to 300 s) the entry goes, and the object is back for the character [data; live I0: a map with no entry restores it].
+- The loader refuses a file with two objects of one placement key or of one actor (the key of the LootTracker entry; the rule of the chest
+  loader) [stage 1.8f; the common export has neither].
 - The state is a value of the character (`Entity::questObjects`; MP-1): each character has its own objects (InstancedLootType 4 of the
   data), and the LootTracker state goes only to its own sessions (owner only, [Chests](chests.md)). The store has no row of it: at a new
   world entry the objects are back, and the quest rows keep the progress [agent].
@@ -403,11 +416,12 @@ client), the live checks are in `~/Games/soulwarden/work/evidence/quests/18e/imp
   ended (6705) after 9.8 s, then the white screen with the subtitles stayed; the development command completed task 22, and the chain went
   on to the Corinth cutscene `126b8567` and the hand-in at Marcel Dupont (800 experience, 6.00 coin, the amulet, 120 standing of
   Windsward, `S_introtosettlement`).
-- Open (live F of stage 1.8e): after the hand-in of `06_raisealarm` the client shows the offer of `06A_MSQ_01_Quartermaster` at Marcel
-  Dupont and sends 3772, and the server refuses it ("the conversation state of the character does not offer this objective"). The server
-  selects `06_01b_MarcelDupont` (no requirement) before `06_01_MarcelDupont` (S_introtosettlement, the offer) by the rule of 2.5c (the
-  states in reverse, the first that passes; `06_01c` needs `MSQ_00_init`, the completion of the later `06A_MSQ_22_TalkToSoulwarden`). The
-  client rule for a state with no requirement is not known; the support manifest uses the rule of the server.
+- Closed in stage 1.8f: after the hand-in of `06_raisealarm` the client offers `06A_MSQ_01_Quartermaster` at Marcel Dupont. The server
+  selected `06_01b_MarcelDupont` (no requirement) and refused the 3772. The client skips that state: a state record is valid only as
+  IsInitialState XOR a requirement ([Persons](persons.md), the conversation state). The server now selects `06_01_MarcelDupont` and accepts
+  the offer (live Q1 of stage 1.8f). Its hand-in is a later point: the success event pays a standing of 100, the row has no
+  ExclusiveTerritory, and the instance of an offer has no origin territory (the manifest: "the standing 100 of
+  06A_MSQ_01_Quartermaster_success has no territory").
 - The countdown row of a timer task (open since stage 1.8d) has a static read in this stage (`research/scratch/quests-18e/timer/`): a new
   TaskTimer of the client has the deadline 0; the objective initialization (0x3A551C0) binds each timer of the tree (0x3B2FD90) before the
   activation of the root, and the bind publishes a copy of that zero deadline to `MissionTimers.<instance>.TargetTime`; the activation and
@@ -436,26 +450,47 @@ loot tables, the recipes, the points of interest, the trigger volumes, the perso
   the level cap; the Soldier first, the default of the creation), a level 60 character with no template (decision D2 option A), and each
   template of the backstory data (decision D2 option C: its achievements and its start objectives, level 60) [the decision D2 of the user is
   open: the manifest counts each option and decides nothing]. A history plays rounds: a start and an ObjectiveReward are direct grants; an
-  offer needs a present person (`Persons::present`), its selected state (the states in reverse, the first whose requirements pass), and the
-  availability; the tree runs with the achievement actions, the achievement waits, the lore pages, and the child objectives; a hand-in
-  pays the standing on the skill set of the history (a rank-up refuses it).
-- The counts of this build (game data of 2026-10-22, level cap 70): 2,147 rows (1,027 objectives, 1,031 mission templates, 12 community
-  goals, 77 developer rows); 160 supported objectives. A new character of each archetype completes 15 objectives (the Soldier:
+  offer needs a present person (`Persons::present`), its selected state (the states in reverse, the first valid record whose requirements
+  pass: stage 1.8f), and the availability; the tree runs with the achievement actions, the achievement waits, the lore pages, and the
+  child objectives; a hand-in pays the standing on the skill set of the history (a rank-up refuses it).
+- Stage 1.8f (finding QR8E-R6): the history hands in an objective only at its destination: its NpcDestinationId has a resolved person
+  slot that is there for the character with the bits after the tasks (`Persons::present`), the rule of `Persons::hand_in`. An objective
+  with no NpcDestinationId has no hand-in (the server compares the destination with the person of the conversation). A child objective
+  whose hand-in cannot happen still completes its task of the parent (TaskObjective: the root of the child), but the history does not
+  count it and gets none of its rewards.
+- Stage 1.8f (finding QR8E-R5): the items. An item of a task has a source of the world in each history when a loot root of a source of the
+  world reaches it (the vitals table of a creature of a spawn point that can drop loot, the root of an available chest, the loot root of
+  a gatherable node of the world; the tables and the buckets that it reaches), or the loot table of a loot container item of such items,
+  or a recipe that the backend crafts whose ingredients such items give (a fixed point: a cycle with no first item gives nothing). The
+  loot tags and the conditions of an entry are not tested, and a currency ingredient passes [agent]. An item that only a quest gives (a
+  reward, a give or the game event of a task, a quest drop) is the member `questItem` of its task: the history has it after the hand-in
+  of a reward (the reward items of the join), and a give, the item of the game event of a task, or a quest drop only while the tree of its
+  objective (or of its parent) runs [agent: a return task takes such an item at the hand-in]. A new character starts with the items of
+  its creation (`start_items` of its archetype).
+- The counts of this build (game data of 2026-10-22, level cap 70; stage 1.8f): 2,147 rows (1,027 objectives, 1,031 mission templates, 12
+  community goals, 77 developer rows); 160 supported objectives. A new character of each archetype completes 15 objectives (the Soldier:
   `06_getoffbeach`, `06_skinningknife`, `06_boarfeast_soldier`, `06_crewmates_soldier`, `06_survivors_soldier`, `06_pillageship_soldier`,
   `06_recoveritems_soldier`, `06_demonstorm`, `06_demonstorm2_soldier`, `06_raisealarm`, `0625_0101_truffles`,
   `9932_0104_RelicReclamation`, `FactionIntro_Marauders_01`, `FactionIntro_Marauders_02`, `FactionIntro_Marauders_Vector`). A level 60
   character with no template completes 4. The 298 template histories in 23 groups (the first start objective of the template) complete 1
-  to 8 (the group `09A_M9_MeetShirzad`: 8; 158 templates with no start objective: 1 to 4). The first reasons of the 867 objectives that
-  are not supported: 185 a point of interest with no shape, 159 a standing with no territory or a rank-up, 118 an item with no source, 90
-  no creature of the categories, 72 no producer of a game event, 42 no grant source that the backend runs, 40 TaskGameMode, 35
-  TaskQuickCourse, 20 TaskHaveLevel, and 26 smaller groups. No repeatable objective is supported: the 40 repeatable Journey rows pay Azoth
-  and standing, and the nearest ones (`C10A_S5R_LightningBottle`, `C10A_S7R_AnimalInstincts`) are blocked only by the rank-up of their
-  standing (450 points against the 150 of rank 0).
-- A second computation by a different path (`scripts/support_check.py` of the evidence of stage 1.8e: its own reader of the game data
-  files, its own reward check, grant index, gates, trees, person presence and state selection, and history; only the facts of the leaf
-  tasks come from the manifest) gives the same counts: the same 2,147 kinds, the same 160 supported rows, the same played list for each of
-  the 306 histories, and the same 25 groups. It found one error of the first manifest: the faction gate tested bit 1 (Syndicate) as the
-  bit of a character with no faction (corrected; case QF4).
+  to 7 (the group `09A_M9_MeetShirzad`: 7; `09A_M15_FightArtemis`: 6; 158 templates with no start objective: 1 to 4). The first reasons of
+  the 867 objectives that are not supported: 185 a point of interest with no shape, 158 a standing with no territory or a rank-up, 154 an
+  item with no source, 71 no producer of a game event, 65 no creature of the categories, 40 TaskGameMode, 35 TaskQuickCourse, 33 no grant
+  source that the backend runs, 20 TaskHaveLevel, 18 no object of the interact tag, and 25 smaller groups. The changes of stage 1.8f: the
+  hand-in rule removes `09A_S4_BlowUpFarm` (no NpcDestinationId) from 3 template histories (8 to 7, 7 to 6, 8 to 7); the item rule
+  changes no count (of the 5 supported rows whose item only a quest gives, the 2 played ones have a give of their own tree, and the 3
+  others have no grant source in the histories; the items of a table that no source reaches block 40 tasks of rows that other reasons
+  block too); the state rule now grants `06A_MSQ_01_Quartermaster` from Marcel Dupont,
+  and its hand-in stops at its standing (no origin territory). No repeatable objective is supported: the 40 repeatable Journey rows pay
+  Azoth and standing, and the nearest ones (`C10A_S5R_LightningBottle`, `C10A_S7R_AnimalInstincts`) are blocked only by the rank-up of
+  their standing (450 points against the 150 of rank 0).
+- A second computation by a different path (`scripts/support_check.py` of the evidence of stage 1.8f: its own reader of the game data
+  files, its own reward check, grant index, gates, trees, person presence and state selection with the validity of a record, the hand-in
+  at the destination, the items of a quest in the history, and history; only the facts of the leaf tasks come from the manifest, with the
+  member `questItem`) gives the same counts: the same 2,147 kinds, the same 160 supported rows, the same played list for each of the 306
+  histories, and the same 25 groups. On the manifest of stage 1.8e it finds the 3 histories of `09A_S4_BlowUpFarm`. In stage 1.8e it found
+  one error of the first manifest: the faction gate tested bit 1 (Syndicate) as the bit of a character with no faction (corrected; case
+  QF4).
 - The manifest is deterministic: two manifests of one world are the same bytes (case QF4). It is a reader: no change of the world.
 - The file stays outside the repository (it names the rows of the game data). `tools/world quest support FILE`,
   `GET /v1/dev/quests/support`, `GET /admin/v1/catalog/quest-support` (about 6 MB and 2 s for the whole quest data).
@@ -542,6 +577,25 @@ stage 1.8d and passes after the correction [agent through the review].
   its number is a reward that the backend cannot pay.
 - QR8D-R7: case QD7 reads the standing bytes of the two sessions after the steps of the host (the host sends a changed state only at its
   steps). A tree whose categorical state goes to an observer fails QD7 (the mutation probe of stage 1.8e).
+
+### The corrections of the code review of stage 1.8e (in stage 1.8f)
+
+The findings QR8E-R1 to QR8E-R9 (`~/Games/soulwarden/work/evidence/quests/18e/code-review/FINDINGS.md`) are corrected in stage 1.8f. Each
+of QR8E-R1 to R8 has a case of `tests/review_quests_18e_tests.cpp` (QRE1 to QRE8) that fails on the tree of stage 1.8e (QRE8 there does
+not end) and passes after the correction; R9 is a correction of case QF1 [agent through the review; the rules above].
+
+- QR8E-R1 (case QRE1): one swing gives one unit of work for each strike entry with a usable row for the character.
+- QR8E-R2 (case QRE2): a solid between the character and the near side of the object stops the strike; a solid behind the object, and the
+  solid of the object itself, do not; a tile that is not there yet gives no hit.
+- QR8E-R3 (case QRE3, two sessions): late attack steps while a granted cutscene plays strike no object; after its end a strike does.
+- QR8E-R4 (case QRE4): a refused write of the quest rows keeps the object with no LootTracker entry; the next strike works.
+- QR8E-R5 (case QRE5): the history of the manifest does not take an item from the reward of the same unfinished quest; a played reward and
+  a give of the tree that runs are items of the history; an item only in a loot table that no source reaches has no source.
+- QR8E-R6 (case QRE6): the history hands in only at a destination person that is there for the character after the tasks.
+- QR8E-R7 (case QRE7): a quest object file with two objects of one actor or of one placement key is refused.
+- QR8E-R8 (case QRE8): the manifest ends for a tree with the task index 255 (the node counters are `std::size_t`).
+- QR8E-R9: case QF1 counts each LootTracker fragment of B in the window, of each interest; a tree that sends the bytes of the observer
+  record of A to B fails QF1 (the mutation of the review: `logs/r9-leak-mutation.log` of the evidence of stage 1.8f).
 
 ## Commands
 
@@ -630,3 +684,15 @@ from the client at a person (a development run: `tools/world quest grant` gives 
   Escape does not send 6542 [client: no video plays, so no stopped event; static read]. Use `tools/world quest cinematic CHARACTER TempestRising start`, then `end`.
 - Stage 1.8e: the skinning prompt of a boar body shows only when the character stands at the body (live F: the prompt came after a walk
   into the body, and not from some meters with the focus on the body); a near bush or flint takes the prompt first.
+- Stage 1.8f: the navigation data has the body of a quest object as a solid (a beach nodule: about 1.1 m from its place). A wall check to
+  the place of the object finds the object itself; the strike line ends at the first free point before the object. A solid that touches
+  the object with no free cell between them counts as the object.
+- Stage 1.8f: a strike from a place with a rock or a slope between the eyes of the character and the object stops at that solid (probe of
+  stage 1.8f: 14 of 64 lines from 2.5 m in 8 directions to the beach nodules stop). Strike from the open side. Live I1 of stage 1.8f: west
+  of the first beach nodule (9674.7 2099.1) the corruption mass is a solid of the data about 0.9 m in front of the character, and the log
+  has "strikes ... through a solid ... no hit"; from the southwest and the north the nodule takes its 4 strikes. A swing moves the character
+  forward (two quick swings: 4.2 m): a test of a refusal travels before each swing.
+- Stage 1.8f: the navigation floor under a character can be some decimeters below the place that the client reports (the southwest of the
+  first beach nodule: 0.46 m). A probe with the floor of the data is not the line of a live strike; read the position of the input report.
+- Stage 1.8f: an objective with no NpcDestinationId (1,206 rows of the data, among them `09A_S4_BlowUpFarm`) has no hand-in on the server:
+  `Persons::hand_in` compares the destination with the person of the conversation. The client rule for such a row is not known.

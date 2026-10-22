@@ -108,14 +108,22 @@ void destructible_objects(const Options&) {
     objects.strike(*a, 5, 0);
     shop.host.steps(3, {&shop.clientA, &shop.clientB});
     bool seenA = false;
-    bool seenB = false;
     const auto entriesA = tracker_entries(shop.clientA, fromA, seenA);
-    (void)tracker_entries(shop.clientB, fromB, seenB);
+    // Code review of stage 1.8e, finding QR8E-R9: each LootTracker fragment that B got in the window, of each interest (its own character
+    // and the observer record of A), not only the interest of its own character.
+    std::size_t foreignB = 0;
+    std::size_t ownB = 0;
+    for (const auto& seen : fragments_of(shop.clientB, chests::kTrackerSlot, chests::kTrackerType, fromB)) {
+        ++(seen.interest == 1 ? ownB : foreignB);
+    }
+    note("QF1 the LootTracker fragments of B after the destruction by A: " + std::to_string(foreignB) + " of the observer record of A, " + std::to_string(ownB)
+         + " of its own character");
     check(objects.counts().destroyed == 1 && a->questObjectTracker.size() == 1 && a->questObjectTracker[0].state == world::quest_object_rules::kLooted
               && questfix::quest_of(*a, "Qf_NoduleQuest")->tasks[0].progress == 1,
           "the 4th unit (BaseGatherTime 4) destroys the object: the Looted claim of A, the game event counts for the task (1 of 2)");
-    check(seenA && entriesA.size() == 1 && entriesA[0].first == "0b00" && entriesA[0].second == 2 && !seenB && b->questObjectTracker.empty(),
-          "the LootTracker state of A (slot 33) has the Looted entry with the managed actor; B gets no fragment of it");
+    check(seenA && entriesA.size() == 1 && entriesA[0].first == "0b00" && entriesA[0].second == 2 && foreignB == 0 && ownB == 0
+              && b->questObjectTracker.empty(),
+          "the LootTracker state of A (slot 33) has the Looted entry with the managed actor; B gets no LootTracker fragment (no observer bytes)");
     objects.strike(*a, 6, 0);
     check(objects.counts().refused[static_cast<std::size_t>(world::QuestObjectVerdict::alreadyDestroyed)] == 1, "a destroyed object takes no hit");
     // The respawn of the row (33 s) for the character: the entry goes.
@@ -219,13 +227,16 @@ json manifest_document() {
     add("Qf_D_Area", "tasktriggerarea", 3, {{"TP_TargetTag", "Qf_No_Volume"}, {"TriggerAreaType", "Enter"}});
     add("Qf_E_Unlock", "taskunlockachievement", 20, {{"ItemName", "Qf_E_Bit"}});
     add("Qf_H_Wait", "taskachievement", 18, {{"ItemName", "Qf_Never_Bit"}});
+    // Each objective has its hand-in person (stage 1.8f, code review of stage 1.8e, finding QR8E-R6: the history hands in a quest only at
+    // the person of its NpcDestinationId).
     const auto one = [](const char* id, json cells, const char* task) {
+        cells["NpcDestinationId"] = "Test_Artificer";
         return json{{"id", id}, {"cells", cells}, {"tree", json::array({json::array({0, task, json::array()})})}};
     };
     json objectives = json::array();
     objectives.push_back(one("Qf_A", {{"Type", "MainStoryQuest"}, {"AchievementId", "Qf_A_Done"}, {"ObjectiveReward", "Qf_B"}}, "qf_a_unlock"));
     objectives.push_back({{"id", "Qf_B"},
-                          {"cells", {{"Type", "MainStoryQuest"}, {"AchievementId", "Qf_B_Done"}}},
+                          {"cells", {{"Type", "MainStoryQuest"}, {"AchievementId", "Qf_B_Done"}, {"NpcDestinationId", "Test_Artificer"}}},
                           {"tree", json::array({json::array({0, "qf_b_wait", json::array()}), json::array({1, "qf_b_child", json::array()}),
                                                 json::array({2, "qf_b_root", json::array({0, 1})})})}});
     objectives.push_back(one("Qf_C", {{"Type", "Journey"}}, "qf_c_fish"));

@@ -16,6 +16,7 @@ contracts are in the protocol notes (sections 4.55 and 4.56).
 | The conversation data: the NPC rows, the states, the topics | `tools/gamedata/conversations.sh`, `conversations.py`, `check_conversations_tool.py`, `gamedata/conversation_data.h`, case NC2 |
 | The person system: the presence check, the selection, the topics, the ends | `world/persons.h` (`Persons`), `world/entity.h` (`PersonConversation`), cases NC3, NC4, NC8 |
 | The rule of each requirement of a state or a topic | `Persons::passes`, `Quests::conditional`, `Quests::task_state`, `Quests::objective_completed`, case NC8 |
+| Stage 1.8f: the validity of a state record (IsInitialState XOR a requirement) | `record_valid` and `Persons::selected_state` in `world/persons.cpp`, case NC9; the static read `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md` |
 | The topic messages 3158 and 5397 | `server/rep/conversation_messages.h`, `RepSession::handle_conversation_topics`, case NC4 |
 | The services of a person | `Persons::started`, `Interactions::grant_service` (kind `conversation`), case NC5 |
 | Stage 1.8b: the offer (3772) and the hand-in (794) at a person | `Persons::accept`, `Persons::hand_in`, `Persons::quest_source`, `Persons::reselect`; `RepSession::handle_objective_request`; cases QB3, QB5, QB6 |
@@ -79,8 +80,19 @@ the stage (with the cause), [review] a finding of the code review of stage 2.5c 
   diagnostics. The CRC-32 of the lower-case topic id is the topic on the wire [client hash 0x12F4730; live L3: `e532485a`].
 - No conversation data: the backend starts. A person keeps its conversation of stage 2.5a (3743 result 1, the close), with no state, no
   accepted topic, and no service [roadmap rule: a default with no game data file].
-- The conversation state of a character [client 0x37AC710, 0x37AB440; static read]: the states of the NPC row in reverse, the first whose
-  requirements pass. The backend makes the same selection as the client at the start of the use (`Persons::select`) and keeps it with the
+- The conversation state of a character [client 0x37AC710, 0x37AB440; static read]: the states of the NPC row in reverse, the first valid
+  record whose requirements pass. Stage 1.8f [client 0x379F2F0 to 0x379F377, 0x37AC846 to 0x37AC870; static read
+  `~/Games/soulwarden/work/evidence/quests/18f/implement/static/STATE-SELECTION.md`; live Q1 of stage 1.8f]: the loader of the client
+  marks a state record valid only as IsInitialState XOR "the row has a requirement", and the selector skips an invalid record before its
+  player check. A requirement is a loaded value that is not 0: RequiredLevel, RequiredFaction (a named value, Any too; None, a name with
+  `!`, and an unknown name are 0), RequiredFactionCooldown (only the two cooldown values), RequiredCompletedObjective, RequiredAchievement,
+  RequiredProgression with an id and a rank or points above 0, RequiredActiveObjectiveId (a list with an id) with RequiredActiveTaskId. A
+  requirement that passes for each character counts too (RequiredLevel 1). Thus a state with no requirement that is not the initial state
+  (`06_01b_MarcelDupont`: the client offers `06A_MSQ_01_Quartermaster` of `06_01_MarcelDupont`) and an initial state with a requirement
+  (`0410a_01_Barkeep`, `1124_PierreAuguste2_Default`) are never selected (`record_valid` in `world/persons.cpp`; case NC9). The data has 50
+  invalid records (48 not initial with no requirement, 2 initial with a requirement), none with an offer; in Windsward they change Marcel
+  Dupont (3 rows) and Priya Thakur and Utkarsh Singh (their empty state `06_02` hid the topic state `06_01` of `06A_Z_02_SpreadJoy`).
+  The backend makes the same selection as the client at the start of the use (`Persons::select`) and keeps it with the
   revision of the bits, the quests, the level, and the categorical progressions of the character (`Entity::conversation`). A topic request
   after a change of these values makes the selection again (a stale revision) [agent: the client selects again from its state of now].
   Live L2 and L3: the client shows the default state of a person, and the state of a task topic while the task is active.
@@ -182,6 +194,10 @@ tools/world persons NAME [METERS]                  # the person conversation of 
 
 ## Traps
 
+- Stage 1.8f: a made-up conversation state for a test needs the shape of the data: a state with no requirement must be the initial state
+  (`"initial": true`), or the client rule skips it (case NC9). The fixtures of stages 2.5c and 1.8b had such states (`Pirate_Default`,
+  `Inn_Default`, `Review_Talk`, the base states of NC8); they are initial states now, and each rule state of NC8 has RequiredLevel 1, so
+  that its record is valid also for a rule that is no requirement (NotInCooldown, a lone objective, 0 and 0).
 - A file of the interaction data of format 3 or before has no person child: a conversation with such a person is refused (3743 result 2)
   and closes at once (the trap of stage 2.5b, the artificer at the forge of Oxboro). Make the file again with the tool of stage 2.5c.
 - The client opens the conversation at the key E with its own state from its own tables, before the reply of the server. A character with

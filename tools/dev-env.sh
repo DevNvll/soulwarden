@@ -6,7 +6,9 @@
 # - A development run has its own Proton prefix. The launcher stops all processes of its
 #   prefix before a start, thus two starts with one prefix stop each other.
 # - Each process of a development run has the mark SOULWARDEN_DEV_RUN=1 in its environment.
-#   tools/dev-stop.sh stops only the processes that have the mark.
+#   tools/dev-stop.sh stops only the processes that have the mark. Each process also has the data
+#   directory of its run (SOULWARDEN_DEV_RUN_DIR): tools/dev-run.sh stops only the runs of its own
+#   data directory, and it starts no game while a run of a different data directory is alive.
 
 # Proton prefix of a development run. SOULWARDEN_COMPAT_DIR selects a different one.
 dev_compat_dir="${SOULWARDEN_COMPAT_DIR:-${HOME}/Games/soulwarden/proton-dev/1063730}"
@@ -64,4 +66,57 @@ dev_processes_matching() {
             echo "${process}"
         fi
     done
+}
+
+# The data directory of a development run, as one text for a compare: the absolute path with no
+# link and no "/." (the same rule as the check of the prefix in tools/dev-run.sh).
+dev_run_key() {
+    realpath -m -- "$1"
+}
+
+# Prints the data directory of the development run of a process (dev_run_key), or "unknown".
+# tools/dev-run.sh gives each process of a run SOULWARDEN_DEV_RUN_DIR (from stage 1.8f). A process of a
+# run of an earlier script has only SOULWARDEN_DATA_DIR: the launcher gives the game the Windows form
+# of its client folder (Z:\...\client), the other processes have the data directory.
+dev_run_directory() {
+    local line run="" data=""
+    while IFS= read -r line; do
+        case "${line}" in
+        SOULWARDEN_DEV_RUN_DIR=*) run="${line#*=}" ;;
+        SOULWARDEN_DATA_DIR=*) data="${line#*=}" ;;
+        esac
+    done < <({ tr '\0' '\n' <"/proc/$1/environ"; } 2>/dev/null)
+    if [[ -z "${run}" ]]; then
+        run="${data}"
+        if [[ "${run}" == Z:\\* ]]; then
+            run="${run#Z:}"
+            run="${run//\\//}"
+            run="${run%/client}"
+        fi
+    fi
+    if [[ "${run}" != /* ]]; then
+        echo "unknown"
+        return
+    fi
+    dev_run_key "${run}"
+}
+
+# Prints "PROCESS DIRECTORY" for each process of a development run (dev_processes, dev_run_directory).
+dev_processes_with_directory() {
+    local process
+    for process in $(dev_processes); do
+        echo "${process} $(dev_run_directory "${process}")"
+    done
+}
+
+# Prints the ids of the processes of the development runs of one data directory. A process whose
+# directory is not known is not in the list.
+dev_processes_of() {
+    local key process directory
+    key="$(dev_run_key "$1")"
+    while read -r process directory; do
+        if [[ -n "${process}" && "${directory}" == "${key}" ]]; then
+            echo "${process}"
+        fi
+    done < <(dev_processes_with_directory)
 }

@@ -2115,6 +2115,49 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
     if (subscriptions == nullptr) {
         return;
     }
+    const std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> matched = matched_tasks(entity, event, *subscriptions);
+    if (matched.empty()) {
+        if (result != 0) {
+            remember(result);
+        }
+        return;
+    }
+    Plan plan(*this, entity, now_ns());
+    for (const auto& [instance, index, amount] : matched) {
+        if (QuestInstance* quest = plan.edit(instance)) {
+            plan.add_progress(*quest, index, amount);
+        }
+    }
+    plan.settle(subscriptions);
+    const QuestError error = commit(entity, plan, {});
+    if (error == QuestError::none) {
+        if (result != 0) {
+            remember(result); // Code review of stage 1.8c, finding QR8C-R1: a result counts as handled only after its commit.
+        }
+        return;
+    }
+    log::write("quests: an event of character %s did not change its quests: %s", entity.characterId.c_str(), quest_error_text(error));
+    if (error == QuestError::storeFailed && event.attempt < kEventRetries) {
+        // The source action committed: its quest event tries again after 2 s on the world clock (the rule of a refused timer write,
+        // finding QR8A-R5). A delivery of the same result before the retry counts one time.
+        ++m_counts.eventRetries;
+        QuestEvent again = event;
+        ++again.attempt;
+        if (event.attempt == 0 && !event.restricted) {
+            for (const auto& [instance, index, amount] : matched) {
+                again.matched.emplace_back(instance, index);
+            }
+        }
+        m_world.after(kEventRetry, [characterId = entity.characterId, again](World& world) {
+            if (Entity* character = world.find_character(characterId)) {
+                world.quests().event(*character, again);
+            }
+        });
+    }
+}
+
+std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> Quests::matched_tasks(const Entity& entity, const QuestEvent& event,
+                                                                                         const Subscriptions& subscriptions) {
     // The keys of the event, and the amount of each one.
     std::vector<std::pair<std::string, std::uint32_t>> keys;
     for (std::size_t position = 0; position < event.keys.size(); ++position) {
@@ -2172,7 +2215,7 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
     const auto amount_of = [&](const Subscriber& entry) {
         std::uint32_t amount = 1;
         for (const auto& [key, keyAmount] : keys) {
-            const std::vector<Subscriber>* list = subscriptions->find(key);
+            const std::vector<Subscriber>* list = subscriptions.find(key);
             if (list != nullptr && std::find(list->begin(), list->end(), entry) != list->end()) {
                 amount = keyAmount;
                 break;
@@ -2195,7 +2238,7 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
         }
     }
     for (const auto& [key, amount] : lookups) {
-        const std::vector<Subscriber>* list = subscriptions->find(key);
+        const std::vector<Subscriber>* list = subscriptions.find(key);
         for (std::size_t position = 0; list != nullptr && position < list->size(); ++position) {
             const Subscriber entry = (*list)[position];
             ++m_counts.subscribersVisited;
@@ -2230,44 +2273,65 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
             matched.emplace_back(entry, amount);
         }
     }
-    if (matched.empty()) {
-        if (result != 0) {
-            remember(result);
-        }
-        return;
-    }
-    Plan plan(*this, entity, now_ns());
+    std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> found;
+    found.reserve(matched.size());
     for (const auto& [entry, amount] : matched) {
-        if (QuestInstance* quest = plan.edit(entry.instance)) {
-            plan.add_progress(*quest, entry.index, amount);
+        found.emplace_back(entry.instance, entry.index, amount);
+    }
+    return found;
+}
+
+QuestError Quests::object_destroyed(Entity& entity, const std::vector<QuestDrop>& drops, const std::vector<QuestEvent>& events) {
+    if (data() == nullptr || !entity.quests.loaded || entity.kind != EntityKind::player) {
+        return QuestError::none; // No quest of the character: the destruction has no row of the quest system.
+    }
+    const auto found = m_subscriptions.find(entity.id);
+    Subscriptions* subscriptions = found != m_subscriptions.end() ? found->second.get() : nullptr;
+    std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint32_t>> matched;
+    for (const QuestEvent& event : events) {
+        ++m_counts.worldEvents;
+        if (subscriptions != nullptr) {
+            for (const auto& task : matched_tasks(entity, event, *subscriptions)) {
+                matched.push_back(task);
+            }
+        }
+    }
+    if (drops.empty() && matched.empty()) {
+        return QuestError::none;
+    }
+    // One plan: the quest drops (a give of the items, with the cause ItemGathered of the plan of the quest items, whole or not at all; the
+    // award rows of AwardOnlyOnce), then the progress of the tasks of the events.
+    Plan plan(*this, entity, now_ns());
+    for (const QuestDrop& drop : drops) {
+        plan.itemActions.push_back(QuestItemAction{true, GrantItem{drop.itemId, drop.quantity, std::nullopt, {}}});
+        plan.itemDelta[lower_text(drop.itemId)] += drop.quantity;
+        if (drop.counted) {
+            const auto key = std::make_pair(drop.objectiveCrc, drop.index);
+            const auto planned = plan.awards.find(key);
+            const auto stored = entity.quests.awards.find(key);
+            const std::uint32_t before = planned != plan.awards.end() ? planned->second : stored != entity.quests.awards.end() ? stored->second : 0U;
+            plan.awards[key] = before + drop.quantity;
+        }
+    }
+    for (const auto& [instance, index, amount] : matched) {
+        if (QuestInstance* quest = plan.edit(instance)) {
+            plan.add_progress(*quest, index, amount);
         }
     }
     plan.settle(subscriptions);
     const QuestError error = commit(entity, plan, {});
-    if (error == QuestError::none) {
-        if (result != 0) {
-            remember(result); // Code review of stage 1.8c, finding QR8C-R1: a result counts as handled only after its commit.
-        }
-        return;
+    if (error != QuestError::none) {
+        log::write("quests: the destruction of a quest object for character %s did not change its quests: %s", entity.characterId.c_str(),
+                   quest_error_text(error));
+        return error;
     }
-    log::write("quests: an event of character %s did not change its quests: %s", entity.characterId.c_str(), quest_error_text(error));
-    if (error == QuestError::storeFailed && event.attempt < kEventRetries) {
-        // The source action committed: its quest event tries again after 2 s on the world clock (the rule of a refused timer write,
-        // finding QR8A-R5). A delivery of the same result before the retry counts one time.
-        ++m_counts.eventRetries;
-        QuestEvent again = event;
-        ++again.attempt;
-        if (event.attempt == 0 && !event.restricted) {
-            for (const auto& [entry, amount] : matched) {
-                again.matched.emplace_back(entry.instance, entry.index);
-            }
-        }
-        m_world.after(kEventRetry, [characterId = entity.characterId, again](World& world) {
-            if (Entity* character = world.find_character(characterId)) {
-                world.quests().event(*character, again);
-            }
-        });
+    for (const QuestDrop& drop : drops) {
+        ++m_counts.drops;
+        m_misses.erase({entity.characterId, drop.instance, drop.index});
+        log::write("quests: character %s got the quest drop %u %s (objective %s, task %u)", entity.characterId.c_str(), drop.quantity,
+                   drop.itemId.c_str(), drop.objective.c_str(), static_cast<unsigned>(drop.index));
     }
+    return QuestError::none;
 }
 
 void Quests::killed(const Entity& creature, const std::vector<Entity*>& credited, const std::vector<std::string>& categories,

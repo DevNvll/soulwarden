@@ -44,7 +44,9 @@ json review_topic_quests(std::uint32_t target = 2) {
 json review_topic_conversations(bool switchAfterFirst = false) {
     json c = conversation_document_18b();
     c["npcs"][0]["states"] = json::array({"Review_Talk"});
-    c["states"].push_back({{"id", "Review_Talk"}, {"topics", json::array({"Qb_Topic", "Review_Second_Topic"})}});
+    // The talk state has no requirement: it is the initial state (stage 1.8f: the client skips a state with no requirement that is not the
+    // initial state).
+    c["states"].push_back({{"id", "Review_Talk"}, {"initial", true}, {"topics", json::array({"Qb_Topic", "Review_Second_Topic"})}});
     c["topics"].push_back({{"id", "Review_Second_Topic"}, {"achievementUnlock", "Qb_Event_Bit"}});
     if (switchAfterFirst) {
         c["npcs"][0]["states"].push_back("Review_After");

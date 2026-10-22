@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -15,19 +16,27 @@
 // The client makes each object from its level data. Its slice has a DamageReceiver and no HitVolume: the client puts no melee contact on it
 // into its input report (collector 0x485FBA0 needs a HitVolume), and the key E has no option. The server finds the hit itself: each strike
 // of a melee swing or of an ability of a character (a strike window of the attack graph that the combat system follows: AttackSequences)
-// hits each object of the character in its reach. The rules, in this sequence (each refusal changes nothing):
-//   1. The character lives, and its exact position is known (no camera estimate).
+// hits each object of the character in its reach. Only a strike with a usable row for the character counts (stage 1.8f, code review of
+// stage 1.8e, finding QR8E-R1: Combat::strike_objects, the learned-node conditions of the hit path). The rules, in this sequence (each
+// refusal changes nothing):
+//   1. The character lives, its exact position is known (no camera estimate), and no cutscene or cinematic of it plays (stage 1.8f,
+//      finding QR8E-R3: the client takes no attack input then; a late step of an attack from before comes here).
 //   2. The object is 5.0 m or less from the position of the character (3D: the reach of a melee weapon and its tolerance, the rule of a
 //      creature hit) and in front of the camera of the character (90 degrees or less from its look).
 //   3. An object with InteractOnlyOnQuest: an active task of the character has its InteractTag (client 0x8261FC0; the client shows the
 //      object only then).
+//   3a. Stage 1.8f (finding QR8E-R2): no solid of the navigation data is on the line from the character to the near side of the object
+//      (Navigation::line_stop at the eye height; kLineHeight, kBody, kBodyStep). A tile of the line that is not there yet: no hit now. A
+//      solid that touches the object (no free cell between them) counts as the object.
 //   4. The object is not destroyed for the character, and the strike did not hit it before (one strike of a visit hits an object one time).
 //   5. The strike is one unit of the work of the gatherable row of the object (BaseGatherTime, rounded up, at least 1: a rule of this
 //      project; the data has no health of the object, and the client shows a full health bar of its own).
-//   6. At the last unit the object is destroyed for the character: its LootTracker entry Looted (the claim of an instanced object, type 982:
-//      live check I0, the client removes the object, its marker, and its corruption), the quest drops of the row (one transaction), then the
-//      game event of the row (TaskGameEvent: MSQ_CorruptedNodule_1_interact) and its InteractTag (TaskInteract). After a uniform draw of the
-//      respawn bounds of the row the entry goes (the map with no entry: the object is back for the character).
+//   6. At the last unit the quest system writes the quest drops of the row, the game event of the row (TaskGameEvent:
+//      MSQ_CorruptedNodule_1_interact), and its InteractTag (TaskInteract) in one plan and one transaction (stage 1.8f, finding QR8E-R4:
+//      Quests::object_destroyed). Only after its commit is the object destroyed for the character: its LootTracker entry Looted (the claim
+//      of an instanced object, type 982: live check I0, the client removes the object, its marker, and its corruption). A refusal (a full
+//      bag, a refused write) keeps the object with its last unit of work. After a uniform draw of the respawn bounds of the row the entry
+//      goes (the map with no entry: the object is back for the character).
 //
 // The state is a value of the character (Entity::questObjects, rule MP-1): each character has its own objects (InstancedLootType 4 of the
 // data), and its entries go only to its own sessions (the LootTracker state is owner only). The store has none: a new world entry has the
@@ -47,10 +56,35 @@ inline constexpr float kReach = 5.0F;
 inline constexpr std::uint32_t kEntryKind = 0;
 /** InstancedLootState Looted (protocol notes 4.41). */
 inline constexpr std::uint32_t kLooted = 2;
+/**
+ * Stage 1.8f (code review of stage 1.8e, finding QR8E-R2): the line of the wall check of a strike (meters; rules of this project: the data
+ * has no shape of the object, and the client finds no hit on it). It goes at the eye height of the sight of the navigation
+ * (navigation_rules::kEyeHeight) above the feet of the character and above the place of the object, and it ends at the near side of the
+ * object: the first point from the place of the object toward the character, in steps of one cell of the navigation data, that no solid
+ * holds, at most kBody (the solid of a nodule of the data reaches about 1.1 m from its place: probe of stage 1.8f).
+ */
+inline constexpr float kLineHeight = 1.5F;
+inline constexpr float kBody = 2.0F;
+inline constexpr float kBodyStep = 0.25F;
 } // namespace quest_object_rules
 
 /** Why a strike did not hit an object (the counts and the log). */
-enum class QuestObjectVerdict : std::uint8_t { hit, destroyed, tooFar, behind, notOnQuest, alreadyDestroyed, sameStrike };
+enum class QuestObjectVerdict : std::uint8_t {
+    hit,
+    destroyed,
+    tooFar,
+    behind,
+    notOnQuest,
+    alreadyDestroyed,
+    sameStrike,
+    /** Stage 1.8f: a solid of the navigation data is on the line to the object (finding QR8E-R2). */
+    wall,
+    /** Stage 1.8f: a tile of the navigation data of the line is not there yet: no hit now (finding QR8E-R2). */
+    wallDataPending,
+    /** Stage 1.8f: a cutscene or a cinematic of the character plays (finding QR8E-R3). */
+    cutscene,
+};
+inline constexpr std::size_t kQuestObjectVerdicts = 10;
 
 [[nodiscard]] const char* quest_object_verdict_text(QuestObjectVerdict verdict);
 
@@ -63,7 +97,7 @@ struct QuestObjectCounts {
     std::uint64_t destroyed{0};
     std::uint64_t respawns{0};
     std::uint64_t storeFailures{0};
-    std::uint64_t refused[7]{};
+    std::uint64_t refused[kQuestObjectVerdicts]{};
 };
 
 class QuestObjects {

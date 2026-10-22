@@ -94,8 +94,13 @@ inline json conversation_document(std::size_t extraNpcs = 0) {
                            {"type", "Linear_Objective"},
                            {"requires", {{"RequiredActiveObjectiveId", "Test_TopicQuest"}, {"RequiredActiveTaskId", "Test_Topic_Talk"}}},
                            {"topics", json::array({"Test_Topic_Ask", "Test_Topic_Gated", "Test_Topic_Missing"})}},
-                          {{"id", "Pirate_Default"}, {"type", "Conversation"}, {"services", json::array({"Open_Shop"})}},
-                          {{"id", "Inn_Default"}, {"type", "Linear_Objective"}, {"services", json::array({"Inn", "Open_Shop", "No_Such_Service"})}},
+                          // The states with no requirement are initial states (stage 1.8f: the client skips a state with no requirement that
+                          // is not the initial state; the real shops of the data have an initial state).
+                          {{"id", "Pirate_Default"}, {"type", "Conversation"}, {"initial", true}, {"services", json::array({"Open_Shop"})}},
+                          {{"id", "Inn_Default"},
+                           {"type", "Linear_Objective"},
+                           {"initial", true},
+                           {"services", json::array({"Inn", "Open_Shop", "No_Such_Service"})}},
                           {{"id", "Inn_Faction"}, {"type", "Linear_Objective"}, {"requires", {{"RequiredFaction", "Syndicate"}}}}})},
             {"topics", json::array({{{"id", "Test_Topic_Ask"}, {"prompt", "@Ask"}, {"response", "@Answer"}},
                                     {{"id", "Test_Topic_Gated"}, {"prompt", "@Gated"}, {"requires", {{"RequiredAchievement", "Test_Never"}}}},

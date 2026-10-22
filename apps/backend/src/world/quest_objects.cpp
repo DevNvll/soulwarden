@@ -2,10 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 #include "core/logging/log.h"
-#include "state/store.h"
-#include "world/inventory.h"
+#include "world/navigation.h"
 #include "world/quests.h"
 #include "world/world.h"
 
@@ -39,6 +39,12 @@ const char* quest_object_verdict_text(QuestObjectVerdict verdict) {
         return "destroyed before";
     case QuestObjectVerdict::sameStrike:
         return "the same strike";
+    case QuestObjectVerdict::wall:
+        return "a solid between the character and the object";
+    case QuestObjectVerdict::wallDataPending:
+        return "the navigation data of the line is not there yet";
+    case QuestObjectVerdict::cutscene:
+        return "a cutscene or a cinematic plays";
     }
     return "?";
 }
@@ -55,6 +61,13 @@ void QuestObjects::strike(Entity& character, std::uint32_t visit, std::uint32_t 
         return;
     }
     ++m_counts.strikes;
+    // Code review of stage 1.8e, finding QR8E-R3: a strike while a cutscene that the server granted plays (the 6706 of the client) or a
+    // cinematic plays (6606) hits nothing. The client takes no attack input then; a late step of an attack from before its start comes here
+    // (also a strike that waited for its due time: Combat::run_event calls this at that time).
+    if (character.quests.cutsceneStarted || character.quests.pendingCinematic != 0) {
+        refuse(QuestObjectVerdict::cutscene);
+        return;
+    }
     const std::vector<std::uint32_t> inReach = objects->nearby(character.position, quest_object_rules::kReach, &m_counts.visits);
     if (inReach.empty()) {
         return;
@@ -78,6 +91,37 @@ void QuestObjects::strike(Entity& character, std::uint32_t visit, std::uint32_t 
         if (object.onlyOnQuest && !m_world.quests().quest_object_open(character, object.tag)) {
             refuse(QuestObjectVerdict::notOnQuest);
             continue;
+        }
+        // Code review of stage 1.8e, finding QR8E-R2: no solid between the character and the object (Navigation::line_stop, the line of a
+        // projectile), on a line at the eye height of the sight of the navigation. The line ends at the near side of the object: the first
+        // point from its place toward the character that no solid holds (the solid of the object itself in the navigation data: about 1.1 m
+        // for a nodule, probe of stage 1.8f), at most kBody. A tile of the line that the world does not have yet: no hit now (the tile comes,
+        // and the next strike tries again).
+        const state::WorldPosition from{character.position.x, character.position.y, character.position.z + quest_object_rules::kLineHeight};
+        const state::WorldPosition place{object.position.x, object.position.y, object.position.z + quest_object_rules::kLineHeight};
+        if (!m_world.navigation().line_ready(from, place)) {
+            refuse(QuestObjectVerdict::wallDataPending);
+            continue;
+        }
+        const float flat = std::sqrt(dx * dx + dy * dy);
+        float side = std::min(quest_object_rules::kBody, flat);
+        for (float step = 0.0F; step < side; step += quest_object_rules::kBodyStep) {
+            const state::WorldPosition point{place.x - dx / flat * step, place.y - dy / flat * step, place.z};
+            if (!m_world.navigation().line_stop(point, point)) {
+                side = step;
+                break;
+            }
+        }
+        if (flat > side) {
+            if (const std::optional<float> stop = m_world.navigation().line_stop(from, {place.x - dx / flat * side, place.y - dy / flat * side, place.z})) {
+                refuse(QuestObjectVerdict::wall);
+                const std::string mark = log::session_mark(character.owner, character.characterId);
+                const log::Context context(mark);
+                log::write("world: quest object: %s strikes %s through a solid (%.2f m from the character, the near side %.2f m before the object): "
+                           "no hit",
+                           character.name.c_str(), object.key.c_str(), static_cast<double>(*stop * (flat - side)), static_cast<double>(side));
+                continue;
+            }
         }
         QuestObjectHits& hits = character.questObjects[index];
         if (hits.destroyed) {
@@ -107,33 +151,31 @@ void QuestObjects::destroy(Entity& character, std::uint32_t index) {
     const gamedata::QuestObjectPlacement& object = m_data->objects()[index];
     const gamedata::QuestObjectRow& row = m_data->rows()[object.row];
     QuestObjectHits& hits = character.questObjects[index];
-    // The quest drops of the row (TaskGatherItems, TaskGatherAndReturnItems: ItemDropVC names the gatherable row; 2 tasks of the data name a
-    // destructible row): one transaction, as for a gather. A full bag refuses the destruction: the object keeps its last unit of work.
+    // The quest change of the destruction is one plan and one transaction of the quest system (code review of stage 1.8e, finding QR8E-R4):
+    // the quest drops of the row (TaskGatherItems, TaskGatherAndReturnItems: ItemDropVC names the gatherable row; 2 tasks of the data name a
+    // destructible row), the game event of the row (TaskGameEvent: MSQ_CorruptedNodule_1_interact), and the InteractTag of the object
+    // (TaskInteract: a completed interaction; the rule of a gather of a quest object, Gathering::quest_events). The object goes only after
+    // the commit. A refusal (a full bag, a refused write) keeps the object with its last unit of work, and no LootTracker entry.
     const std::vector<QuestDrop> drops = m_world.quests().plan_drops(character, true, {row.id});
-    if (!drops.empty()) {
-        std::vector<GrantItem> given;
-        for (const QuestDrop& drop : drops) {
-            given.push_back(GrantItem{drop.itemId, drop.quantity, std::nullopt, {}});
-        }
-        const Bag bagBefore = character.bag;
-        state::Store::Batch batch(m_world.store());
-        bool written = batch.open();
-        ItemResult grant;
-        if (written) {
-            grant = m_world.inventory().grant(character.characterId, given, 0, nullptr, true);
-            written = grant.error == ItemError::none;
-        }
-        written = written && m_world.quests().write_drops(character, drops) && batch.commit();
-        if (!written) {
-            character.bag = bagBefore;
-            m_world.touch(character.id, ComponentKey::container);
-            hits.hits = work_of(row) - 1;
-            ++m_counts.storeFailures;
-            log::write("world: quest object: the quest drops of %s for %s did not go into the bag (%s): the object stays", object.key.c_str(),
-                       character.characterId.c_str(), item_error_text(grant.error));
-            return;
-        }
-        m_world.quests().drops_done(character, drops);
+    std::vector<QuestEvent> events;
+    if (!row.event.empty()) {
+        QuestEvent applied;
+        applied.kind = QuestEventKind::gameEvent;
+        applied.keys = {row.event};
+        events.push_back(std::move(applied));
+    }
+    if (!object.tag.empty()) {
+        QuestEvent interacted;
+        interacted.kind = QuestEventKind::interact;
+        interacted.keys = {object.tag};
+        events.push_back(std::move(interacted));
+    }
+    if (const QuestError error = m_world.quests().object_destroyed(character, drops, events); error != QuestError::none) {
+        hits.hits = work_of(row) - 1;
+        ++m_counts.storeFailures;
+        log::write("world: quest object: the quest change of the destruction of %s for %s was refused (%s): the object stays",
+                   object.key.c_str(), character.characterId.c_str(), quest_error_text(error));
+        return;
     }
     hits.destroyed = true;
     hits.generation = ++m_generation;
@@ -150,20 +192,6 @@ void QuestObjects::destroy(Entity& character, std::uint32_t index) {
     m_world.after(delay, [characterId, index, generation](World& world) { world.quest_objects().respawn_due(characterId, index, generation); });
     log::write("world: quest object: %s destroyed %s (%s), the game event %s; it is back for the character in %.1f s", character.name.c_str(),
                object.key.c_str(), object.variant.c_str(), row.event.empty() ? "(none)" : row.event.c_str(), static_cast<double>(seconds));
-    // The events of the quests after the change (the rule of a gather of a quest object, Gathering::quest_events): the game event of the
-    // row (TaskGameEvent) and the InteractTag of the object (TaskInteract: a completed interaction).
-    if (!row.event.empty()) {
-        QuestEvent applied;
-        applied.kind = QuestEventKind::gameEvent;
-        applied.keys = {row.event};
-        m_world.quests().event(character, applied);
-    }
-    if (!object.tag.empty()) {
-        QuestEvent interacted;
-        interacted.kind = QuestEventKind::interact;
-        interacted.keys = {object.tag};
-        m_world.quests().event(character, interacted);
-    }
 }
 
 void QuestObjects::respawn_due(const std::string& characterId, std::uint32_t index, std::uint64_t generation) {

@@ -513,13 +513,20 @@ void load(const Options&) {
     check(small.seconds < 1.0 && large.seconds < 1.0, "20,000 requests in less than 1 s for each size (the project limit of the research)");
 }
 
-/** The conversation data of NC8: one NPC row for each rule, with the states Base (no requirement) and Rule (the rule). */
+/**
+ * The conversation data of NC8: one NPC row for each rule, with the states Base (the initial state, no requirement) and Rule (the rule). Stage
+ * 1.8f: a state record is valid only as IsInitialState XOR a requirement (NC9); each Rule state has RequiredLevel 1 (each character passes it),
+ * thus its record is valid also when the rule under test is no requirement of the record (NotInCooldown, a lone objective, 0 and 0).
+ */
 json rule_document() {
     json npcs = json::array();
     json states = json::array();
     const auto rule = [&](const std::string& name, json cells, json topics = json::array(), json services = json::array()) {
         npcs.push_back({{"id", "Test_Rule_" + name}, {"states", json::array({"Base_" + name, "Rule_" + name})}});
-        states.push_back({{"id", "Base_" + name}, {"type", "Conversation"}});
+        states.push_back({{"id", "Base_" + name}, {"type", "Conversation"}, {"initial", true}});
+        if (!cells.contains("RequiredLevel")) {
+            cells["RequiredLevel"] = "1";
+        }
         states.push_back({{"id", "Rule_" + name}, {"type", "Conversation"}, {"requires", cells}, {"topics", topics}, {"services", services}});
     };
     rule("Any", {{"RequiredFaction", "Any"}}, json::array({"Topic_Any", "Topic_None", "Topic_Cooldown", "Topic_Root"}));

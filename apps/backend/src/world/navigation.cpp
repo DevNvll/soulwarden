@@ -844,6 +844,13 @@ bool Navigation::sees(const state::WorldPosition& eye, const state::WorldPositio
     return true;
 }
 
+bool Navigation::line_ready(const state::WorldPosition& from, const state::WorldPosition& to) {
+    if (!has_data() || !usable(from) || !usable(to)) {
+        return true;
+    }
+    return tiles_ready(from, to, 0.0F);
+}
+
 std::optional<float> Navigation::line_stop(const state::WorldPosition& from, const state::WorldPosition& to) const {
     ++m_counts.lineTests;
     if (!has_data() || !usable(from) || !usable(to)) {

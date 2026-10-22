@@ -56,7 +56,8 @@ class QuestObjectData {
 public:
     /**
      * Reads the file of the tool (format 1). A file that is not complete is not used, as a whole: a member with a wrong form, a row index with
-     * no row, an actor or an asset that is not 32 hexadecimal digits, a number that is not finite, a work that is not above 0.
+     * no row, an actor or an asset that is not 32 hexadecimal digits, a number that is not finite, a work that is not above 0, two objects
+     * with one placement key or with one actor (stage 1.8f).
      * @return False when the file is not there or is not complete. `error()` then has the cause.
      */
     [[nodiscard]] bool load(const std::string& path);

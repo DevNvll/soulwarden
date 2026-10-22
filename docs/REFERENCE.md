@@ -178,7 +178,10 @@ The launcher keeps its Proton prefix in `~/Games/soulwarden/proton/1063730` (`SO
 and stops the processes of that prefix before a start. A development run
 (`tools/dev-run.sh`, `tools/scenarios`) has a different prefix
 (`~/Games/soulwarden/proton-dev/1063730`), and `tools/dev-stop.sh` stops only development runs.
-Thus a development run and a game from the Steam library do not stop each other.
+Thus a development run and a game from the Steam library do not stop each other. A new
+development run stops only the earlier runs of its own data directory, and it does not start
+while a run of a different data directory is alive (`tools/dev-stop.sh --data-dir DIR` stops the
+runs of one data directory).
 
 A development run and the development tools (`tools/hx`, `tools/shot`, `tools/world`, the
 scenario scripts, the research tools) use the development data directory

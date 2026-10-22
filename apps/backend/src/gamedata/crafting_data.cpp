@@ -606,6 +606,11 @@ std::size_t CraftingData::member_count(std::string_view category) const {
     return found != m_categories.end() ? found->second.size() : 0;
 }
 
+const std::unordered_map<std::uint32_t, std::string>* CraftingData::members(std::string_view category) const {
+    const auto found = m_categories.find(lower_ascii(category));
+    return found != m_categories.end() ? &found->second : nullptr;
+}
+
 const CraftEvent* CraftingData::event(std::string_view id) const {
     const auto found = m_events.find(lower_ascii(id));
     return found != m_events.end() ? &found->second : nullptr;
