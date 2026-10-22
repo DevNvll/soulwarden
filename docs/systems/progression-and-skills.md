@@ -26,6 +26,11 @@ The wire contracts are in the protocol notes (sections 4.12 and 4.13).
   level, and the health of the constitution) and marks the vitals state. The cost of a reset
   goes from the coin through the inventory system (`Inventory::pay`), in the transaction that
   writes the points. A system that gives experience later calls `Progress::add_experience`.
+  A system that gives experience in its own transaction (the hand-in of a quest, stage 1.8b,
+  [Quests](quests.md)) calls `Progress::plan_experience` (the rules of `add_experience` on a
+  copy of the sheet), writes the plan with `Progress::write` in its batch, and calls
+  `Progress::finish` after the commit. An error of the plan (no character) refuses the
+  hand-in.
 - The attribute bonus (stage 1.3b, [Gear and perks](gear-and-perks.md)): the gear system sets
   `Attributes::bonus` from the perks and the effects of a character; the rules use the value
   with the bonus (`Attributes::value`), the attribute state has the base value in field 0 and

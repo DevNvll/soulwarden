@@ -132,7 +132,10 @@ the protocol notes (sections 3.5, 4.2, and 4.9).
   5606) are for the owner only, and a session sends them only after the first message 2709 of its client (`StateCodec::afterObjectivesEnable`;
   the session keeps its own mark `Known::gatedSent` for them; live check L1: a tracked objective of an earlier state is not pinned on the
   HUD). The quests of a character are in its entity (`Entity::quests`); only the quest system changes them. The session keeps only the
-  auto-pin flags of its client (the last 2709, `SessionSink::auto_pin`).
+  auto-pin flags of its client (the last 2709, `SessionSink::auto_pin`). Stage 1.8b: the completed notice of a hand-in (field 2 of the
+  Objectives state) is a value of the entity (`QuestLog::completed`, the 16 newest instances of the world entry), and the encoder writes it
+  only when it has an instance; a whisper of a quest goes only to the session of the owner (`SessionSink::whisper`, message 5070 to the
+  Whisper component of the player slice); the cutscene grant 6707 is the answer of the session of the owner to its own 6703.
 - The world time (stage 2.2, [World time and weather](world-time-and-weather.md)) is one value of the world (`World::world_time`),
   not of a session or of a character. A session keeps only its delivery marks: the request mark of its client (a valid 4248), the
   revision, the phase, and the time of the last record that it sent (7036), and the time of its next clock correction (335, each 3 s

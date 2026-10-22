@@ -1,6 +1,7 @@
 #include "server/rep/quest_messages.h"
 
 #include "server/hub/wire.h"
+#include "server/rep/lock_messages.h"
 
 namespace soulwarden::backend::server::rep {
 
@@ -54,6 +55,22 @@ std::optional<CutsceneRequest> read_cutscene_request(std::span<const std::uint8_
         return std::nullopt;
     }
     return message;
+}
+
+std::vector<std::uint8_t> cutscene_granted_body(std::uint64_t entity, std::uint32_t cutscene) {
+    hub::Writer out;
+    out.u64(kPlayerCutsceneComponent + entity);
+    out.u64(entity);
+    out.u32(cutscene);
+    return out.data();
+}
+
+std::vector<std::uint8_t> whisper_body(std::uint64_t target, std::uint64_t entity, std::uint32_t whisper) {
+    hub::Writer out;
+    out.u64(target);
+    out.u64(entity);
+    out.u32(whisper);
+    return out.data();
 }
 
 std::optional<TerritoryReport> read_territory_report(std::span<const std::uint8_t> body, bool entered) {

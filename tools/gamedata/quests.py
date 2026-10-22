@@ -120,10 +120,13 @@ OBJECTIVE_COLUMNS = ("ObjectiveID", "Type", "Task")
 TASK_COLUMNS = ("TaskID", "Type")
 ACHIEVEMENT_COLUMNS = ("AchievementID", "AchievementIndex")
 BACKSTORY_COLUMNS = ("BackstoryID", "ObjectiveUnlockOverride", "AchievementUnlockOverride")
-# The columns of a game event that the quest engine reads now or in a later part (1.8d: the rewards).
+# The columns of a game event that the quest engine reads now or in a later part (1.8d: the rewards). Stage 1.8b: the chances, the
+# whisper of an event (WhisperId and WhisperID: both spellings are in the data), and the other currencies (a reward that the backend
+# cannot pay yet refuses the hand-in).
 EVENT_COLUMNS = ("UniversalExpAmount", "CurrencyReward", "ItemReward", "ItemRewardQty", "GearScoreRange", "CategoricalProgressionId",
                  "CategoricalProgressionReward", "TerritoryStanding", "FactionReputation", "FactionTokens", "AzothReward",
-                 "AchievementId", "StatusEffectId", "EntitlementId", "ScheduleId")
+                 "AchievementId", "StatusEffectId", "EntitlementId", "ScheduleId", "CoinRewardChance", "AzothRewardChance", "WhisperId",
+                 "WhisperID", "UmbralCurrency", "PvpXp", "PVPXP", "SeasonsXp", "AzothSalt", "CursedSilvers", "CursedCrowns")
 WHISPER_COLUMNS = ("TriggerType", "RequiredAchievementId", "Duration", "GameEvent", "AchievementId", "Subtitle")
 SCHEDULE_COLUMNS = ("StartDate", "EndDate", "StartWeekday", "EndWeekday", "UTC")
 

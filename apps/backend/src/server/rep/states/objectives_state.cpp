@@ -10,13 +10,15 @@
 // this encoder writes group 1 only (group 0 field 0 is gracePeriodEndTime: no rule):
 //   field 0  taskStartTimes      full map: instance:u64 index:u8 -> start:u64 (the synced wall clock, Unix nanoseconds; reader 0x3A68CB0)
 //   field 1  trackedObjectives   full vector of instance:u64 (8 at most; reader 0x3A68340)
+//   field 2  completedObjectives full vector of instance:u64 (reader 0x3A68E90): stage 1.8b, the notice list of the hand-ins of this world
+//            entry (the apply 0x3A43530 calls 0x3A559B0 with the completion flag for a removed instance that the list names: the banner of a
+//            completion, not "Objective Failed"; live check L3 of stage 1.8b). Written only when the list has an instance.
 //   field 3  activeObjectives    full vector of 56-byte elements (reader 0x3A688F0, element 0x5B52F60):
 //              objectiveId:u32 (CRC-32 of the lower-case ObjectiveID) instanceId:u64 missionId:u32 (0) destinationOverride:16 bytes (0)
 //              acceptTime:u64 originTerritory:u16 available:u8 (1) isCommunityGoal:u8 isPoiObjective:u8 isDynamicPoiObjective:u8
 //              parentObjectiveId:u64 isResetObjective:u8 selectedIngredients:size (0)
 //   field 4  taskStates          full vector of 18-byte elements: instance:u64 index:u8 taskCRC:u32 progress:u32 state:u8 (reader 0x3ADDB50)
-// Fields 2 (completedObjectives: a notice list of completed instances), 5, and 6 are not written (no completion and no POI objective in
-// stage 1.8a). A full container is `00 01 sequence:size64 count:size element*` (reader 0x279DC70); the sequence is the world revision of
+// Fields 5 and 6 are not written (no POI objective). A full container is `00 01 sequence:size64 count:size element*` (reader 0x279DC70); the sequence is the world revision of
 // the last change of the state.
 //
 // The order of the task elements is the index order of the tree: a child before its container (live check L1 of stage 1.8a: with the
@@ -38,6 +40,7 @@ constexpr unsigned kObjectiveGroups = 2;
 constexpr unsigned kQuestGroup = 1;
 constexpr unsigned kStartTimesField = 0;
 constexpr unsigned kTrackedField = 1;
+constexpr unsigned kCompletedField = 2;
 constexpr unsigned kActiveField = 3;
 constexpr unsigned kTaskStatesField = 4;
 
@@ -84,6 +87,13 @@ hub::Bytes encode_objectives_state(const world::Entity& entity, View view, const
     full_header(tracked, sequence, log.tracked.size());
     for (const std::uint64_t instance : log.tracked) {
         tracked.u64(instance);
+    }
+    if (!log.completed.empty()) {
+        hub::Writer& completed = state.field(kQuestGroup, kCompletedField);
+        full_header(completed, sequence, log.completed.size());
+        for (const std::uint64_t instance : log.completed) {
+            completed.u64(instance);
+        }
     }
     hub::Writer& active = state.field(kQuestGroup, kActiveField);
     full_header(active, sequence, log.active.size());

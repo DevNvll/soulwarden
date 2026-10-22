@@ -1,8 +1,8 @@
 # Travel and conversations
 
 Read this document before a change of a travel, the travel places, or the lock of the input of a
-client (a conversation, a cutscene). The wire contracts are in the protocol notes (sections 4.16 and
-4.20).
+client (a conversation, a cutscene). The wire contracts are in the protocol notes (sections 4.16,
+4.20, and 4.56).
 
 ## Start here
 
@@ -10,6 +10,7 @@ client (a conversation, a cutscene). The wire contracts are in the protocol note
 | --- | --- |
 | A conversation with a person, a cutscene of the client, a character that the client keeps in place | Protocol notes 4.20, `apps/backend/src/server/rep/lock_messages.h`, `server/rep/rep_session.cpp` (`handle_cutscene_ended`, `end_input_lock`), `tools/world message`, test case UT1 |
 | The persons: the conversation state of a character, the topics 3158 and 5397, the services | [Persons](persons.md), protocol notes 4.55 |
+| The cutscene of a quest: the grant 6707, the start 6706, the end 6705 (stage 1.8b) | [Quests](quests.md), protocol notes 4.56, `RepSession::handle_cutscene_request`, `handle_cutscene_call`, `Quests::cutscene_requested` |
 | Travel: the server moves a character to a different place, the travel places, the tab "Travel" | Protocol notes 4.16, `apps/backend/src/world/world.h` (`World::travel`), `server/rep/travel_messages.h`, `gamedata/travel_places.h`, `server/http/travel_commands.cpp`, `tools/world travel`, `tools/world places`, `tools/gamedata/places.sh` |
 
 ## Rules
@@ -63,6 +64,14 @@ client (a conversation, a cutscene). The wire contracts are in the protocol note
   server ends a conversation with 3746 (a command; stage 2.5b), the client closes it, sends 2473
   and 6705, and the answer 6709 frees the input and the camera (live check L7 of stage 2.5b: a
   walk of 6 m after it); the backend sends no extra 6709 for it.
+- The cutscene of a quest (stage 1.8b, protocol notes 4.56): the client asks for it with 6703.
+  The session answers 6707 (the grant) only when an active TaskCutsceneComplete of the
+  character names it ([Quests](quests.md)); the client plays it and sends 6706, and at its end
+  6705. The answer 6709 to each 6705 does not change: the end of a conversation and the end of
+  a cutscene get it in the same way, and only a 6705 after a 6706 of the pending cutscene
+  completes a task. A 6703 with no task gets no answer [agent: the client then gives up the
+  request; live I1 of stage 1.8b: the beach cutscene plays at the world entry, and the
+  character walks after it].
 - The travel places are game data (`travel-places.json`, `gamedata::TravelPlaces`): the
   spirit shrines and the inns of the territories, each with an id, a name, a territory, and
   a position. A command names a place by its id, or it gives the three numbers of a
@@ -96,6 +105,10 @@ tools/world travel NAME 8866 4250 137.9   # move a character to a position (--sc
   `tools/world list` prints the line `load:` with the time of the ticks and of the scans.
 
 ## Traps
+
+- Stage 1.8b: the client sends 6705 at the end of a cutscene and at the end of a conversation.
+  The backend log line of 6705 does not say which one: look for the line of the grant (6707)
+  and of 6706 before it.
 
 - A travel place can have a creature that fights near it (a Highlands Goat of level 62
   is 8 m from the Shrine of Pillars): a character that travels there or that respawns

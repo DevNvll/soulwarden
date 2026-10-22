@@ -355,3 +355,11 @@ tools/dev-stop.sh --check            # status 0: no process of a development run
   travel, travel to a point to the south of it. `'look DX DY'`: a positive `DY` turns the camera down.
 - A kill while the creatures ignore the character (`tools/world ignore CHARACTER on`) gives no reward and no quest count (stage 1.8c,
   live K1). Turn the mode on again after the kill, before a gather or a picture near other creatures.
+- A test of the beach quests (stage 1.8b): a new character (`tools/scenarios/create.sh`) starts in the trigger area of the beach
+  cutscene, and the cutscene starts at the first accepted position, some seconds after the loading screen. Start the picture loop
+  before the world entry, or the start of the cutscene is not in the video. The first `create.sh` after a start of the game can stop
+  at the title screen with `harness: no result`: run it again.
+- `tools/world travel` with a Z of a guess can put the character in a rock or under the ground at the beach (stage 1.8b): use the Z of
+  the data (a trigger volume, a person in `tools/world persons`) and look at a picture before an input.
+- A dialogue of a quest has pages and options (stage 1.8b): E is "Next", the key 1 the first option. A key of a page can select the
+  hand-in or the offer of the next page: take a picture before each key.

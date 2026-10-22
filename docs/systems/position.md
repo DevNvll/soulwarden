@@ -91,7 +91,10 @@ contracts are in the protocol notes (sections 4.6 and 4.7).
   report that does not decode is in the output as `NOT DECODED`.
 - An accepted position of a character is an event of the quests (stage 1.8c): `World::place` marks the character, and the tick of the
   quests looks one time at its place tasks (TaskGoToPOITag, TaskExitPOITag) with the shapes of the points of interest. A camera
-  estimate and the estimated position of a travel change no place task ([Quests](quests.md), case QE6).
+  estimate and the estimated position of a travel change no place task ([Quests](quests.md), case QE6). Stage 1.8b adds the trigger areas
+  (TaskTriggerArea): the same look tests the accepted position against the volumes of the trigger data with the tags of the active tasks
+  of the character only (a hash of the tag; no scan of the volumes of the world; cases QB4, QB7). The client sends no message for these
+  volumes (live check T1 of stage 1.8b).
 
 ## Traps
 

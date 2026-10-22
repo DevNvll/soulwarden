@@ -113,10 +113,32 @@ std::optional<std::uint32_t> conversation_service_id(std::string_view name) {
     return std::nullopt;
 }
 
+const char* quest_request_text(QuestRequestResult result) {
+    switch (result) {
+    case QuestRequestResult::accepted:
+        return "accepted";
+    case QuestRequestResult::noConversation:
+        return "the character has no open person conversation";
+    case QuestRequestResult::notPresent:
+        return "the person is not there for the character";
+    case QuestRequestResult::tooFar:
+        return "the character is farther from the person than the range of its bound";
+    case QuestRequestResult::unknownObjective:
+        return "the quest data has no objective of this CRC";
+    case QuestRequestResult::notOffered:
+        return "the conversation state of the character does not offer this objective";
+    case QuestRequestResult::wrongPerson:
+        return "the person is not the destination of the objective";
+    case QuestRequestResult::refused:
+        return "the quest system refused it";
+    }
+    return "?";
+}
+
 const char* topic_result_text(TopicResult result) {
     switch (result) {
     case TopicResult::accepted:
-        return "accepted (no reward and no quest change in stage 2.5c)";
+        return "accepted";
     case TopicResult::duplicate:
         return "the character finished this topic in this conversation: no change";
     case TopicResult::noConversation:
@@ -328,10 +350,18 @@ void Persons::started(Entity& character, const InteractionContext& context) {
                                     : (catalog == nullptr ? "(no conversation data)" : selection.npc == nullptr ? "(no NPC row)" : "(none passes)"),
                topics.c_str(), selection.services.size(), selection.unknownServices.empty() ? "" : ", services with no number: ",
                selection.unknownServices.empty() ? "" : selection.unknownServices.front().c_str());
-    // The services of the state go to the grant API of stage 2.5b: they stay after a conversation-only close (research Q3).
-    if (!selection.services.empty()
-        && m_world.interactions().grant_service(character, kConversationServiceKind, selection.services, conversation.serial)) {
-        ++m_counts.grants;
+    // The services of the state go to the grant API of stage 2.5b: they stay after a conversation-only close (research Q3). A new
+    // conversation with no service ends the grant of the earlier conversation (code review of stage 2.5c, finding PR5C-R3).
+    if (!selection.services.empty()) {
+        if (m_world.interactions().grant_service(character, kConversationServiceKind, selection.services, conversation.serial)) {
+            ++m_counts.grants;
+        }
+    } else if (character.serviceGrant && character.serviceGrant->kind == kConversationServiceKind) {
+        (void)m_world.interactions().close_service(character.characterId);
+    }
+    // Stage 1.8b: TaskConversationState (the person and the selected state).
+    if (selection.state >= 0) {
+        m_world.quests().state_selected(character, person.npc, catalog->state(static_cast<std::uint32_t>(selection.state)).id);
     }
 }
 
@@ -339,12 +369,64 @@ void Persons::end(Entity& character, const InteractionContext& context, Interact
     if (!character.conversation || character.conversation->object != context.objectIndex || context.instance != 0) {
         return;
     }
-    if (cause == InteractionEnd::replaced) {
-        forget(character, "a new interaction");
+    // Only a close of the client (2473, the end of its block) keeps the closed conversation: the message 5397 of the close comes after it.
+    // Each other end (the range, the removal of the source, a new use, a command, a travel, the death, the leave) forgets it (code review of
+    // stage 2.5c, finding PR5C-R1: a late 5397 after the loss of the source must not count).
+    if (cause == InteractionEnd::clientCancel || cause == InteractionEnd::clientEnd) {
+        character.conversation->open = false;
         return;
     }
-    // The close (2473, the end of the block, a cancel): the message 5397 of the close can come after it.
-    character.conversation->open = false;
+    forget(character, interaction_end_text(cause));
+}
+
+void Persons::source_replaced(Entity& character) {
+    if (character.conversation) {
+        forget(character, "an accepted use of a new source");
+    }
+}
+
+void Persons::lost_presence(Entity& character, const char* cause) {
+    if (!character.conversation) {
+        return;
+    }
+    const PersonConversation conversation = *character.conversation;
+    ++m_counts.presenceEnds;
+    // The person went for this character (its bits): its use and its service grant end; the person of the other characters stays.
+    if (character.interaction && character.interaction->object == conversation.object && character.interaction->instance == 0) {
+        m_world.interactions().end_use(character, InteractionEnd::sourceRemoved);
+    }
+    if (character.serviceGrant && character.serviceGrant->kind == kConversationServiceKind
+        && character.serviceGrant->object == conversation.object && character.serviceGrant->instance == 0) {
+        (void)m_world.interactions().close_service(character.characterId);
+    }
+    forget(character, cause);
+}
+
+void Persons::reselect(Entity& character, const gamedata::PersonBinding& person) {
+    PersonConversation& conversation = *character.conversation;
+    const PersonSelection selection = select(character, person);
+    conversation.state = selection.state;
+    conversation.topics = selection.topics;
+    conversation.services = selection.services;
+    conversation.revision = selection_revision(character);
+    // The grant of this conversation gets the services of the state of now (finding PR5C-R3: a service that the new state does not offer
+    // does not pass the grant API).
+    if (character.serviceGrant && character.serviceGrant->kind == kConversationServiceKind
+        && character.serviceGrant->revision == conversation.serial) {
+        m_world.interactions().update_service(character, selection.services);
+    }
+}
+
+void Persons::refresh_offer(Entity& character) {
+    if (!character.conversation || selection_revision(character) == character.conversation->revision) {
+        return;
+    }
+    const gamedata::PersonBinding* person = binding_of(*character.conversation);
+    if (person == nullptr || !present(character, *person)) {
+        lost_presence(character, "the person is not there for the character any more");
+        return;
+    }
+    reselect(character, *person);
 }
 
 const gamedata::PersonBinding* Persons::binding_of(const PersonConversation& conversation) const {
@@ -378,10 +460,10 @@ TopicResult Persons::topic(Entity& character, std::uint32_t topicCrc, bool closi
     if (!character.conversation || (!closing && !character.conversation->open)) {
         return count(TopicResult::noConversation);
     }
-    PersonConversation& conversation = *character.conversation;
-    const gamedata::PersonBinding* person = binding_of(conversation);
+    const gamedata::PersonBinding* person = binding_of(*character.conversation);
     if (person == nullptr || !present(character, *person)) {
-        forget(character, "the person is not there for the character");
+        // Code review of stage 2.5c, finding PR5C-R2: the one end of a lost presence (the use and the grant end too).
+        lost_presence(character, "the person is not there for the character");
         return count(TopicResult::notPresent);
     }
     const std::optional<std::uint32_t> found = catalog->topic_of_crc(topicCrc);
@@ -389,22 +471,134 @@ TopicResult Persons::topic(Entity& character, std::uint32_t topicCrc, bool closi
         return count(TopicResult::unknownTopic);
     }
     // A change of the state of the character since the selection (a stale revision): the selection again, from the state of now.
-    if (const Revision now = selection_revision(character); now != conversation.revision) {
-        const PersonSelection selection = select(character, *person);
-        conversation.state = selection.state;
-        conversation.topics = selection.topics;
-        conversation.revision = now;
+    if (selection_revision(character) != character.conversation->revision) {
+        reselect(character, *person);
     }
+    PersonConversation& conversation = *character.conversation;
     if (std::find(conversation.topics.begin(), conversation.topics.end(), *found) == conversation.topics.end()) {
         return count(TopicResult::notOffered);
     }
-    if (std::find(conversation.finished.begin(), conversation.finished.end(), topicCrc) != conversation.finished.end()) {
+    std::vector<std::uint32_t>& list = closing ? conversation.finished : conversation.selected;
+    if (std::find(list.begin(), list.end(), topicCrc) != list.end()) {
         return count(TopicResult::duplicate);
     }
-    conversation.finished.push_back(topicCrc);
-    log::write("person: the character %s finished the topic %s of %s (%s)", character.characterId.c_str(), catalog->topic(*found).id.c_str(),
-               conversation.npc.c_str(), closing ? "the close, 5397" : "3158");
+    list.push_back(topicCrc);
+    const gamedata::ConversationTopic& topic = catalog->topic(*found);
+    log::write("person: the character %s %s the topic %s of %s (%s)", character.characterId.c_str(), closing ? "finished" : "selected",
+               topic.id.c_str(), conversation.npc.c_str(), closing ? "the close, 5397" : "3158");
+    if (closing) {
+        // Stage 1.8b: the effects of the topic at its finish (live check of stage 1.8b: 3158 at the selection, 5397 at the close; the
+        // topic of 06_demonstorm is at a walkaway person, whose bit change after the task starts its walk away; a decision of an agent).
+        const std::string npc = conversation.npc;
+        m_world.quests().topic_finished(character, npc, topic.id, topic.achievementUnlock);
+    }
     return count(TopicResult::accepted);
+}
+
+QuestRequestResult Persons::quest_source(Entity& character) {
+    if (data() == nullptr || !character.conversation || !character.conversation->open) {
+        return QuestRequestResult::noConversation;
+    }
+    const gamedata::PersonBinding* person = binding_of(*character.conversation);
+    if (person == nullptr || !present(character, *person)) {
+        lost_presence(character, "the person is not there for the character");
+        return QuestRequestResult::notPresent;
+    }
+    // The range of the bound of the person (the rule of the interaction base and of require_service): an accepted position.
+    const gamedata::InteractionData* catalog = m_world.interactions().data();
+    const PersonConversation& conversation = *character.conversation;
+    if (catalog == nullptr || conversation.object >= catalog->objects().size()
+        || conversation.bound >= catalog->objects()[conversation.object].bounds.size()) {
+        return QuestRequestResult::noConversation;
+    }
+    const gamedata::InteractionBound& bound = catalog->objects()[conversation.object].bounds[conversation.bound];
+    const float dx = character.position.x - bound.position.x;
+    const float dy = character.position.y - bound.position.y;
+    const float dz = character.position.z - bound.position.z;
+    if (character.positionEstimated || dx * dx + dy * dy + dz * dz > bound.rangeSq) {
+        return QuestRequestResult::tooFar;
+    }
+    if (selection_revision(character) != conversation.revision) {
+        reselect(character, *person);
+    }
+    return QuestRequestResult::accepted;
+}
+
+QuestRequest Persons::accept(Entity& character, std::uint32_t objectiveCrc) {
+    QuestRequest request;
+    const auto done = [&](QuestRequestResult result) {
+        request.result = result;
+        ++m_counts.offers[static_cast<std::size_t>(result)];
+        return request;
+    };
+    if (const QuestRequestResult source = quest_source(character); source != QuestRequestResult::accepted) {
+        return done(source);
+    }
+    const gamedata::QuestData* quests = m_world.quests().data();
+    const gamedata::QuestObjective* objective = quests != nullptr ? quests->objective_by_crc(objectiveCrc) : nullptr;
+    if (objective == nullptr) {
+        return done(QuestRequestResult::unknownObjective);
+    }
+    // The offer of the selected state of the character (LinearObjectiveId1..N; the client accepts only an objective of the offer list of the
+    // selected state: 0x375A980, research quest-engine.md Q4).
+    const PersonConversation& conversation = *character.conversation;
+    bool offered = false;
+    if (conversation.state >= 0) {
+        for (const std::string& id : data()->state(static_cast<std::uint32_t>(conversation.state)).objectives) {
+            offered = offered || gamedata::lower_text(id) == gamedata::lower_text(objective->id);
+        }
+    }
+    if (!offered) {
+        request.detail = objective->id;
+        return done(QuestRequestResult::notOffered);
+    }
+    // The territory of the grant: the ExclusiveTerritory of the row (a decision of an agent: the beach chain has 06; the client shows it as
+    // the territory of the quest in the journal).
+    const QuestResult result = m_world.quests().accept(character, *objective, objective->exclusiveTerritory.value_or(0));
+    if (!result.ok()) {
+        request.error = result.error;
+        request.detail = objective->id;
+        return done(QuestRequestResult::refused);
+    }
+    request.detail = objective->id;
+    log::write("person: the character %s accepted the offer %s of %s", character.characterId.c_str(), objective->id.c_str(),
+               conversation.npc.c_str());
+    return done(QuestRequestResult::accepted);
+}
+
+QuestRequest Persons::hand_in(Entity& character, std::uint32_t objectiveCrc) {
+    QuestRequest request;
+    const auto done = [&](QuestRequestResult result) {
+        request.result = result;
+        ++m_counts.handIns[static_cast<std::size_t>(result)];
+        return request;
+    };
+    if (const QuestRequestResult source = quest_source(character); source != QuestRequestResult::accepted) {
+        return done(source);
+    }
+    const gamedata::QuestData* quests = m_world.quests().data();
+    const gamedata::QuestObjective* objective = quests != nullptr ? quests->objective_by_crc(objectiveCrc) : nullptr;
+    if (objective == nullptr) {
+        return done(QuestRequestResult::unknownObjective);
+    }
+    request.detail = objective->id;
+    // NpcDestinationId: the person of the hand-in (research quest-engine.md Q3: 794 has no NPC id and no instance; the source and the
+    // instance come from the state of the character).
+    if (gamedata::lower_text(objective->destination) != gamedata::lower_text(character.conversation->npc)) {
+        return done(QuestRequestResult::wrongPerson);
+    }
+    const QuestInstance* quest = m_world.quests().active_of(character, objective->crc);
+    if (quest == nullptr) {
+        request.error = QuestError::unknownInstance;
+        return done(QuestRequestResult::refused);
+    }
+    const HandInResult result = m_world.quests().hand_in(character, quest->instance);
+    if (!result.ok()) {
+        request.error = result.error;
+        request.detail = objective->id + ": " + result.detail;
+        return done(QuestRequestResult::refused);
+    }
+    return done(QuestRequestResult::accepted);
 }
 
 void Persons::achievements_touched(const Entity& character) {
@@ -425,23 +619,13 @@ void Persons::tick() {
             continue;
         }
         ++m_counts.presenceChecks;
-        const PersonConversation conversation = *character->conversation;
-        const gamedata::PersonBinding* person = binding_of(conversation);
+        const gamedata::PersonBinding* person = binding_of(*character->conversation);
         if (person != nullptr && present(*character, *person)) {
             continue;
         }
         const std::string mark = log::session_mark(character->owner, character->characterId);
         const log::Context logContext(mark);
-        ++m_counts.presenceEnds;
-        // The person went for this character (its bits): its use and its service grant end; the person of the other characters stays.
-        if (character->interaction && character->interaction->object == conversation.object && character->interaction->instance == 0) {
-            m_world.interactions().end_use(*character, InteractionEnd::sourceRemoved);
-        }
-        if (character->serviceGrant && character->serviceGrant->kind == kConversationServiceKind
-            && character->serviceGrant->object == conversation.object && character->serviceGrant->instance == 0) {
-            (void)m_world.interactions().close_service(character->characterId);
-        }
-        forget(*character, "the person is not there for the character any more");
+        lost_presence(*character, "the person is not there for the character any more");
     }
 }
 

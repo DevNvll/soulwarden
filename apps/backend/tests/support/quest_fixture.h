@@ -200,6 +200,9 @@ struct ObjectivesState {
     std::vector<std::tuple<std::uint64_t, std::uint8_t, std::uint64_t>> timers;
     std::vector<std::uint16_t> territories;
     std::vector<std::uint64_t> acceptTimes;
+    /** Stage 1.8b: field 2, the completed notice; `hasCompleted` when the fragment has the field. */
+    std::vector<std::uint64_t> completed;
+    bool hasCompleted{false};
 };
 
 inline ObjectivesState decode_objectives(const Fragment& fragment) {
@@ -223,6 +226,13 @@ inline ObjectivesState decode_objectives(const Fragment& fragment) {
         server::hub::Reader reader(fragment.fields.at({1, 1}));
         for (std::uint32_t count = open(1, reader), index = 0; index < count; ++index) {
             state.tracked.push_back(reader.u64());
+        }
+    }
+    if (fragment.fields.contains({1, 2})) {
+        state.hasCompleted = true;
+        server::hub::Reader reader(fragment.fields.at({1, 2}));
+        for (std::uint32_t count = open(2, reader), index = 0; index < count; ++index) {
+            state.completed.push_back(reader.u64());
         }
     }
     if (fragment.fields.contains({1, 3})) {

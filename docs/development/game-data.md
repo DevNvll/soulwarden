@@ -360,7 +360,21 @@ backend. The tool of each system is also in the document of that system.
   EnforceLocationRequirement, ItemDropVC, ItemDropProbability, GuranteedDropAttempts, AwardOnlyOnce, PauseAndClearLootOnTaskComplete,
   UseGlobalStorage, MinGearScore, ResetOnCondition, CraftingRecipeId, CraftAnyRecipe, InteractTag, OnInteractStart, UIScreenTag (a list
   cell is split at ","; each part trimmed and in lower case). The loader also refuses a tree with a task that no container reaches (code
-  review of stage 1.8a, finding QR8A-R6, case QRV6).
+  review of stage 1.8a, finding QR8A-R6, case QRV6). Stage 1.8b reads more cells of the same file (the format stays 1): the reward
+  columns of an objective (ExperienceReward, ItemRewardName, ItemRewardQty, ProgressionReward, ObjectiveReward, the unpaid columns), the
+  TP_TargetTag and TriggerAreaType of a trigger task, and the ItemName of a conversation task; the tool writes 11 more columns of a game
+  event (CoinRewardChance, AzothRewardChance, WhisperId, WhisperID, UmbralCurrency, PvpXp, PVPXP, SeasonsXp, AzothSalt, CursedSilvers,
+  CursedCrowns). A file of before loads: a hand-in then has no coin chance (1, the default of the client) and no whisper of an event
+  column; write it again with `tools/gamedata/quests.sh` for the rules of 1.8b.
+- `trigger-data.json` (stage 1.8b, `tools/gamedata/triggers.sh`, `check_triggers_tool.py` (case QB1), [Quests](../systems/quests.md)): format
+  1. The trigger volumes of the quests: each entity of a chunk slice of a region with an ObjectiveDetectionVolumeComponent, its tag
+  (m_targetTag of its server facet), and its detection volume in world coordinates (the chunk position of `region.chunks` and the entity
+  transform; a query shape: aabb, box, sphere, cylinder, capsule with its authored size; with no query shape the shape component of the
+  entity with its scale), m_ignoreHeight, and m_strFilter. `tasks` compares the tags of the TaskTriggerArea rows of `quest-data.json` with
+  the tags of the volumes. The build: 849 volumes with 790 tags in 751 of the 186,850 chunks of 49 regions (88 with the shape component;
+  2 entities with no tag, 1 with no shape); 657 of the 700 tags of the tasks have a volume (each one of the beach chain); 0.2 MB, 22 s
+  with the index of the pak files of the navigation tool. The tool stops for a query shape that it does not know and for a number that is
+  not finite. Without the file the backend starts, and a task of a trigger area waits.
 - `poi-data.json` (stage 1.8c, `tools/gamedata/pois.sh`, `check_pois_tool.py` (case QE-TOOL), [Quests](../systems/quests.md)): format 1. The
   points of interest with a shape: the shape files `objects/worldprisms/pois/REGION/poi_ID_NAME.vshapec` (points relative to an origin, not
   turned; a tail of 20 bytes), the origin of each one (the POI placement of the layer "pois" of its region for which the entries of the
@@ -383,9 +397,12 @@ backend. The tool of each system is also in the document of that system.
   bounds of its slice with the XOR rule, and the member `person`: the NPC id of the row of its variant in the variation table of its slice,
   the variant, the table, the row, the presence rule (`PERSON_PRESENCE`: `showWhen` or `hideWhen` with an achievement conditional; no rule:
   always there), `clientChild`, the spawner, and `unresolved` with a cause when the tool cannot bind it. A direct person has `npc` and
-  `direct`. A slot within 0.001 of a border of the id rule has two objects (`KEY`, `KEY~1`); the second slot of one id and a child with
-  m_spawnOnInitialize false are left out with their causes. The build: 1,221 person children (89 slots with two ids), 145 direct persons,
-  50 with no binding; 44,534 objects in all. `check_interactions_tool.py --persons` (case NC1) checks the id rule against an independent
+  `direct`. A slot within 0.001 of a border of the id rule has an object for each id of its candidates (`KEY`, `KEY~1`, ...); the second
+  slot of one id and a child with m_spawnOnInitialize false are left out with their causes. The build: 1,221 person children (89 slots
+  with two ids), 145 direct persons, 50 with no binding; 44,534 objects in all. Stage 1.8b (code review of stage 2.5c, finding PR5C-R6):
+  the tool rounds the float place of the client (f32(x) * 8) and writes each combination of the candidates of each axis and of the yaw,
+  the id of the float rule first (1,311 ids: each of the 1,309 ids of before, 90 slots with more than one id, 4 at most); the format stays
+  4. Write the file again with `tools/gamedata/interactions.sh`. `check_interactions_tool.py --persons` (case NC1) checks the id rule against an independent
   bit builder and the bindings with made-up slices. A file of format 3 loads: it has no person child.
 - `conversation-data.json` (stage 2.5c, `tools/gamedata/conversations.sh`, `check_conversations_tool.py` (case NC2),
   [Persons](../systems/persons.md)): format 1. The NPC rows (the tables of the type NPCData: their states ConversationStateId1 to N in
@@ -419,6 +436,7 @@ tools/gamedata/interactions.sh       # one time: the objects of the world that a
 tools/gamedata/crafting.sh           # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits, the gear score and perk data for the backend (format 3 of stage 3.7c; 9 MB, 5 s); needs an Oodle source
 tools/gamedata/quests.sh             # one time: the quest data for the backend (objectives, compiled task trees, achievement table, territory starts, backstories; 9 MB, 10 s); needs an Oodle source
 tools/gamedata/pois.sh               # one time: the shapes of the points of interest (the quest tasks of a place; 15 s); needs an Oodle source
+tools/gamedata/triggers.sh           # one time, after quests.sh: the trigger volumes of the quests (0.2 MB, 22 s with the pak index of navigation.sh); needs an Oodle source
 tools/gamedata/conversations.sh      # one time: the conversation data of the persons (NPC rows, states, topics; 1.5 MB, 10 s); needs an Oodle source
 tools/gamedata/heights.sh            # one time: terrain heights for the backend (a creature that walks needs them; 136 MB, 2 minutes, no Oodle source)
 tools/gamedata/gathering.sh          # one time, after heights.sh: the gathering nodes of the world for the backend (40 MB, 1 minute); needs an Oodle source
@@ -427,6 +445,11 @@ tools/gamedata/navigation.sh         # one time: navigation data of the world (1
 ```
 
 ## Traps
+
+- Stage 1.8b adds `trigger-data.json` and changes `quest-data.json` (11 more columns of a game event, still format 1) and
+  `interaction-data.json` (the float rule of the ids of a person child, still format 4). Make `trigger-data.json` after
+  `quest-data.json`: its `tasks` member compares the tags of that file. `triggers.py` reads the index of the pak files of the navigation
+  tool (`SOULWARDEN_NAVIGATION_WORK/pak-index.pickle`); with no index it makes one first (some minutes).
 
 - Stage U4 changes `item-catalog.json` to format 5 (`tools/gamedata/items.sh`) and the checks of `crafting-data.json` (the code review of
   stage 3.7a):

@@ -463,6 +463,17 @@ void RepSession::on_message(std::uint8_t channel, std::span<const std::uint8_t> 
         check_route(route, type, body, firstOfType);
         handle_conversation_topics(body, type);
         break;
+    case kTypeCutsceneStarted:
+    case kTypeCinematicStarted:
+    case kTypeCinematicEnded:
+        check_route(route, type, body, firstOfType);
+        handle_cutscene_call(body, type);
+        break;
+    case kTypeAcceptObjective:
+    case kTypeCompleteObjective:
+        check_route(route, type, body, firstOfType);
+        handle_objective_request(body, type);
+        break;
     default:
         check_route(route, type, body, firstOfType);
         if (firstOfType) {
@@ -1954,6 +1965,8 @@ void RepSession::handle_cutscene_ended(std::span<const std::uint8_t> body) {
     // The client keeps the input of its character blocked until this answer: without it the
     // character never moves again (user test 1, a conversation with a person of the settlement).
     send_message(kTypeCutsceneEndFinalized, cutscene_finalized_body(own->id));
+    // Stage 1.8b: the end of the granted cutscene of the character completes its task (a 6705 with no started pending cutscene: no change).
+    m_world.quests().cutscene_ended(*m_world.find(m_observer.own()));
     ++m_cutsceneEnds;
     log::write("rep: the client ended a cutscene (type %u): message \"cutscene end request finalized\" (type %u) sent, "
                "the input of the character is free again",
@@ -2563,7 +2576,7 @@ void RepSession::handle_tracked_objectives(std::span<const std::uint8_t> body) {
 }
 
 void RepSession::handle_cutscene_request(std::span<const std::uint8_t> body) {
-    const world::Entity* own = m_world.find(m_observer.own());
+    world::Entity* own = m_world.find(m_observer.own());
     if (own == nullptr) {
         return;
     }
@@ -2572,9 +2585,80 @@ void RepSession::handle_cutscene_request(std::span<const std::uint8_t> body) {
         || !own_facet(*own, message->target, message->entity, kPlayerCutsceneComponentName, kTypeRequestStartCutscene, "cutscene request")) {
         return;
     }
-    // The answer (6707) is stage 1.8b: the client waits for it (live check L2 of stage 1.8a).
-    log::write("rep: the client asks for the cutscene %08x (message %u): no answer before stage 1.8b", message->cutscene,
+    // Stage 1.8b: the grant 6707 when an active task of the character waits for the cutscene (live check C1: the client then plays it and
+    // sends 6706). With no such task: no answer (the server of the game has no rule that the research knows for it; 6708 cancels a pending
+    // start, with no live check).
+    if (m_world.quests().cutscene_requested(*own, message->cutscene)) {
+        send_message(kTypeCutsceneGranted, cutscene_granted_body(own->id, message->cutscene));
+        log::write("rep: the client asks for the cutscene %08x (message %u): granted (message %u)", message->cutscene, kTypeRequestStartCutscene,
+                   kTypeCutsceneGranted);
+        return;
+    }
+    log::write("rep: the client asks for the cutscene %08x (message %u): no task of the character waits for it, no answer", message->cutscene,
                kTypeRequestStartCutscene);
+}
+
+void RepSession::handle_cutscene_call(std::span<const std::uint8_t> body, std::uint32_t type) {
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const char* name = type == kTypeCutsceneStarted ? "cutscene start" : type == kTypeCinematicStarted ? "cinematic start" : "cinematic end";
+    const std::optional<CutsceneRequest> message = read_cutscene_request(body);
+    if (!message) {
+        log::write("rep: %s (type %u, %zu bytes) does not have the form of the message: no change", name, type, body.size());
+        return;
+    }
+    if (!own_facet(*own, message->target, message->entity, kPlayerCutsceneComponentName, type, name)) {
+        return;
+    }
+    if (type == kTypeCutsceneStarted) {
+        const bool pending = m_world.quests().cutscene_started(*own, message->cutscene);
+        log::write("rep: the client started the cutscene %08x (message %u): %s", message->cutscene, type,
+                   pending ? "the pending cutscene of the character" : "not the pending cutscene of the character (no change)");
+        return;
+    }
+    const bool changed = m_world.quests().cinematic(*own, message->cutscene, type == kTypeCinematicEnded);
+    log::write("rep: the client %s the cinematic %08x (message %u): %s", type == kTypeCinematicEnded ? "ended" : "started", message->cutscene,
+               type, changed ? "a quest task changed" : "no quest change");
+}
+
+void RepSession::handle_objective_request(std::span<const std::uint8_t> body, std::uint32_t type) {
+    world::Entity* own = m_world.find(m_observer.own());
+    if (own == nullptr) {
+        return;
+    }
+    const char* name = type == kTypeAcceptObjective ? "offer accept" : "hand-in";
+    const std::optional<CutsceneRequest> message = read_cutscene_request(body);
+    if (!message) {
+        log::write("rep: %s (type %u, %zu bytes) does not have the form of the message: no change", name, type, body.size());
+        return;
+    }
+    if (!own_facet(*own, message->target, message->entity, kConversationComponentName, type, name)) {
+        return;
+    }
+    // The person system checks the source (the open conversation of the character); the quest system changes the quests (rule MP-5: the
+    // session gives the world only a message of its own character).
+    const world::QuestRequest request =
+        type == kTypeAcceptObjective ? m_world.persons().accept(*own, message->cutscene) : m_world.persons().hand_in(*own, message->cutscene);
+    log::write("rep: the client sent the %s of the objective %08x (message %u): %s%s%s%s%s", name, message->cutscene, type,
+               world::quest_request_text(request.result), request.detail.empty() ? "" : " (", request.detail.c_str(),
+               request.detail.empty() ? "" : ")",
+               request.result == world::QuestRequestResult::refused ? (std::string(": ") + world::quest_error_text(request.error)).c_str() : "");
+}
+
+void RepSession::whisper(std::uint32_t whisperCrc) {
+    world::Entity* own = m_world.find(m_observer.own());
+    const gamedata::SliceIds* slice = m_options.playerSlice;
+    const gamedata::SliceIds::Component* component =
+        slice != nullptr && slice->loaded() ? slice->find_named(kWhisperComponentName) : nullptr;
+    if (own == nullptr || component == nullptr) {
+        log::write("rep: no whisper %08x for the client (type %u): %s", static_cast<unsigned>(whisperCrc), kTypeStartWhisper,
+                   own == nullptr ? "no character" : "the ids of the player slice have no Whisper component");
+        return;
+    }
+    send_message(kTypeStartWhisper, whisper_body(slice->target(own->id, *component), own->id, whisperCrc));
+    log::write("rep: whisper %08x sent (message %u)", static_cast<unsigned>(whisperCrc), kTypeStartWhisper);
 }
 
 void RepSession::handle_territory_report(std::span<const std::uint8_t> body, bool entered) {

@@ -434,22 +434,27 @@ ProgressError Progress::check_sheet(std::uint32_t level, const std::array<std::u
     return sheet_into(sheet, level, values);
 }
 
+ProgressError Progress::experience_into(Sheet& sheet, std::uint64_t amount) const {
+    if (amount == 0 || amount > kExperienceLimit) {
+        return ProgressError::badAmount;
+    }
+    Progression& progression = sheet.progression;
+    const std::uint32_t cap = tables()->level_cap();
+    const std::uint64_t total = std::min<std::uint64_t>(progression.experience + amount, tables()->level(cap)->experience);
+    progression.experience = static_cast<std::uint32_t>(total);
+    while (progression.level < cap && progression.experience >= tables()->level(progression.level + 1)->experience) {
+        ++progression.level;
+    }
+    return ProgressError::none;
+}
+
 ProgressResult Progress::add_experience(const std::string& characterId, std::uint64_t amount) {
     const std::string what = "gain of " + std::to_string(amount) + " experience";
-    return change(characterId, what.c_str(), true, [&](Sheet& sheet, std::uint64_t&) {
-        if (amount == 0 || amount > kExperienceLimit) {
-            return ProgressError::badAmount;
-        }
-        Progression& progression = sheet.progression;
-        const std::uint32_t cap = tables()->level_cap();
-        const std::uint64_t total =
-            std::min<std::uint64_t>(progression.experience + amount, tables()->level(cap)->experience);
-        progression.experience = static_cast<std::uint32_t>(total);
-        while (progression.level < cap && progression.experience >= tables()->level(progression.level + 1)->experience) {
-            ++progression.level;
-        }
-        return ProgressError::none;
-    });
+    return change(characterId, what.c_str(), true, [&](Sheet& sheet, std::uint64_t&) { return experience_into(sheet, amount); });
+}
+
+Progress::Plan Progress::plan_experience(const std::string& characterId, std::uint64_t amount) {
+    return stage(characterId, true, [&](Sheet& sheet, std::uint64_t&) { return experience_into(sheet, amount); });
 }
 
 ProgressResult Progress::set_attribute(const std::string& characterId, unsigned type, std::uint32_t value) {

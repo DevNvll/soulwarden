@@ -15,6 +15,7 @@
 
 #include "gamedata/poi_data.h"
 #include "gamedata/quest_data.h"
+#include "gamedata/trigger_data.h"
 #include "state/store.h"
 #include "world/entity.h"
 
@@ -43,7 +44,12 @@
 //   items in the bag, the equipment, the points of interest, the achievements: evaluated at the activation and at each change, with the
 //   regression of a CompleteActive task), the item actions (TaskGiveItem, TaskGiveAndTakeItem, TaskRemoveItem), the quest drops of a kill
 //   and of a gather, TaskObjective, TaskDie, the abandon, the reset, and the failure of an objective.
-// - Each other type stays active: its supplier is a later part (1.8b: persons, conversations, cutscenes, trigger areas, whispers).
+// - Stage 1.8b: TaskTriggerArea (the accepted position in a trigger volume of the data), TaskCutsceneComplete (the cutscene that the
+//   server granted, 6703 to 6707, started 6706, ended 6705), TaskCinematicStart and TaskCinematicComplete (6606, 6542), TaskConversationTopic
+//   and TaskConversationState (the person system), TaskTriggerGameEvent (the game event of the task at its activation: its whisper 5070,
+//   its achievements). The offer (3772) grants an objective; the hand-in (794) completes it and pays its rewards in one transaction (the
+//   plan, write, finish pattern of the build presets).
+// - Each other type stays active: its supplier is a later part.
 //
 // World thread only. A route gives the world a task (World::call).
 
@@ -82,6 +88,16 @@ enum class QuestError {
     notAbandonable,
     /** Stage 1.8c: the character is not in the world. */
     notInWorld,
+    /** Stage 1.8b: the root of the objective is not complete (a hand-in before the end of the tasks). */
+    notReady,
+    /** Stage 1.8b: the objective has a reward that the backend cannot pay yet (standing, a loot container, a faction reward): no change. */
+    cannotPay,
+    /** Stage 1.8b: the bag has no place for the reward items (decision D5 option A of the orchestrator): no change, the quest stays ready. */
+    bagFull,
+    /** Stage 1.8b: the RequiredAchievementId of the objective is false for the character (an offer of a different variant). */
+    notAvailable,
+    /** Stage 1.8b: the character has the completion achievement of the objective (a second accept of a quest that it completed). */
+    completedBefore,
 };
 
 [[nodiscard]] const char* quest_error_text(QuestError error);
@@ -147,6 +163,39 @@ struct QuestCounts {
     std::uint64_t questVisits{0};
     /** Finding QR8C-R1: events whose plan the store refused (a retry follows on the world clock), and the retries. */
     std::uint64_t eventRetries{0};
+    /** Stage 1.8b: the offers that the character accepted, the hand-ins, and the hand-ins that the system refused. */
+    std::uint64_t accepts{0};
+    std::uint64_t handIns{0};
+    std::uint64_t handInRefusals{0};
+    /** Stage 1.8b: the cutscene requests (6703) that got the grant 6707, the refused ones, and the cutscene ends that completed a task. */
+    std::uint64_t cutsceneGrants{0};
+    std::uint64_t cutsceneRefusals{0};
+    std::uint64_t cutsceneCompletions{0};
+    /** Stage 1.8b: the whispers that went to a client (5070), the game events that a task applied, and the trigger volumes visited. */
+    std::uint64_t whispers{0};
+    std::uint64_t gameEventsApplied{0};
+    std::uint64_t triggerVisits{0};
+    /** Stage 1.8b: the finished topics with an effect (an AchievementUnlock or a task of the topic). */
+    std::uint64_t topicEffects{0};
+};
+
+/** Stage 1.8b: the result of a hand-in (794): the rewards that the transaction paid, or the cause of the refusal. */
+struct HandInResult {
+    QuestError error{QuestError::none};
+    /** The cause of a refusal for the log (the reward that cannot be paid, the item that does not fit). */
+    std::string detail;
+    std::uint64_t instance{0};
+    std::uint64_t experience{0};
+    /** The coin in the units of the wallet (150 is 1.50 coin). */
+    std::uint64_t coin{0};
+    /** The reward items ("ITEM xN") and the achievements of the completion. */
+    std::vector<std::string> items;
+    std::vector<std::string> achievements;
+    /** The next objective of ObjectiveReward that the hand-in granted (empty: none). */
+    std::string next;
+    [[nodiscard]] bool ok() const {
+        return error == QuestError::none;
+    }
 };
 
 /** The quests of a character for a reader (a command). */
@@ -173,6 +222,15 @@ enum class QuestEventKind : std::uint8_t {
     screen,
     /** An interaction with a tag started (`started` true) or completed: `keys` has the tag. */
     interact,
+    /** Stage 1.8b: the granted cutscene of the character ended (6705 after its 6706): `screenCrc` is the CRC-32 of the cutscene name. */
+    cutscene,
+    /** Stage 1.8b: the client started a cinematic (6606) or ended the cinematic that it started (6542): `screenCrc` is its CRC-32. */
+    cinematicStart,
+    cinematicEnd,
+    /** Stage 1.8b: the character finished a topic of a person (the person system): `keys` has "NPC|TOPIC" (lower case). */
+    topic,
+    /** Stage 1.8b: the person system selected a conversation state for the character: `keys` has "NPC|STATE" (lower case). */
+    state,
 };
 
 /** One event of a different system for one character (stage 1.8c; research quest-progress.md 8: the values that a task needs). */
@@ -190,6 +248,11 @@ struct QuestEvent {
     std::uint64_t result{0};
     /** The number of the retry of an event whose plan the store refused (code review of stage 1.8c, finding QR8C-R1). 0: the first. */
     std::uint32_t attempt{0};
+    /**
+     * A retry (code review of stage 2.5c, finding PR5C-R5): the tasks (instance and index) that the first delivery matched. A retry credits
+     * only these tasks, when they are still active: a quest that a reset replaced, and a task that became active later, get nothing.
+     */
+    std::vector<std::pair<std::uint64_t, std::uint8_t>> matched;
 };
 
 /** One quest drop of a kill or of a gather (stage 1.8c): an item of a possession or gather task of the character. */
@@ -220,6 +283,11 @@ public:
         m_pois = pois;
     }
     [[nodiscard]] const gamedata::PoiData* pois() const;
+    /** Stage 1.8b: the trigger volumes (game data trigger-data.json), or null: a task of a trigger area waits. */
+    void set_triggers(const gamedata::TriggerData* triggers) {
+        m_triggers = triggers;
+    }
+    [[nodiscard]] const gamedata::TriggerData* triggers() const;
 
     /**
      * The entity of a character comes into the world (after its achievement bits, before its first record): its saved quests, its pins,
@@ -343,6 +411,48 @@ public:
      */
     [[nodiscard]] QuestResult reset(Entity& entity, std::uint64_t instance);
 
+    // Stage 1.8b: the offers, the hand-in, the cutscenes, the cinematics, and the effects of a topic.
+
+    /**
+     * @return `none` when the character can accept the objective (an offer of a person, 3772): its RequiredAchievementId is true (an empty
+     *         cell: true), the character has no active instance of it, and it does not have its completion achievement. Else the cause.
+     */
+    [[nodiscard]] QuestError available(const Entity& entity, const gamedata::QuestObjective& objective) const;
+    /** The character accepts an offer (the person system checked the source): a new instance with the source "offer". */
+    [[nodiscard]] QuestResult accept(Entity& entity, const gamedata::QuestObjective& objective, std::uint16_t territory);
+    /** @return The active instance of an objective CRC of a character, or null. */
+    [[nodiscard]] const QuestInstance* active_of(const Entity& entity, std::uint32_t objectiveCrc) const;
+    /** @return True when the root of an instance is satisfied (Complete or CompleteActive): the quest waits for its hand-in. */
+    [[nodiscard]] bool ready(const QuestInstance& quest) const;
+    /**
+     * The hand-in of a ready quest (794; the person system checked the source and the destination): one transaction removes the instance
+     * (with the undo of its temporary unlocks, the return of its items, the pin), writes the completion achievements, the experience, the
+     * coin, and the reward items; then the entity, the bits, the items, the level, and the completed notice of the Objectives state. A
+     * reward that the backend cannot pay, a full bag (decision D5 option A), or a refused write changes nothing: the quest stays ready.
+     */
+    [[nodiscard]] HandInResult hand_in(Entity& entity, std::uint64_t instance);
+    /**
+     * A cutscene request of the client (6703): @return True (the grant 6707) when an Active TaskCutsceneComplete of the character waits for
+     * this cutscene; it is the pending cutscene of the character then. Else false: no answer, nothing changes.
+     */
+    bool cutscene_requested(Entity& entity, std::uint32_t cutsceneCrc);
+    /** The client started a cutscene (6706). @return True when it is the pending cutscene of the character. */
+    bool cutscene_started(Entity& entity, std::uint32_t cutsceneCrc);
+    /**
+     * The client ended its cutscene (6705, no id). @return True when the pending cutscene of the character started (6706) and its tasks got
+     * the completion. A 6705 with no started pending cutscene (the end of a conversation) changes no quest.
+     */
+    bool cutscene_ended(Entity& entity);
+    /** A cinematic of the client: 6606 (`ended` false) or 6542 (the end of the cinematic that the client started). @return True: a change. */
+    bool cinematic(Entity& entity, std::uint32_t cinematicCrc, bool ended);
+    /**
+     * The character finished a topic of a person (the person system checked it): one plan unlocks the AchievementUnlock of the topic and
+     * gives the TaskConversationTopic tasks of the person and the topic their progress.
+     */
+    void topic_finished(Entity& entity, const std::string& npc, const std::string& topic, const std::string& achievementUnlock);
+    /** The person system selected a conversation state for the character: the TaskConversationState tasks of the person and the state. */
+    void state_selected(Entity& entity, const std::string& npc, const std::string& state);
+
     /** @return True when the character has an active task of a place or a location rule (a test of the index). */
     [[nodiscard]] bool has_place_tasks(const Entity& entity) const;
     /** @return The number of indexed subscribers of a character (a test of the index; 0 for a character with no index). */
@@ -366,8 +476,12 @@ private:
     void index(const Entity& entity, const std::set<std::uint64_t>& instances, bool all);
     /** The predicates of the indexed tasks of some kinds (items, places, achievements) of a character: one plan when one changed. */
     void refresh(Entity& entity, bool items, bool places, bool achievements, const char* cause);
-    /** Ends an instance (abandon, reset, failure) in a plan: the undo, the returns, the pin. */
-    void end_instance(Plan& plan, std::uint64_t instance, bool keepAwards, const char* cause);
+    /**
+     * Ends an instance (abandon, reset, failure) in a plan: the undo, the returns, the pin. `completed` (the hand-in, stage 1.8b): only the
+     * undo of a temporary unlock (client 0x8260590; an unlock or a lock reverts only at a reset or an abandon: 0x8260730, 0x8260880), and
+     * the instance goes into the completed notice.
+     */
+    void end_instance(Plan& plan, std::uint64_t instance, bool keepAwards, const char* cause, bool completed = false);
     /** @return True for a result id that an earlier event handled: the event changes nothing. */
     [[nodiscard]] bool repeated(std::uint64_t result) const;
     /** Keeps a result id as handled (code review of stage 1.8c, finding QR8C-R1: only after the commit of its plan). */
@@ -379,6 +493,7 @@ private:
     state::Store& m_store;
     const gamedata::QuestData* m_data;
     const gamedata::PoiData* m_pois{nullptr};
+    const gamedata::TriggerData* m_triggers{nullptr};
     std::uint64_t m_nextInstance{0};
     QuestCounts m_counts;
     /** The task index of each character in the world (a cache of its active tasks; MP-1: the state stays in the entity). */

@@ -141,6 +141,7 @@ tools/gamedata/heights.sh          # one time: terrain heights (without them and
 tools/gamedata/gathering.sh        # one time, after heights.sh: the gathering nodes of the world (without them each gather is refused); 40 MB, 1 minute; needs an Oodle library
 tools/gamedata/quests.sh           # one time: the quests, the achievement table, the backstory templates (without it no quest); 9 MB, 10 s; needs an Oodle library
 tools/gamedata/pois.sh             # one time: the shapes of the points of interest (without it no quest task of a place counts); 15 s; needs an Oodle library
+tools/gamedata/triggers.sh         # one time, after quests.sh: the trigger volumes of the quests (without it no quest task of a trigger area counts); 22 s; needs an Oodle library
 tools/gamedata/crafting.sh         # one time: the recipes, the station rows, the ingredient categories, the rank bonuses, the first-craft bits (without it each craft is refused; format 2 of stage 3.7b for refining, format 3 of stage 3.7c for procedural gear and Azoth); 9 MB, 5 s; needs an Oodle library
 tools/gamedata/navigation.sh       # one time: navigation data of the world (the paths of the creatures); 1.2 GB, 45 minutes; needs an Oodle library and a C and a C++ compiler
 linux-compat/run-soulwarden.sh
@@ -513,6 +514,10 @@ button on "Confirm").
   territory tables with its origin (the POI placement that the entries of the region metadata confirm), its tags, and its territory: 476
   points of interest in the supported build. Without the file the quest tasks of a place wait. Stage 1.8c also adds the vitals categories
   to `loot.sh` (the kill tasks of the quests) and the quest objects to `gathering.sh` (run the two tools again).
+- `tools/gamedata/triggers.sh` makes the trigger volumes of the quests (stage 1.8b; `trigger-data.json`, format 1, 0.2 MB, 22 s): the
+  detection volume of each quest trigger of the chunk slices with its tag: 849 volumes with 790 tags in the supported build. Without the
+  file a quest task of a trigger area waits. Stage 1.8b also changes `quests.sh` (the columns of the game events) and `interactions.sh`
+  (the ids of the persons near a border of the id rule): run the three tools again.
 - `tools/gamedata/conversations.sh` makes the conversation data of the persons (stage 2.5c; `conversation-data.json`, format 1, 1.5 MB): the
   NPC rows with their conversation states in authored order, the states with their requirements, topics, and services, and the topics with
   their requirements and ProvidedTopics (1,478 NPC rows, 3,429 states, 556 topics in the supported build). `--npc ID` prints an NPC row
@@ -855,7 +860,7 @@ button on "Confirm").
   quest template NAME TEMPLATE` give it the achievements and the start objective of one backstory template of the game data (decision D2
   option C; `GET /admin/v1/catalog/backstories`, `tools/world quest templates` list them). In a development run `tools/world quests NAME`
   shows the quests and their tasks, `tools/world quest grant NAME OBJECTIVE` gives an objective, and `tools/world achievement NAME ID
-  on|off` changes a bit. The persons, the hand-in, and the rewards are later parts (1.8b, 1.8d).
+  on|off` changes a bit. The offers and the hand-in are stage 1.8b (below); the full rewards are 1.8d.
 - Quest events (stage 1.8c, [Quests](systems/quests.md)). The tasks count the events of the other systems: a credited kill (each vitals
   category of the victim and its kill event; only the characters of the credit list), the items in the bag and the paperdoll (the
   possession tasks, also back below the target for a StayActive task), an equip, a gather (the items of the roll, the game event of the
@@ -866,14 +871,24 @@ button on "Confirm").
   (reset) end an instance (the undo of its achievement actions, the return of its items, its pin; a reset makes a new instance and keeps the
   award rows of AwardOnlyOnce), and a failure timer or a TaskDie fails or resets its objective. The award rows are in schema 16. The
   admin commands `abandon_quest` and `reset_quest` (argument `instance`) and `tools/world quest abandon|reset NAME INSTANCE` do the same.
+- Offers, hand-ins, cutscenes, whispers, and trigger areas (stage 1.8b, [Quests](systems/quests.md), protocol notes 4.56). A person offers
+  the objectives of the selected conversation state (LinearObjectiveId) whose RequiredAchievementId is true for the character (the
+  variant of its archetype), and the accept (3772) gives the objective. The hand-in (794) at the destination person (NpcDestinationId) of
+  a quest with a complete root ends the quest in one transaction: the experience, the coin, the reward items (with the item rules of stage
+  1.3b), and the completion achievements, and the record names the instance as completed (no "Objective Failed"). A hand-in with a reward
+  that the backend cannot pay yet (a territory standing, a faction reward, a loot container item) or with a full bag is refused, and the
+  quest stays ready. A trigger area (`trigger-data.json` of `tools/gamedata/triggers.sh`) counts while the accepted position is in a
+  volume of its tag; a cutscene that an active task waits for is granted (6707) and completes the task at its end; a game event of a task
+  sends its whisper (5070) and sets its bits. The quest view of `tools/world quests NAME` and the admin state member `quests` have the
+  counts of the offers, the hand-ins, the cutscenes, the whispers, and the trigger volumes.
 - Persons (stage 2.5c, [Persons](systems/persons.md), protocol notes 4.55). Each person of the game data is in the interaction data: the
   persons that the client makes for the PrefabSpawners of the level (Aelstrom, Urda, and Grace on the beach, the persons of the quests and of
   the settlements) with the client id of their place, yaw, and slice, and the direct persons. A person of a quest is there for a character
   by the achievement bits of that character (the rule of its slice); E at a person that is not there for the character is refused. The
   server selects the conversation state of each character from the conversation data (the states in reverse, the first whose
   requirements pass: the level, the achievements, the faction, the active quest task, the completed objective, the progression) and
-  checks the topics of the client (3158 during the talk, 5397 at its close): a topic of the state counts one time in a talk and gives no
-  reward and no quest change yet (stage 1.8b). The services of the state (the inn, a shop, the faction board) go to the service grant of
+  checks the topics of the client (3158 during the talk, 5397 at its close): a topic of the state counts one time in a talk; from stage
+  1.8b a finished topic (5397) gives its AchievementUnlock and counts for the conversation tasks of the quests. The services of the state (the inn, a shop, the faction board) go to the service grant of
   the character; no service opens yet. In a development run `tools/world persons NAME [METERS]` (route `GET /v1/dev/persons`) lists the
   conversation of a character and the persons near it with their presence and their state for the character.
 - Mana (stage 3.5b.2). The maximum mana is the base of the progression tables times 1 plus the MaxMana parts of the threshold

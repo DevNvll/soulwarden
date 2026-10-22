@@ -208,6 +208,11 @@ bool QuestData::load_text(const std::string& text) {
         task.onInteractStart = flag(cell(cells, "OnInteractStart"));
         task.screen = trimmed(cell(cells, "UIScreenTag"));
         task.screenCrc = task.screen.empty() ? 0U : quest_crc(task.screen);
+        // Stage 1.8b.
+        task.targetTag = lower_text(trimmed(cell(cells, "TP_TargetTag")));
+        const std::string rule = lower_text(trimmed(cell(cells, "TriggerAreaType")));
+        task.areaRule = rule == "leave" ? AreaRule::leave : rule == "stay inside" ? AreaRule::stayInside : AreaRule::enter;
+        task.nameCrc = trimmed(task.itemName).empty() ? 0U : quest_crc(trimmed(task.itemName));
         taskByKey.emplace(key, static_cast<std::uint32_t>(m_tasks.size()));
         m_tasks.push_back(std::move(task));
     }
@@ -244,6 +249,19 @@ bool QuestData::load_text(const std::string& text) {
         const std::string abandon = cell(cells, "CanBeAbandoned");
         objective.canAbandon = abandon.empty() || flag(abandon);
         objective.title = cell(cells, "Title");
+        // Stage 1.8b: the rewards of the row.
+        objective.itemReward = trimmed(cell(cells, "ItemRewardName"));
+        if (const std::optional<double> quantity = number(cell(cells, "ItemRewardQty"))) {
+            if (*quantity != std::floor(*quantity) || std::fabs(*quantity) > 1e9) {
+                return fail("the objective " + objective.id + " has an ItemRewardQty that is not a whole number");
+            }
+            objective.itemRewardQty = static_cast<std::int64_t>(*quantity);
+        }
+        if (const std::optional<double> experience = number(cell(cells, "ExperienceReward")); experience && *experience > 0.0) {
+            objective.experienceReward = static_cast<std::uint64_t>(std::min(*experience, 1e12));
+        }
+        objective.progressionReward = trimmed(cell(cells, "ProgressionReward"));
+        objective.objectiveReward = trimmed(cell(cells, "ObjectiveReward"));
         std::size_t lastIndex = 0;
         bool first = true;
         for (const json& node : entry["tree"]) {
@@ -386,8 +404,90 @@ bool QuestData::load_text(const std::string& text) {
         }
         m_backstories.push_back(std::move(backstory));
     }
+    // Stage 1.8b: the game events (rewards, whispers) and the whispers. A file of before stage 1.8b has the events with fewer columns: an
+    // event with no whisper column plays the whisper whose GameEvent names it.
+    if (document.contains("events") && document["events"].is_object()) {
+        for (const auto& [key, cells] : document["events"].items()) {
+            if (!cells.is_object()) {
+                return fail("the game event " + key + " is not an object");
+            }
+            QuestGameEvent event;
+            event.id = cell(cells, "id").empty() ? key : cell(cells, "id");
+            const auto whole = [&](const char* column) -> std::uint64_t {
+                const std::optional<double> value = number(cell(cells, column));
+                return value && *value > 0.0 ? static_cast<std::uint64_t>(std::min(*value, 1e12)) : 0U;
+            };
+            event.experience = whole("UniversalExpAmount");
+            event.coin = whole("CurrencyReward");
+            if (const std::optional<double> chance = number(cell(cells, "CoinRewardChance"))) {
+                event.coinChance = std::clamp(*chance, 0.0, 1.0);
+            }
+            event.item = trimmed(cell(cells, "ItemReward"));
+            if (const std::optional<double> quantity = number(cell(cells, "ItemRewardQty"))) {
+                event.itemQty = *quantity > 0.0 ? static_cast<std::uint32_t>(std::min(*quantity, 1e6)) : 0U;
+            }
+            event.achievement = trimmed(cell(cells, "AchievementId"));
+            event.whisper = trimmed(cell(cells, "WhisperId"));
+            if (event.whisper.empty()) {
+                event.whisper = trimmed(cell(cells, "WhisperID"));
+            }
+            // The rewards with no owner in the backend yet (research quest-engine.md Q6; stage 1.8d and later).
+            for (const char* column : {"TerritoryStanding", "FactionReputation", "FactionTokens", "CategoricalProgressionReward", "AzothReward",
+                                       "UmbralCurrency", "PvpXp", "PVPXP", "SeasonsXp", "AzothSalt", "CursedSilvers", "CursedCrowns"}) {
+                const std::string text = trimmed(cell(cells, column));
+                const std::optional<double> value = number(text);
+                if (!text.empty() && (!value || *value != 0.0)) {
+                    event.unpaid.push_back(std::string(column) + " " + text);
+                }
+            }
+            for (const char* column : {"EntitlementId", "StatusEffectId", "GearScoreRange"}) {
+                if (const std::string text = trimmed(cell(cells, column)); !text.empty()) {
+                    event.unpaid.push_back(std::string(column) + " " + text);
+                }
+            }
+            m_events.emplace(lower_text(event.id), std::move(event));
+        }
+    }
+    if (document.contains("whispers") && document["whispers"].is_array()) {
+        for (const json& row : document["whispers"]) {
+            if (!row.is_object() || !row.contains("id") || !row["id"].is_string()) {
+                return fail("a whisper row has no id");
+            }
+            QuestWhisper whisper;
+            whisper.id = row["id"].get<std::string>();
+            whisper.crc = quest_crc(whisper.id);
+            const json& cells = row.contains("cells") ? row["cells"] : json::object();
+            whisper.gameEvent = trimmed(cell(cells, "GameEvent"));
+            whisper.achievement = trimmed(cell(cells, "AchievementId"));
+            if (!m_whisperById.emplace(lower_text(whisper.id), m_whispers.size()).second) {
+                return fail("two whisper rows have the id " + whisper.id);
+            }
+            if (!whisper.gameEvent.empty()) {
+                m_whisperByEvent.emplace(lower_text(whisper.gameEvent), m_whispers.size());
+            }
+            m_whispers.push_back(std::move(whisper));
+        }
+    }
     m_loaded = true;
     return true;
+}
+
+const QuestGameEvent* QuestData::game_event(std::string_view id) const {
+    const auto found = m_events.find(lower_text(id));
+    return found != m_events.end() ? &found->second : nullptr;
+}
+
+const QuestWhisper* QuestData::whisper(std::string_view id) const {
+    const auto found = m_whisperById.find(lower_text(id));
+    return found != m_whisperById.end() ? &m_whispers[found->second] : nullptr;
+}
+
+const QuestWhisper* QuestData::whisper_of_event(std::string_view eventId) const {
+    if (const QuestGameEvent* event = game_event(eventId); event != nullptr && !event->whisper.empty()) {
+        return whisper(event->whisper);
+    }
+    const auto found = m_whisperByEvent.find(lower_text(eventId));
+    return found != m_whisperByEvent.end() ? &m_whispers[found->second] : nullptr;
 }
 
 const QuestObjective* QuestData::objective(std::string_view id) const {

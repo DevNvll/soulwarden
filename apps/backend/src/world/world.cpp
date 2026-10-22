@@ -87,6 +87,7 @@ World::World(const WorldClock& clock,
       m_presets(*this, project_presets()) {
     m_random = options.randomSeed;
     m_quests.set_pois(options.poiData);
+    m_quests.set_triggers(options.triggerData);
 }
 
 World::~World() {
@@ -387,6 +388,13 @@ void World::interaction_cancelled(SessionId session) {
     const auto sink = m_sinks.find(session);
     if (sink != m_sinks.end() && sink->second != nullptr) {
         sink->second->interaction_cancelled();
+    }
+}
+
+void World::whisper(SessionId session, std::uint32_t whisperCrc) {
+    const auto sink = m_sinks.find(session);
+    if (sink != m_sinks.end() && sink->second != nullptr) {
+        sink->second->whisper(whisperCrc);
     }
 }
 

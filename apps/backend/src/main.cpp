@@ -31,6 +31,7 @@
 #include "gamedata/navigation_data.h"
 #include "gamedata/progression_tables.h"
 #include "gamedata/poi_data.h"
+#include "gamedata/trigger_data.h"
 #include "gamedata/conversation_data.h"
 #include "gamedata/quest_data.h"
 #include "gamedata/slice_ids.h"
@@ -678,6 +679,18 @@ int main(int argc, char** argv) {
                    "tools/gamedata/pois.sh",
                    poiDataPath.c_str(), poiData.error().c_str());
     }
+    // The trigger volumes of the quests (stage 1.8b): the volumes of the tags of TaskTriggerArea. Without the file a task of a trigger area
+    // waits.
+    const std::string triggerDataPath = (gameDataDirectory / gamedata::kTriggerDataFile).string();
+    gamedata::TriggerData triggerData;
+    if (triggerData.load(triggerDataPath)) {
+        log::write("backend: trigger data %s: %zu trigger volumes with %zu tags", triggerDataPath.c_str(), triggerData.volume_count(),
+                   triggerData.tag_count());
+    } else {
+        log::write("backend: no trigger data at %s (%s): no quest task of a trigger area progresses. Make the file with "
+                   "tools/gamedata/triggers.sh",
+                   triggerDataPath.c_str(), triggerData.error().c_str());
+    }
     // The conversation data of the persons (stage 2.5c, docs/systems/persons.md): the NPC rows, the conversation states, the topics. Without
     // the file a person keeps its conversation, with no state selection, no topic, and no service.
     const std::string conversationDataPath = (gameDataDirectory / gamedata::kConversationDataFile).string();
@@ -762,6 +775,7 @@ int main(int argc, char** argv) {
     worldOptions.craftingData = &craftingData;
     worldOptions.questData = &questData;
     worldOptions.poiData = &poiData;
+    worldOptions.triggerData = &triggerData;
     worldOptions.conversationData = &conversationData;
     worldOptions.chestData = &chestData;
     worldOptions.gatheringData = &gatheringData;

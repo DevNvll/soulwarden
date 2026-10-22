@@ -63,10 +63,15 @@ json persons_view(world::World& target, const std::string& character, float radi
         for (const std::uint32_t crc : conversation.finished) {
             finished.push_back(hex32(crc));
         }
+        json selected = json::array();
+        for (const std::uint32_t crc : conversation.selected) {
+            selected.push_back(hex32(crc));
+        }
         reply["conversation"] = {
             {"npc", conversation.npc}, {"npcCrc", hex32(conversation.npcCrc)}, {"open", conversation.open}, {"serial", conversation.serial},
             {"state", conversation.state >= 0 && data != nullptr ? json(data->state(static_cast<std::uint32_t>(conversation.state)).id) : json(nullptr)},
-            {"topics", topics}, {"services", conversation.services}, {"finished", finished}, {"revision", conversation.revision}};
+            {"topics", topics}, {"services", conversation.services}, {"selected", selected}, {"finished", finished},
+            {"revision", conversation.revision}};
     }
     json list = json::array();
     for (const world::PersonView& entry : view.persons) {
@@ -95,6 +100,12 @@ json persons_view(world::World& target, const std::string& character, float radi
     for (std::size_t index = 0; index < world::kTopicResultCount; ++index) {
         topicCounts[world::topic_result_text(static_cast<world::TopicResult>(index))] = counts.topics[index];
     }
+    json offerCounts = json::object();
+    json handInCounts = json::object();
+    for (std::size_t index = 0; index < world::kQuestRequestResultCount; ++index) {
+        offerCounts[world::quest_request_text(static_cast<world::QuestRequestResult>(index))] = counts.offers[index];
+        handInCounts[world::quest_request_text(static_cast<world::QuestRequestResult>(index))] = counts.handIns[index];
+    }
     reply["counts"] = {{"uses", counts.uses},
                        {"notPresent", counts.notPresent},
                        {"selections", counts.selections},
@@ -104,6 +115,8 @@ json persons_view(world::World& target, const std::string& character, float radi
                        {"presenceChecks", counts.presenceChecks},
                        {"presenceEnds", counts.presenceEnds},
                        {"topics", topicCounts},
+                       {"offers", offerCounts},
+                       {"handIns", handInCounts},
                        {"conversations", persons.conversation_count()}};
     return reply;
 }

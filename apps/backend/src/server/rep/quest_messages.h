@@ -28,6 +28,20 @@
 //        state name: a1126b78 "hud" in the captures of stage 1.8c).
 //   3836 ObjectivesComponentServerFacet_AbandonSingleObjective (sender 0x3A04130, reader 0x39E8A10): instance:u64.
 //   5600 ObjectivesComponentServerFacet_ResetObjective (handler 0x3A62210, reader 0x39E8A10): instance:u64.
+// Stage 1.8b (research quest-engine.md Q3, conversations.md "Control messages"; the live checks of stage 1.8b):
+//   3772 ConversationComponentServerFacet_RequestAcceptObjective (sender 0x3722700, caller 0x376DFF0, reader 0x26FEC60): objective:u32 (the
+//        CRC-32 of the lower-case ObjectiveID). The Conversation facet of RootPlayer. No answer: the Objectives state gives the result.
+//   794  ConversationComponentServerFacet_RequestCompleteObjective (sender 0x37228F0, caller 0x376E2C0): objective:u32. Live check P1: the
+//        client sends it at "Complete the Quest!" of the dialogue of the ready quest (e4d66020 for 06_getoffbeach).
+//   6703 (see above): the server answers 6707 when a task of the character waits for the cutscene (live check C1).
+//   6707 PlayerCutsceneComponentClientFacet_OnServerCutsceneRequestGranted (server to client, handler 0x2EFE880): cutscene:u32. Live check
+//        C1: the client then plays the cutscene and sends 6706.
+//   6706 PlayerCutsceneComponentServerFacet_OnClientCutsceneStarted (sender 0x2EDA550, caller 0x2EF13F0): cutscene:u32.
+//   6606 PlayerCutsceneComponentServerFacet_NotifyCinematicStarted (sender 0x2EDA180) and 6542 ..._NotifyCinematicEnded (sender
+//        0x2ED9F90): cinematic:u32 (the CRC-32 of the lower-case name; no live check).
+//   5070 WhisperPlayerComponentClientFacet_RequestStartWhisper (server to client, reader 0x4304980): whisper:u32 (the CRC-32 of the
+//        lower-case WhisperId). The Whisper component of the entity "Whisper" of the player slice. Live check W1: the client plays the
+//        whisper and shows its subtitles.
 
 namespace soulwarden::backend::server::rep {
 
@@ -38,6 +52,13 @@ inline constexpr std::uint32_t kTypeTerritoryEntered = 2297;
 inline constexpr std::uint32_t kTypeTerritoryLeft = 6416;
 inline constexpr std::uint32_t kTypeUiScreenOpened = 2617;
 inline constexpr std::uint32_t kTypeAbandonObjective = 3836;
+inline constexpr std::uint32_t kTypeAcceptObjective = 3772;
+inline constexpr std::uint32_t kTypeCompleteObjective = 794;
+inline constexpr std::uint32_t kTypeCutsceneGranted = 6707;
+inline constexpr std::uint32_t kTypeCutsceneStarted = 6706;
+inline constexpr std::uint32_t kTypeCinematicStarted = 6606;
+inline constexpr std::uint32_t kTypeCinematicEnded = 6542;
+inline constexpr std::uint32_t kTypeStartWhisper = 5070;
 inline constexpr std::uint32_t kTypeResetObjective = 5600;
 /** The TerritoryDetector component of the player slice (entity RootPlayer), by its name in slice-ids.json (live log of stage 1.8c). */
 inline constexpr const char* kTerritoryDetectorComponentName = "RootPlayer/efc5d83c-a790-6a1f-f6f2-150e05d4d093";
@@ -45,6 +66,8 @@ inline constexpr const char* kTerritoryDetectorComponentName = "RootPlayer/efc5d
 /** The Objectives component (entity RootPlayer) and the PlayerCutscene component of the player slice, by their names in slice-ids.json. */
 inline constexpr const char* kObjectivesComponentName = "RootPlayer/a42a47db-4f14-41c6-81d1-19a95ba99f84";
 inline constexpr const char* kPlayerCutsceneComponentName = "RootPlayer/ea877e94-f1e7-4e27-8d90-f80c0938656d";
+/** The Whisper component of the entity "Whisper" of the player slice (the name of the tool slice_ids.py; research chat.md). */
+inline constexpr const char* kWhisperComponentName = "Whisper/9d2f173a-ae75-4a1e-8f6f-d676c587f313";
 
 /** The reader of 2709 takes 36 flags at most (`count < 0x25`, research quests.md 6.1). */
 inline constexpr std::size_t kAutoPinFlags = 36;
@@ -72,8 +95,12 @@ struct CutsceneRequest {
     std::uint64_t entity{0};
     std::uint32_t cutscene{0};
 };
-/** @return The body of 6703, or no value. */
+/** @return The body of 6703, or no value. Stage 1.8b: the same form (one u32 after the call) for 3772, 794, 6706, 6606, and 6542. */
 [[nodiscard]] std::optional<CutsceneRequest> read_cutscene_request(std::span<const std::uint8_t> body);
+/** @return The body of 6707 for the client of an entity group id G (target: the PlayerCutscene component plus G). */
+[[nodiscard]] std::vector<std::uint8_t> cutscene_granted_body(std::uint64_t entity, std::uint32_t cutscene);
+/** @return The body of 5070 (`target`: the facet target of the Whisper component of the character). */
+[[nodiscard]] std::vector<std::uint8_t> whisper_body(std::uint64_t target, std::uint64_t entity, std::uint32_t whisper);
 
 struct TerritoryReport {
     std::uint64_t target{0};

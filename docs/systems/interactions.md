@@ -190,7 +190,11 @@ transmog 5.6, quests 1.8). The wire contracts are in the protocol notes (section
   code review of stage 2.5b, finding ST-R4, case RY4), the removal of the source, the range (each accepted position of the character
   tests the range of its source: a walk out of it ends the grant, and a walk back does not give it back; finding ST-R3, case RY3), the
   death, a travel, the leave, an expired deadline, and `close_service` end it. No fixed time limit: the option data has none
-  (research). Two characters at one source have two grants.
+  (research). Two characters at one source have two grants. From stage 1.8b (code review of stage 2.5c, findings PR5C-R1 and PR5C-R3;
+  cases QRP1, QRP3): a new use of a character first replaces its old person conversation (`Persons::source_replaced`, before the handler
+  of the new use starts); a new person conversation with no service ends the old grant; a selection that the person system makes again
+  sets the new ids and revision of the grant (`update_service`); and `require_service` for the kind `conversation` also needs the
+  conversation of the grant (the same serial as the revision).
 - The cost depends on the requests and on the objects near the players, not on the size of the world (rule MP-8; cases IT8, SC7): a
   request finds its bound in the reference map of the data (a hash) or in the map of the server children (by G), the list near a
   character looks only at the cells of 64 m near it, the spawn rule looks at the cells of the grid of the children near each

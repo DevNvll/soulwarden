@@ -51,11 +51,22 @@ bool running(std::uint8_t state) {
 bool is_counter(std::uint8_t type) {
     return type == task_type::kKillContribution || type == task_type::kGameEvent || type == task_type::kRequireGatherItems
            || type == task_type::kCraftRecipe || type == task_type::kCraftMultipleRecipes || type == task_type::kRefineRecipe
-           || type == task_type::kOpenUiScreen || type == task_type::kInteract;
+           || type == task_type::kOpenUiScreen || type == task_type::kInteract || type == task_type::kCutsceneComplete
+           || type == task_type::kCinematicStart || type == task_type::kCinematicComplete || type == task_type::kConversationTopic
+           || type == task_type::kConversationState;
 }
 
+/** Stage 1.8c: the tasks of a place; stage 1.8b: TaskTriggerArea (a volume of the trigger data and the accepted position). */
 bool is_place(std::uint8_t type) {
-    return type == task_type::kGoToPoi || type == task_type::kGoToPoiOnTerritory || type == task_type::kExitPoi;
+    return type == task_type::kGoToPoi || type == task_type::kGoToPoiOnTerritory || type == task_type::kExitPoi || type == task_type::kTriggerArea;
+}
+
+/** The completed notice keeps the newest instances (field 2 of the Objectives state; a decision of an agent: a bounded list). */
+constexpr std::size_t kCompletedNotices = 16;
+
+/** @return The key of the index of a task of a person ("NPC|TOPIC" or "NPC|STATE", lower case). */
+std::string person_key(std::string_view npc, std::string_view what) {
+    return gamedata::lower_text(npc) + "|" + gamedata::lower_text(what);
 }
 
 /** @return The key of a result for one character and one kind of event (a kill gives its credit list one event each). */
@@ -98,6 +109,16 @@ const char* quest_error_text(QuestError error) {
         return "the objective cannot be abandoned (CanBeAbandoned 0)";
     case QuestError::notInWorld:
         return "the character is not in the world";
+    case QuestError::notReady:
+        return "the root task of the objective is not complete";
+    case QuestError::cannotPay:
+        return "the objective has a reward that the backend cannot pay yet: no change";
+    case QuestError::bagFull:
+        return "the bag has no place for the reward items (decision D5 option A): no change";
+    case QuestError::notAvailable:
+        return "the RequiredAchievementId of the objective is false for the character";
+    case QuestError::completedBefore:
+        return "the character completed this objective before";
     }
     return "?";
 }
@@ -107,14 +128,18 @@ namespace {
 
 /**
  * The value of an achievement conditional (client 0x31898D0, 0x3A8C640): ids with !, &&, ||, and parentheses. `value(id)` gives the value of
- * one id. One reader for the quest plans and for the persons (stage 2.5c).
+ * one id (no value: the id is malformed, an NPA with a malformed expression). One reader for the quest plans and for the persons (stage
+ * 2.5c). Code review of stage 2.5c, finding PR5C-R7: an expression that the reader cannot read to its end (a missing operand, a missing
+ * closing parenthesis, text after the end) has no value, also under a negation: the caller takes it as false (a malformed requirement does
+ * not pass).
  */
 template <class IdValue>
-bool evaluate_conditional(const std::string& text, IdValue&& value) {
+std::optional<bool> evaluate_conditional(const std::string& text, IdValue&& value) {
     struct Reader {
         const std::string& text;
         std::size_t position{0};
         IdValue& value;
+        bool error{false};
 
         void blank() {
             while (position < text.size() && (text[position] == ' ' || text[position] == '\t')) {
@@ -152,7 +177,9 @@ bool evaluate_conditional(const std::string& text, IdValue&& value) {
             }
             if (take("(")) {
                 const bool result = any();
-                (void)take(")");
+                if (!take(")")) {
+                    error = true;
+                }
                 return result;
             }
             blank();
@@ -161,11 +188,25 @@ bool evaluate_conditional(const std::string& text, IdValue&& value) {
                    && text[position] != '|' && text[position] != '(' && text[position] != ')' && text[position] != '!') {
                 ++position;
             }
-            return value(text.substr(start, position - start));
+            if (position == start) {
+                error = true; // A missing operand.
+                return false;
+            }
+            const std::optional<bool> one = value(text.substr(start, position - start));
+            if (!one) {
+                error = true;
+                return false;
+            }
+            return *one;
         }
     };
     Reader reader{text, 0, value};
-    return reader.any();
+    const bool result = reader.any();
+    reader.blank();
+    if (reader.error || reader.position != text.size()) {
+        return std::nullopt;
+    }
+    return result;
 }
 
 } // namespace
@@ -274,6 +315,12 @@ struct Quests::Plan {
     std::vector<std::uint64_t> failed;
     std::vector<std::uint64_t> resetOnDeath;
     std::vector<std::string> notes;
+    /** Stage 1.8b: the whispers of the game events of the plan (5070 after the commit), and the instances that a hand-in completed. */
+    std::vector<std::uint32_t> whispers;
+    std::vector<std::uint64_t> completed;
+    /** Stage 1.8b: the experience and the coin (the units of the wallet) of the plan (a hand-in, the game event of a task). */
+    std::uint64_t experience{0};
+    std::uint64_t coin{0};
     std::uint64_t nowNs;
     std::uint64_t steps{0};
     bool overflow{false};
@@ -347,7 +394,7 @@ struct Quests::Plan {
     // The conditional of TaskAchievement and of a non-persisted achievement (client 0x31898D0, 0x3A8C640): ids with !, &&, ||, and
     // parentheses. An id is true when the character has its bit; a non-persisted achievement is its own conditional; an id that the data
     // does not know is false (research U7: it must not become a stored bit).
-    bool id_value(const std::string& id, int depth) {
+    std::optional<bool> id_value(const std::string& id, int depth) {
         if (id.empty()) {
             return false;
         }
@@ -358,16 +405,16 @@ struct Quests::Plan {
             if (depth >= kNpaDepth || !npa->status.empty() || npa->conditional.empty()) {
                 return false; // No rule for a status requirement in stage 1.8a.
             }
-            return evaluate(npa->conditional, depth + 1);
+            return evaluate_conditional(npa->conditional, [this, depth](const std::string& inner) { return id_value(inner, depth + 1); });
         }
         return false;
     }
 
-    bool evaluate(const std::string& conditional, int depth = 0) {
+    bool evaluate(const std::string& conditional) {
         if (conditional.empty()) {
             return false;
         }
-        return evaluate_conditional(conditional, [this, depth](const std::string& id) { return id_value(id, depth); });
+        return evaluate_conditional(conditional, [this](const std::string& id) { return id_value(id, 0); }).value_or(false);
     }
 
     bool step() {
@@ -421,7 +468,62 @@ struct Quests::Plan {
         if (task.type == task_type::kAchievement) {
             return const_cast<Plan*>(this)->evaluate(task.itemName) ? node.target : 0U;
         }
+        if (task.type == task_type::kTriggerArea) {
+            // Stage 1.8b: the accepted position of the character in a volume of the tag of the task (the client sends no message for these
+            // volumes: live check T1). Enter and Stay Inside: inside one volume of the tag; Leave: outside each one. No trigger data, no
+            // volume of the tag, or a camera estimate: no knowledge of the place, the task waits (the rule of QR8C-R7).
+            const gamedata::TriggerData* triggers = owner.triggers();
+            if (triggers == nullptr || task.targetTag.empty() || entity.positionEstimated || !triggers->knows(task.targetTag)) {
+                return 0U;
+            }
+            const bool inside = triggers->inside(task.targetTag, entity.position.x, entity.position.y, entity.position.z, &counts.triggerVisits);
+            return (task.areaRule == gamedata::AreaRule::leave ? !inside : inside) ? node.target : 0U;
+        }
         return std::nullopt;
+    }
+
+    /**
+     * Stage 1.8b: a TaskTriggerGameEvent applies its game event (KillEnemyType; research quest-engine-3.md Q3): its whisper (the client plays
+     * it and shows its subtitles: message 5070 after the commit; the AchievementId of the whisper), its achievement, and its experience and
+     * coin. An item of the event goes into the bag. @return False when the bag has no place for the item of the event (the task waits).
+     */
+    bool apply_event(const QuestTask& task) {
+        const std::string eventId = task.targets.empty() ? std::string{} : task.targets.front();
+        if (eventId.empty()) {
+            notes.push_back("the task " + task.id + " names no game event");
+            return true;
+        }
+        const gamedata::QuestGameEvent* event = data.game_event(eventId);
+        if (event != nullptr && !event->item.empty() && event->itemQty > 0) {
+            if (!fits(GrantItem{event->item, event->itemQty, std::nullopt, {}})) {
+                notes.push_back("the bag has no place for the item " + event->item + " of the game event " + eventId + ": the task " + task.id
+                                + " waits");
+                return false;
+            }
+            itemActions.push_back(QuestItemAction{true, GrantItem{event->item, event->itemQty, std::nullopt, {}}});
+            itemDelta[lower_text(event->item)] += event->itemQty;
+        }
+        std::string whisperText = "no whisper";
+        if (const gamedata::QuestWhisper* whisper = data.whisper_of_event(eventId)) {
+            whispers.push_back(whisper->crc);
+            whisperText = "the whisper " + whisper->id;
+            if (!whisper->achievement.empty()) {
+                action(whisper->achievement, true);
+            }
+        }
+        if (event != nullptr) {
+            if (!event->achievement.empty()) {
+                action(event->achievement, true);
+            }
+            experience += event->experience;
+            coin += event->coin;
+            if (!event->unpaid.empty()) {
+                notes.push_back("the game event " + eventId + " has a reward that the backend cannot pay yet (" + event->unpaid.front() + "): not paid");
+            }
+        }
+        ++counts.gameEventsApplied;
+        notes.push_back("the task " + task.id + " applied the game event " + eventId + " (" + whisperText + ")");
+        return true;
     }
 
     // ----- The rules of the tasks -----
@@ -545,6 +647,13 @@ struct Quests::Plan {
         case task_type::kObjective:
             grant_child(quest, index, task);
             return;
+        case task_type::kTriggerGameEvent:
+            // Stage 1.8b: the event at the activation, then complete (client 0x8260AE0, 0x8260B10: "a higher count does not emit more
+            // events"; research quest-progress.md).
+            if (apply_event(task)) {
+                complete(quest, index);
+            }
+            return;
         default:
             break;
         }
@@ -590,8 +699,10 @@ struct Quests::Plan {
             }
             if (other->parent != 0 && peek(other->parent) == nullptr) {
                 // The child of a parent that ended in this plan (a reset of the parent): it is the child of the new parent now (code review
-                // of stage 1.8c, finding QR8C-R3), so that its completion completes the task of the new parent.
+                // of stage 1.8c, finding QR8C-R3), so that its completion completes the task of the new parent. The row of the child goes
+                // into the transaction of the reset (code review of stage 2.5c, finding PR5C-R4: a new world entry keeps the new parent).
                 edit(other->instance)->parent = quest.instance;
+                changed.insert(other->instance);
                 notes.push_back("the child objective " + child->id + " of the task " + task.id + " is the child of the new instance " +
                                 hex(quest.instance) + " now");
                 return;
@@ -735,7 +846,7 @@ struct Quests::Plan {
         changed.insert(quest.instance);
         if (!node.parent) {
             notes.push_back("the root of the objective " + quest.objective + " (instance " + hex(quest.instance) +
-                            ") is complete: the hand-in is stage 1.8b");
+                            ") is complete: the quest waits for its hand-in");
             child_completed(quest);
             return;
         }
@@ -863,6 +974,10 @@ Quests::~Quests() = default;
 
 const gamedata::PoiData* Quests::pois() const {
     return m_pois != nullptr && m_pois->loaded() ? m_pois : nullptr;
+}
+
+const gamedata::TriggerData* Quests::triggers() const {
+    return m_triggers != nullptr && m_triggers->loaded() ? m_triggers : nullptr;
 }
 
 std::uint64_t Quests::now_ns() const {
@@ -1019,6 +1134,22 @@ void Quests::index(const Entity& entity, const std::set<std::uint64_t>& instance
             case task_type::kInteract:
                 subscriptions.add("i:" + task.interactTag, entry);
                 break;
+            // Stage 1.8b: the cutscene and the cinematic of the task (the CRC-32 of the name), the person and its topic or state.
+            case task_type::kCutsceneComplete:
+                subscriptions.add("cut:" + std::to_string(task.nameCrc), entry);
+                break;
+            case task_type::kCinematicStart:
+                subscriptions.add("cin0:" + std::to_string(task.nameCrc), entry);
+                break;
+            case task_type::kCinematicComplete:
+                subscriptions.add("cin1:" + std::to_string(task.nameCrc), entry);
+                break;
+            case task_type::kConversationTopic:
+                subscriptions.add("ct:" + person_key(task.itemName, task.screen), entry);
+                break;
+            case task_type::kConversationState:
+                subscriptions.add("cs:" + person_key(task.itemName, task.screen), entry);
+                break;
             default:
                 break;
             }
@@ -1060,14 +1191,28 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
             (last[key].second ? unlocks : locks).push_back(last[key].first);
         }
     }
-    // The item actions (stage 1.8c): one plan of the inventory, written in this transaction, finished after it.
+    // The item actions (stage 1.8c) and the coin (stage 1.8b): one plan of the inventory, written in this transaction, finished after it.
     std::optional<Inventory::Plan> items;
-    if (!plan.itemActions.empty()) {
+    std::optional<std::uint64_t> coin;
+    if (plan.coin > 0) {
+        coin = std::min(entity.wallet.coin + plan.coin, kWalletLimit);
+    }
+    if (!plan.itemActions.empty() || coin) {
         items = m_world.inventory().plan_quest_items(entity.characterId, plan.itemActions, nullptr);
         if (!items->ok()) {
             log::write("quests: the items of the quest change of character %s do not fit (%s): no change", entity.characterId.c_str(),
                        item_error_text(items->error));
-            return QuestError::storeFailed;
+            return items->error == ItemError::bagFull ? QuestError::bagFull : QuestError::storeFailed;
+        }
+    }
+    // The experience (stage 1.8b): one plan of the progress system (the pattern of the build presets).
+    std::optional<Progress::Plan> sheet;
+    if (plan.experience > 0) {
+        sheet = m_world.progress().plan_experience(entity.characterId, plan.experience);
+        if (!sheet->ok()) {
+            log::write("quests: the experience of the quest change of character %s cannot be given (%s): no change", entity.characterId.c_str(),
+                       progress_error_text(sheet->error));
+            return QuestError::cannotPay;
         }
     }
     state::Store::Batch batch(m_store);
@@ -1123,7 +1268,10 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
         ok = ok && m_store.write_quest_grant(entity.characterId, grant);
     }
     if (ok && items) {
-        ok = m_world.inventory().write(*items);
+        ok = m_world.inventory().write(*items, coin);
+    }
+    if (ok && sheet) {
+        ok = m_world.progress().write(*sheet);
     }
     ok = ok && batch.commit();
     if (!ok) {
@@ -1181,6 +1329,18 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     }
     entity.quests.loaded = true;
     entity.quests.data = m_data;
+    // The completed notice (stage 1.8b): the instances of the hand-ins of this world entry, the newest last.
+    for (const std::uint64_t instance : plan.completed) {
+        entity.quests.completed.push_back(instance);
+    }
+    if (entity.quests.completed.size() > kCompletedNotices) {
+        entity.quests.completed.erase(entity.quests.completed.begin(),
+                                      entity.quests.completed.end() - static_cast<std::ptrdiff_t>(kCompletedNotices));
+    }
+    // The level and the experience first (the finish of the items refreshes the gear with them; the order of the build presets).
+    if (sheet) {
+        (void)m_world.progress().finish(*sheet, "the experience of a quest");
+    }
     m_world.ownership().quest_achievements(entity, unlocks, locks);
     m_world.touch(entity.id, ComponentKey::objectives);
     // The index before the items (code review of stage 1.8c, finding QR8C-R14): the item change of this plan marks the possession tasks
@@ -1190,6 +1350,14 @@ QuestError Quests::commit(Entity& entity, Plan& plan, const std::vector<state::Q
     index(entity, touched, false);
     if (items) {
         (void)m_world.inventory().finish(*items, "the item actions of a quest");
+        if (coin) {
+            m_world.inventory().coin_written(entity.characterId, *coin);
+        }
+    }
+    // The whispers of the game events of the plan (stage 1.8b): the session of the owner sends 5070 (live check W1: the subtitles).
+    for (const std::uint32_t whisper : plan.whispers) {
+        ++m_counts.whispers;
+        m_world.whisper(entity.owner, whisper);
     }
     for (const Plan::TimerStart& timer : plan.timers) {
         schedule(entity.characterId, timer.instance, timer.index, timer.startNs, timer.seconds);
@@ -1383,7 +1551,7 @@ bool Quests::conditional(const Entity& entity, const std::string& text) const {
         return false;
     }
     const Ownership& ownership = m_world.ownership();
-    std::function<bool(const std::string&, int)> value = [&](const std::string& id, int depth) -> bool {
+    std::function<std::optional<bool>(const std::string&, int)> value = [&](const std::string& id, int depth) -> std::optional<bool> {
         if (id.empty()) {
             return false;
         }
@@ -1400,7 +1568,8 @@ bool Quests::conditional(const Entity& entity, const std::string& text) const {
         }
         return false;
     };
-    return evaluate_conditional(text, [&](const std::string& id) { return value(id, 0); });
+    // A malformed expression does not pass (finding PR5C-R7).
+    return evaluate_conditional(text, [&](const std::string& id) { return value(id, 0); }).value_or(false);
 }
 
 std::optional<std::uint8_t> Quests::task_state(const Entity& entity, std::string_view objective, std::string_view task) const {
@@ -1749,17 +1918,55 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
         case QuestEventKind::interact:
             keys.emplace_back("i:" + key, 1U);
             break;
+        case QuestEventKind::topic:
+            keys.emplace_back("ct:" + key, 1U);
+            break;
+        case QuestEventKind::state:
+            keys.emplace_back("cs:" + key, 1U);
+            break;
         case QuestEventKind::screen:
+        case QuestEventKind::cutscene:
+        case QuestEventKind::cinematicStart:
+        case QuestEventKind::cinematicEnd:
             break;
         }
     }
     if (event.kind == QuestEventKind::screen) {
         keys.emplace_back("s:" + std::to_string(event.screenCrc), 1U);
+    } else if (event.kind == QuestEventKind::cutscene) {
+        keys.emplace_back("cut:" + std::to_string(event.screenCrc), 1U);
+    } else if (event.kind == QuestEventKind::cinematicStart || event.kind == QuestEventKind::cinematicEnd) {
+        keys.emplace_back((event.kind == QuestEventKind::cinematicStart ? "cin0:" : "cin1:") + std::to_string(event.screenCrc), 1U);
     }
     // The matching tasks: each subscriber of each key once (a kill of a victim with the categories "Corrupted" and "Pirate" counts one
-    // time for a task that names both).
+    // time for a task that names both). A retry (code review of stage 2.5c, finding PR5C-R5) looks only at the tasks of the first delivery.
     std::vector<std::pair<Subscriber, std::uint32_t>> matched;
-    for (const auto& [key, amount] : keys) {
+    const auto amount_of = [&](const Subscriber& entry) {
+        std::uint32_t amount = 1;
+        for (const auto& [key, keyAmount] : keys) {
+            const std::vector<Subscriber>* list = subscriptions->find(key);
+            if (list != nullptr && std::find(list->begin(), list->end(), entry) != list->end()) {
+                amount = keyAmount;
+                break;
+            }
+        }
+        return amount;
+    };
+    std::vector<std::pair<std::string, std::uint32_t>> lookups = keys;
+    if (event.attempt > 0) {
+        lookups.clear();
+        for (const auto& [instance, index] : event.matched) {
+            const Subscriber entry{instance, index};
+            ++m_counts.subscribersVisited;
+            const QuestInstance* quest = instance_of(entity, instance);
+            const QuestObjective* objective = quest != nullptr ? m_data->objective_by_crc(quest->objectiveCrc) : nullptr;
+            if (objective == nullptr || index >= quest->tasks.size() || quest->tasks[index].state != quest_state::kActive) {
+                continue; // The quest of the first delivery ended (a reset gives a new instance): no credit for the replacement.
+            }
+            matched.emplace_back(entry, amount_of(entry));
+        }
+    }
+    for (const auto& [key, amount] : lookups) {
         const std::vector<Subscriber>* list = subscriptions->find(key);
         for (std::size_t position = 0; list != nullptr && position < list->size(); ++position) {
             const Subscriber entry = (*list)[position];
@@ -1819,6 +2026,11 @@ void Quests::event(Entity& entity, const QuestEvent& event) {
         ++m_counts.eventRetries;
         QuestEvent again = event;
         ++again.attempt;
+        if (event.attempt == 0) {
+            for (const auto& [entry, amount] : matched) {
+                again.matched.emplace_back(entry.instance, entry.index);
+            }
+        }
         m_world.after(kEventRetry, [characterId = entity.characterId, again](World& world) {
             if (Entity* character = world.find_character(characterId)) {
                 world.quests().event(*character, again);
@@ -2046,7 +2258,7 @@ void Quests::tick() {
     }
 }
 
-void Quests::end_instance(Plan& plan, std::uint64_t instance, bool keepAwards, const char* cause) {
+void Quests::end_instance(Plan& plan, std::uint64_t instance, bool keepAwards, const char* cause, bool completed) {
     const QuestInstance* quest = plan.peek(instance);
     const QuestObjective* objective = quest != nullptr ? plan.objective_of(*quest) : nullptr;
     if (objective == nullptr) {
@@ -2066,6 +2278,15 @@ void Quests::end_instance(Plan& plan, std::uint64_t instance, bool keepAwards, c
         }
     }
     for (const state::QuestUndoRow& row : rows) {
+        // The completion (stage 1.8b) reverts only a temporary unlock (client 0x8260590: "restore on completion, reset, or abandon"); an
+        // unlock or a lock reverts at a reset or an abandon only (0x8260730, 0x8260880; research quest-progress.md). Live check P1: Aelstrom
+        // 01 (the lock of task 13 of 06_getoffbeach) must stay for the offer of the next quest after the hand-in.
+        if (completed) {
+            const QuestTask* task = row.index <= 255 ? plan.task_of(*quest, static_cast<std::uint8_t>(row.index)) : nullptr;
+            if (task == nullptr || task->type != task_type::kTemporaryUnlockAchievement) {
+                continue;
+            }
+        }
         plan.action(row.achievement, row.action == "unlock");
     }
     plan.undo.erase(std::remove_if(plan.undo.begin(), plan.undo.end(), [&](const state::QuestUndoRow& row) { return row.instance == instance; }),
@@ -2102,6 +2323,9 @@ void Quests::end_instance(Plan& plan, std::uint64_t instance, bool keepAwards, c
     plan.notes.push_back("the objective " + objective->id + " (instance " + hex(instance) + ") ends: " + cause);
     plan.removed.insert(instance);
     plan.changed.erase(instance);
+    if (completed) {
+        plan.completed.push_back(instance);
+    }
 }
 
 QuestResult Quests::abandon(Entity& entity, std::uint64_t instance) {
@@ -2170,6 +2394,293 @@ QuestResult Quests::reset(Entity& entity, std::uint64_t instance) {
         result.instance = next;
     }
     return result;
+}
+
+// ----- Stage 1.8b: the offers, the hand-in, the cutscenes, the cinematics, and the effects of a topic -----
+
+QuestError Quests::available(const Entity& entity, const QuestObjective& objective) const {
+    if (data() == nullptr || !entity.quests.loaded) {
+        return QuestError::noData;
+    }
+    if (active_of(entity, objective.crc) != nullptr) {
+        return QuestError::alreadyActive;
+    }
+    // A quest that the character completed: its completion achievement (the client IsObjectiveComplete 0x3A48A30; the repeats of a quest
+    // are stage 1.8d).
+    if (!objective.achievement.empty() && conditional(entity, objective.achievement)) {
+        return QuestError::completedBefore;
+    }
+    // RequiredAchievementId: the client offers only the variant whose conditional is true (the eight variants of 06_boarfeast name one
+    // archetype achievement each; research quest-engine-3.md Q5). An empty cell has no rule.
+    if (!objective.required.empty() && !conditional(entity, objective.required)) {
+        return QuestError::notAvailable;
+    }
+    return QuestError::none;
+}
+
+QuestResult Quests::accept(Entity& entity, const QuestObjective& objective, std::uint16_t territory) {
+    QuestResult result;
+    result.error = available(entity, objective);
+    if (!result.ok()) {
+        return result;
+    }
+    result = grant(entity, objective.id, "offer", territory);
+    if (result.ok()) {
+        ++m_counts.accepts;
+    }
+    return result;
+}
+
+const QuestInstance* Quests::active_of(const Entity& entity, std::uint32_t objectiveCrc) const {
+    // The active quests of one character (MP-8).
+    for (const QuestInstance& quest : entity.quests.active) {
+        if (quest.objectiveCrc == objectiveCrc) {
+            return &quest;
+        }
+    }
+    return nullptr;
+}
+
+bool Quests::ready(const QuestInstance& quest) const {
+    const QuestObjective* objective = m_data != nullptr ? m_data->objective_by_crc(quest.objectiveCrc) : nullptr;
+    return objective != nullptr && objective->root < quest.tasks.size() && done(quest.tasks[objective->root].state);
+}
+
+HandInResult Quests::hand_in(Entity& entity, std::uint64_t instance) {
+    HandInResult result;
+    result.instance = instance;
+    const auto refuse = [&](QuestError error, std::string detail) {
+        result.error = error;
+        result.detail = std::move(detail);
+        ++m_counts.handInRefusals;
+        log::write("quests: the hand-in of the instance %016llx of character %s is refused: %s (%s); the quest stays as it is",
+                   static_cast<unsigned long long>(instance), entity.characterId.c_str(), quest_error_text(error), result.detail.c_str());
+        return result;
+    };
+    if (data() == nullptr || !entity.quests.loaded) {
+        return refuse(QuestError::noData, "no quest data");
+    }
+    Plan plan(*this, entity, now_ns());
+    const QuestInstance* quest = plan.peek(instance);
+    const QuestObjective* objective = quest != nullptr ? plan.objective_of(*quest) : nullptr;
+    if (objective == nullptr) {
+        return refuse(QuestError::unknownInstance, "no active quest of this instance (a second hand-in)");
+    }
+    if (!ready(*quest)) {
+        return refuse(QuestError::notReady, "the root task of " + objective->id + " is not complete");
+    }
+    // The rewards (research quest-engine.md Q6): the success event (UniversalExpAmount, CurrencyReward with CoinRewardChance, ItemReward with
+    // ItemRewardQty, AchievementId), the row (ExperienceReward, ItemRewardName with ItemRewardQty, AchievementId, ObjectiveReward). A reward
+    // with no owner in the backend refuses the hand-in: a completed quest must not lose a reward (the brief of stage 1.8b).
+    const gamedata::QuestGameEvent* event = objective->successEvent.empty() ? nullptr : m_data->game_event(objective->successEvent);
+    if (!objective->successEvent.empty() && event == nullptr) {
+        return refuse(QuestError::cannotPay, "the quest data has no game event " + objective->successEvent);
+    }
+    if (event != nullptr && !event->unpaid.empty()) {
+        return refuse(QuestError::cannotPay, "the reward " + event->unpaid.front() + " of " + event->id + " has no owner in the backend (stage 1.8d)");
+    }
+    if (!objective->progressionReward.empty()) {
+        return refuse(QuestError::cannotPay, "the reward ProgressionReward " + objective->progressionReward + " has no owner in the backend");
+    }
+    std::vector<LootDrop> drops;
+    const auto add_item = [&](const std::string& itemId, std::int64_t quantity) -> bool {
+        if (itemId.empty() || quantity == 0) {
+            return true;
+        }
+        if (quantity < 0) {
+            refuse(QuestError::cannotPay, "a negative reward quantity of " + itemId + " (a removal: no rule)");
+            return false;
+        }
+        const gamedata::ItemCatalog* catalog = m_world.options().itemCatalog;
+        const gamedata::ItemDefinition* definition = catalog != nullptr ? catalog->find(itemId) : nullptr;
+        if (definition == nullptr) {
+            refuse(QuestError::cannotPay, "the item catalog has no reward item " + itemId);
+            return false;
+        }
+        // A loot container (Resource+LootContainer: the Meat Pouch of 06_skinningknife) is opened by a later stage (1.8d, research U9): its
+        // reward cannot be paid yet.
+        if (lower_text(definition->itemClass).find("lootcontainer") != std::string::npos) {
+            refuse(QuestError::cannotPay, "the reward item " + itemId + " is a loot container with no open path (stage 1.8d)");
+            return false;
+        }
+        drops.push_back(LootDrop{definition->id, static_cast<std::uint32_t>(quantity), std::nullopt});
+        result.items.push_back(definition->id + " x" + std::to_string(quantity));
+        return true;
+    };
+    if (event != nullptr && !add_item(event->item, event->itemQty)) {
+        return result;
+    }
+    if (!add_item(objective->itemReward, objective->itemRewardQty)) {
+        return result;
+    }
+    // The items with the rules of a new instance of stage 1.3b: the gear score of the item table (GearScoreOverride), its fixed perks and
+    // its perk places with the level of the character (Rewards::grant_items: the roll of world/perk_roll.h).
+    for (const GrantItem& item : m_world.rewards().grant_items(drops, entity.progression.level)) {
+        plan.itemActions.push_back(QuestItemAction{true, item});
+        plan.itemDelta[lower_text(item.itemId)] += item.quantity;
+    }
+    if (event != nullptr) {
+        plan.experience += event->experience;
+        if (event->coin > 0 && (event->coinChance >= 1.0 || static_cast<double>(m_world.random_unit()) < event->coinChance)) {
+            plan.coin += event->coin;
+        }
+        if (!event->achievement.empty()) {
+            plan.action(event->achievement, true);
+            result.achievements.push_back(event->achievement);
+        }
+    }
+    plan.experience += objective->experienceReward;
+    result.experience = plan.experience;
+    result.coin = plan.coin;
+    // The completion: the instance goes (with the undo of its temporary unlocks and the return of its items) into the completed notice, and
+    // the completion achievement of the row is set.
+    end_instance(plan, instance, true, "handed in", true);
+    if (!objective->achievement.empty()) {
+        plan.action(objective->achievement, true);
+        result.achievements.push_back(objective->achievement);
+    }
+    if (!objective->objectiveReward.empty()) {
+        // ObjectiveReward: the next objective (research quest-engine.md Q6). No row of the beach chain has it.
+        if (const QuestObjective* next = m_data->objective(objective->objectiveReward); next != nullptr && active_of(entity, next->crc) == nullptr) {
+            plan.add(*next, next_instance(), "reward", quest->originTerritory);
+            result.next = next->id;
+        }
+    }
+    // Decision D5 option A (orchestrator, 2026-10-18): a full bag refuses the hand-in; nothing changes, and the quest stays ready.
+    if (!plan.itemActions.empty()) {
+        const Inventory::Plan trial = m_world.inventory().plan_quest_items(entity.characterId, plan.itemActions, nullptr);
+        if (!trial.ok()) {
+            return refuse(trial.error == ItemError::bagFull ? QuestError::bagFull : QuestError::cannotPay,
+                          std::string("the reward items: ") + item_error_text(trial.error));
+        }
+    }
+    const auto found = m_subscriptions.find(entity.id);
+    plan.settle(found != m_subscriptions.end() ? found->second.get() : nullptr);
+    const QuestError error = commit(entity, plan, {});
+    if (error != QuestError::none) {
+        return refuse(error, "the transaction of the hand-in");
+    }
+    ++m_counts.handIns;
+    std::string items;
+    for (const std::string& item : result.items) {
+        items += (items.empty() ? "" : ", ") + item;
+    }
+    log::write("quests: character %s handed in %s (instance %016llx): %llu experience, %llu coin units, items [%s]%s%s",
+               entity.characterId.c_str(), objective->id.c_str(), static_cast<unsigned long long>(instance),
+               static_cast<unsigned long long>(result.experience), static_cast<unsigned long long>(result.coin), items.c_str(),
+               result.next.empty() ? "" : ", next objective ", result.next.c_str());
+    return result;
+}
+
+bool Quests::cutscene_requested(Entity& entity, std::uint32_t cutsceneCrc) {
+    const auto found = m_subscriptions.find(entity.id);
+    const std::vector<Subscriber>* list =
+        found != m_subscriptions.end() && found->second ? found->second->find("cut:" + std::to_string(cutsceneCrc)) : nullptr;
+    bool waits = false;
+    for (std::size_t position = 0; list != nullptr && !waits && position < list->size(); ++position) {
+        ++m_counts.subscribersVisited;
+        const QuestInstance* quest = instance_of(entity, (*list)[position].instance);
+        waits = quest != nullptr && quest->tasks[(*list)[position].index].state == quest_state::kActive;
+    }
+    if (!waits) {
+        ++m_counts.cutsceneRefusals;
+        log::write("quests: the client of character %s asks for the cutscene %08x, which no active task of the character waits for: no grant",
+                   entity.characterId.c_str(), static_cast<unsigned>(cutsceneCrc));
+        return false;
+    }
+    // The pending cutscene of the character (research quest-engine-3.md Q2: the server grants 6707 when a task waits for it; live check C1).
+    entity.quests.pendingCutscene = cutsceneCrc;
+    entity.quests.cutsceneStarted = false;
+    ++m_counts.cutsceneGrants;
+    log::write("quests: character %s gets the cutscene %08x (grant 6707)", entity.characterId.c_str(), static_cast<unsigned>(cutsceneCrc));
+    return true;
+}
+
+bool Quests::cutscene_started(Entity& entity, std::uint32_t cutsceneCrc) {
+    if (entity.quests.pendingCutscene == 0 || entity.quests.pendingCutscene != cutsceneCrc) {
+        return false;
+    }
+    entity.quests.cutsceneStarted = true;
+    return true;
+}
+
+bool Quests::cutscene_ended(Entity& entity) {
+    const std::uint32_t pending = entity.quests.pendingCutscene;
+    const bool started = entity.quests.cutsceneStarted;
+    if (pending == 0 || !started) {
+        // The end of a conversation camera, or a 6705 after a grant that the client did not start (a mismatched grant can send 6705:
+        // research conversations.md): no quest change.
+        return false;
+    }
+    entity.quests.pendingCutscene = 0;
+    entity.quests.cutsceneStarted = false;
+    QuestEvent ended;
+    ended.kind = QuestEventKind::cutscene;
+    ended.screenCrc = pending;
+    const std::uint64_t before = m_counts.progressChanges;
+    event(entity, ended);
+    const bool changed = m_counts.progressChanges != before;
+    m_counts.cutsceneCompletions += changed ? 1 : 0;
+    log::write("quests: the cutscene %08x of character %s ended (6705)%s", static_cast<unsigned>(pending), entity.characterId.c_str(),
+               changed ? ": its task is complete" : "");
+    return changed;
+}
+
+bool Quests::cinematic(Entity& entity, std::uint32_t cinematicCrc, bool ended) {
+    if (!ended) {
+        entity.quests.pendingCinematic = cinematicCrc;
+    } else if (entity.quests.pendingCinematic != cinematicCrc || cinematicCrc == 0) {
+        log::write("quests: the client of character %s ended the cinematic %08x, which it did not start: no change", entity.characterId.c_str(),
+                   static_cast<unsigned>(cinematicCrc));
+        return false;
+    } else {
+        entity.quests.pendingCinematic = 0;
+    }
+    QuestEvent cinematic;
+    cinematic.kind = ended ? QuestEventKind::cinematicEnd : QuestEventKind::cinematicStart;
+    cinematic.screenCrc = cinematicCrc;
+    const std::uint64_t before = m_counts.progressChanges;
+    event(entity, cinematic);
+    return m_counts.progressChanges != before;
+}
+
+void Quests::topic_finished(Entity& entity, const std::string& npc, const std::string& topic, const std::string& achievementUnlock) {
+    if (data() == nullptr || !entity.quests.loaded) {
+        return;
+    }
+    const auto found = m_subscriptions.find(entity.id);
+    const Subscriptions* subscriptions = found != m_subscriptions.end() ? found->second.get() : nullptr;
+    Plan plan(*this, entity, now_ns());
+    // AchievementUnlock of the topic (data ConversationTopicData; one time: a bit). Live check of stage 1.8b: the client sends 3158 at the
+    // selection and 5397 at the close; the bit changes nothing in the open conversation, and the topic of 06_demonstorm is at a walkaway
+    // person: the effects come at the finish.
+    if (!achievementUnlock.empty()) {
+        plan.action(achievementUnlock, true);
+    }
+    if (const std::vector<Subscriber>* list = subscriptions != nullptr ? subscriptions->find("ct:" + person_key(npc, topic)) : nullptr) {
+        const std::vector<Subscriber> copy = *list;
+        for (const Subscriber& entry : copy) {
+            ++m_counts.subscribersVisited;
+            if (QuestInstance* quest = plan.edit(entry.instance)) {
+                plan.add_progress(*quest, entry.index, 1);
+            }
+        }
+    }
+    if (plan.actions.empty() && plan.changed.empty()) {
+        return;
+    }
+    ++m_counts.topicEffects;
+    plan.settle(subscriptions);
+    const QuestError error = commit(entity, plan, {});
+    log::write("quests: character %s finished the topic %s of %s%s%s: %s", entity.characterId.c_str(), topic.c_str(), npc.c_str(),
+               achievementUnlock.empty() ? "" : ", AchievementUnlock ", achievementUnlock.c_str(), quest_error_text(error));
+}
+
+void Quests::state_selected(Entity& entity, const std::string& npc, const std::string& state) {
+    QuestEvent selected;
+    selected.kind = QuestEventKind::state;
+    selected.keys = {person_key(npc, state)};
+    event(entity, selected);
 }
 
 } // namespace soulwarden::backend::world

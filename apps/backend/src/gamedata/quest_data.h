@@ -11,7 +11,8 @@
 
 // The quest data (stage 1.8a, docs/systems/quests.md): the objectives with their compiled task trees, the task rows, the achievement
 // table (the bit of each achievement id), the non-persisted achievements (expressions of other bits), the start objectives of the
-// territories, the backstories, the game events, the whispers, and the schedules of the game data.
+// territories, the backstories, the game events, the whispers, and the schedules of the game data. Stage 1.8b reads the rewards of the
+// objectives and of their success events, and the whispers.
 //
 // The data is game data: the tool tools/gamedata/quests.sh makes the file from the game copy of the user, and the file stays outside the
 // repository. Without the file the backend has no quest: a new character gets no start quest, and the other systems do not change.
@@ -25,7 +26,7 @@ namespace soulwarden::backend::gamedata {
 /** File name of the quest data in the game data directory of the backend. */
 inline constexpr const char* kQuestDataFile = "quest-data.json";
 
-/** The task types of the client enum (table 0x3AA6A80; research quest-engine.md Q1) that the engine evaluates (stages 1.8a and 1.8c). */
+/** The task types of the client enum (table 0x3AA6A80; research quest-engine.md Q1) that the engine evaluates (stages 1.8a to 1.8c). */
 namespace task_type {
 inline constexpr std::uint8_t kSimpleContainer = 0;
 inline constexpr std::uint8_t kConsecutiveContainer = 1;
@@ -37,6 +38,8 @@ inline constexpr std::uint8_t kExitPoi = 9;
 inline constexpr std::uint8_t kKillContribution = 13;
 inline constexpr std::uint8_t kGameEvent = 14;
 inline constexpr std::uint8_t kTriggerGameEvent = 15;
+inline constexpr std::uint8_t kConversationState = 16;
+inline constexpr std::uint8_t kConversationTopic = 17;
 inline constexpr std::uint8_t kAchievement = 18;
 inline constexpr std::uint8_t kLockAchievement = 19;
 inline constexpr std::uint8_t kUnlockAchievement = 20;
@@ -54,6 +57,8 @@ inline constexpr std::uint8_t kCraftRecipe = 38;
 inline constexpr std::uint8_t kRefineRecipe = 42;
 inline constexpr std::uint8_t kEquipItem = 45;
 inline constexpr std::uint8_t kCutsceneComplete = 49;
+inline constexpr std::uint8_t kCinematicStart = 50;
+inline constexpr std::uint8_t kCinematicComplete = 51;
 inline constexpr std::uint8_t kObjective = 52;
 inline constexpr std::uint8_t kOpenUiScreen = 62;
 inline constexpr std::uint8_t kTimer = 64;
@@ -71,6 +76,9 @@ inline constexpr std::uint8_t kCraftMultipleRecipes = 86;
 [[nodiscard]] constexpr bool is_return(std::uint8_t type) {
     return type == task_type::kHaveAndReturnItems || type == task_type::kGatherAndReturnItems;
 }
+
+/** The rule of a TaskTriggerArea (TriggerAreaType: Enter 778 rows, Leave 10, Stay Inside 3; a blank cell is Enter). */
+enum class AreaRule : std::uint8_t { enter, leave, stayInside };
 
 /** @return True for the three container types. */
 [[nodiscard]] constexpr bool is_container(std::uint8_t type) {
@@ -134,6 +142,17 @@ struct QuestTask {
     /** UIScreenTag: the screen of TaskOpenUiScreen (message 2617 has the CRC-32 of the lower-case text). */
     std::string screen;
     std::uint32_t screenCrc{0};
+    // Stage 1.8b: the cells of the tasks of a person, a trigger area, a cutscene, a cinematic, and a game event of a task.
+    /** TP_TargetTag (lower case): the tag of the trigger volume of a TaskTriggerArea (tools/gamedata/triggers.py). */
+    std::string targetTag;
+    /** TriggerAreaType of a TaskTriggerArea. */
+    AreaRule areaRule{AreaRule::enter};
+    /**
+     * The CRC-32 of the lower-case ItemName: the cutscene of TaskCutsceneComplete (message 6703, 6706: 4817DD08 for
+     * 06_GetOffBeach_MSQ_RevivalShoreKnight_WW_IGC; research conversations.md) and the cinematic of TaskCinematicStart and
+     * TaskCinematicComplete (6606, 6542). 0 for an empty ItemName.
+     */
+    std::uint32_t nameCrc{0};
 };
 
 /** One node of a tree: the task at an index, and the indexes of its children (a container). */
@@ -179,6 +198,50 @@ struct QuestObjective {
     std::optional<std::uint16_t> exclusiveTerritory;
     bool canAbandon{true};
     std::string title;
+    // Stage 1.8b: the rewards of the row (research quest-engine.md Q6). A blank cell has no value.
+    /** ItemRewardName and ItemRewardQty (a blank quantity: 1; the loader 0x445CA30 reads a signed quantity, the data has none below 0). */
+    std::string itemReward;
+    std::int64_t itemRewardQty{1};
+    /** ExperienceReward: the experience of the row (added to the event; no row of the beach chain has it). */
+    std::uint64_t experienceReward{0};
+    /** ProgressionReward (a categorical progression: faction tokens or reputation; a later stage) and ObjectiveReward (the next objective). */
+    std::string progressionReward;
+    std::string objectiveReward;
+};
+
+/**
+ * One game event (GameEventData; research quest-engine.md Q6, quest-engine-3.md Q3): the reward of a success event of an objective, and the
+ * whisper of an event of a TaskTriggerGameEvent. The cells keep the source text; the loader reads the ones of the engine.
+ */
+struct QuestGameEvent {
+    std::string id;
+    /** UniversalExpAmount and CurrencyReward (the units of the wallet: 150 is 1.50 coin). */
+    std::uint64_t experience{0};
+    std::uint64_t coin{0};
+    /** CoinRewardChance: the loader of the client sets 1 when the cell is blank (0x31E70B0, row +0x38). */
+    double coinChance{1.0};
+    /** ItemReward and ItemRewardQty (a blank quantity: 1, the client loader 0x31E7129; an explicit 0 stays 0). */
+    std::string item;
+    std::uint32_t itemQty{1};
+    /** AchievementId: an achievement of the event. */
+    std::string achievement;
+    /** WhisperId or WhisperID: the whisper of the event (166 of 170 TaskTriggerGameEvent rows name an event with one). */
+    std::string whisper;
+    /**
+     * The rewards of the event that the backend cannot pay yet (stage 1.8d and later: TerritoryStanding, FactionReputation, FactionTokens,
+     * a categorical progression, Azoth, the other currencies, an entitlement, a status effect, GearScoreRange): "COLUMN VALUE" for each
+     * cell with a value that is not 0.
+     */
+    std::vector<std::string> unpaid;
+};
+
+/** One whisper (WhisperData): the voice and the subtitles of the client (message 5070 with the CRC-32 of the lower-case id). */
+struct QuestWhisper {
+    std::string id;
+    std::uint32_t crc{0};
+    /** GameEvent: the event that plays it; AchievementId: the bit that the client and the data use for a whisper that played. */
+    std::string gameEvent;
+    std::string achievement;
 };
 
 /** One non-persisted achievement (NPAData): the client computes it from other bits; the server does not store it. */
@@ -252,6 +315,12 @@ public:
     }
     /** @return The backstory row of an id (any case), or null. */
     [[nodiscard]] const QuestBackstory* backstory(std::string_view id) const;
+    /** Stage 1.8b: @return The game event of an id (any case), or null. */
+    [[nodiscard]] const QuestGameEvent* game_event(std::string_view id) const;
+    /** Stage 1.8b: @return The whisper of a game event (the WhisperId of the event, else a whisper whose GameEvent is the event), or null. */
+    [[nodiscard]] const QuestWhisper* whisper_of_event(std::string_view eventId) const;
+    /** Stage 1.8b: @return The whisper of an id (any case), or null. */
+    [[nodiscard]] const QuestWhisper* whisper(std::string_view id) const;
     /** @return The number of achievement rows. */
     [[nodiscard]] std::size_t achievement_count() const {
         return m_achievementIds.size();
@@ -272,6 +341,10 @@ private:
     std::unordered_map<std::string, QuestNpa> m_npa;
     std::unordered_map<std::uint16_t, std::size_t> m_territoryObjective;
     std::unordered_map<std::string, std::size_t> m_backstoryById;
+    std::unordered_map<std::string, QuestGameEvent> m_events;
+    std::vector<QuestWhisper> m_whispers;
+    std::unordered_map<std::string, std::size_t> m_whisperById;
+    std::unordered_map<std::string, std::size_t> m_whisperByEvent;
 };
 
 /** @return The CRC-32 of the lower-case text: the id of an objective or of a task on the wire. */

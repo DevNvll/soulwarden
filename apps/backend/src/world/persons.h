@@ -11,6 +11,7 @@
 #include "gamedata/interaction_data.h"
 #include "world/entity.h"
 #include "world/interactions.h"
+#include "world/quests.h"
 
 // The persons (stage 2.5c, docs/systems/persons.md; research npc-conversations.md, quest-engine-3.md Q2 and Q6): the use of a person of
 // the world (the key E, OpenConversation), the selection of its conversation state for one character, the topics of that state (messages
@@ -34,7 +35,19 @@
 // the state of the character; a topic request after a change of that state makes the selection again (a stale revision).
 //
 // The topics (3158 during the conversation, 5397 at its close): a topic of the selection of the character at its source counts one time
-// (a second finish changes nothing). In stage 2.5c a topic gives no reward and changes no quest task (stage 1.8b does that).
+// (a second selection or finish changes nothing). Stage 1.8b: the finish (5397) gives the effects of the topic (its AchievementUnlock and
+// the TaskConversationTopic tasks of the character: Quests::topic_finished).
+//
+// The quests of a person (stage 1.8b): the offer (3772) of an objective of the selected state of the character (LinearObjectiveId1..N),
+// and the hand-in (794) of a ready quest whose NpcDestinationId is the person. Both need the open conversation of the character with a
+// person that is there for it and near. 3772 and 794 name no person (research npc-conversations.md): the conversation of the character is
+// the source.
+//
+// The source of a conversation (code review of stage 2.5c, findings PR5C-R1 to PR5C-R3): only a close of the client (2473, the end of its
+// block) keeps the closed conversation for the 5397 of the close; each other end (the range, the removal of the source, a new use of any
+// source, a travel, the death, the leave) forgets it. One function ends a conversation whose person is not there any more (its use, its
+// grant, its value). Each new conversation and each new selection sets the service grant to the services of the state of now (an empty
+// set ends the grant).
 //
 // The services (research Q3, shops-stage.md Q5): the services of the selected state (the numbers of the client enum) go to the grant API of
 // stage 2.5b (Interactions::grant_service, kind "conversation"), which keeps them after a conversation-only close. No operation of a service
@@ -82,6 +95,37 @@ enum class TopicResult : std::uint8_t {
 };
 inline constexpr std::size_t kTopicResultCount = 7;
 
+/** Stage 1.8b: the result of an offer (3772) or a hand-in (794) of the client. */
+enum class QuestRequestResult : std::uint8_t {
+    accepted,
+    /** The character has no open person conversation. */
+    noConversation,
+    /** The person of the conversation is not there for the character now (its use and its grant end). */
+    notPresent,
+    /** The character is farther from the person than the range of its bound. */
+    tooFar,
+    /** The quest data has no objective of this CRC. */
+    unknownObjective,
+    /** 3772: the selected state of the character does not offer the objective. */
+    notOffered,
+    /** 794: the person of the conversation is not the NpcDestinationId of the objective. */
+    wrongPerson,
+    /** The quest system refused it (QuestRequest::error: a second accept, a quest that is not ready, a reward that cannot be paid, ...). */
+    refused,
+};
+inline constexpr std::size_t kQuestRequestResultCount = 8;
+
+[[nodiscard]] const char* quest_request_text(QuestRequestResult result);
+
+struct QuestRequest {
+    QuestRequestResult result{QuestRequestResult::accepted};
+    QuestError error{QuestError::none};
+    std::string detail;
+    [[nodiscard]] bool ok() const {
+        return result == QuestRequestResult::accepted;
+    }
+};
+
 [[nodiscard]] const char* topic_result_text(TopicResult result);
 
 /** The counts of the person system: for the log, the commands, and the tests (NC7). */
@@ -97,6 +141,9 @@ struct PersonCounts {
     /** The characters that a change of their bits made the system look at, and the ends of a conversation for a lost presence. */
     std::uint64_t presenceChecks{0};
     std::uint64_t presenceEnds{0};
+    /** Stage 1.8b: the results of the offers (3772) and of the hand-ins (794). */
+    std::array<std::uint64_t, kQuestRequestResultCount> offers{};
+    std::array<std::uint64_t, kQuestRequestResultCount> handIns{};
 };
 
 /** One person near a character, for a reader (a command). */
@@ -144,6 +191,21 @@ public:
      * the close of the conversation). A valid topic counts one time; each other result changes nothing.
      */
     TopicResult topic(Entity& character, std::uint32_t topicCrc, bool closing);
+    /** Stage 1.8b: the client accepts an offer (3772, the CRC-32 of the ObjectiveID). */
+    QuestRequest accept(Entity& character, std::uint32_t objectiveCrc);
+    /** Stage 1.8b: the client hands in a quest (794, the CRC-32 of the ObjectiveID). */
+    QuestRequest hand_in(Entity& character, std::uint32_t objectiveCrc);
+    /**
+     * Code review of stage 2.5c, finding PR5C-R1: the interaction system accepted a new use of any source for the character. Its conversation
+     * (also a closed one) is not a source any more.
+     */
+    void source_replaced(Entity& character);
+    /**
+     * Code review of stage 2.5c, finding PR5C-R3: the selection of the conversation of the character again when the state of the character
+     * changed (a stale revision), with its services into the grant (Interactions::update_service). The interaction system calls it before
+     * it checks a grant of the kind "conversation".
+     */
+    void refresh_offer(Entity& character);
 
     /** The world calls it when the achievement state of a character changes: a character with a person conversation is checked at the tick. */
     void achievements_touched(const Entity& character);
@@ -174,6 +236,15 @@ private:
     [[nodiscard]] const gamedata::PersonBinding* binding_of(const PersonConversation& conversation) const;
     /** Ends the conversation of a character (its value); `cause` for the log. */
     void forget(Entity& character, const char* cause);
+    /**
+     * Code review of stage 2.5c, finding PR5C-R2: the one end of a conversation whose person is not there for the character any more: its
+     * use (3746), its service grant, and its value. The presence tick and a topic request use it.
+     */
+    void lost_presence(Entity& character, const char* cause);
+    /** @return The open conversation of a character for a quest request, with its person there and near, or the cause of a refusal. */
+    [[nodiscard]] QuestRequestResult quest_source(Entity& character);
+    /** The selection again for a stale revision (the state, the topics, the services, and the grant). */
+    void reselect(Entity& character, const gamedata::PersonBinding& person);
 
     World& m_world;
     const gamedata::ConversationData* m_data;

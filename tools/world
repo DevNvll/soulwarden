@@ -826,7 +826,7 @@ def show_persons(document: dict) -> None:
     talk = document.get("conversation")
     if talk:
         print(f"conversation: {talk['npc']} ({talk['npcCrc']}) {'open' if talk['open'] else 'closed'}, state {talk['state']}, topics "
-              f"{talk['topics']}, services {talk['services']}, finished {talk['finished']}")
+              f"{talk['topics']}, services {talk['services']}, selected {talk.get('selected', [])}, finished {talk['finished']}")
     else:
         print("conversation: none")
     for person in document.get("persons", []):

@@ -147,6 +147,13 @@ in [Consumables and the heart rune](consumables-and-heart-rune.md).
   paperdoll, also a locked or a protected item, and the gives with the cause ItemGathered; the quest system writes it in its own
   transaction; code review of stage 1.8c, findings QR8C-R2 and R4). Each change of the bag or the paperdoll state of a character
   (`World::touch`) is the item event of its quests (one look at the next tick).
+- Stage 1.8b (the hand-in of a quest, [Quests](quests.md)): the reward items of a quest (ItemReward of the success event, ItemRewardName of
+  the objective) are new instances of `Rewards::grant_items` (the rules of stage 1.3b: GearScoreOverride, the fixed perks and the
+  ForceRarity of the perk data, the perk places with the level of the character) and go in through `Inventory::plan_quest_items` with the
+  return takes of the quest. Each item must fit: a full bag refuses the hand-in, and the quest stays ready (decision D5 option A of the
+  orchestrator). A loot container item (the class LootContainer: `QuestReward_MB_Meat_Pouch`) has no open path yet and refuses the hand-in
+  (stage 1.8d). The coin of a hand-in goes into the wallet in the same transaction (the units of the wallet: CurrencyReward 150 is 1.50
+  coin), up to the wallet limit.
 
 ## Commands
 

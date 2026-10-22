@@ -80,7 +80,9 @@ before a live test of the expansion. The wire contracts are in the protocol note
   the rows (`grant_achievements`, `remove_achievements`) in the transaction of the quest plan, then `Ownership::quest_achievements` sets and
   clears the bits. The bit of an id comes last from the quest data (the whole achievement table of the game, 17,005 rows: the fifth source
   of `Ownership::achievement_bit`). Each other change of the bits of a character (a lore page, a first craft, a build preset, the DLC) is a
-  change event of the quest system (`Quests::achievements_changed`).
+  change event of the quest system (`Quests::achievements_changed`). Stage 1.8b adds the bits of a hand-in (the AchievementId of the
+  objective and of its success event), of a game event and its whisper (the AchievementId of each), and of a finished topic (its
+  AchievementUnlock) to the same transaction of the quest plan.
 - The lock of the last bit (stage 1.8a, rule A4a; case QG5): the client keeps the last list that it got, so the owner gets an empty full
   list (`Entity::achievementsEmptied`). A character that never had a bit still gets no achievement fragment (the first record of stage
   1.1b and the stored bytes of case T2 do not change).

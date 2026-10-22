@@ -167,6 +167,8 @@ public:
 
     /** The world ended the committed interaction of the character (stage 2.5a): the client gets the message 3746. */
     void interaction_cancelled() override;
+    /** Stage 1.8b: the whisper 5070 of a game event of a quest task (world/quests.h). */
+    void whisper(std::uint32_t whisperCrc) override;
 
     /** Development aid: the client gets one message with a type and a body of a command (tools/world message). */
     void development_message(std::uint32_t type, const std::vector<std::uint8_t>& body) override;
@@ -360,10 +362,14 @@ private:
      */
     void handle_craft_request(std::span<const std::uint8_t> body);
     void handle_craft_cancel(std::span<const std::uint8_t> body);
-    /** Stage 1.8a: 2709 (the auto-pin flags; the first one opens the gate of the quest states), 1458 (the pins), 6703 (log only). */
+    /** Stage 1.8a: 2709 (the auto-pin flags; the first one opens the gate of the quest states), 1458 (the pins). */
     void handle_auto_pinning(std::span<const std::uint8_t> body);
     void handle_tracked_objectives(std::span<const std::uint8_t> body);
+    /** Stage 1.8b: 6703 (the grant 6707 for a cutscene that a task of the character waits for), 6706, 6606, 6542. */
     void handle_cutscene_request(std::span<const std::uint8_t> body);
+    void handle_cutscene_call(std::span<const std::uint8_t> body, std::uint32_t type);
+    /** Stage 1.8b: the offer 3772 and the hand-in 794 of the Conversation component (world/persons.h). */
+    void handle_objective_request(std::span<const std::uint8_t> body, std::uint32_t type);
     /** Stage 1.8c: 2297 and 6416 (a cue of a place), 2617 (a screen), 3836 (an abandon), 5600 (a reset). */
     void handle_territory_report(std::span<const std::uint8_t> body, bool entered);
     void handle_objective_call(std::span<const std::uint8_t> body, std::uint32_t type);

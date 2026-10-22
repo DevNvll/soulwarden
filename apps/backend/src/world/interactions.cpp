@@ -523,6 +523,9 @@ InteractionVerdict Interactions::request(SessionId session, const InteractionReq
                        station->parentKey.empty() ? "none" : station->parentKey.c_str());
         }
     }
+    // Code review of stage 2.5c, finding PR5C-R1: an accepted use of any source ends the person conversation of the character (also a
+    // closed one): a late 5397 of the old person does not count. The person handler makes the new conversation after it.
+    m_world.persons().source_replaced(*character);
     // The handler after the base registered the use (stage 3.5b.2: the Take All of a loot bag).
     handler->started(*character, context);
     // Stage 1.8c: the start of an interaction with a tag (TaskInteract with OnInteractStart; 0x825E470). A use with no time completes at
@@ -1346,6 +1349,15 @@ ServiceError Interactions::require_service(const std::string& characterId, const
     if (character == nullptr) {
         return ServiceError::notInWorld;
     }
+    if (kind == kConversationServiceKind) {
+        // Code review of stage 2.5c, finding PR5C-R3: the grant of a person is the offer of the conversation of now: the selection again
+        // after a change of the state of the character, and the grant of an older conversation does not pass.
+        m_world.persons().refresh_offer(*character);
+        if (character->serviceGrant && character->serviceGrant->kind == kind
+            && (!character->conversation || character->conversation->serial != character->serviceGrant->revision)) {
+            end_grant(*character, "the grant of an older conversation");
+        }
+    }
     if (!character->serviceGrant || character->serviceGrant->kind != kind) {
         return ServiceError::noGrant;
     }
@@ -1368,6 +1380,18 @@ ServiceError Interactions::require_service(const std::string& characterId, const
         end_grant(*character, service_error_text(error));
     }
     return error;
+}
+
+void Interactions::update_service(Entity& character, std::vector<std::uint32_t> ids) {
+    if (!character.serviceGrant) {
+        return;
+    }
+    if (ids.empty()) {
+        end_grant(character, "the source offers no service now");
+        return;
+    }
+    std::sort(ids.begin(), ids.end());
+    character.serviceGrant->ids = std::move(ids);
 }
 
 bool Interactions::close_service(const std::string& characterId) {

@@ -488,14 +488,20 @@ PERSON_SPAWNER_ENTITY = 0x5000000000000A01
 PERSON_PLACE = (2000.3, 3000.6, 40.27)
 
 
+def single(value: float) -> float:
+    """@return The value as an IEEE 32-bit float (the client keeps the place and the yaw in floats)."""
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
 def independent_group(x: float, y: float, z: float, yaw: float, asset: bytes) -> int:
     """The client id of a person child, from its fields at their bit places (low to high): 3 bits 7, 18 bits x * 8, 18 bits y * 8, 12
-    bits z * 4, 4 bits of the yaw bucket, 9 bits of the slice asset."""
+    bits z * 4, 4 bits of the yaw bucket, 9 bits of the slice asset. Each value is a 32-bit float of the client before its product and
+    roundf (code review of stage 2.5c, finding PR5C-R6)."""
     def nearest(value: float) -> int:
         return int(math.copysign(math.floor(abs(value) + 0.5), value))
-    turn = yaw + 360.0 if yaw < 0 else yaw
-    fields = [(7, 3), (nearest(x * 8) % (1 << 18), 18), (nearest(y * 8) % (1 << 18), 18), (nearest(z * 4) % (1 << 12), 12),
-              ((int(turn) % 360) // 23, 4), (int.from_bytes(asset[:8], "little") % (1 << 9), 9)]
+    turn = single(yaw) + 360.0 if single(yaw) < 0 else single(yaw)
+    fields = [(7, 3), (nearest(single(x) * 8) % (1 << 18), 18), (nearest(single(y) * 8) % (1 << 18), 18),
+              (nearest(single(z) * 4) % (1 << 12), 12), ((int(turn) % 360) // 23, 4), (int.from_bytes(asset[:8], "little") % (1 << 9), 9)]
     value = 0
     offset = 0
     for field, width in fields:
@@ -626,6 +632,18 @@ def run_person_cases(work: Path) -> int:
     print(f"{'ok  ' if rule else 'FAIL'} the client id rule of the tool (child_group) equals the independent bit builder ({len(vectors)} "
           f"vectors: a positive and a negative yaw, the upper ends, 0)")
     failures += 0 if rule else 1
+    # Code review of stage 2.5c, finding PR5C-R6 (the probes of the review, made-up places): two axes at their roundf borders at one time
+    # (each combination of the roundings), and a place whose float is above the border while its double is below it (10000.0623 is the
+    # float 10000.0625: 80000.5 rounds to 80001).
+    asset = PERSON_CHILD_ASSET[0]
+    two = (100.0624999, 200.0624999, 30.0, 50.0)
+    spacing = (10000.0623, 2000.0, 30.0, 50.0)
+    border = (independent_group(*two, asset) in tool.child_groups(*two, asset) and len(tool.child_groups(*two, asset)) == 4
+              and tool.child_groups(*spacing, asset)[0] == independent_group(*spacing, asset)
+              and tool.child_groups(*PERSON_PLACE, 140.0, asset) == [independent_group(*PERSON_PLACE, 140.0, asset)])
+    print(f"{'ok  ' if border else 'FAIL'} the ids of a slot at the borders of the rule: two axes at their borders give 4 ids with the id of the "
+          f"client; the float of a place above the border gives the id of the client first; a place far from a border has one id")
+    failures += 0 if border else 1
     for mode, what in PERSON_CASES:
         PersonSources.person_mode = mode
         target = work / f"interactions-tool-check-{mode}.json"

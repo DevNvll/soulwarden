@@ -61,13 +61,14 @@ record of the server. The file has these children of a placement:
     value of the client), the count of the rarity particles, and each DelayedEvent of the slice.
 The persons (format 4, stage 2.5c; docs/systems/persons.md, live checks L1 and A2 of stage 2.5c). An object with a person has the
 member "person":
-  - a person child: the child of a PrefabSpawner of a level placement with m_isClientAuthoratative false and m_spawnOnInitialize true
-    whose slice has an NPC component (4bdb17d5-...). The client makes it itself at the load of the level (client 0x6160B60, called from
+  - a person child: the child of a PrefabSpawner of a level placement with m_isClientAuthoratative false and m_spawnOnInitialize true whose
+    slice has an NPC component (4bdb17d5-...). The client makes it itself at the load of the level (client 0x6160B60, called from
     0x69EE550), with G from its place, its yaw, and its slice asset (child_group: the low 3 bits 7) and the actor G and 8 zero bytes; the
-    XOR rule of item 4 gives its targets. The key is "UUID/ENTITY" of the spawner ("~1" for the second id of a slot near a border of the
-    rule). The member: the NPC id of the row of the variant (m_sliceVariant) in the variation table of the slice (NPCId), the variant, the
-    table, the row, the presence for one character (PERSON_PRESENCE: "showWhen" or "hideWhen" with an achievement conditional; no rule:
-    always there), "clientChild" true, the spawner, and "unresolved" with a cause when the tool cannot bind it (the backend refuses its use).
+    XOR rule of item 4 gives its targets. The key is "UUID/ENTITY" of the spawner ("~1", "~2", ... for the other ids of a slot near a
+    border of the rule). The member: the NPC id of the row of the variant (m_sliceVariant) in the variation table of the slice (NPCId), the
+    variant, the table, the row, the presence for one character (PERSON_PRESENCE: "showWhen" or "hideWhen" with an achievement conditional;
+    no rule: always there), "clientChild" true, the spawner, and "unresolved" with a cause when the tool cannot bind it (the backend
+    refuses its use).
   - a direct person: a placement whose own slice has the NPC component: "npc" (m_npcKey) and "direct" true.
 What the file does not have, with the count of each cause in "excluded" (a later stage reads them):
   - The other children of a PrefabSpawner (a trading post, a building), a person child with m_spawnOnInitialize false (the client does
@@ -276,7 +277,7 @@ PERSON_PRESENCE = {
 CHILD_GROUP_TAG = 7
 CHILD_YAW_BUCKET = 23
 # The yaw near a border of the 23 degree buckets, or a position near the half of a step: the float of the client can give the next
-# value (the tool has no exact copy of the conversion of the client). The tool then writes both ids of the slot.
+# value (the tool has no exact copy of the conversion of the client). The tool then writes each id of the candidates of the slot.
 CHILD_ID_MARGIN = 0.001
 # The entity of a slice whose event ends the slice (the event target of KillSelfDelay and FastKillSelfDelay of the personal bag).
 KILL_SELF_ENTITY = "KillSelf"
@@ -505,29 +506,63 @@ def round_half_away(value: float) -> int:
     return int(math.floor(value + 0.5)) if value >= 0 else -int(math.floor(-value + 0.5))
 
 
-def child_group(x: float, y: float, z: float, yaw: float, asset: bytes) -> int:
-    """@return G of the child that the client makes for a PrefabSpawner of a level placement (live check L1 of stage 2.5c; client
-    0x6160B60): the low 3 bits 7, then 18 bits of round(x * 8), 18 bits of round(y * 8), 12 bits of round(z * 4), 4 bits of the yaw
-    bucket ((int)yaw / 23, the yaw 0 to 360 degrees), and the first 8 bytes of the slice asset of the child (little-endian; only their low 9 bits stay)."""
+def f32(value: float) -> float:
+    """@return The value as a 32-bit float (the client keeps the place and the yaw of a spawner in floats)."""
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def compose_group(rx: int, ry: int, rz: int, bucket: int, asset: bytes) -> int:
+    """@return G of a child from its rounded fields (client 0x6160B60)."""
     mask = (1 << 64) - 1
-    turn = int(yaw % 360.0) % 360  # the yaw of the client is 0 to 360 before the cut toward 0 (cvttss2si; live check L1: -107.4 is 252)
-    bucket = (turn // CHILD_YAW_BUCKET) & 0xF
     first = int.from_bytes(asset[:8], "little")
-    value = (round_half_away(z * 4) & 0xFFF) | (((bucket | (first << 4)) << 12) & mask)
-    value = ((value << 18) | (round_half_away(y * 8) & 0x3FFFF)) & mask
-    value = ((value << 18) | (round_half_away(x * 8) & 0x3FFFF)) & mask
+    value = (rz & 0xFFF) | ((((bucket & 0xF) | (first << 4)) << 12) & mask)
+    value = ((value << 18) | (ry & 0x3FFFF)) & mask
+    value = ((value << 18) | (rx & 0x3FFFF)) & mask
     return ((value << 3) | CHILD_GROUP_TAG) & mask
 
 
+def yaw_bucket(yaw: float) -> int:
+    """@return The yaw bucket of the client: the float yaw 0 to 360 degrees, cut toward 0 (cvttss2si; live check L1: -107.4 is 252),
+    divided by 23."""
+    return ((int(f32(yaw) % 360.0) % 360) // CHILD_YAW_BUCKET) & 0xF
+
+
+def child_group(x: float, y: float, z: float, yaw: float, asset: bytes) -> int:
+    """@return G of the child that the client makes for a PrefabSpawner of a level placement (live check L1 of stage 2.5c; client
+    0x6160B60): the low 3 bits 7, then 18 bits of round(x * 8), 18 bits of round(y * 8), 12 bits of round(z * 4), 4 bits of the yaw
+    bucket ((int)yaw / 23, the yaw 0 to 360 degrees), and the first 8 bytes of the slice asset of the child (little-endian; only their low
+    9 bits stay). The place is a float of the client: x * 8 is f32(x) * 8 (an exact float product), then roundf (code review of stage 2.5c,
+    finding PR5C-R6: 10000.0623 is the float 10000.0625, and 80000.5 rounds to 80001)."""
+    return compose_group(round_half_away(f32(x) * 8), round_half_away(f32(y) * 8), round_half_away(f32(z) * 4), yaw_bucket(yaw), asset)
+
+
+def axis_values(value: float, scale: int) -> list[int]:
+    """@return The rounded values of one axis: the float path of the client first, then the other rounding when the scaled value is
+    CHILD_ID_MARGIN or less from a border of roundf (the tool has no exact copy of the float composition of the client), and the rounding
+    of the value in double (the rule of the ids of the trace of gate R)."""
+    scaled = f32(value) * scale
+    values = [round_half_away(scaled)]
+    for other in (round_half_away(scaled + CHILD_ID_MARGIN), round_half_away(scaled - CHILD_ID_MARGIN), round_half_away(value * scale)):
+        if other not in values:
+            values.append(other)
+    return values
+
+
 def child_groups(x: float, y: float, z: float, yaw: float, asset: bytes) -> list[int]:
-    """@return The ids of a child slot: one, or two when a value is near a border of the rule (CHILD_ID_MARGIN)."""
+    """@return The ids of a child slot: the id of the float path first; with a value near a border of the rule, each combination of the
+    roundings of each axis and of the yaw bucket (code review of stage 2.5c, finding PR5C-R6: two axes near their borders at one time)."""
+    buckets = [yaw_bucket(yaw)]
+    for other in (yaw_bucket(yaw + CHILD_ID_MARGIN), yaw_bucket(yaw - CHILD_ID_MARGIN)):
+        if other not in buckets:
+            buckets.append(other)
     groups: list[int] = []
-    for dx, dy, dz, dyaw in ((0, 0, 0, 0), (CHILD_ID_MARGIN, 0, 0, 0), (-CHILD_ID_MARGIN, 0, 0, 0), (0, CHILD_ID_MARGIN, 0, 0),
-                             (0, -CHILD_ID_MARGIN, 0, 0), (0, 0, CHILD_ID_MARGIN, 0), (0, 0, -CHILD_ID_MARGIN, 0),
-                             (0, 0, 0, CHILD_ID_MARGIN), (0, 0, 0, -CHILD_ID_MARGIN)):
-        group = child_group(x + dx / 8, y + dy / 8, z + dz / 4, yaw + dyaw, asset)
-        if group not in groups:
-            groups.append(group)
+    for rx in axis_values(x, 8):
+        for ry in axis_values(y, 8):
+            for rz in axis_values(z, 4):
+                for bucket in buckets:
+                    group = compose_group(rx, ry, rz, bucket, asset)
+                    if group not in groups:
+                        groups.append(group)
     return groups
 
 
@@ -1454,7 +1489,7 @@ def main() -> int:
           + ", ".join(document["fixtures"]))
     print("  station keys: " + ", ".join(f"{key} {count}" for key, count in counts["spawnedByKey"].items()))
     print(f"  persons (stage 2.5c): {counts['persons']} person children that the client makes ({counts['personSlotsWithTwoIds']} slots "
-          f"with two ids), {counts['personsDirect']} direct persons, {counts['personsUnresolved']} with no binding (the backend "
+          f"with more than one id), {counts['personsDirect']} direct persons, {counts['personsUnresolved']} with no binding (the backend "
           f"refuses their use)")
     if counts.get("stationOverrides"):
         changes = sorted({f"{entry['override']['from']} -> {entry['override']['to']}" for entry in document["spawned"] if "override" in entry})

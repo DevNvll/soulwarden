@@ -6911,7 +6911,7 @@ field 4 taskStates        18-byte elements: instance:u64 index:u8 taskCRC:u32 pr
 `1B73198B`) [static; live L1]. States: 0 New, 1 Active, 2 Complete, 3 CompleteActive, 4 Inactive, 5 Failed (table 0x3AA46F0).
 `acceptTime` is 0 [live L1 with 0; decision of an agent: the native TaskTimer can take its start from the creation time, research
 quest-display-18a.md Q4]. `originTerritory` is the territory of the grant (6 for the start quest) [live: the start quest shows with 6].
-Fields 2 (completed: a notice list), 5, and 6 are not written in stage 1.8a.
+Fields 5 and 6 are not written. Field 2 (completed: a notice list) is written from stage 1.8b (4.56).
 
 **The order and the values of the task elements** [live L1; static 0x3A43530, 0x3ADDE50, 0x3AD6C60, 0x3AD6D20, 0x3AC0990]: the elements of a
 quest are in index order (a child before its container). The client applies the elements in the received order and runs its container
@@ -6956,7 +6956,7 @@ quest turns to "Talk to Aelstrom", `L2-impl-questbeach-after.png`). A lock of th
 
 **6703** (`PlayerCutsceneComponentServerFacet_OnClientRequestStartCutscene`, sender 0x2EDA740: `target:u64 entity:u64 cutscene:u32`)
 [live L2]: 2 s after the bit `Start_IGC_Aelstrom_WW` the client sends `4817DD08` (the CRC-32 of `06_getoffbeach_msq_revivalshoreknight_ww_igc`)
-and moves its camera while it waits for the answer. Stage 1.8a writes it to the log; the answer is stage 1.8b.
+and moves its camera while it waits for the answer. Stage 1.8a writes it to the log; the answer (6707) is in 4.56.
 
 **The timer** [static; live]: the start of a TaskTimer is field 0 (Unix nanoseconds of the synced wall clock, the clock of 4.24). The server
 ends the timer at the start plus Duration with its fraction (live: `06_skinningknife` task 14, Duration 25.4, ended after 25.416 s, and its
@@ -7052,7 +7052,11 @@ with atan2f, cosf, sinf, fmodf; the degrees factor 57.29582595825195 at 0x85725F
 the first 8 bytes of the asset UUID of the child slice, little-endian; only the low 9 bits stay. round: roundf (import 0x7ECAC28; a half
 goes away from 0). Live L1: 19 of 19 ids of a trace of the client have this value (a yaw of -107.43 degrees counts as 252: bucket 10).
 The request of the client names this actor and the targets of the XOR rule, as for a level object (4.35). A person child that the client
-does not make (m_spawnOnInitialize false: 2 in the build) has no known source.
+does not make (m_spawnOnInitialize false: 2 in the build) has no known source. The tool of the interaction data computes x*8, y*8, z*4
+in float, as the client (the product of a float and 8 is exact), and near a border of the rounding or of a yaw bucket (0.001) it writes
+each id of the candidates of each axis, the id of the float rule first (stage 1.8b, finding PR5C-R6 of the code review of stage 2.5c: the
+old border rule could omit the id of the client). The data of the build keeps each of the 1309 ids of stage 2.5c (the 19 of the trace of
+gate R too) and has 2 more.
 
 **The NPC of a person child** [data; research npc-conversations.md Q1]: the column NPCId of the row of the variant (m_sliceVariant of the
 spawner) in the variation table of the child slice (m_variationTableUniqueName), not the defaults of the generic slice.
@@ -7086,6 +7090,7 @@ target:u64 entity:u64 topic:u32
 
 `topic` is the CRC-32 of the lower-case ConversationTopicId (live L3: `e532485a`, the task topic of a person). The client sends it when its
 player selects a topic. No answer is known; the client shows the NPCResponse of the topic from its own data (`L3-04-topic-response.png`).
+Stage 1.8b records the selection only; the effects of the topic come at 5397 (4.56).
 
 **5397** (`ConversationComponentServerFacet_OnFinishedConversationTopicsFromClient`; close 0x37622D0, sender 0x3722540, writer
 0x3701DF0, reader 0x3701E90 through 0x37080A0) [static; live L3]:
@@ -7095,7 +7100,7 @@ target:u64 entity:u64 count:size (10 at most) topic:u32 * count
 ```
 
 The client sends it at the close of the conversation, after 6705 and 2473 (live L3: 6705, then 2473, then 5397 with `e532485a`). No
-answer is known.
+answer is known. Stage 1.8b applies the effects of each finished topic here (4.56).
 
 **The services of a state** [static: registrar 0x37B3DA0, builder 0x37ACF10, switch table 0x37AE038; data; live L4]: the names of
 ConversationService1 to N have the numbers Inn 1, Faction_Board 2, Community_Board 3, Faction_Selection 4, Join_Outpost_Rush 5, Event_Store
@@ -7108,6 +7113,64 @@ of the action 70 OpenInnScreen (option `6cb6b4f9`) to the same object.
 **The close** [live L5]: after the close of a person conversation (the key, or 3746 of the server), the session answers 6705 with 6709 as
 before (4.20), and the character walks at once (`L5-walk-after-close.mp4`, `L5-walk-after-server-cancel.mp4`). A new world entry shows the
 prompt of the person again, and E opens it (live L6).
+
+### 4.56 The offers, the hand-in, the cutscenes, the cinematics, the whispers, the completed notice, the trigger areas (live proof of stage 1.8b; static proof for the client code and the game data; the checks and the reward rules are project rules with the values of the game data)
+
+Research: `~/Games/soulwarden/work/research/quest-engine.md` (Q3 to Q6, K8), `quest-engine-3.md` (the beach chain, G8, G9, G13), and
+`conversations.md` (the request table, the cutscene handshake). The system: `world/quests.h`, `world/persons.h`, [Quests](systems/quests.md),
+[Persons](systems/persons.md). Live checks of stage 1.8b: `~/Games/soulwarden/work/evidence/quests/18b/implement/live/` and `RESULT.md`.
+Client build 1.400.6031.6004151; all addresses are image-relative. Each request below has the prefix `target:u64 entity:u64` of its facet
+and one `u32`: the CRC-32 of the lower-case name (reader 0x26FEC60).
+
+**3772** (`ConversationComponentServerFacet_RequestAcceptObjective`; sender 0x3722700, caller 0x376DFF0; the Conversation facet of the
+player) [static; live I2]: `objective:u32`. The client sends it when its player accepts an offer of the selected state of the person (option
+0x3779AE0, check 0x375A980); the window shows the accept text at once (response type 4, before a state comes). Live I2: `d137c605`
+(`06_skinningknife`) after the hand-in of `06_getoffbeach` at Aelstrom. The backend answers with the Objectives state of the new instance
+(no other answer is known). A refused accept gets no answer.
+
+**794** (`ConversationComponentServerFacet_RequestCompleteObjective`; sender 0x37228F0, caller 0x376E2C0, the option 0x3749B80; the
+Conversation facet) [static; live P1, I1]: `objective:u32`, no instance and no NPC. The client shows the option "Complete the Quest!" for a
+quest whose NpcDestinationId is the person and whose root is complete (live P1: `e4d66020`, `06_getoffbeach`, 20 bytes). The backend finds
+the active instance of the character; the answer is the Objectives state (the instance in field 2, then not in field 3), the achievement
+state, the progression, and the item records. A refused hand-in gets no answer: the client removes the option and waits in the conversation
+(live I2 at Urda, the Meat Pouch reward of `06_skinningknife`).
+
+**The completed notice** (field 2 of the Objectives state, `completedObjectives`: `instance:u64` each; reader 0x3A68340, content 0x3A68E90)
+[static: apply 0x3A43530 calls 0x3A559B0 with the completion flag only for a removed instance in field 2; live L3]. With the field mask
+`1F` the record that removes a handed-in instance names it in field 2; the client then shows the completion and no "Objective Failed" (live
+L3: `06_demonstorm` leaves the HUD and the journal, `L3-hand-in-completion.mp4`). The backend keeps the 16 newest instances of the world
+entry and writes field 2 only when it has an instance (the bytes of a quest with no hand-in do not change).
+
+**6707** (`PlayerCutsceneComponentClientFacet_OnServerCutsceneRequestGranted`; handler 0x2EFE880; server to client, owner only)
+[static; live C1, I1, C2]: `target:u64 entity:u64 cutscene:u32`, the PlayerCutscene component of the player slice as for 6709 (4.20).
+The handler compares the CRC with its pending cutscene and plays it (0x2EF13F0); a mismatch can send 6705 with no play. Live I1: the
+character of a new creation sends 6703 `4817dd08` at its first accepted position in Aelstrom_IGC_Trigger, the backend grants it, and the
+cutscene plays (`I1-cutscene-and-walk.mp4`); live C2: the Grace cutscene `848caecf` of `06_survivors` at its trigger area. A 6703 that no
+active TaskCutsceneComplete of the character names gets no answer (the client waits, then gives up).
+
+**6706** (`PlayerCutsceneComponentServerFacet_OnClientCutsceneStarted`; sender 0x2EDA550, caller 0x2EF13F0) [static; live C1, I1]:
+`cutscene:u32` (75 ms after the grant in live I1). The backend marks the pending cutscene of the character as started. The 6705 after it (the end, 4.20)
+completes the tasks of the cutscene; the session answers 6709 for each 6705, as before. A 6705 with no started pending cutscene changes no
+quest.
+
+**6606 and 6542** (`PlayerCutsceneComponentServerFacet_NotifyCinematicStarted`, sender 0x2EDA180, caller 0x2EF9A00;
+`..._NotifyCinematicEnded`, sender 0x2ED9F90, caller 0x2EF81F0) [static; no live check: the cinematic `TempestRising` of `06_raisealarm` is
+after the refused hand-in of the chain]: `cinematic:u32`. The backend counts 6606 for TaskCinematicStart and keeps it as the pending
+cinematic; 6542 counts for TaskCinematicComplete only for the pending cinematic. No answer is known.
+
+**5070** (`WhisperPlayerComponentClientFacet_RequestStartWhisper`; reader 0x4304980; server to client, owner only) [static; live W1, W2]:
+`target:u64 entity:u64 whisper:u32`, the CRC-32 of the lower-case WhisperId. The target is the Whisper component (`7D5CA09D7B3CC6FA`) of
+the entity `Whisper` (`000000A02DBCEA72`) of the player slice with the XOR rule of a slice child: `(entity XOR root XOR G) + component`.
+Live W1: `69128a14` (`01_Whisper_Beach_05`, a development message): the client plays it and shows its subtitles (`W1-subtitles.png`); live
+W2: `52f36e05` (`01_IsabellasFirstWhisper_Isabella_01`) from TaskTriggerGameEvent of `06_survivors_soldier` (`W2-whisper-trigger.mp4`).
+
+**The trigger areas** [live T1]: the client sends no message for an ObjectiveDetectionVolumeComponent of a quest: no 560 at the entry of
+Aelstrom_IGC_Trigger and no message at a spawn in it. The server tests the accepted position of the character (4.7) against the volumes of the trigger data.
+
+**The finish of a topic** [live T2]: the client sends 3158 at the selection of a topic and 5397 with the topic at the close (4.55). The
+backend applies the AchievementUnlock of the topic and counts TaskConversationTopic at 5397. Live T2: `06_demonstorm` at Grace: the bit
+`01_Grace_Goodbye_WW` at the close, the next task locks `SwapActive_01_GraceWW_C`, and Grace walks away after the conversation
+(`T2-topic-finish-walkaway.mp4`).
 
 ## 5. Open items
 
@@ -7134,9 +7197,11 @@ prompt of the person again, and E opens it (live L6).
   and of 0.4, a slow of −0.6: the distance of a walk of 2 s does not change). The server
   accepts the faster positions. Not tried: the stat container of the status component, a
   status of the first record before the world entry of the client.
-- A conversation with a person, the content of a lore page, an interaction with an object
-  (4.20): the backend answers only the end of the cutscene and of the interaction. The person
-  speaks the text of its default state (no quest), and no reward or quest state changes.
+- A conversation with a person (4.20, 4.55, 4.56): from stage 1.8b the backend accepts an
+  offer (3772) and a hand-in (794), grants a cutscene (6707) and sends a whisper (5070). Open:
+  the cinematics 6606 and 6542 have no live check; the hand-in of a quest with a loot container
+  item, a territory standing, or a faction reward (1.8d); a repeated quest; the person of a
+  later topic that no state of the data names (`01_GraceWW_00`).
 - Creatures (4.14) fight from stage 3.4b (4.17): a creature sees a character, goes to it,
   attacks it, and goes back to its home. Open for them:
   - From stage 3.4d a creature goes on a path of the navigation data (4.19): around a wall,

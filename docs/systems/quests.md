@@ -1,12 +1,14 @@
 # Quests
 
 Read this document before a change of the quests of a character: the quest data, the task trees, the quest system of the world, the
-achievement actions of a task, the start quest of a new character, the backstory templates, the Objectives state, or the pins. Stage 1.8a
-is the first part of the generic quest engine (roadmap row 23); stage 1.8c (the events of the other systems: the kills, the items, the
-equipment, the gathers and the quest objects, the crafts, the places, the screens, the child objectives, the deaths, the abandon, the reset,
-the failure) is the third part. The persons, the offers, the hand-in, the cutscenes, the whispers, and the trigger areas are stage 1.8b; the
-rewards, the availability, and the recurrence 1.8d. The achievements are in [DLC and entitlements](dlc-and-entitlements.md), the wire
-contracts in the protocol notes (sections 4.53 and 4.54).
+achievement actions of a task, the start quest of a new character, the backstory templates, the Objectives state, the pins, the offers,
+the hand-in and its rewards, the cutscenes, the whispers, or the trigger areas. Stage 1.8a is the first part of the generic quest engine
+(roadmap row 23); stage 1.8b (the offers and the hand-in at a person, the rewards that the backend can pay, the effects of a topic, the
+cutscenes and the cinematics, the whispers, the trigger areas) the second; stage 1.8c (the events of the other systems: the kills, the
+items, the equipment, the gathers and the quest objects, the crafts, the places, the screens, the child objectives, the deaths, the abandon,
+the reset, the failure) the third. The full reward join (the loot containers, the territory standing, GearScoreRange), the availability, and
+the recurrence are 1.8d. The persons are in [Persons](persons.md), the achievements in [DLC and entitlements](dlc-and-entitlements.md), the
+wire contracts in the protocol notes (sections 4.53, 4.54, and 4.56).
 
 ## Start here
 
@@ -23,7 +25,13 @@ contracts in the protocol notes (sections 4.53 and 4.54).
 | The Objectives state (slot 22) and the seasons readiness state (slot 73) | `server/rep/states/objectives_state.cpp`, the gate of 2709 in `rep_session.cpp` (`handle_auto_pinning`), cases QG3, QG10 |
 | The pins of the client (1458) | `RepSession::handle_tracked_objectives`, `Quests::client_tracked`, case QG10 |
 | A backstory template for an existing character (decision D2 option C) | `Quests::apply_template`, `server/http/quest_commands.cpp`, case QG9 |
-| The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18c/implement/RESULT.md` |
+| Stage 1.8b: the offer (3772), the hand-in (794) and its rewards | `Persons::accept`, `Persons::hand_in` (the source), `Quests::available`, `accept`, `hand_in`, `end_instance` (the completion); `Progress::plan_experience`; cases QB2, QB3, QB5, QB6 |
+| Stage 1.8b: the cutscenes (6703, 6707, 6706, 6705) and the cinematics (6606, 6542) | `Quests::cutscene_requested`, `cutscene_started`, `cutscene_ended`, `cinematic`; `RepSession::handle_cutscene_request`, `handle_cutscene_call`, `handle_cutscene_ended`; cases QB2, QB4 |
+| Stage 1.8b: the whispers (5070) and the game event of a task | `Quests::Plan::apply_event`, `SessionSink::whisper`, `RepSession::whisper`; the events and the whispers of `gamedata/quest_data.h`; case QB3 |
+| Stage 1.8b: the trigger areas | `tools/gamedata/triggers.py`, `triggers.sh`, `check_triggers_tool.py`; `gamedata/trigger_data.h`; the predicate of TaskTriggerArea in `Quests::Plan::predicate`; cases QB1, QB2, QB4 |
+| Stage 1.8b: the effects of a topic, TaskConversationTopic, TaskConversationState | `Quests::topic_finished`, `state_selected`; `Persons::topic` (5397), `Persons::started`; case QB4 |
+| The completed notice (field 2 of the Objectives state) | `QuestLog::completed`, `server/rep/states/objectives_state.cpp`; cases QB2, QB8 |
+| The research | `~/Games/soulwarden/work/research/quest-engine.md`, `quest-engine-3.md`, `quest-display-18a.md`; the results of the stages: `~/Games/soulwarden/work/evidence/quests/18a/implement/RESULT.md`, `18b/implement/RESULT.md`, `18c/implement/RESULT.md` |
 
 ## Rules
 
@@ -51,7 +59,9 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
   TaskTimer with FailOnCondition has it [client 0x3ACDC10, 0x3B2BA40; research quest-display-18a.md Q3].
 - The conditional of TaskAchievement: achievement ids with `!`, `&&`, `||`, and parentheses [client 0x31898D0, 0x3A8C640]. An id is true
   when the character has its bit; a non-persisted achievement (NPAData) is its own conditional; an NPA with a status requirement is false
-  (no status rule in 1.8a) [agent: the status of a quest is a later part]; an id that the data does not know is false [research U7].
+  (no status rule in 1.8a) [agent: the status of a quest is a later part]; an id that the data does not know is false [research U7]. An
+  expression that the reader cannot read to its end (a missing operand, a missing closing parenthesis, text after the end) is false, also
+  under a negation and in an NPA [code review of stage 2.5c, finding PR5C-R7; case QRP7].
 - One change of the quests of a character is one plan: a copy of its quests and of its bits, the rules to a fixed point (an action can
   complete a TaskAchievement of the same character), then one transaction (the quests, the tasks, the pins, the achievement rows, the
   undo rows, the grant rows), and only then the entity, the bits (`Ownership::quest_achievements`), the marks, and the timers. A plan that
@@ -183,8 +193,9 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
 - A screen (2617) [client 0x8261660, sender 0x3A055A0; live: `a1126b78` is "hud"]: TaskOpenUiScreen counts the CRC-32 of its lower-case
   UIScreenTag.
 - TaskObjective [client 0x82619E0]: the activation grants the child objective (a new instance with the parent instance; no second instance
-  of an active objective) and the task waits; the completion of the root of the child completes the task [agent: the hand-in of the child is
-  stage 1.8b; its root is the completion of the child for its parent now].
+  of an active objective) and the task waits; the completion of the root of the child completes the task [agent: the root of the child is
+  the completion of the child for its parent; 136 of 138 TaskObjective rows are not in a tree of the data]. The reset of a parent gives its
+  active child to the new parent in the transaction of the reset (code review of stage 2.5c, finding PR5C-R4; case QRP4).
 - TaskDie [client 0x825E5F0, 0x825E628]: satisfied while the character lives (CompleteActive: an effective StayActive) [agent: 184 of 185
   nodes are in a simple container, which needs each child]; the death of the character fails the objective (FailOnCondition) or resets it
   (ResetOnCondition).
@@ -199,6 +210,78 @@ user, [orchestrator] a decision of the orchestrator, [agent] a decision of the a
   main story objective; each asks for a confirmation, then sends 3836 or 5600 (protocol notes 4.54).
 - A disconnect ends nothing: the quests stay in their rows; the entry evaluates the predicates again (the items, the place, the bits can
   have changed while the character was away).
+
+### The offers, the hand-in, the cutscenes, the whispers, and the trigger areas (stage 1.8b)
+
+- The offer (3772, the CRC-32 of the ObjectiveID) [client 0x3722700, 0x375A980; research quest-engine.md Q3, Q4]: the person system checks
+  the source (the open conversation of the character, the person there for it, the character in the range of its bound) and that the
+  selected state of the character now offers the objective (LinearObjectiveId1 to N). The quest system then needs the RequiredAchievementId
+  of the objective to be true (the client shows only the variant of the archetype of its player: the eight variants of 06_boarfeast name
+  one archetype achievement each) [data], no active instance, and no completion achievement (a repeat is 1.8d) [client IsObjectiveComplete
+  0x3A48A30]. The grant has the source `offer` and the territory of its ExclusiveTerritory [agent: the beach chain has 06; the journal shows
+  "Windsward"]. Live I2 of stage 1.8b: Aelstrom offers 06_skinningknife after the hand-in, and 3772 `d137c605` accepts it.
+- The hand-in (794, the CRC-32 of the ObjectiveID) [client 0x37228F0; live P1 of stage 1.8b: `e4d66020` at "Complete the Quest!"]: the
+  person system checks the source and that the NpcDestinationId of the objective is the person of the conversation [data]; the quest system
+  needs an active instance whose root is Complete or CompleteActive [client]. 794 names no instance: the active instance of the objective
+  of the character.
+- The completion is one transaction (the plan, write, and finish of the build presets) [brief of stage 1.8b; MP-1]: the instance and its
+  rows go; the undo rows of its temporary unlocks run (an unlock or a lock with no StayActive stays: client 0x8260730, 0x8260880 revert
+  only at a reset or an abandon, 0x8260590 also at a completion; live P1: Aelstrom 01, whom task 13 of 06_getoffbeach shows, must stay for
+  the next offer); the return tasks take their items, the pin goes; the AchievementId of the objective and of the success event are set; the
+  experience (UniversalExpAmount of the success event and ExperienceReward of the row), the coin (CurrencyReward, in the units of the
+  wallet: 150 is 1.50 coin; CoinRewardChance 1 for a blank cell, client 0x31E70B0), the item of the event (ItemReward, ItemRewardQty 1 for
+  a blank cell) and of the row (ItemRewardName, ItemRewardQty) go in. The items have the rules of a new instance of stage 1.3b
+  (`Rewards::grant_items`: GearScoreOverride, the fixed perks, the perk places with the level of the character). ObjectiveReward grants
+  its objective in the same plan [research quest-engine.md Q6]. After the commit: the entity, the bits, the level (`Progress::finish`),
+  the items and the coin, and the completed notice.
+- A reward that the backend cannot pay refuses the hand-in, and the quest stays ready [brief of stage 1.8b: a completed quest must not lose
+  a reward]: a TerritoryStanding, FactionReputation, FactionTokens, CategoricalProgressionReward, Azoth, UmbralCurrency, PvpXp, SeasonsXp,
+  AzothSalt, CursedSilvers, or CursedCrowns that is not 0, an EntitlementId, a StatusEffectId, a GearScoreRange, a ProgressionReward of the
+  row, an item that the catalog does not have, a loot container item (class LootContainer: the Meat Pouch of 06_skinningknife; its open path
+  is 1.8d, research U9), a negative quantity. A full bag refuses the hand-in [decision D5 option A of the orchestrator]. A refused write of
+  the store changes nothing (case QB5).
+- The completed notice [client apply 0x3A43530 to 0x3A559B0; live L3 of stage 1.8b]: the Objectives state names the instance of a hand-in
+  in field 2 (completedObjectives) in the record that removes it; the client then shows no "Objective Failed" (live L3: 06_demonstorm leaves
+  the HUD and the journal). The list is a value of the world entry (16 instances at most) and is written only when it has an instance.
+- TaskTriggerArea [data TP_TargetTag, TriggerAreaType; live T1 of stage 1.8b]: the client sends no message for these volumes (no 560 at
+  the entry of Aelstrom_IGC_Trigger, also not at the spawn in it). The task is a predicate of the accepted position: Enter and Stay Inside
+  are satisfied while the position is in a volume of the tag, Leave while it is outside each volume of the tag (the TriggerAreaType of 778,
+  3, and 10 rows) [agent: the research rule "a validated entry or an in-volume position"; a character that is in the volume at the
+  activation satisfies an Enter task: the start position of a new character is in Aelstrom_IGC_Trigger, and live I1 starts the cutscene at
+  the first accepted position]. A StayActive task regresses when the character leaves (the rule of 1.8c). No trigger data, no volume of
+  the tag, or a camera estimate: the task waits. The index has the task under "place": a move looks only at the volumes of the tags of the
+  active tasks of the character (MP-8; case QB4).
+- The trigger data is game data [data]: `tools/gamedata/triggers.sh` makes `trigger-data.json` from the chunk slices of each region: each
+  entity with an ObjectiveDetectionVolumeComponent, its m_targetTag, and its detection volume in world coordinates (the chunk position and
+  the entity transform; QueryShapeAabb, a box, a sphere, a cylinder, a capsule; with no query shape the shape component of the entity). 849
+  volumes with 790 tags in the supported build; 657 of the 700 trigger tags of the tasks have a volume (each of the 10 of the beach chain).
+- The cutscenes [live A1 of stage 1.8a, C1 and I1 of stage 1.8b; research conversations.md]: the client runs the AchievementEvents script of
+  a cutscene spawner with the bits of its player (`Start_IGC_X && !Watched_IGC_X`) and sends 6703 with the CRC-32 of the cutscene name. The
+  server grants it (6707 with the CRC) only when an Active TaskCutsceneComplete of the character has that name: it is the pending cutscene of
+  the character then. 6706 with the CRC marks it started; the 6705 after it completes the tasks of the cutscene (and the session answers 6709
+  as for each 6705). A 6703 that no task waits for gets no answer; a 6705 with no started pending cutscene (the end of a conversation, a
+  mismatched grant) changes no quest [agent; the client sends 6705 also after a mismatched grant]. Live I1: the start quest of a new
+  character plays the beach cutscene by itself at the world entry; the Grace cutscene of 06_survivors starts at its trigger area.
+- The cinematics (6606 started, 6542 ended, the CRC-32 of the name) [research quest-engine.md Q3; no live check]: 6606 counts for
+  TaskCinematicStart and is the pending cinematic of the character; a 6542 counts for TaskCinematicComplete only for the pending cinematic.
+- TaskTriggerGameEvent [client 0x8260AE0; data GameEventData, WhisperData]: the activation applies the game event of KillEnemyType (one
+  time) and completes: its whisper (the WhisperId or WhisperID of the event, else the whisper whose GameEvent names it) goes to the client of
+  the character as 5070 with the CRC-32 of the lower-case WhisperId, and the AchievementId of the whisper is set; the AchievementId, the
+  experience, the coin, and the item of the event too. Live W1 and W2 of stage 1.8b: the client plays the whisper and shows its subtitles.
+- The effects of a topic [data ConversationTopicData; live check of stage 1.8b]: the AchievementUnlock of a topic and the TaskConversationTopic
+  tasks of the person (ItemName) and the topic (UIScreenTag) come at the finish of the topic (5397 of the close), one time in a conversation.
+  The live check: the client sends 3158 at the selection and 5397 at the close; the bit of 01_Grace_Goodbye_WW at 3158 changes nothing in
+  the open conversation (its next topic is in no state); the person of the topic task of 06_demonstorm is a walkaway slice whose next task
+  hides it, and with the finish at the close Grace walks away after the conversation [agent from the live check]. TaskConversationState
+  (ItemName the person, UIScreenTag the state) counts at the selection of the state at the start of a use.
+
+### The corrections of the code review of stage 2.5c (in stage 1.8b)
+
+The findings PR5C-R1 to PR5C-R7 (`~/Games/soulwarden/work/evidence/persons/25c/code-review/FINDINGS.md`) are corrected in stage 1.8b; each has
+a case of `tests/review_persons_25c_tests.cpp` (QRP1 to QRP7) that fails on the tree of stage 2.5c and passes after the correction. The
+quest rules: PR5C-R4 (the stored parent of a child after the reset of its parent: `Plan::grant_child` adds the child to the rows of the
+plan), PR5C-R5 (a retry credits only the tasks of its first delivery: `QuestEvent::matched`), PR5C-R7 (a malformed expression is false).
+The person rules are in [Persons](persons.md).
 
 ### The corrections of the code review of stage 1.8c
 
@@ -245,12 +328,15 @@ tools/world quest grant CHARACTER OBJECTIVE     # development only: a new instan
 tools/world quest abandon CHARACTER INSTANCE    # stage 1.8c: the rule of message 3836 (CanBeAbandoned 0 refuses it)
 tools/world quest reset CHARACTER INSTANCE      # stage 1.8c: the rule of message 5600 (a new instance; the award rows stay)
 tools/gamedata/pois.sh [OUTPUT.json]            # the points of interest (a test: a path outside the common game data folder)
+tools/gamedata/triggers.sh [OUTPUT.json]        # stage 1.8b: the trigger volumes (a test: a path outside the common game data folder)
 tools/world achievement CHARACTER ID on|off     # development only: the change event, the lock of a last bit
 ```
 
 The admin interface has the commands `apply_backstory` (argument `template`), `abandon_quest` and `reset_quest` (argument `instance`, 16
 hexadecimal digits), the route `GET /admin/v1/catalog/backstories`, and the member `quests` of the state of a character (stage 1.8c: with
-the award rows and the counts of the events). The tool window has no control for them in this stage.
+the award rows and the counts of the events; stage 1.8b: the counts of the offers, the hand-ins, the cutscenes, the whispers, the trigger
+volumes, and the topic effects). The tool window has no control for them in this stage. An offer and a hand-in have no command: they come
+from the client at a person (a development run: `tools/world quest grant` gives a quest, `tools/world achievement` a bit).
 
 ## Traps
 
@@ -284,3 +370,12 @@ the award rows and the counts of the events). The tool window has no control for
   count (live K1: the first kill did not count). Turn the mode off for a test of a kill task.
 - Stage 1.8c: the place task of `06_crewmates` (task 6, StayActive) regresses when the character leaves the shipwreck, and the kill task 8
   is Inactive then: a kill outside the place does not count, although task 8 has no EnforceLocationRequirement (live K1).
+- Stage 1.8b: the dialogue of a ready quest has pages (E "Next") and options (the key 1); "Complete the Quest!" sends 794, and the client
+  shows the offer of the next quest of the person in the same conversation at once (live I1: the offer of 06_skinningknife after the
+  hand-in). A key press that a test sends for a page can select the hand-in or the offer.
+- Stage 1.8b: a refused hand-in gets no answer: the client removes the option and waits in the conversation (live I2 at Urda, the Meat Pouch
+  of 06_skinningknife). Escape closes it; the quest stays ready.
+- Stage 1.8b: the knife of 06_skinningknife needs the station `engineering2` or `camp1`; the camp of the watchtower is hidden for the client
+  (open point of 1.8c). The live run of stage 1.8b gave the knife by command after the natural gathers of the flint and the wood.
+- Stage 1.8b: the character of a new creation starts in Aelstrom_IGC_Trigger: the beach cutscene starts at the first accepted position, some
+  seconds after the loading screen. A capture of the world entry needs the picture loop before the client leaves the loading screen.

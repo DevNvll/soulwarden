@@ -26,6 +26,7 @@
 #include "gamedata/loot_tables.h"
 #include "gamedata/conversation_data.h"
 #include "gamedata/progression_tables.h"
+#include "gamedata/trigger_data.h"
 #include "gamedata/quest_data.h"
 #include "gamedata/travel_places.h"
 #include "service/rep_server.h"
@@ -100,8 +101,10 @@ struct ServerHost {
     gamedata::PoiData pois;
     /** The conversation data of the persons (stage 2.5c). It is empty until a case sets it: no state selection, no topic, no service. */
     gamedata::ConversationData conversations;
+    /** The trigger volumes of the quests (stage 1.8b). They are empty until a case sets them: a task of a trigger area waits. */
+    gamedata::TriggerData triggers;
     world::World world{clock, store, tables,
-                       with_conversations(with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
+                       with_triggers(with_conversations(with_pois(with_quests(with_crafting(with_gathering(with_chests(with_stamina(with_interactions(with_game_data(catalog, progression, creatures,
                                                                                                               combat, places, terrain, navigation,
                                                                                                               loot, abilities, perks, spells,
                                                                                                               projectiles, weaponActions),
@@ -112,7 +115,7 @@ struct ServerHost {
                                      crafting),
                                      quests),
                                      pois),
-                                     conversations)};
+                                     conversations), triggers)};
     FakeTransport transport;
     std::unique_ptr<service::RepServer> server;
     /** Time of the last datagram that each peer sent. */
@@ -298,6 +301,10 @@ struct ServerHost {
     }
     static world::WorldOptions with_conversations(world::WorldOptions options, const gamedata::ConversationData& conversations) {
         options.conversationData = &conversations;
+        return options;
+    }
+    static world::WorldOptions with_triggers(world::WorldOptions options, const gamedata::TriggerData& triggers) {
+        options.triggerData = &triggers;
         return options;
     }
 

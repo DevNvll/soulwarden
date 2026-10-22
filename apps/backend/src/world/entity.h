@@ -1492,7 +1492,11 @@ struct PersonConversation {
     std::vector<std::uint32_t> services;
     /** The revision of the state of the character at the selection (the achievements, the quests, the level). */
     Revision revision{0};
-    /** The topics (CRC-32) that the character finished in this conversation: a second finish changes nothing. */
+    /**
+     * The topics (CRC-32) that the character selected in this conversation (3158), and the ones that it finished (5397 of the close: stage
+     * 1.8b gives the effects of a topic at its finish). A second selection or a second finish changes nothing.
+     */
+    std::vector<std::uint32_t> selected;
     std::vector<std::uint32_t> finished;
     /** True while the use of the person is the committed interaction of the character. */
     bool open{false};
@@ -1686,6 +1690,20 @@ struct QuestLog {
      * and the task index; the value the number of items. A reset keeps them (client 0x825EEF0, 0x825F8F0); an abandon removes them.
      */
     std::map<std::pair<std::uint32_t, std::uint8_t>, std::uint32_t> awards;
+    /**
+     * Stage 1.8b: the instances that a hand-in completed in this world entry (field 2 of the Objectives state: a notice list; the client
+     * shows the completion of a removed instance that the list names, apply 0x3A43530 to 0x3A559B0 with flag 1). 16 at most (the newest).
+     * A value of the world: a new world entry has none.
+     */
+    std::vector<std::uint64_t> completed;
+    /**
+     * Stage 1.8b: the cutscene that the server granted (6707: the CRC-32 of its lower-case name; 0: none), and true after the 6706 of the
+     * client for it. A value of the world: the client asks again after a new entry (live check L2 of stage 1.8a).
+     */
+    std::uint32_t pendingCutscene{0};
+    bool cutsceneStarted{false};
+    /** Stage 1.8b: the cinematic that the client started (6606; 0: none). */
+    std::uint32_t pendingCinematic{0};
     /** True when the quest system loaded the rows of the character (it has quest data). */
     bool loaded{false};
     /** The quest data of the world (the trees and the task CRCs of the encoder). Null when not loaded. */

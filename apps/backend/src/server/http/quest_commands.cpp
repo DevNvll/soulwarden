@@ -214,7 +214,17 @@ std::optional<json> quests_view(world::World& target, const std::string& charact
                   {"failures", counts.failures},
                   {"timerRetries", counts.timerRetries},
                   {"itemLooks", counts.itemLooks},
-                  {"placeLooks", counts.placeLooks}}}};
+                  {"placeLooks", counts.placeLooks},
+                  {"accepts", counts.accepts},
+                  {"handIns", counts.handIns},
+                  {"handInRefusals", counts.handInRefusals},
+                  {"cutsceneGrants", counts.cutsceneGrants},
+                  {"cutsceneRefusals", counts.cutsceneRefusals},
+                  {"cutsceneCompletions", counts.cutsceneCompletions},
+                  {"whispers", counts.whispers},
+                  {"gameEventsApplied", counts.gameEventsApplied},
+                  {"triggerVisits", counts.triggerVisits},
+                  {"topicEffects", counts.topicEffects}}}};
 }
 
 json backstories_json(world::World& target) {

@@ -547,6 +547,11 @@ public:
     [[nodiscard]] ServiceError require_service(const std::string& characterId, const std::string& kind, std::uint32_t id);
     /** Ends the service grant of a character (an authenticated close of a later stage). @return False: no grant. */
     bool close_service(const std::string& characterId);
+    /**
+     * Code review of stage 2.5c, finding PR5C-R3: the offer of the source of the grant changed (a new selection of a person): the grant gets
+     * these ids; an empty set ends it.
+     */
+    void update_service(Entity& character, std::vector<std::uint32_t> ids);
 
     /**
      * Calls `visit(Entity&)` for each object entity with an interest point `range` or less from `center` (horizontal): a bound, or

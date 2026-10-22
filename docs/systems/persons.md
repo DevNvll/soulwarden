@@ -1,11 +1,12 @@
 # Persons
 
 Read this document before a change of a person of the world (a person child that the client makes, a direct person), of the
-conversation data, of the selection of a conversation state, of the topics 3158 and 5397, or of the services of a person. Stage 2.5c is
-the person base. The offers, the hand-in, the effects of a topic, the cutscenes, and the whispers are stage 1.8b; the operation of a shop
-is stage 5.1. The use of an object (the request, the checks, the reply 3743, the cancels) is in [Interactions](interactions.md), the lock
-of the input of a conversation (6705, 6709) in [Travel and conversations](travel-and-conversations.md), the conditional of an achievement
-in [Quests](quests.md). The wire contracts are in the protocol notes (section 4.55).
+conversation data, of the selection of a conversation state, of the topics 3158 and 5397, of the offers (3772) and the hand-in (794) at a
+person, or of the services of a person. Stage 2.5c is the person base; stage 1.8b adds the offers, the hand-in, and the effects of a topic
+(the quest rules, the cutscenes, and the whispers are in [Quests](quests.md)); the operation of a shop is stage 5.1. The use of an object
+(the request, the checks, the reply 3743, the cancels) is in [Interactions](interactions.md), the lock of the input of a conversation
+(6705, 6709) in [Travel and conversations](travel-and-conversations.md), the conditional of an achievement in [Quests](quests.md). The wire
+contracts are in the protocol notes (sections 4.55 and 4.56).
 
 ## Start here
 
@@ -17,13 +18,17 @@ in [Quests](quests.md). The wire contracts are in the protocol notes (section 4.
 | The rule of each requirement of a state or a topic | `Persons::passes`, `Quests::conditional`, `Quests::task_state`, `Quests::objective_completed`, case NC8 |
 | The topic messages 3158 and 5397 | `server/rep/conversation_messages.h`, `RepSession::handle_conversation_topics`, case NC4 |
 | The services of a person | `Persons::started`, `Interactions::grant_service` (kind `conversation`), case NC5 |
+| Stage 1.8b: the offer (3772) and the hand-in (794) at a person | `Persons::accept`, `Persons::hand_in`, `Persons::quest_source`, `Persons::reselect`; `RepSession::handle_objective_request`; cases QB3, QB5, QB6 |
+| Stage 1.8b: the effects of a topic, the state of a selection | `Persons::topic` (5397: `Quests::topic_finished`), `Persons::started` (`Quests::state_selected`); case QB4 |
+| The corrections of the code review of stage 2.5c (PR5C-R1, R2, R3, R6) | `Persons::source_replaced`, `Persons::lost_presence`, `Persons::refresh_offer`, `Interactions::update_service`; `child_groups` of `tools/gamedata/interactions.py`; cases QRP1, QRP2, QRP3, QRP6 |
 | The commands | `server/http/person_commands.cpp`, `tools/world persons`, the admin state member `persons` |
 | The research and the results | `~/Games/soulwarden/work/research/npc-conversations.md`, `quest-engine-3.md` (Q2), `shops-stage.md` (Q5); the static read of stage 2.5c: `~/Games/soulwarden/work/research/scratch/persons-25c-static/ANSWERS.md`; the result: `~/Games/soulwarden/work/evidence/persons/25c/implement/RESULT.md` |
 
 ## Rules
 
-The source of each rule is in brackets: [data] the game data, [client] the client code, [live] a live check of stage 2.5c, [user] a
-decision of the user, [orchestrator] a decision of the orchestrator, [agent] a decision of the agent of the stage (with the cause).
+The source of each rule is in brackets: [data] the game data, [client] the client code, [live] a live check of stage 2.5c (of stage 1.8b
+when the text says so), [user] a decision of the user, [orchestrator] a decision of the orchestrator, [agent] a decision of the agent of
+the stage (with the cause), [review] a finding of the code review of stage 2.5c that the stage 1.8b checked and corrected.
 
 - Two kinds of persons [data; live L1]:
   - a direct person: a level placement whose own slice has an NPC component (`4bdb17d5-...`, m_npcKey). It is a level object of stage
@@ -41,10 +46,14 @@ decision of the user, [orchestrator] a decision of the orchestrator, [agent] a d
   (the placement matrix times the m_worldTM of the spawner entity), bucket the yaw of that transform in degrees from 0 to 360, cut to a
   whole number, divided by 23 (4 bits), asset the first 8 bytes of the asset UUID of the child slice (little-endian; only the low 9 bits
   stay), and round the roundf of the C library (a half goes away from 0; client import 0x7ECAC28). The actor id is G and 8 zero bytes.
-  The XOR rule of stage 2.5a gives the targets (K = root XOR G). The client computes the yaw in float (Euler Z of 0x63344A0, the degrees
-  factor at 0x85725F0; static read): a slot whose value is 0.001 or less from a border of a step or of a bucket gets both ids in the file
-  (89 slots; the second key ends in `~1`) [agent: the tool has no exact copy of the float path]. Two slots with one id: the first keeps
-  it (2 in the build) [agent: the client has one entity for the id].
+  The XOR rule of stage 2.5a gives the targets (K = root XOR G). The client computes the place and the yaw in float (Euler Z of
+  0x63344A0, the degrees factor at 0x85725F0; static read): the tool rounds f32(x) * 8, f32(y) * 8, f32(z) * 4 (the product of a float and
+  8 is exact), and for a value 0.001 or less from a border of a step or of a bucket it writes each id of the candidates of each axis and of
+  the yaw (all the combinations; the id of the float rule first; the other keys end in `~1`, `~2`, ...) [review PR5C-R6: the old rule
+  rounded in double and wrote one other id, so a place near two borders could omit the id of the client; agent: the tool has no exact copy
+  of the float composition of the client]. The file of the build: 1,311 ids (each of the 1,309 ids of stage 2.5c, the 19 of the trace of
+  gate R too), 90 slots with more than one id (4 at most) [live check of stage 1.8b: the conversations of the beach persons with the new
+  file; case QRP6]. Two slots with one id: the first keeps it (2 in the build) [agent: the client has one entity for the id].
 - The binding of a person child [data; research npc-conversations.md Q1]: the NPC id is the column NPCId of the row of its variant
   (m_sliceVariant of the spawner) in the variation table of the child slice, not the defaults of the generic slice. A variant with no
   row, a row with no NPCId, or a swap slice with no presence rule gives a binding with a cause (`unresolved`, 50 in the build): the backend
@@ -60,7 +69,8 @@ decision of the user, [orchestrator] a decision of the orchestrator, [agent] a d
   the person goes for the client, and without it the person comes back (`A2-02-bit-off-return.mp4`).
 - A change of the bits of a character with a person conversation: the next tick checks its person again; when the person is not there for
   that character any more, its use ends (3746) and its service grant ends. The persons of the other characters do not change (no shared
-  state) [rule MP-2; agent].
+  state) [rule MP-2; agent]. A topic request that finds the person not there (before that tick) ends the use and the grant in the same
+  way (`Persons::lost_presence`) [review PR5C-R2; case QRP2].
 - The conversation data is game data [data]: `tools/gamedata/conversations.sh` makes `conversation-data.json` (format 1): the NPC rows
   (NPCData) with their states in the order of the numbers of their columns (ConversationStateId1 to ConversationStateIdN, not the order of
   their text), the states (ConversationStateData) with their topics, services, and requirements, and the topics (ConversationTopicData)
@@ -103,9 +113,29 @@ decision of the user, [orchestrator] a decision of the orchestrator, [agent] a d
   Conversation facet of its own player (rule MP-5). The world accepts a topic when the character has an open person conversation (3158)
   or the conversation of the close (5397), the person is still there for it, the data has the topic, and the selection of now offers it;
   each topic counts one time in one conversation (a second finish: `duplicate`). Each other request changes nothing and has a count with
-  its cause (`TopicResult`). In stage 2.5c an accepted topic gives no reward, sets no achievement, and changes no quest task (stage 1.8b)
-  [orchestrator: the brief of stage 2.5c]. Live L3: the client sends 3158 with the topic at its selection, then at the close 6705, 2473,
+  its cause (`TopicResult`). In stage 2.5c an accepted topic gave no reward, set no achievement, and changed no quest task [orchestrator:
+  the brief of stage 2.5c]; stage 1.8b gives the effects of a finished topic (the rule above). Live L3: the client sends 3158 with the topic at its selection, then at the close 6705, 2473,
   and 5397 with the finished topics.
+- The offer of a quest (3772, stage 1.8b) [client 0x3722700, 0x375A980; live I2 of stage 1.8b]: the person system accepts it only from the
+  source of the character: its open person conversation (or the closed one of the close), the person still there for it, the character
+  in the range of the bound of the use (not an estimated position), and the objective in the LinearObjectiveId1 to N of the selected state
+  of now (a stale selection is made again first, `Persons::reselect`, with the new services) [agent: the client shows only the objectives
+  of that state; 3772 names no person]. Then the quest system checks the objective (the RequiredAchievementId of the variant, no active
+  instance, no completion: [Quests](quests.md)). Each result has a count (`QuestRequestResult`: accepted, noConversation, notPresent,
+  tooFar, unknownObjective, notOffered, wrongPerson, refused).
+- The hand-in (794, stage 1.8b) [client 0x37228F0; live P1 and I1 of stage 1.8b]: the same source, and the NpcDestinationId of the
+  objective is the NPC of the conversation (else `wrongPerson`) [data]. The quest system finds the active instance of the character and
+  completes it with its rewards in one transaction ([Quests](quests.md)).
+- The effects of a topic (stage 1.8b) [data; live T2 of stage 1.8b]: 3158 (the selection) records the topic in the list `selected` of the
+  conversation and has no effect; 5397 (the finish, at the close) records it in `finished` and gives the world the AchievementUnlock of the
+  topic and the event of TaskConversationTopic (the NPC and the topic), one time in one conversation [agent from the live check: an effect
+  at 3158 changes nothing in the open conversation, and the person of a walkaway slice must walk away after it]. The selection of a state
+  at the start of a use gives the event of TaskConversationState [data].
+- The source of a conversation [review PR5C-R1, PR5C-R3; cases QRP1, QRP3]: a new use replaces the conversation of the character before
+  the handler of the new use starts (`Persons::source_replaced`): the old topic context is gone, so a 5397 or a 3772 of the old person
+  does not count. Only a close of the client (2473, the end of the block) keeps the closed conversation for its 5397; each other end (a new
+  use, the presence, a travel, the death, the leave) forgets it. A new conversation with no service ends the old service grant, and the
+  service check of a conversation grant needs the open conversation of the same serial (`Interactions::update_service`).
 - The services of a person [client registrar 0x37B3DA0, builder 0x37ACF10 with its switch table 0x37AE038; static read; live L4]: the
   services of the selected state, as the numbers of the client enum (Inn 1, Faction_Board 2, Community_Board 3, Faction_Selection 4,
   Join_Outpost_Rush 5, Event_Store 6, Horse_Store 7, Wolf_Store 8, Lion_Store 9, Expansion_Modal 10, Fast_Travel_Guide 11, PvP_Guide 12,
@@ -137,9 +167,9 @@ tools/world persons NAME [METERS]                  # the person conversation of 
 
 - The route `GET /v1/dev/persons?character=ID[&radius=N]` (the development routes; `tools/world persons`) and the member `persons` of the
   admin state (the persons 30 m or less from the character): the conversation of the character (the NPC, the state, the topics, the
-  services, the finished topics, open or closed), and for each person near it the key, the NPC id, the slice, `clientChild`, the presence
+  services, the selected topics (3158), the finished topics (5397), open or closed), and for each person near it the key, the NPC id, the slice, `clientChild`, the presence
   rule, `present` for the character, the distance, and the selection of now (the state, the topics with their CRC, the services); the
-  counts (uses, `notPresent`, selections, state and topic visits, the result of each topic, grants, presence checks and ends).
+  counts (uses, `notPresent`, selections, state and topic visits, the result of each topic, grants, presence checks and ends; stage 1.8b: the offers and the hand-ins with the count of each `QuestRequestResult`).
 - `python3 -B tools/gamedata/check_conversations_tool.py` and `check_interactions_tool.py --persons`: the checks of the tools, with made-up
   tables (cases NC1, NC2).
 
@@ -155,4 +185,9 @@ tools/world persons NAME [METERS]                  # the person conversation of 
 - Two persons can stand at one place with one slice and one yaw bucket: their ids are equal, and only the first slot is in the file.
 - A backend that is older than the route answers 404 to `tools/world persons`: build the backend of the run again.
 - The Inn option of an innkeeper closes the conversation with no inn screen: the backend has no handler of OpenInnScreen (action 70) yet.
-- A person child near a border of the id rule has two objects (`KEY` and `KEY~1`): the list of `tools/world persons` shows both.
+- A person child near a border of the id rule has more than one object (`KEY`, `KEY~1`, ...): the list of `tools/world persons` shows each.
+- Stage 1.8b: the client shows an offer and a hand-in from its own state of the person. When the server refuses (a stale bit, a reward
+  that it cannot pay), the client gets no answer: it removes the option and waits in the conversation. Compare `tools/world persons` and
+  `tools/world quests` with the screen.
+- Stage 1.8b: a hand-in moves the quests, and so the selection of the person changes in the same conversation (the next offer shows at
+  once). A 5397 of a topic of the old selection is `notOffered` then.

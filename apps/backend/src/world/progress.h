@@ -221,6 +221,11 @@ public:
      *         of the backend): the rules of plan_sheet. `noTables` with no progression tables.
      */
     [[nodiscard]] ProgressError check_sheet(std::uint32_t level, const std::array<std::uint32_t, attribute::kCount>& values) const;
+    /**
+     * Stage 1.8b: plans a gain of experience (the rules of add_experience) for one change of more than one system (the hand-in of a quest,
+     * world/quests.h). No write.
+     */
+    [[nodiscard]] Plan plan_experience(const std::string& characterId, std::uint64_t amount);
     /** Writes the row of a plan (in a batch: a savepoint). @return False: the database did not take it. */
     [[nodiscard]] bool write(const Plan& plan);
     /** Changes the entity of a written plan and marks its states. */
@@ -232,6 +237,8 @@ private:
     Plan stage(const std::string& characterId, bool needsTables, Change&& apply);
     /** The level and the values of plan_sheet on a sheet. */
     [[nodiscard]] ProgressError sheet_into(Sheet& sheet, std::uint32_t level, const std::array<std::uint32_t, attribute::kCount>& values) const;
+    /** The experience of add_experience on a sheet. */
+    [[nodiscard]] ProgressError experience_into(Sheet& sheet, std::uint64_t amount) const;
     /** The level of set_level on a sheet. */
     [[nodiscard]] ProgressError level_into(Sheet& sheet, std::uint32_t level) const;
     /** The value of one attribute of set_attribute on a sheet. */

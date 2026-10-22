@@ -194,6 +194,15 @@ public:
     virtual void interaction_cancelled() {}
 
     /**
+     * Stage 1.8b: a game event of a quest task plays a whisper for the character of this session (world/quests.h): the session sends its
+     * client the message 5070 (WhisperPlayerComponentClientFacet_RequestStartWhisper, the CRC-32 of the lower-case WhisperId; live check W1:
+     * the client plays it and shows its subtitles). A sink with no client does nothing.
+     */
+    virtual void whisper(std::uint32_t whisperCrc) {
+        (void)whisperCrc;
+    }
+
+    /**
      * Stage 1.8a: the auto-pin option of the client of this session for an objective type (message 2709: one flag for each type of the
      * client enum EObjectiveType). No value: no flag (no 2709 yet, a type above the list, or a sink with no client).
      */
@@ -300,6 +309,8 @@ struct WorldOptions {
     const gamedata::QuestData* questData{nullptr};
     /** Stage 1.8c: the points of interest of the world (game data poi-data.json), or null: no task of a place progresses. */
     const gamedata::PoiData* poiData{nullptr};
+    /** Stage 1.8b: the trigger volumes of the quests (game data trigger-data.json), or null: a task of a trigger area waits. */
+    const gamedata::TriggerData* triggerData{nullptr};
     /**
      * Stage 2.5c: the conversation data of the persons (game data conversation-data.json), or null: a person keeps its conversation (3743
      * result 1), with no state selection, no topic, and no service.
@@ -933,6 +944,8 @@ public:
     void healed_player(SessionId session, EntityId target, float amount);
     /** Gives a session the end of the committed interaction of its character (SessionSink::interaction_cancelled; stage 2.5a). */
     void interaction_cancelled(SessionId session);
+    /** Stage 1.8b: gives a session a whisper for its client (SessionSink::whisper). */
+    void whisper(SessionId session, std::uint32_t whisperCrc);
     /**
      * Development aid: gives the session of a character one message for its client
      * (SessionSink::development_message).
